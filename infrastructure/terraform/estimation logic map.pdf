@@ -1,0 +1,36 @@
+alb_arn = "arn:aws:elasticloadbalancing:us-east-1:100328509916:loadbalancer/app/beaver-alb/9a370a5801016935"
+alb_dns_name = "beaver-alb-1668624004.us-east-1.elb.amazonaws.com"
+app_url = "https://beaver-alb-1668624004.us-east-1.elb.amazonaws.com"
+cloudfront_distribution_id = "E1R57VZ6B5NDO1"
+cloudfront_domain_name = "d1ocuec3j7z8yb.cloudfront.net"
+cloudfront_url = "https://d1ocuec3j7z8yb.cloudfront.net"
+ecr_beaver_app_url = "100328509916.dkr.ecr.us-east-1.amazonaws.com/beaver-app"
+ecr_beaver_cpu_pipeline_url = "100328509916.dkr.ecr.us-east-1.amazonaws.com/beaver-cpu-pipeline"
+ecr_beaver_yolo_pipeline_url = "100328509916.dkr.ecr.us-east-1.amazonaws.com/beaver-yolo-pipeline"
+ecs_cluster_arn = "arn:aws:ecs:us-east-1:100328509916:cluster/beaver-cluster"
+ecs_cluster_name = "beaver-cluster"
+ecs_execution_role_arn = "arn:aws:iam::100328509916:role/beaver-ecs-execution-role"
+ecs_service_name = "beaver-app"
+ecs_task_role_arn = "arn:aws:iam::100328509916:role/beaver-ecs-task-role"
+private_subnet_ids = [
+  "subnet-0c8f065fa15a483b5",
+  "subnet-0dfc65caaff11a6f7",
+]
+public_subnet_ids = [
+  "subnet-061638ba91dea22db",
+  "subnet-0f287631f3f45a270",
+]
+rds_arn = "arn:aws:rds:us-east-1:100328509916:db:beaver-db"
+rds_db_name = "beaver"
+rds_endpoint = "beaver-db.cev8idr0zvqg.us-east-1.rds.amazonaws.com:5432"
+s3_bucket_arn = "arn:aws:s3:::beaver-data-100328509916"
+s3_bucket_name = "beaver-data-100328509916"
+sagemaker_role_arn = "arn:aws:iam::100328509916:role/beaver-sagemaker-role"
+secret_anthropic_arn = "arn:aws:secretsmanager:us-east-1:100328509916:secret:beaver/ANTHROPIC_API_KEY-r704cl"
+secret_database_url_arn = "arn:aws:secretsmanager:us-east-1:100328509916:secret:beaver/DATABASE_URL-hg2bRp"
+secret_nextauth_arn = "arn:aws:secretsmanager:us-east-1:100328509916:secret:beaver/NEXTAUTH_SECRET-HSlP4G"
+secret_webhook_arn = "arn:aws:secretsmanager:us-east-1:100328509916:secret:beaver/PROCESSING_WEBHOOK_SECRET-hg2bRp"
+step_functions_role_arn = "arn:aws:iam::100328509916:role/beaver-step-functions-role"
+step_functions_state_machine_arn = "arn:aws:states:us-east-1:100328509916:stateMachine:beaver-process-blueprint"
+step_functions_state_machine_name = "beaver-process-blueprint"
+vpc_id = "vpc-036dac11a6f0c4c9f"
