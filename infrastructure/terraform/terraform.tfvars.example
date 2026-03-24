@@ -1,0 +1,27 @@
+# ──────────────────────────────────────────────────────────────
+# Copy this file to terraform.tfvars and fill in your values
+# DO NOT commit terraform.tfvars — it contains secrets
+# ──────────────────────────────────────────────────────────────
+
+# Your AWS account ID
+account_id = "YOUR_AWS_ACCOUNT_ID"
+
+# ACM certificate ARN for your domain (must be in us-east-1)
+acm_certificate_arn = "arn:aws:acm:us-east-1:YOUR_ACCOUNT:certificate/YOUR_CERT_ID"
+
+# Your domain name
+domain_name = "yourdomain.com"
+
+# Database password (use: openssl rand -base64 32)
+db_password = "GENERATE_A_STRONG_PASSWORD"
+
+# Session & webhook secrets (use: openssl rand -base64 32)
+nextauth_secret           = "GENERATE_ME"
+processing_webhook_secret = "GENERATE_ME"
+
+# API keys
+anthropic_api_key = "sk-ant-..."
+groq_api_key      = "gsk_..."
+
+# CORS origins (your app domain)
+cors_allowed_origins = ["https://app.yourdomain.com", "https://yourdomain.com"]

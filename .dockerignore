@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env*.local
+*.md
+.DS_Store
+.obsidian
+plan_march18.md
+infrastructure/terraform/.terraform
+infrastructure/terraform/*.tfstate*
+infrastructure/terraform/terraform.tfvars
+models/
