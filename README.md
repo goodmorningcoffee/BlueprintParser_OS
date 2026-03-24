@@ -6,6 +6,12 @@ Open-source AI-powered construction blueprint analysis. Upload PDFs, extract tex
 
 ---
 
+> **WARNING: DO NOT run `deploy.sh`, `deploy-yolo.sh`, or `terraform apply`.**
+>
+> These scripts deploy to a LIVE production environment on a shared AWS account. Running them will overwrite the running application, database, and infrastructure. If you want to test locally, use `docker compose up -d && npm run dev` (see Quick Start below). Talk to the team before touching anything in `infrastructure/` or running any deploy commands.
+
+---
+
 ## Features
 
 ### Document Intelligence
