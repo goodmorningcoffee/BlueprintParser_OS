@@ -9,6 +9,14 @@ Open-source AI-powered construction blueprint analysis. Upload PDFs, extract tex
 > **WARNING: DO NOT run `deploy.sh`, `deploy-yolo.sh`, or `terraform apply`.**
 >
 > These scripts deploy to a LIVE production environment on a shared AWS account. Running them will overwrite the running application, database, and infrastructure. If you want to test locally, use `docker compose up -d && npm run dev` (see Quick Start below). Talk to the team before touching anything in `infrastructure/` or running any deploy commands.
+>
+> **This repo contains live credentials.** Keep it private. Files with secrets:
+> - `infrastructure/terraform/terraform.tfvars` — DB password, API keys (Groq, Anthropic), NextAuth secret, webhook secret
+> - `.env.local` — Groq API key, S3 bucket name
+> - `deploy.sh` / `deploy-yolo.sh` — Hardcoded AWS account ID, ECR repo names, ECS cluster/service names
+> - `src/lib/yolo.ts` — Fallback AWS account ID
+>
+> These will be cleaned up before open-source release. For now, do not fork publicly or share outside the team.
 
 ---
 
