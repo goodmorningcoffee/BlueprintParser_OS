@@ -89,6 +89,21 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     };
   }, [pdfUrl, setNumPages]);
 
+  // Auto-center blueprint on load (free panning padding pushes content off-screen)
+  const centeredRef = useRef(false);
+  useEffect(() => {
+    if (!pdfDoc || centeredRef.current) return;
+    // Wait for content to render
+    const timer = setTimeout(() => {
+      const container = containerRef.current;
+      if (!container || container.scrollWidth <= container.clientWidth) return;
+      container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
+      container.scrollTop = (container.scrollHeight - container.clientHeight) / 2;
+      centeredRef.current = true;
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [pdfDoc]);
+
   // Mode ref for use in native event listeners
   const mode = useViewerStore((s) => s.mode);
 
@@ -252,25 +267,25 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       <div className="flex flex-1 min-h-0">
         {!sidebarCollapsed && <PageSidebar pdfDoc={pdfDoc!} />}
 
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 relative">
+          {/* Sidebar collapse toggle — outside scroll container so it doesn't scroll away */}
+          <button
+            onClick={toggleSidebar}
+            className="absolute top-2 left-2 z-20 w-6 h-6 rounded flex items-center justify-center text-xs bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/40"
+            title={sidebarCollapsed ? "Show pages" : "Hide pages"}
+          >
+            {sidebarCollapsed ? ">" : "<"}
+          </button>
+
           <div
             ref={containerRef}
-            className="flex-1 bg-[#1a1a1a] relative overflow-auto"
+            className="flex-1 bg-[#1a1a1a] overflow-auto"
             style={{ cursor: mode === "move" ? "grab" : "default" }}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
           >
-            {/* Sidebar collapse toggle */}
-            <button
-              onClick={toggleSidebar}
-              className="absolute top-2 left-2 z-20 w-6 h-6 rounded flex items-center justify-center text-xs bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/40"
-              title={sidebarCollapsed ? "Show pages" : "Hide pages"}
-            >
-              {sidebarCollapsed ? ">" : "<"}
-            </button>
-
             <div
               className="p-4"
               style={{ width: "fit-content", paddingTop: "50vh", paddingBottom: "50vh", paddingLeft: "25vw", paddingRight: "25vw" }}
