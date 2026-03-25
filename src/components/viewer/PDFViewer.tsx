@@ -89,44 +89,47 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     };
   }, [pdfUrl, setNumPages]);
 
-  // Mouse wheel zoom — anchored to cursor position, throttled
+  // Mouse wheel / trackpad zoom — anchored to cursor position
+  // Uses native event listener with { passive: false } to allow preventDefault
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
   const lastWheelRef = useRef(0);
-  const handleWheel = useCallback(
-    (e: React.WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    function handleWheel(e: WheelEvent) {
       e.preventDefault();
 
-      // Throttle: ignore events within 30ms of last
+      // Throttle: 16ms for smooth trackpad feel
       const now = Date.now();
-      if (now - lastWheelRef.current < 30) return;
+      if (now - lastWheelRef.current < 16) return;
       lastWheelRef.current = now;
 
-      const container = containerRef.current;
-      if (!container) return;
+      const rect = container!.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left + container!.scrollLeft;
+      const mouseY = e.clientY - rect.top + container!.scrollTop;
 
-      const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left + container.scrollLeft;
-      const mouseY = e.clientY - rect.top + container.scrollTop;
-
-      const oldScale = scale;
-      const factor = e.deltaY < 0 ? 1 / 0.95 : 0.95;
+      const oldScale = scaleRef.current;
+      const factor = e.deltaY < 0 ? 1 / 0.97 : 0.97;
       const newScale = Math.max(0.2, Math.min(oldScale * factor, 10));
 
-      // Adjust scroll to keep cursor position stable
       const ratio = newScale / oldScale;
       const newScrollLeft = mouseX * ratio - (e.clientX - rect.left);
       const newScrollTop = mouseY * ratio - (e.clientY - rect.top);
 
       setScale(newScale);
 
-      // Apply scroll after React re-renders
       requestAnimationFrame(() => {
-        container.scrollLeft = newScrollLeft;
-        container.scrollTop = newScrollTop;
+        container!.scrollLeft = newScrollLeft;
+        container!.scrollTop = newScrollTop;
       });
-    },
-    [scale, setScale]
-  );
+    }
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    return () => container.removeEventListener("wheel", handleWheel);
+  }, [setScale]);
 
   // Click-drag pan
   const [isPanning, setIsPanning] = useState(false);
@@ -171,7 +174,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const handleMouseUp = useCallback(() => {
     setIsPanning(false);
     const container = containerRef.current;
-    if (container) container.style.cursor = mode === "move" ? "grab" : mode === "moveMarkup" ? "grab" : "crosshair";
+    if (container) container.style.cursor = mode === "move" ? "grab" : "default";
   }, [mode]);
 
   // Hooks must be before early returns (Rules of Hooks)
@@ -227,8 +230,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
           <div
             ref={containerRef}
             className="flex-1 overflow-auto bg-[#1a1a1a] relative"
-            style={{ cursor: mode === "move" ? "grab" : mode === "moveMarkup" ? "grab" : "crosshair" }}
-            onWheel={handleWheel}
+            style={{ cursor: mode === "move" ? "grab" : "default" }}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}

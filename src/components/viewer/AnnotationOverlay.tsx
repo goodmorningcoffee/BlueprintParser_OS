@@ -26,7 +26,8 @@ function drawCountMarker(
   ann: ClientAnnotation,
   width: number,
   height: number,
-  isSelected: boolean
+  isSelected: boolean,
+  markerSize?: number
 ) {
   const data = ann.data as unknown as CountMarkerData;
   if (!data?.color || !data?.shape) return;
@@ -34,7 +35,7 @@ function drawCountMarker(
   const [minX, minY, maxX, maxY] = ann.bbox;
   const cx = ((minX + maxX) / 2) * width;
   const cy = ((minY + maxY) / 2) * height;
-  const r = 10;
+  const r = markerSize || 10;
 
   ctx.save();
   ctx.fillStyle = data.color + "cc";
@@ -177,7 +178,9 @@ export default function AnnotationOverlay({
     for (const ann of pageAnnotations) {
       // Count markers: draw shape instead of rectangle
       if (ann.source === "takeoff" && (ann.data as any)?.type === "count-marker") {
-        drawCountMarker(ctx, ann, width, height, ann.id === selectedId);
+        const itemId = (ann.data as any)?.takeoffItemId;
+        const item = takeoffItems.find((t) => t.id === itemId || String(t.id) === String(itemId));
+        drawCountMarker(ctx, ann, width, height, ann.id === selectedId, item?.size);
         continue;
       }
 
@@ -642,13 +645,31 @@ export default function AnnotationOverlay({
         return;
       }
 
-      // Pointer mode: click to select annotation, delete via label "x", or click keynote to filter
+      // Pointer mode: select, delete, move, resize annotations + click keynotes
       if (mode === "pointer") {
-        // If an annotation is already selected, check if clicking its delete "x"
+        // If an annotation is already selected, check corners for resize
         if (selectedId !== null) {
           const selAnn = pageAnnotations.find((a) => a.id === selectedId);
           if (selAnn) {
-            const [minX, minY] = selAnn.bbox;
+            const [minX, minY, maxX, maxY] = selAnn.bbox;
+            const corners = {
+              tl: { x: minX * width, y: minY * height },
+              tr: { x: maxX * width, y: minY * height },
+              bl: { x: minX * width, y: maxY * height },
+              br: { x: maxX * width, y: maxY * height },
+            };
+
+            // Check if clicking a corner handle for resize
+            for (const [key, corner] of Object.entries(corners)) {
+              if (Math.abs(pos.x - corner.x) < HANDLE && Math.abs(pos.y - corner.y) < HANDLE) {
+                e.stopPropagation();
+                setResizeCorner(key);
+                setDragging(true);
+                return;
+              }
+            }
+
+            // Check if clicking the label bar area (above the box) for delete
             const ax = minX * width;
             const ay = minY * height;
             if (pos.y >= ay - 18 && pos.y <= ay && pos.x >= ax) {
@@ -669,7 +690,7 @@ export default function AnnotationOverlay({
             return;
           }
         }
-        // Check annotations (bbox-based)
+        // Check annotations (bbox-based) — select and start drag
         for (const ann of pageAnnotations) {
           const [minX, minY, maxX, maxY] = ann.bbox;
           const ax = minX * width;
@@ -679,6 +700,9 @@ export default function AnnotationOverlay({
           if (pos.x >= ax && pos.x <= ax + aw && pos.y >= ay && pos.y <= ay + ah) {
             e.stopPropagation();
             setSelectedId(ann.id);
+            setDragging(true);
+            setResizeCorner(null);
+            setDragOffset({ x: pos.x - ax, y: pos.y - ay });
             return;
           }
         }
@@ -698,8 +722,8 @@ export default function AnnotationOverlay({
         return;
       }
 
-      // If selected, check corners for resize or label area for delete
-      if (selectedId !== null && (mode === "moveMarkup" || mode === "markup")) {
+      // Markup mode: check corners for resize or label for delete on selected
+      if (selectedId !== null && mode === "markup") {
         const selAnn = pageAnnotations.find((a) => a.id === selectedId);
         if (selAnn) {
           const [minX, minY, maxX, maxY] = selAnn.bbox;
@@ -710,7 +734,6 @@ export default function AnnotationOverlay({
             br: { x: maxX * width, y: maxY * height },
           };
 
-          // Check if clicking a corner handle
           for (const [key, corner] of Object.entries(corners)) {
             if (Math.abs(pos.x - corner.x) < HANDLE && Math.abs(pos.y - corner.y) < HANDLE) {
               e.stopPropagation();
@@ -720,7 +743,6 @@ export default function AnnotationOverlay({
             }
           }
 
-          // Check if clicking the label bar area (above the box) for delete
           const ax = minX * width;
           const ay = minY * height;
           if (pos.y >= ay - 18 && pos.y <= ay && pos.x >= ax) {
@@ -731,22 +753,19 @@ export default function AnnotationOverlay({
         }
       }
 
-      // Check if clicking on any annotation to select it
-      for (const ann of pageAnnotations) {
-        const [minX, minY, maxX, maxY] = ann.bbox;
-        const ax = minX * width;
-        const ay = minY * height;
-        const aw = (maxX - minX) * width;
-        const ah = (maxY - minY) * height;
-        if (pos.x >= ax && pos.x <= ax + aw && pos.y >= ay && pos.y <= ay + ah) {
-          e.stopPropagation();
-          setSelectedId(ann.id);
-          if (mode === "moveMarkup") {
-            setDragging(true);
-            setResizeCorner(null);
-            setDragOffset({ x: pos.x - ax, y: pos.y - ay });
+      // Markup mode: check if clicking annotation to select
+      if (mode === "markup") {
+        for (const ann of pageAnnotations) {
+          const [minX, minY, maxX, maxY] = ann.bbox;
+          const ax = minX * width;
+          const ay = minY * height;
+          const aw = (maxX - minX) * width;
+          const ah = (maxY - minY) * height;
+          if (pos.x >= ax && pos.x <= ax + aw && pos.y >= ay && pos.y <= ay + ah) {
+            e.stopPropagation();
+            setSelectedId(ann.id);
+            return;
           }
-          return;
         }
       }
 
@@ -1003,7 +1022,7 @@ export default function AnnotationOverlay({
   }, [showTakeoffPanel]);
 
   // Always render — annotations should be visible in all modes
-  if (pageAnnotations.length === 0 && activeTakeoffItemId === null && calibrationMode === "idle" && polygonDrawingMode === "idle" && mode !== "markup" && mode !== "moveMarkup" && mode !== "pointer") return null;
+  if (pageAnnotations.length === 0 && activeTakeoffItemId === null && calibrationMode === "idle" && polygonDrawingMode === "idle" && mode !== "markup" && mode !== "pointer") return null;
 
   return (
     <canvas
@@ -1025,10 +1044,10 @@ export default function AnnotationOverlay({
         left: 0,
         width: `${width}px`,
         height: `${height}px`,
-        pointerEvents: activeTakeoffItemId !== null || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "moveMarkup" || mode === "pointer" ? "auto" : "none",
+        pointerEvents: activeTakeoffItemId !== null || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" ? "auto" : "none",
         transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
         transformOrigin: "top left",
-        cursor: calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : mode === "moveMarkup" ? "grab" : mode === "pointer" ? "pointer" : "default",
+        cursor: calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : mode === "pointer" ? "default" : "default",
       }}
     />
   );

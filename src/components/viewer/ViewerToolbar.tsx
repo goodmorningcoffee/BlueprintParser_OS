@@ -211,17 +211,6 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         >
           Add Markup
         </button>
-        <button
-          onClick={() => setMode("moveMarkup")}
-          className={`px-3 py-1 text-xs ${
-            mode === "moveMarkup"
-              ? "bg-[var(--accent)] text-white"
-              : "text-[var(--muted)] hover:text-[var(--fg)]"
-          }`}
-          title="Reposition markups"
-        >
-          Move Markup
-        </button>
       </div>
 
       {/* Trade filter */}

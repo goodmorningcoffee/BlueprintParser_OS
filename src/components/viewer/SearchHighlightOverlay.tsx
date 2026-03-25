@@ -14,7 +14,7 @@ interface SearchHighlightOverlayProps {
  * Find Textract words that match a phrase (consecutive word sequence).
  * Returns matching word bboxes in SearchWordMatch format.
  */
-function findPhraseMatches(
+export function findPhraseMatches(
   words: TextractWord[],
   phrase: string
 ): SearchWordMatch[] {
@@ -54,6 +54,7 @@ export default function SearchHighlightOverlay({
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const searchMatches = useViewerStore((s) => s.searchMatches);
   const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
+  const activeTradeFilter = useViewerStore((s) => s.activeTradeFilter);
   const csiCodes = useViewerStore((s) => s.csiCodes);
   const textractData = useViewerStore((s) => s.textractData);
 
@@ -69,11 +70,34 @@ export default function SearchHighlightOverlay({
     const pageWords = textractData[pageNumber]?.words;
     if (!pageWords || pageWords.length === 0) return [];
 
-    // Use the CSI description as the trigger phrase
     return findPhraseMatches(pageWords, matchingCode.description);
   }, [activeCsiFilter, csiCodes, textractData, pageNumber]);
 
-  const allMatches = searchHits.length > 0 || csiHits.length > 0;
+  // Compute trade highlight matches: find words from all CSI descriptions for the active trade
+  const tradeHits = useMemo(() => {
+    if (!activeTradeFilter) return [];
+    const pageCsi = csiCodes[pageNumber] || [];
+    const matchingCodes = pageCsi.filter((c) => c.trade === activeTradeFilter);
+    if (matchingCodes.length === 0) return [];
+
+    const pageWords = textractData[pageNumber]?.words;
+    if (!pageWords || pageWords.length === 0) return [];
+
+    const hits: SearchWordMatch[] = [];
+    for (const code of matchingCodes) {
+      hits.push(...findPhraseMatches(pageWords, code.description));
+    }
+    // Also match the trade name itself as individual words
+    const tradeWords = activeTradeFilter.toLowerCase().split(/\s+/);
+    for (const word of pageWords) {
+      if (tradeWords.includes(word.text.toLowerCase()) && !hits.some((h) => h.bbox === word.bbox)) {
+        hits.push({ text: word.text, bbox: word.bbox });
+      }
+    }
+    return hits;
+  }, [activeTradeFilter, csiCodes, textractData, pageNumber]);
+
+  const allMatches = searchHits.length > 0 || csiHits.length > 0 || tradeHits.length > 0;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -106,10 +130,10 @@ export default function SearchHighlightOverlay({
       }
     }
 
-    // Draw CSI highlight rectangles (slightly different tint — orange-yellow)
+    // Draw CSI highlight rectangles (bright magenta)
     if (csiHits.length > 0) {
-      ctx.fillStyle = "rgba(255, 180, 0, 0.4)";
-      ctx.strokeStyle = "rgba(255, 150, 0, 0.9)";
+      ctx.fillStyle = "rgba(255, 0, 180, 0.3)";
+      ctx.strokeStyle = "rgba(255, 0, 180, 0.8)";
       ctx.lineWidth = 1.5;
 
       for (const match of csiHits) {
@@ -122,7 +146,24 @@ export default function SearchHighlightOverlay({
         ctx.strokeRect(x, y, rw, rh);
       }
     }
-  }, [searchHits, csiHits, width, height]);
+
+    // Draw trade highlight rectangles (bright magenta)
+    if (tradeHits.length > 0) {
+      ctx.fillStyle = "rgba(255, 0, 180, 0.3)";
+      ctx.strokeStyle = "rgba(255, 0, 180, 0.8)";
+      ctx.lineWidth = 1.5;
+
+      for (const match of tradeHits) {
+        const [left, top, w, h] = match.bbox;
+        const x = left * width;
+        const y = top * height;
+        const rw = w * width;
+        const rh = h * height;
+        ctx.fillRect(x, y, rw, rh);
+        ctx.strokeRect(x, y, rw, rh);
+      }
+    }
+  }, [searchHits, csiHits, tradeHits, width, height]);
 
   if (!allMatches) return null;
 
