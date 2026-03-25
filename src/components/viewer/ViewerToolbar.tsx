@@ -146,27 +146,6 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
 
       <div className="w-px h-6 bg-[var(--border)] mx-2" />
 
-      {/* Page navigation */}
-      <button
-        onClick={() => setPage(pageNumber - 1)}
-        disabled={pageNumber <= 1}
-        className="px-2 py-1 text-sm text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-30"
-      >
-        &lt;
-      </button>
-      <span className="text-sm tabular-nums min-w-16 text-center">
-        {pageNumber} / {numPages}
-      </span>
-      <button
-        onClick={() => setPage(pageNumber + 1)}
-        disabled={pageNumber >= numPages}
-        className="px-2 py-1 text-sm text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-30"
-      >
-        &gt;
-      </button>
-
-      <div className="w-px h-6 bg-[var(--border)] mx-2" />
-
       {/* Zoom controls */}
       <button
         onClick={zoomOut}
@@ -277,45 +256,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </button>
       </div>
 
-      {/* Trade filter */}
-      {allTrades.length > 0 && (
-        <>
-          <div className="w-px h-6 bg-[var(--border)] mx-2" />
-          <select
-            value={activeTradeFilter || ""}
-            onChange={(e) => setTradeFilter(e.target.value || null)}
-            className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-40"
-          >
-            <option value="">All Trades</option>
-            {allTrades.map((trade) => (
-              <option key={trade} value={trade}>
-                {trade}
-              </option>
-            ))}
-          </select>
-        </>
-      )}
-
-      {/* CSI code filter */}
-      {allCsiCodes.length > 0 && (
-        <>
-          <div className="w-px h-6 bg-[var(--border)] mx-2" />
-          <select
-            value={activeCsiFilter || ""}
-            onChange={(e) => setCsiFilter(e.target.value || null)}
-            className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-48"
-          >
-            <option value="">All CSI Codes</option>
-            {allCsiCodes.map((csi) => (
-              <option key={csi.code} value={csi.code}>
-                {csi.code} — {csi.description}
-              </option>
-            ))}
-          </select>
-        </>
-      )}
-
-      {/* Spacer */}
+      {/* Spacer — pushes search to center */}
       <div className="flex-1" />
 
       {/* Search */}
@@ -325,7 +266,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           placeholder="Search text..."
           value={searchQuery}
           onChange={(e) => setSearch(e.target.value)}
-          className="px-3 py-1 text-sm bg-[var(--bg)] border border-sky-400/20 rounded focus:outline-none focus:border-sky-400/50 w-48 pr-16"
+          className="px-3 py-1 text-sm bg-sky-950/30 border border-sky-400/30 rounded focus:outline-none focus:border-sky-400/60 w-56 pr-16"
         />
         <div className="absolute right-2 flex items-center gap-1">
           {searchLoading && (
@@ -348,6 +289,41 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           )}
         </div>
       </div>
+
+      {/* Trade filter */}
+      {allTrades.length > 0 && (
+        <select
+          value={activeTradeFilter || ""}
+          onChange={(e) => setTradeFilter(e.target.value || null)}
+          className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-40"
+        >
+          <option value="">All Trades</option>
+          {allTrades.map((trade) => (
+            <option key={trade} value={trade}>
+              {trade}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* CSI code filter */}
+      {allCsiCodes.length > 0 && (
+        <select
+          value={activeCsiFilter || ""}
+          onChange={(e) => setCsiFilter(e.target.value || null)}
+          className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-48"
+        >
+          <option value="">All CSI Codes</option>
+          {allCsiCodes.map((csi) => (
+            <option key={csi.code} value={csi.code}>
+              {csi.code} — {csi.description}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* Spacer — pushes right buttons to edge */}
+      <div className="flex-1" />
 
       {/* YOLO detections toggle + per-model dropdown */}
       {hasYoloAnnotations && (
