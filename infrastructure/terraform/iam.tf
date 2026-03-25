@@ -46,6 +46,9 @@ resource "aws_iam_role_policy" "beaver_ecs_execution_secrets" {
           aws_secretsmanager_secret.processing_webhook_secret.arn,
           aws_secretsmanager_secret.anthropic_api_key.arn,
           aws_secretsmanager_secret.groq_api_key.arn,
+          aws_secretsmanager_secret.ls_admin_email.arn,
+          aws_secretsmanager_secret.ls_admin_password.arn,
+          aws_secretsmanager_secret.ls_api_key.arn,
         ]
       }
     ]
