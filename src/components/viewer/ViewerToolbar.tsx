@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import Link from "next/link";
+import LabelingWizard from "./LabelingWizard";
 
 interface ViewerToolbarProps {
   projectName: string;
@@ -51,6 +52,10 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const publicId = useViewerStore((s) => s.publicId);
   const hasYoloAnnotations = annotations.some((a) => a.source === "yolo");
   const [yoloDropdownOpen, setYoloDropdownOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showLabelingWizard, setShowLabelingWizard] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const isDemo = useViewerStore((s) => s.isDemo);
   const yoloDropdownRef = useRef<HTMLDivElement>(null);
 
   // Derive unique model names from YOLO annotations
@@ -72,6 +77,19 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [yoloDropdownOpen]);
+
+  // Close menu dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    if (menuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [menuOpen]);
 
   async function saveRename() {
     const trimmed = editName.trim();
@@ -174,6 +192,52 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       >
         Fit
       </button>
+
+      {/* Menu dropdown */}
+      <div className="relative" ref={menuRef}>
+        <button
+          onClick={() => setMenuOpen((o) => !o)}
+          className={`px-2 py-1 text-xs rounded border ${
+            menuOpen
+              ? "border-[var(--fg)]/50 text-[var(--fg)] bg-[var(--fg)]/5"
+              : "border-[var(--fg)]/30 text-[var(--fg)]/70 hover:text-[var(--fg)] hover:border-[var(--fg)]/50"
+          }`}
+        >
+          Menu
+        </button>
+        {menuOpen && (
+          <div className="absolute top-full left-0 mt-1 bg-[var(--surface)] border border-[var(--border)] rounded shadow-lg z-50 min-w-[160px]">
+            {!isDemo && (
+              <button
+                onClick={() => { setMenuOpen(false); setShowLabelingWizard(true); }}
+                className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
+              >
+                Data Labeling
+              </button>
+            )}
+            <button
+              disabled
+              className="w-full text-left px-3 py-2 text-xs text-[var(--muted)]/50 cursor-not-allowed"
+            >
+              Export PDF (coming soon)
+            </button>
+            <button
+              disabled
+              className="w-full text-left px-3 py-2 text-xs text-[var(--muted)]/50 cursor-not-allowed"
+            >
+              Settings (coming soon)
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Labeling wizard modal */}
+      {showLabelingWizard && (
+        <LabelingWizard
+          onClose={() => setShowLabelingWizard(false)}
+          projectName={projectName}
+        />
+      )}
 
       <div className="w-px h-6 bg-[var(--border)] mx-2" />
 

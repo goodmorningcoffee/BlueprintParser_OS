@@ -11,5 +11,19 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK: "true"
+      LABEL_STUDIO_USERNAME: ${LABEL_STUDIO_ADMIN_EMAIL:-admin@blueprintparser.local}
+      LABEL_STUDIO_PASSWORD: ${LABEL_STUDIO_ADMIN_PASSWORD:-changeme123}
+      LABEL_STUDIO_USER_TOKEN: ${LABEL_STUDIO_API_KEY:-}
+    volumes:
+      - label-studio-data:/label-studio/data
+
 volumes:
   pgdata:
+  label-studio-data:

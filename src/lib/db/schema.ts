@@ -41,6 +41,7 @@ export const companies = pgTable("companies", {
     yolo: boolean;
     llm: boolean;
     textract: boolean;
+    labelStudio?: boolean;
   }>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
@@ -256,3 +257,26 @@ export const inviteRequests = pgTable("invite_requests", {
   seen: boolean("seen").default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+// ─── Labeling Sessions (Label Studio integration) ───────────
+export const labelingSessions = pgTable(
+  "labeling_sessions",
+  {
+    id: serial("id").primaryKey(),
+    projectId: integer("project_id")
+      .notNull()
+      .references(() => projects.id),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id),
+    labelStudioProjectId: integer("label_studio_project_id").notNull(),
+    labelStudioUrl: varchar("label_studio_url", { length: 500 }),
+    taskType: varchar("task_type", { length: 50 }).notNull(),
+    labels: jsonb("labels"),
+    pageRange: varchar("page_range", { length: 100 }),
+    status: varchar("status", { length: 50 }).default("active").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [index("idx_labeling_sessions_project").on(table.projectId)]
+);

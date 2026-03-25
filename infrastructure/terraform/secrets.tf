@@ -76,3 +76,40 @@ resource "aws_secretsmanager_secret_version" "groq_api_key" {
   secret_id     = aws_secretsmanager_secret.groq_api_key.id
   secret_string = var.groq_api_key
 }
+
+###############################################################################
+# Label Studio Secrets
+###############################################################################
+
+resource "aws_secretsmanager_secret" "ls_admin_email" {
+  name                    = "beaver/LABEL_STUDIO_ADMIN_EMAIL"
+  description             = "Label Studio admin account email"
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "ls_admin_email" {
+  secret_id     = aws_secretsmanager_secret.ls_admin_email.id
+  secret_string = var.label_studio_admin_email
+}
+
+resource "aws_secretsmanager_secret" "ls_admin_password" {
+  name                    = "beaver/LABEL_STUDIO_ADMIN_PASSWORD"
+  description             = "Label Studio admin account password"
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "ls_admin_password" {
+  secret_id     = aws_secretsmanager_secret.ls_admin_password.id
+  secret_string = var.label_studio_admin_password
+}
+
+resource "aws_secretsmanager_secret" "ls_api_key" {
+  name                    = "beaver/LABEL_STUDIO_API_KEY"
+  description             = "Label Studio API token for BP integration"
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "ls_api_key" {
+  secret_id     = aws_secretsmanager_secret.ls_api_key.id
+  secret_string = var.label_studio_api_key
+}

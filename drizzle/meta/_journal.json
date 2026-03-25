@@ -50,6 +50,13 @@
       "when": 1774240000000,
       "tag": "0006_add_takeoff_size_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1774300000000,
+      "tag": "0007_add_labeling_sessions",
+      "breakpoints": true
     }
   ]
 }

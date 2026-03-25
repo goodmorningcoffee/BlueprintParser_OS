@@ -70,6 +70,7 @@ resource "aws_ecs_task_definition" "beaver_app" {
         { name = "CLOUDFRONT_DOMAIN", value = "assets.blueprintparser.com" },
         { name = "NEXTAUTH_URL", value = "https://app.blueprintparser.com" },
         { name = "STEP_FUNCTION_ARN", value = aws_sfn_state_machine.beaver_process_blueprint.arn },
+        { name = "LABEL_STUDIO_URL", value = "https://ls.blueprintparser.com" },
       ]
 
       secrets = [
@@ -92,6 +93,10 @@ resource "aws_ecs_task_definition" "beaver_app" {
         {
           name      = "GROQ_API_KEY"
           valueFrom = aws_secretsmanager_secret.groq_api_key.arn
+        },
+        {
+          name      = "LABEL_STUDIO_API_KEY"
+          valueFrom = aws_secretsmanager_secret.ls_api_key.arn
         },
       ]
 
@@ -381,4 +386,231 @@ resource "aws_ecs_task_definition" "beaver_cpu_pipeline" {
       }
     }
   ])
+}
+
+###############################################################################
+# Label Studio - Security Group (must be defined before EFS SG that refs it)
+###############################################################################
+
+resource "aws_security_group" "beaver_label_studio" {
+  name        = "beaver-label-studio-sg"
+  description = "Security group for Label Studio ECS tasks"
+  vpc_id      = aws_vpc.beaver.id
+
+  ingress {
+    description     = "From ALB"
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.beaver_alb.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "beaver-label-studio-sg"
+  }
+}
+
+###############################################################################
+# Label Studio - EFS Persistent Storage
+###############################################################################
+
+resource "aws_efs_file_system" "label_studio" {
+  creation_token = "beaver-label-studio"
+  encrypted      = true
+
+  tags = {
+    Name = "beaver-label-studio-efs"
+  }
+}
+
+resource "aws_security_group" "beaver_efs" {
+  name        = "beaver-efs-sg"
+  description = "Security group for Label Studio EFS mount targets"
+  vpc_id      = aws_vpc.beaver.id
+
+  ingress {
+    description     = "NFS from Label Studio ECS tasks"
+    from_port       = 2049
+    to_port         = 2049
+    protocol        = "tcp"
+    security_groups = [aws_security_group.beaver_label_studio.id]
+  }
+
+  tags = {
+    Name = "beaver-efs-sg"
+  }
+}
+
+resource "aws_efs_mount_target" "label_studio" {
+  count           = 2
+  file_system_id  = aws_efs_file_system.label_studio.id
+  subnet_id       = aws_subnet.private[count.index].id
+  security_groups = [aws_security_group.beaver_efs.id]
+}
+
+###############################################################################
+# Label Studio - CloudWatch Log Group
+###############################################################################
+
+resource "aws_cloudwatch_log_group" "beaver_label_studio" {
+  name              = "/ecs/beaver-label-studio"
+  retention_in_days = 30
+}
+
+###############################################################################
+# Label Studio - Task Definition
+###############################################################################
+
+resource "aws_ecs_task_definition" "beaver_label_studio" {
+  family                   = "beaver-label-studio"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = 1024
+  memory                   = 2048
+  execution_role_arn       = aws_iam_role.beaver_ecs_execution_role.arn
+
+  volume {
+    name = "label-studio-data"
+
+    efs_volume_configuration {
+      file_system_id = aws_efs_file_system.label_studio.id
+    }
+  }
+
+  container_definitions = jsonencode([
+    {
+      name      = "label-studio"
+      image     = "heartexlabs/label-studio:latest"
+      essential = true
+
+      portMappings = [
+        {
+          containerPort = 8080
+          protocol      = "tcp"
+        }
+      ]
+
+      mountPoints = [
+        {
+          sourceVolume  = "label-studio-data"
+          containerPath = "/label-studio/data"
+        }
+      ]
+
+      environment = [
+        { name = "LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK", value = "true" },
+      ]
+
+      secrets = [
+        {
+          name      = "LABEL_STUDIO_USERNAME"
+          valueFrom = aws_secretsmanager_secret.ls_admin_email.arn
+        },
+        {
+          name      = "LABEL_STUDIO_PASSWORD"
+          valueFrom = aws_secretsmanager_secret.ls_admin_password.arn
+        },
+        {
+          name      = "LABEL_STUDIO_USER_TOKEN"
+          valueFrom = aws_secretsmanager_secret.ls_api_key.arn
+        },
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.beaver_label_studio.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "label-studio"
+        }
+      }
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 90
+      }
+    }
+  ])
+}
+
+###############################################################################
+# Label Studio - Target Group + Listener Rule
+###############################################################################
+
+resource "aws_lb_target_group" "beaver_label_studio" {
+  name        = "beaver-ls-tg"
+  port        = 8080
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.beaver.id
+  target_type = "ip"
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 30
+    path                = "/health"
+    matcher             = "200"
+  }
+
+  deregistration_delay = 30
+}
+
+resource "aws_lb_listener_rule" "label_studio" {
+  listener_arn = aws_lb_listener.beaver_https.arn
+  priority     = 10
+
+  condition {
+    host_header {
+      values = ["ls.blueprintparser.com"]
+    }
+  }
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.beaver_label_studio.arn
+  }
+}
+
+###############################################################################
+# Label Studio - ECS Service
+###############################################################################
+
+resource "aws_ecs_service" "beaver_label_studio" {
+  name             = "beaver-label-studio"
+  cluster          = aws_ecs_cluster.beaver.id
+  task_definition  = aws_ecs_task_definition.beaver_label_studio.arn
+  desired_count    = 1
+  launch_type      = "FARGATE"
+  platform_version = "1.4.0" # Required for EFS support
+
+  network_configuration {
+    subnets          = aws_subnet.private[*].id
+    security_groups  = [aws_security_group.beaver_label_studio.id]
+    assign_public_ip = false
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.beaver_label_studio.arn
+    container_name   = "label-studio"
+    container_port   = 8080
+  }
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  depends_on = [aws_lb_listener_rule.label_studio, aws_efs_mount_target.label_studio]
 }

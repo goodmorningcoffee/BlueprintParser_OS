@@ -143,3 +143,26 @@ variable "cors_allowed_origins" {
   type        = list(string)
   default     = ["https://*"]
 }
+
+###############################################################################
+# Label Studio
+###############################################################################
+
+variable "label_studio_admin_email" {
+  description = "Label Studio admin account email"
+  type        = string
+  sensitive   = true
+  default     = "admin@blueprintparser.com"
+}
+
+variable "label_studio_admin_password" {
+  description = "Label Studio admin account password"
+  type        = string
+  sensitive   = true
+}
+
+variable "label_studio_api_key" {
+  description = "Label Studio API token for BP integration"
+  type        = string
+  sensitive   = true
+}

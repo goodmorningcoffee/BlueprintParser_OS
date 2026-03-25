@@ -1,10 +1,12 @@
 import {
   S3Client,
   PutObjectCommand,
+  GetObjectCommand,
   ListObjectsV2Command,
   DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import crypto from "crypto";
 
 const s3Client = new S3Client({
@@ -108,6 +110,14 @@ export async function createModelUploadPresignedPost(modelSlug: string) {
   });
 
   return { url, fields, key, s3Path };
+}
+
+/**
+ * Generate a presigned GET URL for an S3 object.
+ * Used for Label Studio image imports — 24h TTL.
+ */
+export async function getPresignedGetUrl(key: string, expiresIn = 86400): Promise<string> {
+  return getSignedUrl(s3Client, new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }), { expiresIn });
 }
 
 export { S3_BUCKET };
