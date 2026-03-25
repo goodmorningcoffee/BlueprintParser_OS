@@ -89,52 +89,74 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     };
   }, [pdfUrl, setNumPages]);
 
-  // Mouse wheel / trackpad zoom — anchored to cursor position
-  // Uses native event listener with { passive: false } to allow preventDefault
+  // Mode ref for use in native event listeners
+  const mode = useViewerStore((s) => s.mode);
+
+  // Zoom via wheel — document-level capture phase listener
+  // Guarantees we intercept events before browser native scroll or child elements
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
-  const lastWheelRef = useRef(0);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const zoomDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
     function handleWheel(e: WheelEvent) {
+      const container = containerRef.current;
+      if (!container) return;
+
+      // Only handle events targeting the viewer container
+      if (!container.contains(e.target as Node)) return;
+
+      // Determine if we should zoom:
+      // - Ctrl/Meta+wheel: zoom in ANY mode (universal shortcut)
+      // - Plain wheel in Pan mode: zoom (trackpad two-finger)
+      const isCtrlZoom = e.ctrlKey || e.metaKey;
+      const isPanZoom = modeRef.current === "move" && !isCtrlZoom;
+
+      if (!isCtrlZoom && !isPanZoom) return; // Let native scroll happen
+
       e.preventDefault();
+      e.stopPropagation();
 
-      // Throttle: 16ms for smooth trackpad feel
-      const now = Date.now();
-      if (now - lastWheelRef.current < 16) return;
-      lastWheelRef.current = now;
-
-      const rect = container!.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left + container!.scrollLeft;
-      const mouseY = e.clientY - rect.top + container!.scrollTop;
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left + container.scrollLeft;
+      const mouseY = e.clientY - rect.top + container.scrollTop;
 
       const oldScale = scaleRef.current;
+      // Smaller factor for Ctrl (pinch-zoom sends smaller deltas) vs trackpad scroll
       const factor = e.deltaY < 0 ? 1 / 0.97 : 0.97;
       const newScale = Math.max(0.2, Math.min(oldScale * factor, 10));
+      scaleRef.current = newScale;
 
+      // Adjust scroll to keep cursor position stable
       const ratio = newScale / oldScale;
       const newScrollLeft = mouseX * ratio - (e.clientX - rect.left);
       const newScrollTop = mouseY * ratio - (e.clientY - rect.top);
 
+      // Debounced sync to React state — avoids jittery re-renders during gesture
+      if (zoomDebounceRef.current) clearTimeout(zoomDebounceRef.current);
+      zoomDebounceRef.current = setTimeout(() => {
+        setScale(scaleRef.current);
+      }, 60);
+
+      // Immediate visual: sync scale to store for CSS transform feedback
       setScale(newScale);
 
       requestAnimationFrame(() => {
-        container!.scrollLeft = newScrollLeft;
-        container!.scrollTop = newScrollTop;
+        container.scrollLeft = newScrollLeft;
+        container.scrollTop = newScrollTop;
       });
     }
 
-    container.addEventListener("wheel", handleWheel, { passive: false });
-    return () => container.removeEventListener("wheel", handleWheel);
+    // Capture phase on document — fires before any child element or native scroll
+    document.addEventListener("wheel", handleWheel, { passive: false, capture: true });
+    return () => document.removeEventListener("wheel", handleWheel, { capture: true });
   }, [setScale]);
 
   // Click-drag pan
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
-  const mode = useViewerStore((s) => s.mode);
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -229,7 +251,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
         <div className="flex-1 flex flex-col min-w-0">
           <div
             ref={containerRef}
-            className="flex-1 overflow-auto bg-[#1a1a1a] relative"
+            className="flex-1 bg-[#1a1a1a] relative overflow-auto"
             style={{ cursor: mode === "move" ? "grab" : "default" }}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}

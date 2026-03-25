@@ -61,11 +61,13 @@ function TakeoffEditPanel({
   item,
   onSave,
   onClose,
+  onLiveUpdate,
   showShape,
 }: {
   item: ClientTakeoffItem;
   onSave: (updates: Partial<ClientTakeoffItem>) => Promise<void>;
   onClose: () => void;
+  onLiveUpdate?: (updates: Partial<ClientTakeoffItem>) => void;
   showShape?: boolean;
 }) {
   const [name, setName] = useState(item.name);
@@ -122,7 +124,7 @@ function TakeoffEditPanel({
           max="30"
           step="1"
           value={size}
-          onChange={(e) => setSize(parseInt(e.target.value))}
+          onChange={(e) => { const v = parseInt(e.target.value); setSize(v); onLiveUpdate?.({ size: v }); }}
           className="flex-1 h-1 accent-[var(--accent)]"
         />
         <span className="text-[10px] text-[var(--muted)] w-5 text-right">{size}</span>
@@ -391,7 +393,7 @@ function CountTab() {
                   e.stopPropagation();
                   setEditPanelId(editPanelId === item.id ? null : item.id);
                 }}
-                className="text-[10px] text-[var(--muted)] opacity-0 group-hover:opacity-100 hover:text-[var(--accent)]"
+                className="text-[10px] text-[var(--fg)]/40 opacity-50 group-hover:opacity-100 hover:text-[var(--accent)]"
                 title="Edit item"
               >
                 ✎
@@ -401,7 +403,7 @@ function CountTab() {
                   e.stopPropagation();
                   handleDelete(item);
                 }}
-                className="text-[10px] text-[var(--muted)] opacity-0 group-hover:opacity-100 hover:text-red-400"
+                className="text-[10px] text-red-400/40 opacity-50 group-hover:opacity-100 hover:text-red-400"
                 title="Delete item and all markers"
               >
                 x
@@ -420,6 +422,7 @@ function CountTab() {
                     });
                   }
                 }}
+                onLiveUpdate={(updates) => updateTakeoffItem(item.id, updates)}
                 onClose={() => setEditPanelId(null)}
                 showShape
               />
@@ -1006,7 +1009,7 @@ function AreaTab() {
                   e.stopPropagation();
                   setEditPanelId(editPanelId === item.id ? null : item.id);
                 }}
-                className="text-[10px] text-[var(--muted)] opacity-0 group-hover:opacity-100 hover:text-[var(--accent)]"
+                className="text-[10px] text-[var(--fg)]/40 opacity-50 group-hover:opacity-100 hover:text-[var(--accent)]"
                 title="Edit item"
               >
                 ✎
@@ -1016,7 +1019,7 @@ function AreaTab() {
                   e.stopPropagation();
                   handleDelete(item);
                 }}
-                className="text-[10px] text-[var(--muted)] opacity-0 group-hover:opacity-100 hover:text-red-400"
+                className="text-[10px] text-red-400/40 opacity-50 group-hover:opacity-100 hover:text-red-400"
                 title="Delete item and all polygons"
               >
                 x
@@ -1035,6 +1038,7 @@ function AreaTab() {
                     });
                   }
                 }}
+                onLiveUpdate={(updates) => updateTakeoffItem(item.id, updates)}
                 onClose={() => setEditPanelId(null)}
               />
             )}
