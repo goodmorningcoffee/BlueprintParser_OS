@@ -10,7 +10,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 
-  const { projectId, isDemo } = await req.json();
+  const body = await req.json();
+
+  // Refresh all demo projects (bust caches, confirm sync)
+  if (body.action === "refresh") {
+    const result = await db
+      .update(projects)
+      .set({ updatedAt: new Date() })
+      .where(
+        and(
+          eq(projects.isDemo, true),
+          eq(projects.companyId, session.user.companyId)
+        )
+      )
+      .returning({ id: projects.id });
+
+    return NextResponse.json({ success: true, refreshed: result.length });
+  }
+
+  const { projectId, isDemo } = body;
 
   if (!projectId || typeof isDemo !== "boolean") {
     return NextResponse.json({ error: "projectId and isDemo required" }, { status: 400 });
