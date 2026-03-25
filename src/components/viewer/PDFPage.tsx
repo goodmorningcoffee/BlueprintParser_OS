@@ -98,7 +98,7 @@ export default function PDFPage({
 
     renderTimerRef.current = setTimeout(() => {
       renderPage(scale);
-    }, 80);
+    }, 150);
 
     return () => {
       if (renderTimerRef.current !== null) clearTimeout(renderTimerRef.current);
@@ -133,6 +133,7 @@ export default function PDFPage({
         style={{
           transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
           transformOrigin: "top left",
+          willChange: "transform",
         }}
       />
       <SearchHighlightOverlay
