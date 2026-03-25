@@ -44,6 +44,8 @@ export async function GET(req: Request) {
       name: t.name,
       shape: t.shape,
       color: t.color,
+      size: t.size,
+      notes: t.notes,
       sortOrder: t.sortOrder,
     }))
   );
@@ -55,7 +57,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { projectId, name, shape, color } = await req.json();
+  const { projectId, name, shape, color, size } = await req.json();
 
   if (!projectId || !name || !shape || !color) {
     return NextResponse.json(
@@ -97,6 +99,7 @@ export async function POST(req: Request) {
         name,
         shape,
         color,
+        size: size || 10,
         sortOrder,
       })
       .returning();
@@ -106,6 +109,8 @@ export async function POST(req: Request) {
       name: item.name,
       shape: item.shape,
       color: item.color,
+      size: item.size,
+      notes: item.notes,
       sortOrder: item.sortOrder,
     });
   } catch (err) {

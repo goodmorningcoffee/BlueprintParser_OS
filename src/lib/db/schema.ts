@@ -165,6 +165,8 @@ export const takeoffItems = pgTable(
     name: varchar("name", { length: 255 }).notNull(),
     shape: varchar("shape", { length: 50 }).notNull(),
     color: varchar("color", { length: 20 }).notNull(),
+    size: integer("size").default(10).notNull(),
+    notes: text("notes"),
     sortOrder: integer("sort_order").default(0).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),

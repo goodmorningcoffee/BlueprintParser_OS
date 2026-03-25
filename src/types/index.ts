@@ -65,6 +65,8 @@ export interface ClientTakeoffItem {
   name: string;
   shape: TakeoffItemShape;
   color: string;
+  size: number;
+  notes?: string;
   sortOrder: number;
 }
 

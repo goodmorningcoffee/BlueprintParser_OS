@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore } from "@/stores/viewerStore";
+import { findPhraseMatches } from "./SearchHighlightOverlay";
 
 interface PageSidebarProps {
   pdfDoc: PDFDocumentProxy;
@@ -37,6 +38,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     setTradeFilter,
     activeCsiFilter,
     setCsiFilter,
+    textractData,
   } = useViewerStore();
 
   const [thumbnails, setThumbnails] = useState<ThumbnailCache>({});
@@ -223,6 +225,44 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     : [];
   const isCsiFiltered = activeCsiFilter !== null && csiFilteredPages.length > 0;
 
+  // Compute per-page word match counts for trade/CSI filters
+  const tradeWordCounts = useMemo(() => {
+    if (!activeTradeFilter) return {};
+    const counts: Record<number, number> = {};
+    for (const pageNum of tradeFilteredPages) {
+      const pageWords = textractData[pageNum]?.words;
+      if (!pageWords?.length) continue;
+      const pageCsi = csiCodes[pageNum] || [];
+      const matchingCodes = pageCsi.filter((c) => c.trade === activeTradeFilter);
+      let total = 0;
+      for (const code of matchingCodes) {
+        total += findPhraseMatches(pageWords, code.description).length;
+      }
+      // Also count trade name word matches
+      const tradeWords = activeTradeFilter.toLowerCase().split(/\s+/);
+      for (const word of pageWords) {
+        if (tradeWords.includes(word.text.toLowerCase())) total++;
+      }
+      if (total > 0) counts[pageNum] = total;
+    }
+    return counts;
+  }, [activeTradeFilter, tradeFilteredPages, csiCodes, textractData]);
+
+  const csiWordCounts = useMemo(() => {
+    if (!activeCsiFilter) return {};
+    const counts: Record<number, number> = {};
+    for (const pageNum of csiFilteredPages) {
+      const pageWords = textractData[pageNum]?.words;
+      if (!pageWords?.length) continue;
+      const pageCsi = csiCodes[pageNum] || [];
+      const matchingCode = pageCsi.find((c) => c.code === activeCsiFilter);
+      if (!matchingCode) continue;
+      const total = findPhraseMatches(pageWords, matchingCode.description).length;
+      if (total > 0) counts[pageNum] = total;
+    }
+    return counts;
+  }, [activeCsiFilter, csiFilteredPages, csiCodes, textractData]);
+
   const isFiltered = isSearchFiltered || isKeynoteFiltered || isAnnotationFiltered || isTradeFiltered || isCsiFiltered;
 
   // Persist page name edits to the server (debounced)
@@ -378,6 +418,16 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
                 {isAnnotationFiltered && annotationPageCounts[n] > 0 && (
                   <span className="bg-purple-500/20 text-purple-300 text-[10px] px-1.5 rounded-full shrink-0">
                     {annotationPageCounts[n]}
+                  </span>
+                )}
+                {isTradeFiltered && tradeWordCounts[n] > 0 && (
+                  <span className="bg-pink-500/20 text-pink-300 text-[10px] px-1.5 rounded-full shrink-0">
+                    {tradeWordCounts[n]}
+                  </span>
+                )}
+                {isCsiFiltered && csiWordCounts[n] > 0 && (
+                  <span className="bg-pink-500/20 text-pink-300 text-[10px] px-1.5 rounded-full shrink-0">
+                    {csiWordCounts[n]}
                   </span>
                 )}
               </div>

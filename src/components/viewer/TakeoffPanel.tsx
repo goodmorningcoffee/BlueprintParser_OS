@@ -56,6 +56,116 @@ function ColorDot({ color }: { color: string }) {
 // ─── AREA_UNITS constant for dropdown ────────────────────────
 const AREA_UNITS: AreaUnit[] = ["ft", "in", "m", "cm"];
 
+// ─── Shared edit panel for takeoff items ────────────────────
+function TakeoffEditPanel({
+  item,
+  onSave,
+  onClose,
+  showShape,
+}: {
+  item: ClientTakeoffItem;
+  onSave: (updates: Partial<ClientTakeoffItem>) => Promise<void>;
+  onClose: () => void;
+  showShape?: boolean;
+}) {
+  const [name, setName] = useState(item.name);
+  const [color, setColor] = useState(item.color);
+  const [shape, setShape] = useState<TakeoffShape>(item.shape as TakeoffShape);
+  const [size, setSize] = useState(item.size || 10);
+  const [notes, setNotes] = useState(item.notes || "");
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <div
+      className="ml-2 mr-1 mb-2 p-2 rounded border border-[var(--border)] bg-[var(--bg)] space-y-2"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className="w-full text-xs px-2 py-1 bg-[var(--surface)] border border-[var(--border)] rounded outline-none focus:border-[var(--accent)]"
+        placeholder="Name"
+      />
+      {/* Color picker */}
+      <div className="flex flex-wrap gap-1">
+        {TWENTY_COLORS.map((c) => (
+          <button
+            key={c}
+            onClick={() => setColor(c)}
+            className={`w-4 h-4 rounded-full border-2 ${color === c ? "border-white" : "border-transparent"}`}
+            style={{ backgroundColor: c }}
+          />
+        ))}
+      </div>
+      {/* Shape picker (count items only) */}
+      {showShape && (
+        <div className="flex gap-1">
+          {TAKEOFF_SHAPES.map((s) => (
+            <button
+              key={s}
+              onClick={() => setShape(s)}
+              className={`px-2 py-0.5 text-[10px] rounded border ${
+                shape === s ? "border-[var(--accent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)]"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+      {/* Size slider */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-[var(--muted)] w-6">Size</span>
+        <input
+          type="range"
+          min="4"
+          max="30"
+          step="1"
+          value={size}
+          onChange={(e) => setSize(parseInt(e.target.value))}
+          className="flex-1 h-1 accent-[var(--accent)]"
+        />
+        <span className="text-[10px] text-[var(--muted)] w-5 text-right">{size}</span>
+      </div>
+      {/* Notes */}
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        placeholder="Notes (searchable by LLM)..."
+        className="w-full text-xs px-2 py-1 bg-[var(--surface)] border border-[var(--border)] rounded outline-none focus:border-[var(--accent)] resize-none"
+        rows={2}
+      />
+      {/* Actions */}
+      <div className="flex justify-end gap-1">
+        <button
+          onClick={onClose}
+          className="px-2 py-0.5 text-[10px] text-[var(--muted)] hover:text-[var(--fg)]"
+        >
+          Cancel
+        </button>
+        <button
+          disabled={saving || !name.trim()}
+          onClick={async () => {
+            setSaving(true);
+            const updates: Partial<ClientTakeoffItem> = {};
+            if (name !== item.name) updates.name = name;
+            if (color !== item.color) updates.color = color;
+            if (showShape && shape !== item.shape) updates.shape = shape;
+            if (size !== (item.size || 10)) updates.size = size;
+            if (notes !== (item.notes || "")) updates.notes = notes;
+            if (Object.keys(updates).length > 0) await onSave(updates);
+            setSaving(false);
+            onClose();
+          }}
+          className="px-2 py-0.5 text-[10px] rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)]/10 disabled:opacity-40"
+        >
+          {saving ? "..." : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ═════════════════════════════════════════════════════════════
 //  COUNT TAB
 // ═════════════════════════════════════════════════════════════
@@ -79,6 +189,7 @@ function CountTab() {
   const [editName, setEditName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editPanelId, setEditPanelId] = useState<number | null>(null);
 
   // Filter to count items only (exclude polygon)
   const countItems = useMemo(
@@ -106,7 +217,7 @@ function CountTab() {
     if (!formName.trim()) return;
 
     if (isDemo) {
-      const item = { id: -Date.now(), name: formName.trim(), shape: formShape, color: formColor, sortOrder: countItems.length };
+      const item = { id: -Date.now(), name: formName.trim(), shape: formShape, color: formColor, size: 10, sortOrder: countItems.length };
       addTakeoffItem(item);
       setActiveTakeoffItemId(item.id);
       setFormName("");
@@ -154,7 +265,7 @@ function CountTab() {
       removeTakeoffItem(item.id);
       setAnnotations(
         annotations.filter(
-          (a) => !(a.source === "takeoff" && (a.data as any)?.takeoffItemId === item.id)
+          (a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))
         )
       );
       if (activeTakeoffItemId === item.id) setActiveTakeoffItemId(null);
@@ -167,7 +278,7 @@ function CountTab() {
         removeTakeoffItem(item.id);
         setAnnotations(
           annotations.filter(
-            (a) => !(a.source === "takeoff" && (a.data as any)?.takeoffItemId === item.id)
+            (a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))
           )
         );
         if (activeTakeoffItemId === item.id) setActiveTakeoffItemId(null);
@@ -227,8 +338,8 @@ function CountTab() {
           const isActive = activeTakeoffItemId === item.id;
 
           return (
+            <div key={item.id}>
             <div
-              key={item.id}
               onClick={() => setActiveTakeoffItemId(isActive ? null : item.id)}
               className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors ${
                 isActive
@@ -278,6 +389,16 @@ function CountTab() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
+                  setEditPanelId(editPanelId === item.id ? null : item.id);
+                }}
+                className="text-[10px] text-[var(--muted)] opacity-0 group-hover:opacity-100 hover:text-[var(--accent)]"
+                title="Edit item"
+              >
+                ✎
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
                   handleDelete(item);
                 }}
                 className="text-[10px] text-[var(--muted)] opacity-0 group-hover:opacity-100 hover:text-red-400"
@@ -285,6 +406,24 @@ function CountTab() {
               >
                 x
               </button>
+            </div>
+            {editPanelId === item.id && (
+              <TakeoffEditPanel
+                item={item}
+                onSave={async (updates) => {
+                  updateTakeoffItem(item.id, updates);
+                  if (!isDemo) {
+                    await fetch(`/api/takeoff-items/${item.id}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(updates),
+                    });
+                  }
+                }}
+                onClose={() => setEditPanelId(null)}
+                showShape
+              />
+            )}
             </div>
           );
         })}
@@ -626,6 +765,7 @@ function AreaTab() {
   const [editName, setEditName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editPanelId, setEditPanelId] = useState<number | null>(null);
 
   // Filter to polygon / area items only
   const areaItems = useMemo(
@@ -684,7 +824,7 @@ function AreaTab() {
     if (!formName.trim()) return;
 
     if (isDemo) {
-      const item = { id: -Date.now(), name: formName.trim(), shape: "polygon" as const, color: formColor, sortOrder: areaItems.length };
+      const item = { id: -Date.now(), name: formName.trim(), shape: "polygon" as const, color: formColor, size: 10, sortOrder: areaItems.length };
       addTakeoffItem(item);
       setActiveTakeoffItemId(item.id);
       setFormName("");
@@ -732,7 +872,7 @@ function AreaTab() {
       removeTakeoffItem(item.id);
       setAnnotations(
         annotations.filter(
-          (a) => !(a.source === "takeoff" && (a.data as any)?.takeoffItemId === item.id)
+          (a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))
         )
       );
       if (activeTakeoffItemId === item.id) setActiveTakeoffItemId(null);
@@ -745,7 +885,7 @@ function AreaTab() {
         removeTakeoffItem(item.id);
         setAnnotations(
           annotations.filter(
-            (a) => !(a.source === "takeoff" && (a.data as any)?.takeoffItemId === item.id)
+            (a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))
           )
         );
         if (activeTakeoffItemId === item.id) setActiveTakeoffItemId(null);
@@ -813,8 +953,8 @@ function AreaTab() {
           const isActive = activeTakeoffItemId === item.id;
 
           return (
+            <div key={item.id}>
             <div
-              key={item.id}
               onClick={() => setActiveTakeoffItemId(isActive ? null : item.id)}
               className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors ${
                 isActive
@@ -864,6 +1004,16 @@ function AreaTab() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
+                  setEditPanelId(editPanelId === item.id ? null : item.id);
+                }}
+                className="text-[10px] text-[var(--muted)] opacity-0 group-hover:opacity-100 hover:text-[var(--accent)]"
+                title="Edit item"
+              >
+                ✎
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
                   handleDelete(item);
                 }}
                 className="text-[10px] text-[var(--muted)] opacity-0 group-hover:opacity-100 hover:text-red-400"
@@ -871,6 +1021,23 @@ function AreaTab() {
               >
                 x
               </button>
+            </div>
+            {editPanelId === item.id && (
+              <TakeoffEditPanel
+                item={item}
+                onSave={async (updates) => {
+                  updateTakeoffItem(item.id, updates);
+                  if (!isDemo) {
+                    await fetch(`/api/takeoff-items/${item.id}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(updates),
+                    });
+                  }
+                }}
+                onClose={() => setEditPanelId(null)}
+              />
+            )}
             </div>
           );
         })}
@@ -979,6 +1146,7 @@ export default function TakeoffPanel() {
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
   const pageDimensions = useViewerStore((s) => s.pageDimensions);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
+  const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
 
   // ─── CSV export (both count + area) ─────────────────────
   function exportCSV() {
@@ -1088,6 +1256,22 @@ export default function TakeoffPanel() {
 
       {/* Tab content */}
       {takeoffTab === "count" ? <CountTab /> : <AreaTab />}
+
+      {/* Stop Takeoff button */}
+      {activeTakeoffItemId !== null && (
+        <div className="p-3 border-t border-[var(--border)] flex justify-end">
+          <button
+            onClick={() => {
+              useViewerStore.getState().setActiveTakeoffItemId(null);
+              useViewerStore.getState().resetPolygonDrawing();
+              useViewerStore.getState().setMode("move");
+            }}
+            className="px-3 py-1.5 text-xs rounded border border-red-400/30 text-red-400/60 bg-red-400/5 hover:border-red-400/50 hover:text-red-400 transition-colors"
+          >
+            Stop Takeoff
+          </button>
+        </div>
+      )}
     </div>
   );
 }

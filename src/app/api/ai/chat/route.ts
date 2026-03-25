@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { projects, pages, chatMessages, annotations } from "@/lib/db/schema";
+import { projects, pages, chatMessages, annotations, takeoffItems } from "@/lib/db/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import Groq from "groq-sdk";
 import { checkChatQuota, checkDemoChatQuota } from "@/lib/quotas";
@@ -246,6 +246,20 @@ export async function POST(req: Request) {
     }
 
     contextText += yoloContext;
+  }
+
+  // Add takeoff item notes if any
+  const projectTakeoffItems = await db
+    .select()
+    .from(takeoffItems)
+    .where(eq(takeoffItems.projectId, project.id));
+
+  const itemsWithNotes = projectTakeoffItems.filter((t) => t.notes);
+  if (itemsWithNotes.length > 0) {
+    contextText += "\n\n--- Quantity Takeoff Notes ---\n";
+    for (const t of itemsWithNotes) {
+      contextText += `${t.name} (${t.shape}): ${t.notes}\n`;
+    }
   }
 
   // Load recent chat history

@@ -26,8 +26,8 @@ interface ViewerState {
   setScale: (s: number) => void;
 
   // ─── Mode ────────────────────────────────────────────────
-  mode: "move" | "pointer" | "markup" | "moveMarkup";
-  setMode: (m: "move" | "pointer" | "markup" | "moveMarkup") => void;
+  mode: "move" | "pointer" | "markup";
+  setMode: (m: "move" | "pointer" | "markup") => void;
 
   // ─── Search ──────────────────────────────────────────────
   searchQuery: string;

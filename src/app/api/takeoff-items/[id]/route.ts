@@ -46,6 +46,8 @@ export async function PUT(
   if (body.name !== undefined) updates.name = body.name;
   if (body.shape !== undefined) updates.shape = body.shape;
   if (body.color !== undefined) updates.color = body.color;
+  if (body.size !== undefined) updates.size = body.size;
+  if (body.notes !== undefined) updates.notes = body.notes;
   updates.updatedAt = new Date();
 
   await db.update(takeoffItems).set(updates).where(eq(takeoffItems.id, itemId));
