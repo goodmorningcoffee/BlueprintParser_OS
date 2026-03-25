@@ -70,7 +70,7 @@ resource "aws_ecs_task_definition" "beaver_app" {
         { name = "CLOUDFRONT_DOMAIN", value = "assets.blueprintparser.com" },
         { name = "NEXTAUTH_URL", value = "https://app.blueprintparser.com" },
         { name = "STEP_FUNCTION_ARN", value = aws_sfn_state_machine.beaver_process_blueprint.arn },
-        { name = "LABEL_STUDIO_URL", value = "https://ls.blueprintparser.com" },
+        { name = "LABEL_STUDIO_URL", value = "https://labelstudio.blueprintparser.com" },
       ]
 
       secrets = [
@@ -573,7 +573,7 @@ resource "aws_lb_listener_rule" "label_studio" {
 
   condition {
     host_header {
-      values = ["ls.blueprintparser.com"]
+      values = ["labelstudio.blueprintparser.com"]
     }
   }
 
