@@ -19,7 +19,7 @@ export default function DemoPage() {
   const [contentMatches, setContentMatches] = useState<Record<string, { matchCount: number; pageCount: number }>>({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [csiCodes, setCsiCodes] = useState<Array<{ code: string; description: string; trade: string; division: string; projectCount: number; pageCount: number; projectIds: string[] }>>([]);
+  const [csiCodes, setCsiCodes] = useState<Array<{ code: string; description: string; trade: string; division: string; projectCount: number; pageCount: number; projectIds: string[]; projectSheetCounts: Record<string, number> }>>([]);
   const [activeCsiFilter, setActiveCsiFilter] = useState<string | null>(null);
   const [showCsi, setShowCsi] = useState(false);
 
@@ -258,10 +258,13 @@ export default function DemoPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-w-5xl mx-auto">
-            {filtered.map((p) => (
+            {filtered.map((p) => {
+              const activeCsi = activeCsiFilter ? csiCodes.find((c) => c.code === activeCsiFilter) : null;
+              const sheetCount = activeCsi?.projectSheetCounts?.[p.id];
+              return (
               <Link
                 key={p.id}
-                href={`/demo/project/${p.id}`}
+                href={activeCsiFilter ? `/demo/project/${p.id}?csi=${encodeURIComponent(activeCsiFilter)}` : `/demo/project/${p.id}`}
                 className="block p-4 bg-[var(--surface)] border border-[var(--border)] rounded-lg hover:border-[var(--accent)] transition-colors"
               >
                 <div className="aspect-[4/3] bg-[var(--bg)] rounded mb-3 overflow-hidden flex items-center justify-center">
@@ -282,14 +285,19 @@ export default function DemoPage() {
                   <span className="text-xs text-[var(--muted)]">
                     {p.numPages} pages
                   </span>
-                  {contentMatches[p.id] && (
+                  {sheetCount ? (
+                    <span className="text-xs text-sky-400">
+                      {sheetCount} sheet{sheetCount !== 1 ? "s" : ""}
+                    </span>
+                  ) : contentMatches[p.id] ? (
                     <span className="text-xs text-[var(--accent)]">
                       {contentMatches[p.id].matchCount} matches
                     </span>
-                  )}
+                  ) : null}
                 </div>
               </Link>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>

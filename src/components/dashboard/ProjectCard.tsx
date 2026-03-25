@@ -14,6 +14,8 @@ interface ProjectCardProps {
   onDelete: (id: string) => void;
   onRename: (id: string, newName: string) => void;
   contentMatch?: { matchCount: number; pageCount: number };
+  csiSheetCount?: number;
+  csiFilter?: string | null;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -34,6 +36,8 @@ export default function ProjectCard({
   pagesProcessed,
   thumbnailUrl,
   contentMatch,
+  csiSheetCount,
+  csiFilter,
 }: ProjectCardProps) {
   const [confirming, setConfirming] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -75,7 +79,7 @@ export default function ProjectCard({
 
   return (
     <Link
-      href={`/project/${id}`}
+      href={csiFilter ? `/project/${id}?csi=${encodeURIComponent(csiFilter)}` : `/project/${id}`}
       className="block p-4 bg-[var(--surface)] border border-[var(--border)] rounded-lg hover:border-[var(--accent)] transition-colors relative group"
     >
       {/* Delete button */}
@@ -153,7 +157,11 @@ export default function ProjectCard({
             </span>
           )}
         </div>
-        {contentMatch ? (
+        {csiSheetCount ? (
+          <span className="text-xs text-sky-400">
+            {csiSheetCount} sheet{csiSheetCount !== 1 ? "s" : ""}
+          </span>
+        ) : contentMatch ? (
           <span className="text-xs text-[var(--accent)]">
             {contentMatch.matchCount} matches
           </span>

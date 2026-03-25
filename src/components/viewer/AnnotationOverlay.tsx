@@ -115,6 +115,8 @@ export default function AnnotationOverlay({
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const showDetections = useViewerStore((s) => s.showDetections);
   const confidenceThreshold = useViewerStore((s) => s.confidenceThreshold);
+  const activeModels = useViewerStore((s) => s.activeModels);
+  const confidenceThresholds = useViewerStore((s) => s.confidenceThresholds);
   const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
@@ -135,11 +137,16 @@ export default function AnnotationOverlay({
 
   const pageAnnotations = annotations.filter((a) => {
     if (a.pageNumber !== pageNumber) return false;
-    // Filter YOLO annotations by toggle and confidence
+    // Filter YOLO annotations by toggle, per-model active state, and per-model confidence
     if (a.source === "yolo") {
       if (!showDetections) return false;
+      const modelName = (a as any).data?.modelName as string | undefined;
+      if (modelName && activeModels[modelName] === false) return false;
       const conf = (a as any).threshold || (a as any).data?.confidence || 0;
-      if (conf < confidenceThreshold) return false;
+      const threshold = (modelName && confidenceThresholds[modelName] != null)
+        ? confidenceThresholds[modelName]
+        : confidenceThreshold;
+      if (conf < threshold) return false;
     }
     // Takeoff markers are always visible
     if (a.source === "takeoff") return true;

@@ -35,7 +35,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState<UserItem[]>([]);
   const [yoloModels, setYoloModels] = useState<ModelItem[]>([]);
   const [newUser, setNewUser] = useState({ username: "", email: "", password: "", role: "member" });
-  const [yoloJobs, setYoloJobs] = useState<Record<string, string>>({});
+  const [yoloJobs, setYoloJobs] = useState<Record<string, Record<string, string>>>({});
   const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
   const [message, setMessage] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -44,7 +44,8 @@ export default function AdminPage() {
   const [invites, setInvites] = useState<Array<{ id: number; email: string; name: string | null; company: string | null; seen: boolean; createdAt: string }>>([]);
   const [unseenInvites, setUnseenInvites] = useState(0);
   const [showInvites, setShowInvites] = useState(false);
-  const [yoloStatus, setYoloStatus] = useState<Record<string, number>>({});
+  const [yoloStatus, setYoloStatus] = useState<Record<string, Record<string, number>>>({});
+  const pollKey = (pid: string, mid: number) => `${pid}:${mid}`;
   const [toggles, setToggles] = useState({ sagemakerEnabled: true, quotaEnabled: true, hasPassword: false });
   const [togglePassword, setTogglePassword] = useState("");
   const [toggleError, setToggleError] = useState("");
@@ -234,7 +235,8 @@ export default function AdminPage() {
   }
 
   async function loadYoloResults(projectId: string, modelId: number, modelName: string, retryCount = 0): Promise<void> {
-    setYoloJobs((prev) => ({ ...prev, [projectId]: "Loading results..." }));
+    const mk = String(modelId);
+    setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: "Loading results..." } }));
     try {
       const loadRes = await fetch("/api/yolo/load", {
         method: "POST",
@@ -246,26 +248,27 @@ export default function AdminPage() {
         const msg = loadError
           ? `Loaded ${detectionsLoaded} (errors: ${loadError})`
           : `Completed — ${detectionsLoaded} detections loaded`;
-        setYoloJobs((prev) => ({ ...prev, [projectId]: msg }));
-        // Update YOLO status to reflect loaded results
+        setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: msg } }));
         if (detectionsLoaded > 0) {
           setYoloStatus((prev) => ({
             ...prev,
-            [projectId]: (prev[projectId] || 0) + detectionsLoaded,
+            [projectId]: {
+              ...(prev[projectId] || {}),
+              [mk]: ((prev[projectId] || {})[mk] || 0) + detectionsLoaded,
+            },
           }));
         }
       } else {
         const err = await loadRes.json().catch(() => ({ error: "Unknown error" }));
         if (err.error === "No results found" && retryCount < 1) {
-          // S3 eventual consistency — retry after delay
-          setYoloJobs((prev) => ({ ...prev, [projectId]: "Waiting for S3 results..." }));
+          setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: "Waiting for S3 results..." } }));
           await new Promise((r) => setTimeout(r, 5000));
           return loadYoloResults(projectId, modelId, modelName, retryCount + 1);
         }
-        setYoloJobs((prev) => ({ ...prev, [projectId]: `Load failed: ${err.error}` }));
+        setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Load failed: ${err.error}` } }));
       }
     } catch {
-      setYoloJobs((prev) => ({ ...prev, [projectId]: "Load failed: network error" }));
+      setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: "Load failed: network error" } }));
     }
   }
 
@@ -276,8 +279,9 @@ export default function AdminPage() {
       return;
     }
 
+    const mk = String(modelId);
     setMessage("");
-    setYoloJobs((prev) => ({ ...prev, [projectId]: "Rasterizing & starting..." }));
+    setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: "Rasterizing & starting..." } }));
 
     const res = await fetch("/api/yolo/run", {
       method: "POST",
@@ -287,16 +291,17 @@ export default function AdminPage() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Unknown error" }));
-      setYoloJobs((prev) => ({ ...prev, [projectId]: `Error: ${err.error}` }));
+      setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Error: ${err.error}` } }));
       return;
     }
 
     const { jobName } = await res.json();
-    setYoloJobs((prev) => ({ ...prev, [projectId]: `Running: ${jobName}` }));
+    setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Running: ${jobName}` } }));
 
-    // Clear any existing poll for this project
-    if (pollingRef.current[projectId]) {
-      clearInterval(pollingRef.current[projectId]);
+    // Clear any existing poll for this project+model
+    const pk = pollKey(projectId, modelId);
+    if (pollingRef.current[pk]) {
+      clearInterval(pollingRef.current[pk]);
     }
 
     // Poll for completion
@@ -306,19 +311,18 @@ export default function AdminPage() {
         if (!statusRes.ok) return;
 
         const { status: jobStatus, failureReason } = await statusRes.json();
-        setYoloJobs((prev) => ({ ...prev, [projectId]: jobStatus }));
+        setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: jobStatus } }));
 
         if (jobStatus === "Completed" || jobStatus === "Failed" || jobStatus === "Stopped") {
           clearInterval(interval);
-          delete pollingRef.current[projectId];
+          delete pollingRef.current[pk];
 
           if (jobStatus === "Completed") {
-            // Wait briefly for S3 eventual consistency, then load
             await new Promise((r) => setTimeout(r, 3000));
             await loadYoloResults(projectId, modelId, model.name);
           } else {
             const reason = failureReason ? `: ${failureReason}` : "";
-            setYoloJobs((prev) => ({ ...prev, [projectId]: `${jobStatus}${reason}` }));
+            setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `${jobStatus}${reason}` } }));
           }
         }
       } catch {
@@ -326,7 +330,7 @@ export default function AdminPage() {
       }
     }, 10000);
 
-    pollingRef.current[projectId] = interval;
+    pollingRef.current[pk] = interval;
   }
 
   async function toggleDemo(projectId: string, isDemo: boolean) {
@@ -667,31 +671,24 @@ export default function AdminPage() {
                   >
                     <div>
                       <span className="font-medium">{p.name}</span>
-                      {yoloStatus[p.id] > 0 && !yoloJobs[p.id] && (
+                      {yoloStatus[p.id] && Object.values(yoloStatus[p.id]).some(c => c > 0) && !(yoloJobs[p.id] && Object.values(yoloJobs[p.id]).some(Boolean)) && (
                         <span className="text-xs ml-2 text-emerald-400/70">
-                          {yoloStatus[p.id]} detections loaded
-                        </span>
-                      )}
-                      {yoloJobs[p.id] && (
-                        <span className={`text-xs ml-2 ${
-                          yoloJobs[p.id].startsWith("Error") || yoloJobs[p.id].startsWith("Failed") || yoloJobs[p.id].startsWith("Load failed")
-                            ? "text-red-400"
-                            : yoloJobs[p.id].startsWith("Completed")
-                              ? "text-green-400"
-                              : "text-[var(--accent)]"
-                        }`}>
-                          {yoloJobs[p.id]}
+                          {Object.values(yoloStatus[p.id]).reduce((a, b) => a + b, 0)} detections loaded
                         </span>
                       )}
                     </div>
                     <div className="flex gap-2">
-                      {yoloModels.map((m) => (
-                        <div key={m.id} className="flex gap-1">
+                      {yoloModels.map((m) => {
+                        const mk = String(m.id);
+                        const mStatus = (yoloStatus[p.id] || {})[mk] || 0;
+                        const mJob = (yoloJobs[p.id] || {})[mk] || "";
+                        return (
+                        <div key={m.id} className="flex gap-1 items-center">
                           <button
                             onClick={() => runYolo(p.id, m.id)}
-                            disabled={!!yoloJobs[p.id] && /^(Running|Rasterizing|InProgress|Loading|Waiting|starting)/.test(yoloJobs[p.id])}
+                            disabled={!!mJob && /^(Running|Rasterizing|InProgress|Loading|Waiting|starting)/.test(mJob)}
                             className={`px-3 py-1 text-xs rounded border disabled:opacity-40 ${
-                              yoloStatus[p.id] > 0
+                              mStatus > 0
                                 ? "bg-purple-500/10 border-purple-400/30 text-purple-300 hover:border-purple-400/60"
                                 : "bg-[var(--bg)] border-[var(--border)] hover:border-[var(--accent)]"
                             }`}
@@ -700,17 +697,29 @@ export default function AdminPage() {
                           </button>
                           <button
                             onClick={() => loadYoloResults(p.id, m.id, m.name)}
-                            disabled={!!yoloJobs[p.id] && /^(Loading|Waiting)/.test(yoloJobs[p.id])}
+                            disabled={!!mJob && /^(Loading|Waiting)/.test(mJob)}
                             className={`px-2 py-1 text-xs rounded border disabled:opacity-40 ${
-                              yoloStatus[p.id] > 0
+                              mStatus > 0
                                 ? "bg-emerald-500/10 border-emerald-400/30 text-emerald-300 hover:border-emerald-400/60"
                                 : "text-[var(--muted)] border-[var(--border)] hover:border-green-500 hover:text-green-400"
                             }`}
                           >
-                            {yoloStatus[p.id] > 0 ? "Loaded" : "Load"}
+                            {mStatus > 0 ? "Loaded" : "Load"}
                           </button>
+                          {mJob && (
+                            <span className={`text-xs ${
+                              mJob.startsWith("Error") || mJob.startsWith("Failed") || mJob.startsWith("Load failed")
+                                ? "text-red-400"
+                                : mJob.startsWith("Completed")
+                                  ? "text-green-400"
+                                  : "text-[var(--accent)]"
+                            }`}>
+                              {mJob}
+                            </span>
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ))}

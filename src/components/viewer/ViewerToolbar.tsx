@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import Link from "next/link";
 
@@ -35,8 +35,10 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
     toggleTakeoffPanel,
     showDetections,
     toggleDetections,
-    confidenceThreshold,
-    setConfidenceThreshold,
+    activeModels,
+    setModelActive,
+    confidenceThresholds,
+    setModelConfidence,
     annotations,
     allTrades,
     activeTradeFilter,
@@ -48,6 +50,28 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
 
   const publicId = useViewerStore((s) => s.publicId);
   const hasYoloAnnotations = annotations.some((a) => a.source === "yolo");
+  const [yoloDropdownOpen, setYoloDropdownOpen] = useState(false);
+  const yoloDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Derive unique model names from YOLO annotations
+  const yoloModelNames = [...new Set(
+    annotations
+      .filter((a) => a.source === "yolo" && (a as any).data?.modelName)
+      .map((a) => (a as any).data.modelName as string)
+  )];
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (yoloDropdownRef.current && !yoloDropdownRef.current.contains(e.target as Node)) {
+        setYoloDropdownOpen(false);
+      }
+    }
+    if (yoloDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [yoloDropdownOpen]);
 
   async function saveRename() {
     const trimmed = editName.trim();
@@ -272,12 +296,12 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </div>
       </div>
 
-      {/* YOLO detections toggle + confidence slider */}
+      {/* YOLO detections toggle + per-model dropdown */}
       {hasYoloAnnotations && (
-        <>
+        <div className="relative" ref={yoloDropdownRef}>
           <button
             onClick={toggleDetections}
-            className={`px-2 py-1 text-xs rounded border ${
+            className={`px-2 py-1 text-xs rounded-l border ${
               showDetections
                 ? "border-purple-400/60 text-purple-400 bg-purple-400/10"
                 : "border-purple-400/20 text-purple-400/50 hover:text-purple-300 hover:border-purple-400/40"
@@ -285,24 +309,59 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           >
             YOLO
           </button>
-          {showDetections && (
-            <div className="flex items-center gap-1">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={confidenceThreshold}
-                onChange={(e) => setConfidenceThreshold(parseFloat(e.target.value))}
-                className="w-16 h-1 accent-[var(--accent)]"
-                title={`Confidence: ${Math.round(confidenceThreshold * 100)}%`}
-              />
-              <span className="text-[10px] text-[var(--muted)] w-8">
-                {Math.round(confidenceThreshold * 100)}%
-              </span>
+          {showDetections && yoloModelNames.length > 0 && (
+            <button
+              onClick={() => setYoloDropdownOpen((o) => !o)}
+              className={`px-1.5 py-1 text-xs border border-l-0 rounded-r ${
+                yoloDropdownOpen
+                  ? "border-purple-400/60 text-purple-400 bg-purple-400/10"
+                  : "border-purple-400/40 text-purple-400/70 hover:text-purple-300 hover:border-purple-400/60"
+              }`}
+            >
+              ▾
+            </button>
+          )}
+          {yoloDropdownOpen && showDetections && (
+            <div className="absolute top-full right-0 mt-1 bg-[var(--surface)] border border-[var(--border)] rounded shadow-lg z-50 min-w-[200px]">
+              {yoloModelNames.map((modelName) => {
+                const isActive = activeModels[modelName] ?? true;
+                const threshold = confidenceThresholds[modelName] ?? 0.25;
+                return (
+                  <div key={modelName} className="px-3 py-2 border-b border-[var(--border)] last:border-b-0">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isActive}
+                        onChange={(e) => setModelActive(modelName, e.target.checked)}
+                        className="accent-purple-400"
+                      />
+                      <span className={`text-xs font-medium ${isActive ? "text-purple-300" : "text-[var(--muted)]"}`}>
+                        {modelName}
+                      </span>
+                    </label>
+                    {isActive && (
+                      <div className="flex items-center gap-1 mt-1 ml-5">
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={threshold}
+                          onChange={(e) => setModelConfidence(modelName, parseFloat(e.target.value))}
+                          className="w-20 h-1 accent-purple-400"
+                          title={`${modelName} confidence: ${Math.round(threshold * 100)}%`}
+                        />
+                        <span className="text-[10px] text-[var(--muted)] w-8">
+                          {Math.round(threshold * 100)}%
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
-        </>
+        </div>
       )}
 
       {/* Text panel toggle */}

@@ -59,7 +59,7 @@ export default function AnnotationPanel() {
   }
 
   return (
-    <div className="border-t border-[var(--border)] max-h-48 overflow-y-auto" style={{ backgroundColor: "#1e1e22" }}>
+    <div className="border-t border-[var(--border)] max-h-24 overflow-y-auto" style={{ backgroundColor: "#1e1e22" }}>
       {/* Label groups */}
       <div className="p-2 flex flex-wrap gap-1.5">
         {activeAnnotationFilter && (

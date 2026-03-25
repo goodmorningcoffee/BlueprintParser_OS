@@ -15,7 +15,8 @@ export async function GET() {
       code->>'division' AS division,
       COUNT(DISTINCT p.id)::int AS project_count,
       COUNT(*)::int AS page_count,
-      ARRAY_AGG(DISTINCT p.public_id) AS project_ids
+      ARRAY_AGG(DISTINCT p.public_id) AS project_ids,
+      ARRAY_AGG(p.public_id) AS project_ids_all
     FROM projects p
     JOIN pages pg ON pg.project_id = p.id,
     jsonb_array_elements(pg.csi_codes) AS code
@@ -28,14 +29,22 @@ export async function GET() {
   `);
 
   return NextResponse.json(
-    results.rows.map((row: any) => ({
-      code: row.code,
-      description: row.description,
-      trade: row.trade,
-      division: row.division,
-      projectCount: row.project_count,
-      pageCount: row.page_count,
-      projectIds: row.project_ids || [],
-    }))
+    results.rows.map((row: any) => {
+      // Count sheets per project from non-deduplicated array
+      const sheetCounts: Record<string, number> = {};
+      for (const pid of (row.project_ids_all || [])) {
+        sheetCounts[pid] = (sheetCounts[pid] || 0) + 1;
+      }
+      return {
+        code: row.code,
+        description: row.description,
+        trade: row.trade,
+        division: row.division,
+        projectCount: row.project_count,
+        pageCount: row.page_count,
+        projectIds: row.project_ids || [],
+        projectSheetCounts: sheetCounts,
+      };
+    })
   );
 }
