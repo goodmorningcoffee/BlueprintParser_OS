@@ -29,7 +29,7 @@ export async function checkUploadQuota(companyId: number, role: string = "member
  * Check if a company has exceeded its daily YOLO job quota.
  */
 export async function checkYoloQuota(companyId: number): Promise<QuotaCheck> {
-  const DAILY_LIMIT = 5;
+  const DAILY_LIMIT = 10;
   const result = await db.execute(sql`
     SELECT COUNT(*)::int AS cnt FROM processing_jobs pj
     JOIN projects p ON pj.project_id = p.id

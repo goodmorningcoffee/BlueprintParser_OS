@@ -146,9 +146,14 @@ export default function ChatPanel() {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
         {chatMessages.length === 0 && !loading && (
-          <div className="text-[var(--muted)] text-xs text-center mt-8">
-            Ask a question about this{" "}
-            {chatScope === "page" ? "page" : "project"}...
+          <div className="text-[var(--muted)] text-xs text-center mt-8 space-y-2">
+            <div>
+              Ask a question about this{" "}
+              {chatScope === "page" ? "page" : "project"}...
+            </div>
+            <div className="text-[10px] opacity-60">
+              Hint: try &quot;How do I use BlueprintParser?&quot;
+            </div>
           </div>
         )}
 

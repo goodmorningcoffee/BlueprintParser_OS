@@ -244,3 +244,13 @@ export const auditLog = pgTable(
   },
   (table) => [index("idx_audit_action").on(table.action)]
 );
+
+// ─── Invite Requests ────────────────────────────────────────
+export const inviteRequests = pgTable("invite_requests", {
+  id: serial("id").primaryKey(),
+  email: varchar("email", { length: 255 }).notNull(),
+  name: varchar("name", { length: 255 }),
+  company: varchar("company", { length: 255 }),
+  seen: boolean("seen").default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});

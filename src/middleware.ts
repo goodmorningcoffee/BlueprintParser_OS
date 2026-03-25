@@ -54,8 +54,12 @@ const RATE_RULES: RateRule[] = [
   { pattern: "/api/takeoff-items", method: "POST", limit: 50, windowMs: 60 * 60 * 1000, keyType: "user" },
   { pattern: "/api/annotations", method: "POST", limit: 200, windowMs: 60 * 60 * 1000, keyType: "user" },
 
+  // Invite requests - tight limit per IP
+  { pattern: "/api/invite", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "ip" },
+
   // Demo endpoints - per IP
   { pattern: "/api/demo", method: "GET", limit: 60, windowMs: 60 * 1000, keyType: "ip" },
+  { pattern: "/api/demo/chat", method: "POST", limit: 10, windowMs: 60 * 1000, keyType: "ip" },
 ];
 
 // ─── Security headers ────────────────────────────────────────

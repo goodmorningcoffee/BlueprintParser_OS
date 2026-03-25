@@ -8,6 +8,7 @@ import { rasterizePage } from "@/lib/pdf-rasterize";
 import { uploadToS3, getS3Url } from "@/lib/s3";
 import { checkYoloQuota } from "@/lib/quotas";
 import { audit } from "@/lib/audit";
+import { getToggles } from "@/lib/toggles";
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -15,10 +16,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 
+  // Check SageMaker toggle (persisted in S3)
+  const toggles = await getToggles();
+  if (!toggles.sagemakerEnabled) {
+    return NextResponse.json({ error: "SageMaker is disabled by admin. Enable it in Admin > Toggles." }, { status: 403 });
+  }
+
   // Check YOLO job quota
-  const quota = await checkYoloQuota(session.user.companyId);
-  if (!quota.allowed) {
-    return NextResponse.json({ error: quota.message }, { status: 429 });
+  if (toggles.quotaEnabled) {
+    const quota = await checkYoloQuota(session.user.companyId);
+    if (!quota.allowed) {
+      return NextResponse.json({ error: quota.message }, { status: 429 });
+    }
   }
 
   const { projectId, modelId } = await req.json();
@@ -80,13 +89,20 @@ export async function POST(req: Request) {
       .where(eq(pages.projectId, project.id))
       .orderBy(pages.pageNumber);
 
+    // Rasterize pages in parallel (batches of 10 to avoid OOM)
     try {
-      for (const page of projectPages) {
-        const pngBuffer = await rasterizePage(pdfBuffer, page.pageNumber, 200);
-        await uploadToS3(
-          `${project.dataUrl}/images/page_${String(page.pageNumber).padStart(4, "0")}.png`,
-          pngBuffer,
-          "image/png"
+      const BATCH = 10;
+      for (let i = 0; i < projectPages.length; i += BATCH) {
+        const batch = projectPages.slice(i, i + BATCH);
+        await Promise.all(
+          batch.map(async (page) => {
+            const pngBuffer = await rasterizePage(pdfBuffer, page.pageNumber, 200);
+            await uploadToS3(
+              `${project.dataUrl}/images/page_${String(page.pageNumber).padStart(4, "0")}.png`,
+              pngBuffer,
+              "image/png"
+            );
+          })
         );
       }
     } catch (err) {

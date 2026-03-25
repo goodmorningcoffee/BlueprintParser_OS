@@ -97,7 +97,9 @@ interface ViewerState {
   confidenceThreshold: number;
   setConfidenceThreshold: (t: number) => void;
 
-  // ─── Keynote filter ─────────────────────────────────────
+  // ─── Keynotes ───────────────────────────────────────────
+  showKeynotes: boolean;
+  toggleKeynotes: () => void;
   activeKeynoteFilter: { shape: string; text: string } | null;
   setKeynoteFilter: (filter: { shape: string; text: string } | null) => void;
 
@@ -236,6 +238,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setConfidenceThreshold: (confidenceThreshold) =>
     set({ confidenceThreshold }),
 
+  showKeynotes: true,
+  toggleKeynotes: () => set((s) => ({ showKeynotes: !s.showKeynotes })),
   activeKeynoteFilter: null,
   setKeynoteFilter: (activeKeynoteFilter) => set({ activeKeynoteFilter }),
 

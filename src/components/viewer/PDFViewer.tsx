@@ -174,6 +174,12 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     if (container) container.style.cursor = mode === "move" ? "grab" : mode === "moveMarkup" ? "grab" : "crosshair";
   }, [mode]);
 
+  // Hooks must be before early returns (Rules of Hooks)
+  const isDemo = useViewerStore((s) => s.isDemo);
+  const showKeynotes = useViewerStore((s) => s.showKeynotes);
+  const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
+  const [showTips, setShowTips] = useState(true);
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center text-[var(--muted)]">
@@ -193,6 +199,26 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   return (
     <div className="flex-1 flex flex-col h-screen">
       <ViewerToolbar projectName={projectName} backHref={backHref} onRename={onRename} />
+
+      {/* Onboarding tips banner — demo only, dismissible */}
+      {isDemo && showTips && (
+        <div className="h-8 bg-[#1a1a2e] border-b border-[var(--border)] flex items-center justify-end px-4 shrink-0">
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className="text-[var(--muted)]">Buttons:</span>
+            <span className="text-purple-400/80">YOLO — AI-detected objects</span>
+            <span className="text-[var(--border)]">|</span>
+            <span className="text-sky-400/80">Chat — Ask AI about drawings</span>
+            <span className="text-[var(--border)]">|</span>
+            <span className="text-emerald-400/80">QTO — Count + measure areas</span>
+          </div>
+          <button
+            onClick={() => setShowTips(false)}
+            className="text-[var(--muted)] hover:text-[var(--fg)] text-xs ml-4"
+          >
+            x
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-1 min-h-0">
         <PageSidebar pdfDoc={pdfDoc!} />
@@ -226,6 +252,23 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
           </div>
 
           <AnnotationPanel />
+
+          {/* Keynote visibility toggle — bottom right */}
+          <button
+            onClick={toggleKeynotes}
+            className={`absolute bottom-3 right-3 w-8 h-8 rounded-full flex items-center justify-center text-xs border transition-colors z-10 ${
+              showKeynotes
+                ? "border-amber-400/40 text-amber-400 bg-amber-400/10 hover:bg-amber-400/20"
+                : "border-[var(--border)] text-[var(--muted)] bg-[var(--surface)] hover:text-[var(--fg)]"
+            }`}
+            title={showKeynotes ? "Hide keynote shapes" : "Show keynote shapes"}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <ellipse cx="8" cy="8" rx="7" ry="4.5" />
+              <circle cx="8" cy="8" r="2" fill="currentColor" />
+              {!showKeynotes && <line x1="2" y1="14" x2="14" y2="2" strokeWidth="2" />}
+            </svg>
+          </button>
         </div>
 
         {showTextPanel && <TextPanel />}
