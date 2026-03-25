@@ -99,6 +99,12 @@ interface ViewerState {
   setModelConfidence: (model: string, threshold: number) => void;
   initDetectionModels: (modelNames: string[]) => void;
 
+  // ─── Panel collapse ────────────────────────────────────
+  sidebarCollapsed: boolean;
+  toggleSidebar: () => void;
+  annotationPanelCollapsed: boolean;
+  toggleAnnotationPanel: () => void;
+
   // ─── Keynotes ───────────────────────────────────────────
   showKeynotes: boolean;
   toggleKeynotes: () => void;
@@ -253,6 +259,11 @@ export const useViewerStore = create<ViewerState>((set) => ({
       return { activeModels, confidenceThresholds };
     }),
 
+  sidebarCollapsed: false,
+  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  annotationPanelCollapsed: false,
+  toggleAnnotationPanel: () => set((s) => ({ annotationPanelCollapsed: !s.annotationPanelCollapsed })),
+
   showKeynotes: true,
   toggleKeynotes: () => set((s) => ({ showKeynotes: !s.showKeynotes })),
   activeKeynoteFilter: null,
@@ -343,6 +354,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
       activeTradeFilter: null,
       activeCsiFilter: null,
       allCsiCodes: [],
+      sidebarCollapsed: false,
+      annotationPanelCollapsed: false,
       showDetections: false,
       confidenceThreshold: 0.25,
       activeModels: {},

@@ -203,6 +203,10 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const isDemo = useViewerStore((s) => s.isDemo);
   const showKeynotes = useViewerStore((s) => s.showKeynotes);
   const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
+  const sidebarCollapsed = useViewerStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useViewerStore((s) => s.toggleSidebar);
+  const annotationPanelCollapsed = useViewerStore((s) => s.annotationPanelCollapsed);
+  const toggleAnnotationPanel = useViewerStore((s) => s.toggleAnnotationPanel);
   const [showTips, setShowTips] = useState(true);
 
   if (loading) {
@@ -246,7 +250,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       )}
 
       <div className="flex flex-1 min-h-0">
-        <PageSidebar pdfDoc={pdfDoc!} />
+        {!sidebarCollapsed && <PageSidebar pdfDoc={pdfDoc!} />}
 
         <div className="flex-1 flex flex-col min-w-0">
           <div
@@ -258,9 +262,18 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
           >
+            {/* Sidebar collapse toggle */}
+            <button
+              onClick={toggleSidebar}
+              className="absolute top-2 left-2 z-20 w-6 h-6 rounded flex items-center justify-center text-xs bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/40"
+              title={sidebarCollapsed ? "Show pages" : "Hide pages"}
+            >
+              {sidebarCollapsed ? ">" : "<"}
+            </button>
+
             <div
-              className="min-h-full p-4"
-              style={{ width: "fit-content", minWidth: "100%" }}
+              className="p-4"
+              style={{ width: "fit-content", paddingTop: "50vh", paddingBottom: "50vh", paddingLeft: "25vw", paddingRight: "25vw" }}
             >
               <div style={{ width: "fit-content", margin: "0 auto" }}>
                 {pdfDoc && (
@@ -275,24 +288,46 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
             </div>
           </div>
 
-          <AnnotationPanel />
+          {/* Annotation panel — collapsible */}
+          {annotationPanelCollapsed ? (
+            <button
+              onClick={toggleAnnotationPanel}
+              className="border-t border-[var(--border)] px-3 py-1 text-xs text-[var(--muted)] hover:text-[var(--fg)] text-left shrink-0"
+              style={{ backgroundColor: "#1e1e22" }}
+            >
+              View Annotations
+            </button>
+          ) : (
+            <>
+              <AnnotationPanel />
+              <button
+                onClick={toggleAnnotationPanel}
+                className="border-t border-[var(--border)] px-3 py-0.5 text-[10px] text-[var(--muted)] hover:text-[var(--fg)] text-center shrink-0"
+                style={{ backgroundColor: "#1e1e22" }}
+              >
+                Collapse
+              </button>
+            </>
+          )}
 
-          {/* Keynote visibility toggle — bottom right */}
-          <button
-            onClick={toggleKeynotes}
-            className={`absolute bottom-3 left-1/2 -translate-x-1/2 w-8 h-8 rounded-full flex items-center justify-center text-xs border transition-colors z-10 ${
-              showKeynotes
-                ? "border-amber-400/40 text-amber-400 bg-amber-400/10 hover:bg-amber-400/20"
-                : "border-[var(--border)] text-[var(--muted)] bg-[var(--surface)] hover:text-[var(--fg)]"
-            }`}
-            title={showKeynotes ? "Hide keynote shapes" : "Show keynote shapes"}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <ellipse cx="8" cy="8" rx="7" ry="4.5" />
-              <circle cx="8" cy="8" r="2" fill="currentColor" />
-              {!showKeynotes && <line x1="2" y1="14" x2="14" y2="2" strokeWidth="2" />}
-            </svg>
-          </button>
+          {/* Keynote visibility toggle — hidden when annotation panel collapsed */}
+          {!annotationPanelCollapsed && (
+            <button
+              onClick={toggleKeynotes}
+              className={`absolute bottom-3 left-1/2 -translate-x-1/2 w-8 h-8 rounded-full flex items-center justify-center text-xs border transition-colors z-10 ${
+                showKeynotes
+                  ? "border-amber-400/40 text-amber-400 bg-amber-400/10 hover:bg-amber-400/20"
+                  : "border-[var(--border)] text-[var(--muted)] bg-[var(--surface)] hover:text-[var(--fg)]"
+              }`}
+              title={showKeynotes ? "Hide keynote shapes" : "Show keynote shapes"}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <ellipse cx="8" cy="8" rx="7" ry="4.5" />
+                <circle cx="8" cy="8" r="2" fill="currentColor" />
+                {!showKeynotes && <line x1="2" y1="14" x2="14" y2="2" strokeWidth="2" />}
+              </svg>
+            </button>
+          )}
         </div>
 
         {showTextPanel && <TextPanel />}
