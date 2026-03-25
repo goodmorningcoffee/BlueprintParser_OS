@@ -1,12 +1,18 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 
 /**
- * GET /api/demo/csi
- * Aggregate CSI codes across all demo projects. Single query via JSON unnesting.
+ * GET /api/csi
+ * Aggregate CSI codes across all company projects (authenticated).
  */
 export async function GET() {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const results = await db.execute(sql`
     SELECT
       code->>'code' AS code,
@@ -20,7 +26,7 @@ export async function GET() {
     FROM projects p
     JOIN pages pg ON pg.project_id = p.id,
     jsonb_array_elements(pg.csi_codes) AS code
-    WHERE p.is_demo = true
+    WHERE p.company_id = ${session.user.companyId}
       AND p.status = 'completed'
       AND pg.csi_codes IS NOT NULL
     GROUP BY code->>'code', code->>'description', code->>'trade', code->>'division'
@@ -30,7 +36,6 @@ export async function GET() {
 
   return NextResponse.json(
     results.rows.map((row: any) => {
-      // Count sheets per project from non-deduplicated array
       const sheetCounts: Record<string, number> = {};
       for (const pid of (row.project_ids_all || [])) {
         sheetCounts[pid] = (sheetCounts[pid] || 0) + 1;

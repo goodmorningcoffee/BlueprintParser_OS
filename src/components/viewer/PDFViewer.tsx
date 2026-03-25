@@ -256,7 +256,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
           {/* Keynote visibility toggle — bottom right */}
           <button
             onClick={toggleKeynotes}
-            className={`absolute bottom-3 right-3 w-8 h-8 rounded-full flex items-center justify-center text-xs border transition-colors z-10 ${
+            className={`absolute bottom-3 left-1/2 -translate-x-1/2 w-8 h-8 rounded-full flex items-center justify-center text-xs border transition-colors z-10 ${
               showKeynotes
                 ? "border-amber-400/40 text-amber-400 bg-amber-400/10 hover:bg-amber-400/20"
                 : "border-[var(--border)] text-[var(--muted)] bg-[var(--surface)] hover:text-[var(--fg)]"

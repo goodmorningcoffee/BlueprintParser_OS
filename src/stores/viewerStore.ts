@@ -6,7 +6,6 @@ import type {
   CsiCode,
   TextractPageData,
   SearchWordMatch,
-  YoloModel,
   ChatMsg,
   TakeoffTab,
   ScaleCalibrationData,
@@ -92,10 +91,13 @@ interface ViewerState {
   // ─── Detections ──────────────────────────────────────────
   showDetections: boolean;
   toggleDetections: () => void;
-  activeModels: Record<YoloModel, boolean>;
-  setModelActive: (model: YoloModel, active: boolean) => void;
+  activeModels: Record<string, boolean>;
+  setModelActive: (model: string, active: boolean) => void;
   confidenceThreshold: number;
   setConfidenceThreshold: (t: number) => void;
+  confidenceThresholds: Record<string, number>;
+  setModelConfidence: (model: string, threshold: number) => void;
+  initDetectionModels: (modelNames: string[]) => void;
 
   // ─── Keynotes ───────────────────────────────────────────
   showKeynotes: boolean;
@@ -231,12 +233,25 @@ export const useViewerStore = create<ViewerState>((set) => ({
   showDetections: false,
   toggleDetections: () =>
     set((s) => ({ showDetections: !s.showDetections })),
-  activeModels: { medium: true, precise: true, primitive: true },
+  activeModels: {},
   setModelActive: (model, active) =>
     set((s) => ({ activeModels: { ...s.activeModels, [model]: active } })),
   confidenceThreshold: 0.25,
   setConfidenceThreshold: (confidenceThreshold) =>
     set({ confidenceThreshold }),
+  confidenceThresholds: {},
+  setModelConfidence: (model, threshold) =>
+    set((s) => ({ confidenceThresholds: { ...s.confidenceThresholds, [model]: threshold } })),
+  initDetectionModels: (modelNames) =>
+    set((s) => {
+      const activeModels: Record<string, boolean> = {};
+      const confidenceThresholds: Record<string, number> = {};
+      for (const name of modelNames) {
+        activeModels[name] = s.activeModels[name] ?? true;
+        confidenceThresholds[name] = s.confidenceThresholds[name] ?? 0.25;
+      }
+      return { activeModels, confidenceThresholds };
+    }),
 
   showKeynotes: true,
   toggleKeynotes: () => set((s) => ({ showKeynotes: !s.showKeynotes })),
@@ -330,6 +345,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
       allCsiCodes: [],
       showDetections: false,
       confidenceThreshold: 0.25,
+      activeModels: {},
+      confidenceThresholds: {},
       showTakeoffPanel: false,
       takeoffItems: [],
       activeTakeoffItemId: null,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSearch } from "@/hooks/useSearch";
 import PDFViewer from "@/components/viewer/PDFViewer";
@@ -34,6 +34,8 @@ interface ProjectResponse {
 
 export default function DemoProjectPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const csiParam = searchParams.get("csi");
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +47,7 @@ export default function DemoProjectPage() {
   const setDataUrl = useViewerStore((s) => s.setDataUrl);
   const setNumPages = useViewerStore((s) => s.setNumPages);
   const setAnnotations = useViewerStore((s) => s.setAnnotations);
+  const initDetectionModels = useViewerStore((s) => s.initDetectionModels);
   const setPageNames = useViewerStore((s) => s.setPageNames);
   const setKeynotes = useViewerStore((s) => s.setKeynotes);
   const setCsiCodes = useViewerStore((s) => s.setCsiCodes);
@@ -53,6 +56,7 @@ export default function DemoProjectPage() {
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const setIsDemo = useViewerStore((s) => s.setIsDemo);
   const resetProjectData = useViewerStore((s) => s.resetProjectData);
+  const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
 
   const load = useCallback(async () => {
     try {
@@ -75,6 +79,18 @@ export default function DemoProjectPage() {
       setDataUrl(data.dataUrl);
       setNumPages(data.numPages || 0);
       setAnnotations(data.annotations);
+      const yoloModelNames = [...new Set(
+        data.annotations
+          .filter((a: any) => a.source === "yolo" && a.data?.modelName)
+          .map((a: any) => a.data.modelName as string)
+      )];
+      if (yoloModelNames.length > 0) {
+        initDetectionModels(yoloModelNames);
+        // Demo mode: show all detections at 0% threshold
+        for (const name of yoloModelNames) {
+          useViewerStore.getState().setModelConfidence(name, 0);
+        }
+      }
 
       const names: Record<number, string> = {};
       const allTradeSet = new Set<string>();
@@ -100,12 +116,15 @@ export default function DemoProjectPage() {
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([code, description]) => ({ code, description }))
       );
+
+      // Apply CSI filter from URL query param
+      if (csiParam) setCsiFilter(csiParam);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
       setLoading(false);
     }
-  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, setAnnotations, setPageNames, setKeynotes, setCsiCodes, setTextractData, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData]);
+  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, setAnnotations, initDetectionModels, setPageNames, setKeynotes, setCsiCodes, setTextractData, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData, csiParam, setCsiFilter]);
 
   useEffect(() => {
     load();

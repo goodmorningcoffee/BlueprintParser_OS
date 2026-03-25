@@ -17,9 +17,10 @@ function getGroqClient() {
 
 const SYSTEM_PROMPT = `You are an expert construction blueprint analyst. You help users understand architectural and engineering drawings by answering questions about blueprint pages.
 
-You have access to two types of data:
+You have access to three types of data:
 1. OCR text extracted from each page (text content, labels, notes, specifications)
 2. YOLO object detection results showing what objects were detected on each page (class names, counts, confidence scores)
+3. CSI (Construction Specifications Institute) codes detected on each page — these identify what construction divisions and trades are referenced
 
 Be concise, specific, and reference page numbers when relevant. You can answer questions about both text content and detected objects (doors, windows, symbols, etc.). If the data doesn't contain enough information to answer, say so clearly.
 
@@ -147,7 +148,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Build context from OCR text
+  // Build context from OCR text + CSI codes
   let contextText = "";
   if (scope === "page" && pageNumber) {
     const [page] = await db
@@ -161,6 +162,12 @@ export async function POST(req: Request) {
     if (page?.rawText) {
       contextText = `--- Page ${pageNumber} (${page.drawingNumber || page.name}) ---\n${page.rawText}`;
     }
+    if (page?.csiCodes && Array.isArray(page.csiCodes) && (page.csiCodes as any[]).length > 0) {
+      contextText += `\n\nCSI Codes on this page:\n`;
+      for (const c of page.csiCodes as any[]) {
+        contextText += `  ${c.code} — ${c.description} (${c.trade})\n`;
+      }
+    }
   } else {
     // Project-wide: include all pages, truncated
     const allPages = await db
@@ -170,7 +177,20 @@ export async function POST(req: Request) {
       .orderBy(pages.pageNumber);
 
     let totalChars = 0;
+    const allCsiSet = new Map<string, { description: string; trade: string; pages: number[] }>();
     for (const page of allPages) {
+      // Collect CSI codes across all pages
+      if (page.csiCodes && Array.isArray(page.csiCodes)) {
+        for (const c of page.csiCodes as any[]) {
+          const existing = allCsiSet.get(c.code);
+          if (existing) {
+            existing.pages.push(page.pageNumber);
+          } else {
+            allCsiSet.set(c.code, { description: c.description, trade: c.trade, pages: [page.pageNumber] });
+          }
+        }
+      }
+
       if (!page.rawText) continue;
       const header = `\n--- Page ${page.pageNumber} (${page.drawingNumber || page.name}) ---\n`;
       const chunk = header + page.rawText;
@@ -180,6 +200,14 @@ export async function POST(req: Request) {
       }
       contextText += chunk;
       totalChars += chunk.length;
+    }
+
+    // Append CSI summary
+    if (allCsiSet.size > 0) {
+      contextText += `\n\n--- CSI Codes Detected Across Project ---\n`;
+      for (const [code, info] of [...allCsiSet.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+        contextText += `${code} — ${info.description} (${info.trade}) — pages: ${info.pages.join(", ")}\n`;
+      }
     }
   }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSearch } from "@/hooks/useSearch";
@@ -43,6 +43,8 @@ interface ProjectResponse {
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const csiParam = searchParams.get("csi");
   const { data: session } = useSession();
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,6 +58,7 @@ export default function ProjectPage() {
   const setDataUrl = useViewerStore((s) => s.setDataUrl);
   const setNumPages = useViewerStore((s) => s.setNumPages);
   const setAnnotations = useViewerStore((s) => s.setAnnotations);
+  const initDetectionModels = useViewerStore((s) => s.initDetectionModels);
   const setPageNames = useViewerStore((s) => s.setPageNames);
   const setKeynotes = useViewerStore((s) => s.setKeynotes);
   const setCsiCodes = useViewerStore((s) => s.setCsiCodes);
@@ -66,6 +69,7 @@ export default function ProjectPage() {
   const setTakeoffItems = useViewerStore((s) => s.setTakeoffItems);
   const setScaleCalibration = useViewerStore((s) => s.setScaleCalibration);
   const resetProjectData = useViewerStore((s) => s.resetProjectData);
+  const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
 
   const load = useCallback(async () => {
     try {
@@ -87,6 +91,12 @@ export default function ProjectPage() {
       setDataUrl(data.dataUrl);
       setNumPages(data.numPages || 0);
       setAnnotations(data.annotations);
+      const yoloModelNames = [...new Set(
+        data.annotations
+          .filter((a: any) => a.source === "yolo" && a.data?.modelName)
+          .map((a: any) => a.data.modelName as string)
+      )];
+      if (yoloModelNames.length > 0) initDetectionModels(yoloModelNames);
 
       // Page names and data
       const names: Record<number, string> = {};
@@ -123,6 +133,9 @@ export default function ProjectPage() {
           .map(([code, description]) => ({ code, description }))
       );
 
+      // Apply CSI filter from URL query param
+      if (csiParam) setCsiFilter(csiParam);
+
       // Load chat history
       if (data.chatMessages) {
         setChatMessages(
@@ -158,6 +171,7 @@ export default function ProjectPage() {
     setDataUrl,
     setNumPages,
     setAnnotations,
+    initDetectionModels,
     setPageNames,
     setKeynotes,
     setCsiCodes,
@@ -168,6 +182,8 @@ export default function ProjectPage() {
     setTakeoffItems,
     setScaleCalibration,
     resetProjectData,
+    csiParam,
+    setCsiFilter,
   ]);
 
   useEffect(() => {

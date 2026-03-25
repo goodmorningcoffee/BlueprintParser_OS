@@ -32,6 +32,10 @@ export default function HomePage() {
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  const [csiCodes, setCsiCodes] = useState<Array<{ code: string; description: string; trade: string; division: string; projectCount: number; pageCount: number; projectIds: string[]; projectSheetCounts: Record<string, number> }>>([]);
+  const [activeCsiFilter, setActiveCsiFilter] = useState<string | null>(null);
+  const [showCsi, setShowCsi] = useState(false);
+
   const [chatOpen, setChatOpen] = useState(true);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string }>>([]);
@@ -44,7 +48,13 @@ export default function HomePage() {
   }, [status, router]);
 
   useEffect(() => {
-    if (session) loadProjects();
+    if (session) {
+      loadProjects();
+      fetch("/api/csi")
+        .then((r) => r.ok ? r.json() : [])
+        .then(setCsiCodes)
+        .catch(() => {});
+    }
   }, [session]);
 
   // Poll for status updates when any project is uploading/processing
@@ -165,9 +175,11 @@ export default function HomePage() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, chatStreaming]);
 
-  // Filter: show projects matching by name OR by content
+  // Filter: CSI filter + name/content search
   const hasContentResults = Object.keys(contentMatches).length > 0;
+  const activeCsi = activeCsiFilter ? csiCodes.find((c) => c.code === activeCsiFilter) : null;
   const filtered = projects.filter((p) => {
+    if (activeCsi && !activeCsi.projectIds.includes(p.id)) return false;
     if (!search) return true;
     const nameMatch = p.name.toLowerCase().includes(search.toLowerCase());
     const contentMatch = contentMatches[p.id] !== undefined;
@@ -219,11 +231,56 @@ export default function HomePage() {
           </div>
           <UploadWidget onUploadComplete={loadProjects} />
         </div>
+
+        {/* CSI Codes filter */}
+        {csiCodes.length > 0 && (
+          <div className="mb-4">
+            <button
+              onClick={() => setShowCsi(!showCsi)}
+              className="text-xs text-[var(--accent)]/70 hover:text-[var(--accent)] flex items-center gap-1"
+            >
+              {showCsi ? "Hide" : "Show"} CSI Codes ({csiCodes.length})
+              {activeCsiFilter && (
+                <span className="ml-2 text-[var(--accent)]">
+                  Filtering: {activeCsiFilter}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setActiveCsiFilter(null); }}
+                    className="ml-1 text-[var(--muted)] hover:text-[var(--fg)]"
+                  >
+                    x
+                  </button>
+                </span>
+              )}
+            </button>
+            {showCsi && (
+              <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5 max-h-48 overflow-y-auto">
+                {csiCodes.slice(0, 40).map((c) => (
+                  <button
+                    key={c.code}
+                    onClick={() => setActiveCsiFilter(activeCsiFilter === c.code ? null : c.code)}
+                    className={`text-left text-[11px] px-2 py-1 rounded border transition-colors ${
+                      activeCsiFilter === c.code
+                        ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--fg)]"
+                        : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--accent)]/50 hover:text-[var(--fg)]"
+                    }`}
+                  >
+                    <span className="font-medium">{c.code}</span>
+                    <span className="block truncate opacity-70">{c.description}</span>
+                    <span className="text-[10px] opacity-50">{c.projectCount} proj, {c.pageCount} pg</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <ProjectGrid
           projects={filtered}
           onDelete={(id) => setProjects((prev) => prev.filter((p) => p.id !== id))}
           onRename={(id, newName) => setProjects((prev) => prev.map((p) => p.id === id ? { ...p, name: newName } : p))}
           contentMatches={hasContentResults ? contentMatches : undefined}
+          csiSheetCounts={activeCsi?.projectSheetCounts}
+          csiFilter={activeCsiFilter}
         />
       </main>
 

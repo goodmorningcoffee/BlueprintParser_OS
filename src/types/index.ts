@@ -189,9 +189,6 @@ export const TWENTY_COLORS = [
 
 // ─── YOLO types ──────────────────────────────────────────────
 
-export type YoloModel = "medium" | "precise" | "primitive";
-export const YOLO_MODELS: YoloModel[] = ["medium", "precise", "primitive"];
-
 export interface YoloDetection {
   class_id: number;
   class_name: string;

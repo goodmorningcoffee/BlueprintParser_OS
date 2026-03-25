@@ -42,6 +42,7 @@ export async function POST(req: Request) {
       pg.page_number,
       pg.drawing_number,
       pg.raw_text,
+      pg.csi_codes,
       ts_rank(pg.search_vector, plainto_tsquery('english', ${message})) AS rank
     FROM pages pg
     JOIN projects p ON pg.project_id = p.id
@@ -59,7 +60,10 @@ export async function POST(req: Request) {
   if (searchResults.rows.length > 0) {
     for (const row of searchResults.rows as any[]) {
       const header = `\n--- ${row.project_name}, Page ${row.page_number} (${row.drawing_number || "unnamed"}) ---\n`;
-      const chunk = header + (row.raw_text || "").substring(0, 3000);
+      let chunk = header + (row.raw_text || "").substring(0, 3000);
+      if (row.csi_codes && Array.isArray(row.csi_codes) && row.csi_codes.length > 0) {
+        chunk += `\nCSI Codes: ${row.csi_codes.map((c: any) => `${c.code} (${c.description})`).join(", ")}\n`;
+      }
       if (totalChars + chunk.length > MAX_CONTEXT_CHARS) break;
       contextText += chunk;
       totalChars += chunk.length;
