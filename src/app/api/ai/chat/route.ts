@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects, pages, chatMessages, annotations } from "@/lib/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import Groq from "groq-sdk";
 import { checkChatQuota, checkDemoChatQuota } from "@/lib/quotas";
 
@@ -21,7 +21,16 @@ You have access to two types of data:
 1. OCR text extracted from each page (text content, labels, notes, specifications)
 2. YOLO object detection results showing what objects were detected on each page (class names, counts, confidence scores)
 
-Be concise, specific, and reference page numbers when relevant. You can answer questions about both text content and detected objects (doors, windows, symbols, etc.). If the data doesn't contain enough information to answer, say so clearly.`;
+Be concise, specific, and reference page numbers when relevant. You can answer questions about both text content and detected objects (doors, windows, symbols, etc.). If the data doesn't contain enough information to answer, say so clearly.
+
+You can also help users learn how to use BlueprintParser. Key features:
+- YOLO button (purple): toggle AI object detections with confidence slider
+- Chat (this panel): ask questions about pages or the whole project
+- QTO button (green): quantity takeoff — Count tab for counting items, Area tab for measuring surface areas with polygon drawing + scale calibration
+- Search bar: full-text search across all pages with word-level highlighting
+- Trade/CSI filters: filter pages by construction trade or CSI code
+- Markup tools: draw, move, resize annotation rectangles
+- Keyboard: arrows for pages, Ctrl+scroll for zoom, Escape to cancel, Ctrl+Z to undo polygon vertex`;
 
 const MAX_CONTEXT_CHARS = 24000; // ~6000 tokens
 
@@ -29,11 +38,69 @@ export async function POST(req: Request) {
   const session = await auth();
   const { projectId, pageNumber, message, scope } = await req.json();
 
-  if (!projectId || !message) {
-    return NextResponse.json(
-      { error: "projectId and message required" },
-      { status: 400 }
-    );
+  if (!message) {
+    return NextResponse.json({ error: "message required" }, { status: 400 });
+  }
+
+  // Global RAG scope — search across all user's projects
+  if (scope === "global" && session?.user) {
+    const quota = await checkChatQuota(session.user.companyId);
+    if (!quota.allowed) {
+      return NextResponse.json({ error: quota.message }, { status: 429 });
+    }
+
+    const searchResults = await db.execute(sql`
+      SELECT p.name AS project_name, pg.page_number, pg.drawing_number, pg.raw_text,
+        ts_rank(pg.search_vector, plainto_tsquery('english', ${message})) AS rank
+      FROM pages pg JOIN projects p ON pg.project_id = p.id
+      WHERE p.company_id = ${session.user.companyId} AND p.status = 'completed'
+        AND pg.search_vector @@ plainto_tsquery('english', ${message})
+      ORDER BY rank DESC LIMIT 10
+    `);
+
+    let contextText = "";
+    let totalChars = 0;
+    if (searchResults.rows.length > 0) {
+      for (const row of searchResults.rows as any[]) {
+        const chunk = `\n--- ${row.project_name}, Page ${row.page_number} (${row.drawing_number || "unnamed"}) ---\n${(row.raw_text || "").substring(0, 3000)}`;
+        if (totalChars + chunk.length > MAX_CONTEXT_CHARS) break;
+        contextText += chunk;
+        totalChars += chunk.length;
+      }
+    }
+
+    const groq = getGroqClient();
+    const msgs: { role: "system" | "user"; content: string }[] = [
+      { role: "system", content: SYSTEM_PROMPT + "\n\nYou have access to text from multiple projects. Reference specific project names and page numbers." },
+    ];
+    if (contextText) msgs.push({ role: "system", content: `Retrieved context:\n${contextText}` });
+    msgs.push({ role: "user", content: message });
+
+    const stream = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile", messages: msgs, stream: true, max_tokens: 1024, temperature: 0.3,
+    });
+
+    const encoder = new TextEncoder();
+    const readable = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const chunk of stream) {
+            const content = chunk.choices[0]?.delta?.content;
+            if (content) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`));
+          }
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        } catch { controller.close(); }
+      },
+    });
+
+    return new Response(readable, {
+      headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" },
+    });
+  }
+
+  if (!projectId) {
+    return NextResponse.json({ error: "projectId required" }, { status: 400 });
   }
 
   let project;

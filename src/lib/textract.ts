@@ -3,7 +3,14 @@ import {
   AnalyzeDocumentCommand,
   type Block,
 } from "@aws-sdk/client-textract";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { writeFile, readFile, mkdtemp, rm } from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
 import type { TextractPageData, TextractWord, TextractLine } from "@/types";
+
+const execFileAsync = promisify(execFile);
 
 const textractClient = new TextractClient({
   region: process.env.AWS_REGION || "us-east-1",
@@ -102,4 +109,151 @@ export function parseTextractResponse(blocks: Block[]): TextractPageData {
  */
 export function extractRawText(data: TextractPageData): string {
   return data.lines.map((l) => l.text).join("\n");
+}
+
+// ─── Fallback chain: Textract 300 → Textract 150 → Tesseract ───
+
+/**
+ * Downscale a PNG buffer using Ghostscript.
+ * Renders the PNG at a lower resolution to reduce file size.
+ */
+async function downscalePng(pngBuffer: Buffer, scaleFactor: number): Promise<Buffer> {
+  const tempDir = await mkdtemp(join(tmpdir(), "bp2-downscale-"));
+  try {
+    const inputPath = join(tempDir, "input.png");
+    const outputPath = join(tempDir, "output.png");
+    await writeFile(inputPath, pngBuffer);
+
+    // Use Ghostscript to resize: scale dimensions by factor
+    const dpi = Math.round(72 * scaleFactor); // 72 is base DPI for images
+    await execFileAsync("gs", [
+      "-dNOPAUSE", "-dBATCH", "-dSAFER",
+      "-sDEVICE=png16m",
+      `-r${dpi}`,
+      "-dFIXEDMEDIA",
+      `-dDEVICEWIDTHPOINTS=${Math.round(72 * scaleFactor)}`,
+      `-dDEVICEHEIGHTPOINTS=${Math.round(72 * scaleFactor)}`,
+      `-sOutputFile=${outputPath}`,
+      inputPath,
+    ]);
+    return await readFile(outputPath);
+  } catch {
+    // If Ghostscript fails, return original — let the caller handle the error
+    return pngBuffer;
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Run Tesseract OCR on a PNG buffer, returning TextractPageData format.
+ */
+async function analyzeWithTesseract(pngBuffer: Buffer): Promise<TextractPageData> {
+  const tempDir = await mkdtemp(join(tmpdir(), "bp2-tess-"));
+  try {
+    const imgPath = join(tempDir, "page.png");
+    const outBase = join(tempDir, "out");
+    await writeFile(imgPath, pngBuffer);
+
+    // Run tesseract with TSV output for word-level bboxes
+    await execFileAsync("tesseract", [imgPath, outBase, "-l", "eng", "tsv"]);
+
+    const tsvContent = await readFile(outBase + ".tsv", "utf-8");
+    const rows = tsvContent.split("\n").slice(1); // skip header
+
+    // Get image dimensions for normalization
+    // Read from PNG header: width at bytes 16-19, height at bytes 20-23
+    const imgWidth = pngBuffer.readUInt32BE(16);
+    const imgHeight = pngBuffer.readUInt32BE(20);
+
+    const words: TextractWord[] = [];
+    const lineGroups = new Map<string, TextractWord[]>();
+
+    for (const row of rows) {
+      const cols = row.split("\t");
+      if (cols.length < 12) continue;
+
+      const conf = parseInt(cols[10], 10);
+      const text = cols[11]?.trim();
+      if (!text || conf < 0) continue;
+
+      const left = parseInt(cols[6], 10);
+      const top = parseInt(cols[7], 10);
+      const width = parseInt(cols[8], 10);
+      const height = parseInt(cols[9], 10);
+
+      const word: TextractWord = {
+        text,
+        confidence: conf,
+        bbox: [
+          left / imgWidth,
+          top / imgHeight,
+          width / imgWidth,
+          height / imgHeight,
+        ],
+      };
+      words.push(word);
+
+      // Group by block + paragraph + line for line construction
+      const lineKey = `${cols[2]}-${cols[3]}-${cols[4]}`;
+      if (!lineGroups.has(lineKey)) lineGroups.set(lineKey, []);
+      lineGroups.get(lineKey)!.push(word);
+    }
+
+    // Build lines from word groups
+    const lines: TextractLine[] = [];
+    for (const [, lineWords] of lineGroups) {
+      if (lineWords.length === 0) continue;
+      const lineText = lineWords.map((w) => w.text).join(" ");
+      const minLeft = Math.min(...lineWords.map((w) => w.bbox[0]));
+      const minTop = Math.min(...lineWords.map((w) => w.bbox[1]));
+      const maxRight = Math.max(...lineWords.map((w) => w.bbox[0] + w.bbox[2]));
+      const maxBottom = Math.max(...lineWords.map((w) => w.bbox[1] + w.bbox[3]));
+      lines.push({
+        text: lineText,
+        confidence: lineWords.reduce((s, w) => s + w.confidence, 0) / lineWords.length,
+        bbox: [minLeft, minTop, maxRight - minLeft, maxBottom - minTop],
+        words: lineWords,
+      });
+    }
+
+    return { lines, words };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * OCR with fallback chain: Textract (full) → Textract (half-size) → Tesseract.
+ * Degrades gracefully — project completes even if Textract rejects pages.
+ */
+export async function analyzePageImageWithFallback(
+  pngBuffer: Buffer
+): Promise<TextractPageData> {
+  // Strategy A: Textract at original resolution
+  try {
+    return await analyzePageImage(pngBuffer);
+  } catch (err: any) {
+    const isUnsupported = err?.__type === "UnsupportedDocumentException" ||
+      err?.name === "UnsupportedDocumentException";
+    if (!isUnsupported) throw err;
+    console.warn("Textract rejected page (full res), trying half resolution...");
+  }
+
+  // Strategy B: Textract at half resolution (cuts size by ~75%)
+  try {
+    const halfBuffer = await downscalePng(pngBuffer, 0.5);
+    return await analyzePageImage(halfBuffer);
+  } catch (err: any) {
+    console.warn("Textract rejected page (half res), falling back to Tesseract...");
+  }
+
+  // Strategy C: Tesseract (local, no AWS dependency)
+  try {
+    return await analyzeWithTesseract(pngBuffer);
+  } catch (err) {
+    console.error("Tesseract fallback also failed:", err);
+    // Return empty data rather than killing the whole project
+    return { lines: [], words: [] };
+  }
 }

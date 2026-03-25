@@ -374,7 +374,7 @@ function CountTab() {
                 <button
                   onClick={handleCreate}
                   disabled={!formName.trim() || creating}
-                  className="text-xs px-2 py-0.5 rounded bg-[var(--accent)] text-white disabled:opacity-40"
+                  className="text-xs px-2 py-0.5 rounded bg-emerald-600 text-white disabled:opacity-40 hover:bg-emerald-500"
                 >
                   {creating ? "..." : "Create"}
                 </button>
@@ -386,8 +386,8 @@ function CountTab() {
             onClick={() => setShowForm(true)}
             className={`w-full text-xs py-1.5 rounded border ${
               countItems.length === 0
-                ? "chat-pulse"
-                : "border-dashed border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]"
+                ? "border-emerald-400/30 text-emerald-400/70 bg-emerald-400/5 hover:bg-emerald-400/10"
+                : "border-dashed border-emerald-400/20 text-emerald-400/50 hover:text-emerald-300 hover:border-emerald-400/40"
             }`}
           >
             + Add Count Item
@@ -524,7 +524,7 @@ function CalibrationInput() {
       <button
         onClick={handleOk}
         disabled={!distance || parseFloat(distance) <= 0 || saving}
-        className="text-xs px-2 py-0.5 rounded bg-[var(--accent)] text-white disabled:opacity-40"
+        className="text-xs px-2 py-0.5 rounded bg-emerald-600 text-white disabled:opacity-40 hover:bg-emerald-500"
       >
         {saving ? "..." : "OK"}
       </button>
@@ -594,7 +594,7 @@ function ScaleStatus() {
     <div className="px-2 py-2 border-b border-[var(--border)]">
       <button
         onClick={() => setCalibrationMode("point1")}
-        className="w-full text-xs py-1.5 rounded border border-dashed border-amber-500/60 text-amber-400 hover:border-amber-400 hover:text-amber-300 transition-colors"
+        className="w-full text-xs py-1.5 rounded border border-dashed border-amber-500/40 text-amber-400/80 bg-amber-400/5 hover:border-amber-400/60 hover:text-amber-300 hover:bg-amber-400/10 transition-colors"
       >
         Set Scale
       </button>
@@ -945,7 +945,7 @@ function AreaTab() {
                 <button
                   onClick={handleCreate}
                   disabled={!formName.trim() || creating}
-                  className="text-xs px-2 py-0.5 rounded bg-[var(--accent)] text-white disabled:opacity-40"
+                  className="text-xs px-2 py-0.5 rounded bg-emerald-600 text-white disabled:opacity-40 hover:bg-emerald-500"
                 >
                   {creating ? "..." : "Create"}
                 </button>
@@ -957,8 +957,8 @@ function AreaTab() {
             onClick={() => setShowForm(true)}
             className={`w-full text-xs py-1.5 rounded border ${
               areaItems.length === 0
-                ? "chat-pulse"
-                : "border-dashed border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]"
+                ? "border-emerald-400/30 text-emerald-400/70 bg-emerald-400/5 hover:bg-emerald-400/10"
+                : "border-dashed border-emerald-400/20 text-emerald-400/50 hover:text-emerald-300 hover:border-emerald-400/40"
             }`}
           >
             + Add Area Item

@@ -189,11 +189,19 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     : [];
   const isKeynoteFiltered = activeKeynoteFilter !== null && keynoteFilteredPages.length > 0;
 
-  // Compute annotation-filtered pages
+  // Compute annotation-filtered pages + per-page counts
   const annotationFilteredPages = activeAnnotationFilter
     ? [...new Set(annotations.filter((a) => a.name === activeAnnotationFilter).map((a) => a.pageNumber))]
     : [];
   const isAnnotationFiltered = activeAnnotationFilter !== null && annotationFilteredPages.length > 0;
+  const annotationPageCounts: Record<number, number> = {};
+  if (activeAnnotationFilter) {
+    for (const a of annotations) {
+      if (a.name === activeAnnotationFilter) {
+        annotationPageCounts[a.pageNumber] = (annotationPageCounts[a.pageNumber] || 0) + 1;
+      }
+    }
+  }
 
   // Compute trade-filtered pages
   const tradeFilteredPages = activeTradeFilter
@@ -365,6 +373,11 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
                 {searchMatches[n] && searchMatches[n].length > 0 && (
                   <span className="bg-yellow-500/20 text-yellow-300 text-[10px] px-1.5 rounded-full shrink-0">
                     {searchMatches[n].length}
+                  </span>
+                )}
+                {isAnnotationFiltered && annotationPageCounts[n] > 0 && (
+                  <span className="bg-purple-500/20 text-purple-300 text-[10px] px-1.5 rounded-full shrink-0">
+                    {annotationPageCounts[n]}
                   </span>
                 )}
               </div>

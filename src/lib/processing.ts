@@ -4,7 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { getS3Url, uploadToS3 } from "@/lib/s3";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
-import { analyzePageImage, extractRawText } from "@/lib/textract";
+import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { detectCsiCodes } from "@/lib/csi-detect";
 import { extractKeynotes } from "@/lib/keynotes";
@@ -117,7 +117,7 @@ export async function processProject(projectId: number): Promise<{
         const pngBuffer = await rasterizePage(pdfBuffer, pageNum, 300);
 
         // Run Textract OCR
-        const textractData = await analyzePageImage(pngBuffer);
+        const textractData = await analyzePageImageWithFallback(pngBuffer);
         const rawText = extractRawText(textractData);
 
         // Extract drawing number from title block

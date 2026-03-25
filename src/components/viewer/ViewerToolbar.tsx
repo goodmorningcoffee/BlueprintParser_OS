@@ -248,7 +248,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           placeholder="Search text..."
           value={searchQuery}
           onChange={(e) => setSearch(e.target.value)}
-          className="px-3 py-1 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)] w-48 pr-16"
+          className="px-3 py-1 text-sm bg-[var(--bg)] border border-sky-400/20 rounded focus:outline-none focus:border-sky-400/50 w-48 pr-16"
         />
         <div className="absolute right-2 flex items-center gap-1">
           {searchLoading && (
@@ -279,8 +279,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             onClick={toggleDetections}
             className={`px-2 py-1 text-xs rounded border ${
               showDetections
-                ? "border-[var(--accent)] text-[var(--accent)]"
-                : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                ? "border-purple-400/60 text-purple-400 bg-purple-400/10"
+                : "border-purple-400/20 text-purple-400/50 hover:text-purple-300 hover:border-purple-400/40"
             }`}
           >
             YOLO
@@ -310,8 +310,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         onClick={toggleTextPanel}
         className={`px-2 py-1 text-xs rounded border ${
           showTextPanel
-            ? "border-[var(--accent)] text-[var(--accent)]"
-            : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+            ? "border-sky-400/60 text-sky-400 bg-sky-400/10"
+            : "border-sky-400/20 text-sky-400/50 hover:text-sky-300 hover:border-sky-400/40"
         }`}
         title="Toggle text panel"
       >
@@ -336,8 +336,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         onClick={toggleTakeoffPanel}
         className={`px-2 py-1 text-xs rounded border ${
           showTakeoffPanel
-            ? "border-[var(--success)] text-[var(--success)]"
-            : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+            ? "border-emerald-400/60 text-emerald-400 bg-emerald-400/10"
+            : "border-emerald-400/20 text-emerald-400/50 hover:text-emerald-300 hover:border-emerald-400/40"
         }`}
         title="Toggle QTO panel"
       >

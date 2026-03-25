@@ -41,6 +41,15 @@ export default function AdminPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const pollingRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const [invites, setInvites] = useState<Array<{ id: number; email: string; name: string | null; company: string | null; seen: boolean; createdAt: string }>>([]);
+  const [unseenInvites, setUnseenInvites] = useState(0);
+  const [showInvites, setShowInvites] = useState(false);
+  const [yoloStatus, setYoloStatus] = useState<Record<string, number>>({});
+  const [toggles, setToggles] = useState({ sagemakerEnabled: true, quotaEnabled: true, hasPassword: false });
+  const [togglePassword, setTogglePassword] = useState("");
+  const [toggleError, setToggleError] = useState("");
+  const [newTogglePass, setNewTogglePass] = useState("");
+  const [currentTogglePass, setCurrentTogglePass] = useState("");
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/login");
@@ -67,6 +76,76 @@ export default function AdminPage() {
     }
     if (userRes.ok) setUsers(await userRes.json());
     if (modelRes.ok) setYoloModels(await modelRes.json());
+
+    try {
+      const invRes = await fetch("/api/admin/invites");
+      if (invRes.ok) {
+        const data = await invRes.json();
+        setInvites(data.requests);
+        setUnseenInvites(data.unseenCount);
+      }
+    } catch { /* table may not exist yet */ }
+
+    try {
+      const yoloRes = await fetch("/api/admin/yolo-status");
+      if (yoloRes.ok) setYoloStatus(await yoloRes.json());
+    } catch { /* ignore */ }
+
+    try {
+      const togRes = await fetch("/api/admin/toggles");
+      if (togRes.ok) setToggles(await togRes.json());
+    } catch { /* ignore */ }
+  }
+
+  async function handleToggle(toggle: "sagemaker" | "quota", enabled: boolean) {
+    if (!togglePassword) { setToggleError("Toggle password required"); return; }
+    setToggleError("");
+    const res = await fetch("/api/admin/toggles", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toggle, enabled, password: togglePassword }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setToggles((prev) => ({ ...prev, sagemakerEnabled: data.sagemakerEnabled, quotaEnabled: data.quotaEnabled }));
+      setTogglePassword("");
+      setToggleError("");
+    } else {
+      const err = await res.json().catch(() => ({ error: "Failed" }));
+      setToggleError(err.error || "Failed");
+    }
+  }
+
+  async function handleSetTogglePassword() {
+    if (!newTogglePass || newTogglePass.length < 6) { setToggleError("Min 6 characters"); return; }
+    setToggleError("");
+    const res = await fetch("/api/admin/toggles", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "set-password",
+        newPassword: newTogglePass,
+        currentPassword: currentTogglePass || undefined,
+      }),
+    });
+    if (res.ok) {
+      setToggles((prev) => ({ ...prev, hasPassword: true }));
+      setNewTogglePass("");
+      setCurrentTogglePass("");
+      setToggleError("");
+    } else {
+      const err = await res.json().catch(() => ({ error: "Failed" }));
+      setToggleError(err.error || "Failed");
+    }
+  }
+
+  async function markInvitesSeen() {
+    setShowInvites(true);
+    if (unseenInvites > 0) {
+      await fetch("/api/admin/invites", { method: "PUT" });
+      setUnseenInvites(0);
+      setInvites((prev) => prev.map((inv) => ({ ...inv, seen: true })));
+    }
   }
 
   async function uploadModel(e: React.FormEvent<HTMLFormElement>) {
@@ -168,6 +247,13 @@ export default function AdminPage() {
           ? `Loaded ${detectionsLoaded} (errors: ${loadError})`
           : `Completed — ${detectionsLoaded} detections loaded`;
         setYoloJobs((prev) => ({ ...prev, [projectId]: msg }));
+        // Update YOLO status to reflect loaded results
+        if (detectionsLoaded > 0) {
+          setYoloStatus((prev) => ({
+            ...prev,
+            [projectId]: (prev[projectId] || 0) + detectionsLoaded,
+          }));
+        }
       } else {
         const err = await loadRes.json().catch(() => ({ error: "Unknown error" }));
         if (err.error === "No results found" && retryCount < 1) {
@@ -309,6 +395,50 @@ export default function AdminPage() {
           </div>
         )}
 
+        {/* Invite Requests */}
+        <section>
+          <button
+            onClick={markInvitesSeen}
+            className={`px-3 py-1.5 text-sm rounded border ${
+              unseenInvites > 0
+                ? "chat-pulse"
+                : showInvites
+                  ? "border-[var(--accent)] text-[var(--accent)]"
+                  : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}
+          >
+            Invites{unseenInvites > 0 ? ` (${unseenInvites})` : ""}
+          </button>
+          {showInvites && (
+            <div className="mt-4 border border-[var(--border)] rounded-lg overflow-hidden">
+              {invites.length === 0 ? (
+                <div className="p-4 text-sm text-[var(--muted)] text-center">No invite requests yet.</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[var(--border)] text-left text-[var(--muted)]">
+                      <th className="px-3 py-2">Email</th>
+                      <th className="px-3 py-2">Name</th>
+                      <th className="px-3 py-2">Company</th>
+                      <th className="px-3 py-2">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invites.map((inv) => (
+                      <tr key={inv.id} className="border-b border-[var(--border)] last:border-0">
+                        <td className="px-3 py-2">{inv.email}</td>
+                        <td className="px-3 py-2 text-[var(--muted)]">{inv.name || "\u2014"}</td>
+                        <td className="px-3 py-2 text-[var(--muted)]">{inv.company || "\u2014"}</td>
+                        <td className="px-3 py-2 text-[var(--muted)]">{new Date(inv.createdAt).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </section>
+
         {/* Demo Projects */}
         <section>
           <h2 className="text-lg font-semibold mb-3">Projects — Push to Demo</h2>
@@ -428,6 +558,101 @@ export default function AdminPage() {
           </form>
         </section>
 
+        {/* Safety Toggles */}
+        <section>
+          <h2 className="text-lg font-semibold mb-3">Safety Toggles</h2>
+          <div className="p-3 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3">
+            {!toggles.hasPassword ? (
+              <div className="space-y-2">
+                <p className="text-xs text-amber-400">Set a toggle password first. This is independent of your login — a separate secret for controlling SageMaker and quotas.</p>
+                <input
+                  type="password"
+                  placeholder="New toggle password (min 6 chars)"
+                  value={newTogglePass}
+                  onChange={(e) => { setNewTogglePass(e.target.value); setToggleError(""); }}
+                  className="w-full px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]"
+                />
+                <button
+                  onClick={handleSetTogglePassword}
+                  disabled={newTogglePass.length < 6}
+                  className="px-3 py-1.5 text-xs bg-amber-600 text-white rounded disabled:opacity-40 hover:bg-amber-500"
+                >
+                  Set Toggle Password
+                </button>
+                {toggleError && <span className="text-xs text-red-400 block">{toggleError}</span>}
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-medium">SageMaker</span>
+                    <span className={`text-xs ml-2 ${toggles.sagemakerEnabled ? "text-green-400" : "text-red-400"}`}>
+                      {toggles.sagemakerEnabled ? "ENABLED" : "DISABLED"}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleToggle("sagemaker", !toggles.sagemakerEnabled)}
+                    disabled={!togglePassword}
+                    className={`px-3 py-1 text-xs rounded border disabled:opacity-40 ${
+                      toggles.sagemakerEnabled
+                        ? "border-red-400/30 text-red-400 hover:bg-red-400/10"
+                        : "border-green-400/30 text-green-400 hover:bg-green-400/10"
+                    }`}
+                  >
+                    {toggles.sagemakerEnabled ? "Disable" : "Enable"}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-medium">Quota Limits</span>
+                    <span className={`text-xs ml-2 ${toggles.quotaEnabled ? "text-green-400" : "text-amber-400"}`}>
+                      {toggles.quotaEnabled ? "ENFORCED" : "BYPASSED"}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleToggle("quota", !toggles.quotaEnabled)}
+                    disabled={!togglePassword}
+                    className={`px-3 py-1 text-xs rounded border disabled:opacity-40 ${
+                      toggles.quotaEnabled
+                        ? "border-amber-400/30 text-amber-400 hover:bg-amber-400/10"
+                        : "border-green-400/30 text-green-400 hover:bg-green-400/10"
+                    }`}
+                  >
+                    {toggles.quotaEnabled ? "Bypass" : "Enforce"}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 pt-2 border-t border-[var(--border)]">
+                  <input
+                    type="password"
+                    placeholder="Toggle password"
+                    value={togglePassword}
+                    onChange={(e) => { setTogglePassword(e.target.value); setToggleError(""); }}
+                    className="flex-1 px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]"
+                  />
+                  {toggleError && <span className="text-xs text-red-400">{toggleError}</span>}
+                </div>
+                <div className="pt-1 border-t border-[var(--border)]">
+                  <details className="text-xs text-[var(--muted)]">
+                    <summary className="cursor-pointer hover:text-[var(--fg)]">Change toggle password</summary>
+                    <div className="mt-2 space-y-1.5">
+                      <input type="password" placeholder="Current toggle password" value={currentTogglePass}
+                        onChange={(e) => setCurrentTogglePass(e.target.value)}
+                        className="w-full px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]" />
+                      <input type="password" placeholder="New toggle password" value={newTogglePass}
+                        onChange={(e) => setNewTogglePass(e.target.value)}
+                        className="w-full px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]" />
+                      <button onClick={handleSetTogglePassword} disabled={newTogglePass.length < 6}
+                        className="px-3 py-1 text-xs border border-[var(--border)] rounded hover:border-[var(--accent)] disabled:opacity-40">
+                        Update
+                      </button>
+                    </div>
+                  </details>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+
         {/* Run YOLO */}
         {yoloModels.length > 0 && (
           <section>
@@ -442,6 +667,11 @@ export default function AdminPage() {
                   >
                     <div>
                       <span className="font-medium">{p.name}</span>
+                      {yoloStatus[p.id] > 0 && !yoloJobs[p.id] && (
+                        <span className="text-xs ml-2 text-emerald-400/70">
+                          {yoloStatus[p.id]} detections loaded
+                        </span>
+                      )}
                       {yoloJobs[p.id] && (
                         <span className={`text-xs ml-2 ${
                           yoloJobs[p.id].startsWith("Error") || yoloJobs[p.id].startsWith("Failed") || yoloJobs[p.id].startsWith("Load failed")
@@ -460,16 +690,24 @@ export default function AdminPage() {
                           <button
                             onClick={() => runYolo(p.id, m.id)}
                             disabled={!!yoloJobs[p.id] && /^(Running|Rasterizing|InProgress|Loading|Waiting|starting)/.test(yoloJobs[p.id])}
-                            className="px-3 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded hover:border-[var(--accent)] disabled:opacity-40"
+                            className={`px-3 py-1 text-xs rounded border disabled:opacity-40 ${
+                              yoloStatus[p.id] > 0
+                                ? "bg-purple-500/10 border-purple-400/30 text-purple-300 hover:border-purple-400/60"
+                                : "bg-[var(--bg)] border-[var(--border)] hover:border-[var(--accent)]"
+                            }`}
                           >
                             Run {m.name}
                           </button>
                           <button
                             onClick={() => loadYoloResults(p.id, m.id, m.name)}
                             disabled={!!yoloJobs[p.id] && /^(Loading|Waiting)/.test(yoloJobs[p.id])}
-                            className="px-2 py-1 text-xs text-[var(--muted)] border border-[var(--border)] rounded hover:border-green-500 hover:text-green-400 disabled:opacity-40"
+                            className={`px-2 py-1 text-xs rounded border disabled:opacity-40 ${
+                              yoloStatus[p.id] > 0
+                                ? "bg-emerald-500/10 border-emerald-400/30 text-emerald-300 hover:border-emerald-400/60"
+                                : "text-[var(--muted)] border-[var(--border)] hover:border-green-500 hover:text-green-400"
+                            }`}
                           >
-                            Load
+                            {yoloStatus[p.id] > 0 ? "Loaded" : "Load"}
                           </button>
                         </div>
                       ))}

@@ -140,11 +140,13 @@ export default function PDFPage({
         height={pageSize.height}
         cssScale={cssScale}
       />
-      <KeynoteOverlay
-        width={pageSize.width}
-        height={pageSize.height}
-        cssScale={cssScale}
-      />
+      {useViewerStore((s) => s.showKeynotes) && (
+        <KeynoteOverlay
+          width={pageSize.width}
+          height={pageSize.height}
+          cssScale={cssScale}
+        />
+      )}
       <AnnotationOverlay
         width={pageSize.width}
         height={pageSize.height}

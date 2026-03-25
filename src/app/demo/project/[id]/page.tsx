@@ -60,6 +60,9 @@ export default function DemoProjectPage() {
       setError(null);
       resetProjectData();
       setIsDemo(true);
+      // Default YOLO on with threshold 0 in demo so users see all detections
+      useViewerStore.getState().setConfidenceThreshold(0);
+      useViewerStore.setState({ showDetections: true });
 
       const res = await fetch(`/api/demo/projects/${id}`);
       if (!res.ok) throw new Error("Project not found");
