@@ -58,6 +58,7 @@ export async function GET(
       bbox: [a.minX, a.minY, a.maxX, a.maxY],
       note: a.note,
       source: a.source,
+      data: a.data,
     })),
   });
 }

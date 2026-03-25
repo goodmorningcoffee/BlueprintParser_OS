@@ -94,7 +94,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   }
 
   return (
-    <div className="h-12 border-b border-[var(--border)] bg-[var(--surface)] flex items-center px-3 gap-2 shrink-0">
+    <div className="h-12 border-b border-[var(--border)] bg-[#222226] flex items-center px-3 gap-2 shrink-0">
       {/* Back to home */}
       <Link
         href={backHref}
@@ -382,8 +382,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         onClick={toggleChatPanel}
         className={`px-2 py-1 text-xs rounded border ${
           showChatPanel
-            ? "border-[var(--accent)] text-[var(--accent)]"
-            : "chat-pulse"
+            ? "border-blue-400/60 text-blue-400 bg-blue-400/10"
+            : "border-blue-400/20 text-blue-400/50 hover:text-blue-300 hover:border-blue-400/40"
         }`}
         title="Toggle chat panel"
       >

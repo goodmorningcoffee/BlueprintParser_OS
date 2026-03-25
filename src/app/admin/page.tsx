@@ -445,7 +445,25 @@ export default function AdminPage() {
 
         {/* Demo Projects */}
         <section>
-          <h2 className="text-lg font-semibold mb-3">Projects — Push to Demo</h2>
+          <div className="flex items-center gap-3 mb-3">
+            <h2 className="text-lg font-semibold">Projects — Push to Demo</h2>
+            <button
+              onClick={async () => {
+                const res = await fetch("/api/admin/demo", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ action: "refresh" }),
+                });
+                if (res.ok) {
+                  const { refreshed } = await res.json();
+                  setMessage(`Refreshed ${refreshed} demo project${refreshed !== 1 ? "s" : ""}`);
+                }
+              }}
+              className="px-3 py-1 text-xs border border-[var(--border)] rounded hover:border-[var(--accent)] text-[var(--muted)] hover:text-[var(--fg)]"
+            >
+              Refresh Demo
+            </button>
+          </div>
           <div className="space-y-2">
             {projects.map((p) => (
               <div
