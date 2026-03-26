@@ -4,6 +4,12 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Header from "@/components/dashboard/Header";
+import AdminTabs, { type AdminTab } from "./AdminTabs";
+import OverviewTab from "./tabs/OverviewTab";
+import ProjectsTab from "./tabs/ProjectsTab";
+import AiModelsTab from "./tabs/AiModelsTab";
+import UsersTab from "./tabs/UsersTab";
+import SettingsTab from "./tabs/SettingsTab";
 
 interface ProjectItem {
   id: string;
@@ -434,6 +440,60 @@ export default function AdminPage() {
     }
   }
 
+  // Tab state — read initial tab from URL, persist on change
+  const [activeTab, setActiveTab] = useState<AdminTab>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get("tab") as AdminTab;
+      if (tab && ["overview", "projects", "ai-models", "users", "settings"].includes(tab)) return tab;
+    }
+    return "overview";
+  });
+
+  const handleTabChange = useCallback((tab: AdminTab) => {
+    setActiveTab(tab);
+    window.history.replaceState(null, "", `?tab=${tab}`);
+  }, []);
+
+  // Handlers passed to tab components
+  const handleRefreshDemo = useCallback(async () => {
+    const res = await fetch("/api/admin/demo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "refresh" }),
+    });
+    if (res.ok) {
+      const { refreshed } = await res.json();
+      return `Refreshed ${refreshed} demo project${refreshed !== 1 ? "s" : ""}`;
+    }
+    return "Refresh failed";
+  }, []);
+
+  const handleDeleteModel = useCallback(async (id: number) => {
+    await fetch("/api/admin/models", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    loadData();
+  }, []);
+
+  const handleDeleteUser = useCallback(async (userId: string, username: string) => {
+    if (!confirm(`Delete user ${username}?`)) return;
+    const res = await fetch("/api/admin/users", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: userId }),
+    });
+    if (res.ok) {
+      setUsers((prev) => prev.filter((x) => x.id !== userId));
+      setMessage("User deleted");
+    } else {
+      const err = await res.json();
+      setMessage(err.error || "Delete failed");
+    }
+  }, []);
+
   if (status === "loading") {
     return <div className="min-h-screen flex items-center justify-center text-[var(--muted)]">Loading...</div>;
   }
@@ -445,518 +505,87 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
-      <main className="flex-1 p-6 max-w-4xl mx-auto w-full space-y-8">
-        <h1 className="text-2xl font-bold">Admin Panel</h1>
+      <main className="flex-1 p-6 max-w-4xl mx-auto w-full">
+        <h1 className="text-2xl font-bold mb-4">Admin Panel</h1>
 
         {message && (
-          <div className="px-4 py-2 rounded bg-[var(--accent)]/20 text-[var(--accent)] text-sm">
+          <div className="px-4 py-2 rounded bg-[var(--accent)]/20 text-[var(--accent)] text-sm mb-4">
             {message}
           </div>
         )}
 
-        {/* Invite Requests */}
-        <section>
-          <button
-            onClick={markInvitesSeen}
-            className={`px-3 py-1.5 text-sm rounded border ${
-              unseenInvites > 0
-                ? "chat-pulse"
-                : showInvites
-                  ? "border-[var(--accent)] text-[var(--accent)]"
-                  : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
-            }`}
-          >
-            Invites{unseenInvites > 0 ? ` (${unseenInvites})` : ""}
-          </button>
-          {showInvites && (
-            <div className="mt-4 border border-[var(--border)] rounded-lg overflow-hidden">
-              {invites.length === 0 ? (
-                <div className="p-4 text-sm text-[var(--muted)] text-center">No invite requests yet.</div>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[var(--border)] text-left text-[var(--muted)]">
-                      <th className="px-3 py-2">Email</th>
-                      <th className="px-3 py-2">Name</th>
-                      <th className="px-3 py-2">Company</th>
-                      <th className="px-3 py-2">Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {invites.map((inv) => (
-                      <tr key={inv.id} className="border-b border-[var(--border)] last:border-0">
-                        <td className="px-3 py-2">{inv.email}</td>
-                        <td className="px-3 py-2 text-[var(--muted)]">{inv.name || "\u2014"}</td>
-                        <td className="px-3 py-2 text-[var(--muted)]">{inv.company || "\u2014"}</td>
-                        <td className="px-3 py-2 text-[var(--muted)]">{new Date(inv.createdAt).toLocaleDateString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
-        </section>
+        <AdminTabs
+          active={activeTab}
+          onChange={handleTabChange}
+          badges={unseenInvites > 0 ? { overview: unseenInvites } : undefined}
+        />
 
-        {/* Demo Projects */}
-        <section>
-          <div className="flex items-center gap-3 mb-3">
-            <h2 className="text-lg font-semibold">Projects — Push to Demo</h2>
-            <button
-              onClick={async () => {
-                const res = await fetch("/api/admin/demo", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ action: "refresh" }),
-                });
-                if (res.ok) {
-                  const { refreshed } = await res.json();
-                  setMessage(`Refreshed ${refreshed} demo project${refreshed !== 1 ? "s" : ""}`);
-                }
-              }}
-              className="px-3 py-1 text-xs border border-[var(--border)] rounded hover:border-[var(--accent)] text-[var(--muted)] hover:text-[var(--fg)]"
-            >
-              Refresh Demo
-            </button>
-          </div>
-          <div className="space-y-2">
-            {projects.map((p) => (
-              <div
-                key={p.id}
-                className="flex items-center justify-between p-3 bg-[var(--surface)] border border-[var(--border)] rounded"
-              >
-                <div>
-                  <span className="font-medium">{p.name}</span>
-                  <span className="text-xs text-[var(--muted)] ml-2">
-                    {p.numPages || "?"} pages — {p.status}
-                  </span>
-                </div>
-                <button
-                  onClick={() => toggleDemo(p.id, !p.isDemo)}
-                  className={`px-3 py-1 text-xs rounded ${
-                    p.isDemo
-                      ? "bg-green-600 text-white"
-                      : "bg-[var(--bg)] text-[var(--muted)] border border-[var(--border)]"
-                  }`}
-                >
-                  {p.isDemo ? "Live on Demo" : "Push to Demo"}
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* YOLO Models */}
-        <section>
-          <h2 className="text-lg font-semibold mb-3">YOLO Models</h2>
-
-          {/* Existing models */}
-          <div className="space-y-2 mb-4">
-            {yoloModels.map((m) => (
-              <div
-                key={m.id}
-                className="flex items-center justify-between p-3 bg-[var(--surface)] border border-[var(--border)] rounded"
-              >
-                <div>
-                  <span className="font-medium">{m.name}</span>
-                  <span className="text-xs text-[var(--muted)] ml-2">
-                    {(m.config as any)?.classes?.length || 0} classes — conf {(m.config as any)?.confidence || 0.25}
-                  </span>
-                </div>
-                <button
-                  onClick={async () => {
-                    await fetch("/api/admin/models", {
-                      method: "DELETE",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: m.id }),
-                    });
-                    loadData();
-                  }}
-                  className="text-xs text-[var(--muted)] hover:text-red-400"
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-            {yoloModels.length === 0 && (
-              <p className="text-sm text-[var(--muted)]">No models uploaded yet.</p>
-            )}
-          </div>
-
-          {/* Upload model form */}
-          <form
-            onSubmit={uploadModel}
-            className="p-4 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3"
-          >
-            <h3 className="text-sm font-medium">Upload Model</h3>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                name="name"
-                placeholder="Model name"
-                required
-                className="px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded"
-              />
-              <input
-                name="confidence"
-                type="number"
-                step="any"
-                min="0"
-                max="1"
-                defaultValue="0.25"
-                placeholder="Confidence"
-                className="px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-[var(--muted)] block mb-1">Model file (.pt)</label>
-                <input name="model" type="file" accept=".pt" required className="text-xs" />
-              </div>
-              <div>
-                <label className="text-xs text-[var(--muted)] block mb-1">Classes file (.txt)</label>
-                <input name="classes" type="file" accept=".txt" className="text-xs" />
-              </div>
-            </div>
-            {uploading && uploadProgress > 0 && (
-              <div className="w-full bg-[var(--bg)] rounded h-2 overflow-hidden">
-                <div
-                  className="h-full bg-[var(--accent)] transition-all duration-300"
-                  style={{ width: `${uploadProgress}%` }}
-                />
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={uploading}
-              className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] disabled:opacity-40"
-            >
-              {uploading ? (uploadProgress > 0 ? `Uploading ${uploadProgress}%` : "Preparing...") : "Upload Model"}
-            </button>
-          </form>
-        </section>
-
-        {/* Safety Toggles */}
-        <section>
-          <h2 className="text-lg font-semibold mb-3">Safety Toggles</h2>
-          <div className="p-3 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3">
-            {!toggles.hasPassword ? (
-              <div className="space-y-2">
-                <p className="text-xs text-amber-400">Set a toggle password first. This is independent of your login — a separate secret for controlling SageMaker and quotas.</p>
-                <input
-                  type="password"
-                  placeholder="New toggle password (min 6 chars)"
-                  value={newTogglePass}
-                  onChange={(e) => { setNewTogglePass(e.target.value); setToggleError(""); }}
-                  className="w-full px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]"
-                />
-                <button
-                  onClick={handleSetTogglePassword}
-                  disabled={newTogglePass.length < 6}
-                  className="px-3 py-1.5 text-xs bg-amber-600 text-white rounded disabled:opacity-40 hover:bg-amber-500"
-                >
-                  Set Toggle Password
-                </button>
-                {toggleError && <span className="text-xs text-red-400 block">{toggleError}</span>}
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="font-medium">SageMaker</span>
-                    <span className={`text-xs ml-2 ${toggles.sagemakerEnabled ? "text-green-400" : "text-red-400"}`}>
-                      {toggles.sagemakerEnabled ? "ENABLED" : "DISABLED"}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => handleToggle("sagemaker", !toggles.sagemakerEnabled)}
-                    disabled={!togglePassword}
-                    className={`px-3 py-1 text-xs rounded border disabled:opacity-40 ${
-                      toggles.sagemakerEnabled
-                        ? "border-red-400/30 text-red-400 hover:bg-red-400/10"
-                        : "border-green-400/30 text-green-400 hover:bg-green-400/10"
-                    }`}
-                  >
-                    {toggles.sagemakerEnabled ? "Disable" : "Enable"}
-                  </button>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="font-medium">Quota Limits</span>
-                    <span className={`text-xs ml-2 ${toggles.quotaEnabled ? "text-green-400" : "text-amber-400"}`}>
-                      {toggles.quotaEnabled ? "ENFORCED" : "BYPASSED"}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => handleToggle("quota", !toggles.quotaEnabled)}
-                    disabled={!togglePassword}
-                    className={`px-3 py-1 text-xs rounded border disabled:opacity-40 ${
-                      toggles.quotaEnabled
-                        ? "border-amber-400/30 text-amber-400 hover:bg-amber-400/10"
-                        : "border-green-400/30 text-green-400 hover:bg-green-400/10"
-                    }`}
-                  >
-                    {toggles.quotaEnabled ? "Bypass" : "Enforce"}
-                  </button>
-                </div>
-                <div className="flex items-center gap-2 pt-2 border-t border-[var(--border)]">
-                  <input
-                    type="password"
-                    placeholder="Toggle password"
-                    value={togglePassword}
-                    onChange={(e) => { setTogglePassword(e.target.value); setToggleError(""); }}
-                    className="flex-1 px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]"
-                  />
-                  {toggleError && <span className="text-xs text-red-400">{toggleError}</span>}
-                </div>
-                <div className="pt-1 border-t border-[var(--border)]">
-                  <details className="text-xs text-[var(--muted)]">
-                    <summary className="cursor-pointer hover:text-[var(--fg)]">Change toggle password</summary>
-                    <div className="mt-2 space-y-1.5">
-                      <input type="password" placeholder="Current toggle password" value={currentTogglePass}
-                        onChange={(e) => setCurrentTogglePass(e.target.value)}
-                        className="w-full px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]" />
-                      <input type="password" placeholder="New toggle password" value={newTogglePass}
-                        onChange={(e) => setNewTogglePass(e.target.value)}
-                        className="w-full px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]" />
-                      <button onClick={handleSetTogglePassword} disabled={newTogglePass.length < 6}
-                        className="px-3 py-1 text-xs border border-[var(--border)] rounded hover:border-[var(--accent)] disabled:opacity-40">
-                        Update
-                      </button>
-                    </div>
-                  </details>
-                </div>
-              </>
-            )}
-          </div>
-        </section>
-
-        {/* Reprocess Text Annotations */}
-        <section>
-          <h2 className="text-lg font-semibold mb-3">Reprocess Text Annotations</h2>
-          <div className="p-3 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3">
-            <p className="text-xs text-[var(--muted)]">
-              Re-run text annotation detectors (abbreviations, equipment tags, phone numbers, etc.) on all existing projects.
-              Uses existing OCR data — no re-upload needed. User notes are preserved.
-            </p>
-            <button
-              onClick={reprocessAll}
-              disabled={reprocessing}
-              className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] disabled:opacity-40"
-            >
-              {reprocessing ? "Reprocessing..." : "Reprocess All Projects"}
-            </button>
-            {reprocessLog.length > 0 && (
-              <div className="mt-2 max-h-40 overflow-y-auto bg-[var(--bg)] rounded p-2 text-xs font-mono text-[var(--muted)]">
-                {reprocessLog.map((line, i) => (
-                  <div key={i}>{line}</div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Run YOLO */}
-        {yoloModels.length > 0 && (
-          <section>
-            <h2 className="text-lg font-semibold mb-3">Run YOLO Inference</h2>
-            <div className="space-y-2">
-              {projects
-                .filter((p) => p.status === "completed")
-                .map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between p-3 bg-[var(--surface)] border border-[var(--border)] rounded"
-                  >
-                    <div>
-                      <span className="font-medium">{p.name}</span>
-                      {yoloStatus[p.id] && Object.values(yoloStatus[p.id]).some(c => c > 0) && !(yoloJobs[p.id] && Object.values(yoloJobs[p.id]).some(Boolean)) && (
-                        <span className="text-xs ml-2 text-emerald-400/70">
-                          {Object.values(yoloStatus[p.id]).reduce((a, b) => a + b, 0)} detections loaded
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex gap-2">
-                      {yoloModels.map((m) => {
-                        const mk = String(m.id);
-                        const mStatus = (yoloStatus[p.id] || {})[mk] || 0;
-                        const mJob = (yoloJobs[p.id] || {})[mk] || "";
-                        return (
-                        <div key={m.id} className="flex gap-1 items-center">
-                          <button
-                            onClick={() => runYolo(p.id, m.id)}
-                            disabled={!!mJob && /^(Running|Rasterizing|InProgress|Loading|Waiting|starting)/.test(mJob)}
-                            className={`px-3 py-1 text-xs rounded border disabled:opacity-40 ${
-                              mStatus > 0
-                                ? "bg-purple-500/10 border-purple-400/30 text-purple-300 hover:border-purple-400/60"
-                                : "bg-[var(--bg)] border-[var(--border)] hover:border-[var(--accent)]"
-                            }`}
-                          >
-                            Run {m.name}
-                          </button>
-                          <button
-                            onClick={() => loadYoloResults(p.id, m.id, m.name)}
-                            disabled={!!mJob && /^(Loading|Waiting)/.test(mJob)}
-                            className={`px-2 py-1 text-xs rounded border disabled:opacity-40 ${
-                              mStatus > 0
-                                ? "bg-emerald-500/10 border-emerald-400/30 text-emerald-300 hover:border-emerald-400/60"
-                                : "text-[var(--muted)] border-[var(--border)] hover:border-green-500 hover:text-green-400"
-                            }`}
-                          >
-                            {mStatus > 0 ? "Loaded" : "Load"}
-                          </button>
-                          {mJob && (
-                            <span className={`text-xs ${
-                              mJob.startsWith("Error") || mJob.startsWith("Failed") || mJob.startsWith("Load failed")
-                                ? "text-red-400"
-                                : mJob.startsWith("Completed")
-                                  ? "text-green-400"
-                                  : "text-[var(--accent)]"
-                            }`}>
-                              {mJob}
-                            </span>
-                          )}
-                        </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </section>
+        {activeTab === "overview" && (
+          <OverviewTab
+            invites={invites}
+            unseenInvites={unseenInvites}
+            showInvites={showInvites}
+            onMarkSeen={markInvitesSeen}
+          />
         )}
 
-        {/* Users */}
-        <section>
-          <h2 className="text-lg font-semibold mb-3">Users</h2>
-          <div className="border border-[var(--border)] rounded-lg overflow-hidden mb-4">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--border)] text-left text-[var(--muted)]">
-                  <th className="px-3 py-2">Username</th>
-                  <th className="px-3 py-2">Email</th>
-                  <th className="px-3 py-2">Role</th>
-                  <th className="px-3 py-2 text-center">Can Run Models</th>
-                  <th className="px-3 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.id} className="border-b border-[var(--border)] last:border-0">
-                    <td className="px-3 py-2 font-medium">{u.username}</td>
-                    <td className="px-3 py-2 text-[var(--muted)]">{u.email}</td>
-                    <td className="px-3 py-2">
-                      <span className="text-xs px-2 py-0.5 rounded bg-[var(--bg)] text-[var(--muted)]">
-                        {u.role}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <button
-                        onClick={() => toggleCanRunModels(u.id, !u.canRunModels)}
-                        className={`px-3 py-1 text-xs rounded border transition-colors ${
-                          u.canRunModels
-                            ? "bg-green-600/20 border-green-500/30 text-green-400 hover:bg-green-600/30"
-                            : "bg-[var(--bg)] border-[var(--border)] text-[var(--muted)] hover:border-red-400/50 hover:text-red-400"
-                        }`}
-                      >
-                        {u.canRunModels ? "Yes" : "No"}
-                      </button>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {u.email !== session?.user?.email && (
-                        <button
-                          onClick={async () => {
-                            if (!confirm(`Delete user ${u.username}?`)) return;
-                            const res = await fetch("/api/admin/users", {
-                              method: "DELETE",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ id: u.id }),
-                            });
-                            if (res.ok) {
-                              setUsers((prev) => prev.filter((x) => x.id !== u.id));
-                              setMessage("User deleted");
-                            } else {
-                              const err = await res.json();
-                              setMessage(err.error || "Delete failed");
-                            }
-                          }}
-                          className="text-xs text-[var(--muted)] hover:text-red-400"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {activeTab === "projects" && (
+          <ProjectsTab
+            projects={projects}
+            onToggleDemo={toggleDemo}
+            onRefreshDemo={handleRefreshDemo}
+            reprocessing={reprocessing}
+            reprocessLog={reprocessLog}
+            onReprocess={reprocessAll}
+            setMessage={setMessage}
+          />
+        )}
 
-          <div className="p-4 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3">
-            <h3 className="text-sm font-medium">Add User</h3>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                placeholder="Username"
-                value={newUser.username}
-                onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
-                className="px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded"
-              />
-              <input
-                placeholder="Email"
-                value={newUser.email}
-                onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                className="px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded"
-              />
-              <input
-                placeholder="Password (min 8)"
-                type="password"
-                value={newUser.password}
-                onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                className="px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded"
-              />
-              <select
-                value={newUser.role}
-                onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                className="px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded"
-              >
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-            <button
-              onClick={createUser}
-              className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)]"
-            >
-              Create User
-            </button>
-          </div>
-        </section>
+        {activeTab === "ai-models" && (
+          <AiModelsTab
+            yoloModels={yoloModels}
+            projects={projects}
+            yoloJobs={yoloJobs}
+            yoloStatus={yoloStatus}
+            uploading={uploading}
+            uploadProgress={uploadProgress}
+            onUploadModel={uploadModel}
+            onDeleteModel={handleDeleteModel}
+            onRunYolo={runYolo}
+            onLoadResults={loadYoloResults}
+          />
+        )}
 
-        {/* Change Password */}
-        <section>
-          <h2 className="text-lg font-semibold mb-3">Change Password</h2>
-          <div className="p-4 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3">
-            <input
-              placeholder="Current password"
-              type="password"
-              value={passwordForm.currentPassword}
-              onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
-              className="w-full px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded"
-            />
-            <input
-              placeholder="New password (min 8)"
-              type="password"
-              value={passwordForm.newPassword}
-              onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-              className="w-full px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded"
-            />
-            <button
-              onClick={changePassword}
-              className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)]"
-            >
-              Update Password
-            </button>
-          </div>
-        </section>
+        {activeTab === "users" && (
+          <UsersTab
+            users={users}
+            currentEmail={session?.user?.email || ""}
+            newUser={newUser}
+            setNewUser={setNewUser}
+            onCreateUser={createUser}
+            onToggleCanRunModels={toggleCanRunModels}
+            onDeleteUser={handleDeleteUser}
+          />
+        )}
+
+        {activeTab === "settings" && (
+          <SettingsTab
+            toggles={toggles}
+            togglePassword={togglePassword}
+            setTogglePassword={setTogglePassword}
+            toggleError={toggleError}
+            setToggleError={setToggleError}
+            newTogglePass={newTogglePass}
+            setNewTogglePass={setNewTogglePass}
+            currentTogglePass={currentTogglePass}
+            setCurrentTogglePass={setCurrentTogglePass}
+            onToggle={handleToggle}
+            onSetTogglePassword={handleSetTogglePassword}
+            passwordForm={passwordForm}
+            setPasswordForm={setPasswordForm}
+            onChangePassword={changePassword}
+          />
+        )}
       </main>
     </div>
   );
