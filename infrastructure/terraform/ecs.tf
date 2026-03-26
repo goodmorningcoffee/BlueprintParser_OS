@@ -542,8 +542,9 @@ resource "aws_ecs_task_definition" "beaver_label_studio" {
 
       environment = [
         { name = "LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK", value = "true" },
+        { name = "LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN", value = "true" },
         { name = "LABEL_STUDIO_HOST", value = "https://labelstudio.blueprintparser.com" },
-        { name = "CSRF_TRUSTED_ORIGINS", value = "https://labelstudio.blueprintparser.com" },
+        { name = "CSRF_TRUSTED_ORIGINS", value = "https://labelstudio.blueprintparser.com,https://app.blueprintparser.com" },
         { name = "USE_X_FORWARDED_HOST", value = "True" },
         { name = "SECURE_PROXY_SSL_HEADER", value = "HTTP_X_FORWARDED_PROTO:https" },
       ]
@@ -573,7 +574,7 @@ resource "aws_ecs_task_definition" "beaver_label_studio" {
       }
 
       healthCheck = {
-        command     = ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/')\" || exit 1"]
+        command     = ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\" || exit 1"]
         interval    = 30
         timeout     = 10
         retries     = 5
@@ -600,8 +601,8 @@ resource "aws_lb_target_group" "beaver_label_studio" {
     unhealthy_threshold = 5
     timeout             = 10
     interval            = 30
-    path                = "/user/login"
-    matcher             = "200,302"
+    path                = "/health"
+    matcher             = "200"
   }
 
   deregistration_delay = 30

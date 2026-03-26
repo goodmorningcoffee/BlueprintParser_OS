@@ -47,6 +47,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
     allCsiCodes,
     activeCsiFilter,
     setCsiFilter,
+    showKeynotes,
+    toggleKeynotes,
   } = useViewerStore();
 
   const publicId = useViewerStore((s) => s.publicId);
@@ -331,6 +333,23 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
 
       {/* Spacer — pushes right buttons to edge */}
       <div className="flex-1" />
+
+      {/* Keynote visibility toggle */}
+      <button
+        onClick={toggleKeynotes}
+        className={`px-2 py-1 text-xs rounded border ${
+          showKeynotes
+            ? "border-amber-400/60 text-amber-400 bg-amber-400/10"
+            : "border-amber-400/20 text-amber-400/50 hover:text-amber-300 hover:border-amber-400/40"
+        }`}
+        title={showKeynotes ? "Hide keynotes" : "Show keynotes"}
+      >
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="inline-block">
+          <ellipse cx="8" cy="8" rx="7" ry="4.5" />
+          <circle cx="8" cy="8" r="2" fill="currentColor" />
+          {!showKeynotes && <line x1="2" y1="14" x2="14" y2="2" strokeWidth="2" />}
+        </svg>
+      </button>
 
       {/* YOLO detections toggle + per-model dropdown */}
       {hasYoloAnnotations && (
