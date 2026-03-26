@@ -261,7 +261,7 @@ export default function LabelingWizard({ onClose, projectName }: LabelingWizardP
                   <span className="text-xs text-[var(--muted)] ml-2">({s.taskCount} images)</span>
                 </div>
                 <a
-                  href={s.labelStudioUrl}
+                  href={`/api/labeling/login?redirect=/projects/${s.labelStudioUrl.split("/projects/")[1] || ""}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-3 py-1 text-xs bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)]"

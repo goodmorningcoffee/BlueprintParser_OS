@@ -24,6 +24,18 @@ export async function POST(req: Request) {
     );
   }
 
+  // Input validation
+  const validTaskTypes = ["detection", "classification", "segmentation", "text"];
+  if (!validTaskTypes.includes(taskType)) {
+    return NextResponse.json({ error: "Invalid task type" }, { status: 400 });
+  }
+  const safePagesPerProject = Math.max(1, Math.min(pagesPerProject || 10, 50));
+  const safeLabels = (labels || [])
+    .slice(0, 50) // Max 50 labels
+    .map((l: string) => String(l).replace(/[<>&"']/g, "").trim().slice(0, 100))
+    .filter(Boolean);
+  const safeProjectName = String(projectName || "").replace(/[<>&"']/g, "").slice(0, 200);
+
   // Verify project ownership
   const [project] = await db
     .select()
@@ -62,7 +74,7 @@ export async function POST(req: Request) {
   }
 
   // Generate labeling config XML
-  const labelConfig = generateLabelConfig(taskType as LabelingTaskType, labels);
+  const labelConfig = generateLabelConfig(taskType as LabelingTaskType, safeLabels);
 
   // Determine which pages to include
   const numPages = project.numPages || 1;
@@ -87,7 +99,7 @@ export async function POST(req: Request) {
   );
 
   // Split into chunks based on pagesPerProject
-  const chunkSize = pagesPerProject || pageNumbers.length;
+  const chunkSize = safePagesPerProject || pageNumbers.length;
   const chunks: typeof presignedTasks[] = [];
   for (let i = 0; i < presignedTasks.length; i += chunkSize) {
     chunks.push(presignedTasks.slice(i, i + chunkSize));
@@ -111,8 +123,8 @@ export async function POST(req: Request) {
 
       const title =
         chunks.length === 1
-          ? (projectName || project.name)
-          : `${projectName || project.name} (pages ${range})`;
+          ? (safeProjectName || project.name)
+          : `${safeProjectName || project.name} (pages ${range})`;
 
       // Create LS project
       const lsProject = await createProject(title, labelConfig);
@@ -131,7 +143,7 @@ export async function POST(req: Request) {
           labelStudioProjectId: lsProject.id,
           labelStudioUrl: projectUrl,
           taskType,
-          labels,
+          labels: safeLabels,
           pageRange: range,
           status: "active",
         })
