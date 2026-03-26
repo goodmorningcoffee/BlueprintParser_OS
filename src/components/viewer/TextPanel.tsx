@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { TEXT_ANNOTATION_COLORS } from "@/types";
-import type { TextAnnotation, AnnotationCategory } from "@/types";
+import type { TextAnnotation, AnnotationCategory, ClientAnnotation } from "@/types";
 import HelpTooltip from "./HelpTooltip";
 
 const CATEGORY_LABELS: Record<AnnotationCategory, string> = {
@@ -26,15 +26,23 @@ export default function TextPanel() {
   const textAnnotations = useViewerStore((s) => s.textAnnotations);
   const tab = useViewerStore((s) => s.textPanelTab);
   const setTab = useViewerStore((s) => s.setTextPanelTab);
+  const userMarkups = useViewerStore((s) => s.annotations).filter((a) => a.source === "user");
 
   const pageData = textractData[pageNumber];
   const annotations = textAnnotations[pageNumber] || [];
+
+  const TAB_LABELS: Record<string, string> = {
+    ocr: "OCR",
+    annotations: `Annotations (${annotations.length})`,
+    markups: `Markups (${userMarkups.length})`,
+    graph: "Graph",
+  };
 
   return (
     <div className="w-80 border-l border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0">
       {/* Tab bar */}
       <div className="flex border-b border-[var(--border)]">
-        {(["ocr", "annotations", "graph"] as const).map((t) => (
+        {(["ocr", "annotations", "markups", "graph"] as const).map((t) => (
           <HelpTooltip key={t} id={`text-tab-${t}`}>
             <button
               onClick={() => setTab(t)}
@@ -44,7 +52,7 @@ export default function TextPanel() {
                   : "text-[var(--muted)] hover:text-[var(--fg)]"
               }`}
             >
-              {t === "ocr" ? "OCR" : t === "annotations" ? `Annotations (${annotations.length})` : "Graph"}
+              {TAB_LABELS[t]}
             </button>
           </HelpTooltip>
         ))}
@@ -54,6 +62,7 @@ export default function TextPanel() {
       <div className="flex-1 overflow-y-auto">
         {tab === "ocr" && <OcrTab pageData={pageData} searchQuery={searchQuery} pageNumber={pageNumber} />}
         {tab === "annotations" && <AnnotationsTab annotations={annotations} pageNumber={pageNumber} />}
+        {tab === "markups" && <MarkupsTab markups={userMarkups} />}
         {tab === "graph" && <GraphTab pageNumber={pageNumber} />}
       </div>
     </div>
@@ -413,6 +422,113 @@ function GraphTab({ pageNumber }: { pageNumber: number }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Markups Tab ────────────────────────────────────────────────
+
+function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
+  const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
+  const setAnnotationFilter = useViewerStore((s) => s.setAnnotationFilter);
+  const setSearch = useViewerStore((s) => s.setSearch);
+  const setPage = useViewerStore((s) => s.setPage);
+  const activeMarkupId = useViewerStore((s) => s.activeMarkupId);
+  const pageNames = useViewerStore((s) => s.pageNames);
+  const scrollRef = useRef<Record<number, HTMLDivElement | null>>({});
+
+  // Scroll to active markup when it changes
+  useEffect(() => {
+    if (activeMarkupId !== null && scrollRef.current[activeMarkupId]) {
+      scrollRef.current[activeMarkupId]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [activeMarkupId]);
+
+  // Group by page
+  const byPage = useMemo(() => {
+    const map: Record<number, ClientAnnotation[]> = {};
+    for (const m of markups) {
+      if (!map[m.pageNumber]) map[m.pageNumber] = [];
+      map[m.pageNumber].push(m);
+    }
+    return Object.entries(map).sort(([a], [b]) => Number(a) - Number(b));
+  }, [markups]);
+
+  if (markups.length === 0) {
+    return (
+      <div className="p-4 text-[var(--muted)] text-xs">
+        No markups yet. Use the Markup tool to draw rectangles on the blueprint and add notes.
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-2 space-y-3">
+      {/* Active filter indicator */}
+      {activeAnnotationFilter && (
+        <div className="flex items-center gap-2 px-2 py-1.5 bg-[var(--accent)]/10 rounded text-xs">
+          <span className="text-[var(--accent)] font-medium truncate flex-1">
+            Filtering: {activeAnnotationFilter}
+          </span>
+          <button
+            onClick={() => { setAnnotationFilter(null); setSearch(""); }}
+            className="text-[var(--muted)] hover:text-[var(--fg)] shrink-0"
+          >
+            x
+          </button>
+        </div>
+      )}
+
+      {byPage.map(([pg, anns]) => (
+        <div key={pg}>
+          <div className="text-[10px] text-[var(--muted)] font-medium px-1 mb-1">
+            Page {pg}{pageNames[Number(pg)] ? ` — ${pageNames[Number(pg)]}` : ""}
+          </div>
+          {anns.map((ann) => {
+            const isActive = activeAnnotationFilter === ann.name;
+            const isHighlighted = activeMarkupId === ann.id;
+            return (
+              <div
+                key={ann.id}
+                ref={(el) => { scrollRef.current[ann.id] = el; }}
+                onClick={() => {
+                  if (isActive) {
+                    setAnnotationFilter(null);
+                    setSearch("");
+                  } else {
+                    setAnnotationFilter(ann.name);
+                    setSearch(ann.name);
+                  }
+                }}
+                className={`px-2 py-1.5 rounded cursor-pointer transition-colors mb-1 ${
+                  isHighlighted
+                    ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40"
+                    : isActive
+                    ? "bg-[var(--accent)]/10"
+                    : "hover:bg-[var(--surface-hover)]"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-medium truncate ${isActive ? "text-[var(--accent)]" : "text-[var(--fg)]"}`}>
+                    {ann.name}
+                  </span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setPage(ann.pageNumber); }}
+                    className="text-[10px] text-[var(--muted)] hover:text-[var(--accent)] shrink-0"
+                  >
+                    pg {ann.pageNumber}
+                  </button>
+                </div>
+                {ann.note && (
+                  <p className="text-[11px] text-[var(--muted)] mt-0.5 whitespace-pre-wrap break-words">
+                    {ann.note}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }

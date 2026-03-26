@@ -12,7 +12,6 @@ interface HelpTooltipProps {
 
 export default function HelpTooltip({ id, children, position = "below" }: HelpTooltipProps) {
   const helpMode = useViewerStore((s) => s.helpMode);
-  const mode = useViewerStore((s) => s.mode);
   const [visible, setVisible] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -20,9 +19,9 @@ export default function HelpTooltip({ id, children, position = "below" }: HelpTo
   const tooltip = HELP_TOOLTIPS[id];
 
   const handleEnter = useCallback(() => {
-    if (!helpMode || mode !== "pointer" || !tooltip) return;
+    if (!helpMode || !tooltip) return;
     timerRef.current = setTimeout(() => setVisible(true), 100);
-  }, [helpMode, mode, tooltip]);
+  }, [helpMode, tooltip]);
 
   const handleLeave = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);

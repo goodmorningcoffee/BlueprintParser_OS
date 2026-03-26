@@ -114,11 +114,20 @@ export default function AnnotationOverlay({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+
+  // Markup name+notes modal state
+  const [pendingMarkup, setPendingMarkup] = useState<[number, number, number, number] | null>(null);
+  const [markupName, setMarkupName] = useState("");
+  const [markupNote, setMarkupNote] = useState("");
+  const [editingAnnotationId, setEditingAnnotationId] = useState<number | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const showDetections = useViewerStore((s) => s.showDetections);
   const confidenceThreshold = useViewerStore((s) => s.confidenceThreshold);
   const activeModels = useViewerStore((s) => s.activeModels);
   const confidenceThresholds = useViewerStore((s) => s.confidenceThresholds);
   const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
+  const setAnnotationFilter = useViewerStore((s) => s.setAnnotationFilter);
+  const setTakeoffFilter = useViewerStore((s) => s.setTakeoffFilter);
   const textractData = useViewerStore((s) => s.textractData);
   const setSearch = useViewerStore((s) => s.setSearch);
   const searchQuery = useViewerStore((s) => s.searchQuery);
@@ -209,16 +218,25 @@ export default function AnnotationOverlay({
       const isSelected = ann.id === selectedId;
 
       // Label background + text
+      const isUserSource = ann.source === "user";
+      const extraW = isSelected ? (isUserSource ? 36 : 20) : 6;
       ctx.fillStyle = "rgba(0,0,0,0.75)";
-      ctx.fillRect(x, y - fontSize - 4, textW + (isSelected ? 20 : 6), fontSize + 4);
+      ctx.fillRect(x, y - fontSize - 4, textW + extraW, fontSize + 4);
       ctx.fillStyle = color;
       ctx.fillText(labelText, x + 3, y - 4);
 
-      // Selected: show delete "x" and corner resize handles
+      // Selected: show edit pencil (user markups) + delete "x" + corner resize handles
       if (isSelected) {
+        let iconX = x + textW + 8;
+        if (isUserSource) {
+          ctx.fillStyle = "#60a5fa"; // blue pencil
+          ctx.font = `${fontSize}px sans-serif`;
+          ctx.fillText("\u270E", iconX, y - 4);
+          iconX += 16;
+        }
         ctx.fillStyle = "#ff4444";
         ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.fillText("x", x + textW + 8, y - 4);
+        ctx.fillText("x", iconX, y - 4);
 
         // Corner handles
         const hs = 6;
@@ -650,26 +668,57 @@ export default function AnnotationOverlay({
 
       // Pointer mode: select, delete, move, resize annotations + click keynotes
       if (mode === "pointer") {
-        // Double-click: search for annotation name or OCR word
+        // Double-click: universal annotation filter — filter pages + search + highlights
         if (e.detail === 2) {
-          // Check if double-clicking an annotation — search for its name
           for (const ann of pageAnnotations) {
-            const [minX, minY, maxX, maxY] = ann.bbox;
-            const ax = minX * width;
-            const ay = minY * height;
-            const aw = (maxX - minX) * width;
-            const ah = (maxY - minY) * height;
-            if (pos.x >= ax && pos.x <= ax + aw && pos.y >= ay && pos.y <= ay + ah) {
-              e.stopPropagation();
-              if (searchQuery.toLowerCase() === ann.name.toLowerCase()) {
-                setSearch("");
-              } else {
-                setSearch(ann.name);
-              }
-              return;
+            // Hit test — check area polygons with point-in-polygon, others with bbox
+            let hit = false;
+            if (ann.source === "takeoff" && (ann.data as any)?.type === "area-polygon") {
+              const data = ann.data as unknown as AreaPolygonData;
+              hit = pointInPolygon({ x: pos.x / width, y: pos.y / height }, data.vertices);
+            } else {
+              const [minX, minY, maxX, maxY] = ann.bbox;
+              const ax = minX * width, ay = minY * height;
+              hit = pos.x >= ax && pos.x <= ax + (maxX - minX) * width && pos.y >= ay && pos.y <= ay + (maxY - minY) * height;
             }
+            if (!hit) continue;
+            e.stopPropagation();
+
+            const store = useViewerStore.getState();
+            const isToggleOff = searchQuery.toLowerCase() === ann.name.toLowerCase();
+
+            if (ann.source === "user") {
+              // User markup: filter + open TextPanel → Markups tab
+              if (isToggleOff) {
+                setSearch(""); setAnnotationFilter(null);
+                store.setActiveMarkupId(null);
+              } else {
+                setSearch(ann.name); setAnnotationFilter(ann.name);
+                store.setActiveMarkupId(ann.id);
+                store.setTextPanelTab("markups");
+                if (!store.showTextPanel) store.toggleTextPanel();
+              }
+            } else if (ann.source === "takeoff") {
+              // QTO marker: filter by takeoff item
+              const itemId = (ann.data as any)?.takeoffItemId;
+              const item = takeoffItems.find((t) => t.id === itemId);
+              const itemName = item?.name || ann.name;
+              if (isToggleOff || searchQuery.toLowerCase() === itemName.toLowerCase()) {
+                setSearch(""); setTakeoffFilter(null);
+              } else {
+                setSearch(itemName); setTakeoffFilter(itemId);
+              }
+            } else {
+              // YOLO or other: annotation name filter
+              if (isToggleOff) {
+                setSearch(""); setAnnotationFilter(null);
+              } else {
+                setSearch(ann.name); setAnnotationFilter(ann.name);
+              }
+            }
+            return;
           }
-          // No annotation hit — try OCR word (fallback, in case TextAnnotationOverlay missed it)
+          // No annotation hit — try OCR word fallback
           const pageWords = textractData[pageNumber]?.words;
           if (pageWords) {
             const normX = pos.x / width;
@@ -712,13 +761,37 @@ export default function AnnotationOverlay({
               }
             }
 
-            // Check if clicking the label bar area (above the box) for delete
+            // Check label bar area for pencil (edit) or x (delete) click
             const ax = minX * width;
             const ay = minY * height;
             if (pos.y >= ay - 18 && pos.y <= ay && pos.x >= ax) {
-              e.stopPropagation();
-              deleteSelected();
-              return;
+              const fontSize = Math.max(10, Math.min(13, (maxY - minY) * height * 0.3));
+              const tempCanvas = canvasRef.current;
+              const tempCtx = tempCanvas?.getContext("2d");
+              if (tempCtx) {
+                tempCtx.font = `bold ${fontSize}px sans-serif`;
+                const textW = tempCtx.measureText(selAnn.name).width;
+                const iconStart = ax + textW + 8;
+                const isUserSource = selAnn.source === "user";
+
+                if (isUserSource && pos.x >= iconStart && pos.x < iconStart + 16) {
+                  // Pencil icon clicked — edit markup
+                  e.stopPropagation();
+                  setPendingMarkup(selAnn.bbox as [number, number, number, number]);
+                  setMarkupName(selAnn.name);
+                  setMarkupNote(selAnn.note || "");
+                  setEditingAnnotationId(selAnn.id);
+                  setTimeout(() => nameInputRef.current?.focus(), 50);
+                  return;
+                }
+                const xStart = isUserSource ? iconStart + 16 : iconStart;
+                if (pos.x >= xStart) {
+                  // Delete "x" clicked
+                  e.stopPropagation();
+                  deleteSelected();
+                  return;
+                }
+              }
             }
           }
         }
@@ -901,38 +974,11 @@ export default function AnnotationOverlay({
     // Minimum size check
     if (Math.abs(maxX - minX) < 0.01 || Math.abs(maxY - minY) < 0.01) return;
 
-    const name = prompt("Label name:");
-    if (!name) return;
-
-    // Optimistic add
-    const tempId = -Date.now();
-    addAnnotation({
-      id: tempId,
-      pageNumber,
-      name,
-      bbox: [minX, minY, maxX, maxY],
-      note: null,
-      source: "user",
-    });
-
-    // Persist
-    if (!isDemo) {
-      fetch("/api/annotations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: publicId,
-          pageNumber,
-          name,
-          bbox: [minX, minY, maxX, maxY],
-        }),
-      })
-        .then((res) => res.ok ? res.json() : null)
-        .then((saved) => {
-          if (saved) updateAnnotation(tempId, { id: saved.id });
-        })
-        .catch(() => {});
-    }
+    // Show markup dialog instead of prompt()
+    setPendingMarkup([minX, minY, maxX, maxY]);
+    setMarkupName("");
+    setMarkupNote("");
+    setTimeout(() => nameInputRef.current?.focus(), 50);
   }, [drawing, dragging, selectedId, saveDragPosition, drawStart, drawEnd, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo]);
 
   const handleDoubleClick = useCallback(() => {
@@ -1066,34 +1112,140 @@ export default function AnnotationOverlay({
     }
   }, [showTakeoffPanel]);
 
+  // Save markup from dialog (handles both create and edit)
+  const saveMarkup = useCallback(() => {
+    if (!pendingMarkup || !markupName.trim()) return;
+    const [minX, minY, maxX, maxY] = pendingMarkup;
+    const name = markupName.trim();
+    const note = markupNote.trim() || null;
+
+    if (editingAnnotationId !== null) {
+      // Edit existing annotation
+      updateAnnotation(editingAnnotationId, { name, note });
+      if (!isDemo) {
+        fetch(`/api/annotations/${editingAnnotationId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, note }),
+        }).catch(() => {});
+      }
+    } else {
+      // Create new annotation
+      const tempId = -Date.now();
+      addAnnotation({
+        id: tempId,
+        pageNumber,
+        name,
+        bbox: [minX, minY, maxX, maxY],
+        note,
+        source: "user",
+      });
+
+      if (!isDemo) {
+        fetch("/api/annotations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: publicId,
+            pageNumber,
+            name,
+            note,
+            bbox: [minX, minY, maxX, maxY],
+          }),
+        })
+          .then((res) => res.ok ? res.json() : null)
+          .then((saved) => {
+            if (saved) updateAnnotation(tempId, { id: saved.id });
+          })
+          .catch(() => {});
+      }
+    }
+
+    setPendingMarkup(null);
+    setMarkupName("");
+    setMarkupNote("");
+    setEditingAnnotationId(null);
+  }, [pendingMarkup, markupName, markupNote, editingAnnotationId, pageNumber, publicId, addAnnotation, updateAnnotation, isDemo]);
+
   // Always render — annotations should be visible in all modes
-  if (pageAnnotations.length === 0 && activeTakeoffItemId === null && calibrationMode === "idle" && polygonDrawingMode === "idle" && mode !== "markup" && mode !== "pointer") return null;
+  if (pageAnnotations.length === 0 && activeTakeoffItemId === null && calibrationMode === "idle" && polygonDrawingMode === "idle" && mode !== "markup" && mode !== "pointer" && !pendingMarkup) return null;
 
   return (
-    <canvas
-      ref={canvasRef}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onDoubleClick={handleDoubleClick}
-      onMouseLeave={() => {
-        if (dragging) {
-          setDragging(false);
-          setResizeCorner(null);
-        }
-        if (drawing) setDrawing(false);
-      }}
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: `${width}px`,
-        height: `${height}px`,
-        pointerEvents: activeTakeoffItemId !== null || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" ? "auto" : "none",
-        transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
-        transformOrigin: "top left",
-        cursor: calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : mode === "pointer" ? "default" : "default",
-      }}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
+        onMouseLeave={() => {
+          if (dragging) {
+            setDragging(false);
+            setResizeCorner(null);
+          }
+          if (drawing) setDrawing(false);
+        }}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: `${width}px`,
+          height: `${height}px`,
+          pointerEvents: activeTakeoffItemId !== null || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" ? "auto" : "none",
+          transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
+          transformOrigin: "top left",
+          cursor: calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : mode === "pointer" ? "default" : "default",
+        }}
+      />
+
+      {/* Markup name + notes dialog */}
+      {pendingMarkup && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setPendingMarkup(null); setEditingAnnotationId(null); } }}
+        >
+          <div
+            style={{ background: "var(--surface, #161616)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 8, padding: 20, width: 360, color: "var(--fg, #ededed)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 600 }}>{editingAnnotationId ? "Edit Markup" : "New Markup"}</h3>
+            <label style={{ display: "block", fontSize: 12, color: "var(--muted, #aaa)", marginBottom: 4 }}>Name</label>
+            <input
+              ref={nameInputRef}
+              type="text"
+              value={markupName}
+              onChange={(e) => setMarkupName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && markupName.trim()) saveMarkup(); if (e.key === "Escape") setPendingMarkup(null); }}
+              placeholder="e.g. RFI #12, Missing detail, Check dimension..."
+              style={{ width: "100%", padding: "6px 8px", background: "var(--bg, #0a0a0a)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 4, color: "var(--fg, #ededed)", fontSize: 14, marginBottom: 12, boxSizing: "border-box" }}
+            />
+            <label style={{ display: "block", fontSize: 12, color: "var(--muted, #aaa)", marginBottom: 4 }}>Notes</label>
+            <textarea
+              value={markupNote}
+              onChange={(e) => setMarkupNote(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") setPendingMarkup(null); }}
+              placeholder="Add details about this markup..."
+              rows={3}
+              style={{ width: "100%", padding: "6px 8px", background: "var(--bg, #0a0a0a)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 4, color: "var(--fg, #ededed)", fontSize: 13, resize: "vertical", marginBottom: 14, fontFamily: "inherit", boxSizing: "border-box" }}
+            />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => { setPendingMarkup(null); setEditingAnnotationId(null); }}
+                style={{ padding: "6px 14px", background: "transparent", border: "1px solid var(--border, #3a3a3a)", borderRadius: 4, color: "var(--muted, #aaa)", cursor: "pointer", fontSize: 13 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveMarkup}
+                disabled={!markupName.trim()}
+                style={{ padding: "6px 14px", background: markupName.trim() ? "var(--accent, #3b82f6)" : "#333", border: "none", borderRadius: 4, color: "#fff", cursor: markupName.trim() ? "pointer" : "default", fontSize: 13, fontWeight: 500 }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
