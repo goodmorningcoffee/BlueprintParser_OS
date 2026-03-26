@@ -455,6 +455,29 @@ resource "aws_efs_mount_target" "label_studio" {
   security_groups = [aws_security_group.beaver_efs.id]
 }
 
+resource "aws_efs_access_point" "label_studio" {
+  file_system_id = aws_efs_file_system.label_studio.id
+
+  posix_user {
+    uid = 1001
+    gid = 0
+  }
+
+  root_directory {
+    path = "/label-studio"
+
+    creation_info {
+      owner_uid   = 1001
+      owner_gid   = 0
+      permissions = "755"
+    }
+  }
+
+  tags = {
+    Name = "beaver-label-studio-ap"
+  }
+}
+
 ###############################################################################
 # Label Studio - CloudWatch Log Group
 ###############################################################################
@@ -480,7 +503,12 @@ resource "aws_ecs_task_definition" "beaver_label_studio" {
     name = "label-studio-data"
 
     efs_volume_configuration {
-      file_system_id = aws_efs_file_system.label_studio.id
+      file_system_id          = aws_efs_file_system.label_studio.id
+      transit_encryption      = "ENABLED"
+      authorization_config {
+        access_point_id = aws_efs_access_point.label_studio.id
+        iam             = "DISABLED"
+      }
     }
   }
 
@@ -506,6 +534,10 @@ resource "aws_ecs_task_definition" "beaver_label_studio" {
 
       environment = [
         { name = "LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK", value = "true" },
+        { name = "LABEL_STUDIO_HOST", value = "https://labelstudio.blueprintparser.com" },
+        { name = "CSRF_TRUSTED_ORIGINS", value = "https://labelstudio.blueprintparser.com" },
+        { name = "USE_X_FORWARDED_HOST", value = "True" },
+        { name = "SECURE_PROXY_SSL_HEADER", value = "HTTP_X_FORWARDED_PROTO:https" },
       ]
 
       secrets = [
@@ -533,11 +565,11 @@ resource "aws_ecs_task_definition" "beaver_label_studio" {
       }
 
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+        command     = ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/')\" || exit 1"]
         interval    = 30
-        timeout     = 5
-        retries     = 3
-        startPeriod = 90
+        timeout     = 10
+        retries     = 5
+        startPeriod = 120
       }
     }
   ])
@@ -557,11 +589,11 @@ resource "aws_lb_target_group" "beaver_label_studio" {
   health_check {
     enabled             = true
     healthy_threshold   = 2
-    unhealthy_threshold = 3
-    timeout             = 5
+    unhealthy_threshold = 5
+    timeout             = 10
     interval            = 30
-    path                = "/health"
-    matcher             = "200"
+    path                = "/user/login"
+    matcher             = "200,302"
   }
 
   deregistration_delay = 30

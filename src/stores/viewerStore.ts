@@ -99,6 +99,10 @@ interface ViewerState {
   setModelConfidence: (model: string, threshold: number) => void;
   initDetectionModels: (modelNames: string[]) => void;
 
+  // ─── Help tips ─────────────────────────────────────────
+  showTips: boolean;
+  toggleTips: () => void;
+
   // ─── Panel collapse ────────────────────────────────────
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
@@ -258,6 +262,9 @@ export const useViewerStore = create<ViewerState>((set) => ({
       }
       return { activeModels, confidenceThresholds };
     }),
+
+  showTips: true,
+  toggleTips: () => set((s) => ({ showTips: !s.showTips })),
 
   sidebarCollapsed: false,
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
