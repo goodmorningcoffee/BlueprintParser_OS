@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useViewerStore } from "@/stores/viewerStore";
@@ -193,10 +193,17 @@ export default function ProjectPage() {
     setCsiFilter,
   ]);
 
+  // Track loaded project ID to prevent re-loading on tab focus.
+  // NextAuth's useSession() refetches on window focus, creating a new session
+  // object reference that would re-trigger load() and reset all viewer state.
+  const loadedIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!session) return;
+    if (loadedIdRef.current === id) return;
+    loadedIdRef.current = id;
     load();
-  }, [session, load]);
+  }, [session, id, load]);
 
   // Keyboard shortcuts
   useEffect(() => {
