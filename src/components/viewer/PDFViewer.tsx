@@ -110,12 +110,27 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   useEffect(() => {
     if (!pendingCenter) return;
     clearPendingCenter();
+    // Sync scaleRef so wheel zoom continues from the correct scale
+    scaleRef.current = 1;
+    // Wait for PDFPage to re-render at the new scale (debounce is 150ms)
     const timer = setTimeout(() => {
       const container = containerRef.current;
       if (!container) return;
-      container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
-      container.scrollTop = (container.scrollHeight - container.clientHeight) / 2;
-    }, 50);
+      // Find the actual page element to center on it precisely
+      const pageEl = container.querySelector("canvas");
+      if (pageEl) {
+        const pageRect = pageEl.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        // Scroll so the page is horizontally and vertically centered
+        const targetScrollLeft = container.scrollLeft + (pageRect.left - containerRect.left) - (containerRect.width - pageRect.width) / 2;
+        const targetScrollTop = container.scrollTop + (pageRect.top - containerRect.top) - (containerRect.height - pageRect.height) / 2;
+        container.scrollLeft = Math.max(0, targetScrollLeft);
+        container.scrollTop = Math.max(0, targetScrollTop);
+      } else {
+        container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
+        container.scrollTop = (container.scrollHeight - container.clientHeight) / 2;
+      }
+    }, 200);
     return () => clearTimeout(timer);
   }, [pendingCenter, clearPendingCenter]);
 
