@@ -103,8 +103,10 @@ interface ViewerState {
   setTextAnnotationFilter: (filter: { type: string; text: string } | null) => void;
   activeTakeoffFilter: number | null; // takeoff item ID to filter sidebar by
   setTakeoffFilter: (id: number | null) => void;
-  textPanelTab: "ocr" | "annotations" | "graph";
-  setTextPanelTab: (tab: "ocr" | "annotations" | "graph") => void;
+  textPanelTab: "ocr" | "annotations" | "graph" | "markups";
+  setTextPanelTab: (tab: "ocr" | "annotations" | "graph" | "markups") => void;
+  activeMarkupId: number | null;
+  setActiveMarkupId: (id: number | null) => void;
 
   // ─── Panels ──────────────────────────────────────────────
   showTextPanel: boolean;
@@ -303,6 +305,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setTakeoffFilter: (activeTakeoffFilter) => set({ activeTakeoffFilter }),
   textPanelTab: "annotations",
   setTextPanelTab: (textPanelTab) => set({ textPanelTab }),
+  activeMarkupId: null,
+  setActiveMarkupId: (activeMarkupId) => set({ activeMarkupId }),
 
   showTextPanel: false,
   toggleTextPanel: () => set((s) => ({ showTextPanel: !s.showTextPanel })),
@@ -445,6 +449,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       activeTextAnnotationFilter: null,
       activeTakeoffFilter: null,
       textPanelTab: "annotations",
+      activeMarkupId: null,
       chatMessages: [],
       chatScope: "page",
       activeKeynoteFilter: null,

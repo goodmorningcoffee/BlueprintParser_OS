@@ -288,7 +288,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
                 : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]/50"
             }`}
           >
-            {helpMode ? "Help ON" : "Help Mode"}
+            {helpMode ? "Help ON" : "Help Mode Off"}
           </button>
           <button
             onClick={toggleTips}

@@ -78,10 +78,6 @@ export async function GET(req: Request) {
           `
     );
 
-    const termRegexes = queryTerms.map(
-      (term) => new RegExp(`\\b${escapeRegex(term)}\\b`, "i")
-    );
-
     const results: SearchResult[] = searchResults.rows.map((row: any) => {
       const textractData = row.textract_data as TextractPageData | null;
       const wordMatches: SearchWordMatch[] = [];
@@ -92,7 +88,7 @@ export async function GET(req: Request) {
           for (let i = 0; i <= words.length - queryTerms.length; i++) {
             let allMatch = true;
             for (let j = 0; j < queryTerms.length; j++) {
-              if (!termRegexes[j].test(words[i + j].text)) { allMatch = false; break; }
+              if (!stemMatch(words[i + j].text, queryTerms[j])) { allMatch = false; break; }
             }
             if (allMatch) {
               for (let j = 0; j < queryTerms.length; j++) {
@@ -102,7 +98,7 @@ export async function GET(req: Request) {
           }
         } else {
           for (const word of textractData.words) {
-            if (termRegexes.some((regex) => regex.test(word.text))) {
+            if (queryTerms.some((term) => stemMatch(word.text, term))) {
               wordMatches.push({ text: word.text, bbox: word.bbox });
             }
           }
@@ -149,6 +145,15 @@ export async function GET(req: Request) {
   });
 }
 
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/**
+ * Stem-aware word matching. PostgreSQL tsvector stems words (doors→door)
+ * but Textract stores the original form. Prefix matching handles this:
+ * "doors" matches "DOOR" (term starts with word), "door" matches "DOORS"
+ * (word starts with term).
+ */
+function stemMatch(wordText: string, term: string): boolean {
+  const w = wordText.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (w.length === 0) return false;
+  if (w.length <= 2 || term.length <= 2) return w === term;
+  return w.startsWith(term) || term.startsWith(w);
 }

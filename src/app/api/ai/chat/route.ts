@@ -17,10 +17,11 @@ function getGroqClient() {
 
 const SYSTEM_PROMPT = `You are an expert construction blueprint analyst. You help users understand architectural and engineering drawings by answering questions about blueprint pages.
 
-You have access to three types of data:
+You have access to four types of data:
 1. OCR text extracted from each page (text content, labels, notes, specifications)
 2. YOLO object detection results showing what objects were detected on each page (class names, counts, confidence scores)
 3. CSI (Construction Specifications Institute) codes detected on each page — these identify what construction divisions and trades are referenced
+4. User markup annotations — regions highlighted by the user with names and notes describing areas of interest, questions, or observations about the blueprints
 
 Be concise, specific, and reference page numbers when relevant. You can answer questions about both text content and detected objects (doors, windows, symbols, etc.). If the data doesn't contain enough information to answer, say so clearly.
 
@@ -258,6 +259,34 @@ export async function POST(req: Request) {
     }
 
     contextText += yoloContext;
+  }
+
+  // Add user markup annotations + notes
+  const userAnnotations = await db
+    .select()
+    .from(annotations)
+    .where(
+      and(
+        eq(annotations.projectId, project.id),
+        eq(annotations.source, "user"),
+        ...(scope === "page" && pageNumber ? [eq(annotations.pageNumber, pageNumber)] : [])
+      )
+    );
+
+  if (userAnnotations.length > 0) {
+    let markupContext = "\n\n--- User Markup Annotations ---\n";
+    const byPage: Record<number, typeof userAnnotations> = {};
+    for (const a of userAnnotations) {
+      if (!byPage[a.pageNumber]) byPage[a.pageNumber] = [];
+      byPage[a.pageNumber].push(a);
+    }
+    for (const [pg, anns] of Object.entries(byPage).sort(([a], [b]) => Number(a) - Number(b))) {
+      markupContext += `\nPage ${pg}:\n`;
+      for (const a of anns) {
+        markupContext += `  "${a.name}"${a.note ? `: ${a.note}` : ""}\n`;
+      }
+    }
+    contextText += markupContext;
   }
 
   // Add takeoff item notes if any
