@@ -172,43 +172,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         Fit
       </button>
 
-      {/* Menu dropdown */}
-      <div className="relative" ref={menuRef}>
-        <button
-          onClick={() => setMenuOpen((o) => !o)}
-          className={`px-2 py-1 text-xs rounded border ${
-            menuOpen
-              ? "border-[var(--fg)]/50 text-[var(--fg)] bg-[var(--fg)]/5"
-              : "border-[var(--fg)]/30 text-[var(--fg)]/70 hover:text-[var(--fg)] hover:border-[var(--fg)]/50"
-          }`}
-        >
-          Menu
-        </button>
-        {menuOpen && (
-          <div className="absolute top-full left-0 mt-1 bg-[var(--surface)] border border-[var(--border)] rounded shadow-lg z-50 min-w-[160px]">
-            {!isDemo && (
-              <button
-                onClick={() => { setMenuOpen(false); setShowLabelingWizard(true); }}
-                className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
-              >
-                Data Labeling
-              </button>
-            )}
-            <button
-              disabled
-              className="w-full text-left px-3 py-2 text-xs text-[var(--muted)]/50 cursor-not-allowed"
-            >
-              Export PDF (coming soon)
-            </button>
-            <button
-              disabled
-              className="w-full text-left px-3 py-2 text-xs text-[var(--muted)]/50 cursor-not-allowed"
-            >
-              Settings (coming soon)
-            </button>
-          </div>
-        )}
-      </div>
+      <div className="w-px h-6 bg-[var(--border)] mx-2" />
 
       {/* Labeling wizard modal */}
       {showLabelingWizard && (
@@ -217,8 +181,6 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           projectName={projectName}
         />
       )}
-
-      <div className="w-px h-6 bg-[var(--border)] mx-2" />
 
       {/* Mode toggle */}
       <div className="flex border border-[var(--border)] rounded overflow-hidden">
@@ -256,8 +218,53 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </button>
       </div>
 
-      {/* Spacer — pushes search to center */}
+      {/* Spacer — pushes center section */}
       <div className="flex-1" />
+
+      {/* Menu dropdown */}
+      <div className="relative" ref={menuRef}>
+        <button
+          onClick={() => setMenuOpen((o) => !o)}
+          className={`px-2 py-1 text-xs rounded border ${
+            menuOpen
+              ? "border-[var(--fg)]/50 text-[var(--fg)] bg-[var(--fg)]/5"
+              : "border-[var(--fg)]/30 text-[var(--fg)]/70 hover:text-[var(--fg)] hover:border-[var(--fg)]/50"
+          }`}
+        >
+          Menu
+        </button>
+        {menuOpen && (
+          <div className="absolute top-full left-0 mt-1 bg-[var(--surface)] border border-[var(--border)] rounded shadow-lg z-50 min-w-[160px]">
+            {!isDemo && (
+              <button
+                onClick={() => { setMenuOpen(false); setShowLabelingWizard(true); }}
+                className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
+              >
+                Data Labeling
+              </button>
+            )}
+            <button
+              disabled
+              className="w-full text-left px-3 py-2 text-xs text-[var(--muted)]/50 cursor-not-allowed"
+            >
+              Export PDF (coming soon)
+            </button>
+            <button
+              disabled
+              className="w-full text-left px-3 py-2 text-xs text-[var(--muted)]/50 cursor-not-allowed"
+            >
+              Settings (coming soon)
+            </button>
+            <div className="border-t border-[var(--border)]" />
+            <button
+              onClick={() => { setMenuOpen(false); useViewerStore.getState().toggleTips(); }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
+            >
+              Help
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Search */}
       <div className="relative flex items-center">
