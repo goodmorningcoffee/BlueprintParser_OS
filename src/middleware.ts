@@ -57,6 +57,10 @@ const RATE_RULES: RateRule[] = [
   // Invite requests - tight limit per IP
   { pattern: "/api/invite", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "ip" },
 
+  // Labeling endpoints - tight limits
+  { pattern: "/api/labeling/login", method: "GET", limit: 10, windowMs: 15 * 60 * 1000, keyType: "ip" },
+  { pattern: "/api/labeling/create", method: "POST", limit: 5, windowMs: 60 * 60 * 1000, keyType: "user" },
+
   // Demo endpoints - per IP
   { pattern: "/api/demo", method: "GET", limit: 60, windowMs: 60 * 1000, keyType: "ip" },
   { pattern: "/api/demo/chat", method: "POST", limit: 10, windowMs: 60 * 1000, keyType: "ip" },

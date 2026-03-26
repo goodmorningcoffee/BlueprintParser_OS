@@ -22,6 +22,7 @@ interface SearchResponse {
 export function useSearch() {
   const searchQuery = useViewerStore((s) => s.searchQuery);
   const publicId = useViewerStore((s) => s.publicId);
+  const isDemo = useViewerStore((s) => s.isDemo);
   const setSearchResults = useViewerStore((s) => s.setSearchResults);
   const setSearchMatches = useViewerStore((s) => s.setSearchMatches);
   const setSearchLoading = useViewerStore((s) => s.setSearchLoading);
@@ -56,7 +57,8 @@ export function useSearch() {
           q: searchQuery.trim(),
         });
 
-        const res = await fetch(`/api/search?${params}`, {
+        const endpoint = isDemo ? "/api/demo/search" : "/api/search";
+        const res = await fetch(`${endpoint}?${params}`, {
           signal: controller.signal,
         });
 
@@ -91,5 +93,5 @@ export function useSearch() {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [searchQuery, publicId, setSearchResults, setSearchMatches, setSearchLoading]);
+  }, [searchQuery, publicId, isDemo, setSearchResults, setSearchMatches, setSearchLoading]);
 }

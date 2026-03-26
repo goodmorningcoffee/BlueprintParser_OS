@@ -139,7 +139,72 @@ export interface PageData {
   keynotes: KeynoteData[];
   csiCodes: CsiCode[];
   textractData: TextractPageData | null;
+  textAnnotations: TextAnnotationResult | null;
 }
+
+// ─── Text Annotation types ───────────────────────────────────
+
+export type AnnotationCategory =
+  | "contact" | "codes" | "csi" | "dimensions" | "equipment"
+  | "references" | "trade" | "abbreviation" | "notes" | "rooms";
+
+export type TextAnnotationType =
+  // Contact
+  | "phone" | "fax" | "address" | "email" | "url" | "zip-code"
+  // Codes
+  | "csi-code" | "spec-section" | "building-code" | "code-compliance"
+  // Dimensions
+  | "imperial-dim" | "metric-dim" | "scale" | "slope"
+  // Equipment
+  | "equipment-tag" | "material-code" | "door-window-tag" | "finish-code" | "panel-circuit"
+  // References
+  | "sheet-number" | "sheet-ref" | "detail-ref" | "revision" | "action-marker"
+  // Trade
+  | "structural" | "mechanical" | "electrical" | "plumbing" | "fire-protection"
+  // Abbreviation
+  | "abbreviation"
+  // Notes
+  | "general-note" | "typical-marker" | "coordination-note"
+  // Rooms
+  | "room-number" | "room-name" | "area-designation";
+
+export interface TextAnnotation {
+  type: TextAnnotationType;
+  category: AnnotationCategory;
+  text: string;
+  bbox: [number, number, number, number]; // [left, top, width, height] normalized 0-1
+  confidence: number;
+  wordIndices: number[];
+  group?: string;
+  note?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface TextAnnotationGroup {
+  prefix: string;
+  count: number;
+  items: TextAnnotation[];
+  label: string;
+}
+
+export interface TextAnnotationResult {
+  annotations: TextAnnotation[];
+  groups: TextAnnotationGroup[];
+  summary: Record<string, number>;
+}
+
+export const TEXT_ANNOTATION_COLORS: Record<AnnotationCategory, string> = {
+  contact: "#ef4444",
+  codes: "#ec4899",
+  csi: "#c084fc",
+  dimensions: "#3b82f6",
+  equipment: "#eab308",
+  references: "#a855f7",
+  trade: "#f97316",
+  abbreviation: "#f59e0b",
+  notes: "#6366f1",
+  rooms: "#14b8a6",
+};
 
 // ─── Chat types ──────────────────────────────────────────────
 

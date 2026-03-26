@@ -342,7 +342,15 @@ function CountTab() {
           return (
             <div key={item.id}>
             <div
-              onClick={() => setActiveTakeoffItemId(isActive ? null : item.id)}
+              onClick={() => {
+                setActiveTakeoffItemId(isActive ? null : item.id);
+                const store = useViewerStore.getState();
+                if (isActive) {
+                  store.setTakeoffFilter(null);
+                } else {
+                  store.setTakeoffFilter(item.id);
+                }
+              }}
               className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors ${
                 isActive
                   ? "ring-1 ring-[var(--accent)]"
@@ -383,9 +391,27 @@ function CountTab() {
               </span>
 
               {c && c.pages.size > 0 && (
-                <span className="text-[10px] text-[var(--muted)]">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const store = useViewerStore.getState();
+                    if (store.activeTakeoffFilter === item.id) {
+                      store.setTakeoffFilter(null);
+                      store.setSearch("");
+                    } else {
+                      store.setTakeoffFilter(item.id);
+                      store.setSearch(item.name);
+                    }
+                  }}
+                  className={`text-[10px] px-1 rounded hover:text-emerald-400 ${
+                    useViewerStore.getState().activeTakeoffFilter === item.id
+                      ? "text-emerald-400 bg-emerald-500/20"
+                      : "text-[var(--muted)]"
+                  }`}
+                  title="Filter pages by this item"
+                >
                   {c.pages.size}pg
-                </span>
+                </button>
               )}
 
               <button
@@ -958,7 +984,15 @@ function AreaTab() {
           return (
             <div key={item.id}>
             <div
-              onClick={() => setActiveTakeoffItemId(isActive ? null : item.id)}
+              onClick={() => {
+                setActiveTakeoffItemId(isActive ? null : item.id);
+                const store = useViewerStore.getState();
+                if (isActive) {
+                  store.setTakeoffFilter(null);
+                } else {
+                  store.setTakeoffFilter(item.id);
+                }
+              }}
               className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors ${
                 isActive
                   ? "ring-1 ring-[var(--accent)]"

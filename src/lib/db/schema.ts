@@ -55,6 +55,7 @@ export const users = pgTable("users", {
   email: varchar("email", { length: 255 }).unique().notNull(),
   passwordHash: varchar("password_hash", { length: 255 }).notNull(),
   role: varchar("role", { length: 50 }).default("member").notNull(),
+  canRunModels: boolean("can_run_models").default(false).notNull(),
   companyId: integer("company_id")
     .notNull()
     .references(() => companies.id),
@@ -118,6 +119,7 @@ export const pages = pgTable(
     textractData: jsonb("textract_data"), // Textract word-level bounding boxes
     keynotes: jsonb("keynotes"), // [{shape, text, bbox, contour}]
     csiCodes: jsonb("csi_codes"), // [{code, description, trade, division}]
+    textAnnotations: jsonb("text_annotations"), // TextAnnotationResult
     error: text("error"),
     projectId: integer("project_id")
       .notNull()
@@ -271,9 +273,11 @@ export const labelingSessions = pgTable(
       .references(() => companies.id),
     labelStudioProjectId: integer("label_studio_project_id").notNull(),
     labelStudioUrl: varchar("label_studio_url", { length: 500 }),
-    taskType: varchar("task_type", { length: 50 }).notNull(),
+    taskType: varchar("task_type", { length: 50 }).default("generic"),
     labels: jsonb("labels"),
     pageRange: varchar("page_range", { length: 100 }),
+    tilingEnabled: boolean("tiling_enabled").default(false),
+    tileGrid: integer("tile_grid"),
     status: varchar("status", { length: 50 }).default("active").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),

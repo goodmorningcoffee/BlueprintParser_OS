@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore } from "@/stores/viewerStore";
 import SearchHighlightOverlay from "./SearchHighlightOverlay";
+import TextAnnotationOverlay from "./TextAnnotationOverlay";
 import KeynoteOverlay from "./KeynoteOverlay";
 import AnnotationOverlay from "./AnnotationOverlay";
 
@@ -137,6 +138,11 @@ export default function PDFPage({
         }}
       />
       <SearchHighlightOverlay
+        width={pageSize.width}
+        height={pageSize.height}
+        cssScale={cssScale}
+      />
+      <TextAnnotationOverlay
         width={pageSize.width}
         height={pageSize.height}
         cssScale={cssScale}

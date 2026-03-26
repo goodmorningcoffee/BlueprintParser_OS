@@ -11,6 +11,7 @@ declare module "next-auth" {
     companyId: number;
     username: string;
     role: string;
+    canRunModels: boolean;
   }
   interface Session {
     user: DefaultSession["user"] & {
@@ -18,6 +19,7 @@ declare module "next-auth" {
       dbId: number;
       username: string;
       role: string;
+      canRunModels: boolean;
     };
   }
 }
@@ -28,6 +30,7 @@ declare module "@auth/core/jwt" {
     dbId: number;
     username: string;
     role: string;
+    canRunModels: boolean;
   }
 }
 
@@ -90,8 +93,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const lockMsg = checkBruteForce(email);
         if (lockMsg) return null;
 
+        // Select only core columns — avoids failure if new columns (e.g. can_run_models)
+        // haven't been migrated yet
         const [user] = await db
-          .select()
+          .select({
+            id: users.id,
+            email: users.email,
+            username: users.username,
+            passwordHash: users.passwordHash,
+            companyId: users.companyId,
+            role: users.role,
+          })
           .from(users)
           .where(eq(users.email, email))
           .limit(1);
@@ -109,6 +121,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
+        // Fetch canRunModels separately — column may not exist if migration pending
+        let canRunModels = user.role === "admin"; // default: admins can run
+        try {
+          const [perms] = await db
+            .select({ canRunModels: users.canRunModels })
+            .from(users)
+            .where(eq(users.id, user.id))
+            .limit(1);
+          if (perms) canRunModels = perms.canRunModels;
+        } catch {
+          // Migration 0009 hasn't run yet — use default
+        }
+
         clearFailedLogins(email);
         audit("login_success", { userId: user.id, companyId: user.companyId });
 
@@ -119,6 +144,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           companyId: user.companyId,
           username: user.username,
           role: user.role,
+          canRunModels,
         };
       },
     }),
@@ -131,12 +157,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: "/login",
   },
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.companyId = user.companyId;
         token.dbId = Number(user.id);
         token.username = user.username;
         token.role = user.role;
+        token.canRunModels = user.canRunModels;
+      }
+      // Refresh canRunModels from DB on each request (admin may toggle it)
+      if (trigger !== "signIn" && token.dbId) {
+        try {
+          const [fresh] = await db.select({ canRunModels: users.canRunModels }).from(users).where(eq(users.id, token.dbId)).limit(1);
+          if (fresh) token.canRunModels = fresh.canRunModels;
+        } catch {
+          // Column may not exist yet if migration 0009 hasn't run
+        }
       }
       return token;
     },
@@ -146,6 +182,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.dbId = token.dbId;
         session.user.username = token.username;
         session.user.role = token.role;
+        session.user.canRunModels = token.canRunModels;
       }
       return session;
     },

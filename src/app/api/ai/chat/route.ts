@@ -152,7 +152,13 @@ export async function POST(req: Request) {
   let contextText = "";
   if (scope === "page" && pageNumber) {
     const [page] = await db
-      .select()
+      .select({
+        pageNumber: pages.pageNumber,
+        name: pages.name,
+        drawingNumber: pages.drawingNumber,
+        rawText: pages.rawText,
+        csiCodes: pages.csiCodes,
+      })
       .from(pages)
       .where(
         and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber))
@@ -171,7 +177,13 @@ export async function POST(req: Request) {
   } else {
     // Project-wide: include all pages, truncated
     const allPages = await db
-      .select()
+      .select({
+        pageNumber: pages.pageNumber,
+        name: pages.name,
+        drawingNumber: pages.drawingNumber,
+        rawText: pages.rawText,
+        csiCodes: pages.csiCodes,
+      })
       .from(pages)
       .where(eq(pages.projectId, project.id))
       .orderBy(pages.pageNumber);

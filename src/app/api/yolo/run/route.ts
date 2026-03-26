@@ -12,12 +12,15 @@ import { getToggles } from "@/lib/toggles";
 
 export async function POST(req: Request) {
   const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!session.user.canRunModels) {
+    return NextResponse.json({ error: "You don't have permission to run models. Ask your admin to enable it." }, { status: 403 });
   }
 
-  // Check SageMaker toggle (persisted in S3)
-  const toggles = await getToggles();
+  // Check SageMaker toggle (persisted in S3) — always read fresh for safety
+  const toggles = await getToggles(true);
   if (!toggles.sagemakerEnabled) {
     return NextResponse.json({ error: "SageMaker is disabled by admin. Enable it in Admin > Toggles." }, { status: 403 });
   }
@@ -84,7 +87,7 @@ export async function POST(req: Request) {
 
     // Rasterize pages and upload to S3
     const projectPages = await db
-      .select()
+      .select({ pageNumber: pages.pageNumber })
       .from(pages)
       .where(eq(pages.projectId, project.id))
       .orderBy(pages.pageNumber);
