@@ -98,6 +98,14 @@ resource "aws_ecs_task_definition" "beaver_app" {
           name      = "LABEL_STUDIO_API_KEY"
           valueFrom = aws_secretsmanager_secret.ls_api_key.arn
         },
+        {
+          name      = "LABEL_STUDIO_ADMIN_EMAIL"
+          valueFrom = aws_secretsmanager_secret.ls_admin_email.arn
+        },
+        {
+          name      = "LABEL_STUDIO_ADMIN_PASSWORD"
+          valueFrom = aws_secretsmanager_secret.ls_admin_password.arn
+        },
       ]
 
       logConfiguration = {
@@ -469,7 +477,7 @@ resource "aws_efs_access_point" "label_studio" {
     creation_info {
       owner_uid   = 1001
       owner_gid   = 0
-      permissions = "755"
+      permissions = "700"
     }
   }
 
