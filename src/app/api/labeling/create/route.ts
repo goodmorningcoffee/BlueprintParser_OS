@@ -93,7 +93,7 @@ export async function POST(req: Request) {
   const presignedTasks = await Promise.all(
     pageNumbers.map(async (pageNum) => {
       const key = `${project.dataUrl}/images/page_${pageNum}.png`;
-      const url = await getPresignedGetUrl(key);
+      const url = await getPresignedGetUrl(key, 604800); // 7 days for labeling
       return { data: { image: url }, meta: { pageNumber: pageNum } };
     })
   );

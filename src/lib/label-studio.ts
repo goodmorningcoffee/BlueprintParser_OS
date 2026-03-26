@@ -3,64 +3,31 @@
  * No SDK exists for Node.js — uses fetch directly.
  * Requires LABEL_STUDIO_URL and LABEL_STUDIO_API_KEY env vars.
  *
- * LS 1.23+ uses JWT Personal Access Tokens (PATs). The stored token
- * is a refresh token — must be exchanged for a short-lived access token
- * via POST /api/token/refresh before making API calls.
+ * Uses legacy token auth (Authorization: Token <token>).
+ * Enable via LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN=true on the LS container.
  *
  * @see https://api.labelstud.io/
  */
 
 function getConfig() {
   const url = process.env.LABEL_STUDIO_URL;
-  const refreshToken = process.env.LABEL_STUDIO_API_KEY;
-  if (!url || !refreshToken) {
+  const token = process.env.LABEL_STUDIO_API_KEY;
+  if (!url || !token) {
     throw new Error("LABEL_STUDIO_URL and LABEL_STUDIO_API_KEY must be set");
   }
-  return { url: url.replace(/\/$/, ""), refreshToken };
-}
-
-// Cache the access token to avoid refreshing on every call
-let cachedAccessToken: string | null = null;
-let cachedTokenExpiry = 0;
-
-/**
- * Exchange the JWT refresh token for a short-lived access token.
- * Caches the result for 5 minutes.
- */
-async function getAccessToken(): Promise<string> {
-  const now = Date.now();
-  if (cachedAccessToken && now < cachedTokenExpiry) {
-    return cachedAccessToken;
-  }
-
-  const { url, refreshToken } = getConfig();
-  const res = await fetch(`${url}/api/token/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh: refreshToken }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Failed to refresh LS token (${res.status}): ${body.slice(0, 300)}`);
-  }
-
-  const data = await res.json();
-  cachedAccessToken = data.access;
-  cachedTokenExpiry = now + 5 * 60 * 1000; // Cache for 5 minutes
-  return cachedAccessToken!;
+  return { url: url.replace(/\/$/, ""), token };
 }
 
 async function lsFetch(path: string, options: RequestInit = {}) {
-  const { url } = getConfig();
-  const accessToken = await getAccessToken();
+  const { url, token } = getConfig();
   const res = await fetch(`${url}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: `Token ${token}`,
       ...options.headers,
     },
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -108,15 +75,13 @@ export async function getProject(projectId: number) {
 
 /**
  * Delete a Label Studio project and all its tasks/annotations.
- * Uses raw fetch instead of lsFetch because DELETE returns no body (204),
- * and lsFetch always calls res.json() which would fail.
  */
 export async function deleteProject(projectId: number) {
-  const { url } = getConfig();
-  const accessToken = await getAccessToken();
+  const { url, token } = getConfig();
   const res = await fetch(`${url}/api/projects/${projectId}`, {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: { Authorization: `Token ${token}` },
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok && res.status !== 404) {
     throw new Error(`Failed to delete LS project ${projectId}: ${res.status}`);
@@ -124,14 +89,13 @@ export async function deleteProject(projectId: number) {
 }
 
 /**
- * Check if Label Studio is reachable and auth works.
+ * Check if Label Studio is reachable.
  */
 export async function healthCheck(): Promise<boolean> {
   try {
     const { url } = getConfig();
-    const accessToken = await getAccessToken();
-    const res = await fetch(`${url}/api/projects`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+    const res = await fetch(`${url}/health`, {
+      signal: AbortSignal.timeout(5000),
     });
     return res.ok;
   } catch {

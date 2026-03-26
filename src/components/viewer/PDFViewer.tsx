@@ -216,8 +216,6 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   // Hooks must be before early returns (Rules of Hooks)
   const isDemo = useViewerStore((s) => s.isDemo);
-  const showKeynotes = useViewerStore((s) => s.showKeynotes);
-  const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
   const sidebarCollapsed = useViewerStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useViewerStore((s) => s.toggleSidebar);
   const annotationPanelCollapsed = useViewerStore((s) => s.annotationPanelCollapsed);
@@ -256,6 +254,11 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
             <span className="text-sky-400/80">Chat — Talk with LLM about blueprints</span>
             <span className="text-[var(--border)]">|</span>
             <span className="text-emerald-400/80">QTO — Count + area</span>
+            <span className="text-[var(--border)]">|</span>
+            <span className="text-amber-400/80 inline-flex items-center gap-1">
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="inline-block"><ellipse cx="8" cy="8" rx="7" ry="4.5"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>
+              — Toggle simple_parse on/off
+            </span>
           </div>
           <button
             onClick={toggleTips}
@@ -327,29 +330,6 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
             </>
           )}
 
-          {/* Keynote visibility toggle — hidden when annotation panel collapsed */}
-          {!annotationPanelCollapsed && (
-            <div className="absolute bottom-[26px] left-1/2 -translate-x-1/2 flex items-center gap-1.5 z-10 group">
-              <button
-                onClick={toggleKeynotes}
-                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-colors ${
-                  showKeynotes
-                    ? "border-amber-400/40 text-amber-400 bg-amber-400/10 hover:bg-amber-400/20"
-                    : "border-[var(--border)] text-[var(--muted)] bg-[var(--surface)] hover:text-[var(--fg)]"
-                }`}
-                title={showKeynotes ? "Hide keynotes" : "Show keynotes"}
-              >
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <ellipse cx="8" cy="8" rx="7" ry="4.5" />
-                  <circle cx="8" cy="8" r="2" fill="currentColor" />
-                  {!showKeynotes && <line x1="2" y1="14" x2="14" y2="2" strokeWidth="2" />}
-                </svg>
-              </button>
-              <span className="text-[10px] text-[var(--muted)]/50 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                toggle keynotes on/off
-              </span>
-            </div>
-          )}
         </div>
 
         {showTextPanel && <TextPanel />}

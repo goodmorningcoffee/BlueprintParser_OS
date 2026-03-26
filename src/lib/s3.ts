@@ -114,7 +114,7 @@ export async function createModelUploadPresignedPost(modelSlug: string) {
 
 /**
  * Generate a presigned GET URL for an S3 object.
- * Used for Label Studio image imports — 24h TTL.
+ * Default 2h TTL. Callers can override (e.g. 604800 for 7-day labeling URLs).
  */
 export async function getPresignedGetUrl(key: string, expiresIn = 7200): Promise<string> {
   return getSignedUrl(s3Client, new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }), { expiresIn });
