@@ -119,6 +119,9 @@ export default function AnnotationOverlay({
   const activeModels = useViewerStore((s) => s.activeModels);
   const confidenceThresholds = useViewerStore((s) => s.confidenceThresholds);
   const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
+  const textractData = useViewerStore((s) => s.textractData);
+  const setSearch = useViewerStore((s) => s.setSearch);
+  const searchQuery = useViewerStore((s) => s.searchQuery);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
@@ -647,6 +650,46 @@ export default function AnnotationOverlay({
 
       // Pointer mode: select, delete, move, resize annotations + click keynotes
       if (mode === "pointer") {
+        // Double-click: search for annotation name or OCR word
+        if (e.detail === 2) {
+          // Check if double-clicking an annotation — search for its name
+          for (const ann of pageAnnotations) {
+            const [minX, minY, maxX, maxY] = ann.bbox;
+            const ax = minX * width;
+            const ay = minY * height;
+            const aw = (maxX - minX) * width;
+            const ah = (maxY - minY) * height;
+            if (pos.x >= ax && pos.x <= ax + aw && pos.y >= ay && pos.y <= ay + ah) {
+              e.stopPropagation();
+              if (searchQuery.toLowerCase() === ann.name.toLowerCase()) {
+                setSearch("");
+              } else {
+                setSearch(ann.name);
+              }
+              return;
+            }
+          }
+          // No annotation hit — try OCR word (fallback, in case TextAnnotationOverlay missed it)
+          const pageWords = textractData[pageNumber]?.words;
+          if (pageWords) {
+            const normX = pos.x / width;
+            const normY = pos.y / height;
+            for (const word of pageWords) {
+              const [left, top, w, h] = word.bbox;
+              if (normX >= left && normX <= left + w && normY >= top && normY <= top + h) {
+                if (searchQuery.toLowerCase() === word.text.toLowerCase()) {
+                  setSearch("");
+                } else {
+                  setSearch(word.text);
+                }
+                e.stopPropagation();
+                return;
+              }
+            }
+          }
+          return;
+        }
+
         // If an annotation is already selected, check corners for resize
         if (selectedId !== null) {
           const selAnn = pageAnnotations.find((a) => a.id === selectedId);
@@ -700,6 +743,7 @@ export default function AnnotationOverlay({
           if (pos.x >= ax && pos.x <= ax + aw && pos.y >= ay && pos.y <= ay + ah) {
             e.stopPropagation();
             setSelectedId(ann.id);
+            setSearch(ann.name);
             setDragging(true);
             setResizeCorner(null);
             setDragOffset({ x: pos.x - ax, y: pos.y - ay });
@@ -714,6 +758,7 @@ export default function AnnotationOverlay({
           if (clickX >= left && clickX <= right && clickY >= top && clickY <= bottom) {
             e.stopPropagation();
             setKeynoteFilter({ shape: keynote.shape, text: keynote.text });
+            if (keynote.text) setSearch(keynote.text);
             return;
           }
         }

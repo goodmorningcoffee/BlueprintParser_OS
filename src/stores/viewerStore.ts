@@ -9,6 +9,8 @@ import type {
   ChatMsg,
   TakeoffTab,
   ScaleCalibrationData,
+  TextAnnotation,
+  TextAnnotationResult,
 } from "@/types";
 
 interface ViewerState {
@@ -23,6 +25,8 @@ interface ViewerState {
   zoomIn: () => void;
   zoomOut: () => void;
   zoomFit: () => void;
+  pendingCenter: boolean;
+  clearPendingCenter: () => void;
   setScale: (s: number) => void;
 
   // ─── Mode ────────────────────────────────────────────────
@@ -60,6 +64,14 @@ interface ViewerState {
   setPublicId: (id: string) => void;
   isDemo: boolean;
   setIsDemo: (v: boolean) => void;
+  showLabelingWizard: boolean;
+  setShowLabelingWizard: (v: boolean) => void;
+  labelingWizardStep: number;
+  setLabelingWizardStep: (step: number) => void;
+  labelingSessions: Array<{ labelStudioUrl: string; pageRange: string; taskCount: number }>;
+  setLabelingSessions: (sessions: Array<{ labelStudioUrl: string; pageRange: string; taskCount: number }>) => void;
+  labelingCredentials: { email: string; password: string } | null;
+  setLabelingCredentials: (creds: { email: string; password: string } | null) => void;
 
   // ─── Textract data per page ──────────────────────────────
   textractData: Record<number, TextractPageData>;
@@ -74,6 +86,25 @@ interface ViewerState {
   setCsiCodes: (pageNum: number, codes: CsiCode[]) => void;
   allTrades: string[];
   setAllTrades: (trades: string[]) => void;
+
+  // ─── Text annotations ──────────────────────────────────────
+  textAnnotations: Record<number, TextAnnotation[]>;
+  setTextAnnotations: (pageNum: number, data: TextAnnotation[]) => void;
+  showTextAnnotations: boolean; // global nuke toggle
+  toggleTextAnnotations: () => void;
+  activeTextAnnotationTypes: Record<string, boolean>;
+  setTextAnnotationType: (type: string, active: boolean) => void;
+  setAllTextAnnotationTypes: (active: boolean) => void;
+  hiddenTextAnnotations: Set<string>; // "pageNum:index" keys for individually hidden
+  toggleTextAnnotationVisibility: (pageNum: number, index: number) => void;
+  textAnnotationColors: Record<string, string>;
+  setTextAnnotationColor: (type: string, color: string) => void;
+  activeTextAnnotationFilter: { type: string; text: string } | null;
+  setTextAnnotationFilter: (filter: { type: string; text: string } | null) => void;
+  activeTakeoffFilter: number | null; // takeoff item ID to filter sidebar by
+  setTakeoffFilter: (id: number | null) => void;
+  textPanelTab: "ocr" | "annotations" | "graph";
+  setTextPanelTab: (tab: "ocr" | "annotations" | "graph") => void;
 
   // ─── Panels ──────────────────────────────────────────────
   showTextPanel: boolean;
@@ -103,6 +134,8 @@ interface ViewerState {
   // ─── Help tips ─────────────────────────────────────────
   showTips: boolean;
   toggleTips: () => void;
+  helpMode: boolean;
+  toggleHelpMode: () => void;
 
   // ─── Panel collapse ────────────────────────────────────
   sidebarCollapsed: boolean;
@@ -174,7 +207,9 @@ export const useViewerStore = create<ViewerState>((set) => ({
   scale: 1,
   zoomIn: () => set((s) => ({ scale: Math.min(s.scale * (1 / 0.95), 10) })),
   zoomOut: () => set((s) => ({ scale: Math.max(s.scale * 0.95, 0.2) })),
-  zoomFit: () => set({ scale: 1 }),
+  zoomFit: () => set({ scale: 1, pendingCenter: true }),
+  pendingCenter: false,
+  clearPendingCenter: () => set({ pendingCenter: false }),
   setScale: (scale) => set({ scale }),
 
   mode: "move",
@@ -214,6 +249,14 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setPublicId: (publicId) => set({ publicId }),
   isDemo: false,
   setIsDemo: (isDemo) => set({ isDemo }),
+  showLabelingWizard: false,
+  setShowLabelingWizard: (showLabelingWizard) => set({ showLabelingWizard }),
+  labelingWizardStep: 1,
+  setLabelingWizardStep: (labelingWizardStep) => set({ labelingWizardStep }),
+  labelingSessions: [],
+  setLabelingSessions: (labelingSessions) => set({ labelingSessions }),
+  labelingCredentials: null,
+  setLabelingCredentials: (labelingCredentials) => set({ labelingCredentials }),
 
   textractData: {},
   setTextractData: (pageNum, data) =>
@@ -228,6 +271,38 @@ export const useViewerStore = create<ViewerState>((set) => ({
     set((s) => ({ csiCodes: { ...s.csiCodes, [pageNum]: codes } })),
   allTrades: [],
   setAllTrades: (allTrades) => set({ allTrades }),
+
+  textAnnotations: {},
+  setTextAnnotations: (pageNum, data) =>
+    set((s) => ({ textAnnotations: { ...s.textAnnotations, [pageNum]: data } })),
+  showTextAnnotations: true,
+  toggleTextAnnotations: () => set((s) => ({ showTextAnnotations: !s.showTextAnnotations })),
+  activeTextAnnotationTypes: {},
+  setTextAnnotationType: (type, active) =>
+    set((s) => ({ activeTextAnnotationTypes: { ...s.activeTextAnnotationTypes, [type]: active } })),
+  setAllTextAnnotationTypes: (active) =>
+    set((s) => {
+      const updated: Record<string, boolean> = {};
+      for (const key of Object.keys(s.activeTextAnnotationTypes)) updated[key] = active;
+      return { activeTextAnnotationTypes: updated };
+    }),
+  hiddenTextAnnotations: new Set<string>(),
+  toggleTextAnnotationVisibility: (pageNum, index) =>
+    set((s) => {
+      const key = `${pageNum}:${index}`;
+      const next = new Set(s.hiddenTextAnnotations);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return { hiddenTextAnnotations: next };
+    }),
+  textAnnotationColors: {},
+  setTextAnnotationColor: (type, color) =>
+    set((s) => ({ textAnnotationColors: { ...s.textAnnotationColors, [type]: color } })),
+  activeTextAnnotationFilter: null,
+  setTextAnnotationFilter: (activeTextAnnotationFilter) => set({ activeTextAnnotationFilter }),
+  activeTakeoffFilter: null,
+  setTakeoffFilter: (activeTakeoffFilter) => set({ activeTakeoffFilter }),
+  textPanelTab: "annotations",
+  setTextPanelTab: (textPanelTab) => set({ textPanelTab }),
 
   showTextPanel: false,
   toggleTextPanel: () => set((s) => ({ showTextPanel: !s.showTextPanel })),
@@ -267,6 +342,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
 
   showTips: true,
   toggleTips: () => set((s) => ({ showTips: !s.showTips })),
+  helpMode: false,
+  toggleHelpMode: () => set((s) => ({ helpMode: !s.helpMode })),
 
   sidebarCollapsed: false,
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
@@ -352,10 +429,22 @@ export const useViewerStore = create<ViewerState>((set) => ({
       dataUrl: "",
       publicId: "",
       isDemo: false,
+      showLabelingWizard: false,
+      labelingWizardStep: 1,
+      labelingSessions: [],
+      labelingCredentials: null,
       textractData: {},
       keynotes: {},
       csiCodes: {},
       allTrades: [],
+      textAnnotations: {},
+      showTextAnnotations: true,
+      activeTextAnnotationTypes: {},
+      hiddenTextAnnotations: new Set<string>(),
+      textAnnotationColors: {},
+      activeTextAnnotationFilter: null,
+      activeTakeoffFilter: null,
+      textPanelTab: "annotations",
       chatMessages: [],
       chatScope: "page",
       activeKeynoteFilter: null,

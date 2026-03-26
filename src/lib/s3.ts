@@ -49,6 +49,16 @@ export function getS3Url(projectPath: string, filename: string): string {
 }
 
 /**
+ * Download a file from S3 as a Buffer.
+ */
+export async function downloadFromS3(key: string): Promise<Buffer> {
+  const res = await s3Client.send(
+    new GetObjectCommand({ Bucket: S3_BUCKET, Key: key })
+  );
+  return Buffer.from(await res.Body!.transformToByteArray());
+}
+
+/**
  * Upload a file buffer to S3.
  */
 export async function uploadToS3(

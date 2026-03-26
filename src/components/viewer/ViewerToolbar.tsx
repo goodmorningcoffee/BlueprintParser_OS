@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import Link from "next/link";
 import LabelingWizard from "./LabelingWizard";
+import HelpTooltip from "./HelpTooltip";
 
 interface ViewerToolbarProps {
   projectName: string;
@@ -55,7 +56,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const hasYoloAnnotations = annotations.some((a) => a.source === "yolo");
   const [yoloDropdownOpen, setYoloDropdownOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [showLabelingWizard, setShowLabelingWizard] = useState(false);
+  const showLabelingWizard = useViewerStore((s) => s.showLabelingWizard);
+  const setShowLabelingWizard = useViewerStore((s) => s.setShowLabelingWizard);
   const menuRef = useRef<HTMLDivElement>(null);
   const isDemo = useViewerStore((s) => s.isDemo);
   const yoloDropdownRef = useRef<HTMLDivElement>(null);
@@ -149,30 +151,33 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       <div className="w-px h-6 bg-[var(--border)] mx-2" />
 
       {/* Zoom controls */}
-      <button
-        onClick={zoomOut}
-        className="px-2 py-1 text-sm text-[var(--muted)] hover:text-[var(--fg)]"
-        title="Zoom out"
-      >
-        -
-      </button>
+      <HelpTooltip id="zoom-out">
+        <button
+          onClick={zoomOut}
+          className="px-2 py-1 text-sm text-[var(--muted)] hover:text-[var(--fg)]"
+        >
+          -
+        </button>
+      </HelpTooltip>
       <span className="text-xs tabular-nums min-w-12 text-center text-[var(--muted)]">
         {Math.round(scale * 100)}%
       </span>
-      <button
-        onClick={zoomIn}
-        className="px-2 py-1 text-sm text-[var(--muted)] hover:text-[var(--fg)]"
-        title="Zoom in"
-      >
-        +
-      </button>
-      <button
-        onClick={zoomFit}
-        className="px-2 py-1 text-xs text-[var(--muted)] hover:text-[var(--fg)] border border-[var(--border)] rounded"
-        title="Fit to window"
-      >
-        Fit
-      </button>
+      <HelpTooltip id="zoom-in">
+        <button
+          onClick={zoomIn}
+          className="px-2 py-1 text-sm text-[var(--muted)] hover:text-[var(--fg)]"
+        >
+          +
+        </button>
+      </HelpTooltip>
+      <HelpTooltip id="zoom-fit">
+        <button
+          onClick={zoomFit}
+          className="px-2 py-1 text-xs text-[var(--muted)] hover:text-[var(--fg)] border border-[var(--border)] rounded"
+        >
+          Fit
+        </button>
+      </HelpTooltip>
 
       <div className="w-px h-6 bg-[var(--border)] mx-2" />
 
@@ -181,49 +186,55 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         <LabelingWizard
           onClose={() => setShowLabelingWizard(false)}
           projectName={projectName}
+          isDemo={isDemo}
         />
       )}
 
       {/* Mode toggle */}
       <div className="flex border border-[var(--border)] rounded overflow-hidden">
-        <button
-          onClick={() => setMode("pointer")}
-          className={`px-3 py-1 text-xs ${
-            mode === "pointer"
-              ? "bg-[var(--accent)] text-white"
-              : "text-[var(--muted)] hover:text-[var(--fg)]"
-          }`}
-          title="Click on keynotes and markups"
-        >
-          Pointer
-        </button>
-        <button
-          onClick={() => setMode("move")}
-          className={`px-3 py-1 text-xs ${
-            mode === "move"
-              ? "bg-[var(--accent)] text-white"
-              : "text-[var(--muted)] hover:text-[var(--fg)]"
-          }`}
-        >
-          Pan
-        </button>
-        <button
-          onClick={() => setMode("markup")}
-          className={`px-3 py-1 text-xs ${
-            mode === "markup"
-              ? "bg-[var(--accent)] text-white"
-              : "text-[var(--muted)] hover:text-[var(--fg)]"
-          }`}
-          title="Draw markups"
-        >
-          Add Markup
-        </button>
+        <HelpTooltip id="pointer-mode">
+          <button
+            onClick={() => setMode("pointer")}
+            className={`px-3 py-1 text-xs ${
+              mode === "pointer"
+                ? "bg-[var(--accent)] text-white"
+                : "text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}
+          >
+            Pointer/Select
+          </button>
+        </HelpTooltip>
+        <HelpTooltip id="pan-mode">
+          <button
+            onClick={() => setMode("move")}
+            className={`px-3 py-1 text-xs ${
+              mode === "move"
+                ? "bg-[var(--accent)] text-white"
+                : "text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}
+          >
+            Pan/Zoom
+          </button>
+        </HelpTooltip>
+        <HelpTooltip id="markup-mode">
+          <button
+            onClick={() => setMode("markup")}
+            className={`px-3 py-1 text-xs ${
+              mode === "markup"
+                ? "bg-[var(--accent)] text-white"
+                : "text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}
+          >
+            Add Markup
+          </button>
+        </HelpTooltip>
       </div>
 
       {/* Spacer — pushes center section */}
       <div className="flex-1" />
 
       {/* Menu dropdown */}
+      <HelpTooltip id="menu-button">
       <div className="relative" ref={menuRef}>
         <button
           onClick={() => setMenuOpen((o) => !o)}
@@ -267,8 +278,10 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           </div>
         )}
       </div>
+      </HelpTooltip>
 
       {/* Search */}
+      <HelpTooltip id="search-bar">
       <div className="relative flex items-center">
         <input
           type="text"
@@ -298,30 +311,34 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           )}
         </div>
       </div>
+      </HelpTooltip>
 
       {/* Trade filter */}
       {allTrades.length > 0 && (
-        <select
-          value={activeTradeFilter || ""}
-          onChange={(e) => setTradeFilter(e.target.value || null)}
-          className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-40"
-        >
-          <option value="">All Trades</option>
-          {allTrades.map((trade) => (
-            <option key={trade} value={trade}>
-              {trade}
-            </option>
-          ))}
-        </select>
+        <HelpTooltip id="trade-filter">
+          <select
+            value={activeTradeFilter || ""}
+            onChange={(e) => setTradeFilter(e.target.value || null)}
+            className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-40"
+          >
+            <option value="">All Trades</option>
+            {allTrades.map((trade) => (
+              <option key={trade} value={trade}>
+                {trade}
+              </option>
+            ))}
+          </select>
+        </HelpTooltip>
       )}
 
       {/* CSI code filter */}
       {allCsiCodes.length > 0 && (
-        <select
-          value={activeCsiFilter || ""}
-          onChange={(e) => setCsiFilter(e.target.value || null)}
-          className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-48"
-        >
+        <HelpTooltip id="csi-filter">
+          <select
+            value={activeCsiFilter || ""}
+            onChange={(e) => setCsiFilter(e.target.value || null)}
+            className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-48"
+          >
           <option value="">All CSI Codes</option>
           {allCsiCodes.map((csi) => (
             <option key={csi.code} value={csi.code}>
@@ -329,30 +346,33 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             </option>
           ))}
         </select>
+        </HelpTooltip>
       )}
 
       {/* Spacer — pushes right buttons to edge */}
       <div className="flex-1" />
 
       {/* Keynote visibility toggle */}
-      <button
-        onClick={toggleKeynotes}
-        className={`px-2 py-1 text-xs rounded border ${
-          showKeynotes
-            ? "border-amber-400/60 text-amber-400 bg-amber-400/10"
-            : "border-amber-400/20 text-amber-400/50 hover:text-amber-300 hover:border-amber-400/40"
-        }`}
-        title={showKeynotes ? "Hide keynotes" : "Show keynotes"}
-      >
+      <HelpTooltip id="keynote-toggle">
+        <button
+          onClick={toggleKeynotes}
+          className={`px-2 py-1 text-xs rounded border ${
+            showKeynotes
+              ? "border-amber-400/60 text-amber-400 bg-amber-400/10"
+              : "border-amber-400/20 text-amber-400/50 hover:text-amber-300 hover:border-amber-400/40"
+          }`}
+        >
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="inline-block">
           <ellipse cx="8" cy="8" rx="7" ry="4.5" />
           <circle cx="8" cy="8" r="2" fill="currentColor" />
           {!showKeynotes && <line x1="2" y1="14" x2="14" y2="2" strokeWidth="2" />}
         </svg>
       </button>
+      </HelpTooltip>
 
       {/* YOLO detections toggle + per-model dropdown */}
       {hasYoloAnnotations && (
+        <HelpTooltip id="yolo-toggle">
         <div className="relative" ref={yoloDropdownRef}>
           <button
             onClick={toggleDetections}
@@ -417,46 +437,50 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             </div>
           )}
         </div>
+        </HelpTooltip>
       )}
 
       {/* Text panel toggle */}
-      <button
-        onClick={toggleTextPanel}
-        className={`px-2 py-1 text-xs rounded border ${
-          showTextPanel
-            ? "border-sky-400/60 text-sky-400 bg-sky-400/10"
-            : "border-sky-400/20 text-sky-400/50 hover:text-sky-300 hover:border-sky-400/40"
-        }`}
-        title="Toggle text panel"
-      >
-        Text
-      </button>
+      <HelpTooltip id="text-button">
+        <button
+          onClick={toggleTextPanel}
+          className={`px-2 py-1 text-xs rounded border ${
+            showTextPanel
+              ? "border-sky-400/60 text-sky-400 bg-sky-400/10"
+              : "border-sky-400/20 text-sky-400/50 hover:text-sky-300 hover:border-sky-400/40"
+          }`}
+        >
+          Text
+        </button>
+      </HelpTooltip>
 
       {/* Chat panel toggle */}
-      <button
-        onClick={toggleChatPanel}
-        className={`px-2 py-1 text-xs rounded border ${
-          showChatPanel
-            ? "border-blue-400/60 text-blue-400 bg-blue-400/10"
-            : "border-blue-400/20 text-blue-400/50 hover:text-blue-300 hover:border-blue-400/40"
-        }`}
-        title="Toggle chat panel"
-      >
-        Chat
-      </button>
+      <HelpTooltip id="chat-button">
+        <button
+          onClick={toggleChatPanel}
+          className={`px-2 py-1 text-xs rounded border ${
+            showChatPanel
+              ? "border-blue-400/60 text-blue-400 bg-blue-400/10"
+              : "border-blue-400/20 text-blue-400/50 hover:text-blue-300 hover:border-blue-400/40"
+          }`}
+        >
+          Chat
+        </button>
+      </HelpTooltip>
 
       {/* Takeoff panel toggle */}
-      <button
-        onClick={toggleTakeoffPanel}
-        className={`px-2 py-1 text-xs rounded border ${
-          showTakeoffPanel
-            ? "border-emerald-400/60 text-emerald-400 bg-emerald-400/10"
-            : "border-emerald-400/20 text-emerald-400/50 hover:text-emerald-300 hover:border-emerald-400/40"
-        }`}
-        title="Toggle QTO panel"
-      >
-        QTO
-      </button>
+      <HelpTooltip id="qto-button">
+        <button
+          onClick={toggleTakeoffPanel}
+          className={`px-2 py-1 text-xs rounded border ${
+            showTakeoffPanel
+              ? "border-emerald-400/60 text-emerald-400 bg-emerald-400/10"
+              : "border-emerald-400/20 text-emerald-400/50 hover:text-emerald-300 hover:border-emerald-400/40"
+          }`}
+        >
+          QTO
+        </button>
+      </HelpTooltip>
     </div>
   );
 }

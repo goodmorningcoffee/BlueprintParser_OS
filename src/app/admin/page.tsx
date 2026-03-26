@@ -26,6 +26,7 @@ interface UserItem {
   username: string;
   email: string;
   role: string;
+  canRunModels: boolean;
 }
 
 export default function AdminPage() {
@@ -48,6 +49,8 @@ export default function AdminPage() {
   const pollKey = (pid: string, mid: number) => `${pid}:${mid}`;
   const [toggles, setToggles] = useState({ sagemakerEnabled: true, quotaEnabled: true, hasPassword: false });
   const [togglePassword, setTogglePassword] = useState("");
+  const [reprocessing, setReprocessing] = useState(false);
+  const [reprocessLog, setReprocessLog] = useState<string[]>([]);
   const [toggleError, setToggleError] = useState("");
   const [newTogglePass, setNewTogglePass] = useState("");
   const [currentTogglePass, setCurrentTogglePass] = useState("");
@@ -111,6 +114,7 @@ export default function AdminPage() {
       setToggles((prev) => ({ ...prev, sagemakerEnabled: data.sagemakerEnabled, quotaEnabled: data.quotaEnabled }));
       setTogglePassword("");
       setToggleError("");
+      setYoloJobs({}); // Clear stale YOLO error states after toggle change
     } else {
       const err = await res.json().catch(() => ({ error: "Failed" }));
       setToggleError(err.error || "Failed");
@@ -360,6 +364,57 @@ export default function AdminPage() {
     } else {
       const err = await res.json();
       setMessage(err.error || "Failed");
+    }
+  }
+
+  async function toggleCanRunModels(userId: string, canRunModels: boolean) {
+    const res = await fetch("/api/admin/users", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: userId, canRunModels }),
+    });
+    if (res.ok) {
+      setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, canRunModels } : u));
+    } else {
+      const err = await res.json().catch(() => ({ error: "Failed" }));
+      setMessage(err.error || "Failed to update permission");
+    }
+  }
+
+  async function reprocessAll() {
+    setReprocessing(true);
+    setReprocessLog(["Starting reprocess..."]);
+    try {
+      const res = await fetch("/api/admin/reprocess", { method: "POST" });
+      if (!res.ok || !res.body) {
+        setReprocessLog((prev) => [...prev, `Error: ${res.status}`]);
+        setReprocessing(false);
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line);
+            if (data.type === "start") setReprocessLog((prev) => [...prev, `Found ${data.projects} projects`]);
+            else if (data.type === "project") setReprocessLog((prev) => [...prev, `Processing: ${data.name} (${data.pages} pages)`]);
+            else if (data.type === "progress") setReprocessLog((prev) => [...prev, `  ${data.updated} pages updated...`]);
+            else if (data.type === "done") setReprocessLog((prev) => [...prev, `Done! ${data.updated} pages updated, ${data.skipped} skipped.`]);
+          } catch { /* ignore parse errors */ }
+        }
+      }
+    } catch (err) {
+      setReprocessLog((prev) => [...prev, `Failed: ${err instanceof Error ? err.message : "unknown"}`]);
+    } finally {
+      setReprocessing(false);
     }
   }
 
@@ -675,6 +730,31 @@ export default function AdminPage() {
           </div>
         </section>
 
+        {/* Reprocess Text Annotations */}
+        <section>
+          <h2 className="text-lg font-semibold mb-3">Reprocess Text Annotations</h2>
+          <div className="p-3 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3">
+            <p className="text-xs text-[var(--muted)]">
+              Re-run text annotation detectors (abbreviations, equipment tags, phone numbers, etc.) on all existing projects.
+              Uses existing OCR data — no re-upload needed. User notes are preserved.
+            </p>
+            <button
+              onClick={reprocessAll}
+              disabled={reprocessing}
+              className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] disabled:opacity-40"
+            >
+              {reprocessing ? "Reprocessing..." : "Reprocess All Projects"}
+            </button>
+            {reprocessLog.length > 0 && (
+              <div className="mt-2 max-h-40 overflow-y-auto bg-[var(--bg)] rounded p-2 text-xs font-mono text-[var(--muted)]">
+                {reprocessLog.map((line, i) => (
+                  <div key={i}>{line}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* Run YOLO */}
         {yoloModels.length > 0 && (
           <section>
@@ -748,45 +828,67 @@ export default function AdminPage() {
         {/* Users */}
         <section>
           <h2 className="text-lg font-semibold mb-3">Users</h2>
-          <div className="space-y-2 mb-4">
-            {users.map((u) => (
-              <div
-                key={u.id}
-                className="flex items-center justify-between p-3 bg-[var(--surface)] border border-[var(--border)] rounded"
-              >
-                <div>
-                  <span className="font-medium">{u.username}</span>
-                  <span className="text-xs text-[var(--muted)] ml-2">{u.email}</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs px-2 py-0.5 rounded bg-[var(--bg)] text-[var(--muted)]">
-                    {u.role}
-                  </span>
-                  {u.email !== session?.user?.email && (
-                    <button
-                      onClick={async () => {
-                        if (!confirm(`Delete user ${u.username}?`)) return;
-                        const res = await fetch("/api/admin/users", {
-                          method: "DELETE",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ id: u.id }),
-                        });
-                        if (res.ok) {
-                          setUsers((prev) => prev.filter((x) => x.id !== u.id));
-                          setMessage("User deleted");
-                        } else {
-                          const err = await res.json();
-                          setMessage(err.error || "Delete failed");
-                        }
-                      }}
-                      className="text-xs text-[var(--muted)] hover:text-red-400"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+          <div className="border border-[var(--border)] rounded-lg overflow-hidden mb-4">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[var(--border)] text-left text-[var(--muted)]">
+                  <th className="px-3 py-2">Username</th>
+                  <th className="px-3 py-2">Email</th>
+                  <th className="px-3 py-2">Role</th>
+                  <th className="px-3 py-2 text-center">Can Run Models</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id} className="border-b border-[var(--border)] last:border-0">
+                    <td className="px-3 py-2 font-medium">{u.username}</td>
+                    <td className="px-3 py-2 text-[var(--muted)]">{u.email}</td>
+                    <td className="px-3 py-2">
+                      <span className="text-xs px-2 py-0.5 rounded bg-[var(--bg)] text-[var(--muted)]">
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        onClick={() => toggleCanRunModels(u.id, !u.canRunModels)}
+                        className={`px-3 py-1 text-xs rounded border transition-colors ${
+                          u.canRunModels
+                            ? "bg-green-600/20 border-green-500/30 text-green-400 hover:bg-green-600/30"
+                            : "bg-[var(--bg)] border-[var(--border)] text-[var(--muted)] hover:border-red-400/50 hover:text-red-400"
+                        }`}
+                      >
+                        {u.canRunModels ? "Yes" : "No"}
+                      </button>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {u.email !== session?.user?.email && (
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Delete user ${u.username}?`)) return;
+                            const res = await fetch("/api/admin/users", {
+                              method: "DELETE",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ id: u.id }),
+                            });
+                            if (res.ok) {
+                              setUsers((prev) => prev.filter((x) => x.id !== u.id));
+                              setMessage("User deleted");
+                            } else {
+                              const err = await res.json();
+                              setMessage(err.error || "Delete failed");
+                            }
+                          }}
+                          className="text-xs text-[var(--muted)] hover:text-red-400"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
 
           <div className="p-4 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3">

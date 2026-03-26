@@ -1,39 +1,36 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
-import type { LabelingTaskType } from "@/lib/labeling-config";
-
-const TASK_TYPES: Array<{ id: LabelingTaskType; name: string; description: string; hint: string }> = [
-  { id: "detection", name: "Object Detection", description: "Draw bounding boxes around objects", hint: "door, window, outlet, panel" },
-  { id: "classification", name: "Classification", description: "Label entire images by category", hint: "electrical, plumbing, structural, mechanical" },
-  { id: "segmentation", name: "Polygon Segmentation", description: "Draw polygon masks around regions", hint: "building footprint, road, parking" },
-  { id: "text", name: "Text / LLM", description: "Annotate with free-text descriptions", hint: "" },
-];
 
 interface LabelingWizardProps {
   onClose: () => void;
   projectName: string;
+  isDemo?: boolean;
 }
 
-export default function LabelingWizard({ onClose, projectName }: LabelingWizardProps) {
+export default function LabelingWizard({ onClose, projectName, isDemo }: LabelingWizardProps) {
   const publicId = useViewerStore((s) => s.publicId);
   const numPages = useViewerStore((s) => s.numPages);
   const pageNumber = useViewerStore((s) => s.pageNumber);
 
-  const [step, setStep] = useState(1);
-  const [taskType, setTaskType] = useState<LabelingTaskType>("detection");
-  const [labelsInput, setLabelsInput] = useState("");
-  const [name, setName] = useState(`${projectName} - Detection`);
+  // Persistent state in Zustand (survives tab switches)
+  const wizardStep = useViewerStore((s) => s.labelingWizardStep);
+  const setWizardStep = useViewerStore((s) => s.setLabelingWizardStep);
+  const storedSessions = useViewerStore((s) => s.labelingSessions);
+  const setStoredSessions = useViewerStore((s) => s.setLabelingSessions);
+  const storedCreds = useViewerStore((s) => s.labelingCredentials);
+  const setStoredCreds = useViewerStore((s) => s.setLabelingCredentials);
+
+  // Local form state (OK to reset)
   const [pagesPerProject, setPagesPerProject] = useState(10);
   const [pageSelection, setPageSelection] = useState<"all" | "current" | "range">("all");
   const [rangeInput, setRangeInput] = useState(`1-${numPages}`);
+  const [tiling, setTiling] = useState(false);
 
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<Array<{ labelStudioUrl: string; pageRange: string; taskCount: number }>>([]);
-
-  const labels = labelsInput.split(",").map((l) => l.trim()).filter(Boolean);
+  const [loadingSessions, setLoadingSessions] = useState(false);
 
   const selectedPages =
     pageSelection === "current" ? 1
@@ -43,23 +40,46 @@ export default function LabelingWizard({ onClose, projectName }: LabelingWizardP
       })()
     : numPages;
 
-  const projectCount = Math.ceil(selectedPages / pagesPerProject);
+  const totalImages = tiling ? selectedPages * 9 : selectedPages;
+  const projectCount = Math.ceil(totalImages / pagesPerProject);
+
+  // Determine which step to show
+  const step = isDemo ? 3 : wizardStep;
+
+  // If we already have sessions in store (tab switch recovery), jump to done
+  useEffect(() => {
+    if (!isDemo && storedSessions.length > 0 && wizardStep < 3) {
+      setWizardStep(3);
+    }
+  }, []);
+
+  // For demo users: fetch existing sessions + credentials on mount
+  useEffect(() => {
+    if (!isDemo) return;
+    setLoadingSessions(true);
+    Promise.all([
+      fetch(`/api/demo/labeling/sessions?projectId=${publicId}`).then((r) => r.ok ? r.json() : []),
+      fetch("/api/demo/labeling/credentials").then((r) => r.ok ? r.json() : null),
+    ]).then(([sessionsData, creds]) => {
+      setStoredSessions(sessionsData);
+      setStoredCreds(creds);
+    }).catch(() => {}).finally(() => setLoadingSessions(false));
+  }, [isDemo, publicId]);
 
   async function handleCreate() {
     setCreating(true);
     setError(null);
+    setWizardStep(2);
     try {
       const res = await fetch("/api/labeling/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId: publicId,
-          taskType,
-          labels,
           pagesPerProject,
           pageSelection,
           pageRange: pageSelection === "current" ? String(pageNumber) : pageSelection === "range" ? rangeInput : undefined,
-          projectName: name,
+          tiling,
         }),
       });
 
@@ -69,8 +89,10 @@ export default function LabelingWizard({ onClose, projectName }: LabelingWizardP
       }
 
       const data = await res.json();
-      setSessions(data.sessions);
-      setStep(5);
+      setStoredSessions(data.sessions);
+      // Fetch LS credentials
+      fetch("/api/labeling/credentials").then((r) => r.json()).then(setStoredCreds).catch(() => {});
+      setWizardStep(3);
     } catch (err: any) {
       setError(err.message || "Failed to create labeling project");
     } finally {
@@ -79,7 +101,7 @@ export default function LabelingWizard({ onClose, projectName }: LabelingWizardP
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={step === 3 ? undefined : onClose}>
       <div
         className="bg-[var(--surface)] border border-[var(--border)] rounded-xl w-full max-w-lg p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -87,181 +109,167 @@ export default function LabelingWizard({ onClose, projectName }: LabelingWizardP
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold">
-            {step <= 4 ? `Data Labeling Setup (${step}/4)` : "Ready"}
+            {isDemo ? "Data Labeling" : step === 3 ? "Label Studio Projects" : `Create Label Studio Projects (${step}/2)`}
           </h2>
           <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--fg)]">x</button>
         </div>
 
-        {/* Step 1: Task Type */}
-        {step === 1 && (
-          <div className="space-y-2">
-            <p className="text-sm text-[var(--muted)] mb-3">What type of labeling task?</p>
-            {TASK_TYPES.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => {
-                  setTaskType(t.id);
-                  setName(`${projectName} - ${t.name}`);
-                }}
-                className={`w-full text-left p-3 rounded border transition-colors ${
-                  taskType === t.id
-                    ? "border-[var(--accent)] bg-[var(--accent)]/10"
-                    : "border-[var(--border)] hover:border-[var(--accent)]/50"
-                }`}
-              >
-                <span className="text-sm font-medium">{t.name}</span>
-                <span className="text-xs text-[var(--muted)] block">{t.description}</span>
-              </button>
-            ))}
-            <div className="flex justify-end mt-4">
-              <button
-                onClick={() => setStep(2)}
-                className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)]"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 2: Labels */}
-        {step === 2 && (
-          <div className="space-y-3">
-            <p className="text-sm text-[var(--muted)]">
-              {taskType === "text" ? "No labels needed for text annotation." : "Enter the labels (comma-separated):"}
-            </p>
-            {taskType !== "text" && (
-              <>
-                <input
-                  autoFocus
-                  value={labelsInput}
-                  onChange={(e) => setLabelsInput(e.target.value)}
-                  placeholder={TASK_TYPES.find((t) => t.id === taskType)?.hint}
-                  className="w-full px-3 py-2 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]"
-                />
-                {labels.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {labels.map((l, i) => (
-                      <span key={i} className="text-xs px-2 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)]">{l}</span>
+        {/* Steps 1-2: Only for authenticated users */}
+        {!isDemo && (
+          <>
+            {/* Step 1: Page Selection + Tiling */}
+            {step === 1 && (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-[var(--muted)] block mb-1">Pages</label>
+                  <div className="flex gap-2">
+                    {(["all", "current", "range"] as const).map((opt) => (
+                      <button
+                        key={opt}
+                        onClick={() => setPageSelection(opt)}
+                        className={`px-3 py-1 text-xs rounded border ${
+                          pageSelection === opt
+                            ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
+                            : "border-[var(--border)] text-[var(--muted)]"
+                        }`}
+                      >
+                        {opt === "all" ? `All (${numPages})` : opt === "current" ? `Current (${pageNumber})` : "Range"}
+                      </button>
                     ))}
                   </div>
+                  {pageSelection === "range" && (
+                    <input
+                      value={rangeInput}
+                      onChange={(e) => setRangeInput(e.target.value)}
+                      placeholder="1-50"
+                      className="mt-2 w-32 px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded"
+                    />
+                  )}
+                </div>
+
+                {/* Tiling toggle */}
+                <div
+                  onClick={() => setTiling(!tiling)}
+                  className={`flex items-center gap-3 p-3 rounded border cursor-pointer transition-colors ${
+                    tiling ? "border-[var(--accent)] bg-[var(--accent)]/10" : "border-[var(--border)] hover:border-[var(--accent)]/50"
+                  }`}
+                >
+                  <div className={`w-4 h-4 rounded border flex items-center justify-center ${
+                    tiling ? "border-[var(--accent)] bg-[var(--accent)]" : "border-[var(--border)]"
+                  }`}>
+                    {tiling && <span className="text-white text-xs">&#10003;</span>}
+                  </div>
+                  <div>
+                    <span className="text-sm font-medium">3x3 Tiling</span>
+                    <span className="text-xs text-[var(--muted)] block">Split each page into 9 tiles for more training data</span>
+                  </div>
+                </div>
+
+                {tiling && (
+                  <div className="text-xs text-[var(--muted)] bg-[var(--bg)] p-2 rounded">
+                    {selectedPages} pages x 9 tiles = <span className="text-[var(--fg)] font-medium">{totalImages}</span> images
+                  </div>
                 )}
-              </>
+
+                <div>
+                  <label className="text-xs text-[var(--muted)] block mb-1">Images per Label Studio project: {pagesPerProject}</label>
+                  <input
+                    type="range" min="2" max="50" step="2" value={pagesPerProject}
+                    onChange={(e) => setPagesPerProject(parseInt(e.target.value))}
+                    className="w-full h-1 accent-[var(--accent)]"
+                  />
+                </div>
+
+                <div className="text-xs text-[var(--muted)] bg-[var(--bg)] p-2 rounded">
+                  <span className="text-[var(--fg)] font-medium">{totalImages}</span> images across <span className="text-[var(--fg)] font-medium">{projectCount}</span> Label Studio project{projectCount !== 1 ? "s" : ""} (<span className="text-[var(--fg)] font-medium">{pagesPerProject}</span> images per project)
+                </div>
+
+                <div className="flex justify-end mt-4">
+                  <button
+                    onClick={handleCreate}
+                    className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)]"
+                  >
+                    Create
+                  </button>
+                </div>
+              </div>
             )}
-            <div className="flex justify-between mt-4">
-              <button onClick={() => setStep(1)} className="px-4 py-2 text-sm text-[var(--muted)] hover:text-[var(--fg)]">Back</button>
-              <button
-                onClick={() => setStep(3)}
-                disabled={taskType !== "text" && labels.length === 0}
-                className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] disabled:opacity-40"
-              >
-                Next
-              </button>
-            </div>
-          </div>
+
+            {/* Step 2: Creating */}
+            {step === 2 && (
+              <div className="text-center py-8">
+                {creating ? (
+                  <>
+                    <div className="text-sm text-[var(--muted)] animate-pulse">Creating Label Studio projects...</div>
+                    <div className="text-xs text-[var(--muted)] mt-2">
+                      {tiling ? "Generating tiles and importing images" : "Importing images"}
+                    </div>
+                  </>
+                ) : error ? (
+                  <>
+                    <div className="text-sm text-red-400 mb-3">{error}</div>
+                    <button
+                      onClick={handleCreate}
+                      className="px-4 py-2 text-sm border border-[var(--border)] rounded hover:border-[var(--accent)]"
+                    >
+                      Retry
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            )}
+          </>
         )}
 
-        {/* Step 3: Project Setup */}
+        {/* Step 3: Sessions view (authenticated after creation, demo on mount) */}
         {step === 3 && (
           <div className="space-y-3">
-            <div>
-              <label className="text-xs text-[var(--muted)] block mb-1">Project Name</label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs text-[var(--muted)] block mb-1">Pages</label>
-              <div className="flex gap-2">
-                {(["all", "current", "range"] as const).map((opt) => (
-                  <button
-                    key={opt}
-                    onClick={() => setPageSelection(opt)}
-                    className={`px-3 py-1 text-xs rounded border ${
-                      pageSelection === opt
-                        ? "border-[var(--accent)] text-[var(--accent)]"
-                        : "border-[var(--border)] text-[var(--muted)]"
-                    }`}
-                  >
-                    {opt === "all" ? `All (${numPages})` : opt === "current" ? `Current (${pageNumber})` : "Range"}
-                  </button>
-                ))}
+            {/* Loading state for demo */}
+            {isDemo && loadingSessions && (
+              <div className="text-center py-8">
+                <div className="text-sm text-[var(--muted)] animate-pulse">Loading labeling sessions...</div>
               </div>
-              {pageSelection === "range" && (
-                <input
-                  value={rangeInput}
-                  onChange={(e) => setRangeInput(e.target.value)}
-                  placeholder="1-50"
-                  className="mt-2 w-32 px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded"
-                />
-              )}
-            </div>
+            )}
 
-            <div>
-              <label className="text-xs text-[var(--muted)] block mb-1">Pages per Label Studio project: {pagesPerProject}</label>
-              <input
-                type="range" min="5" max="50" step="5" value={pagesPerProject}
-                onChange={(e) => setPagesPerProject(parseInt(e.target.value))}
-                className="w-full h-1 accent-[var(--accent)]"
-              />
-            </div>
+            {/* Success header (authenticated only) */}
+            {!isDemo && storedSessions.length > 0 && (
+              <div className="text-center mb-4">
+                <span className="text-green-400 text-2xl">&#10003;</span>
+                <p className="text-sm mt-2">Label Studio project{storedSessions.length > 1 ? "s" : ""} created!</p>
+              </div>
+            )}
 
-            <div className="text-xs text-[var(--muted)] bg-[var(--bg)] p-2 rounded">
-              This will create <span className="text-[var(--fg)] font-medium">{projectCount}</span> project{projectCount !== 1 ? "s" : ""} with up to <span className="text-[var(--fg)] font-medium">{pagesPerProject}</span> images each ({selectedPages} pages total)
-            </div>
+            {/* No sessions message (demo) */}
+            {isDemo && !loadingSessions && storedSessions.length === 0 && (
+              <div className="text-center py-6">
+                <p className="text-sm text-[var(--muted)]">No labeling sessions for this project yet.</p>
+              </div>
+            )}
 
-            <div className="flex justify-between mt-4">
-              <button onClick={() => setStep(2)} className="px-4 py-2 text-sm text-[var(--muted)] hover:text-[var(--fg)]">Back</button>
-              <button
-                onClick={() => { setStep(4); handleCreate(); }}
-                className="px-4 py-2 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)]"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        )}
+            {/* Credentials section */}
+            {storedCreds && storedSessions.length > 0 && (
+              <div className="p-3 bg-[var(--bg)] rounded border border-[var(--border)] space-y-2">
+                <p className="text-xs text-[var(--muted)] font-medium">Label Studio Login</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--muted)]">Email:</span>
+                  <span className="text-xs text-[var(--fg)] font-mono select-all">{storedCreds.email}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--muted)]">Password:</span>
+                  <span className="text-xs text-[var(--fg)] font-mono select-all">{storedCreds.password}</span>
+                </div>
+                <p className="text-xs text-[var(--muted)] italic">Log in once — your session will persist.</p>
+              </div>
+            )}
 
-        {/* Step 4: Creating */}
-        {step === 4 && (
-          <div className="text-center py-8">
-            {creating ? (
-              <>
-                <div className="text-sm text-[var(--muted)] animate-pulse">Creating Label Studio project...</div>
-                <div className="text-xs text-[var(--muted)] mt-2">Generating presigned URLs and importing tasks</div>
-              </>
-            ) : error ? (
-              <>
-                <div className="text-sm text-red-400 mb-3">{error}</div>
-                <button
-                  onClick={handleCreate}
-                  className="px-4 py-2 text-sm border border-[var(--border)] rounded hover:border-[var(--accent)]"
-                >
-                  Retry
-                </button>
-              </>
-            ) : null}
-          </div>
-        )}
-
-        {/* Step 5: Success */}
-        {step === 5 && (
-          <div className="space-y-3">
-            <div className="text-center mb-4">
-              <span className="text-green-400 text-2xl">&#10003;</span>
-              <p className="text-sm mt-2">Label Studio project{sessions.length > 1 ? "s" : ""} created successfully!</p>
-            </div>
-            {sessions.map((s, i) => (
+            {storedSessions.map((s, i) => (
               <div key={i} className="flex items-center justify-between p-3 bg-[var(--bg)] rounded border border-[var(--border)]">
                 <div>
                   <span className="text-xs text-[var(--muted)]">Pages {s.pageRange}</span>
                   <span className="text-xs text-[var(--muted)] ml-2">({s.taskCount} images)</span>
                 </div>
                 <a
-                  href={`/api/labeling/login?redirect=/projects/${s.labelStudioUrl.split("/projects/")[1] || ""}`}
+                  href={s.labelStudioUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-3 py-1 text-xs bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)]"
@@ -270,9 +278,24 @@ export default function LabelingWizard({ onClose, projectName }: LabelingWizardP
                 </a>
               </div>
             ))}
-            <div className="flex justify-end mt-4">
-              <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--muted)] hover:text-[var(--fg)]">Close</button>
-            </div>
+
+            {/* New project button (authenticated only) */}
+            {!isDemo && (
+              <div className="flex justify-between mt-4">
+                <button
+                  onClick={() => { setStoredSessions([]); setStoredCreds(null); setWizardStep(1); }}
+                  className="px-4 py-2 text-sm text-[var(--muted)] hover:text-[var(--fg)]"
+                >
+                  Create Another
+                </button>
+                <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--muted)] hover:text-[var(--fg)]">Close</button>
+              </div>
+            )}
+            {isDemo && (
+              <div className="flex justify-end mt-4">
+                <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--muted)] hover:text-[var(--fg)]">Close</button>
+              </div>
+            )}
           </div>
         )}
       </div>

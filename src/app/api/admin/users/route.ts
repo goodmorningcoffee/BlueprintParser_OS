@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { users, companies } from "@/lib/db/schema";
+import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
 
@@ -12,7 +12,8 @@ export async function GET() {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 
-  const allUsers = await db
+  // Select core fields first (always available)
+  const coreUsers = await db
     .select({
       id: users.publicId,
       username: users.username,
@@ -22,6 +23,24 @@ export async function GET() {
     })
     .from(users)
     .where(eq(users.companyId, session.user.companyId));
+
+  // Try to fetch canRunModels — column may not exist yet
+  let permsMap: Record<string, boolean> = {};
+  try {
+    const perms = await db
+      .select({ id: users.publicId, canRunModels: users.canRunModels })
+      .from(users)
+      .where(eq(users.companyId, session.user.companyId));
+    for (const p of perms) permsMap[p.id] = p.canRunModels;
+  } catch {
+    // Migration 0009 hasn't run — default admins to true
+    for (const u of coreUsers) permsMap[u.id] = u.role === "admin";
+  }
+
+  const allUsers = coreUsers.map((u) => ({
+    ...u,
+    canRunModels: permsMap[u.id] ?? u.role === "admin",
+  }));
 
   return NextResponse.json(allUsers);
 }
@@ -45,7 +64,7 @@ export async function POST(req: Request) {
 
   // Check email uniqueness
   const [existing] = await db
-    .select()
+    .select({ id: users.id })
     .from(users)
     .where(eq(users.email, email))
     .limit(1);
@@ -55,16 +74,67 @@ export async function POST(req: Request) {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
+  const isAdmin = role === "admin";
 
-  await db.insert(users).values({
-    username,
-    email,
-    passwordHash,
-    role: "member", // always member — admin role requires separate elevation
-    companyId: session.user.companyId,
-  });
+  // Try with canRunModels first, fall back to without if column doesn't exist
+  try {
+    await db.insert(users).values({
+      username,
+      email,
+      passwordHash,
+      role: isAdmin ? "admin" : "member",
+      canRunModels: isAdmin,
+      companyId: session.user.companyId,
+    });
+  } catch {
+    // canRunModels column may not exist yet — insert without it
+    await db.insert(users).values({
+      username,
+      email,
+      passwordHash,
+      role: isAdmin ? "admin" : "member",
+      companyId: session.user.companyId,
+    } as any);
+  }
 
   return NextResponse.json({ success: true });
+}
+
+// PUT - toggle user permissions (canRunModels)
+export async function PUT(req: Request) {
+  const session = await auth();
+  if (!session?.user || session.user.role !== "admin") {
+    return NextResponse.json({ error: "Admin only" }, { status: 403 });
+  }
+
+  const { id, canRunModels } = await req.json();
+
+  if (!id || typeof canRunModels !== "boolean") {
+    return NextResponse.json({ error: "id and canRunModels required" }, { status: 400 });
+  }
+
+  // Ensure user belongs to same company
+  const [target] = await db
+    .select({ id: users.id, companyId: users.companyId })
+    .from(users)
+    .where(eq(users.publicId, id))
+    .limit(1);
+
+  if (!target || target.companyId !== session.user.companyId) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+
+  try {
+    await db
+      .update(users)
+      .set({ canRunModels, updatedAt: new Date() })
+      .where(eq(users.publicId, id));
+  } catch {
+    // canRunModels column may not exist yet
+    return NextResponse.json({ error: "Migration pending — try again after restart" }, { status: 503 });
+  }
+
+  return NextResponse.json({ success: true, canRunModels });
 }
 
 // DELETE - remove a user
@@ -82,7 +152,7 @@ export async function DELETE(req: Request) {
 
   // Ensure user belongs to same company
   const [target] = await db
-    .select()
+    .select({ id: users.id, companyId: users.companyId })
     .from(users)
     .where(eq(users.publicId, id))
     .limit(1);

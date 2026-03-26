@@ -62,7 +62,7 @@ export async function POST(req: Request) {
 
       // Upsert page
       const [existingPage] = await db
-        .select()
+        .select({ id: pages.id, drawingNumber: pages.drawingNumber })
         .from(pages)
         .where(
           and(

@@ -22,7 +22,7 @@ export async function POST(req: Request) {
 
   // Verify current password
   const [user] = await db
-    .select()
+    .select({ id: users.id, passwordHash: users.passwordHash })
     .from(users)
     .where(eq(users.id, session.user.dbId))
     .limit(1);

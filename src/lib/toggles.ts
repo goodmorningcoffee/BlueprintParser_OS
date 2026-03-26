@@ -45,9 +45,9 @@ async function writeToS3(state: ToggleState): Promise<void> {
   cache = { data: state, expiry: Date.now() + CACHE_TTL };
 }
 
-/** Read toggles (cached 60s) */
-export async function getToggles(): Promise<ToggleState> {
-  if (cache && Date.now() < cache.expiry) return { ...cache.data };
+/** Read toggles (cached 60s). Pass fresh=true to bypass cache for safety-critical checks. */
+export async function getToggles(fresh = false): Promise<ToggleState> {
+  if (!fresh && cache && Date.now() < cache.expiry) return { ...cache.data };
   const data = await readFromS3();
   cache = { data, expiry: Date.now() + CACHE_TTL };
   return { ...data };

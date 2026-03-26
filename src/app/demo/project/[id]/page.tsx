@@ -52,6 +52,7 @@ export default function DemoProjectPage() {
   const setKeynotes = useViewerStore((s) => s.setKeynotes);
   const setCsiCodes = useViewerStore((s) => s.setCsiCodes);
   const setTextractData = useViewerStore((s) => s.setTextractData);
+  const setTextAnnotations = useViewerStore((s) => s.setTextAnnotations);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const setIsDemo = useViewerStore((s) => s.setIsDemo);
@@ -107,6 +108,10 @@ export default function DemoProjectPage() {
           });
         }
         if (page.textractData) setTextractData(page.pageNumber, page.textractData);
+        if ((page as any).textAnnotations) {
+          const result = (page as any).textAnnotations;
+          setTextAnnotations(page.pageNumber, result.annotations || []);
+        }
       }
 
       setPageNames(names);
@@ -124,7 +129,7 @@ export default function DemoProjectPage() {
     } finally {
       setLoading(false);
     }
-  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, setAnnotations, initDetectionModels, setPageNames, setKeynotes, setCsiCodes, setTextractData, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData, csiParam, setCsiFilter]);
+  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, setAnnotations, initDetectionModels, setPageNames, setKeynotes, setCsiCodes, setTextractData, setTextAnnotations, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData, csiParam, setCsiFilter]);
 
   useEffect(() => {
     load();

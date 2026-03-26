@@ -90,19 +90,34 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   }, [pdfUrl, setNumPages]);
 
   // Auto-center blueprint on load (free panning padding pushes content off-screen)
+  // Center content once on initial PDF load only (not on tab switch)
   const centeredRef = useRef(false);
   useEffect(() => {
     if (!pdfDoc || centeredRef.current) return;
-    // Wait for content to render
+    centeredRef.current = true;
     const timer = setTimeout(() => {
       const container = containerRef.current;
       if (!container || container.scrollWidth <= container.clientWidth) return;
       container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
       container.scrollTop = (container.scrollHeight - container.clientHeight) / 2;
-      centeredRef.current = true;
     }, 200);
     return () => clearTimeout(timer);
   }, [pdfDoc]);
+
+  // Center when zoomFit is triggered (via store flag)
+  const pendingCenter = useViewerStore((s) => s.pendingCenter);
+  const clearPendingCenter = useViewerStore((s) => s.clearPendingCenter);
+  useEffect(() => {
+    if (!pendingCenter) return;
+    clearPendingCenter();
+    const timer = setTimeout(() => {
+      const container = containerRef.current;
+      if (!container) return;
+      container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
+      container.scrollTop = (container.scrollHeight - container.clientHeight) / 2;
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [pendingCenter, clearPendingCenter]);
 
   // Mode ref for use in native event listeners
   const mode = useViewerStore((s) => s.mode);
@@ -222,6 +237,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const toggleAnnotationPanel = useViewerStore((s) => s.toggleAnnotationPanel);
   const showTips = useViewerStore((s) => s.showTips);
   const toggleTips = useViewerStore((s) => s.toggleTips);
+  const helpMode = useViewerStore((s) => s.helpMode);
+  const toggleHelpMode = useViewerStore((s) => s.toggleHelpMode);
 
   if (loading) {
     return (
@@ -246,12 +263,15 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       {/* Help tips banner — dismissible, toggleable from Menu → Help */}
       {showTips && (
         <div className="h-8 bg-[#1a1a2e] border-b border-[var(--border)] flex items-center justify-center px-4 shrink-0">
-          <div className="flex items-center gap-3 text-[11px]">
+          <div className="flex items-center gap-3 text-[11px] -ml-16">
+            <span className="text-[var(--fg)]/50 font-medium">BUTTONS:</span>
             <span className="text-[var(--fg)]/60">Menu — Data labeling & more</span>
             <span className="text-[var(--border)]">|</span>
             <span className="text-purple-400/80">YOLO — Toggle AI detections on/off</span>
             <span className="text-[var(--border)]">|</span>
-            <span className="text-sky-400/80">Chat — Talk with LLM about blueprints</span>
+            <span className="text-sky-400/80">Text — Phone, abbreviations & more</span>
+            <span className="text-[var(--border)]">|</span>
+            <span className="text-blue-400/80">Chat — Talk with LLM about blueprints</span>
             <span className="text-[var(--border)]">|</span>
             <span className="text-emerald-400/80">QTO — Count + area</span>
             <span className="text-[var(--border)]">|</span>
@@ -261,8 +281,18 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
             </span>
           </div>
           <button
+            onClick={toggleHelpMode}
+            className={`text-[11px] ml-4 px-2 py-0.5 rounded border transition-colors ${
+              helpMode
+                ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10 animate-pulse"
+                : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]/50"
+            }`}
+          >
+            {helpMode ? "Help ON" : "Help Mode"}
+          </button>
+          <button
             onClick={toggleTips}
-            className="text-[var(--muted)] hover:text-[var(--fg)] text-xs ml-4"
+            className="text-[var(--muted)] hover:text-[var(--fg)] text-sm ml-2 w-5 h-5 flex items-center justify-center rounded hover:bg-[var(--surface)]"
           >
             x
           </button>

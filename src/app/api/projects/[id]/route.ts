@@ -31,12 +31,32 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Fetch pages with all data
+  // Fetch pages with core data (explicit columns to avoid schema/migration mismatch)
   const projectPages = await db
-    .select()
+    .select({
+      pageNumber: pages.pageNumber,
+      name: pages.name,
+      drawingNumber: pages.drawingNumber,
+      rawText: pages.rawText,
+      textractData: pages.textractData,
+      keynotes: pages.keynotes,
+      csiCodes: pages.csiCodes,
+    })
     .from(pages)
     .where(eq(pages.projectId, project.id))
     .orderBy(pages.pageNumber);
+
+  // Try to fetch textAnnotations separately (column may not exist if migration 0010 pending)
+  let textAnnotationsMap: Record<number, unknown> = {};
+  try {
+    const taRows = await db
+      .select({ pageNumber: pages.pageNumber, textAnnotations: pages.textAnnotations })
+      .from(pages)
+      .where(eq(pages.projectId, project.id));
+    for (const r of taRows) {
+      if (r.textAnnotations) textAnnotationsMap[r.pageNumber] = r.textAnnotations;
+    }
+  } catch { /* migration 0010 hasn't run */ }
 
   // Fetch annotations
   const projectAnnotations = await db
@@ -81,6 +101,7 @@ export async function GET(
       textractData: p.textractData,
       keynotes: p.keynotes,
       csiCodes: p.csiCodes,
+      textAnnotations: textAnnotationsMap[p.pageNumber] || null,
     })),
     annotations: projectAnnotations.map((a) => ({
       id: a.id,

@@ -3,10 +3,12 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects, labelingSessions } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
-import { getPresignedGetUrl } from "@/lib/s3";
-import { generateLabelConfig } from "@/lib/labeling-config";
+import { getS3Url, downloadFromS3, uploadToS3 } from "@/lib/s3";
 import { createProject, importTasks } from "@/lib/label-studio";
-import type { LabelingTaskType } from "@/lib/labeling-config";
+
+const DEFAULT_LABEL_CONFIG = `<View>
+  <Image name="image" value="$image" zoomControl="true" rotateControl="true"/>
+</View>`;
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -14,27 +16,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { projectId, taskType, labels, pagesPerProject, pageSelection, pageRange, projectName } =
+  const { projectId, pagesPerProject, pageSelection, pageRange, tiling } =
     await req.json();
 
-  if (!projectId || !taskType || (taskType !== "text" && !labels?.length)) {
-    return NextResponse.json(
-      { error: "projectId, taskType, and labels required" },
-      { status: 400 }
-    );
+  if (!projectId) {
+    return NextResponse.json({ error: "projectId required" }, { status: 400 });
   }
 
-  // Input validation
-  const validTaskTypes = ["detection", "classification", "segmentation", "text"];
-  if (!validTaskTypes.includes(taskType)) {
-    return NextResponse.json({ error: "Invalid task type" }, { status: 400 });
-  }
-  const safePagesPerProject = Math.max(1, Math.min(pagesPerProject || 10, 50));
-  const safeLabels = (labels || [])
-    .slice(0, 50) // Max 50 labels
-    .map((l: string) => String(l).replace(/[<>&"']/g, "").trim().slice(0, 100))
-    .filter(Boolean);
-  const safeProjectName = String(projectName || "").replace(/[<>&"']/g, "").slice(0, 200);
+  const safePagesPerProject = Math.max(2, Math.min(pagesPerProject || 10, 50));
 
   // Verify project ownership
   const [project] = await db
@@ -52,17 +41,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  // Rate limit: max 10 labeling sessions per company per day
-  const todayCount = await db.execute(
-    sql`SELECT COUNT(*)::int AS cnt FROM labeling_sessions
-        WHERE company_id = ${session.user.companyId}
-          AND created_at > NOW() - INTERVAL '1 day'`
-  );
-  if ((todayCount.rows[0] as any)?.cnt >= 10) {
-    return NextResponse.json(
-      { error: "Daily labeling limit reached (10 projects/day)" },
-      { status: 429 }
+  // Rate limit: max 10 labeling sessions per company per day (admin bypasses)
+  if (session.user.role !== "admin") {
+    const todayCount = await db.execute(
+      sql`SELECT COUNT(*)::int AS cnt FROM labeling_sessions
+          WHERE company_id = ${session.user.companyId}
+            AND created_at > NOW() - INTERVAL '1 day'`
     );
+    if ((todayCount.rows[0] as any)?.cnt >= 10) {
+      return NextResponse.json(
+        { error: "Daily labeling limit reached (10 projects/day)" },
+        { status: 429 }
+      );
+    }
   }
 
   // Check Label Studio env vars are configured
@@ -72,9 +63,6 @@ export async function POST(req: Request) {
       { status: 503 }
     );
   }
-
-  // Generate labeling config XML
-  const labelConfig = generateLabelConfig(taskType as LabelingTaskType, safeLabels);
 
   // Determine which pages to include
   const numPages = project.numPages || 1;
@@ -89,20 +77,53 @@ export async function POST(req: Request) {
     for (let i = 1; i <= numPages; i++) pageNumbers.push(i);
   }
 
-  // Generate presigned URLs for each page image (24h TTL)
-  const presignedTasks = await Promise.all(
-    pageNumbers.map(async (pageNum) => {
-      const key = `${project.dataUrl}/images/page_${pageNum}.png`;
-      const url = await getPresignedGetUrl(key, 604800); // 7 days for labeling
-      return { data: { image: url }, meta: { pageNumber: pageNum } };
-    })
-  );
+  // Build tasks — either direct CloudFront URLs or tiled images
+  let tasks: Array<{ data: { image: string }; meta: Record<string, number> }>;
+
+  if (tiling) {
+    const sharp = (await import("sharp")).default;
+    tasks = [];
+    // Process in batches of 5 for performance
+    const batchSize = 5;
+    for (let b = 0; b < pageNumbers.length; b += batchSize) {
+      const batch = pageNumbers.slice(b, b + batchSize);
+      const batchResults = await Promise.all(
+        batch.map(async (pageNum) => {
+          const key = `${project.dataUrl}/images/page_${pageNum}.png`;
+          const buffer = await downloadFromS3(key);
+          const metadata = await sharp(buffer).metadata();
+          const tileW = Math.floor((metadata.width || 3000) / 3);
+          const tileH = Math.floor((metadata.height || 2000) / 3);
+          const tileTasks: typeof tasks = [];
+
+          for (let row = 0; row < 3; row++) {
+            for (let col = 0; col < 3; col++) {
+              const tileBuffer = await sharp(buffer)
+                .extract({ left: col * tileW, top: row * tileH, width: tileW, height: tileH })
+                .png()
+                .toBuffer();
+              const tileKey = `${project.dataUrl}/tiles/page_${pageNum}_r${row}_c${col}.png`;
+              await uploadToS3(tileKey, tileBuffer, "image/png");
+              const url = getS3Url(project.dataUrl, `tiles/page_${pageNum}_r${row}_c${col}.png`);
+              tileTasks.push({ data: { image: url }, meta: { pageNumber: pageNum, row, col } });
+            }
+          }
+          return tileTasks;
+        })
+      );
+      tasks.push(...batchResults.flat());
+    }
+  } else {
+    tasks = pageNumbers.map((pageNum) => ({
+      data: { image: getS3Url(project.dataUrl, `images/page_${pageNum}.png`) },
+      meta: { pageNumber: pageNum },
+    }));
+  }
 
   // Split into chunks based on pagesPerProject
-  const chunkSize = safePagesPerProject || pageNumbers.length;
-  const chunks: typeof presignedTasks[] = [];
-  for (let i = 0; i < presignedTasks.length; i += chunkSize) {
-    chunks.push(presignedTasks.slice(i, i + chunkSize));
+  const chunks: typeof tasks[] = [];
+  for (let i = 0; i < tasks.length; i += safePagesPerProject) {
+    chunks.push(tasks.slice(i, i + safePagesPerProject));
   }
 
   const lsUrl = process.env.LABEL_STUDIO_URL.replace(/\/$/, "");
@@ -117,19 +138,21 @@ export async function POST(req: Request) {
   try {
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
-      const firstPage = pageNumbers[i * chunkSize];
-      const lastPage = pageNumbers[Math.min((i + 1) * chunkSize - 1, pageNumbers.length - 1)];
-      const range = `${firstPage}-${lastPage}`;
+      // Determine page range for this chunk
+      const chunkPages = [...new Set(chunk.map((t) => t.meta.pageNumber))].sort((a, b) => a - b);
+      const range = chunkPages.length === 1
+        ? String(chunkPages[0])
+        : `${chunkPages[0]}-${chunkPages[chunkPages.length - 1]}`;
 
       const title =
         chunks.length === 1
-          ? (safeProjectName || project.name)
-          : `${safeProjectName || project.name} (pages ${range})`;
+          ? project.name
+          : `${project.name} (pages ${range})`;
 
-      // Create LS project
-      const lsProject = await createProject(title, labelConfig);
+      // Create LS project with default image-only config
+      const lsProject = await createProject(title, DEFAULT_LABEL_CONFIG);
 
-      // Import tasks with presigned URLs
+      // Import tasks with CloudFront URLs
       await importTasks(lsProject.id, chunk);
 
       const projectUrl = `${lsUrl}/projects/${lsProject.id}`;
@@ -142,9 +165,11 @@ export async function POST(req: Request) {
           companyId: session.user.companyId,
           labelStudioProjectId: lsProject.id,
           labelStudioUrl: projectUrl,
-          taskType,
-          labels: safeLabels,
+          taskType: "generic",
+          labels: null,
           pageRange: range,
+          tilingEnabled: !!tiling,
+          tileGrid: tiling ? 3 : null,
           status: "active",
         })
         .returning();

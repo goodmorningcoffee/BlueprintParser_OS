@@ -54,7 +54,7 @@ export async function POST(req: Request) {
 
   // Check if email already exists
   const [existing] = await db
-    .select()
+    .select({ id: users.id })
     .from(users)
     .where(eq(users.email, email))
     .limit(1);

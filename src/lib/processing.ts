@@ -7,6 +7,7 @@ import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { detectCsiCodes } from "@/lib/csi-detect";
+import { detectTextAnnotations } from "@/lib/text-annotations";
 import { extractKeynotes } from "@/lib/keynotes";
 
 const PAGE_CONCURRENCY = 20;
@@ -98,7 +99,7 @@ export async function processProject(projectId: number): Promise<{
       try {
         // Check if page already has textract data (skip if re-processing)
         const [existingPage] = await db
-          .select()
+          .select({ id: pages.id, textractData: pages.textractData })
           .from(pages)
           .where(
             and(
@@ -126,6 +127,12 @@ export async function processProject(projectId: number): Promise<{
         // Detect CSI codes from OCR text
         const csiCodes = detectCsiCodes(rawText);
 
+        // Detect text annotations (phone, address, equipment tags, abbreviations, etc.)
+        const textAnnotationResult = detectTextAnnotations(textractData, csiCodes);
+        if (textAnnotationResult.annotations.length > 0) {
+          console.log(`[processing] Page ${pageNum}: found ${textAnnotationResult.annotations.length} text annotations`);
+        }
+
         // Extract keynotes (OpenCV + Tesseract) — reuse same 300 DPI buffer
         let keynotes = null;
         try {
@@ -143,6 +150,7 @@ export async function processProject(projectId: number): Promise<{
           rawText,
           drawingNumber,
           csiCodes: csiCodes.length > 0 ? csiCodes : null,
+          textAnnotations: textAnnotationResult.annotations.length > 0 ? textAnnotationResult : null,
           keynotes: keynotes && keynotes.length > 0 ? keynotes : null,
         };
 
@@ -179,8 +187,8 @@ export async function processProject(projectId: number): Promise<{
         pageErrors++;
 
         // Insert page row with error if it doesn't exist
-        const [existingPage] = await db
-          .select()
+        const [errPage] = await db
+          .select({ id: pages.id })
           .from(pages)
           .where(
             and(
@@ -190,7 +198,7 @@ export async function processProject(projectId: number): Promise<{
           )
           .limit(1);
 
-        if (!existingPage) {
+        if (!errPage) {
           await db.insert(pages).values({
             pageNumber: pageNum,
             name: `Page ${pageNum}`,

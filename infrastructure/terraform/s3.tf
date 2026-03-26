@@ -67,7 +67,7 @@ resource "aws_s3_bucket_cors_configuration" "beaver_data" {
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["GET", "PUT", "POST"]
-    allowed_origins = ["https://app.blueprintparser.com"]
+    allowed_origins = ["https://app.blueprintparser.com", "https://labelstudio.blueprintparser.com"]
     expose_headers  = ["ETag"]
     max_age_seconds = 3600
   }
@@ -99,6 +99,7 @@ resource "aws_cloudfront_response_headers_policy" "beaver_cors" {
       items = [
         "https://app.blueprintparser.com",
         "https://blueprintparser.com",
+        "https://labelstudio.blueprintparser.com",
         "http://localhost:3000"
       ]
     }

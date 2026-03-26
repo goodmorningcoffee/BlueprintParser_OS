@@ -546,7 +546,9 @@ resource "aws_ecs_task_definition" "beaver_label_studio" {
         { name = "LABEL_STUDIO_HOST", value = "https://labelstudio.blueprintparser.com" },
         { name = "CSRF_TRUSTED_ORIGINS", value = "https://labelstudio.blueprintparser.com,https://app.blueprintparser.com" },
         { name = "USE_X_FORWARDED_HOST", value = "True" },
-        { name = "SECURE_PROXY_SSL_HEADER", value = "HTTP_X_FORWARDED_PROTO:https" },
+        { name = "SECURE_PROXY_SSL_HEADER", value = "HTTP_X_FORWARDED_PROTO,https" },
+        { name = "SESSION_COOKIE_SECURE", value = "1" },
+        { name = "CSRF_COOKIE_SECURE", value = "1" },
       ]
 
       secrets = [

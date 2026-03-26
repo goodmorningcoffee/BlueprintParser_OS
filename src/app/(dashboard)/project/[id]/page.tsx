@@ -30,6 +30,7 @@ interface ProjectResponse {
     textractData: TextractPageData | null;
     keynotes: KeynoteData[] | null;
     csiCodes: CsiCode[] | null;
+    textAnnotations: unknown | null;
   }>;
   annotations: ClientAnnotation[];
   takeoffItems?: ClientTakeoffItem[];
@@ -63,6 +64,7 @@ export default function ProjectPage() {
   const setKeynotes = useViewerStore((s) => s.setKeynotes);
   const setCsiCodes = useViewerStore((s) => s.setCsiCodes);
   const setTextractData = useViewerStore((s) => s.setTextractData);
+  const setTextAnnotations = useViewerStore((s) => s.setTextAnnotations);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const setChatMessages = useViewerStore((s) => s.setChatMessages);
@@ -123,6 +125,10 @@ export default function ProjectPage() {
             page.textractData as TextractPageData
           );
         }
+        if (page.textAnnotations) {
+          const result = page.textAnnotations as any;
+          setTextAnnotations(page.pageNumber, result.annotations || []);
+        }
       }
 
       setPageNames(names);
@@ -176,6 +182,7 @@ export default function ProjectPage() {
     setKeynotes,
     setCsiCodes,
     setTextractData,
+    setTextAnnotations,
     setAllTrades,
     setAllCsiCodes,
     setChatMessages,

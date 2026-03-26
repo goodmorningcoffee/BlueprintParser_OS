@@ -39,6 +39,11 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     activeCsiFilter,
     setCsiFilter,
     textractData,
+    textAnnotations,
+    activeTextAnnotationFilter,
+    setTextAnnotationFilter,
+    activeTakeoffFilter,
+    setTakeoffFilter,
   } = useViewerStore();
 
   const [thumbnails, setThumbnails] = useState<ThumbnailCache>({});
@@ -263,7 +268,60 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     return counts;
   }, [activeCsiFilter, csiFilteredPages, csiCodes, textractData]);
 
-  const isFiltered = isSearchFiltered || isKeynoteFiltered || isAnnotationFiltered || isTradeFiltered || isCsiFiltered;
+  // Compute text annotation-filtered pages
+  const textAnnotationFilteredPages = activeTextAnnotationFilter
+    ? Object.entries(textAnnotations)
+        .filter(([, anns]) =>
+          anns.some((a) => a.type === activeTextAnnotationFilter!.type && a.text === activeTextAnnotationFilter!.text)
+        )
+        .map(([pageNum]) => Number(pageNum))
+    : [];
+  const isTextAnnotationFiltered = activeTextAnnotationFilter !== null && textAnnotationFilteredPages.length > 0;
+
+  const textAnnotationCounts = useMemo(() => {
+    if (!activeTextAnnotationFilter) return {};
+    const counts: Record<number, number> = {};
+    for (const pageNum of textAnnotationFilteredPages) {
+      const anns = textAnnotations[pageNum] || [];
+      const count = anns.filter(
+        (a) => a.type === activeTextAnnotationFilter!.type && a.text === activeTextAnnotationFilter!.text
+      ).length;
+      if (count > 0) counts[pageNum] = count;
+    }
+    return counts;
+  }, [activeTextAnnotationFilter, textAnnotationFilteredPages, textAnnotations]);
+
+  // Compute QTO takeoff-filtered pages
+  const takeoffFilteredPages = useMemo(() => {
+    if (activeTakeoffFilter === null) return [];
+    const pages: number[] = [];
+    const seen = new Set<number>();
+    for (const ann of annotations) {
+      if (ann.source !== "takeoff") continue;
+      const itemId = (ann.data as any)?.takeoffItemId;
+      if (String(itemId) === String(activeTakeoffFilter) && !seen.has(ann.pageNumber)) {
+        seen.add(ann.pageNumber);
+        pages.push(ann.pageNumber);
+      }
+    }
+    return pages;
+  }, [activeTakeoffFilter, annotations]);
+  const isTakeoffFiltered = activeTakeoffFilter !== null && takeoffFilteredPages.length > 0;
+
+  const takeoffCounts = useMemo(() => {
+    if (activeTakeoffFilter === null) return {};
+    const counts: Record<number, number> = {};
+    for (const ann of annotations) {
+      if (ann.source !== "takeoff") continue;
+      const itemId = (ann.data as any)?.takeoffItemId;
+      if (String(itemId) === String(activeTakeoffFilter)) {
+        counts[ann.pageNumber] = (counts[ann.pageNumber] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [activeTakeoffFilter, annotations]);
+
+  const isFiltered = isSearchFiltered || isKeynoteFiltered || isAnnotationFiltered || isTradeFiltered || isCsiFiltered || isTextAnnotationFiltered || isTakeoffFiltered;
 
   // Persist page name edits to the server (debounced)
   const handleNameEdit = useCallback(
@@ -354,12 +412,40 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
             </button>
           </div>
         )}
+        {isTextAnnotationFiltered && (
+          <div className="text-xs text-sky-400 px-1.5 pb-2 border-b border-[var(--border)] mb-2 flex items-center justify-between">
+            <span>
+              Text: {activeTextAnnotationFilter!.text} ({textAnnotationFilteredPages.length} pg)
+            </span>
+            <button
+              onClick={() => setTextAnnotationFilter(null)}
+              className="text-[var(--muted)] hover:text-[var(--fg)] ml-1"
+            >
+              x
+            </button>
+          </div>
+        )}
+        {isTakeoffFiltered && (
+          <div className="text-xs text-emerald-400 px-1.5 pb-2 border-b border-[var(--border)] mb-2 flex items-center justify-between">
+            <span>
+              QTO: {annotations.find((a) => a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(activeTakeoffFilter))?.name || "Item"} ({takeoffFilteredPages.length} pg)
+            </span>
+            <button
+              onClick={() => setTakeoffFilter(null)}
+              className="text-[var(--muted)] hover:text-[var(--fg)] ml-1"
+            >
+              x
+            </button>
+          </div>
+        )}
         {Array.from({ length: numPages }, (_, i) => i + 1).map((n) => {
           const isHidden =
             (isSearchFiltered && !searchResults.includes(n)) ||
             (isKeynoteFiltered && !keynoteFilteredPages.includes(n)) ||
             (isAnnotationFiltered && !annotationFilteredPages.includes(n)) ||
             (isTradeFiltered && !tradeFilteredPages.includes(n)) ||
+            (isTextAnnotationFiltered && !textAnnotationFilteredPages.includes(n)) ||
+            (isTakeoffFiltered && !takeoffFilteredPages.includes(n)) ||
             (isCsiFiltered && !csiFilteredPages.includes(n));
           if (isHidden) return null;
 
@@ -428,6 +514,16 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
                 {isCsiFiltered && csiWordCounts[n] > 0 && (
                   <span className="bg-pink-500/20 text-pink-300 text-[10px] px-1.5 rounded-full shrink-0">
                     {csiWordCounts[n]}
+                  </span>
+                )}
+                {isTextAnnotationFiltered && textAnnotationCounts[n] > 0 && (
+                  <span className="bg-sky-500/20 text-sky-300 text-[10px] px-1.5 rounded-full shrink-0">
+                    {textAnnotationCounts[n]}
+                  </span>
+                )}
+                {isTakeoffFiltered && takeoffCounts[n] > 0 && (
+                  <span className="bg-emerald-500/20 text-emerald-300 text-[10px] px-1.5 rounded-full shrink-0">
+                    {takeoffCounts[n]}
                   </span>
                 )}
               </div>
