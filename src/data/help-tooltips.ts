@@ -10,16 +10,16 @@ export const HELP_TOOLTIPS: Record<string, { title: string; body: string }> = {
   // TOOLBAR MODES
   // ═══════════════════════════════════════════════════════════
   "pointer-mode": {
-    title: "Pointer/Select Tool",
-    body: "Select annotations, markups, and QTO items on the blueprint. Double-click any OCR'd word to search all pages for it. Drag selected markups to reposition them. Click the X above a selected annotation to delete it. This is also the mode needed for Help Mode tooltips.",
+    title: "Pointer/Select",
+    body: "Double-click any OCR'd word on the blueprint to search all pages for it. Select and edit all annotations — click a markup to see the edit (pencil) and delete (x) icons. Drag selected markups to reposition them. Double-click any annotation to filter pages showing that item.",
   },
   "pan-mode": {
-    title: "Pan/Zoom Tool",
-    body: "Click and drag to scroll around the blueprint. Mouse wheel zooms in this mode. Tip: Ctrl + scroll wheel zooms in ANY mode, so you rarely need to switch to Pan.",
+    title: "Pan/Zoom",
+    body: "Click and drag to scroll around the blueprint. Mouse wheel zooms in this mode. Tip: Ctrl + scroll wheel zooms in ANY mode, so you rarely need to switch here.",
   },
   "markup-mode": {
     title: "Add Markup",
-    body: "Click and drag to draw a rectangle annotation on the blueprint. You'll be prompted to name it. Switch back to Pointer/Select to move, resize, or delete markups.",
+    body: "Click and drag to draw a rectangle on the blueprint. A dialog will ask for a name and optional notes — notes are visible in the Text panel's Markups tab and are shared with the AI chat for context.",
   },
 
   // ═══════════════════════════════════════════════════════════
