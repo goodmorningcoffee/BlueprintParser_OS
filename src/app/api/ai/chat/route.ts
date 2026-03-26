@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects, pages, chatMessages, annotations, takeoffItems } from "@/lib/db/schema";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, isNull } from "drizzle-orm";
 import Groq from "groq-sdk";
 import { checkChatQuota, checkDemoChatQuota } from "@/lib/quotas";
 
@@ -362,4 +362,55 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * DELETE /api/ai/chat — Clear chat messages for a project
+ * Query params: projectId, scope (page|project|all), pageNumber (for page scope)
+ */
+export async function DELETE(req: Request) {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const url = new URL(req.url);
+  const projectId = url.searchParams.get("projectId");
+  const scope = url.searchParams.get("scope") || "all";
+  const pageNum = url.searchParams.get("pageNumber");
+
+  if (!projectId) {
+    return NextResponse.json({ error: "projectId required" }, { status: 400 });
+  }
+
+  // Verify project ownership
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(
+      and(
+        eq(projects.publicId, projectId),
+        eq(projects.companyId, session.user.companyId)
+      )
+    )
+    .limit(1);
+
+  if (!project) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+
+  let conditions = [eq(chatMessages.projectId, project.id)];
+
+  if (scope === "page" && pageNum) {
+    conditions.push(eq(chatMessages.pageNumber, parseInt(pageNum)));
+  } else if (scope === "project") {
+    conditions.push(isNull(chatMessages.pageNumber));
+  }
+  // scope === "all" — no extra filter, deletes everything
+
+  const result = await db
+    .delete(chatMessages)
+    .where(and(...conditions));
+
+  return NextResponse.json({ success: true });
 }

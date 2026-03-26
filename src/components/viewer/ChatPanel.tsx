@@ -7,6 +7,7 @@ export default function ChatPanel() {
   const {
     chatMessages,
     addChatMessage,
+    clearChatMessages,
     chatScope,
     setChatScope,
     publicId,
@@ -15,6 +16,7 @@ export default function ChatPanel() {
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -23,6 +25,21 @@ export default function ChatPanel() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, streamingContent]);
+
+  async function handleClear() {
+    if (chatMessages.length === 0 || clearing) return;
+    setClearing(true);
+    try {
+      const params = new URLSearchParams({ projectId: publicId, scope: chatScope });
+      if (chatScope === "page") params.set("pageNumber", String(pageNumber));
+      await fetch(`/api/ai/chat?${params}`, { method: "DELETE" });
+      clearChatMessages();
+    } catch {
+      // silently fail — messages stay in UI
+    } finally {
+      setClearing(false);
+    }
+  }
 
   async function handleSend() {
     const msg = input.trim();
@@ -118,7 +135,19 @@ export default function ChatPanel() {
     <div className="w-80 border-l border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0">
       {/* Header with scope toggle */}
       <div className="p-3 border-b border-[var(--border)] flex items-center justify-between">
-        <span className="text-xs text-[var(--muted)]">Chat</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-[var(--muted)]">Chat</span>
+          {chatMessages.length > 0 && (
+            <button
+              onClick={handleClear}
+              disabled={clearing}
+              className="text-[10px] text-red-400/60 hover:text-red-400 disabled:opacity-40"
+              title="Clear chat history"
+            >
+              Clear
+            </button>
+          )}
+        </div>
         <div className="flex border border-[var(--border)] rounded overflow-hidden">
           <button
             onClick={() => setChatScope("page")}

@@ -85,6 +85,7 @@ interface ViewerState {
   chatMessages: ChatMsg[];
   addChatMessage: (msg: ChatMsg) => void;
   setChatMessages: (msgs: ChatMsg[]) => void;
+  clearChatMessages: () => void;
   chatScope: "page" | "project";
   setChatScope: (scope: "page" | "project") => void;
 
@@ -237,6 +238,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
   addChatMessage: (msg) =>
     set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
   setChatMessages: (chatMessages) => set({ chatMessages }),
+  clearChatMessages: () => set({ chatMessages: [] }),
   chatScope: "page",
   setChatScope: (chatScope) => set({ chatScope }),
 
