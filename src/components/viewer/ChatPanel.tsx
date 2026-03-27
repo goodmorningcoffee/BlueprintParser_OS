@@ -101,6 +101,9 @@ export default function ChatPanel() {
                   if (parsed.content) {
                     fullContent += parsed.content;
                     setStreamingContent(fullContent);
+                  } else if (parsed.error) {
+                    fullContent = `Error: ${parsed.error}`;
+                    setStreamingContent(fullContent);
                   }
                 } catch {
                   // skip malformed chunks
@@ -112,13 +115,10 @@ export default function ChatPanel() {
       }
 
       // Add complete assistant message to store
-      if (fullContent) {
-        addChatMessage({
-          role: "assistant",
-          content: fullContent,
-          model: "llama-3.3-70b-versatile",
-        });
-      }
+      addChatMessage({
+        role: "assistant",
+        content: fullContent || "No response received. Check LLM configuration in admin panel.",
+      });
     } catch (err) {
       addChatMessage({
         role: "assistant",

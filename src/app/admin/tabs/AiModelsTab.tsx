@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import LLMConfigSection from "../sections/LLMConfigSection";
 import S3Browser from "../sections/S3Browser";
+import type { ModelClassType } from "@/types";
 
 interface ModelItem {
   id: number;
@@ -56,6 +57,40 @@ export default function AiModelsTab({
   const [jobDetails, setJobDetails] = useState<Record<string, any>>({});
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
 
+  // Class type editor state
+  const [editingModelId, setEditingModelId] = useState<number | null>(null);
+  const [classTypeEdits, setClassTypeEdits] = useState<Record<string, ModelClassType>>({});
+  const [savingClassTypes, setSavingClassTypes] = useState(false);
+
+  function startEditingClassTypes(model: ModelItem) {
+    if (editingModelId === model.id) {
+      setEditingModelId(null);
+      return;
+    }
+    setEditingModelId(model.id);
+    setClassTypeEdits((model.config as any)?.classTypes || {});
+  }
+
+  async function saveClassTypes(modelId: number) {
+    setSavingClassTypes(true);
+    try {
+      const res = await fetch("/api/admin/models", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: modelId, classTypes: classTypeEdits }),
+      });
+      if (res.ok) {
+        // Update the model config in the parent's state by modifying the config object directly
+        const model = yoloModels.find((m) => m.id === modelId);
+        if (model) {
+          model.config = { ...model.config, classTypes: classTypeEdits };
+        }
+        setEditingModelId(null);
+      }
+    } catch { /* ignore */ }
+    setSavingClassTypes(false);
+  }
+
   const fetchJobDetails = useCallback(async (jobName: string) => {
     if (jobDetails[jobName]) {
       setExpandedJob(expandedJob === jobName ? null : jobName);
@@ -86,25 +121,107 @@ export default function AiModelsTab({
 
         {/* Existing models */}
         <div className="space-y-2 mb-4">
-          {yoloModels.map((m) => (
-            <div
-              key={m.id}
-              className="flex items-center justify-between p-3 bg-[var(--surface)] border border-[var(--border)] rounded"
-            >
-              <div>
-                <span className="font-medium">{m.name}</span>
-                <span className="text-xs text-[var(--muted)] ml-2">
-                  {(m.config as any)?.classes?.length || 0} classes — conf {(m.config as any)?.confidence || 0.25}
-                </span>
+          {yoloModels.map((m) => {
+            const classes: string[] = (m.config as any)?.classes || [];
+            const classTypes: Record<string, ModelClassType> = (m.config as any)?.classTypes || {};
+            const taggedCount = Object.keys(classTypes).length;
+            const spatialCount = Object.values(classTypes).filter((t) => t === "spatial" || t === "both").length;
+            return (
+            <div key={m.id} className="bg-[var(--surface)] border border-[var(--border)] rounded">
+              <div className="flex items-center justify-between p-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{m.name}</span>
+                  <span className="text-xs text-[var(--muted)]">
+                    {classes.length} classes — conf {(m.config as any)?.confidence || 0.25}
+                  </span>
+                  {taggedCount > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-400/20 text-purple-300">
+                      {spatialCount} spatial
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {classes.length > 0 && (
+                    <button
+                      onClick={() => startEditingClassTypes(m)}
+                      className={`text-xs px-2 py-0.5 rounded border ${
+                        editingModelId === m.id
+                          ? "border-purple-400/40 text-purple-300 bg-purple-500/10"
+                          : "text-[var(--muted)] border-[var(--border)] hover:text-purple-300 hover:border-purple-400/30"
+                      }`}
+                    >
+                      {editingModelId === m.id ? "Close" : "Edit Classes"}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => onDeleteModel(m.id)}
+                    className="text-xs text-[var(--muted)] hover:text-red-400"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={() => onDeleteModel(m.id)}
-                className="text-xs text-[var(--muted)] hover:text-red-400"
-              >
-                Delete
-              </button>
+
+              {/* Class type editor */}
+              {editingModelId === m.id && classes.length > 0 && (
+                <div className="px-3 pb-3 border-t border-[var(--border)]">
+                  <p className="text-[10px] text-[var(--muted)] mt-2 mb-2">
+                    Tag classes as <strong>Spatial</strong> (regions like title blocks, tables — enriches LLM context)
+                    or <strong>Countable</strong> (objects like doors — for QTO workflows).
+                  </p>
+                  <div className="space-y-1">
+                    {classes.map((cls) => (
+                      <div key={cls} className="flex items-center gap-3 py-1">
+                        <span className="text-xs font-mono w-36 truncate" title={cls}>{cls}</span>
+                        <div className="flex gap-1">
+                          {(["spatial", "countable", "both"] as ModelClassType[]).map((type) => (
+                            <button
+                              key={type}
+                              onClick={() => {
+                                setClassTypeEdits((prev) => {
+                                  const next = { ...prev };
+                                  if (next[cls] === type) {
+                                    delete next[cls];
+                                  } else {
+                                    next[cls] = type;
+                                  }
+                                  return next;
+                                });
+                              }}
+                              className={`px-2 py-0.5 text-[10px] rounded border ${
+                                classTypeEdits[cls] === type
+                                  ? type === "spatial"
+                                    ? "border-purple-400/50 text-purple-300 bg-purple-500/15"
+                                    : type === "countable"
+                                      ? "border-green-400/50 text-green-300 bg-green-500/15"
+                                      : "border-amber-400/50 text-amber-300 bg-amber-500/15"
+                                  : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--accent)]/30"
+                              }`}
+                            >
+                              {type}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2 mt-3">
+                    <button
+                      onClick={() => saveClassTypes(m.id)}
+                      disabled={savingClassTypes}
+                      className="px-3 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-500 disabled:opacity-40"
+                    >
+                      {savingClassTypes ? "Saving..." : "Save Class Types"}
+                    </button>
+                    <span className="text-[10px] text-[var(--muted)]">
+                      {Object.keys(classTypeEdits).length} of {classes.length} tagged
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
-          ))}
+            );
+          })}
           {yoloModels.length === 0 && (
             <p className="text-sm text-[var(--muted)]">No models uploaded yet.</p>
           )}

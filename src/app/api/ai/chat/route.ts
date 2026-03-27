@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { projects, pages, chatMessages, annotations, takeoffItems } from "@/lib/db/schema";
-import { eq, and, desc, sql, isNull } from "drizzle-orm";
+import { projects, pages, chatMessages, annotations, takeoffItems, models } from "@/lib/db/schema";
+import { eq, and, desc, sql, isNull, inArray } from "drizzle-orm";
 import { checkChatQuota, checkDemoChatQuota } from "@/lib/quotas";
 import { resolveLLMConfig } from "@/lib/llm/resolve";
 import { streamChatResponse } from "@/lib/llm/stream";
+import { mapWordsToRegions, buildSpatialContext } from "@/lib/spatial";
 import type { ChatMessage } from "@/lib/llm/types";
+import type { TextractPageData } from "@/types";
 
 const MAX_CONTEXT_CHARS = 24000; // ~6000 tokens
 
@@ -282,6 +284,7 @@ export async function POST(req: Request) {
         name: pages.name,
         drawingNumber: pages.drawingNumber,
         rawText: pages.rawText,
+        textractData: pages.textractData,
         csiCodes: pages.csiCodes,
         textAnnotations: pages.textAnnotations,
       })
@@ -309,8 +312,64 @@ export async function POST(req: Request) {
       }
     }
 
-    // OCR text (priority 10 — longest, least structured, goes LAST)
-    if (page?.rawText) {
+    // ─── Spatial Intelligence: map OCR words to YOLO regions ───
+    let usedSpatialContext = false;
+    if (page?.textractData && yoloAnnotations.length > 0) {
+      // Collect unique modelIds from YOLO annotations, query their configs for classTypes
+      const modelIds = [...new Set(yoloAnnotations.map((a) => (a.data as any)?.modelId).filter(Boolean))];
+      if (modelIds.length > 0) {
+        const modelConfigs = await db
+          .select({ id: models.id, config: models.config })
+          .from(models)
+          .where(inArray(models.id, modelIds));
+
+        // Build set of spatial class names
+        const spatialClasses = new Set<string>();
+        for (const mc of modelConfigs) {
+          const ct = (mc.config as any)?.classTypes || {};
+          for (const [cls, type] of Object.entries(ct)) {
+            if (type === "spatial" || type === "both") spatialClasses.add(cls);
+          }
+        }
+
+        if (spatialClasses.size > 0) {
+          // Filter YOLO annotations to only spatial classes on this page
+          const spatialAnnotations = yoloAnnotations
+            .filter((a) => a.pageNumber === pageNumber && spatialClasses.has(a.name))
+            .map((a) => ({
+              name: a.name,
+              minX: a.minX,
+              minY: a.minY,
+              maxX: a.maxX,
+              maxY: a.maxY,
+              confidence: (a.data as any)?.confidence || 0,
+            }));
+
+          if (spatialAnnotations.length > 0) {
+            const spatialResult = mapWordsToRegions(
+              page.textractData as TextractPageData,
+              spatialAnnotations
+            );
+
+            if (spatialResult.regions.length > 0) {
+              const spatialText = buildSpatialContext(pageNumber, page.drawingNumber, spatialResult);
+              const pageLabel = page.drawingNumber || page.name;
+              sections.push({
+                header: `SPATIAL CONTEXT — Page ${pageNumber} (${pageLabel})`,
+                content: spatialText,
+                priority: 8, // after structured data, before flat OCR
+              });
+              const regionNames = spatialResult.regions.map((r) => r.displayName).join(", ");
+              dataSummary.push(`Spatially-tagged OCR text (regions: ${regionNames}) from Page ${pageNumber}`);
+              usedSpatialContext = true;
+            }
+          }
+        }
+      }
+    }
+
+    // OCR text fallback (priority 10 — only if spatial context didn't replace it)
+    if (!usedSpatialContext && page?.rawText) {
       const pageLabel = page.drawingNumber || page.name;
       sections.push({
         header: `OCR TEXT — Page ${pageNumber} (${pageLabel})`,
