@@ -464,7 +464,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
               : "border-blue-400/20 text-blue-400/50 hover:text-blue-300 hover:border-blue-400/40"
           }`}
         >
-          Chat
+          LLM Chat
         </button>
       </HelpTooltip>
 

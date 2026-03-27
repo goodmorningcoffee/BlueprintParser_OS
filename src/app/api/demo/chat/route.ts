@@ -1,17 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, pages } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { projects, pages, annotations } from "@/lib/db/schema";
+import { eq, and, sql } from "drizzle-orm";
 import { checkDemoChatQuota } from "@/lib/quotas";
 import { resolveLLMConfig } from "@/lib/llm/resolve";
 import { streamChatResponse } from "@/lib/llm/stream";
 import type { ChatMessage } from "@/lib/llm/types";
-
-const GLOBAL_SYSTEM_PROMPT = `You are an expert construction blueprint analyst with access to text extracted from multiple construction blueprint projects. You help users understand architectural and engineering drawings.
-
-When answering, reference specific project names and page numbers so users can find the source. Be concise and specific. If the retrieved context doesn't contain enough information, say so clearly.
-
-You can also help users learn how to use BlueprintParser — features include YOLO object detection, full-text search, CSI code detection, quantity takeoff (count + area measurement), and AI chat.`;
 
 const MAX_CONTEXT_CHARS = 20000;
 const MAX_PAGES = 10;
@@ -19,7 +13,7 @@ const MAX_PAGES = 10;
 /**
  * POST /api/demo/chat
  * RAG chat: search across all demo projects, retrieve relevant pages, send to LLM.
- * Uses demo-specific LLM config if admin configured one, otherwise falls back to env var.
+ * Includes YOLO detection summaries alongside OCR text.
  */
 export async function POST(req: Request) {
   const quota = await checkDemoChatQuota();
@@ -53,8 +47,10 @@ export async function POST(req: Request) {
   }
 
   // Step 1: Search for relevant pages across all demo projects
+  // Include project_id so we can query YOLO annotations
   const searchResults = await db.execute(sql`
     SELECT
+      p.id AS project_id,
       p.name AS project_name,
       pg.page_number,
       pg.drawing_number,
@@ -73,9 +69,12 @@ export async function POST(req: Request) {
   // Step 2: Build context from retrieved pages
   let contextText = "";
   let totalChars = 0;
+  const dataSummary: string[] = [];
+  const matchedProjectIds = new Set<number>();
 
   if (searchResults.rows.length > 0) {
     for (const row of searchResults.rows as any[]) {
+      matchedProjectIds.add(row.project_id);
       const header = `\n--- ${row.project_name}, Page ${row.page_number} (${row.drawing_number || "unnamed"}) ---\n`;
       let chunk = header + (row.raw_text || "").substring(0, 3000);
       if (row.csi_codes && Array.isArray(row.csi_codes) && row.csi_codes.length > 0) {
@@ -85,6 +84,7 @@ export async function POST(req: Request) {
       contextText += chunk;
       totalChars += chunk.length;
     }
+    dataSummary.push(`OCR text from ${searchResults.rows.length} matching page(s) across demo projects`);
   } else {
     // No search matches — provide general context from first pages of each demo project
     const demoProjects = await db
@@ -93,6 +93,7 @@ export async function POST(req: Request) {
       .where(eq(projects.isDemo, true));
 
     for (const proj of demoProjects) {
+      matchedProjectIds.add(proj.id);
       const firstPages = await db
         .select({ pageNumber: pages.pageNumber, drawingNumber: pages.drawingNumber, rawText: pages.rawText })
         .from(pages)
@@ -108,16 +109,61 @@ export async function POST(req: Request) {
         totalChars += chunk.length;
       }
     }
+    if (demoProjects.length > 0) {
+      dataSummary.push(`General context from ${demoProjects.length} demo project(s) (no exact search matches)`);
+    }
   }
 
-  // Step 3: Build messages and stream
-  const messages: ChatMessage[] = [
-    { role: "system", content: GLOBAL_SYSTEM_PROMPT },
-  ];
-  if (contextText) {
-    messages.push({ role: "system", content: `Retrieved blueprint context:\n${contextText}` });
+  // Step 3: Query YOLO detections for matched projects
+  let yoloSection = "";
+  if (matchedProjectIds.size > 0) {
+    // Query YOLO annotations for all matched projects
+    const allYolo: any[] = [];
+    for (const pid of matchedProjectIds) {
+      const yolo = await db.select().from(annotations)
+        .where(and(eq(annotations.projectId, pid), eq(annotations.source, "yolo")));
+      allYolo.push(...yolo);
+    }
+
+    if (allYolo.length > 0) {
+      const byClass: Record<string, number> = {};
+      for (const a of allYolo) {
+        byClass[a.name] = (byClass[a.name] || 0) + 1;
+      }
+      yoloSection = `\n\n=== OBJECT DETECTIONS (YOLO) ===\n${allYolo.length} objects detected across demo projects:\n`;
+      for (const [cls, count] of Object.entries(byClass).sort(([, a], [, b]) => b - a)) {
+        yoloSection += `  ${cls}: ${count}\n`;
+      }
+      dataSummary.push(`${allYolo.length} YOLO object detection(s) (${Object.entries(byClass).slice(0, 3).map(([c, n]) => `${n} ${c}`).join(", ")})`);
+
+      // Add to context if space allows
+      if (totalChars + yoloSection.length < MAX_CONTEXT_CHARS) {
+        contextText = yoloSection + contextText; // YOLO first, then OCR
+        totalChars += yoloSection.length;
+      }
+    }
   }
-  messages.push({ role: "user", content: message });
+
+  // Step 4: Build dynamic system prompt + single system message
+  let systemPrompt = `You are an expert construction blueprint analyst. Below is data retrieved from demo blueprint projects.
+
+IMPORTANT: ONLY reference information that appears in the data below. Do not invent or fabricate examples, page numbers, counts, or project names. If something is not in the provided data, say "that information is not available."`;
+
+  if (dataSummary.length > 0) {
+    systemPrompt += `\n\nDATA PROVIDED:\n${dataSummary.map(s => `• ${s}`).join("\n")}`;
+  }
+
+  systemPrompt += `\n\nReference specific project names and page numbers when answering.`;
+
+  // Single system message (fixes Anthropic adapter silently dropping second message)
+  const systemContent = contextText
+    ? `${systemPrompt}\n\n${contextText}`
+    : systemPrompt;
+
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemContent },
+    { role: "user", content: message },
+  ];
 
   return streamChatResponse(config, messages, demoProject?.id || 0, null, null);
 }

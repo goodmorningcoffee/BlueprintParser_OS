@@ -136,7 +136,7 @@ export default function ChatPanel() {
       {/* Header with scope toggle */}
       <div className="p-3 border-b border-[var(--border)] flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-xs text-[var(--muted)]">Chat</span>
+          <span className="text-xs text-[var(--muted)]">LLM Chat</span>
           {chatMessages.length > 0 && (
             <button
               onClick={handleClear}
