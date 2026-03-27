@@ -178,10 +178,10 @@ export default function ChatPanel() {
           <div className="text-[var(--muted)] text-xs text-center mt-8 space-y-2">
             <div>
               Ask a question about this{" "}
-              {chatScope === "page" ? "page" : "project"}...
+              {chatScope === "page" ? "page" : "project"}
             </div>
             <div className="text-[10px] opacity-60">
-              Hint: try &quot;How do I use BlueprintParser?&quot;
+              Try a quick prompt below, or type your own question
             </div>
           </div>
         )}
@@ -224,6 +224,36 @@ export default function ChatPanel() {
 
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Quick prompts */}
+      {chatMessages.length === 0 && !loading && (
+        <div className="px-3 pb-2 flex flex-wrap gap-1.5">
+          {(chatScope === "page"
+            ? [
+                "Summarize this page",
+                "List all materials mentioned",
+                "What trades are on this sheet?",
+                "What are the key dimensions?",
+                "Any notes or special instructions?",
+              ]
+            : [
+                "Summarize this project",
+                "List all trades across sheets",
+                "How many pages per discipline?",
+                "What CSI codes were detected?",
+                "Any coordination issues?",
+              ]
+          ).map((prompt) => (
+            <button
+              key={prompt}
+              onClick={() => { setInput(prompt); inputRef.current?.focus(); }}
+              className="px-2 py-1 text-[10px] rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--accent)] hover:border-[var(--accent)]/50 transition-colors"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Input */}
       <div className="p-3 border-t border-[var(--border)]">

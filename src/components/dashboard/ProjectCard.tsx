@@ -16,6 +16,7 @@ interface ProjectCardProps {
   contentMatch?: { matchCount: number; pageCount: number };
   csiSheetCount?: number;
   csiFilter?: string | null;
+  searchQuery?: string;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -38,6 +39,7 @@ export default function ProjectCard({
   contentMatch,
   csiSheetCount,
   csiFilter,
+  searchQuery,
 }: ProjectCardProps) {
   const [confirming, setConfirming] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -79,7 +81,13 @@ export default function ProjectCard({
 
   return (
     <Link
-      href={csiFilter ? `/project/${id}?csi=${encodeURIComponent(csiFilter)}` : `/project/${id}`}
+      href={(() => {
+        const params = new URLSearchParams();
+        if (csiFilter) params.set("csi", csiFilter);
+        if (searchQuery) params.set("q", searchQuery);
+        const qs = params.toString();
+        return `/project/${id}${qs ? `?${qs}` : ""}`;
+      })()}
       className="block p-4 bg-[var(--surface)] border border-[var(--border)] rounded-lg hover:border-[var(--accent)] transition-colors relative group"
     >
       {/* Delete button */}

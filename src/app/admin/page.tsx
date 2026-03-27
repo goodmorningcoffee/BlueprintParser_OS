@@ -105,6 +105,62 @@ export default function AdminPage() {
       const togRes = await fetch("/api/admin/toggles");
       if (togRes.ok) setToggles(await togRes.json());
     } catch { /* ignore */ }
+
+    // Resume polling for any running YOLO jobs
+    try {
+      const runRes = await fetch("/api/admin/running-jobs");
+      if (runRes.ok) {
+        const runningJobs = await runRes.json();
+        for (const job of runningJobs) {
+          if (job.executionId && job.modelId && job.projectPublicId) {
+            resumeJobPolling(job.projectPublicId, job.modelId, job.modelName, job.executionId);
+          }
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  /** Resume polling for a job that was already running (e.g., after page navigation) */
+  function resumeJobPolling(projectId: string, modelId: number, modelName: string, jobName: string) {
+    const mk = String(modelId);
+    const pk = pollKey(projectId, modelId);
+
+    // Don't double-poll
+    if (pollingRef.current[pk]) return;
+
+    setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Running: ${jobName}` } }));
+
+    const interval = setInterval(async () => {
+      try {
+        const statusRes = await fetch(`/api/yolo/status?jobName=${jobName}`);
+        if (!statusRes.ok) return;
+
+        const { status: jobStatus, failureReason } = await statusRes.json();
+        setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: jobStatus } }));
+
+        if (jobStatus === "Completed" || jobStatus === "Failed" || jobStatus === "Stopped") {
+          clearInterval(interval);
+          delete pollingRef.current[pk];
+
+          // Update DB status
+          fetch("/api/admin/running-jobs", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ executionId: jobName, status: jobStatus }),
+          }).catch(() => {});
+
+          if (jobStatus === "Completed") {
+            await new Promise((r) => setTimeout(r, 3000));
+            await loadYoloResults(projectId, modelId, modelName);
+          } else {
+            const reason = failureReason ? `: ${failureReason}` : "";
+            setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `${jobStatus}${reason}` } }));
+          }
+        }
+      } catch { /* network error — keep trying */ }
+    }, 10000);
+
+    pollingRef.current[pk] = interval;
   }
 
   async function handleToggle(toggle: "sagemaker" | "quota", enabled: boolean) {
@@ -326,6 +382,13 @@ export default function AdminPage() {
         if (jobStatus === "Completed" || jobStatus === "Failed" || jobStatus === "Stopped") {
           clearInterval(interval);
           delete pollingRef.current[pk];
+
+          // Update DB status so the job isn't re-polled on next page load
+          fetch("/api/admin/running-jobs", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ executionId: jobName, status: jobStatus }),
+          }).catch(() => {});
 
           if (jobStatus === "Completed") {
             await new Promise((r) => setTimeout(r, 3000));

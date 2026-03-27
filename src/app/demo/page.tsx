@@ -265,7 +265,13 @@ export default function DemoPage() {
               return (
               <Link
                 key={p.id}
-                href={activeCsiFilter ? `/demo/project/${p.id}?csi=${encodeURIComponent(activeCsiFilter)}` : `/demo/project/${p.id}`}
+                href={(() => {
+                  const params = new URLSearchParams();
+                  if (activeCsiFilter) params.set("csi", activeCsiFilter);
+                  if (search.trim()) params.set("q", search.trim());
+                  const qs = params.toString();
+                  return `/demo/project/${p.id}${qs ? `?${qs}` : ""}`;
+                })()}
                 className="block p-4 bg-[var(--surface)] border border-[var(--border)] rounded-lg hover:border-[var(--accent)] transition-colors"
               >
                 <div className="aspect-[4/3] bg-[var(--bg)] rounded mb-3 overflow-hidden flex items-center justify-center">

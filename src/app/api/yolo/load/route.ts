@@ -136,10 +136,22 @@ export async function POST(req: Request) {
   });
 
   let totalInserted = 0;
+  let deletedPrevious = 0;
   let firstError: string | null = null;
 
   try {
     const client = await pool.connect();
+
+    // Delete previous detections for this project+model to prevent duplicates
+    try {
+      const delResult = await client.query(
+        `DELETE FROM annotations WHERE project_id = $1 AND source = 'yolo' AND data->>'modelId' = $2`,
+        [project.id, String(modelId)]
+      );
+      deletedPrevious = delResult.rowCount || 0;
+    } catch (delErr: any) {
+      console.warn("[YOLO-LOAD] Delete previous failed (non-fatal):", delErr?.message);
+    }
     try {
       for (const v of allValues) {
         await client.query(
@@ -162,6 +174,7 @@ export async function POST(req: Request) {
   return NextResponse.json({
     success: totalInserted > 0,
     detectionsLoaded: totalInserted,
+    deletedPrevious,
     filesProcessed,
     ...(firstError && { error: firstError }),
   });
