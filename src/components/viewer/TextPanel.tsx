@@ -209,7 +209,7 @@ function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotati
       {/* Category groups */}
       {grouped.map((group) => {
         const catKey = group.category;
-        const expanded = expandedCategories[catKey] !== false; // default open
+        const expanded = expandedCategories[catKey] === true; // default collapsed
         const baseColor = TEXT_ANNOTATION_COLORS[catKey] || "#f59e0b";
         const allTypesInCategory = [...new Set(group.annotations.map((a) => a.type))];
         const allVisible = allTypesInCategory.every((t) => activeTypes[t] !== false);

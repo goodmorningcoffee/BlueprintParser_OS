@@ -167,8 +167,10 @@ export default function DemoPage() {
         </h1>
         <p className="text-[var(--muted)] max-w-2xl mx-auto">
           Upload construction blueprints and instantly search text across all
-          pages, detect keynotes and CSI codes, and chat with AI about your
-          drawings. Run your own YOLO models for AI-assisted quantity takeoffs,
+          pages, detect CSI codes, and chat with AI about your
+          drawings via self-hosted LLMs or your own subscription. 
+          
+          Run your own YOLO models for AI-assisted quantity takeoffs,
           connect to{" "}
           <a
             href="https://github.com/HumanSignal/label-studio"
@@ -178,8 +180,8 @@ export default function DemoPage() {
           >
             Label Studio
           </a>{" "}
-          for data labeling, and build custom detection
-          workflows — all open source and self-hostable.
+          for data labeling your blueprints, build your own custom
+          Ai-assisted takeoff workflows, all open source and self-hostable.
         </p>
       </div>
 
