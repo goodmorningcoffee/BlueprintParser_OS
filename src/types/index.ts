@@ -9,6 +9,7 @@ import type {
   userApiKeys,
   processingJobs,
   models,
+  llmConfigs,
 } from "@/lib/db/schema";
 
 // ─── Database row types ──────────────────────────────────────
@@ -33,6 +34,7 @@ export type NewChatMessage = InferInsertModel<typeof chatMessages>;
 export type UserApiKey = InferSelectModel<typeof userApiKeys>;
 export type ProcessingJob = InferSelectModel<typeof processingJobs>;
 export type Model = InferSelectModel<typeof models>;
+export type LlmConfig = InferSelectModel<typeof llmConfigs>;
 
 // ─── Client-side types ───────────────────────────────────────
 
@@ -215,7 +217,7 @@ export interface ChatMsg {
   model?: string;
 }
 
-export type LLMProvider = "groq" | "anthropic" | "openai";
+export type LLMProvider = "groq" | "anthropic" | "openai" | "custom";
 
 // ─── Shape types ─────────────────────────────────────────────
 

@@ -3,17 +3,10 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects, pages, chatMessages, annotations, takeoffItems } from "@/lib/db/schema";
 import { eq, and, desc, sql, isNull } from "drizzle-orm";
-import Groq from "groq-sdk";
 import { checkChatQuota, checkDemoChatQuota } from "@/lib/quotas";
-
-// Lazy init — env vars from Secrets Manager may not be available at module load time
-function getGroqClient() {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    throw new Error("GROQ_API_KEY not configured");
-  }
-  return new Groq({ apiKey });
-}
+import { resolveLLMConfig } from "@/lib/llm/resolve";
+import { streamChatResponse } from "@/lib/llm/stream";
+import type { ChatMessage } from "@/lib/llm/types";
 
 const SYSTEM_PROMPT = `You are an expert construction blueprint analyst. You help users understand architectural and engineering drawings by answering questions about blueprint pages.
 
@@ -71,34 +64,18 @@ export async function POST(req: Request) {
       }
     }
 
-    const groq = getGroqClient();
-    const msgs: { role: "system" | "user"; content: string }[] = [
+    const config = await resolveLLMConfig(session.user.companyId, session.user.dbId);
+    if (!config) {
+      return NextResponse.json({ error: "No LLM configured. Set up a provider in Admin → AI Models." }, { status: 503 });
+    }
+
+    const msgs: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT + "\n\nYou have access to text from multiple projects. Reference specific project names and page numbers." },
     ];
     if (contextText) msgs.push({ role: "system", content: `Retrieved context:\n${contextText}` });
     msgs.push({ role: "user", content: message });
 
-    const stream = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile", messages: msgs, stream: true, max_tokens: 1024, temperature: 0.3,
-    });
-
-    const encoder = new TextEncoder();
-    const readable = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const chunk of stream) {
-            const content = chunk.choices[0]?.delta?.content;
-            if (content) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`));
-          }
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-          controller.close();
-        } catch { controller.close(); }
-      },
-    });
-
-    return new Response(readable, {
-      headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" },
-    });
+    return streamChatResponse(config, msgs, 0, null, session.user.dbId);
   }
 
   if (!projectId) {
@@ -311,12 +288,25 @@ export async function POST(req: Request) {
     .orderBy(desc(chatMessages.createdAt))
     .limit(10);
 
-  // Build messages array for Groq
+  // Resolve LLM config (DB → env var hierarchy)
+  const config = await resolveLLMConfig(
+    project.companyId,
+    session?.user?.dbId,
+    isDemo
+  );
+  if (!config) {
+    return NextResponse.json(
+      { error: "No LLM configured. Set up a provider in Admin → AI Models." },
+      { status: 503 }
+    );
+  }
+
+  // Build messages
   const systemMessage = contextText
     ? `${SYSTEM_PROMPT}\n\nHere is the extracted text from the blueprint:\n\n${contextText}`
     : SYSTEM_PROMPT;
 
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+  const messages: ChatMessage[] = [
     { role: "system", content: systemMessage },
   ];
 
@@ -337,72 +327,17 @@ export async function POST(req: Request) {
     pageNumber: scope === "page" ? pageNumber : null,
     role: "user",
     content: message,
-    model: "llama-3.3-70b-versatile",
+    model: `${config.provider}/${config.model}`,
     userId: session?.user?.dbId || null,
   });
 
-  try {
-    const groq = getGroqClient();
-
-    // Call Groq (streaming)
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages,
-      temperature: 0.3,
-      max_tokens: 2048,
-      stream: true,
-    });
-
-    // Stream response
-    let fullResponse = "";
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const chunk of completion) {
-            const content = chunk.choices[0]?.delta?.content || "";
-            if (content) {
-              fullResponse += content;
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({ content })}\n\n`)
-              );
-            }
-          }
-
-          // Save assistant response to DB
-          await db.insert(chatMessages).values({
-            projectId: project.id,
-            pageNumber: scope === "page" ? pageNumber : null,
-            role: "assistant",
-            content: fullResponse,
-            model: "llama-3.3-70b-versatile",
-            userId: session?.user?.dbId || null,
-          });
-
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-          controller.close();
-        } catch (err) {
-          console.error("Stream error:", err);
-          controller.error(err);
-        }
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
-  } catch (err) {
-    console.error("Groq API error:", err);
-    const message = err instanceof Error ? err.message : "Chat failed";
-    return NextResponse.json(
-      { error: message },
-      { status: 500 }
-    );
-  }
+  return streamChatResponse(
+    config,
+    messages,
+    project.id,
+    scope === "page" ? pageNumber : null,
+    session?.user?.dbId || null
+  );
 }
 
 /**
