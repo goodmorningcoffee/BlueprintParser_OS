@@ -726,7 +726,18 @@ export default function AnnotationOverlay({
             for (const word of pageWords) {
               const [left, top, w, h] = word.bbox;
               if (normX >= left && normX <= left + w && normY >= top && normY <= top + h) {
-                if (searchQuery.toLowerCase() === word.text.toLowerCase()) {
+                if (e.shiftKey && searchQuery) {
+                  // Shift+double-click: append word to search (multi-word selection)
+                  const existing = searchQuery.toLowerCase().split(/\s+/);
+                  const newWord = word.text.toLowerCase();
+                  if (existing.includes(newWord)) {
+                    // Remove word if already in search
+                    const filtered = existing.filter((w) => w !== newWord);
+                    setSearch(filtered.join(" "));
+                  } else {
+                    setSearch(searchQuery + " " + word.text);
+                  }
+                } else if (searchQuery.toLowerCase() === word.text.toLowerCase()) {
                   setSearch("");
                 } else {
                   setSearch(word.text);
