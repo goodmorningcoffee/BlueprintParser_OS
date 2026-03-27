@@ -29,11 +29,26 @@ interface AiModelsTabProps {
   onDeleteModel: (id: number) => void;
   onRunYolo: (projectId: string, modelId: number) => void;
   onLoadResults: (projectId: string, modelId: number, modelName: string) => void;
+  // Safety toggles (SageMaker/Quota)
+  toggles: { sagemakerEnabled: boolean; quotaEnabled: boolean; hasPassword: boolean };
+  togglePassword: string;
+  setTogglePassword: (v: string) => void;
+  toggleError: string;
+  setToggleError: (v: string) => void;
+  newTogglePass: string;
+  setNewTogglePass: (v: string) => void;
+  currentTogglePass: string;
+  setCurrentTogglePass: (v: string) => void;
+  onToggle: (toggle: "sagemaker" | "quota", enabled: boolean) => void;
+  onSetTogglePassword: () => void;
 }
 
 export default function AiModelsTab({
   yoloModels, projects, yoloJobs, yoloStatus,
   uploading, uploadProgress, onUploadModel, onDeleteModel, onRunYolo, onLoadResults,
+  toggles, togglePassword, setTogglePassword, toggleError, setToggleError,
+  newTogglePass, setNewTogglePass, currentTogglePass, setCurrentTogglePass,
+  onToggle, onSetTogglePassword,
 }: AiModelsTabProps) {
   return (
     <div className="space-y-8">
@@ -126,6 +141,59 @@ export default function AiModelsTab({
           <p className="text-sm text-[var(--muted)]">
             Using environment default (Groq — llama-3.3-70b). Admin LLM configuration coming soon.
           </p>
+        </div>
+      </section>
+
+      {/* Safety Toggles */}
+      <section>
+        <h2 className="text-lg font-semibold mb-3">Safety Toggles</h2>
+        <div className="p-3 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3">
+          {!toggles.hasPassword ? (
+            <div className="space-y-2">
+              <p className="text-xs text-amber-400">Set a toggle password first. This is independent of your login — a separate secret for controlling SageMaker and quotas.</p>
+              <input type="password" placeholder="New toggle password (min 6 chars)" value={newTogglePass}
+                onChange={(e) => { setNewTogglePass(e.target.value); setToggleError(""); }}
+                className="w-full px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]" />
+              <button onClick={onSetTogglePassword} disabled={newTogglePass.length < 6}
+                className="px-3 py-1.5 text-xs bg-amber-600 text-white rounded disabled:opacity-40 hover:bg-amber-500">
+                Set Toggle Password
+              </button>
+              {toggleError && <span className="text-xs text-red-400 block">{toggleError}</span>}
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-medium">SageMaker</span>
+                  <span className={`text-xs ml-2 ${toggles.sagemakerEnabled ? "text-green-400" : "text-red-400"}`}>
+                    {toggles.sagemakerEnabled ? "ENABLED" : "DISABLED"}
+                  </span>
+                </div>
+                <button onClick={() => onToggle("sagemaker", !toggles.sagemakerEnabled)} disabled={!togglePassword}
+                  className={`px-3 py-1 text-xs rounded border disabled:opacity-40 ${toggles.sagemakerEnabled ? "border-red-400/30 text-red-400 hover:bg-red-400/10" : "border-green-400/30 text-green-400 hover:bg-green-400/10"}`}>
+                  {toggles.sagemakerEnabled ? "Disable" : "Enable"}
+                </button>
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-medium">Quota Limits</span>
+                  <span className={`text-xs ml-2 ${toggles.quotaEnabled ? "text-green-400" : "text-amber-400"}`}>
+                    {toggles.quotaEnabled ? "ENFORCED" : "BYPASSED"}
+                  </span>
+                </div>
+                <button onClick={() => onToggle("quota", !toggles.quotaEnabled)} disabled={!togglePassword}
+                  className={`px-3 py-1 text-xs rounded border disabled:opacity-40 ${toggles.quotaEnabled ? "border-amber-400/30 text-amber-400 hover:bg-amber-400/10" : "border-green-400/30 text-green-400 hover:bg-green-400/10"}`}>
+                  {toggles.quotaEnabled ? "Bypass" : "Enforce"}
+                </button>
+              </div>
+              <div className="flex items-center gap-2 pt-2 border-t border-[var(--border)]">
+                <input type="password" placeholder="Toggle password" value={togglePassword}
+                  onChange={(e) => { setTogglePassword(e.target.value); setToggleError(""); }}
+                  className="flex-1 px-3 py-1.5 text-sm bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]" />
+                {toggleError && <span className="text-xs text-red-400">{toggleError}</span>}
+              </div>
+            </>
+          )}
         </div>
       </section>
 
