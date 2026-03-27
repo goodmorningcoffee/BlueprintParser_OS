@@ -191,11 +191,11 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       )}
 
       {/* Mode toggle */}
-      <div className="flex border border-[var(--border)] rounded overflow-hidden">
+      <div className="flex border border-[var(--border)] rounded">
         <HelpTooltip id="pointer-mode">
           <button
             onClick={() => setMode("pointer")}
-            className={`px-3 py-1 text-xs ${
+            className={`px-3 py-1 text-xs rounded-l ${
               mode === "pointer"
                 ? "bg-[var(--accent)] text-white"
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
@@ -219,7 +219,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         <HelpTooltip id="markup-mode">
           <button
             onClick={() => setMode("markup")}
-            className={`px-3 py-1 text-xs ${
+            className={`px-3 py-1 text-xs rounded-r ${
               mode === "markup"
                 ? "bg-[var(--accent)] text-white"
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
