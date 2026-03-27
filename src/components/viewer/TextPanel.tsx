@@ -173,37 +173,16 @@ function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotati
       {/* Global controls */}
       <div className="p-3 border-b border-[var(--border)] flex items-center justify-between">
         <span className="text-[var(--muted)]">{annotations.length} annotations</span>
-        <div className="flex gap-2">
-          <HelpTooltip id="text-annotations-show-all" position="above">
-            <button
-              onClick={() => setAllTypes(true)}
-              className="px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]"
-            >
-              Show All
-            </button>
-          </HelpTooltip>
-          <HelpTooltip id="text-annotations-hide-all" position="above">
-            <button
-              onClick={() => setAllTypes(false)}
-              className="px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-red-400"
-            >
-              Hide All
-            </button>
-          </HelpTooltip>
-          <HelpTooltip id="text-annotations-nuke" position="above">
-            <button
-              onClick={toggleAll}
-              className={`px-2 py-0.5 rounded border ${
-                showAll
-                  ? "border-green-500/30 text-green-400"
-                  : "border-red-400/30 text-red-400"
-              }`}
-            title={showAll ? "Disable all overlays" : "Enable all overlays"}
-          >
-            {showAll ? "ON" : "OFF"}
-          </button>
-          </HelpTooltip>
-        </div>
+        <button
+          onClick={toggleAll}
+          className={`px-2 py-0.5 rounded border text-[11px] ${
+            showAll
+              ? "border-green-500/30 text-green-400 bg-green-500/10"
+              : "border-red-400/30 text-red-400 bg-red-500/10"
+          }`}
+        >
+          {showAll ? "Show Annotations: On" : "Show Annotations: Off"}
+        </button>
       </div>
 
       {/* Category groups */}
