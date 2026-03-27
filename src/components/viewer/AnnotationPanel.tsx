@@ -17,118 +17,130 @@ export default function AnnotationPanel() {
   const removeAnnotation = useViewerStore((s) => s.removeAnnotation);
   const setAnnotationFilter = useViewerStore((s) => s.setAnnotationFilter);
   const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
-  const setPage = useViewerStore((s) => s.setPage);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
 
-  // Group annotations by label
-  const groups = useMemo(() => {
-    const map = new Map<
-      string,
-      { count: number; pages: Set<number>; ids: number[]; source: string }
-    >();
+  // Group annotations by category (YOLO, MARKUPS, QTO) then by name
+  const categorized = useMemo(() => {
+    const yolo: Map<string, { count: number; pages: Set<number> }> = new Map();
+    const markups: Map<string, { count: number; pages: Set<number>; ids: number[] }> = new Map();
+    const qto: Map<string, { count: number; pages: Set<number> }> = new Map();
+
     for (const ann of annotations) {
-      if (ann.source === "takeoff") continue;
-      const existing = map.get(ann.name);
-      if (existing) {
-        existing.count++;
-        existing.pages.add(ann.pageNumber);
-        existing.ids.push(ann.id);
+      if (ann.source === "yolo") {
+        const existing = yolo.get(ann.name);
+        if (existing) { existing.count++; existing.pages.add(ann.pageNumber); }
+        else yolo.set(ann.name, { count: 1, pages: new Set([ann.pageNumber]) });
+      } else if (ann.source === "takeoff" || ann.source === "takeoff-scale") {
+        const existing = qto.get(ann.name);
+        if (existing) { existing.count++; existing.pages.add(ann.pageNumber); }
+        else qto.set(ann.name, { count: 1, pages: new Set([ann.pageNumber]) });
       } else {
-        map.set(ann.name, {
-          count: 1,
-          pages: new Set([ann.pageNumber]),
-          ids: [ann.id],
-          source: ann.source,
-        });
+        const existing = markups.get(ann.name);
+        if (existing) { existing.count++; existing.pages.add(ann.pageNumber); existing.ids.push(ann.id); }
+        else markups.set(ann.name, { count: 1, pages: new Set([ann.pageNumber]), ids: [ann.id] });
       }
     }
-    return Array.from(map.entries()).sort((a, b) => b[1].count - a[1].count);
+
+    return {
+      yolo: [...yolo.entries()].sort(([, a], [, b]) => b.count - a.count),
+      markups: [...markups.entries()].sort(([, a], [, b]) => b.count - a.count),
+      qto: [...qto.entries()].sort(([, a], [, b]) => b.count - a.count),
+    };
   }, [annotations]);
 
-  // Current page annotations
-  const pageAnnotations = annotations.filter((a) => a.pageNumber === pageNumber);
+  const totalYolo = categorized.yolo.reduce((s, [, d]) => s + d.count, 0);
+  const totalMarkups = categorized.markups.reduce((s, [, d]) => s + d.count, 0);
+  const totalQto = categorized.qto.reduce((s, [, d]) => s + d.count, 0);
 
   if (annotations.length === 0) {
     return (
       <div className="border-t border-[var(--border)] p-3" style={{ backgroundColor: "#1e1e22" }}>
         <span className="text-xs" style={{ color: "#6b8aad" }}>
-          No markups. Switch to Add Markup mode to draw.
+          No annotations. Run YOLO or switch to markup mode to draw.
         </span>
       </div>
     );
   }
 
   return (
-    <div className="border-t border-[var(--border)] max-h-24 overflow-y-auto" style={{ backgroundColor: "#1e1e22" }}>
-      {/* Label groups */}
-      <div className="p-2 flex flex-wrap gap-1.5">
+    <div className="border-t border-[var(--border)] max-h-28 overflow-y-auto" style={{ backgroundColor: "#1e1e22" }}>
+      <div className="p-2 space-y-1.5">
+        {/* Active filter badge */}
         {activeAnnotationFilter && (
           <button
             onClick={() => setAnnotationFilter(null)}
-            className="px-2 py-0.5 text-[10px] rounded bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/40"
+            className="px-2 py-0.5 text-[10px] rounded bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/40 mb-1"
           >
-            {activeAnnotationFilter} ({groups.find(([n]) => n === activeAnnotationFilter)?.[1].pages.size || 0} pg) x
+            Filtered: {activeAnnotationFilter} x
           </button>
         )}
-        {groups.map(([name, data]) => {
-          const color = labelColor(name);
-          const isActive = activeAnnotationFilter === name;
-          return (
-            <button
-              key={name}
-              onClick={() =>
-                setAnnotationFilter(isActive ? null : name)
-              }
-              className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${
-                isActive
-                  ? "bg-[var(--accent)]/20 border-[var(--accent)]/40"
-                  : "border-[var(--border)] hover:border-[var(--accent)]"
-              }`}
-              style={{ borderLeftColor: color, borderLeftWidth: 3 }}
-            >
-              {name}
-              <span className="text-[var(--muted)] ml-1">
-                {data.count} ({data.pages.size}pg)
-              </span>
-            </button>
-          );
-        })}
-      </div>
 
-      {/* Current page annotations list */}
-      {pageAnnotations.length > 0 && (
-        <div className="px-2 pb-2">
-          <div className="text-[10px] text-[var(--muted)] mb-1">
-            Page {pageNumber}
-          </div>
-          {pageAnnotations.map((ann) => (
-            <div
-              key={ann.id}
-              className="flex items-center justify-between text-xs py-0.5"
-            >
-              <span style={{ color: labelColor(ann.name) }}>
-                {ann.name}
-              </span>
-              <div className="flex items-center gap-2">
-                <span className="text-[var(--muted)] text-[10px]">
-                  {ann.source}
-                </span>
+        {/* YOLO detections */}
+        {categorized.yolo.length > 0 && (
+          <div>
+            <div className="text-[10px] text-purple-400/70 mb-0.5">YOLO ({totalYolo})</div>
+            <div className="flex flex-wrap gap-1">
+              {categorized.yolo.map(([name, data]) => (
                 <button
-                  onClick={() => {
-                    fetch(`/api/annotations/${ann.id}`, {
-                      method: "DELETE",
-                    }).catch(() => {});
-                    removeAnnotation(ann.id);
-                  }}
-                  className="text-[var(--muted)] hover:text-red-400 text-[10px]"
+                  key={`yolo-${name}`}
+                  onClick={() => setAnnotationFilter(activeAnnotationFilter === name ? null : name)}
+                  className={`px-1.5 py-0.5 text-[10px] rounded border transition-colors ${
+                    activeAnnotationFilter === name
+                      ? "bg-purple-500/20 border-purple-400/40 text-purple-300"
+                      : "border-[var(--border)] text-[var(--muted)] hover:border-purple-400/30 hover:text-purple-300"
+                  }`}
                 >
-                  x
+                  {name} <span className="opacity-60">{data.count}</span>
                 </button>
-              </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        )}
+
+        {/* User markups */}
+        {categorized.markups.length > 0 && (
+          <div>
+            <div className="text-[10px] text-blue-400/70 mb-0.5">MARKUPS ({totalMarkups})</div>
+            <div className="flex flex-wrap gap-1">
+              {categorized.markups.map(([name, data]) => (
+                <button
+                  key={`markup-${name}`}
+                  onClick={() => setAnnotationFilter(activeAnnotationFilter === name ? null : name)}
+                  className={`px-1.5 py-0.5 text-[10px] rounded border transition-colors ${
+                    activeAnnotationFilter === name
+                      ? "bg-blue-500/20 border-blue-400/40 text-blue-300"
+                      : "border-[var(--border)] text-[var(--muted)] hover:border-blue-400/30 hover:text-blue-300"
+                  }`}
+                  style={{ borderLeftColor: labelColor(name), borderLeftWidth: 2 }}
+                >
+                  {name} <span className="opacity-60">{data.count}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* QTO annotations */}
+        {categorized.qto.length > 0 && (
+          <div>
+            <div className="text-[10px] text-emerald-400/70 mb-0.5">QTO ({totalQto})</div>
+            <div className="flex flex-wrap gap-1">
+              {categorized.qto.map(([name, data]) => (
+                <button
+                  key={`qto-${name}`}
+                  onClick={() => setAnnotationFilter(activeAnnotationFilter === name ? null : name)}
+                  className={`px-1.5 py-0.5 text-[10px] rounded border transition-colors ${
+                    activeAnnotationFilter === name
+                      ? "bg-emerald-500/20 border-emerald-400/40 text-emerald-300"
+                      : "border-[var(--border)] text-[var(--muted)] hover:border-emerald-400/30 hover:text-emerald-300"
+                  }`}
+                >
+                  {name} <span className="opacity-60">{data.count}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
