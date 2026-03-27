@@ -4,7 +4,7 @@ export type AdminTab = "overview" | "projects" | "ai-models" | "users" | "settin
 
 const TABS: { id: AdminTab; label: string }[] = [
   { id: "overview", label: "Overview" },
-  { id: "projects", label: "Projects" },
+  { id: "projects", label: "Demo Projects" },
   { id: "ai-models", label: "AI Models" },
   { id: "users", label: "Users" },
   { id: "settings", label: "Settings" },

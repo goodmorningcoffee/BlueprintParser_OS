@@ -61,7 +61,15 @@ export default function TextAnnotationOverlay({
           for (const word of pageWords) {
             const [left, top, w, h] = word.bbox;
             if (normX >= left && normX <= left + w && normY >= top && normY <= top + h) {
-              if (searchQuery.toLowerCase() === word.text.toLowerCase()) {
+              if (e.shiftKey && searchQuery) {
+                const existing = searchQuery.toLowerCase().split(/\s+/);
+                const newWord = word.text.toLowerCase();
+                if (existing.includes(newWord)) {
+                  setSearch(existing.filter((w) => w !== newWord).join(" "));
+                } else {
+                  setSearch(searchQuery + " " + word.text);
+                }
+              } else if (searchQuery.toLowerCase() === word.text.toLowerCase()) {
                 setSearch("");
               } else {
                 setSearch(word.text);

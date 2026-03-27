@@ -169,8 +169,7 @@ export default function DemoPage() {
           Upload construction blueprints and instantly search text across all
           pages, detect CSI codes, and chat with AI about your
           drawings via self-hosted LLMs or your own subscription. 
-          
-          Run your own YOLO models for AI-assisted quantity takeoffs,
+          Run your own models for parsing the plans,
           connect to{" "}
           <a
             href="https://github.com/HumanSignal/label-studio"
@@ -180,8 +179,8 @@ export default function DemoPage() {
           >
             Label Studio
           </a>{" "}
-          for data labeling your blueprints, build your own custom
-          Ai-assisted takeoff workflows, all open source and self-hostable.
+          for data labeling your blueprints, and build your own custom
+          Ai-assisted takeoff workflows: all open source and self-hostable.
         </p>
       </div>
 

@@ -262,7 +262,7 @@ function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotati
                       {/* Type + text */}
                       <span className="text-[var(--muted)] shrink-0">{ann.type}:</span>
                       <span className="text-[var(--fg)] truncate flex-1" title={ann.text}>
-                        {ann.text}
+                        {ann.type === "csi-code" && ann.meta?.code ? `${ann.meta.code} ${ann.text}` : ann.text}
                       </span>
                       {/* Confidence */}
                       <span className="text-[var(--muted)] shrink-0">
