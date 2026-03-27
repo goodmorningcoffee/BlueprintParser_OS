@@ -265,3 +265,28 @@ export interface YoloDetection {
   bbox: [number, number, number, number];
   bbox_normalized: [number, number, number, number];
 }
+
+// ─── Model class tagging (spatial intelligence) ─────────────
+
+export type ModelClassType = "spatial" | "countable" | "both";
+
+export interface ModelConfig {
+  classes: string[];
+  confidence: number;
+  iou: number;
+  imageSize: number;
+  classTypes?: Record<string, ModelClassType>;
+}
+
+export interface SpatialRegion {
+  className: string;
+  displayName: string;
+  bbox: [number, number, number, number]; // [minX, minY, maxX, maxY] normalized 0-1
+  confidence: number;
+  text: string;
+}
+
+export interface SpatialMappingResult {
+  regions: SpatialRegion[];
+  unmappedText: string;
+}
