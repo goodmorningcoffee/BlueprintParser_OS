@@ -553,6 +553,17 @@ export default function AdminPage() {
             onDeleteModel={handleDeleteModel}
             onRunYolo={runYolo}
             onLoadResults={loadYoloResults}
+            toggles={toggles}
+            togglePassword={togglePassword}
+            setTogglePassword={setTogglePassword}
+            toggleError={toggleError}
+            setToggleError={setToggleError}
+            newTogglePass={newTogglePass}
+            setNewTogglePass={setNewTogglePass}
+            currentTogglePass={currentTogglePass}
+            setCurrentTogglePass={setCurrentTogglePass}
+            onToggle={handleToggle}
+            onSetTogglePassword={handleSetTogglePassword}
           />
         )}
 
@@ -570,17 +581,6 @@ export default function AdminPage() {
 
         {activeTab === "settings" && (
           <SettingsTab
-            toggles={toggles}
-            togglePassword={togglePassword}
-            setTogglePassword={setTogglePassword}
-            toggleError={toggleError}
-            setToggleError={setToggleError}
-            newTogglePass={newTogglePass}
-            setNewTogglePass={setNewTogglePass}
-            currentTogglePass={currentTogglePass}
-            setCurrentTogglePass={setCurrentTogglePass}
-            onToggle={handleToggle}
-            onSetTogglePassword={handleSetTogglePassword}
             passwordForm={passwordForm}
             setPasswordForm={setPasswordForm}
             onChangePassword={changePassword}

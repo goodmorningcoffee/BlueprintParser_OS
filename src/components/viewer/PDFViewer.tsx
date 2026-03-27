@@ -107,20 +107,22 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   // Center when zoomFit is triggered (via store flag)
   const pendingCenter = useViewerStore((s) => s.pendingCenter);
   const clearPendingCenter = useViewerStore((s) => s.clearPendingCenter);
+  const centerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!pendingCenter) return;
     clearPendingCenter();
     // Sync scaleRef so wheel zoom continues from the correct scale
     scaleRef.current = 1;
-    // Wait 300ms for PDFPage to re-render at scale=1 (its debounce is 150ms).
-    // Same centering formula as initial load which works correctly.
-    const timer = setTimeout(() => {
+    // Use a ref for the timer so it survives the re-render caused by clearPendingCenter().
+    // Without a ref, the effect cleanup cancels the timer before it fires.
+    if (centerTimerRef.current) clearTimeout(centerTimerRef.current);
+    centerTimerRef.current = setTimeout(() => {
+      centerTimerRef.current = null;
       const container = containerRef.current;
       if (!container) return;
       container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
       container.scrollTop = (container.scrollHeight - container.clientHeight) / 2;
     }, 300);
-    return () => clearTimeout(timer);
   }, [pendingCenter, clearPendingCenter]);
 
   // Mode ref for use in native event listeners
