@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import LLMConfigSection from "../sections/LLMConfigSection";
 
 interface ModelItem {
   id: number;
@@ -134,15 +135,8 @@ export default function AiModelsTab({
         </form>
       </section>
 
-      {/* LLM Configuration placeholder — Phase 6 will add the real UI here */}
-      <section>
-        <h2 className="text-lg font-semibold mb-3">LLM Configuration</h2>
-        <div className="p-4 bg-[var(--surface)] border border-[var(--border)] rounded">
-          <p className="text-sm text-[var(--muted)]">
-            Using environment default (Groq — llama-3.3-70b). Admin LLM configuration coming soon.
-          </p>
-        </div>
-      </section>
+      {/* LLM Configuration — self-contained component */}
+      <LLMConfigSection />
 
       {/* Safety Toggles */}
       <section>

@@ -107,22 +107,27 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   // Center when zoomFit is triggered (via store flag)
   const pendingCenter = useViewerStore((s) => s.pendingCenter);
   const clearPendingCenter = useViewerStore((s) => s.clearPendingCenter);
-  const centerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!pendingCenter) return;
     clearPendingCenter();
-    // Sync scaleRef so wheel zoom continues from the correct scale
     scaleRef.current = 1;
-    // Use a ref for the timer so it survives the re-render caused by clearPendingCenter().
-    // Without a ref, the effect cleanup cancels the timer before it fires.
-    if (centerTimerRef.current) clearTimeout(centerTimerRef.current);
-    centerTimerRef.current = setTimeout(() => {
-      centerTimerRef.current = null;
-      const container = containerRef.current;
-      if (!container) return;
-      container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
-      container.scrollTop = (container.scrollHeight - container.clientHeight) / 2;
-    }, 300);
+
+    // Calculate scroll positions directly from known padding values.
+    // We can't rely on scrollWidth during the CSS transition — the wrapper div
+    // shrinks to pageSize * (1/renderedScale) before the canvas re-renders,
+    // making scrollWidth temporarily wrong.
+    //
+    // The inner div has: paddingLeft=25vw, paddingRight=25vw, p-4 (16px).
+    // At scale=1, the page fills containerWidth-32. To center it:
+    //   scrollLeft = 25vw (the left padding offset)
+    //   scrollTop  = 50vh (the top padding offset, centers page vertically)
+    const container = containerRef.current;
+    if (!container) return;
+    const targetLeft = window.innerWidth * 0.25;
+    const targetTop = window.innerHeight * 0.5;
+    // Apply immediately — these values are correct regardless of CSS transform state
+    container.scrollLeft = targetLeft;
+    container.scrollTop = targetTop;
   }, [pendingCenter, clearPendingCenter]);
 
   // Mode ref for use in native event listeners

@@ -2,14 +2,10 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { projects, pages } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
-import Groq from "groq-sdk";
 import { checkDemoChatQuota } from "@/lib/quotas";
-
-function getGroqClient() {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error("GROQ_API_KEY not configured");
-  return new Groq({ apiKey });
-}
+import { resolveLLMConfig } from "@/lib/llm/resolve";
+import { streamChatResponse } from "@/lib/llm/stream";
+import type { ChatMessage } from "@/lib/llm/types";
 
 const GLOBAL_SYSTEM_PROMPT = `You are an expert construction blueprint analyst with access to text extracted from multiple construction blueprint projects. You help users understand architectural and engineering drawings.
 
@@ -23,6 +19,7 @@ const MAX_PAGES = 10;
 /**
  * POST /api/demo/chat
  * RAG chat: search across all demo projects, retrieve relevant pages, send to LLM.
+ * Uses demo-specific LLM config if admin configured one, otherwise falls back to env var.
  */
 export async function POST(req: Request) {
   const quota = await checkDemoChatQuota();
@@ -33,6 +30,26 @@ export async function POST(req: Request) {
   const { message } = await req.json();
   if (!message || typeof message !== "string") {
     return NextResponse.json({ error: "message required" }, { status: 400 });
+  }
+
+  // Find a demo project to get companyId for LLM config resolution
+  const [demoProject] = await db
+    .select({ id: projects.id, companyId: projects.companyId })
+    .from(projects)
+    .where(eq(projects.isDemo, true))
+    .limit(1);
+
+  // Resolve LLM config (demo-specific → company default → env var)
+  const config = await resolveLLMConfig(
+    demoProject?.companyId || 0,
+    undefined,
+    true // isDemo
+  );
+  if (!config) {
+    return NextResponse.json(
+      { error: "No LLM configured for demo. Admin must set up a provider." },
+      { status: 503 }
+    );
   }
 
   // Step 1: Search for relevant pages across all demo projects
@@ -93,55 +110,14 @@ export async function POST(req: Request) {
     }
   }
 
-  // Step 3: Send to LLM with streaming
-  const groq = getGroqClient();
-
-  const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+  // Step 3: Build messages and stream
+  const messages: ChatMessage[] = [
     { role: "system", content: GLOBAL_SYSTEM_PROMPT },
   ];
-
   if (contextText) {
-    messages.push({
-      role: "system",
-      content: `Retrieved blueprint context:\n${contextText}`,
-    });
+    messages.push({ role: "system", content: `Retrieved blueprint context:\n${contextText}` });
   }
-
   messages.push({ role: "user", content: message });
 
-  const stream = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
-    messages,
-    stream: true,
-    max_tokens: 1024,
-    temperature: 0.3,
-  });
-
-  // Stream SSE response
-  const encoder = new TextEncoder();
-  const readable = new ReadableStream({
-    async start(controller) {
-      try {
-        for await (const chunk of stream) {
-          const content = chunk.choices[0]?.delta?.content;
-          if (content) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`));
-          }
-        }
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-        controller.close();
-      } catch (err) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: "Stream failed" })}\n\n`));
-        controller.close();
-      }
-    },
-  });
-
-  return new Response(readable, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+  return streamChatResponse(config, messages, demoProject?.id || 0, null, null);
 }

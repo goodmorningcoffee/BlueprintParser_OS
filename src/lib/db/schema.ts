@@ -260,6 +260,30 @@ export const inviteRequests = pgTable("invite_requests", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
+// ─── LLM Configs (admin-configured provider/model per company) ─
+export const llmConfigs = pgTable(
+  "llm_configs",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }), // NULL = company-wide
+    provider: varchar("provider", { length: 50 }).notNull(), // 'groq' | 'anthropic' | 'openai' | 'custom'
+    model: varchar("model", { length: 100 }).notNull(),
+    encryptedApiKey: text("encrypted_api_key"), // NULL = use env var fallback
+    baseUrl: text("base_url"), // for Ollama/custom endpoints
+    isDemo: boolean("is_demo").default(false).notNull(),
+    isDefault: boolean("is_default").default(false).notNull(),
+    config: jsonb("config").$type<{ temperature?: number; maxTokens?: number }>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("idx_llm_configs_company").on(table.companyId),
+  ]
+);
+
 // ─── Labeling Sessions (Label Studio integration) ───────────
 export const labelingSessions = pgTable(
   "labeling_sessions",
