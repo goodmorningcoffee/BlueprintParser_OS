@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import LLMConfigSection from "../sections/LLMConfigSection";
+import S3Browser from "../sections/S3Browser";
 
 interface ModelItem {
   id: number;
@@ -51,6 +52,32 @@ export default function AiModelsTab({
   newTogglePass, setNewTogglePass, currentTogglePass, setCurrentTogglePass,
   onToggle, onSetTogglePassword,
 }: AiModelsTabProps) {
+  // SageMaker job details state
+  const [jobDetails, setJobDetails] = useState<Record<string, any>>({});
+  const [expandedJob, setExpandedJob] = useState<string | null>(null);
+
+  const fetchJobDetails = useCallback(async (jobName: string) => {
+    if (jobDetails[jobName]) {
+      setExpandedJob(expandedJob === jobName ? null : jobName);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/sagemaker-details?jobName=${encodeURIComponent(jobName)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setJobDetails((prev) => ({ ...prev, [jobName]: data }));
+        setExpandedJob(jobName);
+      }
+    } catch { /* ignore */ }
+  }, [jobDetails, expandedJob]);
+
+  const formatDuration = (secs: number | null) => {
+    if (!secs) return "—";
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  };
+
   return (
     <div className="space-y-8">
       {/* YOLO Models */}
@@ -217,7 +244,8 @@ export default function AiModelsTab({
                       const mStatus = (yoloStatus[p.id] || {})[mk] || 0;
                       const mJob = (yoloJobs[p.id] || {})[mk] || "";
                       return (
-                      <div key={m.id} className="flex gap-1 items-center">
+                      <div key={m.id}>
+                      <div className="flex gap-1 items-center">
                         <button
                           onClick={() => onRunYolo(p.id, m.id)}
                           disabled={!!mJob && /^(Running|Rasterizing|InProgress|Loading|Waiting|starting)/.test(mJob)}
@@ -241,16 +269,48 @@ export default function AiModelsTab({
                           {mStatus > 0 ? "Loaded" : "Load"}
                         </button>
                         {mJob && (
-                          <span className={`text-xs ${
-                            mJob.startsWith("Error") || mJob.startsWith("Failed") || mJob.startsWith("Load failed")
-                              ? "text-red-400"
-                              : mJob.startsWith("Completed")
-                                ? "text-green-400"
-                                : "text-[var(--accent)]"
-                          }`}>
-                            {mJob}
-                          </span>
+                          <>
+                            <span className={`text-xs ${
+                              mJob.startsWith("Error") || mJob.startsWith("Failed") || mJob.startsWith("Load failed")
+                                ? "text-red-400"
+                                : mJob.startsWith("Completed")
+                                  ? "text-green-400"
+                                  : "text-[var(--accent)]"
+                            }`}>
+                              {mJob}
+                            </span>
+                            {mJob.startsWith("Running:") && (
+                              <button
+                                onClick={() => fetchJobDetails(mJob.replace("Running: ", ""))}
+                                className="text-[10px] text-[var(--muted)] hover:text-[var(--accent)] underline"
+                              >
+                                {expandedJob === mJob.replace("Running: ", "") ? "Hide" : "Details"}
+                              </button>
+                            )}
+                          </>
                         )}
+                      </div>
+                      {/* SageMaker job details panel */}
+                      {mJob.startsWith("Running:") && (() => {
+                        const jn = mJob.replace("Running: ", "");
+                        return expandedJob === jn && jobDetails[jn] ? (
+                          <div className="mt-1 p-2 bg-[#0d0d0d] border border-[var(--border)] rounded font-mono text-[10px] text-[var(--muted)] leading-relaxed">
+                            <div>Job: <span className="text-[var(--fg)]">{jobDetails[jn].jobName}</span></div>
+                            <div>Status: <span className={jobDetails[jn].status === "InProgress" || jobDetails[jn].status === "Completed" ? "text-green-400" : jobDetails[jn].status === "Failed" ? "text-red-400" : "text-[var(--accent)]"}>{jobDetails[jn].status}</span></div>
+                            <div>Instance: <span className="text-[var(--fg)]">{jobDetails[jn].instanceType} ({jobDetails[jn].instanceCount}x)</span></div>
+                            <div>Volume: <span className="text-[var(--fg)]">{jobDetails[jn].volumeSizeGB} GB</span></div>
+                            <div>Started: <span className="text-[var(--fg)]">{jobDetails[jn].startTime ? new Date(jobDetails[jn].startTime).toLocaleString() : "Pending"}</span></div>
+                            <div>Duration: <span className="text-[var(--fg)]">{formatDuration(jobDetails[jn].durationSeconds)}</span></div>
+                            {jobDetails[jn].inputs?.map((i: any, idx: number) => (
+                              <div key={idx}>Input: <span className="text-sky-400/70 break-all">{i.s3Uri}</span></div>
+                            ))}
+                            {jobDetails[jn].outputs?.map((o: any, idx: number) => (
+                              <div key={idx}>Output: <span className="text-sky-400/70 break-all">{o.s3Uri}</span></div>
+                            ))}
+                            {jobDetails[jn].failureReason && <div>Error: <span className="text-red-400">{jobDetails[jn].failureReason}</span></div>}
+                          </div>
+                        ) : null;
+                      })()}
                       </div>
                       );
                     })}
@@ -260,6 +320,9 @@ export default function AiModelsTab({
           </div>
         </section>
       )}
+
+      {/* S3 Storage Browser */}
+      <S3Browser />
     </div>
   );
 }

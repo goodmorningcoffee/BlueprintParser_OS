@@ -19,6 +19,7 @@ export default function ProjectGrid({
   contentMatches,
   csiSheetCounts,
   csiFilter,
+  searchQuery,
 }: {
   projects: ProjectData[];
   onDelete: (id: string) => void;
@@ -26,6 +27,7 @@ export default function ProjectGrid({
   contentMatches?: Record<string, { matchCount: number; pageCount: number }>;
   csiSheetCounts?: Record<string, number>;
   csiFilter?: string | null;
+  searchQuery?: string;
 }) {
   if (projects.length === 0) {
     return (
@@ -39,7 +41,7 @@ export default function ProjectGrid({
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
       {projects.map((p) => (
-        <ProjectCard key={p.id} {...p} onDelete={onDelete} onRename={onRename} contentMatch={contentMatches?.[p.id]} csiSheetCount={csiSheetCounts?.[p.id]} csiFilter={csiFilter} />
+        <ProjectCard key={p.id} {...p} onDelete={onDelete} onRename={onRename} contentMatch={contentMatches?.[p.id]} csiSheetCount={csiSheetCounts?.[p.id]} csiFilter={csiFilter} searchQuery={searchQuery} />
       ))}
     </div>
   );

@@ -136,6 +136,7 @@ export async function POST(req: Request) {
         drawingNumber: pages.drawingNumber,
         rawText: pages.rawText,
         csiCodes: pages.csiCodes,
+        textAnnotations: pages.textAnnotations,
       })
       .from(pages)
       .where(
@@ -150,6 +151,22 @@ export async function POST(req: Request) {
       contextText += `\n\nCSI Codes on this page:\n`;
       for (const c of page.csiCodes as any[]) {
         contextText += `  ${c.code} — ${c.description} (${c.trade})\n`;
+      }
+    }
+    // Add auto-detected text annotations (phone numbers, equipment tags, dimensions, etc.)
+    if (page?.textAnnotations) {
+      const anns = (page.textAnnotations as any)?.annotations || page.textAnnotations;
+      if (Array.isArray(anns) && anns.length > 0) {
+        contextText += `\n\n--- Auto-Detected Text Annotations (${anns.length}) ---\n`;
+        const byCategory: Record<string, string[]> = {};
+        for (const a of anns) {
+          const cat = a.category || "other";
+          if (!byCategory[cat]) byCategory[cat] = [];
+          byCategory[cat].push(`${a.type}: ${a.text}${a.meta?.code ? ` [${a.meta.code}]` : ""}`);
+        }
+        for (const [cat, items] of Object.entries(byCategory)) {
+          contextText += `${cat}: ${items.join(", ")}\n`;
+        }
       }
     }
   } else {
@@ -227,11 +244,45 @@ export async function POST(req: Request) {
     let yoloContext = "\n\n--- Object Detection Results (YOLO) ---\n";
     yoloContext += `${yoloAnnotations.length} objects detected across ${Object.keys(byPage).length} pages:\n`;
 
+    // Summary by class per page
     for (const [pg, classes] of Object.entries(byPage).sort(([a], [b]) => Number(a) - Number(b))) {
       const total = Object.values(classes).reduce((s, c) => s + c.count, 0);
       yoloContext += `\nPage ${pg} (${total} objects):`;
       for (const [cls, info] of Object.entries(classes).sort(([, a], [, b]) => b.count - a.count)) {
         yoloContext += `\n  ${cls}: ${info.count} (avg confidence ${(info.totalConf / info.count).toFixed(2)})`;
+      }
+    }
+
+    // Per-detection details with bounding boxes
+    // Page scope: all detections on current page
+    // Project scope: all detections grouped by page (truncated to fit context)
+    const detectionPages = scope === "page" && pageNumber
+      ? [pageNumber]
+      : [...new Set(yoloAnnotations.map((a) => a.pageNumber))].sort((a, b) => a - b);
+
+    let detailChars = 0;
+    const MAX_DETAIL_CHARS = 8000; // cap detection details to avoid blowing context
+    yoloContext += `\n\nDetailed detections:\n`;
+    for (const pg of detectionPages) {
+      const pageDetections = yoloAnnotations.filter((a) => a.pageNumber === pg);
+      if (pageDetections.length === 0) continue;
+      const header = `Page ${pg}:\n`;
+      if (detailChars + header.length > MAX_DETAIL_CHARS) {
+        yoloContext += `... (remaining pages truncated)\n`;
+        break;
+      }
+      yoloContext += header;
+      detailChars += header.length;
+      for (const det of pageDetections) {
+        const conf = ((det.data as any)?.confidence || det.threshold || 0).toFixed(2);
+        const model = (det.data as any)?.modelName || "unknown";
+        const line = `  [${det.name}] bbox(${det.minX.toFixed(3)},${det.minY.toFixed(3)},${det.maxX.toFixed(3)},${det.maxY.toFixed(3)}) conf=${conf} model=${model}\n`;
+        if (detailChars + line.length > MAX_DETAIL_CHARS) {
+          yoloContext += `  ... (${pageDetections.length - pageDetections.indexOf(det)} more on this page)\n`;
+          break;
+        }
+        yoloContext += line;
+        detailChars += line.length;
       }
     }
 

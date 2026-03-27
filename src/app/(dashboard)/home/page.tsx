@@ -281,6 +281,7 @@ export default function HomePage() {
           contentMatches={hasContentResults ? contentMatches : undefined}
           csiSheetCounts={activeCsi?.projectSheetCounts}
           csiFilter={activeCsiFilter}
+          searchQuery={search.trim() || undefined}
         />
       </main>
 

@@ -36,6 +36,7 @@ export default function DemoProjectPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const csiParam = searchParams.get("csi");
+  const qParam = searchParams.get("q");
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -122,14 +123,15 @@ export default function DemoProjectPage() {
           .map(([code, description]) => ({ code, description }))
       );
 
-      // Apply CSI filter from URL query param
+      // Apply filters from URL query params
       if (csiParam) setCsiFilter(csiParam);
+      if (qParam) useViewerStore.getState().setSearch(qParam);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
       setLoading(false);
     }
-  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, setAnnotations, initDetectionModels, setPageNames, setKeynotes, setCsiCodes, setTextractData, setTextAnnotations, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData, csiParam, setCsiFilter]);
+  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, setAnnotations, initDetectionModels, setPageNames, setKeynotes, setCsiCodes, setTextractData, setTextAnnotations, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData, csiParam, qParam, setCsiFilter]);
 
   useEffect(() => {
     load();

@@ -46,6 +46,7 @@ export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const csiParam = searchParams.get("csi");
+  const qParam = searchParams.get("q");
   const { data: session } = useSession();
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -139,8 +140,9 @@ export default function ProjectPage() {
           .map(([code, description]) => ({ code, description }))
       );
 
-      // Apply CSI filter from URL query param
+      // Apply filters from URL query params
       if (csiParam) setCsiFilter(csiParam);
+      if (qParam) useViewerStore.getState().setSearch(qParam);
 
       // Load chat history
       if (data.chatMessages) {
