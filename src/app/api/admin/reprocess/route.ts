@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { projects, pages } from "@/lib/db/schema";
+import { projects, pages, companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { detectTextAnnotations } from "@/lib/text-annotations";
 import { detectCsiCodes } from "@/lib/csi-detect";
@@ -21,6 +21,14 @@ export async function POST() {
   if (!session?.user || session.user.role !== "admin") {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
+
+  // Load pipeline config for this company
+  const [company] = await db
+    .select({ pipelineConfig: companies.pipelineConfig })
+    .from(companies)
+    .where(eq(companies.id, session.user.companyId))
+    .limit(1);
+  const enabledDetectorIds = (company?.pipelineConfig as any)?.textAnnotation?.enabledDetectors as string[] | undefined;
 
   // Get all completed projects for this company
   const allProjects = await db
@@ -86,8 +94,8 @@ export async function POST() {
           const rawText = page.rawText || extractRawText(textractData);
           const csiCodes = detectCsiCodes(rawText);
 
-          // Re-run text annotation detectors (with CSI codes)
-          const textAnnotationResult = detectTextAnnotations(textractData, csiCodes);
+          // Re-run text annotation detectors (with CSI codes + pipeline config)
+          const textAnnotationResult = detectTextAnnotations(textractData, csiCodes, enabledDetectorIds);
 
           // Merge back user notes from previous run
           for (const ann of textAnnotationResult.annotations) {

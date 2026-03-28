@@ -123,8 +123,10 @@ interface ViewerState {
   setChatScope: (scope: "page" | "project") => void;
 
   // ─── Detections ──────────────────────────────────────────
-  showDetections: boolean;
+  showDetections: boolean;          // overlay visibility (stays on when panel closed)
   toggleDetections: () => void;
+  showDetectionPanel: boolean;      // sidebar panel visibility
+  toggleDetectionPanel: () => void;
   activeModels: Record<string, boolean>;
   setModelActive: (model: string, active: boolean) => void;
   confidenceThreshold: number;
@@ -164,6 +166,8 @@ interface ViewerState {
   setCsiFilter: (code: string | null) => void;
   allCsiCodes: { code: string; description: string }[];
   setAllCsiCodes: (codes: { code: string; description: string }[]) => void;
+  showCsiPanel: boolean;
+  toggleCsiPanel: () => void;
 
   // ─── Takeoff ────────────────────────────────────────────
   showTakeoffPanel: boolean;
@@ -324,6 +328,9 @@ export const useViewerStore = create<ViewerState>((set) => ({
   showDetections: false,
   toggleDetections: () =>
     set((s) => ({ showDetections: !s.showDetections })),
+  showDetectionPanel: false,
+  toggleDetectionPanel: () =>
+    set((s) => ({ showDetectionPanel: !s.showDetectionPanel })),
   activeModels: {},
   setModelActive: (model, active) =>
     set((s) => ({ activeModels: { ...s.activeModels, [model]: active } })),
@@ -369,6 +376,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setCsiFilter: (activeCsiFilter) => set({ activeCsiFilter }),
   allCsiCodes: [],
   setAllCsiCodes: (allCsiCodes) => set({ allCsiCodes }),
+  showCsiPanel: false,
+  toggleCsiPanel: () => set((s) => ({ showCsiPanel: !s.showCsiPanel })),
 
   showTakeoffPanel: false,
   toggleTakeoffPanel: () =>
@@ -457,9 +466,11 @@ export const useViewerStore = create<ViewerState>((set) => ({
       activeTradeFilter: null,
       activeCsiFilter: null,
       allCsiCodes: [],
+      showCsiPanel: false,
       sidebarCollapsed: false,
       annotationPanelCollapsed: false,
       showDetections: false,
+      showDetectionPanel: false,
       confidenceThreshold: 0.25,
       activeModels: {},
       confidenceThresholds: {},

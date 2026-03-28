@@ -130,4 +130,13 @@ export async function getPresignedGetUrl(key: string, expiresIn = 7200): Promise
   return getSignedUrl(s3Client, new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }), { expiresIn });
 }
 
+export async function deleteFromS3(key: string): Promise<void> {
+  await s3Client.send(
+    new DeleteObjectsCommand({
+      Bucket: S3_BUCKET,
+      Delete: { Objects: [{ Key: key }] },
+    })
+  );
+}
+
 export { S3_BUCKET };

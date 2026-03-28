@@ -1,11 +1,13 @@
 "use client";
 
-export type AdminTab = "overview" | "projects" | "ai-models" | "users" | "settings";
+export type AdminTab = "overview" | "projects" | "ai-models" | "text-annotations" | "csi" | "users" | "settings";
 
 const TABS: { id: AdminTab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "projects", label: "Demo Projects" },
   { id: "ai-models", label: "AI Models" },
+  { id: "text-annotations", label: "Text Annotations" },
+  { id: "csi", label: "CSI Codes" },
   { id: "users", label: "Users" },
   { id: "settings", label: "Settings" },
 ];

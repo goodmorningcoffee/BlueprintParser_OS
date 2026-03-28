@@ -8,6 +8,8 @@ import AdminTabs, { type AdminTab } from "./AdminTabs";
 import OverviewTab from "./tabs/OverviewTab";
 import ProjectsTab from "./tabs/ProjectsTab";
 import AiModelsTab from "./tabs/AiModelsTab";
+import TextAnnotationsTab from "./tabs/TextAnnotationsTab";
+import CsiTab from "./tabs/CsiTab";
 import UsersTab from "./tabs/UsersTab";
 import SettingsTab from "./tabs/SettingsTab";
 
@@ -508,7 +510,7 @@ export default function AdminPage() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get("tab") as AdminTab;
-      if (tab && ["overview", "projects", "ai-models", "users", "settings"].includes(tab)) return tab;
+      if (tab && ["overview", "projects", "ai-models", "text-annotations", "csi", "users", "settings"].includes(tab)) return tab;
     }
     return "overview";
   });
@@ -627,6 +629,22 @@ export default function AdminPage() {
             setCurrentTogglePass={setCurrentTogglePass}
             onToggle={handleToggle}
             onSetTogglePassword={handleSetTogglePassword}
+          />
+        )}
+
+        {activeTab === "text-annotations" && (
+          <TextAnnotationsTab
+            reprocessing={reprocessing}
+            reprocessLog={reprocessLog}
+            onReprocess={reprocessAll}
+          />
+        )}
+
+        {activeTab === "csi" && (
+          <CsiTab
+            reprocessing={reprocessing}
+            reprocessLog={reprocessLog}
+            onReprocess={reprocessAll}
           />
         )}
 

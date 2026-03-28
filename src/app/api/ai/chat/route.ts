@@ -14,13 +14,12 @@ import {
   buildPageIntelligenceSection,
   buildProjectSummarySection,
   assembleContext,
+  getContextBudget,
   DEFAULT_CONTEXT_BUDGET,
   type ContextSection,
 } from "@/lib/context-builder";
 import type { ChatMessage } from "@/lib/llm/types";
 import type { TextractPageData } from "@/types";
-
-const MAX_CONTEXT_CHARS = DEFAULT_CONTEXT_BUDGET;
 
 
 export async function POST(req: Request) {
@@ -47,19 +46,20 @@ export async function POST(req: Request) {
       ORDER BY rank DESC LIMIT 10
     `);
 
+    const config = await resolveLLMConfig(session.user.companyId, session.user.dbId);
+
     let contextText = "";
     let totalChars = 0;
+    const globalBudget = config ? getContextBudget(config.provider, config.model) : DEFAULT_CONTEXT_BUDGET;
     const pageCount = searchResults.rows.length;
     if (pageCount > 0) {
       for (const row of searchResults.rows as any[]) {
         const chunk = `\n--- ${row.project_name}, Page ${row.page_number} (${row.drawing_number || "unnamed"}) ---\n${(row.raw_text || "").substring(0, 3000)}`;
-        if (totalChars + chunk.length > MAX_CONTEXT_CHARS) break;
+        if (totalChars + chunk.length > globalBudget) break;
         contextText += chunk;
         totalChars += chunk.length;
       }
     }
-
-    const config = await resolveLLMConfig(session.user.companyId, session.user.dbId);
     if (!config) {
       return NextResponse.json({ error: "No LLM configured. Set up a provider in Admin → AI Models." }, { status: 503 });
     }
@@ -131,6 +131,16 @@ export async function POST(req: Request) {
     db.select().from(takeoffItems).where(eq(takeoffItems.projectId, project.id)),
     db.select().from(chatMessages).where(eq(chatMessages.projectId, project.id)).orderBy(desc(chatMessages.createdAt)).limit(10),
   ]);
+
+  // ─── Resolve LLM config early (needed for context budget) ──
+  const config = await resolveLLMConfig(project.companyId, session?.user?.dbId, isDemo);
+  if (!config) {
+    return NextResponse.json(
+      { error: "No LLM configured. Set up a provider in Admin → AI Models." },
+      { status: 503 }
+    );
+  }
+  const contextBudget = getContextBudget(config.provider, config.model);
 
   // ─── Build context sections with priority ordering ─────────
   const sections: ContextSection[] = [];
@@ -341,7 +351,7 @@ export async function POST(req: Request) {
       const header = `\n--- Page ${page.pageNumber} (${page.drawingNumber || page.name}) ---\n`;
       const chunk = header + page.rawText;
       // Reserve ~4000 chars for structured sections above
-      if (ocrChars + chunk.length > MAX_CONTEXT_CHARS - 4000) {
+      if (ocrChars + chunk.length > contextBudget - 4000) {
         ocrText += `\n... (${allPages.length - pagesIncluded} more pages not shown)`;
         break;
       }
@@ -356,17 +366,8 @@ export async function POST(req: Request) {
     }
   }
 
-  // ─── Resolve LLM config ────────────────────────────────────
-  const config = await resolveLLMConfig(project.companyId, session?.user?.dbId, isDemo);
-  if (!config) {
-    return NextResponse.json(
-      { error: "No LLM configured. Set up a provider in Admin → AI Models." },
-      { status: 503 }
-    );
-  }
-
   // ─── Build messages array ──────────────────────────────────
-  const contextText = assembleContext(sections);
+  const contextText = assembleContext(sections, contextBudget);
   const systemPrompt = buildSystemPrompt(dataSummary);
 
   // Single system message with prompt + context (avoids Anthropic adapter bug)

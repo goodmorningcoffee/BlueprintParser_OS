@@ -48,6 +48,10 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
     allCsiCodes,
     activeCsiFilter,
     setCsiFilter,
+    showCsiPanel,
+    toggleCsiPanel,
+    showDetectionPanel,
+    toggleDetectionPanel,
     showKeynotes,
     toggleKeynotes,
   } = useViewerStore();
@@ -370,14 +374,14 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       </button>
       </HelpTooltip>
 
-      {/* YOLO detections toggle + per-model dropdown */}
+      {/* YOLO detections panel + per-model dropdown */}
       {hasYoloAnnotations && (
         <HelpTooltip id="yolo-toggle">
         <div className="relative" ref={yoloDropdownRef}>
           <button
-            onClick={toggleDetections}
+            onClick={() => { toggleDetectionPanel(); if (!showDetections) toggleDetections(); }}
             className={`px-2 py-1 text-xs rounded-l border ${
-              showDetections
+              showDetectionPanel
                 ? "border-purple-400/60 text-purple-400 bg-purple-400/10"
                 : "border-purple-400/20 text-purple-400/50 hover:text-purple-300 hover:border-purple-400/40"
             }`}
@@ -479,6 +483,20 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           }`}
         >
           QTO
+        </button>
+      </HelpTooltip>
+
+      {/* CSI panel toggle */}
+      <HelpTooltip id="csi-button">
+        <button
+          onClick={toggleCsiPanel}
+          className={`px-2 py-1 text-xs rounded border ${
+            showCsiPanel
+              ? "border-orange-400/60 text-orange-400 bg-orange-400/10"
+              : "border-orange-400/20 text-orange-400/50 hover:text-orange-300 hover:border-orange-400/40"
+          }`}
+        >
+          CSI
         </button>
       </HelpTooltip>
     </div>
