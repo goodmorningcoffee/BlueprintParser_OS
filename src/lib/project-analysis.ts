@@ -10,12 +10,14 @@ import type {
   ProjectIntelligence,
   DisciplineBreakdown,
   RefGraphEdge,
+  CsiCode,
 } from "@/types";
 
 interface PageSummary {
   pageNumber: number;
   drawingNumber: string | null;
   pageIntelligence: PageIntelligence | null;
+  csiCodes?: CsiCode[] | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -128,6 +130,69 @@ function assembleRefGraph(pages: PageSummary[]): {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// CSI Topology Analysis
+// ═══════════════════════════════════════════════════════════════════
+
+interface CsiDivisionSummary {
+  division: string;       // "08"
+  name: string;           // "Openings"
+  codeCount: number;      // unique codes in this division
+  pageCount: number;      // pages mentioning any code in this division
+  codes: { code: string; description: string; pages: number[] }[];
+}
+
+const DIVISION_NAMES: Record<string, string> = {
+  "01": "General Requirements", "02": "Existing Conditions", "03": "Concrete",
+  "04": "Masonry", "05": "Metals", "06": "Wood/Plastics/Composites",
+  "07": "Thermal & Moisture", "08": "Openings", "09": "Finishes",
+  "10": "Specialties", "11": "Equipment", "12": "Furnishings",
+  "13": "Special Construction", "14": "Conveying Equipment",
+  "21": "Fire Suppression", "22": "Plumbing", "23": "HVAC",
+  "25": "Integrated Automation", "26": "Electrical", "27": "Communications",
+  "28": "Electronic Safety", "31": "Earthwork", "32": "Exterior Improvements",
+  "33": "Utilities",
+};
+
+function analyzeCsiTopology(pages: PageSummary[]): CsiDivisionSummary[] {
+  const divMap = new Map<string, {
+    codes: Map<string, { description: string; pages: Set<number> }>;
+    pages: Set<number>;
+  }>();
+
+  for (const page of pages) {
+    if (!page.csiCodes || !Array.isArray(page.csiCodes)) continue;
+    for (const csi of page.csiCodes as CsiCode[]) {
+      const div = csi.code.substring(0, 2).trim();
+      if (!divMap.has(div)) divMap.set(div, { codes: new Map(), pages: new Set() });
+      const entry = divMap.get(div)!;
+      entry.pages.add(page.pageNumber);
+      if (!entry.codes.has(csi.code)) {
+        entry.codes.set(csi.code, { description: csi.description, pages: new Set() });
+      }
+      entry.codes.get(csi.code)!.pages.add(page.pageNumber);
+    }
+  }
+
+  const results: CsiDivisionSummary[] = [];
+  for (const [div, data] of divMap) {
+    results.push({
+      division: div,
+      name: DIVISION_NAMES[div] || `Division ${div}`,
+      codeCount: data.codes.size,
+      pageCount: data.pages.size,
+      codes: [...data.codes.entries()].map(([code, info]) => ({
+        code,
+        description: info.description,
+        pages: [...info.pages].sort((a, b) => a - b),
+      })),
+    });
+  }
+
+  results.sort((a, b) => b.pageCount - a.pageCount);
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Project Intelligence Report (auto-generated, no LLM needed)
 // ═══════════════════════════════════════════════════════════════════
 
@@ -135,6 +200,7 @@ function generateProjectReport(
   pageCount: number,
   disciplines: DisciplineBreakdown[],
   refGraph: { edges: RefGraphEdge[]; hubs: string[]; leaves: string[] },
+  csiTopology: CsiDivisionSummary[],
 ): string {
   const lines: string[] = [];
   lines.push(`PROJECT OVERVIEW: ${pageCount} sheets`);
@@ -158,6 +224,15 @@ function generateProjectReport(
     }
   }
 
+  if (csiTopology.length > 0) {
+    lines.push("");
+    lines.push("CSI TOPOLOGY:");
+    for (const div of csiTopology.slice(0, 10)) { // top 10 divisions
+      const topCodes = div.codes.slice(0, 3).map(c => c.code).join(", ");
+      lines.push(`  Division ${div.division} (${div.name}): ${div.codeCount} codes across ${div.pageCount} pages [${topCodes}]`);
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -171,7 +246,8 @@ export function analyzeProject(pages: PageSummary[]): {
 } {
   const disciplines = analyzeDrawingSequence(pages);
   const refGraph = assembleRefGraph(pages);
-  const summary = generateProjectReport(pages.length, disciplines, refGraph);
+  const csiTopology = analyzeCsiTopology(pages);
+  const summary = generateProjectReport(pages.length, disciplines, refGraph, csiTopology);
 
   return {
     intelligence: {

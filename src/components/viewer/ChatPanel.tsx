@@ -3,6 +3,36 @@
 import { useState, useRef, useEffect } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 
+const DISCIPLINE_PROMPTS: Record<string, string[]> = {
+  A: ["What rooms are shown?", "Door/window schedules?", "What finishes are specified?", "Any accessibility notes?"],
+  S: ["What structural members?", "Concrete specs (f'c)?", "Foundation details?", "Any rebar callouts?"],
+  M: ["List HVAC equipment", "What are the CFM values?", "Ductwork layout?", "Any mechanical schedules?"],
+  E: ["Panel schedules on this page?", "Circuit assignments?", "What voltage is specified?", "Conduit routing?"],
+  P: ["Plumbing fixtures?", "Pipe sizes mentioned?", "What GPM values?", "Drain locations?"],
+  FP: ["Sprinkler layout?", "Fire alarm devices?", "What fire ratings?", "FDC location?"],
+};
+
+const DEFAULT_PAGE_PROMPTS = [
+  "Summarize this page",
+  "List all materials mentioned",
+  "What trades are on this sheet?",
+  "What are the key dimensions?",
+  "Any notes or special instructions?",
+];
+
+const PROJECT_PROMPTS = [
+  "Summarize this project",
+  "List all trades across sheets",
+  "How many pages per discipline?",
+  "What CSI codes were detected?",
+  "Any coordination issues?",
+];
+
+function getDisciplineFromPageName(pageName: string): string | null {
+  const match = /^([A-Z]{1,2})-?\d/i.exec(pageName);
+  return match ? match[1].toUpperCase() : null;
+}
+
 export default function ChatPanel() {
   const {
     chatMessages,
@@ -12,6 +42,7 @@ export default function ChatPanel() {
     setChatScope,
     publicId,
     pageNumber,
+    pageNames,
   } = useViewerStore();
 
   const [input, setInput] = useState("");
@@ -225,24 +256,19 @@ export default function ChatPanel() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Quick prompts */}
+      {/* Quick prompts — discipline-aware for page scope */}
       {chatMessages.length === 0 && !loading && (
         <div className="px-3 pb-2 flex flex-wrap gap-1.5">
           {(chatScope === "page"
-            ? [
-                "Summarize this page",
-                "List all materials mentioned",
-                "What trades are on this sheet?",
-                "What are the key dimensions?",
-                "Any notes or special instructions?",
-              ]
-            : [
-                "Summarize this project",
-                "List all trades across sheets",
-                "How many pages per discipline?",
-                "What CSI codes were detected?",
-                "Any coordination issues?",
-              ]
+            ? (() => {
+                const pageName = pageNames[pageNumber] || "";
+                const disc = getDisciplineFromPageName(pageName);
+                const specific = disc ? DISCIPLINE_PROMPTS[disc] : null;
+                return specific
+                  ? ["Summarize this page", ...specific.slice(0, 3)]
+                  : DEFAULT_PAGE_PROMPTS;
+              })()
+            : PROJECT_PROMPTS
           ).map((prompt) => (
             <button
               key={prompt}

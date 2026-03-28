@@ -188,6 +188,7 @@ export interface TextAnnotation {
   group?: string;
   note?: string;
   meta?: Record<string, unknown>;
+  csiTags?: CsiCode[];  // CSI codes that apply to this annotation (universal tagging)
 }
 
 export interface TextAnnotationGroup {
@@ -242,10 +243,53 @@ export interface NoteBlock {
   noteCount: number;
 }
 
+// ─── Text Region types (OCR-based classification) ──────────
+
+export type TextRegionType = "table-like" | "notes-block" | "spec-text" | "key-value" | "paragraph";
+
+export interface TextRegion {
+  id: string;
+  type: TextRegionType;
+  bbox: BboxLTWH;
+  confidence: number;
+  csiTags?: CsiCode[];
+  wordCount: number;
+  columnCount?: number;
+  rowCount?: number;
+  hasNumberedItems?: boolean;
+  headerText?: string;
+  containedText?: string;
+}
+
+export interface HeuristicInference {
+  ruleId: string;
+  ruleName: string;
+  label: string;
+  confidence: number;
+  evidence: string[];
+  bbox?: BboxLTWH;
+  csiTags?: CsiCode[];
+}
+
+export type ClassifiedTableCategory =
+  | "keynote-table" | "material-schedule" | "symbol-legend"
+  | "door-schedule" | "finish-schedule" | "general-notes"
+  | "spec-text" | "unknown-table";
+
+export interface ClassifiedTable extends TextRegion {
+  category: ClassifiedTableCategory;
+  evidence: string[];
+  pageNumber: number;
+  isPageSpecific: boolean;
+}
+
 export interface PageIntelligence {
   classification?: PageClassification;
   crossRefs?: CrossRef[];
   noteBlocks?: NoteBlock[];
+  textRegions?: TextRegion[];
+  heuristicInferences?: HeuristicInference[];
+  classifiedTables?: ClassifiedTable[];
 }
 
 // ─── Project Intelligence types ─────────────────────────────

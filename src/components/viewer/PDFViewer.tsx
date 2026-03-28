@@ -10,6 +10,8 @@ import TextPanel from "./TextPanel";
 import ChatPanel from "./ChatPanel";
 import AnnotationPanel from "./AnnotationPanel";
 import TakeoffPanel from "./TakeoffPanel";
+import DetectionPanel from "./DetectionPanel";
+import CsiPanel from "./CsiPanel";
 
 interface PDFViewerProps {
   pdfUrl: string;
@@ -31,6 +33,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const showTextPanel = useViewerStore((s) => s.showTextPanel);
   const showChatPanel = useViewerStore((s) => s.showChatPanel);
   const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
+  const showDetectionPanel = useViewerStore((s) => s.showDetectionPanel);
+  const showCsiPanel = useViewerStore((s) => s.showCsiPanel);
   const setMode = useViewerStore((s) => s.setMode);
 
   // Keyboard shortcuts: a = pointer/select, v = pan/zoom
@@ -389,6 +393,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
         {showTextPanel && <TextPanel />}
         {showChatPanel && <ChatPanel />}
         {showTakeoffPanel && <TakeoffPanel />}
+        {showDetectionPanel && <DetectionPanel />}
+        {showCsiPanel && <CsiPanel />}
       </div>
     </div>
   );

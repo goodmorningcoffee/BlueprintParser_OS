@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { projects, annotations, models } from "@/lib/db/schema";
+import { projects, pages, annotations, models } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
+import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
+import { classifyTables } from "@/lib/table-classifier";
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { S3_BUCKET } from "@/lib/s3";
 
@@ -169,6 +171,73 @@ export async function POST(req: Request) {
     console.error("[YOLO-LOAD] Raw pg error:", err);
   } finally {
     await pool.end();
+  }
+
+  // ─── Post-YOLO: Run heuristic engine with YOLO data ───
+  if (totalInserted > 0) {
+    try {
+      // Fetch YOLO annotations + page data for heuristic re-evaluation
+      const yoloAnns = await db
+        .select({ name: annotations.name, minX: annotations.minX, minY: annotations.minY, maxX: annotations.maxX, maxY: annotations.maxY, pageNumber: annotations.pageNumber, data: annotations.data })
+        .from(annotations)
+        .where(and(eq(annotations.projectId, project.id), eq(annotations.source, "yolo")));
+
+      const projectPages = await db
+        .select({ id: pages.id, pageNumber: pages.pageNumber, rawText: pages.rawText, pageIntelligence: pages.pageIntelligence })
+        .from(pages)
+        .where(eq(pages.projectId, project.id));
+
+      const rules = getEffectiveRules();
+
+      // Group YOLO detections by page
+      const yoloByPage = new Map<number, Array<{ name: string; minX: number; minY: number; maxX: number; maxY: number; confidence: number }>>();
+      for (const a of yoloAnns) {
+        if (!yoloByPage.has(a.pageNumber)) yoloByPage.set(a.pageNumber, []);
+        yoloByPage.get(a.pageNumber)!.push({
+          name: a.name,
+          minX: a.minX,
+          minY: a.minY,
+          maxX: a.maxX,
+          maxY: a.maxY,
+          confidence: (a.data as any)?.confidence || 0,
+        });
+      }
+
+      // Run heuristics per page with YOLO data
+      for (const page of projectPages) {
+        const yoloDets = yoloByPage.get(page.pageNumber);
+        if (!yoloDets?.length) continue;
+
+        const existing = (page.pageIntelligence || {}) as any;
+        const inferences = runHeuristicEngine(rules, {
+          rawText: page.rawText || "",
+          yoloDetections: yoloDets,
+          textRegions: existing.textRegions,
+          csiCodes: existing.csiCodes,
+          pageNumber: page.pageNumber,
+        });
+
+        if (inferences.length > 0) {
+          const updated = { ...existing, heuristicInferences: inferences };
+
+          // Reclassify tables with YOLO-enriched heuristic data
+          if (updated.textRegions?.length > 0) {
+            const classified = classifyTables({
+              textRegions: updated.textRegions,
+              heuristicInferences: inferences,
+              csiCodes: existing.csiCodes,
+              pageNumber: page.pageNumber,
+            });
+            if (classified.length > 0) updated.classifiedTables = classified;
+          }
+
+          await db.update(pages).set({ pageIntelligence: updated }).where(eq(pages.id, page.id));
+        }
+      }
+      console.log(`[YOLO-LOAD] Post-YOLO heuristic engine ran on ${projectPages.length} pages`);
+    } catch (err) {
+      console.error("[YOLO-LOAD] Post-YOLO heuristic engine failed:", err);
+    }
   }
 
   return NextResponse.json({

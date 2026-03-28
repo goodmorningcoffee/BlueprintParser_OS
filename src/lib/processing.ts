@@ -10,6 +10,9 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 import { detectTextAnnotations } from "@/lib/text-annotations";
 import { extractKeynotes } from "@/lib/keynotes";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
+import { classifyTextRegions } from "@/lib/text-region-classifier";
+import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
+import { classifyTables } from "@/lib/table-classifier";
 import { analyzeProject } from "@/lib/project-analysis";
 
 const PAGE_CONCURRENCY = 20;
@@ -147,14 +150,61 @@ export async function processProject(projectId: number): Promise<{
         }
 
         // Analyze page intelligence (classification, cross-refs, note blocks)
-        let pageIntelligence = null;
+        let pageIntelligence: Record<string, unknown> | null = null;
         try {
           const intel = analyzePageIntelligence(drawingNumber, textractData, csiCodes);
           if (intel.classification || intel.crossRefs || intel.noteBlocks) {
-            pageIntelligence = intel;
+            pageIntelligence = { ...intel };
           }
         } catch (err) {
           console.error(`[processing] Page intelligence FAILED for page ${pageNum}:`, err);
+        }
+
+        // Classify text regions (OCR-based table/notes/spec detection)
+        try {
+          const textRegions = classifyTextRegions(textractData, csiCodes);
+          if (textRegions.length > 0) {
+            if (!pageIntelligence) pageIntelligence = {};
+            pageIntelligence.textRegions = textRegions;
+          }
+        } catch (err) {
+          console.error(`[processing] Text region classification FAILED for page ${pageNum}:`, err);
+        }
+
+        // Run heuristic engine (text-only mode — no YOLO data during initial processing)
+        try {
+          const rules = getEffectiveRules();
+          const inferences = runHeuristicEngine(rules, {
+            rawText: rawText || "",
+            textRegions: (pageIntelligence as any)?.textRegions,
+            csiCodes,
+            pageNumber: pageNum,
+          });
+          if (inferences.length > 0) {
+            if (!pageIntelligence) pageIntelligence = {};
+            pageIntelligence.heuristicInferences = inferences;
+          }
+        } catch (err) {
+          console.error(`[processing] Heuristic engine FAILED for page ${pageNum}:`, err);
+        }
+
+        // Classify tables/schedules/keynotes (combines text regions + heuristic inferences)
+        try {
+          const intel = pageIntelligence as any;
+          if (intel?.textRegions?.length > 0) {
+            const classified = classifyTables({
+              textRegions: intel.textRegions,
+              heuristicInferences: intel.heuristicInferences,
+              csiCodes,
+              pageNumber: pageNum,
+            });
+            if (classified.length > 0) {
+              if (!pageIntelligence) pageIntelligence = {};
+              (pageIntelligence as any).classifiedTables = classified;
+            }
+          }
+        } catch (err) {
+          console.error(`[processing] Table classification FAILED for page ${pageNum}:`, err);
         }
 
         // Build page data
@@ -230,6 +280,7 @@ export async function processProject(projectId: number): Promise<{
           pageNumber: pages.pageNumber,
           drawingNumber: pages.drawingNumber,
           pageIntelligence: pages.pageIntelligence,
+          csiCodes: pages.csiCodes,
         })
         .from(pages)
         .where(eq(pages.projectId, project.id))
@@ -240,6 +291,7 @@ export async function processProject(projectId: number): Promise<{
           pageNumber: p.pageNumber,
           drawingNumber: p.drawingNumber,
           pageIntelligence: p.pageIntelligence as any,
+          csiCodes: p.csiCodes as any,
         }))
       );
 

@@ -7,6 +7,38 @@
 
 export const DEFAULT_CONTEXT_BUDGET = 24000; // ~6000 tokens
 
+/**
+ * Determine context budget based on the LLM model.
+ * Larger context windows → more room for structured tags + OCR.
+ */
+export function getContextBudget(provider?: string, model?: string): number {
+  if (!provider || !model) return DEFAULT_CONTEXT_BUDGET;
+
+  const m = model.toLowerCase();
+
+  // Anthropic models
+  if (provider === "anthropic") {
+    if (m.includes("opus")) return 200000;     // Opus: 1M context, use ~200K chars
+    if (m.includes("sonnet")) return 80000;    // Sonnet: 200K context
+    if (m.includes("haiku")) return 40000;     // Haiku: 200K context but keep lean
+  }
+
+  // OpenAI models
+  if (provider === "openai") {
+    if (m.includes("gpt-4o")) return 60000;    // GPT-4o: 128K context
+    if (m.includes("gpt-4")) return 40000;     // GPT-4 Turbo: 128K
+    if (m.includes("o1") || m.includes("o3")) return 80000;
+  }
+
+  // Groq (Llama, Mixtral)
+  if (provider === "groq") return 24000;       // Groq free tier: tight limits
+
+  // Custom/Ollama — conservative default
+  if (provider === "custom") return 30000;
+
+  return DEFAULT_CONTEXT_BUDGET;
+}
+
 export interface ContextSection {
   header: string;
   content: string;
@@ -84,7 +116,11 @@ export function buildTextAnnotationsSection(textAnnotations: any): string | null
   for (const a of anns) {
     const cat = a.category || "other";
     if (!byCategory[cat]) byCategory[cat] = [];
-    byCategory[cat].push(`${a.type}: ${a.text}${a.meta?.code ? ` [${a.meta.code}]` : ""}`);
+    // Include CSI tags if present (universal tagging)
+    const csiSuffix = a.csiTags?.length
+      ? ` [${a.csiTags.map((c: any) => `CSI ${c.code} — ${c.description}`).join("; ")}]`
+      : a.meta?.code ? ` [${a.meta.code}]` : "";
+    byCategory[cat].push(`${a.type}: ${a.text}${csiSuffix}`);
   }
 
   let text = "";
@@ -138,6 +174,34 @@ export function buildPageIntelligenceSection(pageIntelligence: any, pageNumber: 
     sections.push({ header: `NOTE BLOCKS — Page ${pageNumber}`, content: text, priority: 5.5 });
     const totalNotes = blocks.reduce((s: number, b: any) => s + b.noteCount, 0);
     summaryLines.push(`${totalNotes} general note(s) in ${blocks.length} block(s) on Page ${pageNumber}`);
+  }
+
+  // Text regions / classified tables (priority 6 — after notes, before spatial)
+  if (pageIntelligence.textRegions?.length > 0 || pageIntelligence.classifiedTables?.length > 0) {
+    const tables = pageIntelligence.classifiedTables || [];
+    const regions = pageIntelligence.textRegions || [];
+
+    let text = "";
+    // Show classified tables first (higher value)
+    for (const t of tables) {
+      const csi = t.csiTags?.length ? ` [${t.csiTags.map((c: any) => `CSI ${c.code}`).join(", ")}]` : "";
+      text += `${t.category}: "${t.headerText || "untitled"}" (confidence ${Math.round(t.confidence * 100)}%)${csi}\n`;
+      if (t.evidence?.length) text += `  Evidence: ${t.evidence.join(", ")}\n`;
+    }
+    // Show remaining unclassified regions
+    for (const r of regions) {
+      if (r.type === "paragraph") continue; // skip paragraph noise
+      const csi = r.csiTags?.length ? ` [${r.csiTags.map((c: any) => `CSI ${c.code}`).join(", ")}]` : "";
+      text += `${r.type}: ${r.wordCount} words${r.headerText ? `, header: "${r.headerText}"` : ""}${r.columnCount ? `, ${r.columnCount} columns` : ""}${csi}\n`;
+    }
+
+    if (text) {
+      sections.push({ header: `DETECTED REGIONS — Page ${pageNumber}`, content: text, priority: 6 });
+      const tableCount = tables.length;
+      const regionCount = regions.filter((r: any) => r.type !== "paragraph").length;
+      if (tableCount > 0) summaryLines.push(`${tableCount} classified table(s) on Page ${pageNumber}`);
+      else if (regionCount > 0) summaryLines.push(`${regionCount} text region(s) detected on Page ${pageNumber}`);
+    }
   }
 
   return sections.length > 0 ? { sections, summaryLines } : null;

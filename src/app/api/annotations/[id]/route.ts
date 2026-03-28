@@ -48,6 +48,7 @@ export async function PUT(
 
   if (body.name !== undefined) updates.name = body.name;
   if (body.note !== undefined) updates.note = body.note;
+  if (body.data !== undefined) updates.data = body.data;
   if (body.bbox) {
     updates.minX = body.bbox[0];
     updates.minY = body.bbox[1];

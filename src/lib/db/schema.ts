@@ -37,6 +37,37 @@ export const companies = pgTable("companies", {
   accessKey: varchar("access_key", { length: 255 }).notNull(),
   emailDomain: varchar("email_domain", { length: 255 }).notNull(),
   subscription: integer("subscription").default(0).notNull(),
+  pipelineConfig: jsonb("pipeline_config").$type<{
+    textAnnotation?: {
+      enabledDetectors?: string[];
+    };
+    csi?: {
+      matchingConfidenceThreshold?: number;
+      taggerKeywordOverlap?: number;
+      taggerMinWordMatches?: number;
+      maxCsiTagsPerAnnotation?: number;
+      tier2MinWords?: number;
+      tier3MinWords?: number;
+      tier2Weight?: number;
+      tier3Weight?: number;
+      customDatabaseS3Key?: string;
+      customDatabaseName?: string;
+      customDatabaseCodes?: number;
+    };
+    heuristics?: Array<{
+      id: string;
+      name: string;
+      source: "built-in" | "custom";
+      enabled: boolean;
+      yoloRequired: string[];
+      yoloBoosters: string[];
+      textKeywords: string[];
+      overlapRequired: boolean;
+      outputLabel: string;
+      outputCsiCode?: string;
+      minConfidence: number;
+    }>;
+  }>(),
   features: jsonb("features").$type<{
     yolo: boolean;
     llm: boolean;

@@ -15,7 +15,7 @@ function classColor(name: string): string {
 
 export default function DetectionPanel() {
   const annotations = useViewerStore((s) => s.annotations);
-  const toggleDetections = useViewerStore((s) => s.toggleDetections);
+  const toggleDetectionPanel = useViewerStore((s) => s.toggleDetectionPanel);
   const activeModels = useViewerStore((s) => s.activeModels);
   const setModelActive = useViewerStore((s) => s.setModelActive);
   const confidenceThreshold = useViewerStore((s) => s.confidenceThreshold);
@@ -66,7 +66,7 @@ export default function DetectionPanel() {
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
         <h3 className="text-sm font-medium text-[var(--fg)]">Detections</h3>
-        <button onClick={toggleDetections} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
+        <button onClick={toggleDetectionPanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
       </div>
 
       {/* Global confidence slider */}
