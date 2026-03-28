@@ -36,6 +36,14 @@ export type ProcessingJob = InferSelectModel<typeof processingJobs>;
 export type Model = InferSelectModel<typeof models>;
 export type LlmConfig = InferSelectModel<typeof llmConfigs>;
 
+// ─── Bbox types ─────────────────────────────────────────────
+// Two bbox conventions used across the codebase:
+// - LTWH: Textract OCR words use [left, top, width, height]
+// - MinMax: Annotations/YOLO use [minX, minY, maxX, maxY]
+// Both normalized 0-1.
+export type BboxLTWH = [left: number, top: number, width: number, height: number];
+export type BboxMinMax = [minX: number, minY: number, maxX: number, maxY: number];
+
 // ─── Client-side types ───────────────────────────────────────
 
 export interface ClientAnnotation {
@@ -208,6 +216,61 @@ export const TEXT_ANNOTATION_COLORS: Record<AnnotationCategory, string> = {
   rooms: "#14b8a6",
 };
 
+// ─── Page Intelligence types ────────────────────────────────
+
+export interface PageClassification {
+  discipline: string;       // "Architectural", "Electrical", etc.
+  disciplinePrefix: string; // "A", "E", "M", etc.
+  subType?: string;         // "Floor Plan", "Elevation", "Section", "Detail", "Schedule"
+  series?: string;          // "100", "200", "300", etc.
+  confidence: number;
+}
+
+export interface CrossRef {
+  sourceText: string;       // "SEE DETAIL 4/A-501"
+  targetDrawing: string;    // "A-501"
+  refType: "sheet" | "detail" | "section" | "elevation" | "similar" | "typical" | "refer";
+  detail?: string;          // "4" (specific detail number)
+  bbox: BboxLTWH;
+  confidence: number;
+}
+
+export interface NoteBlock {
+  title: string;            // "GENERAL NOTES" or auto-detected
+  notes: string[];          // ["1. All dimensions...", "2. Contractor shall..."]
+  bbox: BboxLTWH;
+  noteCount: number;
+}
+
+export interface PageIntelligence {
+  classification?: PageClassification;
+  crossRefs?: CrossRef[];
+  noteBlocks?: NoteBlock[];
+}
+
+// ─── Project Intelligence types ─────────────────────────────
+
+export interface DisciplineBreakdown {
+  prefix: string;          // "A"
+  discipline: string;      // "Architectural"
+  count: number;           // 12
+  range: string;           // "A-101 to A-501"
+  series: Record<string, number>; // { "100": 5, "200": 3, "500": 4 }
+}
+
+export interface RefGraphEdge {
+  fromPage: string;        // drawing number or page number
+  toPage: string;
+  refType: string;
+  detail?: string;
+}
+
+export interface ProjectIntelligence {
+  disciplines?: DisciplineBreakdown[];
+  refGraph?: { edges: RefGraphEdge[]; hubs: string[]; leaves: string[] };
+  pageCount?: number;
+}
+
 // ─── Chat types ──────────────────────────────────────────────
 
 export interface ChatMsg {
@@ -276,6 +339,8 @@ export interface ModelConfig {
   iou: number;
   imageSize: number;
   classTypes?: Record<string, ModelClassType>;
+  classCsiCodes?: Record<string, string[]>;   // class name -> CSI codes
+  classKeywords?: Record<string, string[]>;   // class name -> keywords
 }
 
 export interface SpatialRegion {

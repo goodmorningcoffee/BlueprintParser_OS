@@ -100,6 +100,8 @@ export const projects = pgTable("projects", {
     .notNull()
     .references(() => companies.id),
   isDemo: boolean("is_demo").default(false).notNull(),
+  projectIntelligence: jsonb("project_intelligence"),
+  projectSummary: text("project_summary"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
@@ -120,6 +122,7 @@ export const pages = pgTable(
     keynotes: jsonb("keynotes"), // [{shape, text, bbox, contour}]
     csiCodes: jsonb("csi_codes"), // [{code, description, trade, division}]
     textAnnotations: jsonb("text_annotations"), // TextAnnotationResult
+    pageIntelligence: jsonb("page_intelligence"), // PageIntelligence
     error: text("error"),
     projectId: integer("project_id")
       .notNull()

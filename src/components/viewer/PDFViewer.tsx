@@ -31,6 +31,19 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const showTextPanel = useViewerStore((s) => s.showTextPanel);
   const showChatPanel = useViewerStore((s) => s.showChatPanel);
   const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
+  const setMode = useViewerStore((s) => s.setMode);
+
+  // Keyboard shortcuts: a = pointer/select, v = pan/zoom
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement).isContentEditable) return;
+      if (e.key === "a") setMode("pointer");
+      else if (e.key === "v") setMode("move");
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [setMode]);
 
   // Measure container width for fit-to-width rendering
   useEffect(() => {

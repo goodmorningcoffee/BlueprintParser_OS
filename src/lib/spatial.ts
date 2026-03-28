@@ -1,4 +1,5 @@
 import type { TextractPageData, TextractWord, SpatialRegion, SpatialMappingResult } from "@/types";
+import { wordsToText } from "@/lib/ocr-utils";
 
 interface SpatialAnnotation {
   name: string;
@@ -98,39 +99,7 @@ export function mapWordsToRegions(
   };
 }
 
-/**
- * Convert a list of words to readable text by sorting into lines
- * (top-to-bottom, left-to-right) and grouping by Y proximity.
- */
-function wordsToText(words: TextractWord[]): string {
-  if (words.length === 0) return "";
-
-  // Sort by Y (top), then X (left)
-  const sorted = [...words].sort((a, b) => {
-    const ya = a.bbox[1];
-    const yb = b.bbox[1];
-    if (Math.abs(ya - yb) > 0.005) return ya - yb; // different lines
-    return a.bbox[0] - b.bbox[0]; // same line, sort left-to-right
-  });
-
-  // Group into lines by Y proximity
-  const lines: string[] = [];
-  let currentLine: string[] = [];
-  let currentY = sorted[0].bbox[1];
-
-  for (const word of sorted) {
-    if (Math.abs(word.bbox[1] - currentY) > 0.005) {
-      // New line
-      if (currentLine.length > 0) lines.push(currentLine.join(" "));
-      currentLine = [];
-      currentY = word.bbox[1];
-    }
-    currentLine.push(word.text);
-  }
-  if (currentLine.length > 0) lines.push(currentLine.join(" "));
-
-  return lines.join("\n");
-}
+// wordsToText is imported from ocr-utils.ts
 
 /**
  * Priority ordering for spatial regions in LLM context.

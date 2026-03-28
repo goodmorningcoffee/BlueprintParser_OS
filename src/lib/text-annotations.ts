@@ -16,6 +16,15 @@ import type {
   TextractPageData,
   CsiCode,
 } from "@/types";
+import {
+  isSameLine,
+  isAdjacent,
+  mergeBbox,
+  slidingWindow,
+  makeAnnotation,
+  avgConf,
+  findWordIndex,
+} from "@/lib/ocr-utils";
 
 // ═══════════════════════════════════════════════════════════════════
 // Module-scope compiled regexes
@@ -457,93 +466,8 @@ function getAbbrDict(): Map<string, AbbrEntry> {
   return _abbrDict;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// Utility functions
-// ═══════════════════════════════════════════════════════════════════
-
-/** Check if two words are on the same line (y-centers within 1.5x avg height). */
-function isSameLine(a: TextractWord, b: TextractWord): boolean {
-  const aCenter = a.bbox[1] + a.bbox[3] / 2;
-  const bCenter = b.bbox[1] + b.bbox[3] / 2;
-  const avgHeight = (a.bbox[3] + b.bbox[3]) / 2;
-  return Math.abs(aCenter - bCenter) < avgHeight * 1.5;
-}
-
-/** Check spatial adjacency: same line and horizontally close. */
-function isAdjacent(a: TextractWord, b: TextractWord): boolean {
-  if (!isSameLine(a, b)) return false;
-  const aRight = a.bbox[0] + a.bbox[2];
-  const gap = b.bbox[0] - aRight;
-  const avgWidth = (a.bbox[2] + b.bbox[2]) / 2;
-  return gap < avgWidth * 2 && gap > -avgWidth * 0.5;
-}
-
-/** Merge bounding boxes from multiple words. */
-function mergeBbox(words: TextractWord[]): [number, number, number, number] {
-  if (words.length === 0) return [0, 0, 0, 0];
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const w of words) {
-    const left = w.bbox[0];
-    const top = w.bbox[1];
-    const right = left + w.bbox[2];
-    const bottom = top + w.bbox[3];
-    if (left < minX) minX = left;
-    if (top < minY) minY = top;
-    if (right > maxX) maxX = right;
-    if (bottom > maxY) maxY = bottom;
-  }
-  return [minX, minY, maxX - minX, maxY - minY];
-}
-
-/** Build a sliding window over words. Yields contiguous groups of 1..maxLen adjacent words. */
-function* slidingWindow(words: TextractWord[], maxLen: number): Generator<{
-  group: TextractWord[];
-  indices: number[];
-  text: string;
-}> {
-  for (let start = 0; start < words.length; start++) {
-    const group: TextractWord[] = [words[start]];
-    const indices: number[] = [start];
-    yield { group: [...group], indices: [...indices], text: words[start].text };
-
-    for (let end = start + 1; end < words.length && end < start + maxLen; end++) {
-      if (!isAdjacent(words[end - 1], words[end])) break;
-      group.push(words[end]);
-      indices.push(end);
-      yield {
-        group: [...group],
-        indices: [...indices],
-        text: group.map(w => w.text).join(" "),
-      };
-    }
-  }
-}
-
-/** Create an annotation helper. */
-function makeAnnotation(
-  type: TextAnnotationType,
-  category: AnnotationCategory,
-  words: TextractWord[],
-  wordIndices: number[],
-  confidence: number,
-  extra?: { group?: string; note?: string; meta?: Record<string, unknown> },
-): TextAnnotation {
-  return {
-    type,
-    category,
-    text: words.map(w => w.text).join(" "),
-    bbox: mergeBbox(words),
-    confidence,
-    wordIndices,
-    ...extra,
-  };
-}
-
-/** Average confidence of a set of words. */
-function avgConf(words: TextractWord[]): number {
-  if (words.length === 0) return 0;
-  return words.reduce((sum, w) => sum + w.confidence, 0) / words.length;
-}
+// Utility functions (isSameLine, isAdjacent, mergeBbox, slidingWindow,
+// makeAnnotation, avgConf, findWordIndex) are imported from ocr-utils.ts
 
 // ═══════════════════════════════════════════════════════════════════
 // Detector functions
@@ -1353,29 +1277,7 @@ function detectNotes(words: TextractWord[], lines: TextractLine[]): TextAnnotati
   return results;
 }
 
-/** Find the index of a word in the full words array by bbox proximity. */
-function findWordIndex(words: TextractWord[], target: TextractWord): number {
-  for (let i = 0; i < words.length; i++) {
-    if (words[i].bbox[0] === target.bbox[0]
-        && words[i].bbox[1] === target.bbox[1]
-        && words[i].text === target.text) {
-      return i;
-    }
-  }
-  // Fallback: closest bbox match
-  let bestIdx = 0;
-  let bestDist = Infinity;
-  for (let i = 0; i < words.length; i++) {
-    const dx = words[i].bbox[0] - target.bbox[0];
-    const dy = words[i].bbox[1] - target.bbox[1];
-    const dist = dx * dx + dy * dy;
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestIdx = i;
-    }
-  }
-  return bestIdx;
-}
+// findWordIndex is imported from ocr-utils.ts
 
 function detectRooms(words: TextractWord[]): TextAnnotation[] {
   const results: TextAnnotation[] = [];

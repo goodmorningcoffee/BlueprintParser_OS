@@ -9,6 +9,8 @@ import { extractDrawingNumber } from "@/lib/title-block";
 import { detectCsiCodes } from "@/lib/csi-detect";
 import { detectTextAnnotations } from "@/lib/text-annotations";
 import { extractKeynotes } from "@/lib/keynotes";
+import { analyzePageIntelligence } from "@/lib/page-analysis";
+import { analyzeProject } from "@/lib/project-analysis";
 
 const PAGE_CONCURRENCY = 20;
 
@@ -144,6 +146,17 @@ export async function processProject(projectId: number): Promise<{
           console.error(`[processing] Keynote extraction FAILED for page ${pageNum}:`, err);
         }
 
+        // Analyze page intelligence (classification, cross-refs, note blocks)
+        let pageIntelligence = null;
+        try {
+          const intel = analyzePageIntelligence(drawingNumber, textractData, csiCodes);
+          if (intel.classification || intel.crossRefs || intel.noteBlocks) {
+            pageIntelligence = intel;
+          }
+        } catch (err) {
+          console.error(`[processing] Page intelligence FAILED for page ${pageNum}:`, err);
+        }
+
         // Build page data
         const pageData: Record<string, unknown> = {
           textractData,
@@ -152,6 +165,7 @@ export async function processProject(projectId: number): Promise<{
           csiCodes: csiCodes.length > 0 ? csiCodes : null,
           textAnnotations: textAnnotationResult.annotations.length > 0 ? textAnnotationResult : null,
           keynotes: keynotes && keynotes.length > 0 ? keynotes : null,
+          pageIntelligence,
         };
 
         // Upsert page row
@@ -208,6 +222,39 @@ export async function processProject(projectId: number): Promise<{
         }
       }
     });
+
+    // ─── Project-level analysis (after all pages processed) ───
+    try {
+      const allProcessedPages = await db
+        .select({
+          pageNumber: pages.pageNumber,
+          drawingNumber: pages.drawingNumber,
+          pageIntelligence: pages.pageIntelligence,
+        })
+        .from(pages)
+        .where(eq(pages.projectId, project.id))
+        .orderBy(pages.pageNumber);
+
+      const { intelligence, summary } = analyzeProject(
+        allProcessedPages.map(p => ({
+          pageNumber: p.pageNumber,
+          drawingNumber: p.drawingNumber,
+          pageIntelligence: p.pageIntelligence as any,
+        }))
+      );
+
+      await db
+        .update(projects)
+        .set({
+          projectIntelligence: intelligence,
+          projectSummary: summary,
+        })
+        .where(eq(projects.id, project.id));
+
+      console.log(`[processing] Project analysis complete: ${summary.split("\n")[0]}`);
+    } catch (err) {
+      console.error("[processing] Project analysis failed:", err);
+    }
 
     // Update project status
     const processingTime = Math.round((Date.now() - startTime) / 1000);
