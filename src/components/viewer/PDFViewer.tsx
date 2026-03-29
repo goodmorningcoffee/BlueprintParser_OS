@@ -16,6 +16,7 @@ import PageIntelligencePanel from "./PageIntelligencePanel";
 import TableParsePanel from "./TableParsePanel";
 import TableCompareModal from "./TableCompareModal";
 import KeynotePanel from "./KeynotePanel";
+import SymbolSearchPanel from "./SymbolSearchPanel";
 
 interface PDFViewerProps {
   pdfUrl: string;
@@ -43,6 +44,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const showTableParsePanel = useViewerStore((s) => s.showTableParsePanel);
   const showTableCompareModal = useViewerStore((s) => s.showTableCompareModal);
   const showKeynoteParsePanel = useViewerStore((s) => s.showKeynoteParsePanel);
+  const symbolSearchResults = useViewerStore((s) => s.symbolSearchResults);
+  const symbolSearchLoading = useViewerStore((s) => s.symbolSearchLoading);
   const setMode = useViewerStore((s) => s.setMode);
 
   // Keyboard shortcuts: a = pointer/select, v = pan/zoom
@@ -350,13 +353,19 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
           <div
             ref={containerRef}
-            className="flex-1 bg-[#1a1a1a] overflow-auto"
+            className="flex-1 bg-[#1a1a1a] overflow-auto relative"
             style={{ cursor: mode === "move" ? "grab" : "default" }}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
           >
+            {/* Symbol Search floating results panel */}
+            {(symbolSearchResults || symbolSearchLoading) && (
+              <div className="absolute top-2 left-2 z-40">
+                <SymbolSearchPanel />
+              </div>
+            )}
             <div
               className="p-4"
               style={{ width: "fit-content", paddingTop: "50vh", paddingBottom: "50vh", paddingLeft: "25vw", paddingRight: "25vw" }}

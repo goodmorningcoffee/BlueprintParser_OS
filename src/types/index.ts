@@ -479,3 +479,60 @@ export interface YoloTagInstance {
   bbox: [number, number, number, number]; // [minX, minY, maxX, maxY]
   confidence: number;
 }
+
+// ─── Template Matching Engine types ─────────────────────────
+
+export type TemplateMatchMode = "search" | "match_one" | "batch";
+export type TemplateMatchMethod = "template" | "sift";
+
+export interface TemplateMatchOptions {
+  mode: TemplateMatchMode;
+  templatePath: string;
+  targetPaths: string[];
+  confidenceThreshold?: number;     // default 0.75
+  multiScale?: boolean;             // default true
+  scales?: number[];                // default [0.9, 0.95, 1.0, 1.05, 1.1]
+  useSiftFallback?: boolean;        // default true
+  siftFallbackThreshold?: number;   // trigger SIFT if < N template hits, default 3
+  nmsIouThreshold?: number;         // default 0.3
+  maxMatchesPerPage?: number;       // default 100
+}
+
+export interface TemplateMatchHit {
+  targetIndex: number;
+  bbox: BboxLTWH;                   // normalized [x, y, w, h] 0-1
+  confidence: number;
+  method: TemplateMatchMethod;
+  scale?: number;
+}
+
+export interface TemplateMatchProgress {
+  type: "progress";
+  targetIndex: number;
+  targetPath: string;
+  matches: number;
+}
+
+export interface TemplateMatchResult {
+  totalMatches: number;
+  results: TemplateMatchHit[];
+}
+
+// ─── Symbol Search types (UI layer on top of engine) ────────
+
+export interface SymbolSearchMatch {
+  id: string;
+  pageNumber: number;
+  bbox: BboxLTWH;                   // normalized [x, y, w, h] 0-1
+  confidence: number;
+  method: TemplateMatchMethod;
+}
+
+export interface SymbolSearchResult {
+  templateBbox: BboxLTWH;
+  sourcePageNumber: number;
+  matches: SymbolSearchMatch[];
+  totalMatches: number;
+  pagesWithMatches: number[];
+  searchedAt: string;               // ISO timestamp
+}

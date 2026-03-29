@@ -571,7 +571,11 @@ export default function TableParsePanel() {
 
             {/* Draw BB button */}
             <button
-              onClick={() => setTableParseStep(tableParseStep === "select-region" ? "idle" : "select-region")}
+              onClick={() => {
+                const next = tableParseStep === "select-region" ? "idle" : "select-region";
+                setTableParseStep(next);
+                if (next !== "idle") useViewerStore.getState().setMode("pointer");
+              }}
               className={`w-full text-xs px-3 py-2 rounded border ${
                 tableParseStep === "select-region"
                   ? "border-pink-500 bg-pink-500/10 text-pink-300"
@@ -749,7 +753,11 @@ export default function TableParsePanel() {
             <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1">Step 1: Table Region</div>
             {!tableParseRegion ? (
               <button
-                onClick={() => setTableParseStep(tableParseStep === "select-region" ? "idle" : "select-region")}
+                onClick={() => {
+                const next = tableParseStep === "select-region" ? "idle" : "select-region";
+                setTableParseStep(next);
+                if (next !== "idle") useViewerStore.getState().setMode("pointer");
+              }}
                 className={`w-full text-xs px-3 py-1.5 rounded border ${
                   tableParseStep === "select-region"
                     ? "border-pink-500 bg-pink-500/10 text-pink-300"

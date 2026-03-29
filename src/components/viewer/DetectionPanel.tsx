@@ -308,7 +308,11 @@ export default function DetectionPanel() {
           {/* Create Tag button */}
           <div className="px-3 py-2 border-b border-[var(--border)]">
             <button
-              onClick={() => setYoloTagPickingMode(!yoloTagPickingMode)}
+              onClick={() => {
+                const next = !yoloTagPickingMode;
+                setYoloTagPickingMode(next);
+                if (next) useViewerStore.getState().setMode("pointer");
+              }}
               className={`w-full px-2 py-1.5 text-[11px] rounded border ${
                 yoloTagPickingMode
                   ? "border-amber-400 bg-amber-500/10 text-amber-300"

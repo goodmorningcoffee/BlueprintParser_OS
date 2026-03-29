@@ -168,6 +168,10 @@ export default function AnnotationOverlay({
   const setYoloTagFilter = useViewerStore((s) => s.setYoloTagFilter);
   const yoloTagVisibility = useViewerStore((s) => s.yoloTagVisibility);
   const addYoloTag = useViewerStore((s) => s.addYoloTag);
+  const symbolSearchActive = useViewerStore((s) => s.symbolSearchActive);
+  const symbolSearchResults = useViewerStore((s) => s.symbolSearchResults);
+  const symbolSearchConfidence = useViewerStore((s) => s.symbolSearchConfidence);
+  const dismissedSymbolMatches = useViewerStore((s) => s.dismissedSymbolMatches);
 
   // During keynote Step 2 with Column A drawn: only show YOLO fully inside Column A
   const isKeynoteYoloPicking = keynoteParseStep === "define-column" && keynoteColumnBBs.length >= 1;
@@ -271,8 +275,9 @@ export default function AnnotationOverlay({
       const h = (maxY - minY) * height;
 
       // If an active tag is set, dim non-matching annotations
+      // Also dim all annotations when symbol search results are showing
       const isTagMatch = activeTag && activeTagAnnIds.has(ann.id);
-      const dimmed = activeTag && !isTagMatch;
+      const dimmed = (activeTag && !isTagMatch) || (symbolSearchResults !== null);
 
       if (isTagMatch) {
         // Bright highlight for active tag instances
@@ -381,8 +386,9 @@ export default function AnnotationOverlay({
       ctx.setLineDash([]);
     }
 
-    // Draw in-progress rectangle (markup or table parse)
+    // Draw in-progress rectangle (markup or table parse or symbol search)
     if (drawing) {
+      const isSymbolSearch = symbolSearchActive;
       const isTableParse = tableParseStep === "select-region" || tableParseStep === "define-column" || tableParseStep === "define-row";
       const isKeynoteParse = keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row";
       const isAnyTableDraw = isTableParse || isKeynoteParse;
@@ -390,18 +396,31 @@ export default function AnnotationOverlay({
       const isRow = tableParseStep === "define-row";
       const isKnColumn = keynoteParseStep === "define-column";
       const isKnRow = keynoteParseStep === "define-row";
-      // Magenta/rose for schedules, amber for keynotes
-      ctx.strokeStyle = isKeynoteParse
-        ? (isKnColumn ? "#d97706" : isKnRow ? "#c026d3" : "#f59e0b")
-        : isTableParse
-          ? (isColumn ? "#9f1239" : isRow ? "#c026d3" : "#e879a0")
-          : "#00ff88";
+      // Cyan for symbol search, magenta/rose for schedules, amber for keynotes
+      ctx.strokeStyle = isSymbolSearch
+        ? "#22d3ee"
+        : isKeynoteParse
+          ? (isKnColumn ? "#d97706" : isKnRow ? "#c026d3" : "#f59e0b")
+          : isTableParse
+            ? (isColumn ? "#9f1239" : isRow ? "#c026d3" : "#e879a0")
+            : "#00ff88";
       ctx.lineWidth = 2;
       ctx.setLineDash([5, 5]);
       const dx = drawEnd.x - drawStart.x;
       const dy = drawEnd.y - drawStart.y;
       ctx.strokeRect(drawStart.x, drawStart.y, dx, dy);
-      if (isAnyTableDraw) {
+      if (isSymbolSearch) {
+        ctx.fillStyle = "rgba(34,211,238,0.08)";
+        ctx.fillRect(drawStart.x, drawStart.y, dx, dy);
+        ctx.setLineDash([]);
+        ctx.font = "bold 11px sans-serif";
+        ctx.fillStyle = "#22d3ee";
+        ctx.fillText(
+          "Symbol Search Template",
+          Math.min(drawStart.x, drawEnd.x) + 4,
+          Math.min(drawStart.y, drawEnd.y) - 4
+        );
+      } else if (isAnyTableDraw) {
         ctx.fillStyle = isKeynoteParse
           ? (isKnColumn ? "rgba(217,119,6,0.06)" : isKnRow ? "rgba(192,38,211,0.06)" : "rgba(245,158,11,0.06)")
           : isColumn ? "rgba(159,18,57,0.06)" : isRow ? "rgba(192,38,211,0.06)" : "rgba(232,121,160,0.06)";
@@ -421,6 +440,36 @@ export default function AnnotationOverlay({
         );
       }
       ctx.setLineDash([]);
+    }
+
+    // Draw symbol search results on current page
+    if (symbolSearchResults) {
+      const pageMatches = symbolSearchResults.matches.filter(
+        (m) => m.pageNumber === pageNumber
+          && m.confidence >= symbolSearchConfidence
+          && !dismissedSymbolMatches.has(m.id)
+      );
+      for (const match of pageMatches) {
+        const [mx, my, mw, mh] = match.bbox;
+        const px = mx * width;
+        const py = my * height;
+        const pw = mw * width;
+        const ph = mh * height;
+
+        // Bright cyan fill + border
+        ctx.fillStyle = "rgba(34,211,238,0.15)";
+        ctx.fillRect(px, py, pw, ph);
+        ctx.strokeStyle = "#22d3ee";
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([]);
+        ctx.strokeRect(px, py, pw, ph);
+
+        // Confidence label
+        ctx.font = "bold 10px sans-serif";
+        ctx.fillStyle = "#22d3ee";
+        const confLabel = `${Math.round(match.confidence * 100)}%`;
+        ctx.fillText(confLabel, px + 2, py - 3);
+      }
     }
 
     // Draw table parse region overlay (persistent magenta border around selected region)
@@ -681,7 +730,7 @@ export default function AnnotationOverlay({
 
       ctx.restore();
     }
-  }, [pageAnnotations, width, height, drawing, drawStart, drawEnd, selectedId, calibrationMode, calibrationPoints, polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems, mousePos, tableParseStep, tableParseRegion, tableParseColumnBBs, tableParseRowBBs, keynoteParseStep, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber]);
+  }, [pageAnnotations, width, height, drawing, drawStart, drawEnd, selectedId, calibrationMode, calibrationPoints, polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems, mousePos, tableParseStep, tableParseRegion, tableParseColumnBBs, tableParseRowBBs, keynoteParseStep, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches]);
 
   const getPos = useCallback(
     (e: React.MouseEvent) => {
@@ -922,6 +971,93 @@ export default function AnnotationOverlay({
         return;
       }
 
+      // ─── Drawing/picking modes: must come BEFORE pointer block ─────
+      // The pointer block always returns, so these would be unreachable after it.
+
+      // Keynote YOLO picking: click a YOLO annotation to assign its class
+      if (isKeynoteYoloPicking) {
+        const clickNormX = pos.x / width;
+        const clickNormY = pos.y / height;
+        for (const ann of pageAnnotations) {
+          if (ann.source !== "yolo") continue;
+          const [aMinX, aMinY, aMaxX, aMaxY] = ann.bbox;
+          if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
+            e.stopPropagation();
+            const model = (ann as any).data?.modelName || "unknown";
+            setKeynoteYoloClass({ model, className: ann.name });
+            return;
+          }
+        }
+        // If click didn't hit a YOLO annotation, fall through to drawing mode
+      }
+
+      // YOLO Tag picking
+      if (yoloTagPickingMode) {
+        const clickNormX = pos.x / width;
+        const clickNormY = pos.y / height;
+        for (const ann of pageAnnotations) {
+          if (ann.source !== "yolo") continue;
+          const [aMinX, aMinY, aMaxX, aMaxY] = ann.bbox;
+          if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
+            e.stopPropagation();
+            const ocrText = getOcrTextInAnnotation(ann, textractData);
+            if (!ocrText) {
+              setYoloTagPickingMode(false);
+              return;
+            }
+            const model = (ann as any).data?.modelName as string || "unknown";
+            const tagName = prompt(`Create tag from "${ocrText}"?\n\nEnter display name:`, ocrText);
+            if (!tagName) { setYoloTagPickingMode(false); return; }
+            const instances = mapYoloToOcrText({
+              tagText: ocrText,
+              yoloClass: ann.name,
+              yoloModel: model,
+              scope: "project",
+              annotations: useViewerStore.getState().annotations,
+              textractData,
+            });
+            const newTag = {
+              id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              name: tagName,
+              tagText: ocrText,
+              yoloClass: ann.name,
+              yoloModel: model,
+              source: "manual" as const,
+              scope: "project" as const,
+              instances,
+            };
+            addYoloTag(newTag);
+            setActiveYoloTagId(newTag.id);
+            setYoloTagFilter(newTag.id);
+            setYoloTagPickingMode(false);
+            return;
+          }
+        }
+        setYoloTagPickingMode(false);
+        return;
+      }
+
+      // Symbol search draw mode
+      if (symbolSearchActive) {
+        e.stopPropagation();
+        setSelectedId(null);
+        setDrawing(true);
+        setDrawStart(pos);
+        setDrawEnd(pos);
+        return;
+      }
+
+      // Table or keynote parse drawing mode
+      if (tableParseStep === "select-region" || tableParseStep === "define-column" || tableParseStep === "define-row"
+          || keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row") {
+        e.stopPropagation();
+        setSelectedId(null);
+        setDrawing(true);
+        setDrawStart(pos);
+        setDrawEnd(pos);
+        return;
+      }
+
       // Pointer mode: select, delete, move, resize annotations + click keynotes
       if (mode === "pointer") {
         // Double-click: universal annotation filter — filter pages + search + highlights
@@ -1117,81 +1253,7 @@ export default function AnnotationOverlay({
         return;
       }
 
-      // Keynote YOLO picking: click a YOLO annotation to assign its class
-      if (isKeynoteYoloPicking) {
-        const clickNormX = pos.x / width;
-        const clickNormY = pos.y / height;
-        for (const ann of pageAnnotations) {
-          if (ann.source !== "yolo") continue;
-          const [aMinX, aMinY, aMaxX, aMaxY] = ann.bbox;
-          if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
-            e.stopPropagation();
-            const model = (ann as any).data?.modelName || "unknown";
-            setKeynoteYoloClass({ model, className: ann.name });
-            return;
-          }
-        }
-        // If click didn't hit a YOLO annotation, fall through to drawing mode
-      }
-
-      // YOLO Tag picking: click a YOLO annotation to create a tag from it
-      if (yoloTagPickingMode) {
-        const clickNormX = pos.x / width;
-        const clickNormY = pos.y / height;
-        for (const ann of pageAnnotations) {
-          if (ann.source !== "yolo") continue;
-          const [aMinX, aMinY, aMaxX, aMaxY] = ann.bbox;
-          if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
-            e.stopPropagation();
-            const ocrText = getOcrTextInAnnotation(ann, textractData);
-            if (!ocrText) {
-              setYoloTagPickingMode(false);
-              return;
-            }
-            const model = (ann as any).data?.modelName as string || "unknown";
-            const tagName = prompt(`Create tag from "${ocrText}"?\n\nEnter display name:`, ocrText);
-            if (!tagName) { setYoloTagPickingMode(false); return; }
-            // Scan all pages for instances
-            const instances = mapYoloToOcrText({
-              tagText: ocrText,
-              yoloClass: ann.name,
-              yoloModel: model,
-              scope: "project",
-              annotations: useViewerStore.getState().annotations,
-              textractData,
-            });
-            const newTag = {
-              id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              name: tagName,
-              tagText: ocrText,
-              yoloClass: ann.name,
-              yoloModel: model,
-              source: "manual" as const,
-              scope: "project" as const,
-              instances,
-            };
-            addYoloTag(newTag);
-            setActiveYoloTagId(newTag.id);
-            setYoloTagFilter(newTag.id);
-            setYoloTagPickingMode(false);
-            return;
-          }
-        }
-        // Missed — cancel picking
-        setYoloTagPickingMode(false);
-        return;
-      }
-
-      // Table or keynote parse drawing mode
-      if (tableParseStep === "select-region" || tableParseStep === "define-column" || tableParseStep === "define-row"
-          || keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row") {
-        e.stopPropagation();
-        setSelectedId(null);
-        setDrawing(true);
-        setDrawStart(pos);
-        setDrawEnd(pos);
-        return;
-      }
+      // (Drawing/picking mode handlers moved before the pointer block above)
 
       // Markup mode: check corners for resize or label for delete on selected
       if (selectedId !== null && mode === "markup") {
@@ -1326,6 +1388,76 @@ export default function AnnotationOverlay({
 
     // Minimum size check
     if (Math.abs(maxX - minX) < 0.01 || Math.abs(maxY - minY) < 0.01) return;
+
+    // Symbol search: capture template BB and trigger search API
+    if (symbolSearchActive) {
+      const store = useViewerStore.getState();
+      store.setSymbolSearchActive(false);
+      store.setSymbolSearchLoading(true);
+
+      // Fire the search API (async, non-blocking)
+      (async () => {
+        try {
+          const resp = await fetch("/api/symbol-search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId: store.projectId,
+              sourcePageNumber: pageNumber,
+              templateBbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
+              confidenceThreshold: store.symbolSearchConfidence,
+            }),
+          });
+
+          if (!resp.ok || !resp.body) {
+            throw new Error(`Search failed: ${resp.status}`);
+          }
+
+          // Read NDJSON stream
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const msg = JSON.parse(line);
+                if (msg.type === "progress") {
+                  useViewerStore.getState().setSymbolSearchProgress({
+                    page: msg.page,
+                    pageIndex: msg.pageIndex,
+                    totalPages: msg.totalPages,
+                    matches: msg.matches,
+                  });
+                } else if (msg.type === "done") {
+                  useViewerStore.getState().setSymbolSearchResults({
+                    templateBbox: msg.templateBbox,
+                    sourcePageNumber: msg.sourcePageNumber,
+                    totalMatches: msg.totalMatches,
+                    pagesWithMatches: msg.pagesWithMatches,
+                    matches: msg.matches,
+                    searchedAt: msg.searchedAt,
+                  });
+                }
+              } catch { /* skip malformed lines */ }
+            }
+          }
+        } catch (err) {
+          console.error("[SYMBOL_SEARCH] Failed:", err);
+        } finally {
+          useViewerStore.getState().setSymbolSearchLoading(false);
+          useViewerStore.getState().setSymbolSearchProgress(null);
+        }
+      })();
+      return;
+    }
 
     // Table parse: finalize BB as region or column
     if (tableParseStep === "select-region") {
@@ -1573,10 +1705,10 @@ export default function AnnotationOverlay({
           left: 0,
           width: `${width}px`,
           height: `${height}px`,
-          pointerEvents: activeTakeoffItemId !== null || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" || tableParseStep !== "idle" || keynoteParseStep !== "idle" ? "auto" : "none",
+          pointerEvents: activeTakeoffItemId !== null || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" || tableParseStep !== "idle" || keynoteParseStep !== "idle" || symbolSearchActive ? "auto" : "none",
           transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
           transformOrigin: "top left",
-          cursor: calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : isKeynoteYoloPicking ? "pointer" : yoloTagPickingMode ? "pointer" : (tableParseStep !== "idle" || keynoteParseStep !== "idle") ? "crosshair" : mode === "pointer" ? "default" : "default",
+          cursor: symbolSearchActive ? "crosshair" : calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : isKeynoteYoloPicking ? "pointer" : yoloTagPickingMode ? "pointer" : (tableParseStep !== "idle" || keynoteParseStep !== "idle") ? "crosshair" : mode === "pointer" ? "default" : "default",
         }}
       />
 
