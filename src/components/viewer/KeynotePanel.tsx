@@ -300,7 +300,11 @@ export default function KeynotePanel() {
             </div>
 
             <button
-              onClick={() => setKeynoteParseStep(keynoteParseStep === "select-region" ? "idle" : "select-region")}
+              onClick={() => {
+                const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
+                setKeynoteParseStep(next);
+                if (next !== "idle") useViewerStore.getState().setMode("pointer");
+              }}
               className={`w-full text-xs px-3 py-2 rounded border ${
                 keynoteParseStep === "select-region"
                   ? "border-amber-500 bg-amber-500/10 text-amber-300"
@@ -352,7 +356,11 @@ export default function KeynotePanel() {
             <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1">Step 1: Keynote Region</div>
             {!keynoteParseRegion ? (
               <button
-                onClick={() => setKeynoteParseStep(keynoteParseStep === "select-region" ? "idle" : "select-region")}
+                onClick={() => {
+                const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
+                setKeynoteParseStep(next);
+                if (next !== "idle") useViewerStore.getState().setMode("pointer");
+              }}
                 className={`w-full text-xs px-3 py-1.5 rounded border ${
                   keynoteParseStep === "select-region"
                     ? "border-amber-500 bg-amber-500/10 text-amber-300"

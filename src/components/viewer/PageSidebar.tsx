@@ -67,6 +67,9 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     activeYoloTagFilter,
     setYoloTagFilter,
     setActiveYoloTagId,
+    symbolSearchResults,
+    symbolSearchConfidence,
+    dismissedSymbolMatches,
   } = useViewerStore();
 
   const [thumbnails, setThumbnails] = useState<ThumbnailCache>({});
@@ -378,7 +381,28 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     return counts;
   }, [activeYoloTag]);
 
-  const isFiltered = isSearchFiltered || isKeynoteFiltered || isAnnotationFiltered || isTradeFiltered || isCsiFiltered || isTextAnnotationFiltered || isTakeoffFiltered || isYoloTagFiltered;
+  // Symbol Search filter
+  const symbolSearchFilteredPages = useMemo(() => {
+    if (!symbolSearchResults) return [];
+    const visibleMatches = symbolSearchResults.matches.filter(
+      (m) => m.confidence >= symbolSearchConfidence && !dismissedSymbolMatches.has(m.id)
+    );
+    return [...new Set(visibleMatches.map((m) => m.pageNumber))].sort((a, b) => a - b);
+  }, [symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches]);
+  const isSymbolSearchFiltered = symbolSearchResults !== null && symbolSearchFilteredPages.length > 0;
+  const symbolSearchPageCounts = useMemo(() => {
+    if (!symbolSearchResults) return {};
+    const counts: Record<number, number> = {};
+    const visibleMatches = symbolSearchResults.matches.filter(
+      (m) => m.confidence >= symbolSearchConfidence && !dismissedSymbolMatches.has(m.id)
+    );
+    for (const m of visibleMatches) {
+      counts[m.pageNumber] = (counts[m.pageNumber] || 0) + 1;
+    }
+    return counts;
+  }, [symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches]);
+
+  const isFiltered = isSearchFiltered || isKeynoteFiltered || isAnnotationFiltered || isTradeFiltered || isCsiFiltered || isTextAnnotationFiltered || isTakeoffFiltered || isYoloTagFiltered || isSymbolSearchFiltered;
 
   // Check if a page is hidden by active filters
   function isPageHidden(n: number): boolean {
@@ -390,7 +414,8 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
       (isTextAnnotationFiltered && !textAnnotationFilteredPages.includes(n)) ||
       (isTakeoffFiltered && !takeoffFilteredPages.includes(n)) ||
       (isCsiFiltered && !csiFilteredPages.includes(n)) ||
-      (isYoloTagFiltered && !yoloTagFilteredPages.includes(n))
+      (isYoloTagFiltered && !yoloTagFilteredPages.includes(n)) ||
+      (isSymbolSearchFiltered && !symbolSearchFilteredPages.includes(n))
     );
   }
 
@@ -521,6 +546,11 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
               {yoloTagPageCounts[n]}
             </span>
           )}
+          {isSymbolSearchFiltered && symbolSearchPageCounts[n] > 0 && (
+            <span className="bg-cyan-500/20 text-cyan-300 text-[10px] px-1.5 rounded-full shrink-0" title="Symbol matches">
+              {symbolSearchPageCounts[n]}
+            </span>
+          )}
         </div>
       </button>
     );
@@ -641,6 +671,19 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
             </span>
             <button
               onClick={() => { setYoloTagFilter(null); setActiveYoloTagId(null); }}
+              className="text-[var(--muted)] hover:text-[var(--fg)] ml-1"
+            >
+              x
+            </button>
+          </div>
+        )}
+        {isSymbolSearchFiltered && (
+          <div className="text-xs text-cyan-400 px-1.5 pb-2 border-b border-[var(--border)] mb-2 flex items-center justify-between">
+            <span>
+              Symbol: {symbolSearchResults!.totalMatches} match{symbolSearchResults!.totalMatches !== 1 ? "es" : ""} ({symbolSearchFilteredPages.length} pg)
+            </span>
+            <button
+              onClick={() => useViewerStore.getState().clearSymbolSearch()}
               className="text-[var(--muted)] hover:text-[var(--fg)] ml-1"
             >
               x

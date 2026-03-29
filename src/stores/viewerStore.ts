@@ -12,6 +12,8 @@ import type {
   TextAnnotation,
   TextAnnotationResult,
   YoloTag,
+  SymbolSearchResult,
+  SymbolSearchMatch,
 } from "@/types";
 
 interface ViewerState {
@@ -265,6 +267,21 @@ interface ViewerState {
   setYoloTagFilter: (id: string | null) => void;
   yoloTagPickingMode: boolean;
   setYoloTagPickingMode: (v: boolean) => void;
+
+  // ─── Symbol Search ────────────────────────────────────
+  symbolSearchActive: boolean;                    // draw mode active (crosshair cursor)
+  setSymbolSearchActive: (active: boolean) => void;
+  symbolSearchLoading: boolean;
+  setSymbolSearchLoading: (loading: boolean) => void;
+  symbolSearchProgress: { page: number; pageIndex: number; totalPages: number; matches: number } | null;
+  setSymbolSearchProgress: (p: { page: number; pageIndex: number; totalPages: number; matches: number } | null) => void;
+  symbolSearchResults: SymbolSearchResult | null;
+  setSymbolSearchResults: (results: SymbolSearchResult | null) => void;
+  symbolSearchConfidence: number;                 // slider value for filtering
+  setSymbolSearchConfidence: (val: number) => void;
+  dismissedSymbolMatches: Set<string>;            // dismissed match IDs
+  dismissSymbolMatch: (matchId: string) => void;
+  clearSymbolSearch: () => void;
 
   // ─── Reset ─────────────────────────────────────────────
   resetProjectData: () => void;
@@ -588,6 +605,33 @@ export const useViewerStore = create<ViewerState>((set) => ({
   yoloTagPickingMode: false,
   setYoloTagPickingMode: (yoloTagPickingMode) => set({ yoloTagPickingMode }),
 
+  symbolSearchActive: false,
+  setSymbolSearchActive: (symbolSearchActive) => set({ symbolSearchActive }),
+  symbolSearchLoading: false,
+  setSymbolSearchLoading: (symbolSearchLoading) => set({ symbolSearchLoading }),
+  symbolSearchProgress: null,
+  setSymbolSearchProgress: (symbolSearchProgress) => set({ symbolSearchProgress }),
+  symbolSearchResults: null,
+  setSymbolSearchResults: (symbolSearchResults) => set({ symbolSearchResults }),
+  symbolSearchConfidence: 0.75,
+  setSymbolSearchConfidence: (symbolSearchConfidence) => set({ symbolSearchConfidence }),
+  dismissedSymbolMatches: new Set<string>(),
+  dismissSymbolMatch: (matchId) =>
+    set((s) => {
+      const next = new Set(s.dismissedSymbolMatches);
+      next.add(matchId);
+      return { dismissedSymbolMatches: next };
+    }),
+  clearSymbolSearch: () =>
+    set({
+      symbolSearchActive: false,
+      symbolSearchLoading: false,
+      symbolSearchProgress: null,
+      symbolSearchResults: null,
+      symbolSearchConfidence: 0.75,
+      dismissedSymbolMatches: new Set<string>(),
+    }),
+
   resetProjectData: () =>
     set({
       pageNumber: 1,
@@ -671,5 +715,11 @@ export const useViewerStore = create<ViewerState>((set) => ({
       yoloTagVisibility: {},
       activeYoloTagFilter: null,
       yoloTagPickingMode: false,
+      symbolSearchActive: false,
+      symbolSearchLoading: false,
+      symbolSearchProgress: null,
+      symbolSearchResults: null,
+      symbolSearchConfidence: 0.75,
+      dismissedSymbolMatches: new Set<string>(),
     }),
 }));

@@ -60,6 +60,11 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
     toggleTableParsePanel,
     showKeynoteParsePanel,
     toggleKeynoteParsePanel,
+    symbolSearchActive,
+    setSymbolSearchActive,
+    symbolSearchResults,
+    symbolSearchLoading,
+    clearSymbolSearch,
   } = useViewerStore();
 
   const publicId = useViewerStore((s) => s.publicId);
@@ -246,6 +251,39 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           </button>
         </HelpTooltip>
       </div>
+
+      {/* Symbol Search */}
+      <HelpTooltip id="symbol-search">
+        <button
+          onClick={() => {
+            if (symbolSearchActive) {
+              setSymbolSearchActive(false);
+            } else if (symbolSearchResults) {
+              clearSymbolSearch();
+            } else {
+              setSymbolSearchActive(true);
+              setMode("pointer");
+            }
+          }}
+          className={`px-2 py-1 text-xs rounded border flex items-center gap-1 ${
+            symbolSearchActive
+              ? "border-cyan-400/60 text-cyan-400 bg-cyan-400/10 animate-pulse"
+              : symbolSearchResults
+                ? "border-cyan-400/60 text-cyan-400 bg-cyan-400/10"
+                : symbolSearchLoading
+                  ? "border-cyan-400/40 text-cyan-400/60 animate-pulse"
+                  : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/30"
+          }`}
+          title={symbolSearchActive ? "Cancel symbol search" : symbolSearchResults ? "Clear search results" : "Symbol Search — draw a BB around a symbol to find all instances"}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="6.5" cy="6.5" r="4.5" />
+            <line x1="10" y1="10" x2="14" y2="14" />
+            <rect x="3.5" y="3.5" width="6" height="6" rx="0.5" strokeDasharray="2 1" strokeWidth="1" />
+          </svg>
+          {symbolSearchLoading ? "Searching..." : symbolSearchResults ? `${symbolSearchResults.totalMatches} found` : "Symbol Search"}
+        </button>
+      </HelpTooltip>
 
       {/* Spacer — pushes center section */}
       <div className="flex-1" />
