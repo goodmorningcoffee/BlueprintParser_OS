@@ -109,34 +109,41 @@ export default function ProjectPage() {
       const allTradeSet = new Set<string>();
       const allCsiMap = new Map<string, string>();
 
+      // Batch all page data into maps, then update store ONCE (avoids N sequential re-renders)
+      const keynoteMap: Record<number, KeynoteData[]> = {};
+      const csiMap: Record<number, CsiCode[]> = {};
+      const textractMap: Record<number, TextractPageData> = {};
+      const textAnnMap: Record<number, any[]> = {};
+      const intelMap: Record<number, any> = {};
+
       for (const page of data.pages) {
         names[page.pageNumber] = page.drawingNumber || page.name;
 
-        if (page.keynotes) {
-          setKeynotes(page.pageNumber, page.keynotes as KeynoteData[]);
-        }
+        if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes as KeynoteData[];
         if (page.csiCodes) {
           const codes = page.csiCodes as CsiCode[];
-          setCsiCodes(page.pageNumber, codes);
+          csiMap[page.pageNumber] = codes;
           codes.forEach((c) => {
             allTradeSet.add(c.trade);
             allCsiMap.set(c.code, c.description);
           });
         }
-        if (page.textractData) {
-          setTextractData(
-            page.pageNumber,
-            page.textractData as TextractPageData
-          );
-        }
+        if (page.textractData) textractMap[page.pageNumber] = page.textractData as TextractPageData;
         if (page.textAnnotations) {
           const result = page.textAnnotations as any;
-          setTextAnnotations(page.pageNumber, result.annotations || []);
+          textAnnMap[page.pageNumber] = result.annotations || [];
         }
-        if ((page as any).pageIntelligence) {
-          useViewerStore.getState().setPageIntelligence(page.pageNumber, (page as any).pageIntelligence);
-        }
+        if ((page as any).pageIntelligence) intelMap[page.pageNumber] = (page as any).pageIntelligence;
       }
+
+      // Single batched store update — triggers ONE re-render instead of 5×N
+      useViewerStore.setState((s) => ({
+        keynotes: { ...s.keynotes, ...keynoteMap },
+        csiCodes: { ...s.csiCodes, ...csiMap },
+        textractData: { ...s.textractData, ...textractMap },
+        textAnnotations: { ...s.textAnnotations, ...textAnnMap },
+        pageIntelligence: { ...s.pageIntelligence, ...intelMap },
+      }));
 
       setPageNames(names);
       setAllTrades(Array.from(allTradeSet).sort());

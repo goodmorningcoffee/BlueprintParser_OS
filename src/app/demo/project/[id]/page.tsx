@@ -101,25 +101,38 @@ export default function DemoProjectPage() {
       const allTradeSet = new Set<string>();
       const allCsiMap = new Map<string, string>();
 
+      // Batch all page data into maps, then update store ONCE
+      const keynoteMap: Record<number, any> = {};
+      const csiMap: Record<number, any> = {};
+      const textractMap: Record<number, any> = {};
+      const textAnnMap: Record<number, any[]> = {};
+      const intelMap: Record<number, any> = {};
+
       for (const page of data.pages) {
         names[page.pageNumber] = page.drawingNumber || page.name;
-        if (page.keynotes) setKeynotes(page.pageNumber, page.keynotes);
+        if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes;
         if (page.csiCodes) {
-          setCsiCodes(page.pageNumber, page.csiCodes);
-          page.csiCodes.forEach((c) => {
+          csiMap[page.pageNumber] = page.csiCodes;
+          page.csiCodes.forEach((c: any) => {
             allTradeSet.add(c.trade);
             allCsiMap.set(c.code, c.description);
           });
         }
-        if (page.textractData) setTextractData(page.pageNumber, page.textractData);
+        if (page.textractData) textractMap[page.pageNumber] = page.textractData;
         if ((page as any).textAnnotations) {
           const result = (page as any).textAnnotations;
-          setTextAnnotations(page.pageNumber, result.annotations || []);
+          textAnnMap[page.pageNumber] = result.annotations || [];
         }
-        if ((page as any).pageIntelligence) {
-          useViewerStore.getState().setPageIntelligence(page.pageNumber, (page as any).pageIntelligence);
-        }
+        if ((page as any).pageIntelligence) intelMap[page.pageNumber] = (page as any).pageIntelligence;
       }
+
+      useViewerStore.setState((s: any) => ({
+        keynotes: { ...s.keynotes, ...keynoteMap },
+        csiCodes: { ...s.csiCodes, ...csiMap },
+        textractData: { ...s.textractData, ...textractMap },
+        textAnnotations: { ...s.textAnnotations, ...textAnnMap },
+        pageIntelligence: { ...s.pageIntelligence, ...intelMap },
+      }));
 
       setPageNames(names);
       setAllTrades(Array.from(allTradeSet).sort());
