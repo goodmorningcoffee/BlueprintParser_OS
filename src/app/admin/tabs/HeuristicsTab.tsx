@@ -27,6 +27,17 @@ interface YoloModel {
   config: { classes?: string[] };
 }
 
+interface YoloSource {
+  modelId: number;
+  modelName: string;
+  classes: string[];
+}
+
+interface PageNamingConfig {
+  enabled: boolean;
+  yoloSources: YoloSource[];
+}
+
 interface HeuristicsTabProps {
   reprocessing: boolean;
   reprocessLog: string[];
@@ -40,6 +51,9 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
   const [message, setMessage] = useState("");
   const [expandedRule, setExpandedRule] = useState<string | null>(null);
   const [yoloModels, setYoloModels] = useState<YoloModel[]>([]);
+  const [pageNaming, setPageNaming] = useState<PageNamingConfig>({ enabled: false, yoloSources: [] });
+  const [savingPageNaming, setSavingPageNaming] = useState(false);
+  const [pageNamingMessage, setPageNamingMessage] = useState("");
 
   const loadModels = useCallback(async () => {
     try {
@@ -68,6 +82,10 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
         for (const r of overrides) ruleMap.set(r.id, r);
 
         setRules([...ruleMap.values()]);
+
+        if (data.pageNaming) {
+          setPageNaming(data.pageNaming);
+        }
       }
     } catch { /* ignore */ }
     setLoading(false);
@@ -93,6 +111,68 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
     }
     setSaving(false);
   }
+
+  async function savePageNaming() {
+    setSavingPageNaming(true);
+    setPageNamingMessage("");
+    try {
+      const res = await fetch("/api/admin/heuristics/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pageNaming }),
+      });
+      if (res.ok) {
+        setPageNamingMessage("Page naming config saved");
+        setTimeout(() => setPageNamingMessage(""), 3000);
+      } else {
+        setPageNamingMessage("Save failed");
+      }
+    } catch {
+      setPageNamingMessage("Save failed");
+    }
+    setSavingPageNaming(false);
+  }
+
+  function addYoloSource() {
+    setPageNaming(prev => ({
+      ...prev,
+      yoloSources: [...prev.yoloSources, { modelId: 0, modelName: "", classes: [] }],
+    }));
+  }
+
+  function removeYoloSource(idx: number) {
+    setPageNaming(prev => ({
+      ...prev,
+      yoloSources: prev.yoloSources.filter((_, i) => i !== idx),
+    }));
+  }
+
+  function updateYoloSource(idx: number, updates: Partial<YoloSource>) {
+    setPageNaming(prev => ({
+      ...prev,
+      yoloSources: prev.yoloSources.map((s, i) => i === idx ? { ...s, ...updates } : s),
+    }));
+  }
+
+  function toggleYoloSourceClass(idx: number, cls: string) {
+    setPageNaming(prev => ({
+      ...prev,
+      yoloSources: prev.yoloSources.map((s, i) => {
+        if (i !== idx) return s;
+        const has = s.classes.includes(cls);
+        return { ...s, classes: has ? s.classes.filter(c => c !== cls) : [...s.classes, cls] };
+      }),
+    }));
+  }
+
+  // Check if any configured source has a valid model with selected classes
+  const pageNamingValid = pageNaming.yoloSources.length > 0 &&
+    pageNaming.yoloSources.every(s => s.modelId > 0 && s.classes.length > 0);
+
+  // Check which models have title_block-like classes for hint
+  const modelsWithTitleBlock = yoloModels.filter(m =>
+    (m.config?.classes || []).some(c => c.toLowerCase().includes("title"))
+  );
 
   function updateRule(id: string, updates: Partial<HeuristicRule>) {
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
@@ -142,6 +222,160 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
       {message && (
         <div className="px-4 py-2 rounded bg-[var(--accent)]/20 text-[var(--accent)] text-sm">{message}</div>
       )}
+
+      {/* Page Naming — YOLO Title Block Configuration */}
+      <section className="border border-emerald-500/20 rounded-lg p-4 space-y-3 bg-emerald-500/5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--fg)]">Page Naming — YOLO Title Block</h3>
+            <p className="text-[10px] text-[var(--muted)] mt-0.5">
+              Use YOLO-detected title block regions to improve page name extraction accuracy.
+            </p>
+          </div>
+          <button
+            onClick={() => setPageNaming(prev => ({ ...prev, enabled: !prev.enabled }))}
+            className={`w-10 h-5 rounded-full relative transition-colors ${
+              pageNaming.enabled ? "bg-emerald-500" : "bg-[var(--border)]"
+            }`}
+          >
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+              pageNaming.enabled ? "left-5" : "left-0.5"
+            }`} />
+          </button>
+        </div>
+
+        {pageNaming.enabled && (
+          <div className="space-y-3">
+            {/* YOLO sources */}
+            {pageNaming.yoloSources.length === 0 && (
+              <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-400/20 rounded px-3 py-2">
+                No YOLO sources configured. Add a model + class below.
+              </div>
+            )}
+
+            {pageNaming.yoloSources.map((source, idx) => {
+              const selectedModel = yoloModels.find(m => m.id === source.modelId);
+              const modelClasses = selectedModel?.config?.classes || [];
+              return (
+                <div key={idx} className="bg-[var(--surface)] border border-[var(--border)] rounded p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-[var(--muted)] font-medium">Source {idx + 1}</span>
+                    <div className="flex-1" />
+                    <button
+                      onClick={() => removeYoloSource(idx)}
+                      className="text-[10px] text-[var(--muted)] hover:text-red-400"
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  {/* Model picker */}
+                  <div>
+                    <label className="text-[10px] text-[var(--muted)] block mb-1">YOLO Model</label>
+                    <select
+                      value={source.modelId || ""}
+                      onChange={(e) => {
+                        const mid = e.target.value ? Number(e.target.value) : 0;
+                        const model = yoloModels.find(m => m.id === mid);
+                        updateYoloSource(idx, {
+                          modelId: mid,
+                          modelName: model?.name || "",
+                          classes: [], // Reset classes when model changes
+                        });
+                      }}
+                      className="w-full px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none"
+                    >
+                      <option value="">Select model...</option>
+                      {yoloModels.map(m => (
+                        <option key={m.id} value={m.id}>{m.name} ({(m.config?.classes || []).length} classes)</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Class picker (chips) */}
+                  {modelClasses.length > 0 && (
+                    <div>
+                      <label className="text-[10px] text-[var(--muted)] block mb-1">
+                        Classes to use as title block (click to toggle)
+                      </label>
+                      <div className="flex flex-wrap gap-1">
+                        {modelClasses.map(cls => {
+                          const active = source.classes.includes(cls);
+                          return (
+                            <button
+                              key={cls}
+                              onClick={() => toggleYoloSourceClass(idx, cls)}
+                              className={`px-1.5 py-0.5 text-[9px] rounded border transition-colors ${
+                                active
+                                  ? "border-emerald-400/50 text-emerald-300 bg-emerald-500/15"
+                                  : "border-[var(--border)] text-[var(--muted)] hover:border-emerald-400/30"
+                              }`}
+                            >
+                              {cls}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {source.classes.length === 0 && source.modelId > 0 && (
+                        <p className="text-[9px] text-amber-400 mt-1">Select at least one class</p>
+                      )}
+                    </div>
+                  )}
+
+                  {source.modelId > 0 && modelClasses.length === 0 && (
+                    <p className="text-[9px] text-[var(--muted)]">
+                      This model has no classes defined. Upload a classes.txt file for it.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Add source button */}
+            <button
+              onClick={addYoloSource}
+              className="w-full px-3 py-1.5 text-xs rounded border border-dashed border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-emerald-400/30"
+            >
+              + Add YOLO Source
+            </button>
+
+            {/* Validation warnings */}
+            {pageNaming.enabled && pageNaming.yoloSources.length > 0 && !pageNamingValid && (
+              <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-400/20 rounded px-3 py-2">
+                Each source needs a model selected and at least one class toggled on.
+              </div>
+            )}
+
+            {pageNaming.enabled && yoloModels.length === 0 && (
+              <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-400/20 rounded px-3 py-2">
+                No YOLO models found. Upload and run YOLO model(s) with a title_block class first.
+              </div>
+            )}
+
+            {pageNaming.enabled && yoloModels.length > 0 && modelsWithTitleBlock.length === 0 && (
+              <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-400/20 rounded px-3 py-2">
+                None of your YOLO models have a class containing "title". You can still select any class, but typical title block classes are: title_block, title_area, etc.
+              </div>
+            )}
+
+            {/* Save */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={savePageNaming}
+                disabled={savingPageNaming}
+                className="px-4 py-1.5 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {savingPageNaming ? "Saving..." : "Save Page Naming Config"}
+              </button>
+              {pageNamingMessage && (
+                <span className={`text-xs ${pageNamingMessage.includes("fail") ? "text-red-400" : "text-green-400"}`}>
+                  {pageNamingMessage}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* Rule list */}
       <div className="space-y-2">

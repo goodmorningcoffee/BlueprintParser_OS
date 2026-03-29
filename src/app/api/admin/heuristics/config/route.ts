@@ -20,7 +20,9 @@ export async function GET() {
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
 
-  const companyHeuristics = (company?.pipelineConfig as any)?.heuristics || [];
+  const config = (company?.pipelineConfig as any) || {};
+  const companyHeuristics = config.heuristics || [];
+  const pageNaming = config.pageNaming || { enabled: false, yoloSources: [] };
 
   return NextResponse.json({
     builtInRules: BUILT_IN_RULES.map((r) => ({
@@ -28,6 +30,7 @@ export async function GET() {
       source: "built-in" as const,
     })),
     companyOverrides: companyHeuristics,
+    pageNaming,
   });
 }
 
@@ -40,9 +43,12 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 
-  const { heuristics } = await req.json();
-  if (!Array.isArray(heuristics)) {
-    return NextResponse.json({ error: "heuristics array required" }, { status: 400 });
+  const body = await req.json();
+  const { heuristics, pageNaming } = body;
+
+  // At least one of heuristics or pageNaming must be provided
+  if (!Array.isArray(heuristics) && !pageNaming) {
+    return NextResponse.json({ error: "heuristics array or pageNaming config required" }, { status: 400 });
   }
 
   const [company] = await db
@@ -52,7 +58,9 @@ export async function PUT(req: Request) {
     .limit(1);
 
   const existing = (company?.pipelineConfig as Record<string, unknown>) || {};
-  const updated = { ...existing, heuristics };
+  const updated = { ...existing };
+  if (Array.isArray(heuristics)) updated.heuristics = heuristics;
+  if (pageNaming) updated.pageNaming = pageNaming;
 
   await db
     .update(companies)

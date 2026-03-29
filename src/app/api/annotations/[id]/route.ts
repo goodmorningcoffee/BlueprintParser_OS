@@ -56,11 +56,28 @@ export async function PUT(
     updates.maxX = body.bbox[2];
     updates.maxY = body.bbox[3];
   }
+
+  // Auto-CSI-tag: detect CSI codes from note text and merge with manual codes
+  let autoCsiCodes: string[] = [];
+  const noteText = (body.note as string) || "";
+  if (noteText.trim()) {
+    const detected = detectCsiCodes(noteText);
+    autoCsiCodes = detected.map((c) => c.code);
+  }
+
+  if (autoCsiCodes.length > 0 && updates.data) {
+    const data = updates.data as Record<string, unknown>;
+    const manualCodes = (data.csiCodes as string[]) || [];
+    const merged = [...new Set([...manualCodes, ...autoCsiCodes])];
+    data.csiCodes = merged;
+    updates.data = data;
+  }
+
   updates.updatedAt = new Date();
 
   await db.update(annotations).set(updates).where(eq(annotations.id, annotation.id));
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, autoCsiCodes });
 }
 
 export async function DELETE(

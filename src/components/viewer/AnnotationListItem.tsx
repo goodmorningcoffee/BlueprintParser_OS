@@ -38,11 +38,18 @@ export default function AnnotationListItem({
     try {
       const normalizedCsi = normalizeCsiCodes(csiInput);
       const updatedData = { ...annotation.data, note, csiCodes: normalizedCsi.length > 0 ? normalizedCsi : undefined };
-      await fetch(`/api/annotations/${annotation.id}`, {
+      const res = await fetch(`/api/annotations/${annotation.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ note, data: updatedData }),
       });
+      const result = await res.json();
+      // Merge auto-detected CSI codes from note text
+      if (result.autoCsiCodes?.length > 0) {
+        const merged = [...new Set([...normalizedCsi, ...result.autoCsiCodes])];
+        updatedData.csiCodes = merged;
+        setCsiInput(merged.join(", "));
+      }
       updateAnnotation(annotation.id, { note: note || null, data: updatedData });
     } catch {
       // Silently fail -- user can retry

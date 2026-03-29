@@ -11,6 +11,54 @@ interface PageIntelligenceTabProps {
 export default function PageIntelligenceTab({ reprocessing, reprocessLog, onReprocess }: PageIntelligenceTabProps) {
   const [reprocessingIntel, setReprocessingIntel] = useState(false);
   const [intelLog, setIntelLog] = useState<string[]>([]);
+  const [reprocessingNames, setReprocessingNames] = useState(false);
+  const [namesLog, setNamesLog] = useState<string[]>([]);
+
+  async function reprocessPageNames() {
+    setReprocessingNames(true);
+    setNamesLog(["Starting page name reprocessing..."]);
+    try {
+      const res = await fetch("/api/admin/reprocess?scope=page-names", { method: "POST" });
+      if (res.ok && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const msg = JSON.parse(line);
+              if (msg.type === "config") {
+                const classes = (msg.targetClasses || []).join(", ");
+                setNamesLog(prev => [...prev,
+                  msg.yoloEnabled
+                    ? `YOLO enabled: looking for classes [${classes}] from ${msg.sources} source(s)`
+                    : `YOLO not configured — using default title_block fallback`,
+                ]);
+              }
+              else if (msg.type === "start") setNamesLog(prev => [...prev, `Processing ${msg.projects} project(s)...`]);
+              else if (msg.type === "project") {
+                const yolo = msg.yoloTitleBlocks > 0 ? ` (${msg.yoloTitleBlocks} YOLO title blocks)` : " (no YOLO title blocks)";
+                setNamesLog(prev => [...prev, `Project: ${msg.name} (${msg.pages} pages)${yolo}`]);
+              }
+              else if (msg.type === "progress") setNamesLog(prev => [...prev, `  ${msg.updated} renamed, ${msg.skipped} unchanged...`]);
+              else if (msg.type === "done") setNamesLog(prev => [...prev, `Done: ${msg.updated} pages renamed, ${msg.skipped} unchanged out of ${msg.total} total`]);
+            } catch { /* skip non-JSON lines */ }
+          }
+        }
+      } else {
+        setNamesLog(prev => [...prev, "Reprocessing failed"]);
+      }
+    } catch {
+      setNamesLog(prev => [...prev, "Reprocessing failed"]);
+    }
+    setReprocessingNames(false);
+  }
 
   async function reprocessIntelligence() {
     setReprocessingIntel(true);
@@ -94,6 +142,13 @@ export default function PageIntelligenceTab({ reprocessing, reprocessLog, onRepr
       {/* Actions */}
       <div className="flex gap-3 items-center flex-wrap">
         <button
+          onClick={reprocessPageNames}
+          disabled={reprocessingNames || reprocessing}
+          className="px-4 py-2 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50"
+        >
+          {reprocessingNames ? "Reprocessing Page Names..." : "Reprocess Page Names"}
+        </button>
+        <button
           onClick={reprocessIntelligence}
           disabled={reprocessingIntel || reprocessing}
           className="px-4 py-2 text-sm rounded bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-50"
@@ -108,10 +163,20 @@ export default function PageIntelligenceTab({ reprocessing, reprocessLog, onRepr
           {reprocessing ? "Reprocessing..." : "Full Reprocess (OCR + CSI + Intelligence)"}
         </button>
         <p className="text-[10px] text-[var(--muted)] w-full">
+          "Reprocess Page Names" re-extracts drawing numbers using label-anchored search + regex + YOLO title block validation. Uses existing OCR data.
           "Reprocess Intelligence" re-runs only the analysis layers on existing OCR/CSI data (fast).
           "Full Reprocess" re-runs everything including CSI detection and text annotations (slower).
         </p>
       </div>
+
+      {/* Page names reprocess log */}
+      {namesLog.length > 0 && (
+        <div className="border border-emerald-500/30 rounded p-3 max-h-40 overflow-y-auto bg-[var(--surface)]">
+          {namesLog.map((line, i) => (
+            <div key={i} className="text-xs text-[var(--muted)] font-mono">{line}</div>
+          ))}
+        </div>
+      )}
 
       {/* Intelligence reprocess log */}
       {intelLog.length > 0 && (
