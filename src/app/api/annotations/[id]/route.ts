@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { annotations, projects } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { detectCsiCodes } from "@/lib/csi-detect";
 
 async function verifyAnnotationOwnership(annotationId: number, companyId: number) {
   const [annotation] = await db

@@ -35,10 +35,16 @@ export default function CsiPanel() {
   const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
   const toggleCsiPanel = useViewerStore((s) => s.toggleCsiPanel);
   const setSearch = useViewerStore((s) => s.setSearch);
+  const publicId = useViewerStore((s) => s.publicId);
+  const projectIntelligenceData = useViewerStore((s) => s.projectIntelligenceData);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedDivisions, setExpandedDivisions] = useState<Record<string, boolean>>({});
+  const [allExpanded, setAllExpanded] = useState(false);
   const [scope, setScope] = useState<"page" | "project">("page");
+  const [showGraph, setShowGraph] = useState(false);
+
+  const csiGraph = projectIntelligenceData?.csiGraph as any;
 
   // Get codes for current scope
   const currentCodes: CsiCode[] = useMemo(() => {
@@ -76,12 +82,30 @@ export default function CsiPanel() {
   }, [currentCodes, searchQuery]);
 
   function handleCodeClick(code: string) {
-    setCsiFilter(activeCsiFilter === code ? null : code);
-    setSearch(code);
+    if (activeCsiFilter === code) {
+      setCsiFilter(null);
+      setSearch("");
+    } else {
+      setCsiFilter(code);
+      // Search for the description text so it highlights on the page
+      const match = currentCodes.find(c => c.code === code);
+      const searchText = match?.description || code;
+      setSearch(searchText);
+    }
   }
 
   function toggleDivision(div: string) {
     setExpandedDivisions(prev => ({ ...prev, [div]: !prev[div] }));
+  }
+
+  function toggleAllDivisions() {
+    const target = !allExpanded;
+    const updated: Record<string, boolean> = {};
+    for (const div of grouped.keys()) {
+      updated[div] = target;
+    }
+    setExpandedDivisions(updated);
+    setAllExpanded(target);
   }
 
   return (
@@ -109,6 +133,61 @@ export default function CsiPanel() {
         <span className="ml-auto text-[10px] text-[var(--muted)]">{filtered.length} codes</span>
       </div>
 
+      {/* Network Graph Summary (project scope only) */}
+      {scope === "project" && csiGraph?.nodes?.length > 0 && (
+        <div className="border-b border-[var(--border)]">
+          <button
+            onClick={() => setShowGraph(!showGraph)}
+            className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
+          >
+            <span className="text-[10px] font-medium text-cyan-400">Network Graph</span>
+            <span className="text-[10px] text-[var(--muted)]">{showGraph ? "▼" : "▶"}</span>
+          </button>
+          {showGraph && (
+            <div className="px-3 pb-2 space-y-1.5">
+              <div className="text-[10px] text-[var(--muted)]">
+                {csiGraph.nodes.length} divisions, {csiGraph.edges?.length || 0} connections
+              </div>
+              {/* Clusters */}
+              {csiGraph.clusters?.length > 0 && (
+                <div className="space-y-0.5">
+                  {csiGraph.clusters.map((c: any, i: number) => (
+                    <div key={i} className="text-[10px]">
+                      <span className="text-cyan-300 font-medium">{c.name}</span>
+                      <span className="text-[var(--muted)]"> [{c.divisions.join(", ")}] {Math.round(c.cohesion * 100)}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Top edges */}
+              {csiGraph.edges?.length > 0 && (
+                <div className="space-y-0.5">
+                  <div className="text-[9px] text-[var(--muted)] font-medium">Strongest connections:</div>
+                  {[...csiGraph.edges].sort((a: any, b: any) => b.weight - a.weight).slice(0, 3).map((e: any, i: number) => (
+                    <div key={i} className="text-[10px] text-[var(--fg)]">
+                      {e.source} ↔ {e.target} <span className="text-[var(--muted)]">({e.weight} pages)</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Fingerprint */}
+              {csiGraph.fingerprint && (
+                <div className="text-[9px] text-[var(--muted)] font-mono truncate" title={csiGraph.fingerprint}>
+                  FP: {csiGraph.fingerprint}
+                </div>
+              )}
+              {/* Open full graph link */}
+              <button
+                onClick={() => window.open(`/project/${publicId}/csi-graph`, "_blank")}
+                className="text-[10px] text-cyan-400 hover:text-cyan-300 underline"
+              >
+                Open Full Graph →
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Search */}
       <div className="px-3 py-2 border-b border-[var(--border)]">
         <input
@@ -119,6 +198,18 @@ export default function CsiPanel() {
           className="w-full px-2 py-1 text-xs bg-[var(--surface)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-[var(--accent)]"
         />
       </div>
+
+      {/* Expand/Collapse All */}
+      {filtered.length > 0 && (
+        <div className="px-3 py-1 border-b border-[var(--border)] flex justify-end">
+          <button
+            onClick={toggleAllDivisions}
+            className="text-[10px] text-[var(--muted)] hover:text-[var(--fg)]"
+          >
+            {allExpanded ? "Collapse All" : "Expand All"}
+          </button>
+        </div>
+      )}
 
       {/* Active filter indicator */}
       {activeCsiFilter && (

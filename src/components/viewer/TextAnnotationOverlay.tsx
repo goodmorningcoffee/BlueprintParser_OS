@@ -24,6 +24,7 @@ export default function TextAnnotationOverlay({
   const hiddenSet = useViewerStore((s) => s.hiddenTextAnnotations);
   const customColors = useViewerStore((s) => s.textAnnotationColors);
   const activeFilter = useViewerStore((s) => s.activeTextAnnotationFilter);
+  const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
   const setFilter = useViewerStore((s) => s.setTextAnnotationFilter);
   const mode = useViewerStore((s) => s.mode);
   const textractData = useViewerStore((s) => s.textractData);
@@ -34,13 +35,22 @@ export default function TextAnnotationOverlay({
 
   // Filter visible annotations
   const visible = useMemo(() => {
-    if (!showTextAnnotations) return [];
+    if (!showTextAnnotations && !activeCsiFilter) return [];
     return annotations.filter((ann, i) => {
-      if (activeTypes[ann.type] === false) return false;
-      if (hiddenSet.has(`${pageNumber}:${i}`)) return false;
-      return true;
+      if (!activeCsiFilter) {
+        // Normal mode: respect type toggles and hidden set
+        if (!showTextAnnotations) return false;
+        if (activeTypes[ann.type] === false) return false;
+        if (hiddenSet.has(`${pageNumber}:${i}`)) return false;
+        return true;
+      }
+      // CSI filter mode: show only annotations with matching CSI tags
+      const filterDiv = activeCsiFilter.substring(0, 2).replace(/\s/g, "");
+      const csiTags = (ann as any).csiTags as Array<{ code: string }> | undefined;
+      if (!csiTags?.length) return false;
+      return csiTags.some(t => t.code.substring(0, 2).replace(/\s/g, "") === filterDiv);
     });
-  }, [annotations, showTextAnnotations, activeTypes, hiddenSet, pageNumber]);
+  }, [annotations, showTextAnnotations, activeTypes, hiddenSet, pageNumber, activeCsiFilter]);
 
   // Click handler — double-click: OCR word search, single-click: text annotation filter
   const handleClick = useCallback(

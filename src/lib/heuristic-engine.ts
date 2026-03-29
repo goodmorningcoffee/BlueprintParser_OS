@@ -40,12 +40,15 @@ export interface HeuristicRule {
   name: string;
   source: "built-in" | "custom";
   enabled: boolean;
+  modelId?: number;              // optional association with a specific YOLO model
+  modelName?: string;
   yoloRequired: string[];
   yoloBoosters: string[];
   textKeywords: string[];
   overlapRequired: boolean;
   spatialConditions?: SpatialCondition[];
   textRegionType?: string;       // match against TextRegion.type if present
+  csiDivisionsRequired?: string[]; // CSI divisions that must be present (first 2 digits, e.g. ["08", "09"])
   outputLabel: string;
   outputCsiCode?: string;
   minConfidence: number;
@@ -406,6 +409,20 @@ function scoreRule(rule: HeuristicRule, ctx: PageContext): { score: number; evid
     if (matching.length > 0) {
       score += 0.15;
       evidence.push(`OCR region: ${rule.textRegionType} detected`);
+    }
+  }
+
+  // CSI division requirement: page must have codes from specified divisions
+  if (rule.csiDivisionsRequired && rule.csiDivisionsRequired.length > 0 && ctx.csiCodes) {
+    const pageDivisions = new Set(ctx.csiCodes.map(c => c.code.substring(0, 2).replace(/\s/g, "")));
+    const hasRequired = rule.csiDivisionsRequired.some(div => pageDivisions.has(div));
+    if (hasRequired) {
+      score += 0.15;
+      const matched = rule.csiDivisionsRequired.filter(div => pageDivisions.has(div));
+      evidence.push(`CSI division: ${matched.join(", ")}`);
+    } else {
+      // Required divisions not present — rule doesn't apply
+      return { score: 0, evidence: [] };
     }
   }
 

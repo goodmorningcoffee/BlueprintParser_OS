@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ClientAnnotation } from "@/types";
 import { useViewerStore } from "@/stores/viewerStore";
+import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
 
 interface AnnotationListItemProps {
   annotation: ClientAnnotation;
@@ -25,6 +26,7 @@ export default function AnnotationListItem({
   const confidence = annotation.data?.confidence as number | undefined;
   const csiCodes = (annotation.data?.csiCodes as string[]) || [];
   const keywords = (annotation.data?.keywords as string[]) || [];
+  const [csiInput, setCsiInput] = useState(csiCodes.join(", "));
 
   function handleRowClick() {
     onToggleFilter(annotation.name);
@@ -34,12 +36,14 @@ export default function AnnotationListItem({
   async function handleSave() {
     setSaving(true);
     try {
+      const normalizedCsi = normalizeCsiCodes(csiInput);
+      const updatedData = { ...annotation.data, note, csiCodes: normalizedCsi.length > 0 ? normalizedCsi : undefined };
       await fetch(`/api/annotations/${annotation.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note, data: { ...annotation.data, note } }),
+        body: JSON.stringify({ note, data: updatedData }),
       });
-      updateAnnotation(annotation.id, { note: note || null });
+      updateAnnotation(annotation.id, { note: note || null, data: updatedData });
     } catch {
       // Silently fail -- user can retry
     } finally {
@@ -83,13 +87,16 @@ export default function AnnotationListItem({
             placeholder="Add notes..." rows={2}
             className="w-full text-xs px-2 py-1 bg-[var(--surface)] border border-[var(--border)] rounded outline-none focus:border-[var(--accent)] resize-none text-[var(--fg)]"
           />
-          {csiCodes.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {csiCodes.map((code) => (
-                <span key={code} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">{code}</span>
-              ))}
-            </div>
-          )}
+          <div className="flex items-center gap-1.5">
+            <label className="text-[9px] text-[var(--muted)] shrink-0">CSI</label>
+            <input
+              type="text"
+              value={csiInput}
+              onChange={(e) => setCsiInput(e.target.value)}
+              placeholder={CSI_INPUT_PLACEHOLDER}
+              className="flex-1 px-1.5 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-blue-400/50 font-mono"
+            />
+          </div>
           {keywords.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {keywords.map((kw) => (

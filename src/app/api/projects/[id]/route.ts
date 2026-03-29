@@ -58,6 +58,18 @@ export async function GET(
     }
   } catch { /* migration 0010 hasn't run */ }
 
+  // Try to fetch pageIntelligence separately (column may not exist if migration 0012 pending)
+  let pageIntelligenceMap: Record<number, unknown> = {};
+  try {
+    const piRows = await db
+      .select({ pageNumber: pages.pageNumber, pageIntelligence: pages.pageIntelligence })
+      .from(pages)
+      .where(eq(pages.projectId, project.id));
+    for (const r of piRows) {
+      if (r.pageIntelligence) pageIntelligenceMap[r.pageNumber] = r.pageIntelligence;
+    }
+  } catch { /* migration 0012 hasn't run */ }
+
   // Fetch annotations
   const projectAnnotations = await db
     .select()
@@ -93,6 +105,7 @@ export async function GET(
     numPages: project.numPages,
     status: project.status,
     address: project.address,
+    projectIntelligence: project.projectIntelligence || null,
     pages: projectPages.map((p) => ({
       pageNumber: p.pageNumber,
       name: p.name,
@@ -102,6 +115,7 @@ export async function GET(
       keynotes: p.keynotes,
       csiCodes: p.csiCodes,
       textAnnotations: textAnnotationsMap[p.pageNumber] || null,
+      pageIntelligence: pageIntelligenceMap[p.pageNumber] || null,
     })),
     annotations: projectAnnotations.map((a) => ({
       id: a.id,
@@ -158,6 +172,13 @@ export async function PUT(
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name;
   if (body.address !== undefined) updates.address = body.address;
+
+  // Merge classCsiOverrides into projectIntelligence (preserving existing data)
+  if (body.classCsiOverrides !== undefined) {
+    const existingPi = (project.projectIntelligence as Record<string, unknown>) || {};
+    updates.projectIntelligence = { ...existingPi, classCsiOverrides: body.classCsiOverrides };
+  }
+
   updates.updatedAt = new Date();
 
   await db.update(projects).set(updates).where(eq(projects.id, project.id));

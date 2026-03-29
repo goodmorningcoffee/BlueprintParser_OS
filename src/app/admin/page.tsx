@@ -10,6 +10,8 @@ import ProjectsTab from "./tabs/ProjectsTab";
 import AiModelsTab from "./tabs/AiModelsTab";
 import TextAnnotationsTab from "./tabs/TextAnnotationsTab";
 import CsiTab from "./tabs/CsiTab";
+import HeuristicsTab from "./tabs/HeuristicsTab";
+import PageIntelligenceTab from "./tabs/PageIntelligenceTab";
 import UsersTab from "./tabs/UsersTab";
 import SettingsTab from "./tabs/SettingsTab";
 
@@ -642,6 +644,22 @@ export default function AdminPage() {
 
         {activeTab === "csi" && (
           <CsiTab
+            reprocessing={reprocessing}
+            reprocessLog={reprocessLog}
+            onReprocess={reprocessAll}
+          />
+        )}
+
+        {activeTab === "heuristics" && (
+          <HeuristicsTab
+            reprocessing={reprocessing}
+            reprocessLog={reprocessLog}
+            onReprocess={reprocessAll}
+          />
+        )}
+
+        {activeTab === "page-intelligence" && (
+          <PageIntelligenceTab
             reprocessing={reprocessing}
             reprocessLog={reprocessLog}
             onReprocess={reprocessAll}

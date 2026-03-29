@@ -126,6 +126,7 @@ export default function AnnotationOverlay({
   const activeModels = useViewerStore((s) => s.activeModels);
   const confidenceThresholds = useViewerStore((s) => s.confidenceThresholds);
   const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
+  const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
   const setAnnotationFilter = useViewerStore((s) => s.setAnnotationFilter);
   const setTakeoffFilter = useViewerStore((s) => s.setTakeoffFilter);
   const textractData = useViewerStore((s) => s.textractData);
@@ -160,10 +161,24 @@ export default function AnnotationOverlay({
         ? confidenceThresholds[modelName]
         : confidenceThreshold;
       if (conf < threshold) return false;
+      // Filter by CSI code when CSI filter is active — only show YOLO annotations matching the division
+      if (activeCsiFilter) {
+        const annCsi = ((a as any).data?.csiCodes as string[] | undefined) || [];
+        const filterDiv = activeCsiFilter.substring(0, 2).replace(/\s/g, "");
+        const matches = annCsi.some(c => c.substring(0, 2).replace(/\s/g, "") === filterDiv);
+        if (!matches) return false;
+      }
     }
     // Takeoff markers are always visible
     if (a.source === "takeoff") return true;
     if (a.source === "takeoff-scale") return false;
+    // When CSI filter active, only show user markups that have matching CSI tags
+    if (activeCsiFilter && a.source === "user") {
+      const annCsi = ((a as any).data?.csiCodes as string[] | undefined) || [];
+      if (annCsi.length === 0) return false;
+      const filterDiv = activeCsiFilter.substring(0, 2).replace(/\s/g, "");
+      if (!annCsi.some(c => c.substring(0, 2).replace(/\s/g, "") === filterDiv)) return false;
+    }
     // Filter by active annotation label
     if (activeAnnotationFilter && a.name !== activeAnnotationFilter) return false;
     return true;

@@ -1,6 +1,6 @@
 "use client";
 
-export type AdminTab = "overview" | "projects" | "ai-models" | "text-annotations" | "csi" | "users" | "settings";
+export type AdminTab = "overview" | "projects" | "ai-models" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "users" | "settings";
 
 const TABS: { id: AdminTab; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -8,6 +8,8 @@ const TABS: { id: AdminTab; label: string }[] = [
   { id: "ai-models", label: "AI Models" },
   { id: "text-annotations", label: "Text Annotations" },
   { id: "csi", label: "CSI Codes" },
+  { id: "heuristics", label: "Heuristics" },
+  { id: "page-intelligence", label: "Page Intelligence" },
   { id: "users", label: "Users" },
   { id: "settings", label: "Settings" },
 ];

@@ -46,6 +46,17 @@ export async function GET(
     }
   } catch { /* migration 0010 hasn't run */ }
 
+  let pageIntelligenceMap: Record<number, unknown> = {};
+  try {
+    const piRows = await db
+      .select({ pageNumber: pages.pageNumber, pageIntelligence: pages.pageIntelligence })
+      .from(pages)
+      .where(eq(pages.projectId, project.id));
+    for (const r of piRows) {
+      if (r.pageIntelligence) pageIntelligenceMap[r.pageNumber] = r.pageIntelligence;
+    }
+  } catch { /* migration 0012 hasn't run */ }
+
   const projectAnnotations = await db
     .select()
     .from(annotations)
@@ -61,6 +72,7 @@ export async function GET(
     pdfUrl,
     numPages: project.numPages,
     status: project.status,
+    projectIntelligence: project.projectIntelligence || null,
     pages: projectPages.map((p) => ({
       pageNumber: p.pageNumber,
       name: p.name,
@@ -70,6 +82,7 @@ export async function GET(
       keynotes: p.keynotes,
       csiCodes: p.csiCodes,
       textAnnotations: textAnnotationsMap[p.pageNumber] || null,
+      pageIntelligence: pageIntelligenceMap[p.pageNumber] || null,
     })),
     annotations: projectAnnotations.map((a) => ({
       id: a.id,

@@ -68,7 +68,7 @@ export default function DemoProjectPage() {
       setIsDemo(true);
       // Default YOLO on with threshold 0 in demo so users see all detections
       useViewerStore.getState().setConfidenceThreshold(0);
-      useViewerStore.setState({ showDetections: true });
+      // Annotations default off — user turns them on as needed
 
       const res = await fetch(`/api/demo/projects/${id}`);
       if (!res.ok) throw new Error("Project not found");
@@ -80,6 +80,9 @@ export default function DemoProjectPage() {
       setPublicId(data.id);
       setDataUrl(data.dataUrl);
       setNumPages(data.numPages || 0);
+      if ((data as any).projectIntelligence) {
+        useViewerStore.getState().setProjectIntelligenceData((data as any).projectIntelligence);
+      }
       setAnnotations(data.annotations);
       const yoloModelNames = [...new Set(
         data.annotations
@@ -112,6 +115,9 @@ export default function DemoProjectPage() {
         if ((page as any).textAnnotations) {
           const result = (page as any).textAnnotations;
           setTextAnnotations(page.pageNumber, result.annotations || []);
+        }
+        if ((page as any).pageIntelligence) {
+          useViewerStore.getState().setPageIntelligence(page.pageNumber, (page as any).pageIntelligence);
         }
       }
 

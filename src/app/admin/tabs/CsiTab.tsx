@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
 
 interface CsiConfig {
   matchingConfidenceThreshold: number;  // min confidence to report a CSI match (0-1)
@@ -40,9 +41,25 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
   const [stats, setStats] = useState<{ totalCodes: number; divisions: number; source?: string } | null>(null);
   const [uploading, setUploading] = useState(false);
 
+  // YOLO Model CSI state
+  const [yoloModels, setYoloModels] = useState<Array<{ id: number; name: string; config: any }>>([]);
+  const [expandedYoloModel, setExpandedYoloModel] = useState<number | null>(null);
+  const [yoloCsiEdits, setYoloCsiEdits] = useState<Record<string, string>>({});
+  const [yoloKwEdits, setYoloKwEdits] = useState<Record<string, string>>({});
+  const [savingYoloCsi, setSavingYoloCsi] = useState(false);
+  const [reprocessingCsi, setReprocessingCsi] = useState(false);
+
+  const loadYoloModels = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/models");
+      if (res.ok) setYoloModels(await res.json());
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     loadConfig();
-  }, []);
+    loadYoloModels();
+  }, [loadYoloModels]);
 
   async function loadConfig() {
     setLoading(true);
@@ -248,6 +265,146 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
             min={1} max={10}
           />
         </div>
+      </section>
+
+      {/* YOLO Model Class CSI Tags */}
+      <section className="border border-[var(--border)] rounded-lg p-4 space-y-3">
+        <h3 className="text-sm font-semibold text-[var(--fg)]">YOLO Model Class CSI Tags</h3>
+        <p className="text-xs text-[var(--muted)]">
+          Assign CSI codes and keywords to YOLO model classes. These tags are applied globally to all projects when YOLO results are loaded.
+        </p>
+
+        {yoloModels.length === 0 ? (
+          <p className="text-xs text-[var(--muted)] py-4 text-center">No YOLO models uploaded</p>
+        ) : (
+          <div className="space-y-2">
+            {yoloModels.map((m) => {
+              const classes: string[] = m.config?.classes || [];
+              const classCsiCodes: Record<string, string[]> = m.config?.classCsiCodes || {};
+              const classKeywords: Record<string, string[]> = m.config?.classKeywords || {};
+              const csiCount = Object.keys(classCsiCodes).length;
+              const isExpanded = expandedYoloModel === m.id;
+              return (
+                <div key={m.id} className="bg-[var(--surface)] border border-[var(--border)] rounded">
+                  <button
+                    onClick={() => {
+                      if (isExpanded) { setExpandedYoloModel(null); return; }
+                      setExpandedYoloModel(m.id);
+                      const csiStrings: Record<string, string> = {};
+                      const kwStrings: Record<string, string> = {};
+                      for (const [cls, codes] of Object.entries(classCsiCodes)) csiStrings[cls] = codes.join(", ");
+                      for (const [cls, kws] of Object.entries(classKeywords)) kwStrings[cls] = kws.join(", ");
+                      setYoloCsiEdits(csiStrings);
+                      setYoloKwEdits(kwStrings);
+                    }}
+                    className="w-full flex items-center justify-between p-2.5 text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-[var(--muted)] w-3">{isExpanded ? "▼" : "▶"}</span>
+                      <span className="text-xs font-medium">{m.name}</span>
+                      <span className="text-[10px] text-[var(--muted)]">{classes.length} classes</span>
+                      {csiCount > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-400/20 text-blue-300">
+                          {csiCount} CSI tagged
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                  {isExpanded && classes.length > 0 && (
+                    <div className="px-3 pb-3 border-t border-[var(--border)] space-y-2 mt-0">
+                      {classes.map((cls) => (
+                        <div key={cls} className="flex items-start gap-2 py-1 border-b border-[var(--border)]/30 last:border-0">
+                          <span className="text-[10px] font-mono w-32 truncate shrink-0 pt-1" title={cls}>{cls}</span>
+                          <div className="flex-1 space-y-0.5">
+                            <div className="flex items-center gap-1.5">
+                              <label className="text-[10px] text-[var(--muted)] w-7 shrink-0">CSI</label>
+                              <input
+                                type="text"
+                                value={yoloCsiEdits[cls] || ""}
+                                onChange={(e) => setYoloCsiEdits((p) => ({ ...p, [cls]: e.target.value }))}
+                                placeholder={CSI_INPUT_PLACEHOLDER}
+                                className="flex-1 px-1.5 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-blue-400/50 font-mono"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <label className="text-[10px] text-[var(--muted)] w-7 shrink-0">Keys</label>
+                              <input
+                                type="text"
+                                value={yoloKwEdits[cls] || ""}
+                                onChange={(e) => setYoloKwEdits((p) => ({ ...p, [cls]: e.target.value }))}
+                                placeholder="e.g. door, opening"
+                                className="flex-1 px-1.5 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-emerald-400/50"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-2 mt-2">
+                        <button
+                          onClick={async () => {
+                            setSavingYoloCsi(true);
+                            const classCsi: Record<string, string[]> = {};
+                            const classKw: Record<string, string[]> = {};
+                            for (const [cls, val] of Object.entries(yoloCsiEdits)) {
+                              const codes = normalizeCsiCodes(val);
+                              if (codes.length > 0) classCsi[cls] = codes;
+                            }
+                            for (const [cls, val] of Object.entries(yoloKwEdits)) {
+                              const kws = val.split(",").map(s => s.trim()).filter(Boolean);
+                              if (kws.length > 0) classKw[cls] = kws;
+                            }
+                            try {
+                              const res = await fetch("/api/admin/models", {
+                                method: "PUT",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id: m.id, classCsiCodes: classCsi, classKeywords: classKw }),
+                              });
+                              if (res.ok) {
+                                setMessage("YOLO class CSI tags saved");
+                                setTimeout(() => setMessage(""), 3000);
+                                loadYoloModels();
+                              }
+                            } catch { setMessage("Save failed"); }
+                            setSavingYoloCsi(false);
+                          }}
+                          disabled={savingYoloCsi}
+                          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-40"
+                        >
+                          {savingYoloCsi ? "Saving..." : "Save CSI Tags"}
+                        </button>
+                        <button
+                          onClick={async () => {
+                            setReprocessingCsi(true);
+                            setMessage("Reprocessing YOLO CSI tags...");
+                            try {
+                              const res = await fetch("/api/admin/models/reprocess-csi", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ modelId: m.id }),
+                              });
+                              if (res.ok) {
+                                const data = await res.json();
+                                setMessage(`Updated ${data.annotationsUpdated || 0} annotations across ${data.projectsProcessed || 0} projects`);
+                              } else {
+                                setMessage("Reprocess failed");
+                              }
+                            } catch { setMessage("Reprocess failed"); }
+                            setTimeout(() => setMessage(""), 5000);
+                            setReprocessingCsi(false);
+                          }}
+                          disabled={reprocessingCsi}
+                          className="px-3 py-1 text-xs rounded border border-orange-400/40 text-orange-400 hover:bg-orange-400/10 disabled:opacity-50"
+                        >
+                          {reprocessingCsi ? "Reprocessing..." : "Reprocess YOLO Tags"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {/* Actions */}

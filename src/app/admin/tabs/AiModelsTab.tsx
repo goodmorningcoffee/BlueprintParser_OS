@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
 import LLMConfigSection from "../sections/LLMConfigSection";
 import S3Browser from "../sections/S3Browser";
 import type { ModelClassType } from "@/types";
@@ -57,9 +58,11 @@ export default function AiModelsTab({
   const [jobDetails, setJobDetails] = useState<Record<string, any>>({});
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
 
-  // Class type editor state
+  // Class config editor state
   const [editingModelId, setEditingModelId] = useState<number | null>(null);
   const [classTypeEdits, setClassTypeEdits] = useState<Record<string, ModelClassType>>({});
+  const [classCsiEdits, setClassCsiEdits] = useState<Record<string, string>>({});
+  const [classKeywordEdits, setClassKeywordEdits] = useState<Record<string, string>>({});
   const [savingClassTypes, setSavingClassTypes] = useState(false);
 
   function startEditingClassTypes(model: ModelItem) {
@@ -69,21 +72,45 @@ export default function AiModelsTab({
     }
     setEditingModelId(model.id);
     setClassTypeEdits((model.config as any)?.classTypes || {});
+    // Load CSI codes and keywords as comma-separated strings for editing
+    const csiMap = (model.config as any)?.classCsiCodes || {};
+    const kwMap = (model.config as any)?.classKeywords || {};
+    const csiStrings: Record<string, string> = {};
+    const kwStrings: Record<string, string> = {};
+    for (const [cls, codes] of Object.entries(csiMap)) {
+      csiStrings[cls] = (codes as string[]).join(", ");
+    }
+    for (const [cls, kws] of Object.entries(kwMap)) {
+      kwStrings[cls] = (kws as string[]).join(", ");
+    }
+    setClassCsiEdits(csiStrings);
+    setClassKeywordEdits(kwStrings);
   }
 
-  async function saveClassTypes(modelId: number) {
+  async function saveClassConfig(modelId: number) {
     setSavingClassTypes(true);
     try {
+      // Parse comma-separated CSI codes and keywords into arrays
+      const classCsiCodes: Record<string, string[]> = {};
+      const classKeywords: Record<string, string[]> = {};
+      for (const [cls, val] of Object.entries(classCsiEdits)) {
+        const codes = normalizeCsiCodes(val);
+        if (codes.length > 0) classCsiCodes[cls] = codes;
+      }
+      for (const [cls, val] of Object.entries(classKeywordEdits)) {
+        const kws = val.split(",").map((s) => s.trim()).filter(Boolean);
+        if (kws.length > 0) classKeywords[cls] = kws;
+      }
+
       const res = await fetch("/api/admin/models", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: modelId, classTypes: classTypeEdits }),
+        body: JSON.stringify({ id: modelId, classTypes: classTypeEdits, classCsiCodes, classKeywords }),
       });
       if (res.ok) {
-        // Update the model config in the parent's state by modifying the config object directly
         const model = yoloModels.find((m) => m.id === modelId);
         if (model) {
-          model.config = { ...model.config, classTypes: classTypeEdits };
+          model.config = { ...model.config, classTypes: classTypeEdits, classCsiCodes, classKeywords };
         }
         setEditingModelId(null);
       }
@@ -124,7 +151,9 @@ export default function AiModelsTab({
           {yoloModels.map((m) => {
             const classes: string[] = (m.config as any)?.classes || [];
             const classTypes: Record<string, ModelClassType> = (m.config as any)?.classTypes || {};
+            const classCsiCodes: Record<string, string[]> = (m.config as any)?.classCsiCodes || {};
             const taggedCount = Object.keys(classTypes).length;
+            const csiTaggedCount = Object.keys(classCsiCodes).length;
             const spatialCount = Object.values(classTypes).filter((t) => t === "spatial" || t === "both").length;
             return (
             <div key={m.id} className="bg-[var(--surface)] border border-[var(--border)] rounded">
@@ -137,6 +166,11 @@ export default function AiModelsTab({
                   {taggedCount > 0 && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-400/20 text-purple-300">
                       {spatialCount} spatial
+                    </span>
+                  )}
+                  {csiTaggedCount > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-400/20 text-blue-300">
+                      {csiTaggedCount} CSI tagged
                     </span>
                   )}
                 </div>
@@ -168,53 +202,76 @@ export default function AiModelsTab({
                   <p className="text-[10px] text-[var(--muted)] mt-2 mb-2">
                     Tag classes as <strong>Spatial</strong> (regions like title blocks, tables — enriches LLM context)
                     or <strong>Countable</strong> (objects like doors — for QTO workflows).
+                    Add <strong>CSI codes</strong> and <strong>keywords</strong> per class for trade tagging.
                   </p>
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     {classes.map((cls) => (
-                      <div key={cls} className="flex items-center gap-3 py-1">
-                        <span className="text-xs font-mono w-36 truncate" title={cls}>{cls}</span>
-                        <div className="flex gap-1">
-                          {(["spatial", "countable", "both"] as ModelClassType[]).map((type) => (
-                            <button
-                              key={type}
-                              onClick={() => {
-                                setClassTypeEdits((prev) => {
-                                  const next = { ...prev };
-                                  if (next[cls] === type) {
-                                    delete next[cls];
-                                  } else {
-                                    next[cls] = type;
-                                  }
-                                  return next;
-                                });
-                              }}
-                              className={`px-2 py-0.5 text-[10px] rounded border ${
-                                classTypeEdits[cls] === type
-                                  ? type === "spatial"
-                                    ? "border-purple-400/50 text-purple-300 bg-purple-500/15"
-                                    : type === "countable"
-                                      ? "border-green-400/50 text-green-300 bg-green-500/15"
-                                      : "border-amber-400/50 text-amber-300 bg-amber-500/15"
-                                  : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--accent)]/30"
-                              }`}
-                            >
-                              {type}
-                            </button>
-                          ))}
+                      <div key={cls} className="py-1.5 border-b border-[var(--border)]/50 last:border-0">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-mono w-36 truncate shrink-0" title={cls}>{cls}</span>
+                          <div className="flex gap-1">
+                            {(["spatial", "countable", "both"] as ModelClassType[]).map((type) => (
+                              <button
+                                key={type}
+                                onClick={() => {
+                                  setClassTypeEdits((prev) => {
+                                    const next = { ...prev };
+                                    if (next[cls] === type) {
+                                      delete next[cls];
+                                    } else {
+                                      next[cls] = type;
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                className={`px-2 py-0.5 text-[10px] rounded border ${
+                                  classTypeEdits[cls] === type
+                                    ? type === "spatial"
+                                      ? "border-purple-400/50 text-purple-300 bg-purple-500/15"
+                                      : type === "countable"
+                                        ? "border-green-400/50 text-green-300 bg-green-500/15"
+                                        : "border-amber-400/50 text-amber-300 bg-amber-500/15"
+                                    : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--accent)]/30"
+                                }`}
+                              >
+                                {type}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 ml-[9.5rem]">
+                          <label className="text-[10px] text-[var(--muted)] w-8 shrink-0">CSI</label>
+                          <input
+                            type="text"
+                            value={classCsiEdits[cls] || ""}
+                            onChange={(e) => setClassCsiEdits((prev) => ({ ...prev, [cls]: e.target.value }))}
+                            placeholder={CSI_INPUT_PLACEHOLDER}
+                            className="flex-1 px-2 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-blue-400/50 font-mono"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5 ml-[9.5rem]">
+                          <label className="text-[10px] text-[var(--muted)] w-8 shrink-0">Keys</label>
+                          <input
+                            type="text"
+                            value={classKeywordEdits[cls] || ""}
+                            onChange={(e) => setClassKeywordEdits((prev) => ({ ...prev, [cls]: e.target.value }))}
+                            placeholder="e.g. door, opening, frame"
+                            className="flex-1 px-2 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-emerald-400/50"
+                          />
                         </div>
                       </div>
                     ))}
                   </div>
                   <div className="flex items-center gap-2 mt-3">
                     <button
-                      onClick={() => saveClassTypes(m.id)}
+                      onClick={() => saveClassConfig(m.id)}
                       disabled={savingClassTypes}
                       className="px-3 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-500 disabled:opacity-40"
                     >
-                      {savingClassTypes ? "Saving..." : "Save Class Types"}
+                      {savingClassTypes ? "Saving..." : "Save Class Config"}
                     </button>
                     <span className="text-[10px] text-[var(--muted)]">
-                      {Object.keys(classTypeEdits).length} of {classes.length} tagged
+                      {Object.keys(classTypeEdits).length} typed, {Object.values(classCsiEdits).filter(Boolean).length} CSI tagged
                     </span>
                   </div>
                 </div>

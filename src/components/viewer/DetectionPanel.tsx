@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientAnnotation } from "@/types";
@@ -26,6 +26,10 @@ export default function DetectionPanel() {
 
   const [expandedModels, setExpandedModels] = useState<Record<string, boolean>>({});
   const [expandedClasses, setExpandedClasses] = useState<Record<string, boolean>>({});
+  const [showCsiTags, setShowCsiTags] = useState(false);
+  const [csiEdits, setCsiEdits] = useState<Record<string, string>>({});
+  const [savingCsi, setSavingCsi] = useState(false);
+  const [csiMessage, setCsiMessage] = useState("");
 
   const yoloAnnotations = useMemo(() => annotations.filter((a) => {
     if (a.source !== "yolo") return false;
@@ -83,6 +87,90 @@ export default function DetectionPanel() {
         </div>
       </div>
 
+      {/* CSI Tags sub-menu */}
+      {modelGroups.length > 0 && (
+        <div className="border-b border-[var(--border)]">
+          <button
+            onClick={() => setShowCsiTags(!showCsiTags)}
+            className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
+          >
+            <span className="text-[10px] font-medium text-blue-400">CSI Tags</span>
+            <span className="text-[10px] text-[var(--muted)]">{showCsiTags ? "▼" : "▶"}</span>
+          </button>
+          {showCsiTags && (
+            <div className="px-3 pb-2 space-y-1.5">
+              <p className="text-[9px] text-[var(--muted)]">CSI codes per class for this project. Edit here to override global defaults.</p>
+              {csiMessage && <div className="text-[9px] text-blue-400">{csiMessage}</div>}
+              {modelGroups.map(({ modelName, classes }) => (
+                <div key={modelName} className="space-y-0.5">
+                  <div className="text-[9px] text-[var(--muted)] font-medium">{modelName}</div>
+                  {classes.map(({ className: cls, csiCodes }) => {
+                    const editKey = `${modelName}:${cls}`;
+                    const editVal = csiEdits[editKey];
+                    const displayVal = editVal !== undefined ? editVal : csiCodes.join(", ");
+                    return (
+                      <div key={cls} className="flex items-center gap-1.5">
+                        <span className="text-[9px] font-mono w-24 truncate shrink-0" title={cls}>{cls}</span>
+                        <input
+                          type="text"
+                          value={displayVal}
+                          onChange={(e) => setCsiEdits(p => ({ ...p, [editKey]: e.target.value }))}
+                          placeholder="CSI codes..."
+                          className="flex-1 px-1 py-0.5 text-[9px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-blue-400/50 font-mono"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+              {Object.keys(csiEdits).length > 0 && (
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={async () => {
+                      setSavingCsi(true);
+                      setCsiMessage("");
+                      const publicId = useViewerStore.getState().publicId;
+                      // Build overrides from edits
+                      const overrides: Record<string, Record<string, string[]>> = {};
+                      for (const [key, val] of Object.entries(csiEdits)) {
+                        const [model, cls] = key.split(":", 2);
+                        const codes = val.split(",").map(s => s.trim()).filter(Boolean);
+                        if (!overrides[model]) overrides[model] = {};
+                        overrides[model][cls] = codes;
+                      }
+                      try {
+                        const res = await fetch(`/api/projects/${publicId}`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ classCsiOverrides: overrides }),
+                        });
+                        if (res.ok) {
+                          setCsiMessage("Saved to project");
+                          setTimeout(() => setCsiMessage(""), 3000);
+                        } else {
+                          setCsiMessage("Save failed");
+                        }
+                      } catch { setCsiMessage("Save failed"); }
+                      setSavingCsi(false);
+                    }}
+                    disabled={savingCsi}
+                    className="px-2 py-0.5 text-[9px] bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-40"
+                  >
+                    {savingCsi ? "Saving..." : "Save to Project"}
+                  </button>
+                  <button
+                    onClick={() => { setCsiEdits({}); setCsiMessage(""); }}
+                    className="px-2 py-0.5 text-[9px] text-[var(--muted)] hover:text-[var(--fg)]"
+                  >
+                    Revert to Global
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Active filter indicator */}
       {activeAnnotationFilter && (
         <div className="flex items-center gap-2 mx-2 mt-2 px-2 py-1.5 bg-[var(--accent)]/10 rounded text-xs">
@@ -99,7 +187,7 @@ export default function DetectionPanel() {
           </div>
         )}
         {modelGroups.map(({ modelName, classes, totalCount }) => {
-          const modelExpanded = expandedModels[modelName] !== false;
+          const modelExpanded = expandedModels[modelName] === true;
           const modelVisible = activeModels[modelName] !== false;
           return (
             <div key={modelName} className="border border-[var(--border)] rounded">

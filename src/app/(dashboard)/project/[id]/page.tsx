@@ -93,6 +93,9 @@ export default function ProjectPage() {
       setPublicId(data.id);
       setDataUrl(data.dataUrl);
       setNumPages(data.numPages || 0);
+      if ((data as any).projectIntelligence) {
+        useViewerStore.getState().setProjectIntelligenceData((data as any).projectIntelligence);
+      }
       setAnnotations(data.annotations);
       const yoloModelNames = [...new Set(
         data.annotations
@@ -129,6 +132,9 @@ export default function ProjectPage() {
         if (page.textAnnotations) {
           const result = page.textAnnotations as any;
           setTextAnnotations(page.pageNumber, result.annotations || []);
+        }
+        if ((page as any).pageIntelligence) {
+          useViewerStore.getState().setPageIntelligence(page.pageNumber, (page as any).pageIntelligence);
         }
       }
 

@@ -44,7 +44,7 @@ const SERIES_MAP: Record<string, string> = {
   "9": "3D/Rendering",
 };
 
-const RE_DRAWING_NUM = /^([A-Z]{1,2})-?(\d{1,3})(?:\.(\d{1,2}))?$/;
+const RE_DRAWING_NUM = /^([A-Z]{1,4})-?(\d{1,4})(?:\.(\d{1,2}))?$/;
 
 function classifyPage(
   drawingNumber: string | null,
@@ -76,7 +76,18 @@ function classifyPage(
   const pageNum = match[2];
   const series = pageNum.length >= 1 ? pageNum[0] : undefined;
 
-  const discipline = DISCIPLINE_MAP[prefix];
+  // Look up discipline — try full prefix first, then progressively shorter
+  // Handles cases like "MEP200" where "MEP" isn't mapped but "M" is
+  let discipline = DISCIPLINE_MAP[prefix];
+  let resolvedPrefix = prefix;
+  if (!discipline && prefix.length > 2) {
+    discipline = DISCIPLINE_MAP[prefix.substring(0, 2)];
+    if (discipline) resolvedPrefix = prefix.substring(0, 2);
+  }
+  if (!discipline && prefix.length > 1) {
+    discipline = DISCIPLINE_MAP[prefix.substring(0, 1)];
+    if (discipline) resolvedPrefix = prefix.substring(0, 1);
+  }
   if (!discipline) {
     return {
       discipline: `Unknown (${prefix})`,
@@ -87,7 +98,7 @@ function classifyPage(
 
   return {
     discipline,
-    disciplinePrefix: prefix,
+    disciplinePrefix: resolvedPrefix,
     subType: series ? SERIES_MAP[series] : undefined,
     series: series ? `${series}00` : undefined,
     confidence: 0.95,

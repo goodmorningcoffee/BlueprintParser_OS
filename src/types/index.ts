@@ -312,6 +312,7 @@ export interface RefGraphEdge {
 export interface ProjectIntelligence {
   disciplines?: DisciplineBreakdown[];
   refGraph?: { edges: RefGraphEdge[]; hubs: string[]; leaves: string[] };
+  csiGraph?: unknown; // CsiNetworkGraph — imported from csi-graph.ts at usage sites
   pageCount?: number;
 }
 
