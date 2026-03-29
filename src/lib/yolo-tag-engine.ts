@@ -103,8 +103,10 @@ function findYoloMatches(
       continue;
     }
 
-    // Fuzzy match: edit distance <= 1
-    if (editDistance(candidateText, normalizedTag) <= 1) {
+    // Fuzzy match: edit distance <= 1, but only for text >= 3 chars
+    // Short text (1-2 chars) like single digits must match exactly —
+    // otherwise "3" matches "8" (edit distance 1) which is wrong
+    if (normalizedTag.length >= 3 && candidateText.length >= 3 && editDistance(candidateText, normalizedTag) <= 1) {
       instances.push({
         pageNumber: ann.pageNumber,
         annotationId: ann.id,

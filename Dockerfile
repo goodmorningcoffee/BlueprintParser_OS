@@ -34,6 +34,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 # Install Ghostscript for PDF rasterization (required by processing pipeline)
 # Install Python 3, Tesseract OCR, and dependencies for keynote extraction
 RUN apk add --no-cache \
+    curl \
     ghostscript \
     python3 \
     py3-pip \

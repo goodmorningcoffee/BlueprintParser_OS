@@ -234,8 +234,8 @@ interface ViewerState {
   // ─── Keynote Parse ────────────────────────────────────
   showKeynoteParsePanel: boolean;
   toggleKeynoteParsePanel: () => void;
-  keynoteParseTab: "all" | "auto" | "manual";
-  setKeynoteParseTab: (tab: "all" | "auto" | "manual") => void;
+  keynoteParseTab: "all" | "guided" | "manual";
+  setKeynoteParseTab: (tab: "all" | "guided" | "manual") => void;
   keynoteParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
   setKeynoteParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
   keynoteParseRegion: [number, number, number, number] | null;
@@ -268,6 +268,10 @@ interface ViewerState {
   yoloTagPickingMode: boolean;
   setYoloTagPickingMode: (v: boolean) => void;
 
+  // ─── Parsed Region Visibility ──────────────────────────
+  showParsedRegions: boolean;
+  toggleParsedRegions: () => void;
+
   // ─── Symbol Search ────────────────────────────────────
   symbolSearchActive: boolean;                    // draw mode active (crosshair cursor)
   setSymbolSearchActive: (active: boolean) => void;
@@ -281,7 +285,34 @@ interface ViewerState {
   setSymbolSearchConfidence: (val: number) => void;
   dismissedSymbolMatches: Set<string>;            // dismissed match IDs
   dismissSymbolMatch: (matchId: string) => void;
+  symbolSearchError: string | null;
+  setSymbolSearchError: (error: string | null) => void;
+  symbolSearchTemplateBbox: [number, number, number, number] | null;
+  setSymbolSearchTemplateBbox: (bbox: [number, number, number, number] | null) => void;
+  symbolSearchSourcePage: number | null;
+  setSymbolSearchSourcePage: (page: number | null) => void;
   clearSymbolSearch: () => void;
+
+  // ─── Drawing State (used by DrawingPreviewLayer, NOT subscribed by AnnotationOverlay) ──
+  _drawing: boolean;
+  _drawStart: { x: number; y: number };
+  _drawEnd: { x: number; y: number };
+  _mousePos: { x: number; y: number } | null;
+  _setDrawing: (d: boolean) => void;
+  _setDrawStart: (pos: { x: number; y: number }) => void;
+  _setDrawEnd: (pos: { x: number; y: number }) => void;
+  _setMousePos: (pos: { x: number; y: number } | null) => void;
+
+  // ─── Guided Parse ─────────────────────────────────────
+  guidedParseActive: boolean;
+  guidedParseRegion: [number, number, number, number] | null; // MinMax BB
+  guidedParseRows: number[];     // Y boundary positions (normalized 0-1)
+  guidedParseCols: number[];     // X boundary positions (normalized 0-1)
+  setGuidedParseActive: (active: boolean) => void;
+  setGuidedParseRegion: (region: [number, number, number, number] | null) => void;
+  setGuidedParseRows: (rows: number[]) => void;
+  setGuidedParseCols: (cols: number[]) => void;
+  resetGuidedParse: () => void;
 
   // ─── Reset ─────────────────────────────────────────────
   resetProjectData: () => void;
@@ -522,12 +553,16 @@ export const useViewerStore = create<ViewerState>((set) => ({
   toggleTableParsePanel: () =>
     set((s) => ({
       showTableParsePanel: !s.showTableParsePanel,
-      // Reset state when closing
+      // Reset all parse state when closing
       ...(!s.showTableParsePanel ? {} : {
         tableParseStep: "idle" as const,
         tableParseRegion: null,
         tableParsedGrid: null,
         tableParseColumnBBs: [],
+        tableParseColumnNames: [],
+        tableParseRowBBs: [],
+        tableParseTab: "all" as const,
+        mode: "move" as const,
       }),
     })),
   tableParseStep: "idle",
@@ -559,7 +594,20 @@ export const useViewerStore = create<ViewerState>((set) => ({
   toggleTableCompareModal: () => set((s) => ({ showTableCompareModal: !s.showTableCompareModal })),
 
   showKeynoteParsePanel: false,
-  toggleKeynoteParsePanel: () => set((s) => ({ showKeynoteParsePanel: !s.showKeynoteParsePanel })),
+  toggleKeynoteParsePanel: () =>
+    set((s) => ({
+      showKeynoteParsePanel: !s.showKeynoteParsePanel,
+      // Reset all parse state when closing
+      ...(!s.showKeynoteParsePanel ? {} : {
+        keynoteParseStep: "idle" as const,
+        keynoteParseRegion: null,
+        keynoteColumnBBs: [],
+        keynoteRowBBs: [],
+        keynoteYoloClass: null,
+        keynoteParseTab: "all" as const,
+        mode: "move" as const,
+      }),
+    })),
   keynoteParseTab: "all",
   setKeynoteParseTab: (keynoteParseTab) => set({ keynoteParseTab }),
   keynoteParseStep: "idle",
@@ -605,6 +653,9 @@ export const useViewerStore = create<ViewerState>((set) => ({
   yoloTagPickingMode: false,
   setYoloTagPickingMode: (yoloTagPickingMode) => set({ yoloTagPickingMode }),
 
+  showParsedRegions: true,
+  toggleParsedRegions: () => set((s) => ({ showParsedRegions: !s.showParsedRegions })),
+
   symbolSearchActive: false,
   setSymbolSearchActive: (symbolSearchActive) => set({ symbolSearchActive }),
   symbolSearchLoading: false,
@@ -622,6 +673,12 @@ export const useViewerStore = create<ViewerState>((set) => ({
       next.add(matchId);
       return { dismissedSymbolMatches: next };
     }),
+  symbolSearchError: null,
+  setSymbolSearchError: (symbolSearchError) => set({ symbolSearchError }),
+  symbolSearchTemplateBbox: null,
+  setSymbolSearchTemplateBbox: (symbolSearchTemplateBbox) => set({ symbolSearchTemplateBbox }),
+  symbolSearchSourcePage: null,
+  setSymbolSearchSourcePage: (symbolSearchSourcePage) => set({ symbolSearchSourcePage }),
   clearSymbolSearch: () =>
     set({
       symbolSearchActive: false,
@@ -630,7 +687,29 @@ export const useViewerStore = create<ViewerState>((set) => ({
       symbolSearchResults: null,
       symbolSearchConfidence: 0.75,
       dismissedSymbolMatches: new Set<string>(),
+      symbolSearchError: null,
+      symbolSearchTemplateBbox: null,
+      symbolSearchSourcePage: null,
     }),
+
+  guidedParseActive: false,
+  guidedParseRegion: null,
+  guidedParseRows: [],
+  guidedParseCols: [],
+  setGuidedParseActive: (guidedParseActive) => set({ guidedParseActive }),
+  setGuidedParseRegion: (guidedParseRegion) => set({ guidedParseRegion }),
+  setGuidedParseRows: (guidedParseRows) => set({ guidedParseRows }),
+  setGuidedParseCols: (guidedParseCols) => set({ guidedParseCols }),
+  resetGuidedParse: () => set({ guidedParseActive: false, guidedParseRegion: null, guidedParseRows: [], guidedParseCols: [] }),
+
+  _drawing: false,
+  _drawStart: { x: 0, y: 0 },
+  _drawEnd: { x: 0, y: 0 },
+  _mousePos: null,
+  _setDrawing: (_drawing) => set({ _drawing }),
+  _setDrawStart: (_drawStart) => set({ _drawStart }),
+  _setDrawEnd: (_drawEnd) => set({ _drawEnd }),
+  _setMousePos: (_mousePos) => set({ _mousePos }),
 
   resetProjectData: () =>
     set({
@@ -721,5 +800,9 @@ export const useViewerStore = create<ViewerState>((set) => ({
       symbolSearchResults: null,
       symbolSearchConfidence: 0.75,
       dismissedSymbolMatches: new Set<string>(),
+      guidedParseActive: false,
+      guidedParseRegion: null,
+      guidedParseRows: [],
+      guidedParseCols: [],
     }),
 }));

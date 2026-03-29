@@ -22,7 +22,7 @@ import type { TemplateMatchProgress, SymbolSearchMatch } from "@/types";
 
 export async function POST(req: Request) {
   const session = await auth();
-  if (!session?.user?.id) {
+  if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

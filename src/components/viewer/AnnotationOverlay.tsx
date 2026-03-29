@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData } from "@/types";
 import { polygonCentroid, pointInPolygon, computeRealArea } from "@/lib/areaCalc";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
+import DrawingPreviewLayer from "./DrawingPreviewLayer";
 
 interface AnnotationOverlayProps {
   width: number;
@@ -107,10 +108,12 @@ export default function AnnotationOverlay({
   const keynotes = useViewerStore((s) => s.keynotes);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
 
-  const [drawing, setDrawing] = useState(false);
-  const [drawStart, setDrawStart] = useState({ x: 0, y: 0 });
-  const [drawEnd, setDrawEnd] = useState({ x: 0, y: 0 });
-  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  // Drawing state lives in Zustand store — AnnotationOverlay does NOT subscribe.
+  // Use getState() for reads in event handlers. DrawingPreviewLayer subscribes independently.
+  const setDrawing = useViewerStore((s) => s._setDrawing);
+  const setDrawStart = useViewerStore((s) => s._setDrawStart);
+  const setDrawEnd = useViewerStore((s) => s._setDrawEnd);
+  const setMousePos = useViewerStore((s) => s._setMousePos);
   const rafRef = useRef<number>(0);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -168,6 +171,9 @@ export default function AnnotationOverlay({
   const setYoloTagFilter = useViewerStore((s) => s.setYoloTagFilter);
   const yoloTagVisibility = useViewerStore((s) => s.yoloTagVisibility);
   const addYoloTag = useViewerStore((s) => s.addYoloTag);
+  const showTableParsePanel = useViewerStore((s) => s.showTableParsePanel);
+  const showKeynoteParsePanel = useViewerStore((s) => s.showKeynoteParsePanel);
+  const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
   const symbolSearchActive = useViewerStore((s) => s.symbolSearchActive);
   const symbolSearchResults = useViewerStore((s) => s.symbolSearchResults);
   const symbolSearchConfidence = useViewerStore((s) => s.symbolSearchConfidence);
@@ -177,7 +183,7 @@ export default function AnnotationOverlay({
   const isKeynoteYoloPicking = keynoteParseStep === "define-column" && keynoteColumnBBs.length >= 1;
   const keynoteColA = keynoteColumnBBs.length >= 1 ? keynoteColumnBBs[0] : null;
 
-  const pageAnnotations = annotations.filter((a) => {
+  const pageAnnotations = useMemo(() => annotations.filter((a) => {
     if (a.pageNumber !== pageNumber) return false;
     // Filter YOLO annotations by toggle, per-model active state, and per-model confidence
     if (a.source === "yolo") {
@@ -218,7 +224,7 @@ export default function AnnotationOverlay({
     // Filter by active annotation label
     if (activeAnnotationFilter && a.name !== activeAnnotationFilter) return false;
     return true;
-  });
+  }), [annotations, pageNumber, showDetections, activeModels, confidenceThresholds, confidenceThreshold, activeCsiFilter, activeAnnotationFilter, isKeynoteYoloPicking, keynoteColA]);
 
   const pageKeynotes = keynotes[pageNumber] || [];
 
@@ -387,60 +393,7 @@ export default function AnnotationOverlay({
     }
 
     // Draw in-progress rectangle (markup or table parse or symbol search)
-    if (drawing) {
-      const isSymbolSearch = symbolSearchActive;
-      const isTableParse = tableParseStep === "select-region" || tableParseStep === "define-column" || tableParseStep === "define-row";
-      const isKeynoteParse = keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row";
-      const isAnyTableDraw = isTableParse || isKeynoteParse;
-      const isColumn = tableParseStep === "define-column";
-      const isRow = tableParseStep === "define-row";
-      const isKnColumn = keynoteParseStep === "define-column";
-      const isKnRow = keynoteParseStep === "define-row";
-      // Cyan for symbol search, magenta/rose for schedules, amber for keynotes
-      ctx.strokeStyle = isSymbolSearch
-        ? "#22d3ee"
-        : isKeynoteParse
-          ? (isKnColumn ? "#d97706" : isKnRow ? "#c026d3" : "#f59e0b")
-          : isTableParse
-            ? (isColumn ? "#9f1239" : isRow ? "#c026d3" : "#e879a0")
-            : "#00ff88";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 5]);
-      const dx = drawEnd.x - drawStart.x;
-      const dy = drawEnd.y - drawStart.y;
-      ctx.strokeRect(drawStart.x, drawStart.y, dx, dy);
-      if (isSymbolSearch) {
-        ctx.fillStyle = "rgba(34,211,238,0.08)";
-        ctx.fillRect(drawStart.x, drawStart.y, dx, dy);
-        ctx.setLineDash([]);
-        ctx.font = "bold 11px sans-serif";
-        ctx.fillStyle = "#22d3ee";
-        ctx.fillText(
-          "Symbol Search Template",
-          Math.min(drawStart.x, drawEnd.x) + 4,
-          Math.min(drawStart.y, drawEnd.y) - 4
-        );
-      } else if (isAnyTableDraw) {
-        ctx.fillStyle = isKeynoteParse
-          ? (isKnColumn ? "rgba(217,119,6,0.06)" : isKnRow ? "rgba(192,38,211,0.06)" : "rgba(245,158,11,0.06)")
-          : isColumn ? "rgba(159,18,57,0.06)" : isRow ? "rgba(192,38,211,0.06)" : "rgba(232,121,160,0.06)";
-        ctx.fillRect(drawStart.x, drawStart.y, dx, dy);
-        ctx.setLineDash([]);
-        ctx.font = "bold 11px sans-serif";
-        ctx.fillStyle = isKeynoteParse
-          ? (isKnColumn ? "#d97706" : isKnRow ? "#c026d3" : "#f59e0b")
-          : isColumn ? "#9f1239" : isRow ? "#c026d3" : "#e879a0";
-        const label = isKeynoteParse
-          ? (isKnColumn ? "Column" : isKnRow ? "Row" : "Keynote Region")
-          : isColumn ? "Column" : isRow ? "Row" : "Table Region";
-        ctx.fillText(
-          label,
-          Math.min(drawStart.x, drawEnd.x) + 4,
-          Math.min(drawStart.y, drawEnd.y) - 4
-        );
-      }
-      ctx.setLineDash([]);
-    }
+    // Drawing preview (BB rectangle, polygon, calibration) — rendered by DrawingPreviewLayer
 
     // Draw symbol search results on current page
     if (symbolSearchResults) {
@@ -472,97 +425,8 @@ export default function AnnotationOverlay({
       }
     }
 
-    // Draw table parse region overlay (persistent magenta border around selected region)
-    if (tableParseRegion) {
-      const [rMinX, rMinY, rMaxX, rMaxY] = tableParseRegion;
-      ctx.strokeStyle = "#e879a0";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([8, 4]);
-      ctx.strokeRect(rMinX * width, rMinY * height, (rMaxX - rMinX) * width, (rMaxY - rMinY) * height);
-      ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(232,121,160,0.03)";
-      ctx.fillRect(rMinX * width, rMinY * height, (rMaxX - rMinX) * width, (rMaxY - rMinY) * height);
-      ctx.font = "bold 11px sans-serif";
-      ctx.fillStyle = "rgba(232,121,160,0.85)";
-      ctx.fillText("Table Parse Region", rMinX * width + 4, rMinY * height - 4);
-    }
-
-    // Draw user-defined column BBs (darker rose) with draw-order labels
-    for (let ci = 0; ci < tableParseColumnBBs.length; ci++) {
-      const [cMinX, cMinY, cMaxX, cMaxY] = tableParseColumnBBs[ci];
-      ctx.strokeStyle = "#9f1239";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 3]);
-      ctx.strokeRect(cMinX * width, cMinY * height, (cMaxX - cMinX) * width, (cMaxY - cMinY) * height);
-      ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(159,18,57,0.05)";
-      ctx.fillRect(cMinX * width, cMinY * height, (cMaxX - cMinX) * width, (cMaxY - cMinY) * height);
-      // Draw order label (A, B, C...)
-      ctx.font = "bold 11px sans-serif";
-      ctx.fillStyle = "rgba(159,18,57,0.85)";
-      ctx.fillText(String.fromCharCode(65 + ci), cMinX * width + 3, cMinY * height - 3);
-    }
-
-    // Draw user-defined row BBs (purple-magenta) with draw-order labels
-    for (let ri = 0; ri < tableParseRowBBs.length; ri++) {
-      const [rMinX, rMinY, rMaxX, rMaxY] = tableParseRowBBs[ri];
-      ctx.strokeStyle = "#c026d3";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 3]);
-      ctx.strokeRect(rMinX * width, rMinY * height, (rMaxX - rMinX) * width, (rMaxY - rMinY) * height);
-      ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(192,38,211,0.05)";
-      ctx.fillRect(rMinX * width, rMinY * height, (rMaxX - rMinX) * width, (rMaxY - rMinY) * height);
-      // Draw order label (1, 2, 3...)
-      ctx.font = "bold 11px sans-serif";
-      ctx.fillStyle = "rgba(192,38,211,0.85)";
-      ctx.fillText(String(ri + 1), rMinX * width - 12, rMinY * height + 12);
-    }
-
-    // Draw keynote parse region (amber)
-    if (keynoteParseRegion) {
-      const [rMinX, rMinY, rMaxX, rMaxY] = keynoteParseRegion;
-      ctx.strokeStyle = "#f59e0b";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([8, 4]);
-      ctx.strokeRect(rMinX * width, rMinY * height, (rMaxX - rMinX) * width, (rMaxY - rMinY) * height);
-      ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(245,158,11,0.03)";
-      ctx.fillRect(rMinX * width, rMinY * height, (rMaxX - rMinX) * width, (rMaxY - rMinY) * height);
-      ctx.font = "bold 11px sans-serif";
-      ctx.fillStyle = "rgba(245,158,11,0.85)";
-      ctx.fillText("Keynote Region", rMinX * width + 4, rMinY * height - 4);
-    }
-
-    // Draw keynote column BBs (amber) with labels
-    for (let ci = 0; ci < keynoteColumnBBs.length; ci++) {
-      const [cMinX, cMinY, cMaxX, cMaxY] = keynoteColumnBBs[ci];
-      ctx.strokeStyle = "#d97706";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 3]);
-      ctx.strokeRect(cMinX * width, cMinY * height, (cMaxX - cMinX) * width, (cMaxY - cMinY) * height);
-      ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(217,119,6,0.05)";
-      ctx.fillRect(cMinX * width, cMinY * height, (cMaxX - cMinX) * width, (cMaxY - cMinY) * height);
-      ctx.font = "bold 11px sans-serif";
-      ctx.fillStyle = "rgba(217,119,6,0.85)";
-      ctx.fillText(String.fromCharCode(65 + ci), cMinX * width + 3, cMinY * height - 3);
-    }
-
-    // Draw keynote row BBs (purple) with labels
-    for (let ri = 0; ri < keynoteRowBBs.length; ri++) {
-      const [rMinX, rMinY, rMaxX, rMaxY] = keynoteRowBBs[ri];
-      ctx.strokeStyle = "#c026d3";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 3]);
-      ctx.strokeRect(rMinX * width, rMinY * height, (rMaxX - rMinX) * width, (rMaxY - rMinY) * height);
-      ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(192,38,211,0.05)";
-      ctx.fillRect(rMinX * width, rMinY * height, (rMaxX - rMinX) * width, (rMaxY - rMinY) * height);
-      ctx.font = "bold 11px sans-serif";
-      ctx.fillStyle = "rgba(192,38,211,0.85)";
-      ctx.fillText(String(ri + 1), rMinX * width - 12, rMinY * height + 12);
-    }
+    // Draw table parse region overlay (only when panel is open)
+    // Parse region overlays (table/keynote BBs) — rendered by ParseRegionLayer
 
     // Draw completed area polygons
     for (const ann of pageAnnotations) {
@@ -615,122 +479,8 @@ export default function AnnotationOverlay({
       ctx.restore();
     }
 
-    // Draw calibration points and line
-    if (calibrationMode !== "idle" && calibrationPoints.p1) {
-      ctx.save();
-      const p1x = calibrationPoints.p1.x * width;
-      const p1y = calibrationPoints.p1.y * height;
-      ctx.fillStyle = "#fbbf24";
-      ctx.beginPath();
-      ctx.arc(p1x, p1y, 5, 0, Math.PI * 2);
-      ctx.fill();
-
-      if (calibrationPoints.p2) {
-        const p2x = calibrationPoints.p2.x * width;
-        const p2y = calibrationPoints.p2.y * height;
-        ctx.beginPath();
-        ctx.arc(p2x, p2y, 5, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = "#fbbf24";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(p1x, p1y);
-        ctx.lineTo(p2x, p2y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-      ctx.restore();
-    }
-
-    // Draw in-progress polygon
-    if (polygonDrawingMode === "drawing" && polygonVertices.length > 0) {
-      const activeItem = takeoffItems.find((t) => t.id === activeTakeoffItemId);
-      const polyColor = activeItem?.color || "#00ff88";
-      ctx.save();
-
-      const verts = polygonVertices;
-      const mp = mousePos;
-
-      // Preview fill (connect vertices + cursor + back to first vertex)
-      if (verts.length >= 2 && mp) {
-        ctx.fillStyle = polyColor + "20"; // very light fill
-        ctx.beginPath();
-        ctx.moveTo(verts[0].x * width, verts[0].y * height);
-        for (let i = 1; i < verts.length; i++) {
-          ctx.lineTo(verts[i].x * width, verts[i].y * height);
-        }
-        ctx.lineTo(mp.x, mp.y);
-        ctx.closePath();
-        ctx.fill();
-      }
-
-      // Lines between vertices
-      ctx.strokeStyle = polyColor;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath();
-      ctx.moveTo(verts[0].x * width, verts[0].y * height);
-      for (let i = 1; i < verts.length; i++) {
-        ctx.lineTo(verts[i].x * width, verts[i].y * height);
-      }
-      // Preview line to cursor
-      if (mp) {
-        ctx.lineTo(mp.x, mp.y);
-      }
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Check if cursor is near first point (snap indicator)
-      let nearFirst = false;
-      if (mp && verts.length >= 3) {
-        const firstX = verts[0].x * width;
-        const firstY = verts[0].y * height;
-        const dist = Math.sqrt((mp.x - firstX) ** 2 + (mp.y - firstY) ** 2);
-        nearFirst = dist < 15;
-      }
-
-      // Vertex dots
-      for (let i = 0; i < verts.length; i++) {
-        const v = verts[i];
-        const vx = v.x * width;
-        const vy = v.y * height;
-
-        if (i === 0) {
-          // First vertex — larger, with white ring, highlighted when cursor is near
-          ctx.fillStyle = nearFirst ? "#ffffff" : polyColor;
-          ctx.beginPath();
-          ctx.arc(vx, vy, nearFirst ? 8 : 7, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = "#ffffff";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(vx, vy, nearFirst ? 10 : 8, 0, Math.PI * 2);
-          ctx.stroke();
-        } else {
-          // Other vertices — normal dots
-          ctx.fillStyle = polyColor;
-          ctx.beginPath();
-          ctx.arc(vx, vy, 4, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-
-      // Instruction text
-      ctx.font = "12px sans-serif";
-      const msg = verts.length < 3
-        ? "Click to add points"
-        : "Click first point or Enter to close";
-      const tw = ctx.measureText(msg).width;
-      ctx.fillStyle = "rgba(0,0,0,0.7)";
-      ctx.fillRect(8, 8, tw + 12, 22);
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(msg, 14, 23);
-
-      ctx.restore();
-    }
-  }, [pageAnnotations, width, height, drawing, drawStart, drawEnd, selectedId, calibrationMode, calibrationPoints, polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems, mousePos, tableParseStep, tableParseRegion, tableParseColumnBBs, tableParseRowBBs, keynoteParseStep, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches]);
+    // Calibration + polygon preview — rendered by DrawingPreviewLayer
+  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches]);
 
   const getPos = useCallback(
     (e: React.MouseEvent) => {
@@ -1310,7 +1060,7 @@ export default function AnnotationOverlay({
       setDrawStart(pos);
       setDrawEnd(pos);
     },
-    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, isDemo, yoloTagPickingMode, textractData, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode]
+    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, isDemo, yoloTagPickingMode, textractData, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep]
   );
 
   const handleMouseMove = useCallback(
@@ -1321,7 +1071,8 @@ export default function AnnotationOverlay({
         cancelAnimationFrame(rafRef.current);
         rafRef.current = requestAnimationFrame(() => setMousePos(p));
       }
-      if (drawing) {
+      // Read drawing state from store (not subscribed — avoids parent re-render)
+      if (useViewerStore.getState()._drawing) {
         setDrawEnd(getPos(e));
         return;
       }
@@ -1366,7 +1117,7 @@ export default function AnnotationOverlay({
         }
       }
     },
-    [drawing, dragging, selectedId, dragOffset, resizeCorner, pageAnnotations, width, height, getPos, updateAnnotation, polygonDrawingMode]
+    [dragging, selectedId, dragOffset, resizeCorner, pageAnnotations, width, height, getPos, updateAnnotation, polygonDrawingMode, setDrawEnd, setMousePos]
   );
 
   const handleMouseUp = useCallback(async () => {
@@ -1378,13 +1129,15 @@ export default function AnnotationOverlay({
       return;
     }
 
-    if (!drawing) return;
+    // Read drawing state from store (not subscribed)
+    const { _drawing, _drawStart, _drawEnd } = useViewerStore.getState();
+    if (!_drawing) return;
     setDrawing(false);
 
-    const minX = Math.min(drawStart.x, drawEnd.x) / width;
-    const minY = Math.min(drawStart.y, drawEnd.y) / height;
-    const maxX = Math.max(drawStart.x, drawEnd.x) / width;
-    const maxY = Math.max(drawStart.y, drawEnd.y) / height;
+    const minX = Math.min(_drawStart.x, _drawEnd.x) / width;
+    const minY = Math.min(_drawStart.y, _drawEnd.y) / height;
+    const maxX = Math.max(_drawStart.x, _drawEnd.x) / width;
+    const maxY = Math.max(_drawStart.y, _drawEnd.y) / height;
 
     // Minimum size check
     if (Math.abs(maxX - minX) < 0.01 || Math.abs(maxY - minY) < 0.01) return;
@@ -1394,6 +1147,9 @@ export default function AnnotationOverlay({
       const store = useViewerStore.getState();
       store.setSymbolSearchActive(false);
       store.setSymbolSearchLoading(true);
+      store.setSymbolSearchError(null);
+      store.setSymbolSearchTemplateBbox([minX, minY, maxX, maxY]);
+      store.setSymbolSearchSourcePage(pageNumber);
 
       // Fire the search API (async, non-blocking)
       (async () => {
@@ -1410,7 +1166,8 @@ export default function AnnotationOverlay({
           });
 
           if (!resp.ok || !resp.body) {
-            throw new Error(`Search failed: ${resp.status}`);
+            const errorText = resp.ok ? "No response body" : await resp.text().catch(() => `HTTP ${resp.status}`);
+            throw new Error(errorText);
           }
 
           // Read NDJSON stream
@@ -1451,6 +1208,9 @@ export default function AnnotationOverlay({
           }
         } catch (err) {
           console.error("[SYMBOL_SEARCH] Failed:", err);
+          useViewerStore.getState().setSymbolSearchError(
+            err instanceof Error ? err.message : "Symbol search failed"
+          );
         } finally {
           useViewerStore.getState().setSymbolSearchLoading(false);
           useViewerStore.getState().setSymbolSearchProgress(null);
@@ -1462,6 +1222,7 @@ export default function AnnotationOverlay({
     // Table parse: finalize BB as region or column
     if (tableParseStep === "select-region") {
       setTableParseRegion([minX, minY, maxX, maxY]);
+      useViewerStore.getState().setTableParseStep("idle");
       // Auto-parse is triggered by the panel watching tableParseRegion
       return;
     }
@@ -1477,6 +1238,7 @@ export default function AnnotationOverlay({
     // Keynote parse BBs
     if (keynoteParseStep === "select-region") {
       useViewerStore.getState().setKeynoteParseRegion([minX, minY, maxX, maxY]);
+      useViewerStore.getState().setKeynoteParseStep("idle");
       return;
     }
     if (keynoteParseStep === "define-column") {
@@ -1493,7 +1255,7 @@ export default function AnnotationOverlay({
     setMarkupName("");
     setMarkupNote("");
     setTimeout(() => nameInputRef.current?.focus(), 50);
-  }, [drawing, dragging, selectedId, saveDragPosition, drawStart, drawEnd, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, setTableParseRegion]);
+  }, [dragging, selectedId, saveDragPosition, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setTableParseRegion, setDrawing]);
 
   const handleDoubleClick = useCallback(() => {
     // Close polygon on double-click
@@ -1586,7 +1348,7 @@ export default function AnnotationOverlay({
     return () => window.removeEventListener("keydown", handleKey);
   }, [selectedId, dragging, removeAnnotation, saveDragPosition, isDemo]);
 
-  // Cancel in-progress polygon/calibration on page change, deselect
+  // Cancel in-progress drawing modes on page change, deselect
   useEffect(() => {
     setSelectedId(null);
     if (polygonDrawingMode === "drawing") {
@@ -1595,6 +1357,20 @@ export default function AnnotationOverlay({
     }
     if (calibrationMode !== "idle") {
       resetCalibration();
+    }
+    // Reset table/keynote parse drawing state on page change
+    const store = useViewerStore.getState();
+    if (store.tableParseStep !== "idle") {
+      store.resetTableParse();
+      store.setMode("move");
+    }
+    if (store.keynoteParseStep !== "idle") {
+      store.resetKeynoteParse();
+      store.setKeynoteParseRegion(null);
+      store.setMode("move");
+    }
+    if (store.symbolSearchActive) {
+      store.setSymbolSearchActive(false);
     }
   }, [pageNumber]);
 
@@ -1697,7 +1473,7 @@ export default function AnnotationOverlay({
             setDragging(false);
             setResizeCorner(null);
           }
-          if (drawing) setDrawing(false);
+          if (useViewerStore.getState()._drawing) setDrawing(false);
         }}
         style={{
           position: "absolute",
@@ -1710,6 +1486,13 @@ export default function AnnotationOverlay({
           transformOrigin: "top left",
           cursor: symbolSearchActive ? "crosshair" : calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : isKeynoteYoloPicking ? "pointer" : yoloTagPickingMode ? "pointer" : (tableParseStep !== "idle" || keynoteParseStep !== "idle") ? "crosshair" : mode === "pointer" ? "default" : "default",
         }}
+      />
+
+      {/* Drawing preview layer — reads drawing state from store independently */}
+      <DrawingPreviewLayer
+        width={width}
+        height={height}
+        cssScale={cssScale}
       />
 
       {/* Markup name + notes dialog */}

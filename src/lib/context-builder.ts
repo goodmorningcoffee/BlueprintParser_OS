@@ -285,6 +285,90 @@ export function buildCsiGraphSection(csiGraph: any): string | null {
 }
 
 /**
+ * Build Parsed Table/Keynote metadata section (priority 5.8).
+ * Tells the LLM what parsed tables/keynotes exist and their structure.
+ * Includes a sample of rows so LLM can understand the data format.
+ */
+export function buildParsedTablesSection(parsedRegions: any[]): string | null {
+  if (!parsedRegions?.length) return null;
+
+  let text = "";
+  for (const region of parsedRegions) {
+    const name = region.data?.tableName || region.category || "Unnamed Table";
+    const type = region.type || "schedule";
+    const headers = region.data?.headers || [];
+    const rows = region.data?.rows || [];
+    const tagCol = region.data?.tagColumn;
+    if (headers.length === 0) continue;
+
+    text += `PARSED ${type.toUpperCase()}: "${name}"\n`;
+    text += `  Columns: ${headers.join(", ")}`;
+    if (tagCol) text += ` (tag column: ${tagCol})`;
+    text += `\n  Rows: ${rows.length}\n`;
+
+    // CSI codes associated with this table
+    const csiTags = region.csiTags || [];
+    if (csiTags.length > 0) {
+      text += `  CSI Codes: ${csiTags.map((c: any) => `${c.code} ${c.description}`).join("; ")}\n`;
+    }
+
+    // Show first 3 rows as sample
+    const sample = Math.min(rows.length, 3);
+    if (sample > 0) {
+      text += "  Sample data:\n";
+      for (let i = 0; i < sample; i++) {
+        const vals = headers.map((h: string) => `${h}: ${rows[i][h] || "—"}`);
+        text += `    Row ${i + 1}: ${vals.join(", ")}\n`;
+      }
+      if (rows.length > sample) text += `    ... (${rows.length - sample} more rows)\n`;
+    }
+    text += "\n";
+  }
+
+  return text || null;
+}
+
+/**
+ * Build CSI from Parsed Data section (priority 6.2).
+ * Shows CSI codes from user-parsed tables/keynotes.
+ */
+export function buildParsedDataCsiSection(parsedRegions: any[]): string | null {
+  if (!parsedRegions?.length) return null;
+
+  const regionsWithCsi = parsedRegions.filter(
+    (r: any) => r.csiTags?.length > 0,
+  );
+  if (regionsWithCsi.length === 0) return null;
+
+  let text = "";
+  for (const region of regionsWithCsi) {
+    const type = region.type || "table";
+    const name = region.data?.tableName || region.category || "Unknown";
+    const rowCount = region.data?.rowCount || region.data?.rows?.length || 0;
+    const tagCol = region.data?.tagColumn;
+
+    // Group CSI tags by division
+    const divMap: Record<string, { name: string; count: number }> = {};
+    for (const tag of region.csiTags) {
+      const div = tag.code.substring(0, 2);
+      if (!divMap[div]) divMap[div] = { name: tag.description, count: 0 };
+      divMap[div].count++;
+    }
+
+    const divParts = Object.entries(divMap)
+      .map(([div, d]) => `Div ${div} (${d.count} codes)`)
+      .join(", ");
+
+    text += `${name} (${type}): ${divParts}`;
+    if (rowCount) text += ` — ${rowCount} rows`;
+    if (tagCol) text += `, tag column: ${tagCol}`;
+    text += "\n";
+  }
+
+  return text || null;
+}
+
+/**
  * Assemble context sections in priority order (structured data first, raw OCR last)
  * and enforce a character budget.
  */

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { SearchWordMatch, TextractWord } from "@/types";
 
@@ -42,10 +42,37 @@ export function findPhraseMatches(
 }
 
 /**
- * Canvas overlay that draws yellow highlight boxes at word-level
+ * Find individual words from a description that appear in OCR word array.
+ * Used as fallback when CSI detection was Tier 2/3 (bag-of-words) and
+ * findPhraseMatches fails (words aren't consecutive on page).
+ */
+const STOP_WORDS = new Set([
+  "and", "the", "of", "for", "in", "on", "to", "a", "an", "or",
+  "with", "by", "not", "is", "are", "at", "from", "as", "all", "other",
+]);
+
+function findWordMatches(
+  words: TextractWord[],
+  description: string,
+): SearchWordMatch[] {
+  const descTokens = description
+    .toLowerCase()
+    .replace(/[-/()]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+  if (descTokens.length === 0) return [];
+
+  const descSet = new Set(descTokens);
+  return words
+    .filter((w) => descSet.has(w.text.toLowerCase().replace(/[-/()]/g, " ")))
+    .map((w) => ({ text: w.text, bbox: w.bbox }));
+}
+
+/**
+ * Canvas overlay that draws highlight boxes at word-level
  * bounding box positions for search matches and CSI code matches.
  */
-export default function SearchHighlightOverlay({
+export default memo(function SearchHighlightOverlay({
   width,
   height,
   cssScale,
@@ -53,6 +80,7 @@ export default function SearchHighlightOverlay({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const searchMatches = useViewerStore((s) => s.searchMatches);
+  const searchQuery = useViewerStore((s) => s.searchQuery);
   const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
   const activeTradeFilter = useViewerStore((s) => s.activeTradeFilter);
   const csiCodes = useViewerStore((s) => s.csiCodes);
@@ -60,7 +88,35 @@ export default function SearchHighlightOverlay({
 
   const searchHits = searchMatches[pageNumber] || [];
 
-  // Compute CSI highlight matches: find words that triggered the active CSI code
+  // Instant local search highlights (no API wait) — fallback when searchMatches empty
+  const localSearchHits = useMemo(() => {
+    if (!searchQuery || searchQuery.trim().length === 0) return [];
+    if (searchHits.length > 0) return []; // API results available, don't double-draw
+
+    const pageWords = textractData[pageNumber]?.words;
+    if (!pageWords || pageWords.length === 0) return [];
+
+    const queryLower = searchQuery.toLowerCase().trim();
+    const queryTokens = queryLower.split(/\s+/);
+
+    // Single word: match OCR words containing the query
+    if (queryTokens.length === 1) {
+      return pageWords
+        .filter((w) => w.text.toLowerCase().includes(queryTokens[0]))
+        .map((w) => ({ text: w.text, bbox: w.bbox }));
+    }
+
+    // Multi-word: try phrase first, fall back to individual words
+    const phraseHits = findPhraseMatches(pageWords, searchQuery);
+    if (phraseHits.length > 0) return phraseHits;
+
+    const tokenSet = new Set(queryTokens.filter((t) => t.length > 1));
+    return pageWords
+      .filter((w) => tokenSet.has(w.text.toLowerCase()))
+      .map((w) => ({ text: w.text, bbox: w.bbox }));
+  }, [searchQuery, searchHits.length, textractData, pageNumber]);
+
+  // CSI highlight: try phrase match first (Tier 1), fall back to word match (Tier 2/3)
   const csiHits = useMemo(() => {
     if (!activeCsiFilter) return [];
     const pageCsi = csiCodes[pageNumber] || [];
@@ -70,10 +126,12 @@ export default function SearchHighlightOverlay({
     const pageWords = textractData[pageNumber]?.words;
     if (!pageWords || pageWords.length === 0) return [];
 
-    return findPhraseMatches(pageWords, matchingCode.description);
+    const phraseHits = findPhraseMatches(pageWords, matchingCode.description);
+    if (phraseHits.length > 0) return phraseHits;
+    return findWordMatches(pageWords, matchingCode.description);
   }, [activeCsiFilter, csiCodes, textractData, pageNumber]);
 
-  // Compute trade highlight matches: find words from all CSI descriptions for the active trade
+  // Trade highlight: phrase match + word fallback for each code, plus trade name words
   const tradeHits = useMemo(() => {
     if (!activeTradeFilter) return [];
     const pageCsi = csiCodes[pageNumber] || [];
@@ -85,7 +143,12 @@ export default function SearchHighlightOverlay({
 
     const hits: SearchWordMatch[] = [];
     for (const code of matchingCodes) {
-      hits.push(...findPhraseMatches(pageWords, code.description));
+      const phraseHits = findPhraseMatches(pageWords, code.description);
+      if (phraseHits.length > 0) {
+        hits.push(...phraseHits);
+      } else {
+        hits.push(...findWordMatches(pageWords, code.description));
+      }
     }
     // Also match the trade name itself as individual words
     const tradeWords = activeTradeFilter.toLowerCase().split(/\s+/);
@@ -97,7 +160,9 @@ export default function SearchHighlightOverlay({
     return hits;
   }, [activeTradeFilter, csiCodes, textractData, pageNumber]);
 
-  const allMatches = searchHits.length > 0 || csiHits.length > 0 || tradeHits.length > 0;
+  // Merge API search hits with local fallback
+  const effectiveSearchHits = searchHits.length > 0 ? searchHits : localSearchHits;
+  const allMatches = effectiveSearchHits.length > 0 || csiHits.length > 0 || tradeHits.length > 0;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -113,13 +178,12 @@ export default function SearchHighlightOverlay({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
-    // Draw search highlight rectangles (magenta)
-    if (searchHits.length > 0) {
-      ctx.fillStyle = "rgba(255, 0, 180, 0.3)";
-      ctx.strokeStyle = "rgba(255, 0, 180, 0.8)";
+    const drawHighlights = (matches: SearchWordMatch[], color: string, stroke: string) => {
+      if (matches.length === 0) return;
+      ctx.fillStyle = color;
+      ctx.strokeStyle = stroke;
       ctx.lineWidth = 1.5;
-
-      for (const match of searchHits) {
+      for (const match of matches) {
         const [left, top, w, h] = match.bbox;
         const x = left * width;
         const y = top * height;
@@ -128,42 +192,12 @@ export default function SearchHighlightOverlay({
         ctx.fillRect(x, y, rw, rh);
         ctx.strokeRect(x, y, rw, rh);
       }
-    }
+    };
 
-    // Draw CSI highlight rectangles (bright magenta)
-    if (csiHits.length > 0) {
-      ctx.fillStyle = "rgba(255, 0, 180, 0.3)";
-      ctx.strokeStyle = "rgba(255, 0, 180, 0.8)";
-      ctx.lineWidth = 1.5;
-
-      for (const match of csiHits) {
-        const [left, top, w, h] = match.bbox;
-        const x = left * width;
-        const y = top * height;
-        const rw = w * width;
-        const rh = h * height;
-        ctx.fillRect(x, y, rw, rh);
-        ctx.strokeRect(x, y, rw, rh);
-      }
-    }
-
-    // Draw trade highlight rectangles (bright magenta)
-    if (tradeHits.length > 0) {
-      ctx.fillStyle = "rgba(255, 0, 180, 0.3)";
-      ctx.strokeStyle = "rgba(255, 0, 180, 0.8)";
-      ctx.lineWidth = 1.5;
-
-      for (const match of tradeHits) {
-        const [left, top, w, h] = match.bbox;
-        const x = left * width;
-        const y = top * height;
-        const rw = w * width;
-        const rh = h * height;
-        ctx.fillRect(x, y, rw, rh);
-        ctx.strokeRect(x, y, rw, rh);
-      }
-    }
-  }, [searchHits, csiHits, tradeHits, width, height]);
+    drawHighlights(effectiveSearchHits, "rgba(255, 0, 180, 0.3)", "rgba(255, 0, 180, 0.8)");
+    drawHighlights(csiHits, "rgba(255, 0, 180, 0.3)", "rgba(255, 0, 180, 0.8)");
+    drawHighlights(tradeHits, "rgba(255, 0, 180, 0.3)", "rgba(255, 0, 180, 0.8)");
+  }, [effectiveSearchHits, csiHits, tradeHits, width, height]);
 
   if (!allMatches) return null;
 
@@ -182,4 +216,4 @@ export default function SearchHighlightOverlay({
       }}
     />
   );
-}
+});

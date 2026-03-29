@@ -1,9 +1,15 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useEffect, useState, useRef } from "react";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore } from "@/stores/viewerStore";
 
-export default function SymbolSearchPanel() {
+interface SymbolSearchPanelProps {
+  pdfDoc: PDFDocumentProxy | null;
+}
+
+export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
+  const symbolSearchActive = useViewerStore((s) => s.symbolSearchActive);
   const symbolSearchResults = useViewerStore((s) => s.symbolSearchResults);
   const symbolSearchLoading = useViewerStore((s) => s.symbolSearchLoading);
   const symbolSearchProgress = useViewerStore((s) => s.symbolSearchProgress);
@@ -12,11 +18,57 @@ export default function SymbolSearchPanel() {
   const dismissedSymbolMatches = useViewerStore((s) => s.dismissedSymbolMatches);
   const dismissSymbolMatch = useViewerStore((s) => s.dismissSymbolMatch);
   const clearSymbolSearch = useViewerStore((s) => s.clearSymbolSearch);
+  const symbolSearchError = useViewerStore((s) => s.symbolSearchError);
+  const symbolSearchTemplateBbox = useViewerStore((s) => s.symbolSearchTemplateBbox);
+  const symbolSearchSourcePage = useViewerStore((s) => s.symbolSearchSourcePage);
+  const setSymbolSearchActive = useViewerStore((s) => s.setSymbolSearchActive);
   const setPage = useViewerStore((s) => s.setPage);
   const pageNames = useViewerStore((s) => s.pageNames);
   const pageNumber = useViewerStore((s) => s.pageNumber);
 
-  // Filter matches by confidence and dismissed state
+  // Template preview image
+  const [templateImageUrl, setTemplateImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pdfDoc || !symbolSearchTemplateBbox || !symbolSearchSourcePage) {
+      setTemplateImageUrl(null);
+      return;
+    }
+    let cancelled = false;
+
+    async function renderCrop() {
+      try {
+        const page = await pdfDoc!.getPage(symbolSearchSourcePage!);
+        const scale = 2;
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext("2d")!;
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        if (cancelled) return;
+
+        const [minX, minY, maxX, maxY] = symbolSearchTemplateBbox!;
+        const sx = minX * viewport.width;
+        const sy = minY * viewport.height;
+        const sw = (maxX - minX) * viewport.width;
+        const sh = (maxY - minY) * viewport.height;
+
+        const crop = document.createElement("canvas");
+        crop.width = Math.round(sw);
+        crop.height = Math.round(sh);
+        const cctx = crop.getContext("2d")!;
+        cctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, crop.width, crop.height);
+        if (!cancelled) setTemplateImageUrl(crop.toDataURL("image/png"));
+      } catch {
+        if (!cancelled) setTemplateImageUrl(null);
+      }
+    }
+    renderCrop();
+    return () => { cancelled = true; };
+  }, [pdfDoc, symbolSearchTemplateBbox, symbolSearchSourcePage]);
+
+  // Filter matches
   const visibleMatches = useMemo(() => {
     if (!symbolSearchResults) return [];
     return symbolSearchResults.matches.filter(
@@ -36,7 +88,12 @@ export default function SymbolSearchPanel() {
       .sort((a, b) => a.pageNumber - b.pageNumber);
   }, [visibleMatches]);
 
-  if (!symbolSearchLoading && !symbolSearchResults) return null;
+  // Determine UI state
+  const state: "idle" | "processing" | "results" | "error" =
+    symbolSearchError ? "error" :
+    symbolSearchLoading ? "processing" :
+    symbolSearchResults ? "results" :
+    "idle";
 
   return (
     <div className="flex flex-col w-72 max-h-[60vh] bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden">
@@ -52,18 +109,57 @@ export default function SymbolSearchPanel() {
         <button
           onClick={clearSymbolSearch}
           className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none"
-          title="Clear search"
+          title="Close"
         >
           &times;
         </button>
       </div>
 
-      {/* Loading state */}
-      {symbolSearchLoading && (
-        <div className="px-3 py-4 text-center">
-          <div className="text-xs text-cyan-400 animate-pulse mb-2">
-            Searching for matches...
+      {/* Template preview (shown after drawing) */}
+      {templateImageUrl && (
+        <div className="px-3 pt-2 flex items-start gap-2">
+          <img
+            src={templateImageUrl}
+            alt="Search template"
+            className="w-16 h-16 object-contain border border-cyan-500/30 rounded bg-neutral-900"
+          />
+          <div className="flex-1 text-[10px]">
+            {state === "processing" && (
+              <div className="text-cyan-400 animate-pulse">Searching...</div>
+            )}
+            {state === "results" && (
+              <div className="text-[var(--fg)]">
+                <span className="text-cyan-400 font-medium">{visibleMatches.length}</span>
+                {" "}match{visibleMatches.length !== 1 ? "es" : ""} across{" "}
+                <span className="text-cyan-400 font-medium">{pageGroups.length}</span>
+                {" "}page{pageGroups.length !== 1 ? "s" : ""}
+              </div>
+            )}
+            {state === "error" && (
+              <div className="text-red-400">Search failed</div>
+            )}
           </div>
+        </div>
+      )}
+
+      {/* State: IDLE — prompt to draw */}
+      {state === "idle" && (
+        <div className="px-3 py-6 text-center">
+          <div className="text-xs text-[var(--muted)] mb-1">
+            Draw a bounding box around the
+          </div>
+          <div className="text-xs text-cyan-400 font-medium">
+            symbol you want to find.
+          </div>
+          <div className="text-[10px] text-[var(--muted)] mt-3">
+            Click and drag on the blueprint to select.
+          </div>
+        </div>
+      )}
+
+      {/* State: PROCESSING — progress bar */}
+      {state === "processing" && (
+        <div className="px-3 py-2">
           {symbolSearchProgress && (
             <div className="space-y-1">
               <div className="text-[10px] text-[var(--muted)]">
@@ -80,29 +176,39 @@ export default function SymbolSearchPanel() {
               </div>
             </div>
           )}
+          {!symbolSearchProgress && (
+            <div className="text-xs text-cyan-400 animate-pulse text-center py-2">
+              Preparing search...
+            </div>
+          )}
         </div>
       )}
 
-      {/* Results */}
-      {symbolSearchResults && !symbolSearchLoading && (
-        <>
-          {/* Summary */}
-          <div className="px-3 py-2 border-b border-[var(--border)]">
-            <div className="text-xs text-[var(--fg)]">
-              <span className="text-cyan-400 font-medium">{visibleMatches.length}</span>
-              {" "}match{visibleMatches.length !== 1 ? "es" : ""} across{" "}
-              <span className="text-cyan-400 font-medium">{pageGroups.length}</span>
-              {" "}page{pageGroups.length !== 1 ? "s" : ""}
-            </div>
-            {dismissedSymbolMatches.size > 0 && (
-              <div className="text-[10px] text-[var(--muted)]">
-                ({dismissedSymbolMatches.size} dismissed)
-              </div>
-            )}
+      {/* State: ERROR — show error + retry */}
+      {state === "error" && (
+        <div className="px-3 py-3 space-y-2">
+          <div className="text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1.5">
+            {symbolSearchError}
           </div>
+          <div className="flex gap-1">
+            <button
+              onClick={() => {
+                useViewerStore.getState().setSymbolSearchError(null);
+                useViewerStore.getState().setSymbolSearchActive(true);
+              }}
+              className="flex-1 text-[9px] px-2 py-1 rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+            >
+              Draw New Template
+            </button>
+          </div>
+        </div>
+      )}
 
+      {/* State: RESULTS — confidence slider + page list */}
+      {state === "results" && (
+        <>
           {/* Confidence slider */}
-          <div className="px-3 py-2 border-b border-[var(--border)] space-y-1">
+          <div className="px-3 py-2 border-t border-[var(--border)] space-y-1">
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-[var(--muted)]">Min Confidence</span>
               <span className="text-[10px] text-cyan-400 font-medium">
@@ -120,7 +226,7 @@ export default function SymbolSearchPanel() {
           </div>
 
           {/* Per-page groups */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto border-t border-[var(--border)]">
             {pageGroups.map(({ pageNumber: pn, matches }) => (
               <div key={pn} className="border-b border-[var(--border)] last:border-b-0">
                 <button
@@ -136,7 +242,6 @@ export default function SymbolSearchPanel() {
                     {matches.length}
                   </span>
                 </button>
-                {/* Individual matches for current page */}
                 {pn === pageNumber && (
                   <div className="px-3 pb-1.5">
                     {matches.map((m) => (
@@ -159,9 +264,23 @@ export default function SymbolSearchPanel() {
             ))}
             {pageGroups.length === 0 && (
               <div className="px-3 py-4 text-center text-[11px] text-[var(--muted)]">
-                No matches found. Try lowering the confidence threshold.
+                No matches at {Math.round(symbolSearchConfidence * 100)}% confidence. Try lowering the threshold.
               </div>
             )}
+          </div>
+
+          {/* Search again button */}
+          <div className="px-3 py-2 border-t border-[var(--border)]">
+            <button
+              onClick={() => {
+                useViewerStore.getState().setSymbolSearchResults(null);
+                useViewerStore.getState().setSymbolSearchTemplateBbox(null);
+                useViewerStore.getState().setSymbolSearchActive(true);
+              }}
+              className="w-full text-[9px] px-2 py-1 rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+            >
+              Search Again
+            </button>
           </div>
         </>
       )}

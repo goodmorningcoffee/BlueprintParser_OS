@@ -2,14 +2,21 @@
 
 import { useMemo, useState, useCallback } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import HelpTooltip from "./HelpTooltip";
 import { mapYoloToOcrText } from "@/lib/yolo-tag-engine";
+import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
+import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
+// CSI detection runs server-side (csi-detect.ts uses fs); client components can't import it directly
 
 /**
  * KeynotePanel — Keynote parsing and management tool.
  *
- * 3 tabs: All Keynotes, Auto Parse, Manual Parse
+ * 3 tabs: All Keynotes, Guided Parse, Manual Parse
  * Keynotes are 2-column key:value tables (tag + description)
  * with YOLO shape assignment for tag-to-drawing mapping.
+ *
+ * Guided Parse: user draws region BB, system proposes a grid (rows+cols),
+ * user adjusts lines on canvas, then parses via extractCellsFromGrid.
  */
 export default function KeynotePanel() {
   const pageNumber = useViewerStore((s) => s.pageNumber);
@@ -38,6 +45,40 @@ export default function KeynotePanel() {
   const resetKeynoteParse = useViewerStore((s) => s.resetKeynoteParse);
   const projectId = useViewerStore((s) => s.projectId);
   const addYoloTag = useViewerStore((s) => s.addYoloTag);
+  const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
+
+  // Guided parse state
+  const guidedParseActive = useViewerStore((s) => s.guidedParseActive);
+  const guidedParseRegion = useViewerStore((s) => s.guidedParseRegion);
+  const guidedParseRows = useViewerStore((s) => s.guidedParseRows);
+  const guidedParseCols = useViewerStore((s) => s.guidedParseCols);
+  const setGuidedParseActive = useViewerStore((s) => s.setGuidedParseActive);
+  const setGuidedParseRegion = useViewerStore((s) => s.setGuidedParseRegion);
+  const setGuidedParseRows = useViewerStore((s) => s.setGuidedParseRows);
+  const setGuidedParseCols = useViewerStore((s) => s.setGuidedParseCols);
+  const resetGuidedParse = useViewerStore((s) => s.resetGuidedParse);
+
+  // Save parsed keynotes to pageIntelligence so All Keynotes tab persists across panel close
+  const saveKeynoteToIntelligence = useCallback((keys: { key: string; description: string }[], tableName?: string, csiTags?: { code: string; description: string }[]) => {
+    const currentIntel = useViewerStore.getState().pageIntelligence[pageNumber] || {};
+    const existingRegions = (currentIntel as any)?.parsedRegions || [];
+    const newRegion = {
+      id: `parsed-kn-${Date.now()}`,
+      type: "keynote" as const,
+      category: "keynote-table",
+      bbox: keynoteParseRegion || [0, 0, 1, 1],
+      confidence: 0.9,
+      csiTags: csiTags || [],
+      data: {
+        keynotes: keys.map(k => ({ key: k.key, description: k.description })),
+        isPageSpecific: true,
+      },
+    };
+    setPageIntelligence(pageNumber, {
+      ...currentIntel,
+      parsedRegions: [...existingRegions, newRegion],
+    });
+  }, [pageNumber, keynoteParseRegion, setPageIntelligence]);
 
   const [autoParsing, setAutoParsing] = useState(false);
 
@@ -130,6 +171,7 @@ export default function KeynotePanel() {
         yoloClass: keynoteYoloClass ? `${keynoteYoloClass.model}:${keynoteYoloClass.className}` : undefined,
         tableName: `Keynotes p.${pageNumber}`,
       });
+      saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`);
       // Create YoloTags for each parsed keynote key
       const allAnns = useViewerStore.getState().annotations;
       for (const k of keys) {
@@ -157,6 +199,7 @@ export default function KeynotePanel() {
         });
       }
       setKeynoteParseStep("review");
+      useViewerStore.getState().setMode("move");
     }
   }, [textractData, pageNumber, keynoteColumnBBs, keynoteRowBBs, keynoteYoloClass, addParsedKeynote, addYoloTag, setKeynoteParseStep]);
 
@@ -182,6 +225,7 @@ export default function KeynotePanel() {
 
         if (keys.length > 0) {
           addParsedKeynote({ pageNumber, keys, tableName: `Keynotes p.${pageNumber}` });
+          saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`, result.csiTags || []);
           // Create YoloTags for auto-parsed keynotes (no YOLO class assigned in auto mode)
           const allAnns = useViewerStore.getState().annotations;
           const td = useViewerStore.getState().textractData;
@@ -208,6 +252,7 @@ export default function KeynotePanel() {
             });
           }
           setKeynoteParseStep("review");
+      useViewerStore.getState().setMode("move");
         }
       }
     } catch (err) {
@@ -216,6 +261,141 @@ export default function KeynotePanel() {
       setAutoParsing(false);
     }
   }, [projectId, pageNumber, addParsedKeynote, addYoloTag, setKeynoteParseStep]);
+
+  // ─── Guided parse: propose grid ─────────────────────────
+  const [guidedLoading, setGuidedLoading] = useState(false);
+  const [guidedError, setGuidedError] = useState<string | null>(null);
+
+  const proposeGrid = useCallback(async () => {
+    const region = useViewerStore.getState().keynoteParseRegion;
+    if (!region || !projectId) return;
+    setGuidedParseRegion(region); // store for overlay
+    setGuidedLoading(true);
+    setGuidedError(null);
+    try {
+      const resp = await fetch("/api/table-parse/propose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          pageNumber,
+          regionBbox: region,
+          layoutHint: { columns: 2 },
+        }),
+      });
+      if (!resp.ok) throw new Error("Proposal failed");
+      const data = await resp.json();
+      setGuidedParseRows(data.proposedRows || []);
+      setGuidedParseCols(data.proposedCols || []);
+      setGuidedParseActive(true);
+    } catch (err: any) {
+      setGuidedError(err.message || "Failed to propose grid");
+    } finally {
+      setGuidedLoading(false);
+    }
+  }, [projectId, pageNumber, setGuidedParseRegion, setGuidedParseRows, setGuidedParseCols, setGuidedParseActive]);
+
+  // ─── Guided parse: parse from grid ─────────────────────
+  const parseFromGuidedGrid = useCallback(async () => {
+    const pageTextract = useViewerStore.getState().textractData[pageNumber];
+    if (!pageTextract?.words || guidedParseRows.length < 2 || guidedParseCols.length < 2) return;
+
+    const result = extractCellsFromGrid(pageTextract.words, guidedParseRows, guidedParseCols);
+    if (result.rows.length === 0) return;
+
+    // Detect CSI
+    let csiTags: { code: string; description: string }[] = [];
+    try {
+      const csiResp = await fetch("/api/csi/detect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ headers: result.headers, rows: result.rows }),
+      });
+      if (csiResp.ok) {
+        const csiData = await csiResp.json();
+        csiTags = csiData.csiTags || [];
+      }
+    } catch { /* best-effort */ }
+
+    // Save as parsed keynote
+    const store = useViewerStore.getState();
+    const currentIntel = store.pageIntelligence[pageNumber] || {};
+    const existingRegions = (currentIntel as any)?.parsedRegions || [];
+    const newRegion = {
+      id: `parsed-${Date.now()}`,
+      type: "keynote" as const,
+      category: "keynote-table",
+      bbox: guidedParseRegion || [0, 0, 1, 1],
+      confidence: 0.85,
+      csiTags,
+      data: {
+        headers: result.headers,
+        rows: result.rows,
+        tagColumn: result.headers[0],
+        tableName: "Keynotes",
+        rowCount: result.rows.length,
+        columnCount: result.headers.length,
+      },
+    };
+    store.setPageIntelligence(pageNumber, {
+      ...currentIntel,
+      parsedRegions: [...existingRegions, newRegion],
+    });
+
+    // Also save as parsedKeynoteData for All Keynotes tab
+    const tagHeader = result.headers[0];
+    const descHeaders = result.headers.slice(1);
+    const keys = result.rows.map((row: any) => ({
+      key: (row[tagHeader] || "").trim(),
+      description: descHeaders.map((h: string) => row[h] || "").join(" ").trim(),
+    })).filter((k: any) => k.key || k.description);
+    if (keys.length > 0) {
+      addParsedKeynote({ pageNumber, keys, tableName: `Keynotes p.${pageNumber}` });
+      // Create YoloTags for guided-parsed keynotes
+      const allAnns = store.annotations;
+      const td = store.textractData;
+      for (const k of keys) {
+        if (!k.key) continue;
+        const instances = mapYoloToOcrText({
+          tagText: k.key,
+          scope: "page",
+          pageNumber,
+          annotations: allAnns,
+          textractData: td,
+        });
+        addYoloTag({
+          id: `keynote-${pageNumber}-${k.key}-${Date.now()}`,
+          name: k.key,
+          tagText: k.key,
+          yoloClass: "",
+          yoloModel: "",
+          source: "keynote",
+          scope: "page",
+          pageNumber,
+          description: k.description,
+          instances,
+        });
+      }
+    }
+
+    // Refresh spatial map
+    refreshPageCsiSpatialMap(pageNumber);
+
+    // Persist to DB (fire-and-forget)
+    if (projectId) {
+      const updatedIntel = store.pageIntelligence[pageNumber];
+      fetch("/api/pages/intelligence", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, pageNumber, intelligence: updatedIntel }),
+      }).catch(() => {});
+    }
+
+    // Reset guided state
+    resetGuidedParse();
+    setKeynoteParseStep("review");
+    useViewerStore.getState().setMode("move");
+  }, [pageNumber, projectId, guidedParseRows, guidedParseCols, guidedParseRegion, resetGuidedParse, addParsedKeynote, addYoloTag, setKeynoteParseStep]);
 
   // ─── Repeat row down ───────────────────────────────────
   const repeatRowDown = useCallback((rowBB: [number, number, number, number]) => {
@@ -229,28 +409,57 @@ export default function KeynotePanel() {
     }
   }, [keynoteParseRegion, addKeynoteRowBB]);
 
+  // ─── Repeat column right ──────────────────────────────
+  const repeatColumnRight = useCallback((colBB: [number, number, number, number]) => {
+    if (!keynoteParseRegion) return;
+    const colW = colBB[2] - colBB[0];
+    const right = keynoteParseRegion[2];
+    let x = colBB[2];
+    while (x + colW * 0.5 < right) {
+      addKeynoteColumnBB([x, colBB[1], Math.min(x + colW, right), colBB[3]]);
+      x += colW;
+    }
+  }, [keynoteParseRegion, addKeynoteColumnBB]);
+
   // ─── Render ─────────────────────────────────────────────
   return (
     <div className="w-80 flex flex-col h-full border-l border-[var(--border)] bg-[var(--bg)]">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
         <h3 className="text-sm font-semibold text-[var(--fg)]">Keynotes</h3>
-        <button onClick={toggleKeynoteParsePanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => useViewerStore.getState().toggleParsedRegions()}
+            className={`text-sm px-1 ${useViewerStore.getState().showParsedRegions ? "text-amber-300" : "text-[var(--muted)]/30"}`}
+            title="Toggle region outlines on canvas"
+          >
+            {useViewerStore.getState().showParsedRegions ? "\u25CF" : "\u25CB"}
+          </button>
+          <button onClick={toggleKeynoteParsePanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
+        </div>
       </div>
 
       {/* Tab bar */}
       <div className="flex border-b border-[var(--border)]">
-        {(["all", "auto", "manual"] as const).map((tab) => (
+        {(["all", "guided", "manual"] as const).map((tab) => (
           <button
             key={tab}
-            onClick={() => setKeynoteParseTab(tab)}
+            onClick={() => {
+              if (tab !== keynoteParseTab) {
+                resetKeynoteParse();
+                setKeynoteParseRegion(null);
+                resetGuidedParse();
+                useViewerStore.getState().setMode("move");
+              }
+              setKeynoteParseTab(tab);
+            }}
             className={`flex-1 px-2 py-1.5 text-[10px] font-medium ${
               keynoteParseTab === tab
                 ? "text-amber-300 border-b-2 border-amber-400"
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
             }`}
           >
-            {tab === "all" ? "All Keynotes" : tab === "auto" ? "Auto Parse" : "Manual Parse"}
+            {tab === "all" ? "All Keynotes" : tab === "guided" ? "Guided Parse" : "Manual Parse"}
           </button>
         ))}
       </div>
@@ -262,7 +471,7 @@ export default function KeynotePanel() {
             {!parsedKeynoteData || parsedKeynoteData.length === 0 ? (
               <div className="text-[10px] text-[var(--muted)] text-center py-8 px-2">
                 No parsed keynotes yet.
-                <br /><span className="text-[9px]">Use Auto Parse or Manual Parse tabs.</span>
+                <br /><span className="text-[9px]">Use Guided Parse or Manual Parse tabs.</span>
               </div>
             ) : (
               <>
@@ -274,6 +483,7 @@ export default function KeynotePanel() {
                     <KeynoteItem
                       key={i}
                       keynote={kn}
+                      keynoteIndex={i}
                       pageNames={pageNames}
                       isCurrentPage={kn.pageNumber === pageNumber}
                       onNavigate={() => setPage(kn.pageNumber)}
@@ -283,6 +493,13 @@ export default function KeynotePanel() {
                           ? null
                           : { pageNumber: kn.pageNumber, key }
                       )}
+                      onDelete={() => {
+                        const store = useViewerStore.getState();
+                        const all = store.parsedKeynoteData;
+                        if (all) {
+                          store.setParsedKeynoteData(all.filter((_, idx) => idx !== i) as any);
+                        }
+                      }}
                     />
                   ))}
               </>
@@ -290,38 +507,112 @@ export default function KeynotePanel() {
           </div>
         )}
 
-        {/* ════════ TAB: Auto Parse ════════ */}
-        {keynoteParseTab === "auto" && (
+        {/* ════════ TAB: Guided Parse ════════ */}
+        {keynoteParseTab === "guided" && (
           <div className="space-y-2">
-            <div className="text-[11px] text-[var(--muted)] px-1">
-              {keynoteParseStep === "select-region"
-                ? <span className="text-amber-300">Drawing — draw a BB around the keynote table.</span>
-                : "Draw a BB around a keynote table to auto-parse it."}
-            </div>
-
-            <button
-              onClick={() => {
-                const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
-                setKeynoteParseStep(next);
-                if (next !== "idle") useViewerStore.getState().setMode("pointer");
-              }}
-              className={`w-full text-xs px-3 py-2 rounded border ${
-                keynoteParseStep === "select-region"
-                  ? "border-amber-500 bg-amber-500/10 text-amber-300"
-                  : "border-[var(--border)] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
-              }`}
-            >
-              {keynoteParseStep === "select-region" ? "Cancel Drawing" : "Draw Keynote Region"}
-            </button>
-
-            {autoParsing && (
-              <div className="text-[11px] text-amber-300 text-center py-2 animate-pulse">Parsing...</div>
+            {/* State: review complete */}
+            {keynoteParseStep === "review" && (
+              <div className="space-y-1.5">
+                <div className="text-[11px] text-green-400 px-2 py-2 border border-green-500/20 rounded bg-green-500/5">
+                  Keynotes parsed — see All Keynotes tab.
+                </div>
+                <button
+                  onClick={() => {
+                    setKeynoteParseRegion(null);
+                    resetKeynoteParse();
+                    resetGuidedParse();
+                  }}
+                  className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                >
+                  Parse Another
+                </button>
+              </div>
             )}
 
-            {keynoteParseStep === "review" && (
-              <div className="text-[11px] text-green-400 px-2 py-2 border border-green-500/20 rounded bg-green-500/5">
-                Keynotes parsed — see All Keynotes tab.
+            {/* State: grid proposed — adjust and parse */}
+            {keynoteParseStep !== "review" && guidedParseActive && guidedParseRows.length >= 2 && guidedParseCols.length >= 2 && (
+              <div className="space-y-2">
+                <div className="text-[11px] text-[var(--muted)] px-1">
+                  <span className="text-amber-300">Adjust row/column lines on the canvas, then click Parse.</span>
+                </div>
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] text-[var(--muted)]">
+                    {guidedParseRows.length - 1} rows, {guidedParseCols.length - 1} columns
+                  </span>
+                </div>
+                <button
+                  onClick={parseFromGuidedGrid}
+                  className="w-full text-xs px-3 py-2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 font-medium"
+                >
+                  Parse Keynotes
+                </button>
+                <button
+                  onClick={() => {
+                    resetGuidedParse();
+                    setKeynoteParseRegion(null);
+                    setKeynoteParseStep("idle");
+                    useViewerStore.getState().setMode("move");
+                  }}
+                  className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                >
+                  Reset
+                </button>
               </div>
+            )}
+
+            {/* State: region drawn but no grid proposed yet */}
+            {keynoteParseStep !== "review" && !guidedParseActive && keynoteParseRegion && (
+              <div className="space-y-2">
+                <div className="text-[11px] text-[var(--muted)] px-1">
+                  <span className="text-amber-300">Region selected. Click "Propose Grid" to auto-detect rows and columns.</span>
+                </div>
+                <button
+                  onClick={proposeGrid}
+                  disabled={guidedLoading}
+                  className="w-full text-xs px-3 py-2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 font-medium disabled:opacity-50"
+                >
+                  {guidedLoading ? "Proposing..." : "Propose Grid (2-col Keynote)"}
+                </button>
+                {guidedError && <p className="text-red-400 text-[10px] px-1">{guidedError}</p>}
+                <button
+                  onClick={() => {
+                    setKeynoteParseRegion(null);
+                    setKeynoteParseStep("idle");
+                    useViewerStore.getState().setMode("move");
+                  }}
+                  className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                >
+                  Clear Region
+                </button>
+              </div>
+            )}
+
+            {/* State: no region drawn yet */}
+            {keynoteParseStep !== "review" && !guidedParseActive && !keynoteParseRegion && (
+              <div className="space-y-2">
+                <div className="text-[11px] text-[var(--muted)] px-1">
+                  Draw a bounding box around the keynote table, then click "Propose Grid".
+                  <br /><span className="text-[9px]">Exclude any title text (e.g. "KEYNOTES") that sits above the table.</span>
+                </div>
+                <HelpTooltip id="keynote-guided-draw"><button
+                  onClick={() => {
+                    const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
+                    setKeynoteParseStep(next);
+                    useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                  }}
+                  className={`w-full text-xs px-3 py-2 rounded border ${
+                    keynoteParseStep === "select-region"
+                      ? "border-amber-500 bg-amber-500/10 text-amber-300"
+                      : "border-[var(--border)] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+                  }`}
+                >
+                  {keynoteParseStep === "select-region" ? "Cancel Drawing" : "Draw Keynote Region"}
+                </button></HelpTooltip>
+              </div>
+            )}
+
+            {guidedLoading && (
+              <div className="text-[11px] text-amber-300 text-center py-2 animate-pulse">Proposing grid...</div>
             )}
 
             {/* Classified keynote regions — informational */}
@@ -354,13 +645,14 @@ export default function KeynotePanel() {
           <div className="space-y-2">
             {/* Step 1: Draw region */}
             <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1">Step 1: Keynote Region</div>
+            <div className="text-[9px] text-[var(--muted)] px-1">Draw around the table grid only. Do NOT include any title text above the table.</div>
             {!keynoteParseRegion ? (
               <button
                 onClick={() => {
-                const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
-                setKeynoteParseStep(next);
-                if (next !== "idle") useViewerStore.getState().setMode("pointer");
-              }}
+                  const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
+                  setKeynoteParseStep(next);
+                  useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                }}
                 className={`w-full text-xs px-3 py-1.5 rounded border ${
                   keynoteParseStep === "select-region"
                     ? "border-amber-500 bg-amber-500/10 text-amber-300"
@@ -370,15 +662,34 @@ export default function KeynotePanel() {
                 {keynoteParseStep === "select-region" ? "Drawing..." : "Draw Keynote Region"}
               </button>
             ) : (
-              <div className="text-[10px] text-green-400 px-1">Region defined</div>
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[10px] text-green-400">Region defined</span>
+                <button
+                  onClick={() => { setKeynoteParseRegion(null); resetKeynoteParse(); }}
+                  className="text-[9px] text-[var(--muted)] hover:text-red-400"
+                >
+                  Clear
+                </button>
+              </div>
             )}
 
-            {/* Step 2: Draw Column A (tags) */}
+            {/* Step 2: Draw Columns */}
             {keynoteParseRegion && (
               <>
-                <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1 mt-2">Step 2: Tag Column (A)</div>
+                <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1 mt-2">Step 2: Columns</div>
+                <div className="text-[9px] text-[var(--muted)] px-1">
+                  {keynoteColumnBBs.length === 0
+                    ? "Draw the first column around the tag/key column (e.g. 01, 02...)."
+                    : keynoteColumnBBs.length === 1
+                      ? "Now draw the second column around the description column."
+                      : `${keynoteColumnBBs.length} columns defined.`}
+                </div>
                 <button
-                  onClick={() => setKeynoteParseStep(keynoteParseStep === "define-column" ? "idle" : "define-column")}
+                  onClick={() => {
+                    const next = keynoteParseStep === "define-column" ? "idle" : "define-column";
+                    setKeynoteParseStep(next);
+                    useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                  }}
                   className={`w-full text-xs px-3 py-1.5 rounded border ${
                     keynoteParseStep === "define-column"
                       ? "border-amber-500 bg-amber-500/10 text-amber-300"
@@ -389,6 +700,16 @@ export default function KeynotePanel() {
                     ? "Stop Drawing Columns"
                     : `Draw Columns (${keynoteColumnBBs.length} defined)`}
                 </button>
+
+                {keynoteColumnBBs.length > 0 && (
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[10px] text-[var(--muted)]">{keynoteColumnBBs.length} col{keynoteColumnBBs.length !== 1 ? "s" : ""}</span>
+                    <button
+                      onClick={() => repeatColumnRight(keynoteColumnBBs[keynoteColumnBBs.length - 1])}
+                      className="text-[9px] text-amber-300 hover:text-amber-200"
+                    >Repeat Right →</button>
+                  </div>
+                )}
 
                 {/* YOLO class picker — appears after Column A is drawn */}
                 {keynoteColumnBBs.length >= 1 && yoloInTagColumn.length > 0 && (
@@ -423,8 +744,15 @@ export default function KeynotePanel() {
             {keynoteColumnBBs.length >= 2 && (
               <>
                 <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1 mt-2">Step 3: Draw Rows</div>
+                <div className="text-[9px] text-[var(--muted)] px-1">
+                  Draw a BB around each row. Use "Repeat Down" after the first to auto-fill evenly spaced rows.
+                </div>
                 <button
-                  onClick={() => setKeynoteParseStep(keynoteParseStep === "define-row" ? "idle" : "define-row")}
+                  onClick={() => {
+                    const next = keynoteParseStep === "define-row" ? "idle" : "define-row";
+                    setKeynoteParseStep(next);
+                    useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                  }}
                   className={`w-full text-xs px-3 py-1.5 rounded border ${
                     keynoteParseStep === "define-row"
                       ? "border-purple-500 bg-purple-500/10 text-purple-300"
@@ -481,58 +809,189 @@ export default function KeynotePanel() {
 /** Collapsible keynote item in All Keynotes list */
 function KeynoteItem({
   keynote,
+  keynoteIndex,
   pageNames,
   isCurrentPage,
   onNavigate,
   activeHighlight,
   onHighlight,
+  onDelete,
 }: {
-  keynote: { pageNumber: number; keys: { key: string; description: string }[]; yoloClass?: string; tableName?: string };
+  keynote: { pageNumber: number; keys: { key: string; description: string; csiCodes?: string[]; note?: string }[]; yoloClass?: string; tableName?: string };
+  keynoteIndex: number;
   pageNames: Record<number, string>;
   isCurrentPage: boolean;
   onNavigate: () => void;
   activeHighlight: { pageNumber: number; key: string } | null;
   onHighlight: (key: string) => void;
+  onDelete: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editNote, setEditNote] = useState("");
+  const [editCsi, setEditCsi] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState(keynote.tableName || "Keynotes");
+
+  const saveName = () => {
+    const trimmed = nameValue.trim();
+    if (trimmed) {
+      const store = useViewerStore.getState();
+      const allKeynotes = store.parsedKeynoteData;
+      if (allKeynotes) {
+        const updated = [...allKeynotes];
+        updated[keynoteIndex] = { ...updated[keynoteIndex], tableName: trimmed };
+        store.setParsedKeynoteData(updated as any);
+      }
+    }
+    setEditingName(false);
+  };
+
+  // Find matching YoloTags for instance counts
+  const yoloTags = useViewerStore((s) => s.yoloTags);
+  const tagInstances = (key: string) => {
+    const yt = yoloTags.find((t) => t.tagText === key && t.source === "keynote" && t.pageNumber === keynote.pageNumber);
+    return yt?.instances?.length || 0;
+  };
+
+  const handleKeyClick = (key: string) => {
+    const store = useViewerStore.getState();
+    const existing = store.yoloTags.find((t) => t.tagText === key && t.source === "keynote" && t.pageNumber === keynote.pageNumber);
+    if (existing) {
+      if (store.activeYoloTagId === existing.id) {
+        store.setActiveYoloTagId(null);
+        store.setYoloTagFilter(null);
+      } else {
+        store.setActiveYoloTagId(existing.id);
+        store.setYoloTagFilter(existing.id);
+      }
+    }
+    // Also set keynote highlight for canvas
+    onHighlight(key);
+  };
 
   return (
     <div
       className={`rounded border ${isCurrentPage ? "border-amber-400/30 bg-amber-500/5" : "border-[var(--border)]"}`}
     >
-      <button
-        onClick={() => setExpanded(!expanded)}
-        onDoubleClick={onNavigate}
-        className="w-full text-left px-2 py-1.5 flex items-center justify-between"
-        title="Double-click to navigate to page"
-      >
-        <div>
-          <span className="text-[11px] font-medium text-[var(--fg)]">{keynote.tableName || "Keynotes"}</span>
-          <span className="text-[9px] text-[var(--muted)] ml-1">
-            {pageNames[keynote.pageNumber] || `p.${keynote.pageNumber}`}
+      {/* Parent header */}
+      <div className="flex items-center gap-1 px-2 py-1.5">
+        <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-[var(--muted)] shrink-0">
+          {expanded ? "▼" : "▶"}
+        </button>
+        <div className="flex-1 min-w-0" onDoubleClick={onNavigate}>
+          {editingName ? (
+            <input
+              autoFocus
+              value={nameValue}
+              onChange={(e) => setNameValue(e.target.value)}
+              onBlur={saveName}
+              onKeyDown={(e) => { if (e.key === "Enter") saveName(); if (e.key === "Escape") setEditingName(false); }}
+              className="text-[11px] font-medium bg-transparent border-b border-amber-400 outline-none w-full text-[var(--fg)]"
+            />
+          ) : (
+            <span
+              onClick={() => setEditingName(true)}
+              className="text-[11px] font-medium text-[var(--fg)] truncate block cursor-pointer hover:text-amber-300"
+              title="Click to rename, double-click to navigate"
+            >
+              {keynote.tableName || "Keynotes"}
+            </span>
+          )}
+          <span className="text-[9px] text-[var(--muted)]">
+            {pageNames[keynote.pageNumber] || `p.${keynote.pageNumber}`} · {keynote.keys.length} keys
           </span>
         </div>
-        <div className="flex items-center gap-1">
-          <span className="text-[9px] text-[var(--muted)]">{keynote.keys.length} keys</span>
-          <span className="text-[10px] text-[var(--muted)]">{expanded ? "▼" : "▶"}</span>
-        </div>
-      </button>
+        <button onClick={onDelete} className="text-[10px] text-[var(--muted)] hover:text-red-400 shrink-0" title="Delete keynote table">x</button>
+      </div>
 
       {expanded && (
         <div className="px-2 pb-2 space-y-0.5">
           {keynote.keys.map((k, i) => (
-            <button
-              key={i}
-              onClick={() => onHighlight(k.key)}
-              className={`w-full text-left text-[10px] px-1.5 py-0.5 rounded ${
-                activeHighlight?.pageNumber === keynote.pageNumber && activeHighlight?.key === k.key
-                  ? "bg-amber-500/15 text-amber-300"
-                  : "hover:bg-[var(--surface-hover)] text-[var(--muted)]"
-              }`}
-            >
-              <span className="font-mono font-medium text-[var(--fg)]">{k.key || "?"}</span>
-              <span className="text-[var(--muted)]"> — {k.description || "(no description)"}</span>
-            </button>
+            <div key={i}>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => handleKeyClick(k.key)}
+                  className={`flex-1 text-left text-[10px] px-1.5 py-0.5 rounded ${
+                    activeHighlight?.pageNumber === keynote.pageNumber && activeHighlight?.key === k.key
+                      ? "bg-amber-500/15 text-amber-300"
+                      : "hover:bg-[var(--surface-hover)] text-[var(--muted)]"
+                  }`}
+                >
+                  <span className="font-mono font-medium text-[var(--fg)]">{k.key || "?"}</span>
+                  <span className="text-[var(--muted)]"> — {k.description || "(no description)"}</span>
+                  {k.csiCodes && k.csiCodes.length > 0 && (
+                    <span className="text-orange-400/60 ml-1 text-[9px]">[{k.csiCodes.join(", ")}]</span>
+                  )}
+                  {tagInstances(k.key) > 0 && (
+                    <span className="text-cyan-400/70 text-[9px] ml-1">({tagInstances(k.key)})</span>
+                  )}
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (editingIdx === i) { setEditingIdx(null); }
+                    else { setEditingIdx(i); setEditNote(k.note || ""); setEditCsi(k.csiCodes?.join(", ") || ""); }
+                  }}
+                  className="text-[10px] text-[var(--muted)] hover:text-amber-300 shrink-0 px-0.5"
+                  title="Edit metadata"
+                >
+                  {editingIdx === i ? "x" : "✏"}
+                </button>
+              </div>
+              {editingIdx === i && (
+                <div className="ml-2 mt-1 mb-1 space-y-1 p-1.5 rounded bg-[var(--surface)] border border-[var(--border)]">
+                  <div>
+                    <label className="text-[9px] text-[var(--muted)] block">CSI Codes</label>
+                    <input
+                      type="text"
+                      value={editCsi}
+                      onChange={(e) => setEditCsi(e.target.value)}
+                      placeholder="e.g. 08 21 16, 09 91 00"
+                      className="w-full text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] bg-transparent text-[var(--fg)] placeholder:text-[var(--muted)]/30 focus:outline-none focus:border-amber-400/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-[var(--muted)] block">Notes</label>
+                    <textarea
+                      value={editNote}
+                      onChange={(e) => setEditNote(e.target.value)}
+                      placeholder="Add notes..."
+                      rows={2}
+                      className="w-full text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] bg-transparent text-[var(--fg)] placeholder:text-[var(--muted)]/30 focus:outline-none focus:border-amber-400/50 resize-none"
+                    />
+                  </div>
+                  <button
+                    onClick={() => {
+                      // Update the keynote key's metadata in the store
+                      const store = useViewerStore.getState();
+                      const allKeynotes = store.parsedKeynoteData;
+                      if (allKeynotes) {
+                        const updated = allKeynotes.map((kn) => {
+                          if (kn.pageNumber !== keynote.pageNumber || kn.tableName !== keynote.tableName) return kn;
+                          return {
+                            ...kn,
+                            keys: kn.keys.map((key, ki) => {
+                              if (ki !== i) return key;
+                              return {
+                                ...key,
+                                csiCodes: editCsi.split(",").map(c => c.trim()).filter(Boolean),
+                                note: editNote,
+                              };
+                            }),
+                          };
+                        });
+                        store.setParsedKeynoteData(updated as any);
+                      }
+                      setEditingIdx(null);
+                    }}
+                    className="text-[9px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30"
+                  >
+                    Save
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}
