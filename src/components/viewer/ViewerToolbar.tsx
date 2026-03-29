@@ -50,6 +50,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
     setCsiFilter,
     showCsiPanel,
     toggleCsiPanel,
+    showPageIntelPanel,
+    togglePageIntelPanel,
     showDetectionPanel,
     toggleDetectionPanel,
     showKeynotes,
@@ -59,12 +61,15 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const publicId = useViewerStore((s) => s.publicId);
   const hasYoloAnnotations = annotations.some((a) => a.source === "yolo");
   const [yoloDropdownOpen, setYoloDropdownOpen] = useState(false);
+  const [csiDropdownOpen, setCsiDropdownOpen] = useState(false);
+  const [csiSearchQuery, setCsiSearchQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const showLabelingWizard = useViewerStore((s) => s.showLabelingWizard);
   const setShowLabelingWizard = useViewerStore((s) => s.setShowLabelingWizard);
   const menuRef = useRef<HTMLDivElement>(null);
   const isDemo = useViewerStore((s) => s.isDemo);
   const yoloDropdownRef = useRef<HTMLDivElement>(null);
+  const csiDropdownRef = useRef<HTMLDivElement>(null);
 
   // Derive unique model names from YOLO annotations
   const yoloModelNames = [...new Set(
@@ -73,18 +78,22 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       .map((a) => (a as any).data.modelName as string)
   )];
 
-  // Close dropdown on click outside
+  // Close dropdowns on click outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (yoloDropdownRef.current && !yoloDropdownRef.current.contains(e.target as Node)) {
         setYoloDropdownOpen(false);
       }
+      if (csiDropdownRef.current && !csiDropdownRef.current.contains(e.target as Node)) {
+        setCsiDropdownOpen(false);
+        setCsiSearchQuery("");
+      }
     }
-    if (yoloDropdownOpen) {
+    if (yoloDropdownOpen || csiDropdownOpen) {
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
-  }, [yoloDropdownOpen]);
+  }, [yoloDropdownOpen, csiDropdownOpen]);
 
   // Close menu dropdown on click outside
   useEffect(() => {
@@ -335,21 +344,75 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </HelpTooltip>
       )}
 
-      {/* CSI code filter */}
+      {/* CSI code filter — custom dropdown with search + standard/masterformat toggle */}
       {allCsiCodes.length > 0 && (
         <HelpTooltip id="csi-filter">
-          <select
-            value={activeCsiFilter || ""}
-            onChange={(e) => setCsiFilter(e.target.value || null)}
-            className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-48"
-          >
-          <option value="">All CSI Codes</option>
-          {allCsiCodes.map((csi) => (
-            <option key={csi.code} value={csi.code}>
-              {csi.code} — {csi.description}
-            </option>
-          ))}
-        </select>
+          <div className="relative" ref={csiDropdownRef}>
+            <button
+              onClick={() => setCsiDropdownOpen(o => !o)}
+              className={`px-2 py-1 text-xs rounded border ${
+                activeCsiFilter
+                  ? "border-orange-400/60 text-orange-400 bg-orange-400/10"
+                  : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+              }`}
+            >
+              {activeCsiFilter ? `CSI: ${activeCsiFilter}` : `CSI Codes (${allCsiCodes.length})`}
+              {activeCsiFilter && (
+                <span
+                  onClick={(e) => { e.stopPropagation(); setCsiFilter(null); setSearch(""); }}
+                  className="ml-1 hover:text-[var(--fg)]"
+                >×</span>
+              )}
+            </button>
+            {csiDropdownOpen && (
+              <div className="absolute top-full right-0 mt-1 bg-[var(--surface)] border border-[var(--border)] rounded shadow-lg z-50 w-72">
+                {/* Search */}
+                <div className="p-2 border-b border-[var(--border)]">
+                  <input
+                    type="text"
+                    value={csiSearchQuery}
+                    onChange={(e) => setCsiSearchQuery(e.target.value)}
+                    placeholder="Search codes... (e.g. 08, door, plumbing)"
+                    className="w-full px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-[var(--accent)]"
+                    autoFocus
+                  />
+                </div>
+                {/* Code list */}
+                <div className="max-h-64 overflow-y-auto">
+                  <button
+                    onClick={() => { setCsiFilter(null); setSearch(""); setCsiDropdownOpen(false); }}
+                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-hover)] ${!activeCsiFilter ? "text-[var(--accent)]" : "text-[var(--fg)]"}`}
+                  >
+                    All CSI Codes
+                  </button>
+                  {allCsiCodes
+                    .filter(csi => {
+                      if (!csiSearchQuery) return true;
+                      const q = csiSearchQuery.toLowerCase();
+                      return csi.code.toLowerCase().includes(q) || csi.description.toLowerCase().includes(q);
+                    })
+                    .slice(0, 50) // limit for performance
+                    .map((csi) => (
+                      <button
+                        key={csi.code}
+                        onClick={() => { setCsiFilter(csi.code); setSearch(csi.description); setCsiDropdownOpen(false); setCsiSearchQuery(""); }}
+                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-hover)] ${
+                          activeCsiFilter === csi.code ? "text-[var(--accent)] bg-[var(--accent)]/5" : "text-[var(--fg)]"
+                        }`}
+                      >
+                        <span className="text-[var(--muted)] font-mono">{csi.code}</span>
+                        <span className="ml-1.5">{csi.description}</span>
+                      </button>
+                    ))}
+                  {allCsiCodes.length > 50 && !csiSearchQuery && (
+                    <div className="px-3 py-2 text-[10px] text-[var(--muted)]">
+                      Type to search {allCsiCodes.length} codes...
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </HelpTooltip>
       )}
 
@@ -382,8 +445,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             onClick={() => { toggleDetectionPanel(); if (!showDetections) toggleDetections(); }}
             className={`px-2 py-1 text-xs rounded-l border ${
               showDetectionPanel
-                ? "border-purple-400/60 text-purple-400 bg-purple-400/10"
-                : "border-purple-400/20 text-purple-400/50 hover:text-purple-300 hover:border-purple-400/40"
+                ? "border-green-400/30 text-green-400/50 bg-green-400/5"
+                : "border-red-400/20 text-red-400/35 hover:text-red-300/45 hover:border-red-400/30"
             }`}
           >
             YOLO
@@ -393,8 +456,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
               onClick={() => setYoloDropdownOpen((o) => !o)}
               className={`px-1.5 py-1 text-xs border border-l-0 rounded-r ${
                 yoloDropdownOpen
-                  ? "border-purple-400/60 text-purple-400 bg-purple-400/10"
-                  : "border-purple-400/40 text-purple-400/70 hover:text-purple-300 hover:border-purple-400/60"
+                  ? "border-green-400/30 text-green-400/50 bg-green-400/5"
+                  : "border-red-400/20 text-red-400/35 hover:text-red-300/45 hover:border-red-400/30"
               }`}
             >
               ▾
@@ -444,59 +507,76 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </HelpTooltip>
       )}
 
-      {/* Text panel toggle */}
+      {/* ─── Panel toggle buttons: YOLO TEXT CSI CHAT Intel QTO ─── */}
+      {/* Gradient: translucent/dark (left) → opaque/bright (right) */}
+      {/* Green when active, red when inactive */}
+
+      {/* TEXT — step 2 */}
       <HelpTooltip id="text-button">
         <button
           onClick={toggleTextPanel}
           className={`px-2 py-1 text-xs rounded border ${
             showTextPanel
-              ? "border-sky-400/60 text-sky-400 bg-sky-400/10"
-              : "border-sky-400/20 text-sky-400/50 hover:text-sky-300 hover:border-sky-400/40"
+              ? "border-green-400/40 text-green-400/60 bg-green-400/8"
+              : "border-red-400/25 text-red-400/40 hover:text-red-300/50 hover:border-red-400/35"
           }`}
         >
           Text
         </button>
       </HelpTooltip>
 
-      {/* Chat panel toggle */}
+      {/* CSI — step 3 */}
+      <HelpTooltip id="csi-button">
+        <button
+          onClick={toggleCsiPanel}
+          className={`px-2 py-1 text-xs rounded border ${
+            showCsiPanel
+              ? "border-green-400/50 text-green-400/70 bg-green-400/10"
+              : "border-red-400/30 text-red-400/45 hover:text-red-300/55 hover:border-red-400/40"
+          }`}
+        >
+          CSI
+        </button>
+      </HelpTooltip>
+
+      {/* LLM CHAT — step 4 */}
       <HelpTooltip id="chat-button">
         <button
           onClick={toggleChatPanel}
           className={`px-2 py-1 text-xs rounded border ${
             showChatPanel
-              ? "border-blue-400/60 text-blue-400 bg-blue-400/10"
-              : "border-blue-400/20 text-blue-400/50 hover:text-blue-300 hover:border-blue-400/40"
+              ? "border-green-400/55 text-green-400/80 bg-green-400/12"
+              : "border-red-400/35 text-red-400/50 hover:text-red-300/60 hover:border-red-400/45"
           }`}
         >
           LLM Chat
         </button>
       </HelpTooltip>
 
-      {/* Takeoff panel toggle */}
+      {/* Intel — step 5 */}
+      <button
+        onClick={togglePageIntelPanel}
+        className={`px-2 py-1 text-xs rounded border ${
+          showPageIntelPanel
+            ? "border-green-400/65 text-green-300/85 bg-green-400/15"
+            : "border-red-400/40 text-red-400/55 hover:text-red-300/65 hover:border-red-400/50"
+        }`}
+        title="Page Intelligence"
+      >
+        Intel
+      </button>
+
+      {/* QTO — step 6 (brightest) */}
       <HelpTooltip id="qto-button">
         <button
           onClick={toggleTakeoffPanel}
           className={`px-2 py-1 text-xs rounded border ${
             showTakeoffPanel
-              ? "border-emerald-400/60 text-emerald-400 bg-emerald-400/10"
-              : "border-emerald-400/20 text-emerald-400/50 hover:text-emerald-300 hover:border-emerald-400/40"
+              ? "border-green-400/75 text-green-300/95 bg-green-400/18"
+              : "border-red-400/45 text-red-400/60 hover:text-red-300/70 hover:border-red-400/55"
           }`}
         >
           QTO
-        </button>
-      </HelpTooltip>
-
-      {/* CSI panel toggle */}
-      <HelpTooltip id="csi-button">
-        <button
-          onClick={toggleCsiPanel}
-          className={`px-2 py-1 text-xs rounded border ${
-            showCsiPanel
-              ? "border-orange-400/60 text-orange-400 bg-orange-400/10"
-              : "border-orange-400/20 text-orange-400/50 hover:text-orange-300 hover:border-orange-400/40"
-          }`}
-        >
-          CSI
         </button>
       </HelpTooltip>
     </div>

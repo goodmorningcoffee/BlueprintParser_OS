@@ -23,6 +23,10 @@ interface EnvDefaults {
 
 type Scope = "users" | "demo";
 
+const DEFAULT_PROMPT = `You are an expert construction blueprint analyst. Below is data extracted from blueprint pages.
+
+IMPORTANT: ONLY reference information that appears in the data sections below. Do not invent or fabricate examples, page numbers, counts, or project names. If something is not in the provided data, say "that information is not available in the current data."`;
+
 export default function LLMConfigSection() {
   const [configs, setConfigs] = useState<LlmConfigView[]>([]);
   const [envDefaults, setEnvDefaults] = useState<EnvDefaults>({ groq: false, anthropic: false, openai: false });
@@ -32,6 +36,9 @@ export default function LLMConfigSection() {
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_PROMPT);
+  const [promptSaving, setPromptSaving] = useState(false);
+  const [promptMessage, setPromptMessage] = useState("");
 
   const loadConfigs = useCallback(async () => {
     try {
@@ -40,6 +47,7 @@ export default function LLMConfigSection() {
         const data = await res.json();
         setConfigs(data.configs);
         setEnvDefaults(data.envDefaults);
+        if (data.systemPrompt) setSystemPrompt(data.systemPrompt);
       }
     } catch { /* table may not exist */ }
   }, []);
@@ -156,6 +164,7 @@ export default function LLMConfigSection() {
   const envDefault = getEnvDefault();
 
   return (
+    <>
     <section>
       <h2 className="text-lg font-semibold mb-3">LLM Configuration</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -311,5 +320,58 @@ export default function LLMConfigSection() {
         })}
       </div>
     </section>
+
+    {/* System Prompt Editor */}
+    <section className="border border-[var(--border)] rounded-lg p-4 space-y-3 mt-6">
+      <h3 className="text-sm font-semibold text-[var(--fg)]">System Prompt</h3>
+      <p className="text-xs text-[var(--muted)]">
+        Customize the base instructions sent to the LLM. The data sections and citation rules are always appended automatically.
+      </p>
+      {promptMessage && (
+        <div className="text-xs text-[var(--accent)]">{promptMessage}</div>
+      )}
+      <textarea
+        value={systemPrompt}
+        onChange={(e) => setSystemPrompt(e.target.value)}
+        rows={6}
+        className="w-full px-3 py-2 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-[var(--accent)] font-mono resize-y"
+      />
+      <div className="flex items-center gap-3">
+        <button
+          onClick={async () => {
+            setPromptSaving(true);
+            setPromptMessage("");
+            try {
+              const res = await fetch("/api/admin/llm-config", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ systemPrompt }),
+              });
+              if (res.ok) {
+                setPromptMessage("System prompt saved");
+                setTimeout(() => setPromptMessage(""), 3000);
+              } else {
+                setPromptMessage("Save failed");
+              }
+            } catch { setPromptMessage("Save failed"); }
+            setPromptSaving(false);
+          }}
+          disabled={promptSaving}
+          className="px-3 py-1.5 text-xs bg-[var(--accent)] text-white rounded hover:opacity-90 disabled:opacity-50"
+        >
+          {promptSaving ? "Saving..." : "Save Prompt"}
+        </button>
+        <button
+          onClick={() => { setSystemPrompt(DEFAULT_PROMPT); setPromptMessage("Reset to default — save to apply"); }}
+          className="px-3 py-1.5 text-xs border border-[var(--border)] rounded text-[var(--muted)] hover:text-[var(--fg)]"
+        >
+          Reset to Default
+        </button>
+        <span className="text-[10px] text-[var(--muted)] ml-auto">
+          ~{Math.round(systemPrompt.length / 4)} tokens
+        </span>
+      </div>
+    </section>
+    </>
   );
 }

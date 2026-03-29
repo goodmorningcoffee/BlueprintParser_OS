@@ -64,30 +64,7 @@ export default function ProjectsTab({
         </div>
       </section>
 
-      {/* Reprocess Text Annotations */}
-      <section>
-        <h2 className="text-lg font-semibold mb-3">Reprocess Text Annotations</h2>
-        <div className="p-3 bg-[var(--surface)] border border-[var(--border)] rounded space-y-3">
-          <p className="text-xs text-[var(--muted)]">
-            Re-run text annotation detectors (abbreviations, equipment tags, phone numbers, etc.) on all existing projects.
-            Uses existing OCR data — no re-upload needed. User notes are preserved.
-          </p>
-          <button
-            onClick={onReprocess}
-            disabled={reprocessing}
-            className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] disabled:opacity-40"
-          >
-            {reprocessing ? "Reprocessing..." : "Reprocess All Projects"}
-          </button>
-          {reprocessLog.length > 0 && (
-            <div className="mt-2 max-h-40 overflow-y-auto bg-[var(--bg)] rounded p-2 text-xs font-mono text-[var(--muted)]">
-              {reprocessLog.map((line, i) => (
-                <div key={i}>{line}</div>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
+      {/* Reprocess moved to Text Annotations tab */}
     </div>
   );
 }

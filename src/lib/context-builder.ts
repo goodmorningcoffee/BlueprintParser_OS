@@ -45,14 +45,18 @@ export interface ContextSection {
   priority: number;
 }
 
+/** Default system prompt used when no custom prompt is configured. */
+export const DEFAULT_SYSTEM_PROMPT = `You are an expert construction blueprint analyst. Below is data extracted from blueprint pages.
+
+IMPORTANT: ONLY reference information that appears in the data sections below. Do not invent or fabricate examples, page numbers, counts, or project names. If something is not in the provided data, say "that information is not available in the current data."`;
+
 /**
  * Build a dynamic system prompt that describes ONLY the data actually provided.
  * Prevents hallucination by telling the model exactly what it has.
+ * Accepts optional custom prompt (from admin config) to replace the default preamble.
  */
-export function buildSystemPrompt(dataSummary: string[]): string {
-  let prompt = `You are an expert construction blueprint analyst. Below is data extracted from blueprint pages.
-
-IMPORTANT: ONLY reference information that appears in the data sections below. Do not invent or fabricate examples, page numbers, counts, or project names. If something is not in the provided data, say "that information is not available in the current data."`;
+export function buildSystemPrompt(dataSummary: string[], customPrompt?: string): string {
+  let prompt = customPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
 
   if (dataSummary.length > 0) {
     prompt += `\n\nDATA PROVIDED:\n${dataSummary.map(s => `• ${s}`).join("\n")}`;
@@ -73,22 +77,32 @@ export function buildYoloSummary(
 ): { text: string; summaryLine: string } | null {
   if (yoloAnnotations.length === 0) return null;
 
-  const byPage: Record<number, Record<string, { count: number; totalConf: number }>> = {};
+  const byPage: Record<number, Record<string, { count: number; totalConf: number; csiCodes: Set<string>; keywords: Set<string> }>> = {};
   const globalCounts: Record<string, number> = {};
+  const globalCsi: Record<string, Set<string>> = {};
 
   for (const a of yoloAnnotations) {
     if (!byPage[a.pageNumber]) byPage[a.pageNumber] = {};
     const cls = a.name;
-    if (!byPage[a.pageNumber][cls]) byPage[a.pageNumber][cls] = { count: 0, totalConf: 0 };
+    if (!byPage[a.pageNumber][cls]) byPage[a.pageNumber][cls] = { count: 0, totalConf: 0, csiCodes: new Set(), keywords: new Set() };
     byPage[a.pageNumber][cls].count++;
     byPage[a.pageNumber][cls].totalConf += (a.data as any)?.confidence || 0;
+    const annCsi = (a.data as any)?.csiCodes as string[] | undefined;
+    const annKw = (a.data as any)?.keywords as string[] | undefined;
+    annCsi?.forEach((c: string) => byPage[a.pageNumber][cls].csiCodes.add(c));
+    annKw?.forEach((k: string) => byPage[a.pageNumber][cls].keywords.add(k));
     globalCounts[cls] = (globalCounts[cls] || 0) + 1;
+    if (!globalCsi[cls]) globalCsi[cls] = new Set();
+    annCsi?.forEach((c: string) => globalCsi[cls].add(c));
   }
 
   const topClasses = Object.entries(globalCounts)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 5)
-    .map(([cls, count]) => `${count} ${cls}`)
+    .map(([cls, count]) => {
+      const csi = globalCsi[cls]?.size ? ` (CSI ${[...globalCsi[cls]].join(", ")})` : "";
+      return `${count} ${cls}${csi}`;
+    })
     .join(", ");
   const summaryLine = `${yoloAnnotations.length} YOLO object detections across ${Object.keys(byPage).length} page(s): ${topClasses}`;
 
@@ -98,7 +112,8 @@ export function buildYoloSummary(
     const total = Object.values(classes).reduce((s, c) => s + c.count, 0);
     text += `\nPage ${pg} (${total} objects):`;
     for (const [cls, info] of Object.entries(classes).sort(([, a], [, b]) => b.count - a.count)) {
-      text += `\n  ${cls}: ${info.count} (avg confidence ${(info.totalConf / info.count).toFixed(2)})`;
+      const csiStr = info.csiCodes.size > 0 ? `, CSI ${[...info.csiCodes].join(", ")}` : "";
+      text += `\n  ${cls}: ${info.count} (avg confidence ${(info.totalConf / info.count).toFixed(2)}${csiStr})`;
     }
   }
 
@@ -217,6 +232,56 @@ export function buildProjectSummarySection(projectSummary: string | null): Conte
     content: projectSummary,
     priority: 0.5, // highest priority in project scope
   };
+}
+
+/**
+ * Build CSI Spatial Distribution section (page-level).
+ * Shows where CSI divisions cluster on the page.
+ */
+export function buildCsiSpatialSection(csiSpatialMap: any): string | null {
+  if (!csiSpatialMap?.zones?.length) return null;
+  let text = "";
+  for (const zone of csiSpatialMap.zones) {
+    if (zone.totalInstances === 0) continue;
+    const divs = zone.divisions
+      .map((d: any) => `${d.division} ${d.name} (${d.count})`)
+      .join(", ");
+    text += `${zone.zone}: ${divs}\n`;
+  }
+  if (csiSpatialMap.summary) text += `\n${csiSpatialMap.summary}`;
+  return text || null;
+}
+
+/**
+ * Build CSI Network Graph section (project-level).
+ * Shows division relationships, clusters, and fingerprint.
+ */
+export function buildCsiGraphSection(csiGraph: any): string | null {
+  if (!csiGraph?.nodes?.length) return null;
+
+  let text = "DIVISIONS:\n";
+  for (const node of csiGraph.nodes) {
+    text += `  ${node.division} (${node.name}): ${node.totalInstances} instances across ${node.pageCount} pages\n`;
+  }
+
+  if (csiGraph.clusters?.length > 0) {
+    text += "\nCLUSTERS:\n";
+    for (const cluster of csiGraph.clusters) {
+      text += `  ${cluster.name}: [${cluster.divisions.join(", ")}] (cohesion ${(cluster.cohesion * 100).toFixed(0)}%)\n`;
+    }
+  }
+
+  if (csiGraph.edges?.length > 0) {
+    text += "\nKEY RELATIONSHIPS:\n";
+    const topEdges = [...csiGraph.edges].sort((a: any, b: any) => b.weight - a.weight).slice(0, 5);
+    for (const edge of topEdges) {
+      text += `  ${edge.source} ↔ ${edge.target}: ${edge.type}, strength ${edge.weight}, ${edge.pages.length} pages\n`;
+    }
+  }
+
+  if (csiGraph.fingerprint) text += `\nFINGERPRINT: ${csiGraph.fingerprint}`;
+
+  return text;
 }
 
 /**

@@ -27,6 +27,9 @@ interface CsiEntry {
   wordCount: number;           // count of significant words
 }
 
+// Re-export shared CSI utilities (client-safe)
+export { normalizeCsiCode, normalizeCsiCodes } from "@/lib/csi-utils";
+
 // ═══════════════════════════════════════════════════════════════
 // Config defaults (overridable via pipeline_config.csi)
 // ═══════════════════════════════════════════════════════════════

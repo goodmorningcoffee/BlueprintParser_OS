@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { llmConfigs } from "@/lib/db/schema";
+import { llmConfigs, companies } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { encryptApiKey, maskApiKey, decryptApiKey } from "@/lib/crypto";
 
@@ -42,8 +42,17 @@ export async function GET() {
     // Table may not exist yet
   }
 
+  // Fetch custom system prompt from pipelineConfig
+  let systemPrompt: string | undefined;
+  try {
+    const [company] = await db.select({ pipelineConfig: companies.pipelineConfig })
+      .from(companies).where(eq(companies.id, session.user.companyId)).limit(1);
+    systemPrompt = (company?.pipelineConfig as any)?.llm?.systemPrompt;
+  } catch { /* ignore */ }
+
   return NextResponse.json({
     configs,
+    systemPrompt: systemPrompt || null,
     envDefaults: {
       groq: !!process.env.GROQ_API_KEY,
       anthropic: !!process.env.ANTHROPIC_API_KEY,
@@ -174,5 +183,39 @@ export async function DELETE(req: Request) {
   }
 
   await db.delete(llmConfigs).where(eq(llmConfigs.id, id));
+  return NextResponse.json({ success: true });
+}
+
+/**
+ * PUT /api/admin/llm-config
+ * Update company-level LLM settings (system prompt).
+ */
+export async function PUT(req: Request) {
+  const session = await auth();
+  if (!session?.user || session.user.role !== "admin") {
+    return NextResponse.json({ error: "Admin only" }, { status: 403 });
+  }
+
+  const { systemPrompt } = await req.json();
+
+  // Merge into pipelineConfig.llm
+  const [company] = await db
+    .select({ pipelineConfig: companies.pipelineConfig })
+    .from(companies)
+    .where(eq(companies.id, session.user.companyId))
+    .limit(1);
+
+  const existing = (company?.pipelineConfig as Record<string, unknown>) || {};
+  const existingLlm = (existing.llm as Record<string, unknown>) || {};
+  const updated = {
+    ...existing,
+    llm: { ...existingLlm, systemPrompt: systemPrompt || undefined },
+  };
+
+  await db
+    .update(companies)
+    .set({ pipelineConfig: updated as any, updatedAt: new Date() })
+    .where(eq(companies.id, session.user.companyId));
+
   return NextResponse.json({ success: true });
 }

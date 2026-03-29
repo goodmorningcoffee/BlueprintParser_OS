@@ -12,6 +12,7 @@ import type {
   RefGraphEdge,
   CsiCode,
 } from "@/types";
+import { buildCsiGraph } from "@/lib/csi-graph";
 
 interface PageSummary {
   pageNumber: number;
@@ -24,7 +25,7 @@ interface PageSummary {
 // Drawing Sequence Analysis
 // ═══════════════════════════════════════════════════════════════════
 
-const RE_DRAWING_NUM = /^([A-Z]{1,2})-?(\d{1,3})(?:\.(\d{1,2}))?$/;
+const RE_DRAWING_NUM = /^([A-Z]{1,4})-?(\d{1,4})(?:\.(\d{1,2}))?$/;
 
 const DISCIPLINE_NAMES: Record<string, string> = {
   T: "Title/Cover", G: "General", C: "Civil", L: "Landscape",
@@ -247,12 +248,17 @@ export function analyzeProject(pages: PageSummary[]): {
   const disciplines = analyzeDrawingSequence(pages);
   const refGraph = assembleRefGraph(pages);
   const csiTopology = analyzeCsiTopology(pages);
+  const csiGraph = buildCsiGraph(pages.map(p => ({
+    ...p,
+    csiCodes: (p.csiCodes || []) as { code: string; description: string; trade: string; division: string }[],
+  })));
   const summary = generateProjectReport(pages.length, disciplines, refGraph, csiTopology);
 
   return {
     intelligence: {
       disciplines: disciplines.length > 0 ? disciplines : undefined,
       refGraph: refGraph.edges.length > 0 ? refGraph : undefined,
+      csiGraph: csiGraph || undefined,
       pageCount: pages.length,
     },
     summary,

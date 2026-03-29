@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { projects, pages, chatMessages, annotations, takeoffItems, models } from "@/lib/db/schema";
+import { projects, pages, chatMessages, annotations, takeoffItems, models, companies } from "@/lib/db/schema";
 import { eq, and, desc, sql, isNull, inArray } from "drizzle-orm";
 import { checkChatQuota, checkDemoChatQuota } from "@/lib/quotas";
 import { resolveLLMConfig } from "@/lib/llm/resolve";
@@ -13,6 +13,8 @@ import {
   buildTextAnnotationsSection,
   buildPageIntelligenceSection,
   buildProjectSummarySection,
+  buildCsiSpatialSection,
+  buildCsiGraphSection,
   assembleContext,
   getContextBudget,
   DEFAULT_CONTEXT_BUDGET,
@@ -226,6 +228,18 @@ export async function POST(req: Request) {
         sections.push(...intelResult.sections);
         dataSummary.push(...intelResult.summaryLines);
       }
+
+      // CSI Spatial Distribution (priority 7 — after detected regions, before spatial OCR)
+      const csiSpatialText = buildCsiSpatialSection((page.pageIntelligence as any)?.csiSpatialMap);
+      if (csiSpatialText) {
+        const pageLabel = page.drawingNumber || page.name;
+        sections.push({
+          header: `CSI SPATIAL DISTRIBUTION — Page ${pageNumber} (${pageLabel})`,
+          content: csiSpatialText,
+          priority: 7,
+        });
+        dataSummary.push(`CSI spatial heatmap for Page ${pageNumber}`);
+      }
     }
 
     // ─── Spatial Intelligence: map OCR words to YOLO regions ───
@@ -318,6 +332,18 @@ export async function POST(req: Request) {
       dataSummary.push("Auto-generated project intelligence report");
     }
 
+    // CSI Network Graph (priority 1 — project-wide division relationships)
+    const csiGraphText = buildCsiGraphSection((project as any).projectIntelligence?.csiGraph);
+    if (csiGraphText) {
+      const graphData = (project as any).projectIntelligence?.csiGraph;
+      sections.push({
+        header: "CSI NETWORK GRAPH — Project Division Relationships",
+        content: csiGraphText,
+        priority: 1,
+      });
+      dataSummary.push(`CSI network graph with ${graphData?.nodes?.length || 0} divisions and ${graphData?.clusters?.length || 0} cluster(s)`);
+    }
+
     // Aggregate CSI codes across project (priority 4)
     const allCsiSet = new Map<string, { description: string; trade: string; pages: number[] }>();
     for (const page of allPages) {
@@ -366,9 +392,20 @@ export async function POST(req: Request) {
     }
   }
 
+  // ─── Fetch custom system prompt if configured ──────────────
+  let customSystemPrompt: string | undefined;
+  try {
+    const [companyConfig] = await db
+      .select({ pipelineConfig: companies.pipelineConfig })
+      .from(companies)
+      .where(eq(companies.id, session?.user?.companyId || project.companyId))
+      .limit(1);
+    customSystemPrompt = (companyConfig?.pipelineConfig as any)?.llm?.systemPrompt;
+  } catch { /* ignore */ }
+
   // ─── Build messages array ──────────────────────────────────
   const contextText = assembleContext(sections, contextBudget);
-  const systemPrompt = buildSystemPrompt(dataSummary);
+  const systemPrompt = buildSystemPrompt(dataSummary, customSystemPrompt);
 
   // Single system message with prompt + context (avoids Anthropic adapter bug)
   const systemContent = contextText

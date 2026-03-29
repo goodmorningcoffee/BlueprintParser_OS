@@ -3,10 +3,11 @@ import type { TextractPageData } from "@/types";
 /**
  * Drawing number pattern — matches common architectural/engineering formats:
  * A-100, E-345, S-201, M-001, P-101, A1.01, AS-100, MEP-200, etc.
+ * Also matches: S3, DM1, A-1, S3.1 (short formats without zero-padding)
  * Also matches numbered variants like A-100A, E-345.1
  */
 const DRAWING_NUMBER_RE =
-  /^[A-Z]{1,4}[-.]?\d{2,4}(?:[A-Z])?(?:\.\d{1,2})?$/i;
+  /^[A-Z]{1,4}[-.]?\d{1,4}(?:[A-Z])?(?:\.\d{1,2})?$/i;
 
 /**
  * Title block region: bottom-right of the page.

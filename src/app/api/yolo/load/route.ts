@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { projects, pages, annotations, models } from "@/lib/db/schema";
+import { projects, pages, annotations, models, companies } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
@@ -47,6 +47,11 @@ export async function POST(req: Request) {
     .from(models)
     .where(eq(models.id, modelId))
     .limit(1);
+
+  // Extract class-level CSI codes and keywords from model config
+  const modelConfig = (model?.config as Record<string, unknown>) || {};
+  const classCsiCodes = (modelConfig.classCsiCodes as Record<string, string[]>) || {};
+  const classKeywords = (modelConfig.classKeywords as Record<string, string[]>) || {};
 
   const outputPrefix = `${project.dataUrl}/yolo-output/${modelName}/`;
 
@@ -98,8 +103,9 @@ export async function POST(req: Request) {
       for (const det of detections) {
         const [x1, y1, x2, y2] = det.bbox_normalized || det.bbox || [0, 0, 0, 0];
 
+        const className = det.class_name || `class_${det.class_id}`;
         allValues.push({
-          name: det.class_name || `class_${det.class_id}`,
+          name: className,
           minX: x1,
           minY: y1,
           maxX: x2,
@@ -111,6 +117,8 @@ export async function POST(req: Request) {
             modelName: modelName,
             classId: det.class_id,
             confidence: det.confidence,
+            csiCodes: classCsiCodes[className] || [],
+            keywords: classKeywords[className] || [],
           },
           source: "yolo",
           projectId: project.id,
@@ -187,7 +195,18 @@ export async function POST(req: Request) {
         .from(pages)
         .where(eq(pages.projectId, project.id));
 
-      const rules = getEffectiveRules();
+      // Fetch company heuristic config
+      let companyHeuristics: any[] | undefined;
+      try {
+        const [company] = await db
+          .select({ pipelineConfig: companies.pipelineConfig })
+          .from(companies)
+          .where(eq(companies.id, project.companyId))
+          .limit(1);
+        companyHeuristics = (company?.pipelineConfig as any)?.heuristics;
+      } catch { /* use defaults */ }
+
+      const rules = getEffectiveRules(companyHeuristics);
 
       // Group YOLO detections by page
       const yoloByPage = new Map<number, Array<{ name: string; minX: number; minY: number; maxX: number; maxY: number; confidence: number }>>();

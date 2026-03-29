@@ -21,9 +21,9 @@ export default function Header() {
             {session.user.role === "admin" && (
               <Link
                 href="/admin"
-                className="text-sm text-[var(--muted)] hover:text-[var(--fg)]"
+                className="text-sm text-[var(--muted)] hover:text-[var(--fg)] px-3 py-1.5 border border-[var(--border)] rounded hover:border-[var(--fg)]/30"
               >
-                Admin
+                Admin Dashboard
               </Link>
             )}
             <button

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { projects, pages } from "@/lib/db/schema";
+import { projects, pages, companies } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { getS3Url, uploadToS3 } from "@/lib/s3";
@@ -13,6 +13,7 @@ import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
+import { computeCsiSpatialMap } from "@/lib/csi-spatial";
 import { analyzeProject } from "@/lib/project-analysis";
 
 const PAGE_CONCURRENCY = 20;
@@ -97,6 +98,17 @@ export async function processProject(projectId: number): Promise<{
       console.warn("Thumbnail generation failed:", err);
     }
 
+    // Fetch company heuristic config for this project
+    let companyHeuristics: any[] | undefined;
+    try {
+      const [company] = await db
+        .select({ pipelineConfig: companies.pipelineConfig })
+        .from(companies)
+        .where(eq(companies.id, project.companyId))
+        .limit(1);
+      companyHeuristics = (company?.pipelineConfig as any)?.heuristics;
+    } catch { /* ignore — use built-in defaults */ }
+
     // Process pages in parallel with concurrency limit
     const pageNums = Array.from({ length: numPages }, (_, i) => i + 1);
 
@@ -173,7 +185,7 @@ export async function processProject(projectId: number): Promise<{
 
         // Run heuristic engine (text-only mode — no YOLO data during initial processing)
         try {
-          const rules = getEffectiveRules();
+          const rules = getEffectiveRules(companyHeuristics);
           const inferences = runHeuristicEngine(rules, {
             rawText: rawText || "",
             textRegions: (pageIntelligence as any)?.textRegions,
@@ -205,6 +217,22 @@ export async function processProject(projectId: number): Promise<{
           }
         } catch (err) {
           console.error(`[processing] Table classification FAILED for page ${pageNum}:`, err);
+        }
+
+        // Compute CSI spatial heatmap (OCR-only — no YOLO data during initial processing)
+        try {
+          const spatialMap = computeCsiSpatialMap(
+            pageNum,
+            textAnnotationResult.annotations,
+            undefined, // YOLO not available during initial processing
+            (pageIntelligence as any)?.classifiedTables,
+          );
+          if (spatialMap) {
+            if (!pageIntelligence) pageIntelligence = {};
+            (pageIntelligence as any).csiSpatialMap = spatialMap;
+          }
+        } catch (err) {
+          console.error(`[processing] CSI spatial map FAILED for page ${pageNum}:`, err);
         }
 
         // Build page data
@@ -295,10 +323,17 @@ export async function processProject(projectId: number): Promise<{
         }))
       );
 
+      // Preserve user-set fields (classCsiOverrides) when regenerating intelligence
+      const [currentProject] = await db.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, project.id));
+      const existingUserConfig = (currentProject?.pi as any)?.classCsiOverrides;
+      const mergedIntelligence = existingUserConfig
+        ? { ...intelligence, classCsiOverrides: existingUserConfig }
+        : intelligence;
+
       await db
         .update(projects)
         .set({
-          projectIntelligence: intelligence,
+          projectIntelligence: mergedIntelligence,
           projectSummary: summary,
         })
         .where(eq(projects.id, project.id));

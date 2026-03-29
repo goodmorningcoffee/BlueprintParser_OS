@@ -64,6 +64,8 @@ interface ViewerState {
   setPublicId: (id: string) => void;
   isDemo: boolean;
   setIsDemo: (v: boolean) => void;
+  projectIntelligenceData: any;
+  setProjectIntelligenceData: (data: any) => void;
   showLabelingWizard: boolean;
   setShowLabelingWizard: (v: boolean) => void;
   labelingWizardStep: number;
@@ -169,6 +171,12 @@ interface ViewerState {
   showCsiPanel: boolean;
   toggleCsiPanel: () => void;
 
+  // ─── Page Intelligence ─────────────────────────────────
+  showPageIntelPanel: boolean;
+  togglePageIntelPanel: () => void;
+  pageIntelligence: Record<number, any>;
+  setPageIntelligence: (pageNum: number, data: any) => void;
+
   // ─── Takeoff ────────────────────────────────────────────
   showTakeoffPanel: boolean;
   toggleTakeoffPanel: () => void;
@@ -255,6 +263,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setPublicId: (publicId) => set({ publicId }),
   isDemo: false,
   setIsDemo: (isDemo) => set({ isDemo }),
+  projectIntelligenceData: null,
+  setProjectIntelligenceData: (data) => set({ projectIntelligenceData: data }),
   showLabelingWizard: false,
   setShowLabelingWizard: (showLabelingWizard) => set({ showLabelingWizard }),
   labelingWizardStep: 1,
@@ -281,7 +291,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
   textAnnotations: {},
   setTextAnnotations: (pageNum, data) =>
     set((s) => ({ textAnnotations: { ...s.textAnnotations, [pageNum]: data } })),
-  showTextAnnotations: true,
+  showTextAnnotations: false,
   toggleTextAnnotations: () => set((s) => ({ showTextAnnotations: !s.showTextAnnotations })),
   activeTextAnnotationTypes: {},
   setTextAnnotationType: (type, active) =>
@@ -314,7 +324,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
 
   showTextPanel: false,
   toggleTextPanel: () => set((s) => ({ showTextPanel: !s.showTextPanel })),
-  showChatPanel: false,
+  showChatPanel: true,
   toggleChatPanel: () => set((s) => ({ showChatPanel: !s.showChatPanel })),
 
   chatMessages: [],
@@ -361,7 +371,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
   annotationPanelCollapsed: false,
   toggleAnnotationPanel: () => set((s) => ({ annotationPanelCollapsed: !s.annotationPanelCollapsed })),
 
-  showKeynotes: true,
+  showKeynotes: false,
   toggleKeynotes: () => set((s) => ({ showKeynotes: !s.showKeynotes })),
   activeKeynoteFilter: null,
   setKeynoteFilter: (activeKeynoteFilter) => set({ activeKeynoteFilter }),
@@ -378,6 +388,11 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setAllCsiCodes: (allCsiCodes) => set({ allCsiCodes }),
   showCsiPanel: false,
   toggleCsiPanel: () => set((s) => ({ showCsiPanel: !s.showCsiPanel })),
+
+  showPageIntelPanel: false,
+  togglePageIntelPanel: () => set((s) => ({ showPageIntelPanel: !s.showPageIntelPanel })),
+  pageIntelligence: {},
+  setPageIntelligence: (pageNum, data) => set((s) => ({ pageIntelligence: { ...s.pageIntelligence, [pageNum]: data } })),
 
   showTakeoffPanel: false,
   toggleTakeoffPanel: () =>
@@ -442,6 +457,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       dataUrl: "",
       publicId: "",
       isDemo: false,
+      projectIntelligenceData: null,
       showLabelingWizard: false,
       labelingWizardStep: 1,
       labelingSessions: [],
@@ -451,7 +467,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       csiCodes: {},
       allTrades: [],
       textAnnotations: {},
-      showTextAnnotations: true,
+      showTextAnnotations: false,
       activeTextAnnotationTypes: {},
       hiddenTextAnnotations: new Set<string>(),
       textAnnotationColors: {},
@@ -467,6 +483,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
       activeCsiFilter: null,
       allCsiCodes: [],
       showCsiPanel: false,
+      showPageIntelPanel: false,
+      pageIntelligence: {},
       sidebarCollapsed: false,
       annotationPanelCollapsed: false,
       showDetections: false,
