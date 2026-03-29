@@ -8,7 +8,7 @@ import { promisify } from "util";
 import { writeFile, readFile, mkdtemp, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import type { TextractPageData, TextractWord, TextractLine } from "@/types";
+import type { TextractPageData, TextractWord, TextractLine, TextractTable, TextractCell, BboxLTWH } from "@/types";
 
 const execFileAsync = promisify(execFile);
 
@@ -31,7 +31,7 @@ export async function analyzePageImage(
 ): Promise<TextractPageData> {
   const command = new AnalyzeDocumentCommand({
     Document: { Bytes: imageBuffer },
-    FeatureTypes: ["LAYOUT"],
+    FeatureTypes: ["LAYOUT", "TABLES"],
   });
 
   const response = await textractClient.send(command);
@@ -101,7 +101,59 @@ export function parseTextractResponse(blocks: Block[]): TextractPageData {
     });
   }
 
-  return { lines, words };
+  // Extract TABLE blocks (from TABLES feature type)
+  const tables: TextractTable[] = [];
+  const blockById = new Map<string, Block>();
+  for (const block of blocks) {
+    if (block.Id) blockById.set(block.Id, block);
+  }
+
+  for (const block of blocks) {
+    if (block.BlockType !== "TABLE" || !block.Geometry?.BoundingBox) continue;
+
+    const tableBB = block.Geometry.BoundingBox;
+    const tableBbox: BboxLTWH = [tableBB.Left || 0, tableBB.Top || 0, tableBB.Width || 0, tableBB.Height || 0];
+
+    const cellIds = block.Relationships?.find((r) => r.Type === "CHILD")?.Ids || [];
+    const cells: TextractCell[] = [];
+    let maxRow = 0;
+    let maxCol = 0;
+
+    for (const cellId of cellIds) {
+      const cellBlock = blockById.get(cellId);
+      if (!cellBlock || cellBlock.BlockType !== "CELL" || !cellBlock.Geometry?.BoundingBox) continue;
+
+      const cellBB = cellBlock.Geometry.BoundingBox;
+      const row = cellBlock.RowIndex || 1;
+      const col = cellBlock.ColumnIndex || 1;
+      if (row > maxRow) maxRow = row;
+      if (col > maxCol) maxCol = col;
+
+      // Get text from child WORD blocks
+      const wordIds = cellBlock.Relationships?.find((r) => r.Type === "CHILD")?.Ids || [];
+      const cellText = wordIds
+        .map((wid) => blockById.get(wid))
+        .filter((b): b is Block => b != null && b.BlockType === "WORD")
+        .map((b) => b.Text || "")
+        .join(" ");
+
+      cells.push({
+        row,
+        col,
+        rowSpan: cellBlock.RowSpan || 1,
+        colSpan: cellBlock.ColumnSpan || 1,
+        text: cellText,
+        bbox: [cellBB.Left || 0, cellBB.Top || 0, cellBB.Width || 0, cellBB.Height || 0],
+        confidence: cellBlock.Confidence || 0,
+      });
+    }
+
+    if (cells.length > 0) {
+      tables.push({ bbox: tableBbox, cells, rowCount: maxRow, colCount: maxCol });
+    }
+  }
+
+  return { lines, words, ...(tables.length > 0 ? { tables } : {}) };
 }
 
 /**

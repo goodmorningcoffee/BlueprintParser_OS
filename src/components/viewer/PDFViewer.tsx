@@ -14,6 +14,8 @@ import DetectionPanel from "./DetectionPanel";
 import CsiPanel from "./CsiPanel";
 import PageIntelligencePanel from "./PageIntelligencePanel";
 import TableParsePanel from "./TableParsePanel";
+import TableCompareModal from "./TableCompareModal";
+import KeynotePanel from "./KeynotePanel";
 
 interface PDFViewerProps {
   pdfUrl: string;
@@ -39,6 +41,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const showCsiPanel = useViewerStore((s) => s.showCsiPanel);
   const showPageIntelPanel = useViewerStore((s) => s.showPageIntelPanel);
   const showTableParsePanel = useViewerStore((s) => s.showTableParsePanel);
+  const showTableCompareModal = useViewerStore((s) => s.showTableCompareModal);
+  const showKeynoteParsePanel = useViewerStore((s) => s.showKeynoteParsePanel);
   const setMode = useViewerStore((s) => s.setMode);
 
   // Keyboard shortcuts: a = pointer/select, v = pan/zoom
@@ -401,7 +405,11 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
         {showCsiPanel && <CsiPanel />}
         {showPageIntelPanel && <PageIntelligencePanel />}
         {showTableParsePanel && <TableParsePanel />}
+        {showKeynoteParsePanel && <KeynotePanel />}
       </div>
+
+      {/* Fullscreen modal overlays */}
+      {showTableCompareModal && pdfDoc && <TableCompareModal pdfDoc={pdfDoc} />}
     </div>
   );
 }

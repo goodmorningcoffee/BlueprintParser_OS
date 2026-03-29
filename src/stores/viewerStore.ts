@@ -11,6 +11,7 @@ import type {
   ScaleCalibrationData,
   TextAnnotation,
   TextAnnotationResult,
+  YoloTag,
 } from "@/types";
 
 interface ViewerState {
@@ -210,15 +211,60 @@ interface ViewerState {
   // ─── Table Parse ───────────────────────────────────────
   showTableParsePanel: boolean;
   toggleTableParsePanel: () => void;
-  tableParseStep: "idle" | "select-region" | "define-column" | "review";
-  setTableParseStep: (step: "idle" | "select-region" | "define-column" | "review") => void;
+  tableParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
+  setTableParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
   tableParseRegion: [number, number, number, number] | null; // [minX, minY, maxX, maxY] normalized
   setTableParseRegion: (bbox: [number, number, number, number] | null) => void;
-  tableParsedGrid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string } | null;
-  setTableParsedGrid: (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string } | null) => void;
+  tableParsedGrid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[] } | null;
+  setTableParsedGrid: (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[] } | null) => void;
   tableParseColumnBBs: [number, number, number, number][]; // user-drawn column BBs
   addTableParseColumnBB: (bb: [number, number, number, number]) => void;
+  tableParseColumnNames: string[]; // user-defined names for each column
+  setTableParseColumnNames: (names: string[]) => void;
+  tableParseRowBBs: [number, number, number, number][]; // user-drawn row BBs
+  addTableParseRowBB: (bb: [number, number, number, number]) => void;
   resetTableParse: () => void;
+  tableParseTab: "all" | "auto" | "manual" | "compare";
+  setTableParseTab: (tab: "all" | "auto" | "manual" | "compare") => void;
+  showTableCompareModal: boolean;
+  toggleTableCompareModal: () => void;
+
+  // ─── Keynote Parse ────────────────────────────────────
+  showKeynoteParsePanel: boolean;
+  toggleKeynoteParsePanel: () => void;
+  keynoteParseTab: "all" | "auto" | "manual";
+  setKeynoteParseTab: (tab: "all" | "auto" | "manual") => void;
+  keynoteParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
+  setKeynoteParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
+  keynoteParseRegion: [number, number, number, number] | null;
+  setKeynoteParseRegion: (bbox: [number, number, number, number] | null) => void;
+  keynoteColumnBBs: [number, number, number, number][];
+  addKeynoteColumnBB: (bb: [number, number, number, number]) => void;
+  keynoteRowBBs: [number, number, number, number][];
+  addKeynoteRowBB: (bb: [number, number, number, number]) => void;
+  keynoteYoloClass: { model: string; className: string } | null;
+  setKeynoteYoloClass: (cls: { model: string; className: string } | null) => void;
+  parsedKeynoteData: { pageNumber: number; keys: { key: string; description: string }[]; yoloClass?: string; tableName?: string }[] | null;
+  setParsedKeynoteData: (data: { pageNumber: number; keys: { key: string; description: string }[]; yoloClass?: string; tableName?: string }[] | null) => void;
+  addParsedKeynote: (entry: { pageNumber: number; keys: { key: string; description: string }[]; yoloClass?: string; tableName?: string }) => void;
+  activeKeynoteHighlight: { pageNumber: number; key: string } | null;
+  setActiveKeynoteHighlight: (h: { pageNumber: number; key: string } | null) => void;
+  resetKeynoteParse: () => void;
+
+  // ─── YOLO Tags ─────────────────────────────────────────
+  yoloTags: YoloTag[];
+  setYoloTags: (tags: YoloTag[]) => void;
+  addYoloTag: (tag: YoloTag) => void;
+  removeYoloTag: (id: string) => void;
+  updateYoloTag: (id: string, updates: Partial<YoloTag>) => void;
+  activeYoloTagId: string | null;
+  setActiveYoloTagId: (id: string | null) => void;
+  yoloTagVisibility: Record<string, boolean>;
+  setYoloTagVisibility: (id: string, visible: boolean) => void;
+  activeYoloTagFilter: string | null;
+  setYoloTagFilter: (id: string | null) => void;
+  yoloTagPickingMode: boolean;
+  setYoloTagPickingMode: (v: boolean) => void;
 
   // ─── Reset ─────────────────────────────────────────────
   resetProjectData: () => void;
@@ -476,13 +522,71 @@ export const useViewerStore = create<ViewerState>((set) => ({
   tableParseColumnBBs: [],
   addTableParseColumnBB: (bb) =>
     set((s) => ({ tableParseColumnBBs: [...s.tableParseColumnBBs, bb] })),
+  tableParseColumnNames: [],
+  setTableParseColumnNames: (tableParseColumnNames) => set({ tableParseColumnNames }),
+  tableParseRowBBs: [],
+  addTableParseRowBB: (bb) =>
+    set((s) => ({ tableParseRowBBs: [...s.tableParseRowBBs, bb] })),
   resetTableParse: () =>
     set({
       tableParseStep: "idle",
       tableParseRegion: null,
       tableParsedGrid: null,
       tableParseColumnBBs: [],
+      tableParseColumnNames: [],
+      tableParseRowBBs: [],
     }),
+  tableParseTab: "all",
+  setTableParseTab: (tableParseTab) => set({ tableParseTab }),
+  showTableCompareModal: false,
+  toggleTableCompareModal: () => set((s) => ({ showTableCompareModal: !s.showTableCompareModal })),
+
+  showKeynoteParsePanel: false,
+  toggleKeynoteParsePanel: () => set((s) => ({ showKeynoteParsePanel: !s.showKeynoteParsePanel })),
+  keynoteParseTab: "all",
+  setKeynoteParseTab: (keynoteParseTab) => set({ keynoteParseTab }),
+  keynoteParseStep: "idle",
+  setKeynoteParseStep: (keynoteParseStep) => set({ keynoteParseStep }),
+  keynoteParseRegion: null,
+  setKeynoteParseRegion: (keynoteParseRegion) => set({ keynoteParseRegion }),
+  keynoteColumnBBs: [],
+  addKeynoteColumnBB: (bb) => set((s) => ({ keynoteColumnBBs: [...s.keynoteColumnBBs, bb] })),
+  keynoteRowBBs: [],
+  addKeynoteRowBB: (bb) => set((s) => ({ keynoteRowBBs: [...s.keynoteRowBBs, bb] })),
+  keynoteYoloClass: null,
+  setKeynoteYoloClass: (keynoteYoloClass) => set({ keynoteYoloClass }),
+  parsedKeynoteData: null,
+  setParsedKeynoteData: (parsedKeynoteData) => set({ parsedKeynoteData }),
+  addParsedKeynote: (entry) => set((s) => ({
+    parsedKeynoteData: [...(s.parsedKeynoteData || []), entry],
+  })),
+  activeKeynoteHighlight: null,
+  setActiveKeynoteHighlight: (activeKeynoteHighlight) => set({ activeKeynoteHighlight }),
+  resetKeynoteParse: () => set({
+    keynoteParseStep: "idle",
+    keynoteParseRegion: null,
+    keynoteColumnBBs: [],
+    keynoteRowBBs: [],
+    keynoteYoloClass: null,
+  }),
+
+  yoloTags: [],
+  setYoloTags: (yoloTags) => set({ yoloTags }),
+  addYoloTag: (tag) => set((s) => ({ yoloTags: [...s.yoloTags, tag] })),
+  removeYoloTag: (id) => set((s) => ({ yoloTags: s.yoloTags.filter((t) => t.id !== id) })),
+  updateYoloTag: (id, updates) =>
+    set((s) => ({
+      yoloTags: s.yoloTags.map((t) => (t.id === id ? { ...t, ...updates } : t)),
+    })),
+  activeYoloTagId: null,
+  setActiveYoloTagId: (activeYoloTagId) => set({ activeYoloTagId }),
+  yoloTagVisibility: {},
+  setYoloTagVisibility: (id, visible) =>
+    set((s) => ({ yoloTagVisibility: { ...s.yoloTagVisibility, [id]: visible } })),
+  activeYoloTagFilter: null,
+  setYoloTagFilter: (activeYoloTagFilter) => set({ activeYoloTagFilter }),
+  yoloTagPickingMode: false,
+  setYoloTagPickingMode: (yoloTagPickingMode) => set({ yoloTagPickingMode }),
 
   resetProjectData: () =>
     set({
@@ -545,9 +649,27 @@ export const useViewerStore = create<ViewerState>((set) => ({
       polygonDrawingMode: "idle",
       polygonVertices: [],
       showTableParsePanel: false,
+      tableParseTab: "all",
       tableParseStep: "idle",
       tableParseRegion: null,
       tableParsedGrid: null,
       tableParseColumnBBs: [],
+      tableParseColumnNames: [],
+      tableParseRowBBs: [],
+      showTableCompareModal: false,
+      showKeynoteParsePanel: false,
+      keynoteParseTab: "all",
+      keynoteParseStep: "idle",
+      keynoteParseRegion: null,
+      keynoteColumnBBs: [],
+      keynoteRowBBs: [],
+      keynoteYoloClass: null,
+      parsedKeynoteData: null,
+      activeKeynoteHighlight: null,
+      yoloTags: [],
+      activeYoloTagId: null,
+      yoloTagVisibility: {},
+      activeYoloTagFilter: null,
+      yoloTagPickingMode: false,
     }),
 }));
