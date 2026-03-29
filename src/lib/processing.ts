@@ -13,6 +13,7 @@ import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
+import { parseSchedules } from "@/lib/schedule-parser";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
 import { analyzeProject } from "@/lib/project-analysis";
 
@@ -217,6 +218,21 @@ export async function processProject(projectId: number): Promise<{
           }
         } catch (err) {
           console.error(`[processing] Table classification FAILED for page ${pageNum}:`, err);
+        }
+
+        // Parse schedule tables into structured row/column data (System 4)
+        try {
+          const intel = pageIntelligence as any;
+          if (intel?.classifiedTables?.length > 0) {
+            const parsed = parseSchedules(intel.classifiedTables, textractData, pageNum);
+            if (parsed.length > 0) {
+              if (!pageIntelligence) pageIntelligence = {};
+              (pageIntelligence as any).parsedRegions = parsed;
+              console.log(`[processing] Page ${pageNum}: parsed ${parsed.length} schedule(s)`);
+            }
+          }
+        } catch (err) {
+          console.error(`[processing] Schedule parsing FAILED for page ${pageNum}:`, err);
         }
 
         // Compute CSI spatial heatmap (OCR-only — no YOLO data during initial processing)

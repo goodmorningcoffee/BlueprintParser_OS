@@ -15,6 +15,7 @@ export default function PageIntelligencePanel() {
     regions: true,
     heuristics: true,
     tables: true,
+    parsedRegions: true,
   });
   const [copied, setCopied] = useState(false);
 
@@ -83,6 +84,25 @@ export default function PageIntelligencePanel() {
         for (const r of nonParagraph) {
           const csi = r.csiTags?.length ? ` [${r.csiTags.map((c: any) => `CSI ${c.code}`).join(", ")}]` : "";
           lines.push(`  ${r.type}: ${r.wordCount} words${r.headerText ? `, "${r.headerText}"` : ""}${r.columnCount ? `, ${r.columnCount} cols` : ""}${csi}`);
+        }
+      }
+    }
+
+    if (intel.parsedRegions?.length > 0) {
+      lines.push(`\nParsed Regions (${intel.parsedRegions.length}):`);
+      for (const pr of intel.parsedRegions) {
+        const csi = pr.csiTags?.length ? ` [${pr.csiTags.map((c: any) => `CSI ${c.code}`).join(", ")}]` : "";
+        lines.push(`  ${pr.category} (${Math.round(pr.confidence * 100)}%)${csi}`);
+        if (pr.type === "schedule" && pr.data) {
+          const d = pr.data as any;
+          lines.push(`    ${d.columnCount} columns, ${d.rowCount} rows`);
+          if (d.tagColumn) lines.push(`    Tag column: ${d.tagColumn}`);
+          lines.push(`    Headers: ${d.headers?.join(" | ")}`);
+          for (const row of (d.rows || []).slice(0, 3)) {
+            const vals = d.headers.map((h: string) => row[h] || "").join(" | ");
+            lines.push(`    ${vals}`);
+          }
+          if (d.rowCount > 3) lines.push(`    ... (${d.rowCount - 3} more rows)`);
         }
       }
     }
@@ -220,6 +240,80 @@ export default function PageIntelligencePanel() {
                       {t.evidence?.length > 0 && (
                         <div className="text-[9px] text-[var(--muted)] mt-0.5">
                           Evidence: {t.evidence.join(", ")}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {/* Parsed Regions (System 4 — extracted schedule/keynote data) */}
+            {intel.parsedRegions?.length > 0 && (
+              <Section title={`Parsed Data (${intel.parsedRegions.length})`} sectionKey="parsedRegions" expanded={expandedSections} onToggle={toggleSection}>
+                <div className="space-y-2">
+                  {intel.parsedRegions.map((pr: any, i: number) => (
+                    <div key={i}>
+                      <div className="flex items-center gap-1 text-[11px]">
+                        <span className="font-medium text-green-400">{pr.category}</span>
+                        <span className="text-[var(--muted)]">({Math.round(pr.confidence * 100)}%)</span>
+                      </div>
+                      {pr.csiTags?.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {pr.csiTags.map((c: any, j: number) => (
+                            <span key={j} className="text-[9px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono">
+                              CSI {c.code}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Schedule data table preview */}
+                      {pr.type === "schedule" && pr.data && (
+                        <div className="mt-1">
+                          <div className="text-[10px] text-[var(--muted)]">
+                            {pr.data.columnCount} cols, {pr.data.rowCount} rows
+                            {pr.data.tagColumn && (
+                              <span className="ml-1 text-green-400">tag: {pr.data.tagColumn}</span>
+                            )}
+                          </div>
+                          {/* Mini table preview */}
+                          <div className="mt-1 overflow-x-auto">
+                            <table className="text-[9px] border-collapse w-full">
+                              <thead>
+                                <tr>
+                                  {(pr.data.headers || []).map((h: string, hi: number) => (
+                                    <th
+                                      key={hi}
+                                      className="border border-[var(--border)] px-1 py-0.5 text-left font-semibold text-[var(--fg)] bg-[var(--surface)]"
+                                    >
+                                      {h}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(pr.data.rows || []).slice(0, 5).map((row: any, ri: number) => (
+                                  <tr key={ri}>
+                                    {(pr.data.headers || []).map((h: string, ci: number) => (
+                                      <td
+                                        key={ci}
+                                        className="border border-[var(--border)] px-1 py-0.5 text-[var(--muted)] max-w-[80px] truncate"
+                                        title={row[h] || ""}
+                                      >
+                                        {row[h] || ""}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {pr.data.rowCount > 5 && (
+                              <div className="text-[9px] text-[var(--muted)] mt-0.5 italic">
+                                +{pr.data.rowCount - 5} more rows
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>

@@ -290,6 +290,44 @@ export interface PageIntelligence {
   textRegions?: TextRegion[];
   heuristicInferences?: HeuristicInference[];
   classifiedTables?: ClassifiedTable[];
+  parsedRegions?: ParsedRegion[];
+}
+
+// ─── Parsed Region types (System 4: structured data extraction) ──
+
+export type ParsedRegionType = "schedule" | "keynote" | "legend" | "notes";
+
+export interface ParsedRegion {
+  id: string;
+  type: ParsedRegionType;
+  category: string;              // "door-schedule", "keynote-table", "symbol-legend", etc.
+  bbox: BboxLTWH;               // region location on page
+  confidence: number;
+  csiTags?: CsiCode[];
+  data: ScheduleData | KeynoteData | LegendData | NotesData;
+}
+
+export interface ScheduleData {
+  headers: string[];
+  rows: Record<string, string>[];  // { "TAG": "D-01", "TYPE": "Hollow Metal", "WIDTH": "3'-0\"" }
+  tagColumn?: string;              // which column has the item tags
+  rowCount: number;
+  columnCount: number;
+}
+
+export interface KeynoteData {
+  keynotes: { key: string; description: string; shapeClass?: string }[];
+  isPageSpecific: boolean;
+}
+
+export interface LegendData {
+  symbols: { yoloClass: string; description: string }[];
+}
+
+export interface NotesData {
+  title: string;
+  notes: string[];
+  isBoilerplate?: boolean[];
 }
 
 // ─── Project Intelligence types ─────────────────────────────

@@ -207,6 +207,19 @@ interface ViewerState {
   undoLastVertex: () => void;
   resetPolygonDrawing: () => void;
 
+  // ─── Table Parse ───────────────────────────────────────
+  showTableParsePanel: boolean;
+  toggleTableParsePanel: () => void;
+  tableParseStep: "idle" | "select-region" | "define-column" | "review";
+  setTableParseStep: (step: "idle" | "select-region" | "define-column" | "review") => void;
+  tableParseRegion: [number, number, number, number] | null; // [minX, minY, maxX, maxY] normalized
+  setTableParseRegion: (bbox: [number, number, number, number] | null) => void;
+  tableParsedGrid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string } | null;
+  setTableParsedGrid: (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string } | null) => void;
+  tableParseColumnBBs: [number, number, number, number][]; // user-drawn column BBs
+  addTableParseColumnBB: (bb: [number, number, number, number]) => void;
+  resetTableParse: () => void;
+
   // ─── Reset ─────────────────────────────────────────────
   resetProjectData: () => void;
 }
@@ -442,6 +455,35 @@ export const useViewerStore = create<ViewerState>((set) => ({
   resetPolygonDrawing: () =>
     set({ polygonDrawingMode: "idle", polygonVertices: [] }),
 
+  showTableParsePanel: false,
+  toggleTableParsePanel: () =>
+    set((s) => ({
+      showTableParsePanel: !s.showTableParsePanel,
+      // Reset state when closing
+      ...(!s.showTableParsePanel ? {} : {
+        tableParseStep: "idle" as const,
+        tableParseRegion: null,
+        tableParsedGrid: null,
+        tableParseColumnBBs: [],
+      }),
+    })),
+  tableParseStep: "idle",
+  setTableParseStep: (tableParseStep) => set({ tableParseStep }),
+  tableParseRegion: null,
+  setTableParseRegion: (tableParseRegion) => set({ tableParseRegion }),
+  tableParsedGrid: null,
+  setTableParsedGrid: (tableParsedGrid) => set({ tableParsedGrid }),
+  tableParseColumnBBs: [],
+  addTableParseColumnBB: (bb) =>
+    set((s) => ({ tableParseColumnBBs: [...s.tableParseColumnBBs, bb] })),
+  resetTableParse: () =>
+    set({
+      tableParseStep: "idle",
+      tableParseRegion: null,
+      tableParsedGrid: null,
+      tableParseColumnBBs: [],
+    }),
+
   resetProjectData: () =>
     set({
       pageNumber: 1,
@@ -502,5 +544,10 @@ export const useViewerStore = create<ViewerState>((set) => ({
       calibrationPoints: {},
       polygonDrawingMode: "idle",
       polygonVertices: [],
+      showTableParsePanel: false,
+      tableParseStep: "idle",
+      tableParseRegion: null,
+      tableParsedGrid: null,
+      tableParseColumnBBs: [],
     }),
 }));

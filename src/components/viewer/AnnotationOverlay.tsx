@@ -148,6 +148,11 @@ export default function AnnotationOverlay({
   const resetPolygonDrawing = useViewerStore((s) => s.resetPolygonDrawing);
   const undoLastVertex = useViewerStore((s) => s.undoLastVertex);
   const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
+  const tableParseStep = useViewerStore((s) => s.tableParseStep);
+  const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
+  const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
+  const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
+  const tableParseColumnBBs = useViewerStore((s) => s.tableParseColumnBBs);
 
   const pageAnnotations = annotations.filter((a) => {
     if (a.pageNumber !== pageNumber) return false;
@@ -263,15 +268,57 @@ export default function AnnotationOverlay({
       }
     }
 
-    // Draw in-progress rectangle
+    // Draw in-progress rectangle (markup or table parse)
     if (drawing) {
-      ctx.strokeStyle = "#00ff88";
+      const isTableParse = tableParseStep === "select-region" || tableParseStep === "define-column";
+      const isColumn = tableParseStep === "define-column";
+      // Magenta for region/rows, darker rose for columns
+      ctx.strokeStyle = isTableParse ? (isColumn ? "#9f1239" : "#e879a0") : "#00ff88";
       ctx.lineWidth = 2;
       ctx.setLineDash([5, 5]);
       const dx = drawEnd.x - drawStart.x;
       const dy = drawEnd.y - drawStart.y;
       ctx.strokeRect(drawStart.x, drawStart.y, dx, dy);
+      if (isTableParse) {
+        ctx.fillStyle = isColumn ? "rgba(159,18,57,0.06)" : "rgba(232,121,160,0.06)";
+        ctx.fillRect(drawStart.x, drawStart.y, dx, dy);
+        ctx.setLineDash([]);
+        ctx.font = "bold 11px sans-serif";
+        ctx.fillStyle = isColumn ? "#9f1239" : "#e879a0";
+        ctx.fillText(
+          isColumn ? "Column" : "Table Region",
+          Math.min(drawStart.x, drawEnd.x) + 4,
+          Math.min(drawStart.y, drawEnd.y) - 4
+        );
+      }
       ctx.setLineDash([]);
+    }
+
+    // Draw table parse region overlay (persistent magenta border around selected region)
+    if (tableParseRegion) {
+      const [rMinX, rMinY, rMaxX, rMaxY] = tableParseRegion;
+      ctx.strokeStyle = "#e879a0";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 4]);
+      ctx.strokeRect(rMinX * width, rMinY * height, (rMaxX - rMinX) * width, (rMaxY - rMinY) * height);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(232,121,160,0.03)";
+      ctx.fillRect(rMinX * width, rMinY * height, (rMaxX - rMinX) * width, (rMaxY - rMinY) * height);
+      ctx.font = "bold 11px sans-serif";
+      ctx.fillStyle = "rgba(232,121,160,0.85)";
+      ctx.fillText("Table Parse Region", rMinX * width + 4, rMinY * height - 4);
+    }
+
+    // Draw user-defined column BBs (darker rose)
+    for (const cbb of tableParseColumnBBs) {
+      const [cMinX, cMinY, cMaxX, cMaxY] = cbb;
+      ctx.strokeStyle = "#9f1239";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(cMinX * width, cMinY * height, (cMaxX - cMinX) * width, (cMaxY - cMinY) * height);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(159,18,57,0.05)";
+      ctx.fillRect(cMinX * width, cMinY * height, (cMaxX - cMinX) * width, (cMaxY - cMinY) * height);
     }
 
     // Draw completed area polygons
@@ -440,7 +487,7 @@ export default function AnnotationOverlay({
 
       ctx.restore();
     }
-  }, [pageAnnotations, width, height, drawing, drawStart, drawEnd, selectedId, calibrationMode, calibrationPoints, polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems, mousePos]);
+  }, [pageAnnotations, width, height, drawing, drawStart, drawEnd, selectedId, calibrationMode, calibrationPoints, polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems, mousePos, tableParseStep, tableParseRegion, tableParseColumnBBs]);
 
   const getPos = useCallback(
     (e: React.MouseEvent) => {
@@ -866,6 +913,16 @@ export default function AnnotationOverlay({
         return;
       }
 
+      // Table parse drawing mode: select-region or define-column
+      if (tableParseStep === "select-region" || tableParseStep === "define-column") {
+        e.stopPropagation();
+        setSelectedId(null);
+        setDrawing(true);
+        setDrawStart(pos);
+        setDrawEnd(pos);
+        return;
+      }
+
       // Markup mode: check corners for resize or label for delete on selected
       if (selectedId !== null && mode === "markup") {
         const selAnn = pageAnnotations.find((a) => a.id === selectedId);
@@ -1000,12 +1057,23 @@ export default function AnnotationOverlay({
     // Minimum size check
     if (Math.abs(maxX - minX) < 0.01 || Math.abs(maxY - minY) < 0.01) return;
 
+    // Table parse: finalize BB as region or column
+    if (tableParseStep === "select-region") {
+      setTableParseRegion([minX, minY, maxX, maxY]);
+      // Auto-parse is triggered by the panel watching tableParseRegion
+      return;
+    }
+    if (tableParseStep === "define-column") {
+      useViewerStore.getState().addTableParseColumnBB([minX, minY, maxX, maxY]);
+      return;
+    }
+
     // Show markup dialog instead of prompt()
     setPendingMarkup([minX, minY, maxX, maxY]);
     setMarkupName("");
     setMarkupNote("");
     setTimeout(() => nameInputRef.current?.focus(), 50);
-  }, [drawing, dragging, selectedId, saveDragPosition, drawStart, drawEnd, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo]);
+  }, [drawing, dragging, selectedId, saveDragPosition, drawStart, drawEnd, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, setTableParseRegion]);
 
   const handleDoubleClick = useCallback(() => {
     // Close polygon on double-click
