@@ -113,6 +113,7 @@ export default function CsiGraphPage() {
   const [projectName, setProjectName] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Simulation output
   const [simNodes, setSimNodes] = useState<SimNode[]>([]);
@@ -462,6 +463,38 @@ export default function CsiGraphPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={async () => {
+              setRefreshing(true);
+              try {
+                const res = await fetch(`/api/admin/reprocess`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ projectId: Number(id), scope: "intelligence" }),
+                });
+                if (res.ok) {
+                  // Reload graph data
+                  for (const url of [`/api/projects/${id}`, `/api/demo/projects/${id}`]) {
+                    try {
+                      const r = await fetch(url);
+                      if (r.ok) {
+                        const data = await r.json();
+                        if (data?.projectIntelligence?.csiGraph) {
+                          setGraph(data.projectIntelligence.csiGraph as CsiGraph);
+                        }
+                        break;
+                      }
+                    } catch { /* try next */ }
+                  }
+                }
+              } catch { /* best-effort */ }
+              setRefreshing(false);
+            }}
+            disabled={refreshing}
+            className="text-[10px] px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50"
+          >
+            {refreshing ? "Refreshing..." : "Refresh Graph"}
+          </button>
           {graph.fingerprint && (
             <button
               onClick={() => navigator.clipboard.writeText(graph.fingerprint)}

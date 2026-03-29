@@ -18,6 +18,9 @@ import type {
   TextAnnotation,
   ClassifiedTable,
   BboxLTWH,
+  ParsedRegion,
+  YoloTag,
+  ClientAnnotation,
 } from "@/types";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -202,6 +205,46 @@ function collectFromTables(acc: ZoneAccumulator, tables: ClassifiedTable[]): voi
   }
 }
 
+function collectFromParsedRegions(acc: ZoneAccumulator, regions: ParsedRegion[]): void {
+  for (const region of regions) {
+    if (!region.csiTags || region.csiTags.length === 0) continue;
+    // parsedRegion.bbox is stored as MinMax [minX, minY, maxX, maxY] by saveParsedToIntelligence
+    const bbox = region.bbox;
+    const cx = (bbox[0] + bbox[2]) / 2;
+    const cy = (bbox[1] + bbox[3]) / 2;
+    const zone = classifyZone(cx, cy);
+    for (const tag of region.csiTags) {
+      addCode(acc, zone, tag.code);
+    }
+  }
+}
+
+function collectFromYoloTags(acc: ZoneAccumulator, tags: YoloTag[], pageNumber: number): void {
+  for (const tag of tags) {
+    if (!tag.csiCodes || tag.csiCodes.length === 0) continue;
+    for (const inst of tag.instances) {
+      if (inst.pageNumber !== pageNumber) continue;
+      const { cx, cy } = minMaxCenter(inst.bbox[0], inst.bbox[1], inst.bbox[2], inst.bbox[3]);
+      const zone = classifyZone(cx, cy);
+      for (const code of tag.csiCodes) {
+        addCode(acc, zone, code);
+      }
+    }
+  }
+}
+
+function collectFromDbAnnotations(acc: ZoneAccumulator, annotations: ClientAnnotation[]): void {
+  for (const ann of annotations) {
+    const codes = (ann as any).data?.csiCodes as string[] | undefined;
+    if (!codes || codes.length === 0) continue;
+    const { cx, cy } = minMaxCenter(ann.bbox[0], ann.bbox[1], ann.bbox[2], ann.bbox[3]);
+    const zone = classifyZone(cx, cy);
+    for (const code of codes) {
+      addCode(acc, zone, code);
+    }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Summary generation
 // ═══════════════════════════════════════════════════════════════════
@@ -269,13 +312,19 @@ export function computeCsiSpatialMap(
   textAnnotations: TextAnnotation[],
   yoloDetections?: YoloDetectionInput[],
   classifiedTables?: ClassifiedTable[],
+  parsedRegions?: ParsedRegion[],
+  yoloTags?: YoloTag[],
+  dbAnnotations?: ClientAnnotation[],
 ): CsiSpatialMap | null {
   const acc = createAccumulator();
 
-  // Collect from all three sources
+  // Collect from all sources
   collectFromAnnotations(acc, textAnnotations);
   if (yoloDetections) collectFromYoloDetections(acc, yoloDetections);
   if (classifiedTables) collectFromTables(acc, classifiedTables);
+  if (parsedRegions) collectFromParsedRegions(acc, parsedRegions);
+  if (yoloTags) collectFromYoloTags(acc, yoloTags, pageNumber);
+  if (dbAnnotations) collectFromDbAnnotations(acc, dbAnnotations);
 
   // Nothing found?
   if (acc.bins.size === 0) return null;

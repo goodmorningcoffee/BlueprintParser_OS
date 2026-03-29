@@ -470,6 +470,7 @@ export interface YoloTag {
   pageNumber?: number;                 // for page-scoped tags
   description?: string;                // from keynote/schedule parsing
   color?: string;                      // user-customizable
+  csiCodes?: string[];                 // CSI codes inherited from parsed region (e.g., ["08 11 13"])
   instances: YoloTagInstance[];
 }
 

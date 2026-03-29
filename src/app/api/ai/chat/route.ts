@@ -15,6 +15,8 @@ import {
   buildProjectSummarySection,
   buildCsiSpatialSection,
   buildCsiGraphSection,
+  buildParsedDataCsiSection,
+  buildParsedTablesSection,
   assembleContext,
   getContextBudget,
   DEFAULT_CONTEXT_BUDGET,
@@ -227,6 +229,28 @@ export async function POST(req: Request) {
       if (intelResult) {
         sections.push(...intelResult.sections);
         dataSummary.push(...intelResult.summaryLines);
+      }
+
+      // Parsed table/keynote contents (priority 5.8 — after notes, before detected regions)
+      const parsedTablesText = buildParsedTablesSection((page.pageIntelligence as any)?.parsedRegions);
+      if (parsedTablesText) {
+        sections.push({
+          header: `PARSED TABLES/KEYNOTES — Page ${pageNumber}`,
+          content: parsedTablesText,
+          priority: 5.8,
+        });
+        dataSummary.push(`Parsed table/keynote data for Page ${pageNumber}`);
+      }
+
+      // CSI from Parsed Data (priority 6.2 — after detected regions, before spatial map)
+      const parsedCsiText = buildParsedDataCsiSection((page.pageIntelligence as any)?.parsedRegions);
+      if (parsedCsiText) {
+        sections.push({
+          header: `CSI FROM PARSED DATA — Page ${pageNumber}`,
+          content: parsedCsiText,
+          priority: 6.2,
+        });
+        dataSummary.push(`Parsed data CSI codes for Page ${pageNumber}`);
       }
 
       // CSI Spatial Distribution (priority 7 — after detected regions, before spatial OCR)

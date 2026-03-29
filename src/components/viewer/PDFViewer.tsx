@@ -44,6 +44,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const showTableParsePanel = useViewerStore((s) => s.showTableParsePanel);
   const showTableCompareModal = useViewerStore((s) => s.showTableCompareModal);
   const showKeynoteParsePanel = useViewerStore((s) => s.showKeynoteParsePanel);
+  const symbolSearchActive = useViewerStore((s) => s.symbolSearchActive);
   const symbolSearchResults = useViewerStore((s) => s.symbolSearchResults);
   const symbolSearchLoading = useViewerStore((s) => s.symbolSearchLoading);
   const setMode = useViewerStore((s) => s.setMode);
@@ -167,8 +168,6 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   scaleRef.current = scale;
   const modeRef = useRef(mode);
   modeRef.current = mode;
-  const zoomDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   useEffect(() => {
     function handleWheel(e: WheelEvent) {
       const container = containerRef.current;
@@ -203,19 +202,14 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       const newScrollLeft = mouseX * ratio - (e.clientX - rect.left);
       const newScrollTop = mouseY * ratio - (e.clientY - rect.top);
 
-      // Debounced sync to React state — avoids jittery re-renders during gesture
-      if (zoomDebounceRef.current) clearTimeout(zoomDebounceRef.current);
-      zoomDebounceRef.current = setTimeout(() => {
-        setScale(scaleRef.current);
-      }, 60);
+      // Set scroll BEFORE scale update so they apply in the same frame
+      // This eliminates the 1-frame position jump
+      container.scrollLeft = newScrollLeft;
+      container.scrollTop = newScrollTop;
 
-      // Immediate visual: sync scale to store for CSS transform feedback
+      // Immediate scale update for CSS transform feedback
+      // PDFPage debounces the expensive re-rasterization separately (300ms)
       setScale(newScale);
-
-      requestAnimationFrame(() => {
-        container.scrollLeft = newScrollLeft;
-        container.scrollTop = newScrollTop;
-      });
     }
 
     // Capture phase on document — fires before any child element or native scroll
@@ -278,6 +272,13 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const toggleTips = useViewerStore((s) => s.toggleTips);
   const helpMode = useViewerStore((s) => s.helpMode);
   const toggleHelpMode = useViewerStore((s) => s.toggleHelpMode);
+
+  // Auto-enable help mode in demo so new users see tooltips
+  useEffect(() => {
+    if (isDemo && !helpMode) {
+      useViewerStore.getState().toggleHelpMode();
+    }
+  }, [isDemo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
@@ -360,10 +361,10 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
           >
-            {/* Symbol Search floating results panel */}
-            {(symbolSearchResults || symbolSearchLoading) && (
+            {/* Symbol Search floating panel */}
+            {(symbolSearchActive || symbolSearchResults || symbolSearchLoading) && (
               <div className="absolute top-2 left-2 z-40">
-                <SymbolSearchPanel />
+                <SymbolSearchPanel pdfDoc={pdfDoc} />
               </div>
             )}
             <div

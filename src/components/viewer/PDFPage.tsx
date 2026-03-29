@@ -7,6 +7,9 @@ import SearchHighlightOverlay from "./SearchHighlightOverlay";
 import TextAnnotationOverlay from "./TextAnnotationOverlay";
 import KeynoteOverlay from "./KeynoteOverlay";
 import AnnotationOverlay from "./AnnotationOverlay";
+import GuidedParseOverlay from "./GuidedParseOverlay";
+import DrawingPreviewLayer from "./DrawingPreviewLayer";
+import ParseRegionLayer from "./ParseRegionLayer";
 
 interface PDFPageProps {
   pdfDoc: PDFDocumentProxy;
@@ -52,8 +55,9 @@ export default function PDFPage({
 
         const viewport = page.getViewport({ scale: finalScale });
 
-        // Render at device pixel ratio for crisp output on Retina displays
-        const dpr = window.devicePixelRatio || 1;
+        // Render at device pixel ratio for crisp output, capped at 2 to prevent
+        // excessive pixel volume on high-DPI displays (3x DPR = 9x pixels = freeze)
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
         canvas.width = Math.floor(viewport.width * dpr);
         canvas.height = Math.floor(viewport.height * dpr);
 
@@ -99,7 +103,7 @@ export default function PDFPage({
 
     renderTimerRef.current = setTimeout(() => {
       renderPage(scale);
-    }, 150);
+    }, 300);
 
     return () => {
       if (renderTimerRef.current !== null) clearTimeout(renderTimerRef.current);
@@ -154,6 +158,16 @@ export default function PDFPage({
           cssScale={cssScale}
         />
       )}
+      <GuidedParseOverlay
+        width={pageSize.width}
+        height={pageSize.height}
+        cssScale={cssScale}
+      />
+      <ParseRegionLayer
+        width={pageSize.width}
+        height={pageSize.height}
+        cssScale={cssScale}
+      />
       <AnnotationOverlay
         width={pageSize.width}
         height={pageSize.height}

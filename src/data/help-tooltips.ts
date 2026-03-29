@@ -233,4 +233,128 @@ export const HELP_TOOLTIPS: Record<string, { title: string; body: string }> = {
     title: "Blueprint Canvas",
     body: "Double-click any OCR'd word to search all pages for it. Single-click an annotation to select it (shows in search bar). Ctrl + scroll wheel to zoom. Drag selected markups to reposition. Click X above selected markup to delete.",
   },
+
+  // ═══════════════════════════════════════════════════════════
+  // SYMBOL SEARCH
+  // ═══════════════════════════════════════════════════════════
+  "symbol-search": {
+    title: "Symbol Search",
+    body: "Draw a bounding box around any symbol to find all matching instances across all pages. Uses two-tier matching: fast template match for same-orientation symbols, plus SIFT fallback for rotated/scaled variants. Results highlight in cyan. Adjust confidence slider to filter weak matches.",
+  },
+  "symbol-search-confidence": {
+    title: "Match Confidence",
+    body: "Filter symbol matches by minimum confidence score. Lower = more results but noisier (more false positives). Higher = fewer but more precise matches. Drag to adjust in real-time without re-searching.",
+  },
+  "symbol-search-page": {
+    title: "Page Match",
+    body: "Click to navigate to this page. Match count shows how many instances of the symbol were found on this page.",
+  },
+
+  // ═══════════════════════════════════════════════════════════
+  // KEYNOTE PANEL
+  // ═══════════════════════════════════════════════════════════
+  "keynote-panel-button": {
+    title: "Keynotes Panel",
+    body: "Parse keynote tables from blueprints. All Keynotes shows parsed results across the project. Auto Parse uses multi-method ML. Manual Parse is step-by-step with column/row drawing.",
+  },
+  "keynote-auto-draw": {
+    title: "Draw Keynote Region",
+    body: "Draw a bounding box around ONLY the keynote table grid. Exclude any title text (e.g. 'KEYNOTES') floating above the table — including titles breaks header detection. BB resolution is based on the full PDF, not zoom level.",
+  },
+  "keynote-auto-process": {
+    title: "Process Region",
+    body: "Send the drawn region to the server for multi-method parsing. Three methods run in parallel: OCR word positions, AWS Textract table detection, and OpenCV line detection. The best result is selected automatically.",
+  },
+  "keynote-manual-region": {
+    title: "Draw Keynote Region (Manual)",
+    body: "Step 1: Draw a bounding box around the table grid only. Exclude floating titles above the table. This defines the area for column and row drawing in the next steps.",
+  },
+  "keynote-manual-columns": {
+    title: "Draw Columns",
+    body: "Step 2: Draw the first column around the tag/key column (e.g. 01, 02...), then draw the second column around the description column. Use 'Repeat Right' to auto-fill evenly spaced columns. Small overlap between columns is OK — OCR word centers determine assignment.",
+  },
+  "keynote-manual-rows": {
+    title: "Draw Rows",
+    body: "Step 3: Draw a bounding box around one row, then click 'Repeat Down' to auto-fill evenly spaced rows down to the region boundary. Small overlap between rows is OK.",
+  },
+  "keynote-manual-parse": {
+    title: "Parse Keynotes",
+    body: "Extract key-description pairs from the column/row intersections using OCR word positions. Each row becomes a keynote entry. Results appear in the All Keynotes tab.",
+  },
+  "keynote-item": {
+    title: "Keynote Table",
+    body: "Click name to rename. Double-click to navigate to the page. Expand to see individual keynote keys. Click a key to highlight instances on the current page. Pencil icon edits CSI codes and notes per key.",
+  },
+  "keynote-visibility": {
+    title: "Region Visibility",
+    body: "Toggle parsed keynote region outlines (bounding boxes for region, columns, rows) on or off on the canvas. Does not affect keynote shape overlays.",
+  },
+
+  // ═══════════════════════════════════════════════════════════
+  // TABLE / SCHEDULE PANEL
+  // ═══════════════════════════════════════════════════════════
+  "table-panel-button": {
+    title: "Schedules / Tables Panel",
+    body: "Parse table and schedule data from blueprints. All Tables shows parsed results. Auto Parse uses multi-method ML. Manual is step-by-step. Compare/Edit for cell-by-cell editing and verification.",
+  },
+  "table-auto-draw": {
+    title: "Draw Table Region",
+    body: "Draw a bounding box around ONLY the table grid. Exclude any title text (e.g. 'DOOR SCHEDULE') floating above the table — including it breaks header detection. Auto-parse runs immediately after drawing.",
+  },
+  "table-manual-region": {
+    title: "Draw Table Region (Manual)",
+    body: "Step 1: Draw a bounding box around the table grid only. Exclude floating titles. This defines the area for column and row drawing.",
+  },
+  "table-manual-columns": {
+    title: "Draw Columns",
+    body: "Step 2: Draw columns left-to-right. First column should be the tag/key column (D-01, F-03, etc.). Name each column in the input fields. Use 'Repeat Right' to auto-fill evenly spaced columns.",
+  },
+  "table-manual-rows": {
+    title: "Draw Rows",
+    body: "Step 3: Draw one row, then click 'Repeat Down' to auto-fill evenly spaced rows. Small overlap between rows is OK — word centers determine assignment.",
+  },
+  "table-manual-parse": {
+    title: "Parse Table",
+    body: "Extract cell values from column/row intersections using OCR word center-point matching. Results appear in the review section and All Tables tab.",
+  },
+  "table-item": {
+    title: "Parsed Table",
+    body: "Click name to rename. Double-click to navigate to the page. Expand to see rows as tag sub-items. Click a tag to highlight all instances across ALL pages. Current-page tables sort to the top.",
+  },
+  "table-view-edit": {
+    title: "View / Edit",
+    body: "Open the parsed grid in a side-by-side view next to the original PDF crop. Click any cell to edit its text. Click 'Done' to save edits back to the parsed data.",
+  },
+  "table-map-tags": {
+    title: "Map Tags to Drawings",
+    body: "Create tags from the table's tag column. Choose the tag column, then select tag type: 'Free-floating' for plain text codes on blueprints, or 'YOLO Shape' for codes inside detected shapes. Searches all pages for each tag value.",
+  },
+  "table-map-run": {
+    title: "Run Mapping",
+    body: "Search all pages for each tag value in the selected column. Creates YoloTag entries that appear in the YOLO panel's Tags tab. Tags can be clicked to highlight instances and filter pages.",
+  },
+  "table-visibility": {
+    title: "Region Visibility",
+    body: "Toggle parsed table region outlines (bounding boxes for region, columns, rows) on or off on the canvas.",
+  },
+  "table-compare": {
+    title: "Compare / Edit Cells",
+    body: "Select a parsed table to view side-by-side with the original PDF. Click cells to edit text. Edit headers to rename columns. Click 'Done' to save all changes.",
+  },
+
+  // ═══════════════════════════════════════════════════════════
+  // YOLO TAGS TAB
+  // ═══════════════════════════════════════════════════════════
+  "yolo-create-tag": {
+    title: "Create Tag",
+    body: "Enter tag-picking mode — click any YOLO annotation on the canvas to create a named tag from its OCR text. The system scans all pages for matching instances of that text inside the same YOLO class. Tags appear in the tree below.",
+  },
+  "yolo-tag-item": {
+    title: "YOLO Tag",
+    body: "Click to highlight all instances on the canvas and filter pages in the sidebar. Expand to see per-page instance counts and navigate to specific pages. Tags come from three sources: keynote parsing (page-scoped), schedule parsing (project-wide), and manual creation.",
+  },
+  "yolo-tag-visibility": {
+    title: "Tag Visibility",
+    body: "Show or hide this specific tag's highlighting on the canvas. When visible, matching annotations get a colored border and label.",
+  },
 };

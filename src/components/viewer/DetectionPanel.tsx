@@ -5,6 +5,7 @@ import { useViewerStore } from "@/stores/viewerStore";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientAnnotation, YoloTag } from "@/types";
 import ClassGroupHeader from "./ClassGroupHeader";
+import HelpTooltip from "./HelpTooltip";
 import AnnotationListItem from "./AnnotationListItem";
 
 function classColor(name: string): string {
@@ -307,6 +308,7 @@ export default function DetectionPanel() {
         <div className="flex-1 overflow-y-auto flex flex-col">
           {/* Create Tag button */}
           <div className="px-3 py-2 border-b border-[var(--border)]">
+            <HelpTooltip id="yolo-create-tag">
             <button
               onClick={() => {
                 const next = !yoloTagPickingMode;
@@ -321,6 +323,7 @@ export default function DetectionPanel() {
             >
               {yoloTagPickingMode ? "Click a YOLO annotation on canvas..." : "Create Tag"}
             </button>
+            </HelpTooltip>
           </div>
 
           {/* Active tag filter indicator */}

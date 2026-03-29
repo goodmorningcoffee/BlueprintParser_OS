@@ -21,6 +21,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const tableParsedGrid = useViewerStore((s) => s.tableParsedGrid);
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
   const textractData = useViewerStore((s) => s.textractData);
+  const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
 
   const [mode, setMode] = useState<"side-by-side" | "overlay">("side-by-side");
   const [overlayOpacity, setOverlayOpacity] = useState(0.55);
@@ -132,7 +133,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       setLoading(true);
       try {
         const page = await pdfDoc.getPage(pageNumber);
-        const scale = 2; // 2x for readability
+        const scale = 4; // 4x for hi-res comparison
         const viewport = page.getViewport({ scale });
 
         // Render full page to offscreen canvas
@@ -478,11 +479,49 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
 
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-2 border-t border-[var(--border)] bg-[var(--surface)]">
-          <div className="text-[10px] text-[var(--muted)]">
-            {mode === "side-by-side" ? "Click a cell to edit. Tab/Shift+Tab to navigate. Enter to move down." : "Blue overlay shows parsed text positions on original image."}
+          <div className="flex items-center gap-3">
+            <div className="text-[10px] text-[var(--muted)]">
+              {mode === "side-by-side" ? "Click cell to edit. Double-click column header to rename." : "Blue overlay shows parsed text positions on original image."}
+            </div>
+            {mode === "side-by-side" && headers.some((h) => h.startsWith("Column ")) && (
+              <button
+                onClick={() => { setEditingHeader(0); setHeaderEditValue(headers[0]); }}
+                className="text-[9px] px-2 py-1 rounded border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 whitespace-nowrap"
+              >
+                Edit Column Names
+              </button>
+            )}
           </div>
           <button
-            onClick={toggleModal}
+            onClick={() => {
+              // Sync edited grid back to pageIntelligence before closing
+              if (tableParsedGrid) {
+                const store = useViewerStore.getState();
+                const intel = store.pageIntelligence[pageNumber] || {};
+                const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
+                  if (r.type !== "schedule") return r;
+                  // Match by comparing headers — update the first matching table on this page
+                  if (JSON.stringify(r.data?.headers) === JSON.stringify(tableParsedGrid.headers) ||
+                      r.data?.rows?.length === tableParsedGrid.rows.length) {
+                    return {
+                      ...r,
+                      data: {
+                        ...r.data,
+                        headers: tableParsedGrid.headers,
+                        rows: tableParsedGrid.rows,
+                        tagColumn: tableParsedGrid.tagColumn,
+                        tableName: tableParsedGrid.tableName,
+                        rowCount: tableParsedGrid.rows.length,
+                        columnCount: tableParsedGrid.headers.length,
+                      },
+                    };
+                  }
+                  return r;
+                });
+                store.setPageIntelligence(pageNumber, { ...intel, parsedRegions: regions });
+              }
+              toggleModal();
+            }}
             className="px-4 py-1.5 text-xs rounded bg-[var(--accent)] text-white hover:opacity-90"
           >
             Done

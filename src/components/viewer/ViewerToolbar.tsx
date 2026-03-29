@@ -623,6 +623,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       </HelpTooltip>
 
       {/* Schedules/Tables — far right */}
+      <HelpTooltip id="table-panel-button">
       <button
         onClick={toggleTableParsePanel}
         className={`px-2 py-1 text-xs rounded border ${
@@ -634,8 +635,10 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       >
         Schedules/Tables
       </button>
+      </HelpTooltip>
 
       {/* Keynotes — far right */}
+      <HelpTooltip id="keynote-panel-button">
       <button
         onClick={toggleKeynoteParsePanel}
         className={`px-2 py-1 text-xs rounded border ${
@@ -647,6 +650,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       >
         Keynotes
       </button>
+      </HelpTooltip>
     </div>
   );
 }

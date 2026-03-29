@@ -262,3 +262,22 @@ export function detectCsiCodes(
 
   return results;
 }
+
+/**
+ * Detect CSI codes from a parsed table/keynote grid.
+ * Concatenates all cell content and runs standard CSI detection.
+ */
+export function detectCsiFromGrid(
+  headers: string[],
+  rows: Record<string, string>[],
+  config?: Partial<CsiDetectConfig>,
+): CsiCode[] {
+  const parts: string[] = [...headers];
+  for (const row of rows) {
+    for (const val of Object.values(row)) {
+      if (val) parts.push(val);
+    }
+  }
+  const text = parts.join(" ");
+  return detectCsiCodes(text, config);
+}

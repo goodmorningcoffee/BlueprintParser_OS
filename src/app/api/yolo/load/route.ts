@@ -191,7 +191,7 @@ export async function POST(req: Request) {
         .where(and(eq(annotations.projectId, project.id), eq(annotations.source, "yolo")));
 
       const projectPages = await db
-        .select({ id: pages.id, pageNumber: pages.pageNumber, rawText: pages.rawText, pageIntelligence: pages.pageIntelligence })
+        .select({ id: pages.id, pageNumber: pages.pageNumber, rawText: pages.rawText, pageIntelligence: pages.pageIntelligence, csiCodes: pages.csiCodes })
         .from(pages)
         .where(eq(pages.projectId, project.id));
 
@@ -251,6 +251,25 @@ export async function POST(req: Request) {
           }
 
           await db.update(pages).set({ pageIntelligence: updated }).where(eq(pages.id, page.id));
+        }
+
+        // Merge YOLO CSI codes from model class config into page-level csiCodes
+        const allYoloCsi = new Set<string>();
+        for (const codes of Object.values(classCsiCodes)) {
+          for (const code of codes) allYoloCsi.add(code);
+        }
+        if (allYoloCsi.size > 0) {
+          const existingPageCsi = (page.csiCodes || []) as any[];
+          const existingSet = new Set(existingPageCsi.map((c: any) => c.code));
+          const newCsi = [...existingPageCsi];
+          for (const code of allYoloCsi) {
+            if (!existingSet.has(code)) {
+              newCsi.push({ code, description: "From YOLO class config", division: code.substring(0, 2), trade: "" });
+            }
+          }
+          if (newCsi.length > existingPageCsi.length) {
+            await db.update(pages).set({ csiCodes: newCsi }).where(eq(pages.id, page.id));
+          }
         }
       }
       console.log(`[YOLO-LOAD] Post-YOLO heuristic engine ran on ${projectPages.length} pages`);

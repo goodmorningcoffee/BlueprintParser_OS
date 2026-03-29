@@ -13,6 +13,7 @@ import type {
   TextractTable,
   BboxLTWH,
 } from "@/types";
+import { detectCsiFromGrid } from "@/lib/csi-detect";
 
 // ─── Method 1: OCR Word Positions ─────────────────────────
 
@@ -105,17 +106,18 @@ function methodOcrPositions(
     return cells;
   });
 
-  // Header detection with minimum threshold
-  let headerIdx = 0;
+  // Header detection: only use a row as header if it contains known keywords
+  let headerIdx = -1;
   let bestScore = 0;
   for (let r = 0; r < Math.min(3, grid.length); r++) {
     const score = grid[r].filter((c: string) => HEADER_KW.has(c.toUpperCase().trim())).length;
     if (score > bestScore) { bestScore = score; headerIdx = r; }
   }
-  // Only use detected header if it has at least 1 keyword match
-  if (bestScore === 0) headerIdx = 0;
+  if (bestScore === 0) headerIdx = -1; // no keyword match → don't consume any row as header
 
-  const headers = grid[headerIdx].map((c: string, i: number) => c.trim() || `Column ${i + 1}`);
+  const headers = headerIdx >= 0
+    ? grid[headerIdx].map((c: string, i: number) => c.trim() || `Column ${i + 1}`)
+    : colBounds.map((_, i) => `Column ${i + 1}`);
   const dataRows: Record<string, string>[] = [];
   for (let r = 0; r < grid.length; r++) {
     if (r === headerIdx) continue;
@@ -221,10 +223,10 @@ function methodTextractTables(
     }
   }
 
-  // First row as headers
-  const headers = grid[0].map((c, i) => c || `Column ${i + 1}`);
+  // Don't assume first row is headers — use generic column names, keep all rows as data
+  const headers = Array.from({ length: colCount }, (_, i) => `Column ${i + 1}`);
   const dataRows: Record<string, string>[] = [];
-  for (let r = 1; r < grid.length; r++) {
+  for (let r = 0; r < grid.length; r++) {
     const row: Record<string, string> = {};
     let hasContent = false;
     for (let c = 0; c < headers.length; c++) {
@@ -314,14 +316,13 @@ async function methodOpenCvLines(
           .map((w) => w.text)
           .join(" ");
 
-        if (ri === 0) {
-          headers.push(text || `Column ${ci + 1}`);
-        } else {
-          rowData[headers[ci] || `Column ${ci + 1}`] = text;
+        if (ri === 0 && headers.length < numCols) {
+          headers.push(`Column ${ci + 1}`);
         }
+        rowData[headers[ci] || `Column ${ci + 1}`] = text;
       }
 
-      if (ri > 0) {
+      {
         const hasContent = Object.values(rowData).some((v) => v);
         if (hasContent) dataRows.push(rowData);
       }
@@ -348,11 +349,6 @@ async function methodOpenCvLines(
  * merges results, and returns the best grid.
  */
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const body = await req.json();
   const { projectId, pageNumber, regionBbox } = body as {
     projectId: number;
@@ -364,18 +360,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing projectId, pageNumber, or regionBbox" }, { status: 400 });
   }
 
-  try {
-    // Fetch project + page data
-    const [project] = await db
-      .select({ id: projects.id, dataUrl: projects.dataUrl })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
+  // Auth: allow demo projects without session, require auth for non-demo
+  const [project] = await db
+    .select({ id: projects.id, dataUrl: projects.dataUrl, isDemo: projects.isDemo })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
 
-    if (!project) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  if (!project) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+
+  if (!project.isDemo) {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+  }
 
+  try {
     const [pageRow] = await db
       .select({ textractData: pages.textractData })
       .from(pages)
@@ -419,6 +422,12 @@ export async function POST(req: Request) {
 
     // Merge results
     const merged = mergeGrids(results);
+
+    // Auto-detect CSI codes from parsed content (server-side, has fs access)
+    try {
+      const csiCodes = detectCsiFromGrid(merged.headers || [], merged.rows || []);
+      (merged as any).csiTags = csiCodes.map((c) => ({ code: c.code, description: c.description }));
+    } catch { /* CSI detection is best-effort */ }
 
     return NextResponse.json(merged);
   } catch (err) {
