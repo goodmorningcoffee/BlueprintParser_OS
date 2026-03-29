@@ -63,6 +63,10 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     setTextAnnotationFilter,
     activeTakeoffFilter,
     setTakeoffFilter,
+    yoloTags,
+    activeYoloTagFilter,
+    setYoloTagFilter,
+    setActiveYoloTagId,
   } = useViewerStore();
 
   const [thumbnails, setThumbnails] = useState<ThumbnailCache>({});
@@ -353,7 +357,28 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     return counts;
   }, [activeTakeoffFilter, annotations]);
 
-  const isFiltered = isSearchFiltered || isKeynoteFiltered || isAnnotationFiltered || isTradeFiltered || isCsiFiltered || isTextAnnotationFiltered || isTakeoffFiltered;
+  // YOLO Tag filter
+  const activeYoloTag = useMemo(() => {
+    if (!activeYoloTagFilter) return null;
+    return yoloTags.find((t) => t.id === activeYoloTagFilter) || null;
+  }, [activeYoloTagFilter, yoloTags]);
+  const yoloTagFilteredPages = useMemo(() => {
+    if (!activeYoloTag) return [];
+    const pages = new Set<number>();
+    for (const inst of activeYoloTag.instances) pages.add(inst.pageNumber);
+    return [...pages].sort((a, b) => a - b);
+  }, [activeYoloTag]);
+  const isYoloTagFiltered = activeYoloTagFilter !== null && yoloTagFilteredPages.length > 0;
+  const yoloTagPageCounts = useMemo(() => {
+    if (!activeYoloTag) return {};
+    const counts: Record<number, number> = {};
+    for (const inst of activeYoloTag.instances) {
+      counts[inst.pageNumber] = (counts[inst.pageNumber] || 0) + 1;
+    }
+    return counts;
+  }, [activeYoloTag]);
+
+  const isFiltered = isSearchFiltered || isKeynoteFiltered || isAnnotationFiltered || isTradeFiltered || isCsiFiltered || isTextAnnotationFiltered || isTakeoffFiltered || isYoloTagFiltered;
 
   // Check if a page is hidden by active filters
   function isPageHidden(n: number): boolean {
@@ -364,7 +389,8 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
       (isTradeFiltered && !tradeFilteredPages.includes(n)) ||
       (isTextAnnotationFiltered && !textAnnotationFilteredPages.includes(n)) ||
       (isTakeoffFiltered && !takeoffFilteredPages.includes(n)) ||
-      (isCsiFiltered && !csiFilteredPages.includes(n))
+      (isCsiFiltered && !csiFilteredPages.includes(n)) ||
+      (isYoloTagFiltered && !yoloTagFilteredPages.includes(n))
     );
   }
 
@@ -490,6 +516,11 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
               {takeoffCounts[n]}
             </span>
           )}
+          {isYoloTagFiltered && yoloTagPageCounts[n] > 0 && (
+            <span className="bg-cyan-500/20 text-cyan-300 text-[10px] px-1.5 rounded-full shrink-0">
+              {yoloTagPageCounts[n]}
+            </span>
+          )}
         </div>
       </button>
     );
@@ -597,6 +628,19 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
             </span>
             <button
               onClick={() => setTakeoffFilter(null)}
+              className="text-[var(--muted)] hover:text-[var(--fg)] ml-1"
+            >
+              x
+            </button>
+          </div>
+        )}
+        {isYoloTagFiltered && activeYoloTag && (
+          <div className="text-xs text-cyan-400 px-1.5 pb-2 border-b border-[var(--border)] mb-2 flex items-center justify-between">
+            <span>
+              Tag: {activeYoloTag.tagText} ({yoloTagFilteredPages.length} pg, {activeYoloTag.instances.length} inst)
+            </span>
+            <button
+              onClick={() => { setYoloTagFilter(null); setActiveYoloTagId(null); }}
               className="text-[var(--muted)] hover:text-[var(--fg)] ml-1"
             >
               x

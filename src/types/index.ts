@@ -117,9 +117,27 @@ export interface TextractLine {
   bbox: [number, number, number, number];
 }
 
+export interface TextractCell {
+  row: number;          // 1-based row index
+  col: number;          // 1-based column index
+  rowSpan: number;
+  colSpan: number;
+  text: string;
+  bbox: BboxLTWH;
+  confidence: number;
+}
+
+export interface TextractTable {
+  bbox: BboxLTWH;
+  cells: TextractCell[];
+  rowCount: number;
+  colCount: number;
+}
+
 export interface TextractPageData {
   lines: TextractLine[];
   words: TextractWord[];
+  tables?: TextractTable[];  // from Textract TABLES feature
 }
 
 export interface SearchWordMatch {
@@ -437,4 +455,27 @@ export interface SpatialRegion {
 export interface SpatialMappingResult {
   regions: SpatialRegion[];
   unmappedText: string;
+}
+
+// ─── YOLO Tag types ─────────────────────────────────────────
+
+export interface YoloTag {
+  id: string;
+  name: string;                        // user-editable display name
+  tagText: string;                     // the OCR text (e.g., "D-01")
+  yoloClass: string;                   // YOLO class name, "" for free-floating
+  yoloModel: string;                   // YOLO model name, "" for free-floating
+  source: "keynote" | "schedule" | "manual";
+  scope: "page" | "project";
+  pageNumber?: number;                 // for page-scoped tags
+  description?: string;                // from keynote/schedule parsing
+  color?: string;                      // user-customizable
+  instances: YoloTagInstance[];
+}
+
+export interface YoloTagInstance {
+  pageNumber: number;
+  annotationId: number;                // -1 for free-floating
+  bbox: [number, number, number, number]; // [minX, minY, maxX, maxY]
+  confidence: number;
 }

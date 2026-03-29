@@ -58,6 +58,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
     toggleKeynotes,
     showTableParsePanel,
     toggleTableParsePanel,
+    showKeynoteParsePanel,
+    toggleKeynoteParsePanel,
   } = useViewerStore();
 
   const publicId = useViewerStore((s) => s.publicId);
@@ -568,20 +570,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         Intel
       </button>
 
-      {/* Table Parse — between Intel and QTO */}
-      <button
-        onClick={toggleTableParsePanel}
-        className={`px-2 py-1 text-xs rounded border ${
-          showTableParsePanel
-            ? "border-pink-400/65 text-pink-300/85 bg-pink-400/15"
-            : "border-red-400/40 text-red-400/55 hover:text-red-300/65 hover:border-red-400/50"
-        }`}
-        title="Table/Schedule Parser"
-      >
-        Table
-      </button>
-
-      {/* QTO — step 6 (brightest) */}
+      {/* QTO */}
       <HelpTooltip id="qto-button">
         <button
           onClick={toggleTakeoffPanel}
@@ -594,6 +583,32 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           QTO
         </button>
       </HelpTooltip>
+
+      {/* Schedules/Tables — far right */}
+      <button
+        onClick={toggleTableParsePanel}
+        className={`px-2 py-1 text-xs rounded border ${
+          showTableParsePanel
+            ? "border-pink-400/75 text-pink-300/95 bg-pink-400/18"
+            : "border-red-400/45 text-red-400/60 hover:text-red-300/70 hover:border-red-400/55"
+        }`}
+        title="Schedules & Table Parser"
+      >
+        Schedules/Tables
+      </button>
+
+      {/* Keynotes — far right */}
+      <button
+        onClick={toggleKeynoteParsePanel}
+        className={`px-2 py-1 text-xs rounded border ${
+          showKeynoteParsePanel
+            ? "border-amber-400/75 text-amber-300/95 bg-amber-400/18"
+            : "border-red-400/45 text-red-400/60 hover:text-red-300/70 hover:border-red-400/55"
+        }`}
+        title="Keynote Parser"
+      >
+        Keynotes
+      </button>
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useCallback, useEffect } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 
 /**
  * TableParsePanel — Semi-manual table/schedule parsing tool.
@@ -26,11 +27,26 @@ export default function TableParsePanel() {
   const resetTableParse = useViewerStore((s) => s.resetTableParse);
   const tableParseColumnBBs = useViewerStore((s) => s.tableParseColumnBBs);
   const addTableParseColumnBB = useViewerStore((s) => s.addTableParseColumnBB);
+  const toggleTableCompareModal = useViewerStore((s) => s.toggleTableCompareModal);
+  const csiCodes = useViewerStore((s) => s.csiCodes);
+  const tableParseColumnNames = useViewerStore((s) => s.tableParseColumnNames);
+  const setTableParseColumnNames = useViewerStore((s) => s.setTableParseColumnNames);
+  const tableParseRowBBs = useViewerStore((s) => s.tableParseRowBBs);
+  const addTableParseRowBB = useViewerStore((s) => s.addTableParseRowBB);
+  const setPage = useViewerStore((s) => s.setPage);
+  const tableParseTab = useViewerStore((s) => s.tableParseTab);
+  const setTableParseTab = useViewerStore((s) => s.setTableParseTab);
+  const pageNames = useViewerStore((s) => s.pageNames);
+  const annotations = useViewerStore((s) => s.annotations);
+  const addYoloTag = useViewerStore((s) => s.addYoloTag);
 
   const [editingCell, setEditingCell] = useState<{ row: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [editingHeader, setEditingHeader] = useState<number | null>(null);
   const [headerEditValue, setHeaderEditValue] = useState("");
+  const [tagYoloClass, setTagYoloClass] = useState<{ model: string; className: string } | null>(null);
+  const [tagMappingDone, setTagMappingDone] = useState(false);
+  const [tagMappingCount, setTagMappingCount] = useState(0);
 
   const intel = pageIntelligence[pageNumber] as any;
   const pageTextract = textractData[pageNumber];
@@ -49,171 +65,118 @@ export default function TableParsePanel() {
     return intel.parsedRegions.filter((r: any) => r.type === "schedule");
   }, [intel]);
 
-  // ─── Auto-parse: run schedule parser on selected region ─────────
+  // ─── YOLO classes in table region (for tag column class picker) ───
+  const yoloInTableRegion = useMemo(() => {
+    if (!tableParseRegion) return [];
+    const region = tableParseRegion;
+    const pageYolo = annotations.filter(
+      (a) => a.source === "yolo" && a.pageNumber === pageNumber
+    );
+    const inside = pageYolo.filter((a) => {
+      const [minX, minY, maxX, maxY] = a.bbox;
+      return minX >= region[0] && maxX <= region[2] && minY >= region[1] && maxY <= region[3];
+    });
+    const groups: Record<string, { model: string; className: string; count: number }> = {};
+    for (const a of inside) {
+      const model = (a as any).data?.modelName || "unknown";
+      const cls = a.name;
+      const key = `${model}:${cls}`;
+      if (!groups[key]) groups[key] = { model, className: cls, count: 0 };
+      groups[key].count++;
+    }
+    return Object.values(groups).sort((a, b) => b.count - a.count);
+  }, [tableParseRegion, annotations, pageNumber]);
+
+  // ─── Map Tags: create YoloTags from parsed tag column ───
+  const handleMapTags = useCallback(() => {
+    if (!tableParsedGrid?.tagColumn || !tableParsedGrid.rows.length) return;
+    const tagCol = tableParsedGrid.tagColumn;
+    const uniqueTags = new Set<string>();
+    for (const row of tableParsedGrid.rows) {
+      const val = row[tagCol]?.trim();
+      if (val) uniqueTags.add(val);
+    }
+    const allAnns = useViewerStore.getState().annotations;
+    const td = useViewerStore.getState().textractData;
+    let count = 0;
+    for (const tagText of uniqueTags) {
+      // Get description from the first row with this tag
+      const row = tableParsedGrid.rows.find((r) => r[tagCol]?.trim() === tagText);
+      const desc = row
+        ? tableParsedGrid.headers
+            .filter((h) => h !== tagCol)
+            .map((h) => row[h] || "")
+            .join(" ")
+            .trim()
+        : "";
+
+      const instances = mapYoloToOcrText({
+        tagText,
+        yoloClass: tagYoloClass?.className,
+        yoloModel: tagYoloClass?.model,
+        scope: "project",
+        annotations: allAnns,
+        textractData: td,
+      });
+      addYoloTag({
+        id: `schedule-${pageNumber}-${tagText}-${Date.now()}`,
+        name: tagText,
+        tagText,
+        yoloClass: tagYoloClass?.className || "",
+        yoloModel: tagYoloClass?.model || "",
+        source: "schedule",
+        scope: "project",
+        description: desc.slice(0, 200),
+        instances,
+      });
+      count++;
+    }
+    setTagMappingDone(true);
+    setTagMappingCount(count);
+  }, [tableParsedGrid, tagYoloClass, pageNumber, addYoloTag]);
+
+  // ─── Auto-parse: call multi-method API endpoint ─────────
+  const projectId = useViewerStore((s) => s.projectId);
+  const [autoParsing, setAutoParsing] = useState(false);
+  const [autoParseError, setAutoParseError] = useState<string | null>(null);
+  const [autoParseMethodInfo, setAutoParseMethodInfo] = useState<any[] | null>(null);
+
   const autoParseRegion = useCallback(
-    (bbox: [number, number, number, number]) => {
-      if (!pageTextract?.words) return;
+    async (bbox: [number, number, number, number]) => {
+      setAutoParsing(true);
+      setAutoParseError(null);
+      setAutoParseMethodInfo(null);
 
-      // Convert minmax bbox to ltwh for word intersection
-      const regionLTWH: [number, number, number, number] = [
-        bbox[0],
-        bbox[1],
-        bbox[2] - bbox[0],
-        bbox[3] - bbox[1],
-      ];
+      try {
+        const resp = await fetch("/api/table-parse", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, pageNumber, regionBbox: bbox }),
+        });
 
-      // Get words inside region (center-in-bbox)
-      const regionWords = pageTextract.words.filter((w: any) => {
-        const cx = w.bbox[0] + w.bbox[2] / 2;
-        const cy = w.bbox[1] + w.bbox[3] / 2;
-        return cx >= bbox[0] && cx <= bbox[2] && cy >= bbox[1] && cy <= bbox[3];
-      });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error || `API error ${resp.status}`);
+        }
 
-      if (regionWords.length < 4) {
-        setTableParsedGrid({ headers: [], rows: [], tagColumn: undefined });
+        const result = await resp.json();
+        setAutoParseMethodInfo(result.methods || null);
+        setTableParsedGrid({
+          headers: result.headers || [],
+          rows: result.rows || [],
+          tagColumn: result.tagColumn,
+        });
         setTableParseStep("review");
-        return;
-      }
-
-      // Cluster rows by Y-center
-      const ROW_TOL = 0.006;
-      const sorted = [...regionWords].sort(
-        (a: any, b: any) => a.bbox[1] + a.bbox[3] / 2 - (b.bbox[1] + b.bbox[3] / 2)
-      );
-      const rows: { yCenter: number; words: any[] }[] = [];
-      let curRow: any[] = [sorted[0]];
-      let curY = sorted[0].bbox[1] + sorted[0].bbox[3] / 2;
-
-      for (let i = 1; i < sorted.length; i++) {
-        const wy = sorted[i].bbox[1] + sorted[i].bbox[3] / 2;
-        if (Math.abs(wy - curY) <= ROW_TOL) {
-          curRow.push(sorted[i]);
-        } else {
-          const avgY = curRow.reduce((s: number, w: any) => s + w.bbox[1] + w.bbox[3] / 2, 0) / curRow.length;
-          rows.push({ yCenter: avgY, words: curRow.sort((a: any, b: any) => a.bbox[0] - b.bbox[0]) });
-          curRow = [sorted[i]];
-          curY = wy;
-        }
-      }
-      if (curRow.length > 0) {
-        const avgY = curRow.reduce((s: number, w: any) => s + w.bbox[1] + w.bbox[3] / 2, 0) / curRow.length;
-        rows.push({ yCenter: avgY, words: curRow.sort((a: any, b: any) => a.bbox[0] - b.bbox[0]) });
-      }
-
-      if (rows.length < 2) {
-        setTableParsedGrid({ headers: [], rows: [], tagColumn: undefined });
+      } catch (err: any) {
+        console.error("[auto-parse] Failed:", err);
+        setAutoParseError(err.message || "Auto-parse failed");
+        setTableParsedGrid({ headers: [], rows: [] });
         setTableParseStep("review");
-        return;
+      } finally {
+        setAutoParsing(false);
       }
-
-      // Detect columns from X-position clustering
-      const MIN_COL_GAP = 0.015;
-      const allLefts = regionWords.map((w: any) => w.bbox[0] as number).sort((a: number, b: number) => a - b);
-      const clusters: number[][] = [[allLefts[0]]];
-      for (let i = 1; i < allLefts.length; i++) {
-        if (allLefts[i] - allLefts[i - 1] > MIN_COL_GAP) {
-          clusters.push([allLefts[i]]);
-        } else {
-          clusters[clusters.length - 1].push(allLefts[i]);
-        }
-      }
-
-      // Filter to stable columns (appear in 30%+ of rows)
-      const minHits = Math.max(2, Math.floor(rows.length * 0.3));
-      let stableClusters = clusters.filter((c) => c.length >= minHits);
-      if (stableClusters.length < 2) stableClusters = clusters.length >= 2 ? clusters : [];
-
-      if (stableClusters.length < 2) {
-        setTableParsedGrid({ headers: [], rows: [], tagColumn: undefined });
-        setTableParseStep("review");
-        return;
-      }
-
-      // Build column boundaries
-      const colCenters = stableClusters
-        .map((c) => c.reduce((s, x) => s + x, 0) / c.length)
-        .sort((a, b) => a - b);
-
-      const maxRight = Math.max(...regionWords.map((w: any) => w.bbox[0] + w.bbox[2]));
-      const colBounds = colCenters.map((center, i) => ({
-        left: i === 0 ? bbox[0] - 0.005 : (colCenters[i - 1] + center) / 2,
-        right: i === colCenters.length - 1 ? maxRight + 0.005 : (center + colCenters[i + 1]) / 2,
-        center,
-      }));
-
-      // Extract cells
-      const grid = rows.map((row) => {
-        const cells = new Array(colBounds.length).fill("");
-        for (const w of row.words) {
-          const wx = w.bbox[0] + w.bbox[2] / 2;
-          let colIdx = colBounds.findIndex((c) => wx >= c.left && wx < c.right);
-          if (colIdx === -1) {
-            // Nearest column
-            let minDist = Infinity;
-            colBounds.forEach((c, ci) => {
-              const d = Math.abs(wx - c.center);
-              if (d < minDist) { minDist = d; colIdx = ci; }
-            });
-          }
-          if (colIdx >= 0) {
-            cells[colIdx] = cells[colIdx] ? cells[colIdx] + " " + w.text : w.text;
-          }
-        }
-        return cells;
-      });
-
-      // Detect header (first row with most keyword matches)
-      const HEADER_KW = new Set([
-        "NO", "NO.", "NUMBER", "TAG", "MARK", "TYPE", "SIZE", "WIDTH", "HEIGHT",
-        "MATERIAL", "FINISH", "HARDWARE", "REMARKS", "DESCRIPTION", "LOCATION",
-        "QTY", "QUANTITY", "RATING", "FRAME", "GLAZING", "NOTES", "ROOM",
-        "FLOOR", "CEILING", "WALL", "BASE", "MANUFACTURER", "MODEL", "COLOR",
-      ]);
-      let headerIdx = 0;
-      let bestScore = 0;
-      for (let r = 0; r < Math.min(3, grid.length); r++) {
-        const score = grid[r].filter((c: string) => HEADER_KW.has(c.toUpperCase().trim())).length;
-        if (score > bestScore) { bestScore = score; headerIdx = r; }
-      }
-
-      const headers = grid[headerIdx].map((c: string, i: number) => c.trim() || `Column ${i + 1}`);
-      const dataRows: Record<string, string>[] = [];
-      for (let r = 0; r < grid.length; r++) {
-        if (r === headerIdx) continue;
-        const row: Record<string, string> = {};
-        let hasContent = false;
-        for (let c = 0; c < headers.length; c++) {
-          const val = (grid[r][c] || "").trim();
-          row[headers[c]] = val;
-          if (val) hasContent = true;
-        }
-        if (hasContent) dataRows.push(row);
-      }
-
-      // Detect tag column
-      const TAG_RE = /^[A-Z]{0,3}-?\d{1,4}[A-Z]?$/i;
-      const TAG_HEADERS = ["TAG", "MARK", "NO", "NO.", "NUMBER", "NUM", "ITEM"];
-      let tagColumn: string | undefined;
-      for (const h of headers) {
-        if (TAG_HEADERS.some((kw) => h.toUpperCase().trim() === kw)) { tagColumn = h; break; }
-      }
-      if (!tagColumn) {
-        let bestRatio = 0;
-        for (const h of headers) {
-          let tags = 0, nonEmpty = 0;
-          for (const row of dataRows) {
-            const v = (row[h] || "").trim();
-            if (v) { nonEmpty++; if (TAG_RE.test(v)) tags++; }
-          }
-          const ratio = nonEmpty > 0 ? tags / nonEmpty : 0;
-          if (ratio > bestRatio && ratio >= 0.5) { bestRatio = ratio; tagColumn = h; }
-        }
-      }
-
-      setTableParsedGrid({ headers, rows: dataRows, tagColumn });
-      setTableParseStep("review");
     },
-    [pageTextract, setTableParsedGrid, setTableParseStep]
+    [projectId, pageNumber, setTableParsedGrid, setTableParseStep]
   );
 
   // ─── Auto-parse when user draws region on canvas ─────────
@@ -312,6 +275,72 @@ export default function TableParsePanel() {
     [tableParseRegion, addTableParseColumnBB]
   );
 
+  // ─── Repeat row BB downward ──────────────────────────────
+  const repeatRowDown = useCallback(
+    (rowBB: [number, number, number, number]) => {
+      if (!tableParseRegion) return;
+      const rowHeight = rowBB[3] - rowBB[1];
+      const regionBottom = tableParseRegion[3];
+      let y = rowBB[3];
+      while (y + rowHeight * 0.5 < regionBottom) {
+        const bottom = Math.min(y + rowHeight, regionBottom);
+        addTableParseRowBB([rowBB[0], y, rowBB[2], bottom]);
+        y = bottom;
+      }
+    },
+    [tableParseRegion, addTableParseRowBB]
+  );
+
+  // ─── Parse from intersections: columns × rows = cells, OCR fills each ──
+  const parseFromIntersections = useCallback(() => {
+    if (!pageTextract?.words || tableParseColumnBBs.length === 0 || tableParseRowBBs.length === 0) return;
+
+    // Use draw order as canonical order (first drawn = Column A / Row 1)
+    const sortedCols = tableParseColumnBBs;  // draw order = column order
+    const sortedRows = tableParseRowBBs;     // draw order = row order
+
+    // Column names (user-defined or default)
+    const headers = sortedCols.map((_, i) =>
+      tableParseColumnNames[i] || `Column ${String.fromCharCode(65 + i)}`
+    );
+
+    // For each row × column intersection, find OCR words
+    const dataRows: Record<string, string>[] = [];
+    for (const rowBB of sortedRows) {
+      const row: Record<string, string> = {};
+      let hasContent = false;
+      for (let ci = 0; ci < sortedCols.length; ci++) {
+        const colBB = sortedCols[ci];
+        // Cell = intersection of column X-range and row Y-range
+        const cellMinX = colBB[0];
+        const cellMaxX = colBB[2];
+        const cellMinY = rowBB[1];
+        const cellMaxY = rowBB[3];
+
+        // Find OCR words whose centers fall inside this cell
+        const cellWords = (pageTextract.words as any[]).filter((w: any) => {
+          const cx = w.bbox[0] + w.bbox[2] / 2;
+          const cy = w.bbox[1] + w.bbox[3] / 2;
+          return cx >= cellMinX && cx <= cellMaxX && cy >= cellMinY && cy <= cellMaxY;
+        });
+
+        // Sort left-to-right and join
+        const text = cellWords
+          .sort((a: any, b: any) => a.bbox[0] - b.bbox[0])
+          .map((w: any) => w.text)
+          .join(" ");
+
+        row[headers[ci]] = text;
+        if (text) hasContent = true;
+      }
+      if (hasContent) dataRows.push(row);
+    }
+
+    setTableParsedGrid({ headers, rows: dataRows, tagColumn: undefined });
+    setTableParseStep("review");
+    setTableParseTab("auto"); // Switch to auto tab to see the review grid
+  }, [pageTextract, tableParseColumnBBs, tableParseRowBBs, tableParseColumnNames, setTableParsedGrid, setTableParseStep]);
+
   // ─── Parse column BBs into grid: extract words inside each column, Y-cluster into rows ──
   const parseFromColumnBBs = useCallback(() => {
     if (!pageTextract?.words || tableParseColumnBBs.length === 0) return;
@@ -365,7 +394,7 @@ export default function TableParsePanel() {
     }
 
     // Assign column headers
-    const headers = sortedCols.map((_, i) => `Column ${i + 1}`);
+    const headers = sortedCols.map((_, i) => `Column ${String.fromCharCode(65 + i)}`);
     // Try to use first row as header
     const headerRow: string[] = sortedCols.map((_, colIdx) => {
       if (colWordSets[colIdx].length === 0) return "";
@@ -424,22 +453,110 @@ export default function TableParsePanel() {
     return val;
   }
 
+  // ─── Project-wide parsed tables (for "All Tables" tab) ───
+  const allParsedTables = useMemo(() => {
+    const tables: { pageNum: number; region: any; name: string; category: string; rowCount: number; colCount: number; csiTags: any[] }[] = [];
+    for (const [pn, intel] of Object.entries(pageIntelligence)) {
+      const pi = intel as any;
+      if (pi?.parsedRegions) {
+        for (const pr of pi.parsedRegions) {
+          if (pr.type === "schedule") {
+            tables.push({
+              pageNum: Number(pn),
+              region: pr,
+              name: pr.data?.tableName || pr.category || "Unnamed Table",
+              category: pr.category,
+              rowCount: pr.data?.rowCount || pr.data?.rows?.length || 0,
+              colCount: pr.data?.columnCount || pr.data?.headers?.length || 0,
+              csiTags: pr.csiTags || [],
+            });
+          }
+        }
+      }
+    }
+    return tables.sort((a, b) => a.pageNum - b.pageNum);
+  }, [pageIntelligence]);
+
   // ─── Render ─────────────────────────────────────────────
   return (
     <div className="w-80 flex flex-col h-full border-l border-[var(--border)] bg-[var(--bg)]">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
-        <h3 className="text-sm font-semibold text-[var(--fg)]">Table Parser</h3>
+        <h3 className="text-sm font-semibold text-[var(--fg)]">Schedules / Tables</h3>
         <button onClick={toggleTableParsePanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">
           &times;
         </button>
       </div>
 
-      <div className="px-3 py-1.5 border-b border-[var(--border)] text-[10px] text-[var(--muted)]">
-        Page {pageNumber}
+      {/* Tab bar */}
+      <div className="flex border-b border-[var(--border)]">
+        {(["all", "auto", "manual", "compare"] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setTableParseTab(tab)}
+            className={`flex-1 px-1.5 py-1.5 text-[9px] font-medium ${
+              tableParseTab === tab
+                ? "text-pink-300 border-b-2 border-pink-400"
+                : "text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}
+          >
+            {tab === "all" ? "All Tables" : tab === "auto" ? "Auto Parse" : tab === "manual" ? "Manual" : "Compare/Edit Cells"}
+          </button>
+        ))}
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-2">
+        {/* ════════ TAB: All Tables ════════ */}
+        {tableParseTab === "all" && (
+          <div className="space-y-1">
+            {allParsedTables.length === 0 ? (
+              <div className="text-[10px] text-[var(--muted)] text-center py-8 px-2">
+                No parsed tables found.
+                <br />
+                <span className="text-[9px]">Tables are auto-parsed at upload, or use Auto Parse / Manual tabs.</span>
+              </div>
+            ) : (
+              <>
+                <div className="text-[10px] text-[var(--muted)] px-1 pb-1">{allParsedTables.length} table(s)</div>
+                {allParsedTables.map((t, i) => (
+                  <div
+                    key={i}
+                    onDoubleClick={() => setPage(t.pageNum)}
+                    className={`px-2 py-1.5 rounded border cursor-pointer ${
+                      t.pageNum === pageNumber
+                        ? "border-pink-400/30 bg-pink-500/5"
+                        : "border-[var(--border)] hover:bg-[var(--surface-hover)]"
+                    }`}
+                    title="Double-click to go to page"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-medium text-[var(--fg)] truncate">{t.name}</span>
+                      <span className="text-[9px] text-[var(--muted)] whitespace-nowrap ml-1">
+                        {pageNames[t.pageNum] || `p.${t.pageNum}`}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-[var(--muted)]">
+                      {t.colCount} cols, {t.rowCount} rows
+                    </div>
+                    {t.csiTags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-0.5">
+                        {t.csiTags.slice(0, 4).map((c: any, j: number) => (
+                          <span key={j} className="text-[8px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono">
+                            {c.code}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ════════ TAB: Auto Parse ════════ */}
+        {tableParseTab === "auto" && (
+          <>
         {/* ─── Step: Select Region ─────────────────────────── */}
         {(tableParseStep === "idle" || tableParseStep === "select-region") && (
           <>
@@ -448,7 +565,7 @@ export default function TableParsePanel() {
               {tableParseStep === "select-region" ? (
                 <span className="text-pink-300">Drawing mode active — draw a BB around a table on the canvas.</span>
               ) : (
-                "Select a table to parse, or draw a bounding box around one."
+                "Draw a bounding box around the table you want to parse."
               )}
             </div>
 
@@ -464,24 +581,23 @@ export default function TableParsePanel() {
               {tableParseStep === "select-region" ? "Cancel Drawing" : "Draw Table Region"}
             </button>
 
-            {/* Auto-detected tables */}
+            {/* Auto-detected tables — informational only, not click-to-parse */}
             {autoDetectedTables.length > 0 && (
               <div className="space-y-1">
                 <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1">
-                  Auto-Detected Tables
+                  Detected on This Page (draw BB to parse)
                 </div>
                 {autoDetectedTables.map((t: any, i: number) => (
-                  <button
+                  <div
                     key={i}
-                    onClick={() => selectAutoDetected(t)}
-                    className="w-full text-left text-[11px] px-2 py-1.5 rounded border border-[var(--border)] hover:bg-[var(--surface-hover)]"
+                    className="text-[11px] px-2 py-1.5 rounded border border-[var(--border)]/50 text-[var(--muted)]"
                   >
                     <span className="font-medium text-[var(--fg)]">{t.category}</span>
                     <span className="text-[var(--muted)]"> ({Math.round(t.confidence * 100)}%)</span>
                     {t.headerText && (
-                      <div className="text-[10px] text-[var(--muted)] truncate">"{t.headerText}"</div>
+                      <div className="text-[10px] text-[var(--muted)]/70 truncate">"{t.headerText}"</div>
                     )}
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -514,192 +630,365 @@ export default function TableParsePanel() {
           </>
         )}
 
-        {/* ─── Step: Review / Edit Grid ───────────────────── */}
-        {tableParseStep === "review" && tableParsedGrid && (
-          <>
-            {/* Summary bar */}
-            <div className="flex items-center justify-between px-1">
-              <div className="text-[11px] text-[var(--fg)]">
-                <span className="font-medium">{tableParsedGrid.headers.length}</span>
-                <span className="text-[var(--muted)]"> cols, </span>
-                <span className="font-medium">{tableParsedGrid.rows.length}</span>
-                <span className="text-[var(--muted)]"> rows</span>
-                {tableParsedGrid.tagColumn && (
-                  <span className="ml-1.5 text-green-400 text-[10px]">tag: {tableParsedGrid.tagColumn}</span>
+        {/* Loading state */}
+        {autoParsing && (
+          <div className="text-[11px] text-pink-300 px-2 py-3 text-center animate-pulse">
+            Running 3 parsing methods...
+          </div>
+        )}
+
+        {/* Error state */}
+        {autoParseError && (
+          <div className="text-[11px] text-red-400 px-2 py-2 border border-red-500/20 rounded bg-red-500/5">
+            {autoParseError}
+          </div>
+        )}
+
+        {/* After auto-parse succeeds, show success + method breakdown */}
+        {tableParseStep === "review" && tableParsedGrid && !autoParsing && (
+          <div className="space-y-2">
+            <div className="text-[11px] text-green-400 px-2 py-2 border border-green-500/20 rounded bg-green-500/5">
+              Parsed: {tableParsedGrid.headers.length} cols, {tableParsedGrid.rows.length} rows
+              {tableParsedGrid.tagColumn && <span className="ml-1">(tag: {tableParsedGrid.tagColumn})</span>}
+            </div>
+            {/* Method breakdown */}
+            {autoParseMethodInfo && (
+              <div className="px-1 space-y-0.5">
+                <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide">Methods</div>
+                {autoParseMethodInfo.map((m: any, i: number) => (
+                  <div key={i} className="text-[10px] flex items-center justify-between">
+                    <span className={m.confidence > 0 ? "text-[var(--fg)]" : "text-[var(--muted)]/50"}>
+                      {m.name}
+                    </span>
+                    <span className={m.confidence > 0.5 ? "text-green-400" : m.confidence > 0 ? "text-yellow-400" : "text-[var(--muted)]/30"}>
+                      {m.confidence > 0 ? `${Math.round(m.confidence * 100)}% (${m.gridShape[0]}r×${m.gridShape[1]}c)` : "no result"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* ─── Map Tags section ─── */}
+            {tableParsedGrid.tagColumn && (
+              <div className="border border-cyan-500/30 rounded px-2 py-2 space-y-1.5 bg-cyan-500/5">
+                <div className="text-[10px] text-cyan-400 font-medium">Map Tags to Drawings</div>
+                <p className="text-[9px] text-[var(--muted)]">
+                  Tag column: <span className="font-mono text-[var(--fg)]">{tableParsedGrid.tagColumn}</span> ({new Set(tableParsedGrid.rows.map((r) => r[tableParsedGrid.tagColumn!]?.trim()).filter(Boolean)).size} unique tags)
+                </p>
+                {/* YOLO class picker */}
+                {yoloInTableRegion.length > 0 && (
+                  <div className="space-y-0.5">
+                    <div className="text-[9px] text-[var(--muted)]">YOLO shapes in table region:</div>
+                    {yoloInTableRegion.map((g, i) => (
+                      <button key={i}
+                        onClick={() => setTagYoloClass(tagYoloClass?.model === g.model && tagYoloClass?.className === g.className ? null : { model: g.model, className: g.className })}
+                        className={`w-full text-left text-[10px] px-2 py-1 rounded border ${
+                          tagYoloClass?.model === g.model && tagYoloClass?.className === g.className
+                            ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                            : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-hover)]"
+                        }`}>
+                        <span className="font-medium">{g.className}</span>
+                        <span className="text-[var(--muted)]"> ({g.model}) &mdash; {g.count} found</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={() => setTagYoloClass(tagYoloClass?.className === "" ? null : { model: "", className: "" })}
+                  className={`w-full text-left text-[10px] px-2 py-1 rounded border ${
+                    tagYoloClass?.className === ""
+                      ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                      : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-hover)]"
+                  }`}>
+                  No shape &mdash; free-floating tags
+                </button>
+                {!tagMappingDone ? (
+                  <button
+                    onClick={handleMapTags}
+                    className="w-full text-xs px-3 py-1.5 rounded bg-cyan-600 text-white hover:bg-cyan-500"
+                  >
+                    Map Tags
+                  </button>
+                ) : (
+                  <div className="text-[10px] text-green-400">
+                    Mapped {tagMappingCount} tags to YOLO Tags panel
+                  </div>
                 )}
               </div>
+            )}
+
+            <div className="flex gap-2 px-1">
               <button
-                onClick={() => { resetTableParse(); }}
-                className="text-[10px] text-[var(--muted)] hover:text-[var(--fg)]"
+                onClick={exportCsv}
+                className="flex-1 text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-white hover:opacity-90"
               >
-                Reset
+                Export CSV
+              </button>
+              <button
+                onClick={() => { setTableParseTab("all"); }}
+                className="text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+              >
+                View All Tables
               </button>
             </div>
-
-            {/* Define column button */}
             <button
-              onClick={() => setTableParseStep("define-column")}
-              className="w-full text-xs px-3 py-1.5 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
+              onClick={() => { resetTableParse(); setTableParseStep("idle"); setTagMappingDone(false); setTagYoloClass(null); }}
+              className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
             >
-              Define Columns Manually (BB)
+              Parse Another
             </button>
+          </div>
+        )}
 
-            {tableParsedGrid.headers.length === 0 ? (
-              <div className="text-[10px] text-[var(--muted)] text-center py-4">
-                Could not detect table structure. Try drawing a BB around a specific column.
-              </div>
-            ) : (
-              <>
-                {/* Editable table */}
-                <div className="overflow-x-auto border border-[var(--border)] rounded">
-                  <table className="text-[9px] border-collapse w-full">
-                    <thead>
-                      <tr>
-                        <th className="border border-[var(--border)] px-1 py-1 bg-[var(--surface)] text-[var(--muted)] w-5">#</th>
-                        {tableParsedGrid.headers.map((h, hi) => (
-                          <th
-                            key={hi}
-                            className={`border border-[var(--border)] px-1 py-1 text-left font-semibold bg-[var(--surface)] cursor-pointer hover:bg-[var(--surface-hover)] ${
-                              h === tableParsedGrid.tagColumn ? "text-green-400" : "text-[var(--fg)]"
-                            }`}
-                            onDoubleClick={() => startEditHeader(hi, h)}
-                          >
-                            {editingHeader === hi ? (
-                              <input
-                                type="text"
-                                value={headerEditValue}
-                                onChange={(e) => setHeaderEditValue(e.target.value)}
-                                onBlur={commitHeaderEdit}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") commitHeaderEdit();
-                                  if (e.key === "Escape") setEditingHeader(null);
-                                }}
-                                className="w-full bg-transparent border-b border-[var(--accent)] outline-none text-[9px]"
-                                autoFocus
-                              />
-                            ) : (
-                              h
-                            )}
-                          </th>
-                        ))}
-                        <th className="border border-[var(--border)] px-1 py-1 bg-[var(--surface)] w-4" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tableParsedGrid.rows.map((row, ri) => (
-                        <tr key={ri} className="hover:bg-[var(--surface-hover)]">
-                          <td className="border border-[var(--border)] px-1 py-0.5 text-[var(--muted)] text-center">
-                            {ri + 1}
-                          </td>
-                          {tableParsedGrid.headers.map((h, ci) => (
-                            <td
-                              key={ci}
-                              className={`border border-[var(--border)] px-1 py-0.5 max-w-[80px] cursor-pointer ${
-                                h === tableParsedGrid.tagColumn ? "text-green-300 font-mono" : "text-[var(--muted)]"
-                              }`}
-                              onDoubleClick={() => startEditCell(ri, h, row[h] || "")}
-                              title={row[h] || ""}
-                            >
-                              {editingCell?.row === ri && editingCell?.col === h ? (
-                                <input
-                                  type="text"
-                                  value={editValue}
-                                  onChange={(e) => setEditValue(e.target.value)}
-                                  onBlur={commitCellEdit}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") commitCellEdit();
-                                    if (e.key === "Escape") setEditingCell(null);
-                                  }}
-                                  className="w-full bg-transparent border-b border-[var(--accent)] outline-none text-[9px]"
-                                  autoFocus
-                                />
-                              ) : (
-                                <span className="truncate block">{row[h] || ""}</span>
-                              )}
-                            </td>
-                          ))}
-                          <td className="border border-[var(--border)] px-0.5 py-0.5 text-center">
-                            <button
-                              onClick={() => deleteRow(ri)}
-                              className="text-red-400/50 hover:text-red-400 text-[9px]"
-                              title="Delete row"
-                            >
-                              x
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Actions */}
-                <div className="flex gap-2 px-1">
-                  <button
-                    onClick={exportCsv}
-                    className="flex-1 text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-white hover:opacity-90"
-                  >
-                    Export CSV
-                  </button>
-                  <button
-                    onClick={() => {
-                      // Re-parse from same region
-                      if (tableParseRegion) autoParseRegion(tableParseRegion);
-                    }}
-                    className="text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
-                  >
-                    Re-parse
-                  </button>
-                </div>
-              </>
-            )}
           </>
         )}
 
-        {/* ─── Step: Define Column ────────────────────────── */}
-        {tableParseStep === "define-column" && (
+        {/* ════════ TAB: Manual Parse ════════ */}
+        {tableParseTab === "manual" && (
           <div className="space-y-2">
-            <div className="text-[11px] text-pink-300 px-1">
-              Draw a BB around a column on the canvas. Words will be clustered into rows by Y-position.
-            </div>
-
-            {/* Show drawn column BBs */}
-            {tableParseColumnBBs.length > 0 && (
-              <div className="space-y-1">
-                <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1">
-                  Defined Columns ({tableParseColumnBBs.length})
-                </div>
-                {tableParseColumnBBs.map((cbb, i) => (
-                  <div key={i} className="text-[10px] text-[var(--muted)] px-2 py-1 border border-[var(--border)] rounded flex items-center justify-between">
-                    <span>Column {i + 1} <span className="text-[9px] opacity-60">({(cbb[2] - cbb[0]).toFixed(3)}w)</span></span>
-                    {i === tableParseColumnBBs.length - 1 && tableParseRegion && (
-                      <button
-                        onClick={() => repeatColumnRight(cbb)}
-                        className="text-[9px] text-pink-300 hover:text-pink-200"
-                        title="Tile this column width rightward across the table"
-                      >
-                        Repeat Right
-                      </button>
-                    )}
-                  </div>
-                ))}
-
-                {/* Parse from column BBs */}
-                <button
-                  onClick={parseFromColumnBBs}
-                  className="w-full text-xs px-3 py-1.5 rounded bg-pink-500/20 text-pink-300 border border-pink-500/30 hover:bg-pink-500/30"
-                >
-                  Parse Grid from Columns
-                </button>
-              </div>
+            {/* Step 1: Draw table region */}
+            <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1">Step 1: Table Region</div>
+            {!tableParseRegion ? (
+              <button
+                onClick={() => setTableParseStep(tableParseStep === "select-region" ? "idle" : "select-region")}
+                className={`w-full text-xs px-3 py-1.5 rounded border ${
+                  tableParseStep === "select-region"
+                    ? "border-pink-500 bg-pink-500/10 text-pink-300"
+                    : "border-[var(--border)] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+                }`}
+              >
+                {tableParseStep === "select-region" ? "Drawing... (click cancel)" : "Draw Table Region"}
+              </button>
+            ) : (
+              <div className="text-[10px] text-green-400 px-1">Region defined</div>
             )}
 
+            {/* Step 2: Draw columns + name them */}
+            {tableParseRegion && (
+              <>
+                <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1 mt-2">Step 2: Define Columns</div>
+                <button
+                  onClick={() => setTableParseStep(tableParseStep === "define-column" ? "idle" : "define-column")}
+                  className={`w-full text-xs px-3 py-1.5 rounded border ${
+                    tableParseStep === "define-column"
+                      ? "border-pink-500 bg-pink-500/10 text-pink-300"
+                      : "border-[var(--border)] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+                  }`}
+                >
+                  {tableParseStep === "define-column" ? "Stop Drawing Columns" : `Draw Columns (${tableParseColumnBBs.length} defined)`}
+                </button>
+
+                {tableParseColumnBBs.length > 0 && (
+                  <div className="space-y-1">
+                    {tableParseColumnBBs.map((cbb, i) => (
+                      <div key={i} className="flex items-center gap-1 px-1">
+                        <input
+                          type="text"
+                          value={tableParseColumnNames[i] || ""}
+                          placeholder={`Column ${String.fromCharCode(65 + i)}`}
+                          onChange={(e) => {
+                            const names = [...tableParseColumnNames];
+                            while (names.length <= i) names.push("");
+                            names[i] = e.target.value;
+                            setTableParseColumnNames(names);
+                          }}
+                          className="flex-1 text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] bg-transparent text-[var(--fg)] placeholder:text-[var(--muted)]/40 focus:outline-none focus:border-pink-400/50"
+                        />
+                        {i === tableParseColumnBBs.length - 1 && (
+                          <button
+                            onClick={() => repeatColumnRight(cbb)}
+                            className="text-[9px] text-pink-300 hover:text-pink-200 whitespace-nowrap"
+                          >
+                            Repeat →
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Step 3: Draw rows */}
+            {tableParseRegion && tableParseColumnBBs.length > 0 && (
+              <>
+                <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1 mt-2">Step 3: Define Rows</div>
+                <button
+                  onClick={() => setTableParseStep(tableParseStep === "define-row" ? "idle" : "define-row")}
+                  className={`w-full text-xs px-3 py-1.5 rounded border ${
+                    tableParseStep === "define-row"
+                      ? "border-purple-500 bg-purple-500/10 text-purple-300"
+                      : "border-[var(--border)] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+                  }`}
+                >
+                  {tableParseStep === "define-row" ? "Stop Drawing Rows" : `Draw Rows (${tableParseRowBBs.length} defined)`}
+                </button>
+
+                {tableParseRowBBs.length > 0 && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[10px] text-[var(--muted)]">{tableParseRowBBs.length} rows</span>
+                      <button
+                        onClick={() => repeatRowDown(tableParseRowBBs[tableParseRowBBs.length - 1])}
+                        className="text-[9px] text-purple-300 hover:text-purple-200"
+                      >
+                        Repeat Down ↓
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Step 4: Parse from intersections */}
+            {tableParseColumnBBs.length > 0 && tableParseRowBBs.length > 0 && (
+              <>
+                <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1 mt-2">Step 4: Parse</div>
+                <button
+                  onClick={parseFromIntersections}
+                  className="w-full text-xs px-3 py-2 rounded bg-pink-500/20 text-pink-300 border border-pink-500/30 hover:bg-pink-500/30 font-medium"
+                >
+                  Parse Table ({tableParseColumnBBs.length} cols × {tableParseRowBBs.length} rows = {tableParseColumnBBs.length * tableParseRowBBs.length} cells)
+                </button>
+              </>
+            )}
+
+            {/* Reset */}
             <button
-              onClick={() => setTableParseStep("review")}
-              className="w-full text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+              onClick={() => resetTableParse()}
+              className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] mt-2"
             >
-              Back to Review
+              Reset All
             </button>
+
+            {/* Show result if parsed */}
+            {tableParsedGrid && tableParsedGrid.headers.length > 0 && (
+              <div className="space-y-1.5">
+                <div className="text-[10px] text-green-400 px-1 py-1 border border-green-500/20 rounded bg-green-500/5">
+                  Parsed: {tableParsedGrid.headers.length} cols, {tableParsedGrid.rows.length} rows — use Compare/Edit Cells tab to verify.
+                </div>
+                {/* Map Tags (same as auto parse tab) */}
+                {tableParsedGrid.tagColumn && (
+                  <div className="border border-cyan-500/30 rounded px-2 py-2 space-y-1.5 bg-cyan-500/5">
+                    <div className="text-[10px] text-cyan-400 font-medium">Map Tags to Drawings</div>
+                    <p className="text-[9px] text-[var(--muted)]">
+                      Tag column: <span className="font-mono text-[var(--fg)]">{tableParsedGrid.tagColumn}</span>
+                    </p>
+                    {yoloInTableRegion.length > 0 && (
+                      <div className="space-y-0.5">
+                        <div className="text-[9px] text-[var(--muted)]">YOLO shapes in table region:</div>
+                        {yoloInTableRegion.map((g, i) => (
+                          <button key={i}
+                            onClick={() => setTagYoloClass(tagYoloClass?.model === g.model && tagYoloClass?.className === g.className ? null : { model: g.model, className: g.className })}
+                            className={`w-full text-left text-[10px] px-2 py-1 rounded border ${
+                              tagYoloClass?.model === g.model && tagYoloClass?.className === g.className
+                                ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                                : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-hover)]"
+                            }`}>
+                            <span className="font-medium">{g.className}</span>
+                            <span className="text-[var(--muted)]"> ({g.model}) &mdash; {g.count}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setTagYoloClass(tagYoloClass?.className === "" ? null : { model: "", className: "" })}
+                      className={`w-full text-left text-[10px] px-2 py-1 rounded border ${
+                        tagYoloClass?.className === ""
+                          ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                          : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-hover)]"
+                      }`}>
+                      No shape &mdash; free-floating tags
+                    </button>
+                    {!tagMappingDone ? (
+                      <button onClick={handleMapTags}
+                        className="w-full text-xs px-3 py-1.5 rounded bg-cyan-600 text-white hover:bg-cyan-500">
+                        Map Tags
+                      </button>
+                    ) : (
+                      <div className="text-[10px] text-green-400">
+                        Mapped {tagMappingCount} tags to YOLO Tags panel
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ════════ TAB: Compare/Edit Cells ════════ */}
+        {tableParseTab === "compare" && (
+          <div className="space-y-1">
+            <div className="text-[11px] text-[var(--muted)] px-1 pb-1">
+              Select a table to compare with the original and edit cells.
+            </div>
+
+            {allParsedTables.length === 0 ? (
+              <div className="text-[10px] text-[var(--muted)] text-center py-8 px-2">
+                No parsed tables yet. Use Auto Parse or Manual tabs first.
+              </div>
+            ) : (
+              <>
+                {/* Current page tables first */}
+                {(() => {
+                  const currentPageTables = allParsedTables.filter((t) => t.pageNum === pageNumber);
+                  const otherTables = allParsedTables.filter((t) => t.pageNum !== pageNumber);
+
+                  return (
+                    <>
+                      {currentPageTables.length > 0 && (
+                        <div className="text-[9px] text-pink-300 uppercase tracking-wide px-1 pt-1">
+                          This Page ({pageNames[pageNumber] || `p.${pageNumber}`})
+                        </div>
+                      )}
+                      {currentPageTables.map((t, i) => (
+                        <button
+                          key={`cur-${i}`}
+                          onClick={() => {
+                            loadExistingParsed(t.region);
+                            toggleTableCompareModal();
+                          }}
+                          className="w-full text-left px-2 py-2 rounded border border-pink-400/30 bg-pink-500/5 hover:bg-pink-500/10 space-y-0.5"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-medium text-[var(--fg)] truncate">{t.name}</span>
+                            <span className="text-[9px] text-pink-300">Compare</span>
+                          </div>
+                          <div className="text-[10px] text-[var(--muted)]">
+                            {t.colCount} cols, {t.rowCount} rows
+                          </div>
+                        </button>
+                      ))}
+
+                      {otherTables.length > 0 && (
+                        <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide px-1 pt-2">
+                          Other Pages
+                        </div>
+                      )}
+                      {otherTables.map((t, i) => (
+                        <button
+                          key={`other-${i}`}
+                          onClick={() => {
+                            setPage(t.pageNum);
+                            loadExistingParsed(t.region);
+                            toggleTableCompareModal();
+                          }}
+                          className="w-full text-left px-2 py-1.5 rounded border border-[var(--border)] hover:bg-[var(--surface-hover)] space-y-0.5"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-medium text-[var(--fg)] truncate">{t.name}</span>
+                            <span className="text-[9px] text-[var(--muted)]">{pageNames[t.pageNum] || `p.${t.pageNum}`}</span>
+                          </div>
+                          <div className="text-[10px] text-[var(--muted)]">
+                            {t.colCount} cols, {t.rowCount} rows
+                          </div>
+                        </button>
+                      ))}
+                    </>
+                  );
+                })()}
+              </>
+            )}
           </div>
         )}
       </div>

@@ -3,7 +3,7 @@
 import { useMemo, useState, useCallback } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { TWENTY_COLORS } from "@/types";
-import type { ClientAnnotation } from "@/types";
+import type { ClientAnnotation, YoloTag } from "@/types";
 import ClassGroupHeader from "./ClassGroupHeader";
 import AnnotationListItem from "./AnnotationListItem";
 
@@ -24,8 +24,29 @@ export default function DetectionPanel() {
   const setAnnotationFilter = useViewerStore((s) => s.setAnnotationFilter);
   const setSearch = useViewerStore((s) => s.setSearch);
 
+  // YOLO Tags
+  const yoloTags = useViewerStore((s) => s.yoloTags);
+  const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
+  const setActiveYoloTagId = useViewerStore((s) => s.setActiveYoloTagId);
+  const setYoloTagFilter = useViewerStore((s) => s.setYoloTagFilter);
+  const yoloTagVisibility = useViewerStore((s) => s.yoloTagVisibility);
+  const setYoloTagVisibility = useViewerStore((s) => s.setYoloTagVisibility);
+  const removeYoloTag = useViewerStore((s) => s.removeYoloTag);
+  const updateYoloTag = useViewerStore((s) => s.updateYoloTag);
+  const setYoloTagPickingMode = useViewerStore((s) => s.setYoloTagPickingMode);
+  const yoloTagPickingMode = useViewerStore((s) => s.yoloTagPickingMode);
+  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const setPage = useViewerStore((s) => s.setPage);
+  const pageNames = useViewerStore((s) => s.pageNames);
+
+  const [detectionTab, setDetectionTab] = useState<"models" | "tags">("models");
   const [expandedModels, setExpandedModels] = useState<Record<string, boolean>>({});
   const [expandedClasses, setExpandedClasses] = useState<Record<string, boolean>>({});
+  const [expandedTagModels, setExpandedTagModels] = useState<Record<string, boolean>>({});
+  const [expandedTagClasses, setExpandedTagClasses] = useState<Record<string, boolean>>({});
+  const [expandedTagItems, setExpandedTagItems] = useState<Record<string, boolean>>({});
+  const [editingTagId, setEditingTagId] = useState<string | null>(null);
+  const [editingTagName, setEditingTagName] = useState("");
   const [showCsiTags, setShowCsiTags] = useState(false);
   const [csiEdits, setCsiEdits] = useState<Record<string, string>>({});
   const [savingCsi, setSavingCsi] = useState(false);
@@ -60,6 +81,35 @@ export default function DetectionPanel() {
       .sort((a, b) => b.totalCount - a.totalCount);
   }, [yoloAnnotations]);
 
+  // Group yoloTags by model → class for hierarchy
+  const tagGroups = useMemo(() => {
+    const groups: Record<string, Record<string, YoloTag[]>> = {};
+    for (const tag of yoloTags) {
+      const model = tag.yoloModel || "[no shape]";
+      const cls = tag.yoloClass || "[free-floating]";
+      if (!groups[model]) groups[model] = {};
+      if (!groups[model][cls]) groups[model][cls] = [];
+      groups[model][cls].push(tag);
+    }
+    return Object.entries(groups).map(([modelName, classes]) => ({
+      modelName,
+      classes: Object.entries(classes).map(([className, tags]) => ({
+        className,
+        tags: tags.sort((a, b) => a.tagText.localeCompare(b.tagText)),
+      })),
+    }));
+  }, [yoloTags]);
+
+  function handleTagClick(tag: YoloTag) {
+    if (activeYoloTagId === tag.id) {
+      setActiveYoloTagId(null);
+      setYoloTagFilter(null);
+    } else {
+      setActiveYoloTagId(tag.id);
+      setYoloTagFilter(tag.id);
+    }
+  }
+
   function handleToggleFilter(name: string) {
     if (activeAnnotationFilter === name) { setAnnotationFilter(null); setSearch(""); }
     else setAnnotationFilter(name);
@@ -69,10 +119,25 @@ export default function DetectionPanel() {
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
-        <h3 className="text-sm font-medium text-[var(--fg)]">Detections</h3>
+        <h3 className="text-sm font-medium text-[var(--fg)]">YOLO</h3>
         <button onClick={toggleDetectionPanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
       </div>
 
+      {/* Tab bar */}
+      <div className="flex border-b border-[var(--border)]">
+        {(["models", "tags"] as const).map((tab) => (
+          <button key={tab} onClick={() => setDetectionTab(tab)}
+            className={`flex-1 px-3 py-1.5 text-[11px] font-medium capitalize ${
+              detectionTab === tab
+                ? "text-[var(--accent)] border-b-2 border-[var(--accent)]"
+                : "text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}>
+            {tab === "tags" ? `Tags${yoloTags.length > 0 ? ` (${yoloTags.length})` : ""}` : "Models"}
+          </button>
+        ))}
+      </div>
+
+      {detectionTab === "models" && <>
       {/* Global confidence slider */}
       <div className="px-3 py-2 border-b border-[var(--border)] space-y-1">
         <div className="flex items-center justify-between">
@@ -235,6 +300,186 @@ export default function DetectionPanel() {
           );
         })}
       </div>
+      </>}
+
+      {/* ═══ Tags Tab ═══ */}
+      {detectionTab === "tags" && (
+        <div className="flex-1 overflow-y-auto flex flex-col">
+          {/* Create Tag button */}
+          <div className="px-3 py-2 border-b border-[var(--border)]">
+            <button
+              onClick={() => setYoloTagPickingMode(!yoloTagPickingMode)}
+              className={`w-full px-2 py-1.5 text-[11px] rounded border ${
+                yoloTagPickingMode
+                  ? "border-amber-400 bg-amber-500/10 text-amber-300"
+                  : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-hover)]"
+              }`}
+            >
+              {yoloTagPickingMode ? "Click a YOLO annotation on canvas..." : "Create Tag"}
+            </button>
+          </div>
+
+          {/* Active tag filter indicator */}
+          {activeYoloTagId && (
+            <div className="flex items-center gap-2 mx-2 mt-2 px-2 py-1.5 bg-[var(--accent)]/10 rounded text-xs">
+              <span className="text-[var(--accent)] font-medium truncate flex-1">
+                Active: {yoloTags.find((t) => t.id === activeYoloTagId)?.tagText || activeYoloTagId}
+              </span>
+              <button onClick={() => { setActiveYoloTagId(null); setYoloTagFilter(null); }}
+                className="text-[var(--muted)] hover:text-[var(--fg)] shrink-0">&times;</button>
+            </div>
+          )}
+
+          {/* Tag hierarchy */}
+          <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+            {tagGroups.length === 0 && (
+              <div className="flex items-center justify-center h-32 text-center px-4">
+                <span className="text-[var(--muted)] text-[11px]">
+                  No tags yet. Parse keynotes or schedules, or use Create Tag to add tags manually.
+                </span>
+              </div>
+            )}
+            {tagGroups.map(({ modelName, classes }) => {
+              const tmKey = modelName;
+              const tmExpanded = expandedTagModels[tmKey] !== false; // default open
+              const totalTags = classes.reduce((s, c) => s + c.tags.length, 0);
+              return (
+                <div key={tmKey} className="border border-[var(--border)] rounded">
+                  {/* Model header */}
+                  <div className="flex items-center gap-2 px-2 py-1.5 bg-[var(--surface)]">
+                    <button onClick={() => setExpandedTagModels((p) => ({ ...p, [tmKey]: !tmExpanded }))}
+                      className="text-[10px] text-[var(--muted)] hover:text-[var(--fg)] shrink-0 w-3 text-center">
+                      {tmExpanded ? "\u25BC" : "\u25B6"}
+                    </button>
+                    <span className="text-xs font-medium text-[var(--fg)] truncate flex-1">{modelName}</span>
+                    <span className="text-[10px] text-[var(--muted)]">{totalTags} tag{totalTags !== 1 ? "s" : ""}</span>
+                  </div>
+                  {tmExpanded && (
+                    <div className="space-y-px">
+                      {classes.map(({ className: cls, tags }) => {
+                        const tcKey = `${tmKey}:${cls}`;
+                        const tcExpanded = expandedTagClasses[tcKey] !== false;
+                        const clr = classColor(cls);
+                        return (
+                          <div key={tcKey}>
+                            {/* Class header */}
+                            <div className="flex items-center gap-1.5 px-2 py-1 ml-2 hover:bg-[var(--surface-hover)] cursor-pointer"
+                              onClick={() => setExpandedTagClasses((p) => ({ ...p, [tcKey]: !tcExpanded }))}>
+                              <span className="text-[10px] text-[var(--muted)] w-3 text-center shrink-0">
+                                {tcExpanded ? "\u25BC" : "\u25B6"}
+                              </span>
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: clr }} />
+                              <span className="text-[11px] text-[var(--fg)] truncate flex-1">{cls}</span>
+                              <span className="text-[10px] text-[var(--muted)]">{tags.length}</span>
+                            </div>
+                            {tcExpanded && (
+                              <div className="ml-6 space-y-px">
+                                {tags.map((tag) => {
+                                  const isActive = activeYoloTagId === tag.id;
+                                  const isVisible = yoloTagVisibility[tag.id] !== false;
+                                  const tiExpanded = expandedTagItems[tag.id] === true;
+                                  const pageCount = new Set(tag.instances.map((i) => i.pageNumber)).size;
+                                  const isEditing = editingTagId === tag.id;
+
+                                  // Source badge color
+                                  const srcColor = tag.source === "keynote" ? "text-amber-400" :
+                                    tag.source === "schedule" ? "text-blue-400" : "text-green-400";
+
+                                  return (
+                                    <div key={tag.id} className={`rounded ${isActive ? "bg-[var(--accent)]/10 border border-[var(--accent)]/30" : ""}`}>
+                                      {/* Tag row */}
+                                      <div className="flex items-center gap-1 px-2 py-1 hover:bg-[var(--surface-hover)] cursor-pointer group"
+                                        onClick={() => handleTagClick(tag)}>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); setExpandedTagItems((p) => ({ ...p, [tag.id]: !tiExpanded })); }}
+                                          className="text-[9px] text-[var(--muted)] hover:text-[var(--fg)] w-3 text-center shrink-0">
+                                          {tiExpanded ? "\u25BC" : "\u25B6"}
+                                        </button>
+                                        <span className="text-[11px] font-mono font-medium text-[var(--fg)] shrink-0">{tag.tagText}</span>
+                                        {tag.description && (
+                                          <span className="text-[10px] text-[var(--muted)] truncate flex-1" title={tag.description}>
+                                            &mdash; {tag.description}
+                                          </span>
+                                        )}
+                                        {!tag.description && <span className="flex-1" />}
+                                        <span className={`text-[8px] ${srcColor} shrink-0`}>{tag.source}</span>
+                                        <span className="text-[9px] text-[var(--muted)] shrink-0">
+                                          {tag.instances.length}
+                                          {pageCount > 1 ? ` / ${pageCount}pg` : ""}
+                                        </span>
+                                        {/* Visibility toggle */}
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); setYoloTagVisibility(tag.id, !isVisible); }}
+                                          className={`text-[10px] shrink-0 opacity-0 group-hover:opacity-100 ${isVisible ? "text-[var(--fg)]" : "text-[var(--muted)] opacity-40"}`}
+                                          title={isVisible ? "Hide" : "Show"}>
+                                          {isVisible ? "\u{1F441}" : "\u2014"}
+                                        </button>
+                                      </div>
+
+                                      {/* Expanded: per-page instances + actions */}
+                                      {tiExpanded && (
+                                        <div className="ml-5 pb-1 space-y-0.5">
+                                          {/* Edit name inline */}
+                                          <div className="flex items-center gap-1 px-2 py-0.5">
+                                            {isEditing ? (
+                                              <input
+                                                autoFocus
+                                                value={editingTagName}
+                                                onChange={(e) => setEditingTagName(e.target.value)}
+                                                onBlur={() => { updateYoloTag(tag.id, { name: editingTagName }); setEditingTagId(null); }}
+                                                onKeyDown={(e) => { if (e.key === "Enter") { updateYoloTag(tag.id, { name: editingTagName }); setEditingTagId(null); } if (e.key === "Escape") setEditingTagId(null); }}
+                                                className="flex-1 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--accent)]/40 rounded text-[var(--fg)] outline-none"
+                                              />
+                                            ) : (
+                                              <>
+                                                <span className="text-[10px] text-[var(--muted)] truncate flex-1">{tag.name}</span>
+                                                <button onClick={() => { setEditingTagId(tag.id); setEditingTagName(tag.name); }}
+                                                  className="text-[9px] text-[var(--muted)] hover:text-[var(--fg)]" title="Rename">&#9998;</button>
+                                              </>
+                                            )}
+                                            <button onClick={() => removeYoloTag(tag.id)}
+                                              className="text-[9px] text-red-400 hover:text-red-300 shrink-0" title="Delete">&times;</button>
+                                          </div>
+                                          {tag.scope === "page" && tag.pageNumber && (
+                                            <div className="px-2 text-[9px] text-[var(--muted)]">
+                                              Scope: page {pageNames[tag.pageNumber] || tag.pageNumber}
+                                            </div>
+                                          )}
+                                          {/* Per-page instance list */}
+                                          {(() => {
+                                            const byPage = new Map<number, number>();
+                                            for (const inst of tag.instances) byPage.set(inst.pageNumber, (byPage.get(inst.pageNumber) || 0) + 1);
+                                            return [...byPage.entries()]
+                                              .sort((a, b) => a[0] - b[0])
+                                              .map(([pn, count]) => (
+                                                <button key={pn}
+                                                  onClick={() => setPage(pn)}
+                                                  className={`w-full text-left px-2 py-0.5 text-[10px] rounded hover:bg-[var(--surface-hover)] flex items-center gap-1 ${
+                                                    pn === pageNumber ? "text-[var(--accent)]" : "text-[var(--muted)]"
+                                                  }`}>
+                                                  <span className="truncate flex-1">{pageNames[pn] || `Page ${pn}`}</span>
+                                                  <span className="shrink-0">({count})</span>
+                                                </button>
+                                              ));
+                                          })()}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

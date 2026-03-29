@@ -8,12 +8,11 @@ import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { detectCsiCodes } from "@/lib/csi-detect";
 import { detectTextAnnotations } from "@/lib/text-annotations";
-import { extractKeynotes } from "@/lib/keynotes";
+// NOTE: extractKeynotes is now user-initiated via the Keynotes panel, not run at upload
 import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
-import { parseSchedules } from "@/lib/schedule-parser";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
 import { analyzeProject } from "@/lib/project-analysis";
 
@@ -151,16 +150,9 @@ export async function processProject(projectId: number): Promise<{
           console.log(`[processing] Page ${pageNum}: found ${textAnnotationResult.annotations.length} text annotations`);
         }
 
-        // Extract keynotes (OpenCV + Tesseract) — reuse same 300 DPI buffer
-        let keynotes = null;
-        try {
-          keynotes = await extractKeynotes(pngBuffer);
-          if (keynotes.length > 0) {
-            console.log(`[processing] Page ${pageNum}: found ${keynotes.length} keynotes`);
-          }
-        } catch (err) {
-          console.error(`[processing] Keynote extraction FAILED for page ${pageNum}:`, err);
-        }
+        // NOTE: Keynote extraction (OpenCV + Tesseract) is now user-initiated via the Keynotes panel.
+        // Classification (Systems 1-3) still identifies keynote table regions.
+        const keynotes: any = null;
 
         // Analyze page intelligence (classification, cross-refs, note blocks)
         let pageIntelligence: Record<string, unknown> | null = null;
@@ -220,20 +212,9 @@ export async function processProject(projectId: number): Promise<{
           console.error(`[processing] Table classification FAILED for page ${pageNum}:`, err);
         }
 
-        // Parse schedule tables into structured row/column data (System 4)
-        try {
-          const intel = pageIntelligence as any;
-          if (intel?.classifiedTables?.length > 0) {
-            const parsed = parseSchedules(intel.classifiedTables, textractData, pageNum);
-            if (parsed.length > 0) {
-              if (!pageIntelligence) pageIntelligence = {};
-              (pageIntelligence as any).parsedRegions = parsed;
-              console.log(`[processing] Page ${pageNum}: parsed ${parsed.length} schedule(s)`);
-            }
-          }
-        } catch (err) {
-          console.error(`[processing] Schedule parsing FAILED for page ${pageNum}:`, err);
-        }
+        // NOTE: Schedule parsing (System 4) is user-initiated only — not run at upload.
+        // Users trigger it via the Auto Parse or Manual Parse tabs in the Schedules/Tables panel.
+        // Classification (Systems 1-3 above) still runs to inform the UI about where tables are.
 
         // Compute CSI spatial heatmap (OCR-only — no YOLO data during initial processing)
         try {
