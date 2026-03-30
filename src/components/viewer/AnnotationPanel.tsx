@@ -53,7 +53,7 @@ export default function AnnotationPanel() {
 
   if (annotations.length === 0) {
     return (
-      <div className="border-t border-[var(--border)] p-3" style={{ backgroundColor: "#1e1e22" }}>
+      <div className="border-t border-[var(--border)] p-3" style={{ backgroundColor: "var(--surface)" }}>
         <span className="text-xs" style={{ color: "#6b8aad" }}>
           No annotations. Run YOLO or switch to markup mode to draw.
         </span>
@@ -62,7 +62,7 @@ export default function AnnotationPanel() {
   }
 
   return (
-    <div className="border-t border-[var(--border)] max-h-28 overflow-y-auto" style={{ backgroundColor: "#1e1e22" }}>
+    <div className="border-t border-[var(--border)] max-h-28 overflow-y-auto" style={{ backgroundColor: "var(--surface)" }}>
       <div className="p-2 space-y-1.5">
         {/* Active filter badge */}
         {activeAnnotationFilter && (
