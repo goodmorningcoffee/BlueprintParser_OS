@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useNavigation, usePageData, usePanels } from "@/stores/viewerStore";
 
 export default function PageIntelligencePanel() {
-  const pageNumber = useViewerStore((s) => s.pageNumber);
-  const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
-  const togglePageIntelPanel = useViewerStore((s) => s.togglePageIntelPanel);
+  const { pageNumber } = useNavigation();
+  const { pageIntelligence } = usePageData();
+  const { togglePageIntelPanel } = usePanels();
 
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     classification: true,

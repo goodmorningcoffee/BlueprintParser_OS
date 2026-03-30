@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/api-utils";
 import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { S3_BUCKET, getPresignedGetUrl } from "@/lib/s3";
+import { db } from "@/lib/db";
+import { companies } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || "us-east-1",
@@ -26,14 +29,21 @@ function humanSize(bytes: number): string {
  * Security: validates prefix starts with the admin's company data key.
  */
 export async function GET(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const url = new URL(req.url);
   const prefix = url.searchParams.get("prefix") || "";
   const download = url.searchParams.get("download");
+
+  // Validate prefix is within company scope
+  const [company] = await db.select({ dataKey: companies.dataKey }).from(companies).where(eq(companies.id, session.user.companyId)).limit(1);
+  if (company?.dataKey) {
+    const target = download || prefix;
+    if (target && !target.startsWith(company.dataKey)) {
+      return NextResponse.json({ error: "Access denied: path outside company scope" }, { status: 403 });
+    }
+  }
 
   // If download requested, return presigned URL
   if (download) {

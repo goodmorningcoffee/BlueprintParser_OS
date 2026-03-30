@@ -209,17 +209,29 @@ function methodTextractTables(
     return { method: "textract-tables", headers: [], rows: [], confidence: 0 };
   }
 
-  // Convert Textract cells to grid
-  const { cells, rowCount, colCount } = bestTable;
-  if (rowCount < 2 || colCount < 1) {
+  // Filter cells to only those within the user's drawn region
+  const { cells: allCells, colCount } = bestTable;
+  const regionCells = allCells.filter((cell) => {
+    const cy = cell.bbox[1] + cell.bbox[3] / 2; // top + height/2
+    const cx = cell.bbox[0] + cell.bbox[2] / 2; // left + width/2
+    return cy >= rMinY && cy <= rMaxY && cx >= rMinX && cx <= rMaxX;
+  });
+
+  // Re-index rows sequentially (original row indices may have gaps after filtering)
+  const uniqueRows = [...new Set(regionCells.map((c) => c.row))].sort((a, b) => a - b);
+  const rowMap = new Map(uniqueRows.map((origRow, idx) => [origRow, idx]));
+  const filteredRowCount = uniqueRows.length;
+
+  if (filteredRowCount < 1 || colCount < 1) {
     return { method: "textract-tables", headers: [], rows: [], confidence: 0 };
   }
 
-  // Build grid from cells (1-based indices)
-  const grid: string[][] = Array.from({ length: rowCount }, () => new Array(colCount).fill(""));
-  for (const cell of cells) {
-    if (cell.row >= 1 && cell.row <= rowCount && cell.col >= 1 && cell.col <= colCount) {
-      grid[cell.row - 1][cell.col - 1] = cell.text.trim();
+  // Build grid from filtered cells
+  const grid: string[][] = Array.from({ length: filteredRowCount }, () => new Array(colCount).fill(""));
+  for (const cell of regionCells) {
+    const ri = rowMap.get(cell.row);
+    if (ri !== undefined && cell.col >= 1 && cell.col <= colCount) {
+      grid[ri][cell.col - 1] = cell.text.trim();
     }
   }
 
@@ -240,7 +252,7 @@ function methodTextractTables(
   const totalCells = dataRows.length * headers.length;
   const filledCells = dataRows.reduce((s, r) => s + Object.values(r).filter((v) => v).length, 0);
   const fillRate = totalCells > 0 ? filledCells / totalCells : 0;
-  const avgCellConf = cells.reduce((s, c) => s + c.confidence, 0) / cells.length / 100;
+  const avgCellConf = regionCells.length > 0 ? regionCells.reduce((s, c) => s + c.confidence, 0) / regionCells.length / 100 : 0;
   const confidence = Math.min(0.5 + fillRate * 0.2 + avgCellConf * 0.2 + bestOverlap * 0.1, 0.95);
 
   return { method: "textract-tables", headers, rows: dataRows, confidence };
@@ -255,8 +267,8 @@ async function methodOpenCvLines(
   allWords: TextractWord[],
 ): Promise<MethodResult> {
   try {
-    // Rasterize page at 300 DPI
-    const pngBuffer = await rasterizePage(pdfBuffer, pageNumber, 300);
+    // Rasterize at 150 DPI for line detection (sufficient for grid lines, prevents OOM on large pages)
+    const pngBuffer = await rasterizePage(pdfBuffer, pageNumber, 150);
 
     // Get image dimensions from PNG header
     const imgWidth = pngBuffer.readUInt32BE(16);
@@ -292,40 +304,41 @@ async function methodOpenCvLines(
     // Build cells from line intersections
     const numRows = regionRowYs.length - 1;
     const numCols = regionColXs.length - 1;
-    const headers: string[] = [];
-    const dataRows: Record<string, string>[] = [];
+    const grid: string[][] = [];
 
     for (let ri = 0; ri < numRows; ri++) {
       const cellTop = regionRowYs[ri];
       const cellBottom = regionRowYs[ri + 1];
+      const rowCells: string[] = [];
 
-      const rowData: Record<string, string> = {};
       for (let ci = 0; ci < numCols; ci++) {
         const cellLeft = regionColXs[ci];
         const cellRight = regionColXs[ci + 1];
 
-        // Get OCR words inside this cell
         const cellWords = allWords.filter((w) => {
           const cx = w.bbox[0] + w.bbox[2] / 2;
           const cy = w.bbox[1] + w.bbox[3] / 2;
           return cx >= cellLeft && cx <= cellRight && cy >= cellTop && cy <= cellBottom;
         });
 
-        const text = cellWords
-          .sort((a, b) => a.bbox[0] - b.bbox[0])
-          .map((w) => w.text)
-          .join(" ");
-
-        if (ri === 0 && headers.length < numCols) {
-          headers.push(`Column ${ci + 1}`);
-        }
-        rowData[headers[ci] || `Column ${ci + 1}`] = text;
+        rowCells.push(
+          cellWords.sort((a, b) => a.bbox[0] - b.bbox[0]).map((w) => w.text).join(" ")
+        );
       }
+      grid.push(rowCells);
+    }
 
-      {
-        const hasContent = Object.values(rowData).some((v) => v);
-        if (hasContent) dataRows.push(rowData);
+    // Don't assume any row is headers — user draws BB below header row
+    const headers = Array.from({ length: numCols }, (_, i) => `Column ${i + 1}`);
+    const dataRows: Record<string, string>[] = [];
+    for (let r = 0; r < grid.length; r++) {
+      const row: Record<string, string> = {};
+      let hasContent = false;
+      for (let c = 0; c < headers.length; c++) {
+        row[headers[c]] = (grid[r][c] || "").trim();
+        if (grid[r][c]) hasContent = true;
       }
+      if (hasContent) dataRows.push(row);
     }
 
     return {
@@ -360,9 +373,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing projectId, pageNumber, or regionBbox" }, { status: 400 });
   }
 
-  // Auth: allow demo projects without session, require auth for non-demo
+  // Bbox validation: all values must be finite numbers in [0,1], min < max
+  const [bx0, by0, bx1, by1] = regionBbox;
+  if (![bx0, by0, bx1, by1].every((v) => typeof v === "number" && isFinite(v) && v >= 0 && v <= 1) || bx0 >= bx1 || by0 >= by1) {
+    return NextResponse.json({ error: "Invalid regionBbox: values must be finite numbers in [0,1] with min < max" }, { status: 400 });
+  }
+
+  // Auth: allow demo projects without session, require auth + company check for non-demo
+  const session = await auth();
+
   const [project] = await db
-    .select({ id: projects.id, dataUrl: projects.dataUrl, isDemo: projects.isDemo })
+    .select({ id: projects.id, dataUrl: projects.dataUrl, isDemo: projects.isDemo, companyId: projects.companyId })
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1);
@@ -372,9 +393,11 @@ export async function POST(req: Request) {
   }
 
   if (!project.isDemo) {
-    const session = await auth();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (session.user.companyId !== project.companyId) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
   }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useCallback } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useYoloTags } from "@/stores/viewerStore";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientAnnotation, YoloTag } from "@/types";
 import ClassGroupHeader from "./ClassGroupHeader";
@@ -15,30 +15,20 @@ function classColor(name: string): string {
 }
 
 export default function DetectionPanel() {
-  const annotations = useViewerStore((s) => s.annotations);
-  const toggleDetectionPanel = useViewerStore((s) => s.toggleDetectionPanel);
-  const activeModels = useViewerStore((s) => s.activeModels);
-  const setModelActive = useViewerStore((s) => s.setModelActive);
-  const confidenceThreshold = useViewerStore((s) => s.confidenceThreshold);
-  const setConfidenceThreshold = useViewerStore((s) => s.setConfidenceThreshold);
-  const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
-  const setAnnotationFilter = useViewerStore((s) => s.setAnnotationFilter);
-  const setSearch = useViewerStore((s) => s.setSearch);
-
-  // YOLO Tags
-  const yoloTags = useViewerStore((s) => s.yoloTags);
-  const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
-  const setActiveYoloTagId = useViewerStore((s) => s.setActiveYoloTagId);
-  const setYoloTagFilter = useViewerStore((s) => s.setYoloTagFilter);
-  const yoloTagVisibility = useViewerStore((s) => s.yoloTagVisibility);
-  const setYoloTagVisibility = useViewerStore((s) => s.setYoloTagVisibility);
-  const removeYoloTag = useViewerStore((s) => s.removeYoloTag);
-  const updateYoloTag = useViewerStore((s) => s.updateYoloTag);
-  const setYoloTagPickingMode = useViewerStore((s) => s.setYoloTagPickingMode);
-  const yoloTagPickingMode = useViewerStore((s) => s.yoloTagPickingMode);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
-  const setPage = useViewerStore((s) => s.setPage);
-  const pageNames = useViewerStore((s) => s.pageNames);
+  const { pageNumber, setPage } = useNavigation();
+  const { toggleDetectionPanel } = usePanels();
+  const { pageNames } = useProject();
+  const {
+    annotations, activeModels, setModelActive,
+    confidenceThreshold, setConfidenceThreshold,
+    activeAnnotationFilter, setAnnotationFilter, setSearch,
+    hiddenAnnotationIds, toggleAnnotationVisibility,
+  } = useDetection();
+  const {
+    yoloTags, activeYoloTagId, setActiveYoloTagId,
+    setYoloTagFilter, yoloTagVisibility, setYoloTagVisibility,
+    removeYoloTag, updateYoloTag, yoloTagPickingMode, setYoloTagPickingMode,
+  } = useYoloTags();
 
   const [detectionTab, setDetectionTab] = useState<"models" | "tags">("models");
   const [expandedModels, setExpandedModels] = useState<Record<string, boolean>>({});
@@ -148,8 +138,21 @@ export default function DetectionPanel() {
         <input type="range" min="0" max="100" value={confidenceThreshold * 100}
           onChange={(e) => setConfidenceThreshold(Number(e.target.value) / 100)}
           className="w-full h-1 bg-[var(--border)] rounded-lg appearance-none cursor-pointer accent-[var(--accent)]" />
-        <div className="text-[10px] text-[var(--muted)]">
-          {yoloAnnotations.length} detection{yoloAnnotations.length !== 1 ? "s" : ""} shown
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-[var(--muted)]">
+            {yoloAnnotations.length} detection{yoloAnnotations.length !== 1 ? "s" : ""} shown
+          </span>
+          {modelGroups.length > 0 && (
+            <button
+              onClick={() => {
+                const allVisible = modelGroups.every(({ modelName }) => activeModels[modelName] !== false);
+                for (const { modelName } of modelGroups) setModelActive(modelName, !allVisible);
+              }}
+              className="text-[10px] text-[var(--muted)] hover:text-[var(--fg)]"
+            >
+              {modelGroups.every(({ modelName }) => activeModels[modelName] !== false) ? "Hide All" : "Show All"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -288,6 +291,8 @@ export default function DetectionPanel() {
                             {classAnns.map((ann) => (
                               <AnnotationListItem key={ann.id} annotation={ann}
                                 isActive={activeAnnotationFilter === ann.name}
+                                isHidden={hiddenAnnotationIds.has(ann.id)}
+                                onToggleVisibility={toggleAnnotationVisibility}
                                 onToggleFilter={handleToggleFilter} onSearchKeyword={(kw) => setSearch(kw)} color={clr} />
                             ))}
                           </div>

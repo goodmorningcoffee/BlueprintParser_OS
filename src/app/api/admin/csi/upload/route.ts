@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -13,10 +13,8 @@ const CSI_S3_PREFIX = "csi-databases";
  * Parses the file, validates format, stores in S3, updates company config.
  */
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const formData = await req.formData();
   const file = formData.get("file") as File | null;
@@ -100,10 +98,8 @@ export async function POST(req: Request) {
  * Revert to built-in CSI database.
  */
 export async function DELETE() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const companyId = session.user.companyId;
 

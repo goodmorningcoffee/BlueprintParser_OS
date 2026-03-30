@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/api-utils";
 import { getToggles, setToggle, hasTogglePassword, setTogglePassword, verifyTogglePassword } from "@/lib/toggles";
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const toggles = await getToggles();
   const hasPassword = await hasTogglePassword();
@@ -19,10 +17,8 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const body = await req.json();
 

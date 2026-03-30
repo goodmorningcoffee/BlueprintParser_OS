@@ -79,7 +79,7 @@ export async function setTogglePassword(newPassword: string, currentPassword?: s
     if (!valid) return { success: false, error: "Invalid current toggle password" };
   }
 
-  const hash = await bcrypt.hash(newPassword, 10);
+  const hash = await bcrypt.hash(newPassword, 12);
   await writeToS3({ ...state, passwordHash: hash });
   return { success: true };
 }

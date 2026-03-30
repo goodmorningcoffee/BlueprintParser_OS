@@ -17,6 +17,7 @@ import TableParsePanel from "./TableParsePanel";
 import TableCompareModal from "./TableCompareModal";
 import KeynotePanel from "./KeynotePanel";
 import SymbolSearchPanel from "./SymbolSearchPanel";
+import { useChunkLoader } from "@/hooks/useChunkLoader";
 
 interface PDFViewerProps {
   pdfUrl: string;
@@ -35,6 +36,9 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   const { pageNumber, numPages, setNumPages, scale, setScale } =
     useViewerStore();
+
+  // Chunk loader: fetches page data when navigating beyond loaded range
+  useChunkLoader();
   const showTextPanel = useViewerStore((s) => s.showTextPanel);
   const showChatPanel = useViewerStore((s) => s.showChatPanel);
   const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
@@ -48,6 +52,27 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const symbolSearchResults = useViewerStore((s) => s.symbolSearchResults);
   const symbolSearchLoading = useViewerStore((s) => s.symbolSearchLoading);
   const setMode = useViewerStore((s) => s.setMode);
+  const projectId = useViewerStore((s) => s.projectId);
+
+  // Lazy-load textractData per page (not loaded in initial project response)
+  // Also prefetch textractData for adjacent pages
+  useEffect(() => {
+    if (!projectId) return;
+    const pagesToLoad = [pageNumber, pageNumber + 1, pageNumber - 1].filter((p) => p >= 1 && p <= numPages);
+
+    for (const p of pagesToLoad) {
+      const store = useViewerStore.getState();
+      if (store.textractData[p]) continue;
+      fetch(`/api/pages/textract?projectId=${projectId}&pageNumber=${p}`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (data?.textractData) {
+            useViewerStore.getState().setTextractData(p, data.textractData);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [pageNumber, projectId, numPages]);
 
   // Keyboard shortcuts: a = pointer/select, v = pan/zoom
   useEffect(() => {

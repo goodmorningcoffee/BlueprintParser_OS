@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { inviteRequests } from "@/lib/db/schema";
-import { eq, sql, desc } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const requests = await db
     .select()
@@ -21,10 +19,8 @@ export async function GET() {
 }
 
 export async function PUT() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   await db
     .update(inviteRequests)

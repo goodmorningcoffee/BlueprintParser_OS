@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/api-utils";
 import { SageMakerClient, DescribeProcessingJobCommand } from "@aws-sdk/client-sagemaker";
 
 const sagemakerClient = new SageMakerClient({
@@ -17,10 +17,8 @@ const sagemakerClient = new SageMakerClient({
  * Returns rich details about a SageMaker processing job.
  */
 export async function GET(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const url = new URL(req.url);
   const jobName = url.searchParams.get("jobName");

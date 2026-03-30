@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
 import { db } from "@/lib/db";
 import { projects, pages, processingJobs } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -29,7 +30,9 @@ export async function POST(req: Request) {
   const authHeader = req.headers.get("authorization");
   const secret = process.env.PROCESSING_WEBHOOK_SECRET;
 
-  if (!secret || authHeader !== `Bearer ${secret}`) {
+  const expected = `Bearer ${secret}`;
+  if (!secret || !authHeader || authHeader.length !== expected.length ||
+      !timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useKeynoteParse } from "@/stores/viewerStore";
 
 interface GuidedParseOverlayProps {
   width: number;
@@ -32,12 +32,14 @@ export default function GuidedParseOverlay({
 }: GuidedParseOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const active = useViewerStore((s) => s.guidedParseActive);
-  const region = useViewerStore((s) => s.guidedParseRegion);
-  const rows = useViewerStore((s) => s.guidedParseRows);
-  const cols = useViewerStore((s) => s.guidedParseCols);
-  const setRows = useViewerStore((s) => s.setGuidedParseRows);
-  const setCols = useViewerStore((s) => s.setGuidedParseCols);
+  const {
+    guidedParseActive: active,
+    guidedParseRegion: region,
+    guidedParseRows: rows,
+    guidedParseCols: cols,
+    setGuidedParseRows: setRows,
+    setGuidedParseCols: setCols,
+  } = useKeynoteParse();
 
   // Local drag state -- not in the store because it's transient
   const [dragging, setDragging] = useState<DragTarget>(null);

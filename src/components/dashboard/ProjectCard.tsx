@@ -42,6 +42,8 @@ export default function ProjectCard({
   searchQuery,
 }: ProjectCardProps) {
   const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(name);
 
@@ -71,12 +73,28 @@ export default function ProjectCard({
 
     if (!confirming) {
       setConfirming(true);
+      setDeleteError(null);
       setTimeout(() => setConfirming(false), 3000);
       return;
     }
 
-    const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
-    if (res.ok) onDelete(id);
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        onDelete(id);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setDeleteError(data.error || `Failed (${res.status})`);
+        setConfirming(false);
+      }
+    } catch (err) {
+      setDeleteError("Network error");
+      setConfirming(false);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -93,14 +111,20 @@ export default function ProjectCard({
       {/* Delete button */}
       <button
         onClick={handleDelete}
+        disabled={deleting}
         className={`absolute top-2 right-2 px-2 py-0.5 rounded text-xs z-10 transition-colors ${
           confirming
             ? "bg-red-600 text-white"
             : "bg-[var(--bg)] text-[var(--muted)] opacity-0 group-hover:opacity-100 hover:text-red-400"
-        }`}
+        } ${deleting ? "opacity-50" : ""}`}
       >
-        {confirming ? "Confirm?" : "X"}
+        {deleting ? "..." : confirming ? "Confirm?" : "X"}
       </button>
+      {deleteError && (
+        <div className="absolute top-9 right-2 px-2 py-1 rounded text-[10px] bg-red-600/90 text-white z-10 max-w-[200px]">
+          {deleteError}
+        </div>
+      )}
 
       {/* Thumbnail */}
       <div

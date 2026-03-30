@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo, useState, useCallback } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore, useSummaries } from "@/stores/viewerStore";
 import HelpTooltip from "./HelpTooltip";
+import KeynoteItem from "./KeynoteItem";
 import { mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
+import ExportCsvModal from "./ExportCsvModal";
 // CSI detection runs server-side (csi-detect.ts uses fs); client components can't import it directly
 
 /**
@@ -81,9 +83,20 @@ export default function KeynotePanel() {
   }, [pageNumber, keynoteParseRegion, setPageIntelligence]);
 
   const [autoParsing, setAutoParsing] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+
+  const { summaries } = useSummaries();
 
   // ─── Classified keynote regions (informational) ─────────
   const classifiedKeynotes = useMemo(() => {
+    // Use summary catalog when available (works across all pages)
+    if (summaries?.keynoteTablePages) {
+      return summaries.keynoteTablePages.map((kp) => ({
+        pageNum: kp.pageNum,
+        table: { confidence: kp.confidence, category: "keynote-table" },
+      }));
+    }
+    // Fallback: iterate loaded pageIntelligence
     const results: { pageNum: number; table: any }[] = [];
     for (const [pn, intel] of Object.entries(pageIntelligence)) {
       const pi = intel as any;
@@ -96,7 +109,7 @@ export default function KeynotePanel() {
       }
     }
     return results.sort((a, b) => a.pageNum - b.pageNum);
-  }, [pageIntelligence]);
+  }, [summaries, pageIntelligence]);
 
   // ─── YOLO annotations inside Column A (tag column) ──────
   // YOLO annotations FULLY contained within Column A (tag column)
@@ -381,8 +394,8 @@ export default function KeynotePanel() {
     // Refresh spatial map
     refreshPageCsiSpatialMap(pageNumber);
 
-    // Persist to DB (fire-and-forget)
-    if (projectId) {
+    // Persist to DB (fire-and-forget) — skip for demo mode
+    if (projectId && !store.isDemo) {
       const updatedIntel = store.pageIntelligence[pageNumber];
       fetch("/api/pages/intelligence", {
         method: "PATCH",
@@ -475,7 +488,27 @@ export default function KeynotePanel() {
               </div>
             ) : (
               <>
-                <div className="text-[10px] text-[var(--muted)] px-1">{parsedKeynoteData.length} keynote table(s)</div>
+                <div className="flex items-center justify-between px-1 pb-1">
+                  <span className="text-[10px] text-[var(--muted)]">{parsedKeynoteData.length} keynote table(s)</span>
+                  <button
+                    onClick={() => setShowExportModal(true)}
+                    className="text-[10px] px-2 py-0.5 rounded border border-[var(--accent)]/40 text-[var(--accent)] hover:bg-[var(--accent)]/10"
+                  >
+                    Export CSV
+                  </button>
+                </div>
+                {showExportModal && (
+                  <ExportCsvModal
+                    tables={parsedKeynoteData.map((kn) => ({
+                      name: kn.tableName || "Keynotes",
+                      headers: ["Key", "Description"],
+                      rows: kn.keys.map((k) => ({ Key: k.key, Description: k.description })),
+                      pageNumber: kn.pageNumber,
+                    }))}
+                    onClose={() => setShowExportModal(false)}
+                    filenamePrefix="keynotes"
+                  />
+                )}
                 {/* Sort current page first */}
                 {[...parsedKeynoteData]
                   .sort((a, b) => (a.pageNumber === pageNumber ? -1 : b.pageNumber === pageNumber ? 1 : a.pageNumber - b.pageNumber))
@@ -802,199 +835,6 @@ export default function KeynotePanel() {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-/** Collapsible keynote item in All Keynotes list */
-function KeynoteItem({
-  keynote,
-  keynoteIndex,
-  pageNames,
-  isCurrentPage,
-  onNavigate,
-  activeHighlight,
-  onHighlight,
-  onDelete,
-}: {
-  keynote: { pageNumber: number; keys: { key: string; description: string; csiCodes?: string[]; note?: string }[]; yoloClass?: string; tableName?: string };
-  keynoteIndex: number;
-  pageNames: Record<number, string>;
-  isCurrentPage: boolean;
-  onNavigate: () => void;
-  activeHighlight: { pageNumber: number; key: string } | null;
-  onHighlight: (key: string) => void;
-  onDelete: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [editingIdx, setEditingIdx] = useState<number | null>(null);
-  const [editNote, setEditNote] = useState("");
-  const [editCsi, setEditCsi] = useState("");
-  const [editingName, setEditingName] = useState(false);
-  const [nameValue, setNameValue] = useState(keynote.tableName || "Keynotes");
-
-  const saveName = () => {
-    const trimmed = nameValue.trim();
-    if (trimmed) {
-      const store = useViewerStore.getState();
-      const allKeynotes = store.parsedKeynoteData;
-      if (allKeynotes) {
-        const updated = [...allKeynotes];
-        updated[keynoteIndex] = { ...updated[keynoteIndex], tableName: trimmed };
-        store.setParsedKeynoteData(updated as any);
-      }
-    }
-    setEditingName(false);
-  };
-
-  // Find matching YoloTags for instance counts
-  const yoloTags = useViewerStore((s) => s.yoloTags);
-  const tagInstances = (key: string) => {
-    const yt = yoloTags.find((t) => t.tagText === key && t.source === "keynote" && t.pageNumber === keynote.pageNumber);
-    return yt?.instances?.length || 0;
-  };
-
-  const handleKeyClick = (key: string) => {
-    const store = useViewerStore.getState();
-    const existing = store.yoloTags.find((t) => t.tagText === key && t.source === "keynote" && t.pageNumber === keynote.pageNumber);
-    if (existing) {
-      if (store.activeYoloTagId === existing.id) {
-        store.setActiveYoloTagId(null);
-        store.setYoloTagFilter(null);
-      } else {
-        store.setActiveYoloTagId(existing.id);
-        store.setYoloTagFilter(existing.id);
-      }
-    }
-    // Also set keynote highlight for canvas
-    onHighlight(key);
-  };
-
-  return (
-    <div
-      className={`rounded border ${isCurrentPage ? "border-amber-400/30 bg-amber-500/5" : "border-[var(--border)]"}`}
-    >
-      {/* Parent header */}
-      <div className="flex items-center gap-1 px-2 py-1.5">
-        <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-[var(--muted)] shrink-0">
-          {expanded ? "▼" : "▶"}
-        </button>
-        <div className="flex-1 min-w-0" onDoubleClick={onNavigate}>
-          {editingName ? (
-            <input
-              autoFocus
-              value={nameValue}
-              onChange={(e) => setNameValue(e.target.value)}
-              onBlur={saveName}
-              onKeyDown={(e) => { if (e.key === "Enter") saveName(); if (e.key === "Escape") setEditingName(false); }}
-              className="text-[11px] font-medium bg-transparent border-b border-amber-400 outline-none w-full text-[var(--fg)]"
-            />
-          ) : (
-            <span
-              onClick={() => setEditingName(true)}
-              className="text-[11px] font-medium text-[var(--fg)] truncate block cursor-pointer hover:text-amber-300"
-              title="Click to rename, double-click to navigate"
-            >
-              {keynote.tableName || "Keynotes"}
-            </span>
-          )}
-          <span className="text-[9px] text-[var(--muted)]">
-            {pageNames[keynote.pageNumber] || `p.${keynote.pageNumber}`} · {keynote.keys.length} keys
-          </span>
-        </div>
-        <button onClick={onDelete} className="text-[10px] text-[var(--muted)] hover:text-red-400 shrink-0" title="Delete keynote table">x</button>
-      </div>
-
-      {expanded && (
-        <div className="px-2 pb-2 space-y-0.5">
-          {keynote.keys.map((k, i) => (
-            <div key={i}>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => handleKeyClick(k.key)}
-                  className={`flex-1 text-left text-[10px] px-1.5 py-0.5 rounded ${
-                    activeHighlight?.pageNumber === keynote.pageNumber && activeHighlight?.key === k.key
-                      ? "bg-amber-500/15 text-amber-300"
-                      : "hover:bg-[var(--surface-hover)] text-[var(--muted)]"
-                  }`}
-                >
-                  <span className="font-mono font-medium text-[var(--fg)]">{k.key || "?"}</span>
-                  <span className="text-[var(--muted)]"> — {k.description || "(no description)"}</span>
-                  {k.csiCodes && k.csiCodes.length > 0 && (
-                    <span className="text-orange-400/60 ml-1 text-[9px]">[{k.csiCodes.join(", ")}]</span>
-                  )}
-                  {tagInstances(k.key) > 0 && (
-                    <span className="text-cyan-400/70 text-[9px] ml-1">({tagInstances(k.key)})</span>
-                  )}
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (editingIdx === i) { setEditingIdx(null); }
-                    else { setEditingIdx(i); setEditNote(k.note || ""); setEditCsi(k.csiCodes?.join(", ") || ""); }
-                  }}
-                  className="text-[10px] text-[var(--muted)] hover:text-amber-300 shrink-0 px-0.5"
-                  title="Edit metadata"
-                >
-                  {editingIdx === i ? "x" : "✏"}
-                </button>
-              </div>
-              {editingIdx === i && (
-                <div className="ml-2 mt-1 mb-1 space-y-1 p-1.5 rounded bg-[var(--surface)] border border-[var(--border)]">
-                  <div>
-                    <label className="text-[9px] text-[var(--muted)] block">CSI Codes</label>
-                    <input
-                      type="text"
-                      value={editCsi}
-                      onChange={(e) => setEditCsi(e.target.value)}
-                      placeholder="e.g. 08 21 16, 09 91 00"
-                      className="w-full text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] bg-transparent text-[var(--fg)] placeholder:text-[var(--muted)]/30 focus:outline-none focus:border-amber-400/50"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[9px] text-[var(--muted)] block">Notes</label>
-                    <textarea
-                      value={editNote}
-                      onChange={(e) => setEditNote(e.target.value)}
-                      placeholder="Add notes..."
-                      rows={2}
-                      className="w-full text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] bg-transparent text-[var(--fg)] placeholder:text-[var(--muted)]/30 focus:outline-none focus:border-amber-400/50 resize-none"
-                    />
-                  </div>
-                  <button
-                    onClick={() => {
-                      // Update the keynote key's metadata in the store
-                      const store = useViewerStore.getState();
-                      const allKeynotes = store.parsedKeynoteData;
-                      if (allKeynotes) {
-                        const updated = allKeynotes.map((kn) => {
-                          if (kn.pageNumber !== keynote.pageNumber || kn.tableName !== keynote.tableName) return kn;
-                          return {
-                            ...kn,
-                            keys: kn.keys.map((key, ki) => {
-                              if (ki !== i) return key;
-                              return {
-                                ...key,
-                                csiCodes: editCsi.split(",").map(c => c.trim()).filter(Boolean),
-                                note: editNote,
-                              };
-                            }),
-                          };
-                        });
-                        store.setParsedKeynoteData(updated as any);
-                      }
-                      setEditingIdx(null);
-                    }}
-                    className="text-[9px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30"
-                  >
-                    Save
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

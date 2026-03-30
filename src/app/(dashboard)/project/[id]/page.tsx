@@ -12,6 +12,7 @@ import type {
   KeynoteData,
   CsiCode,
   TextractPageData,
+  ProjectSummaries,
 } from "@/types";
 
 interface ProjectResponse {
@@ -22,17 +23,13 @@ interface ProjectResponse {
   pdfUrl: string;
   numPages: number;
   status: string;
+  projectIntelligence: any;
+  summaries: ProjectSummaries | null;
   pages: Array<{
     pageNumber: number;
     name: string;
     drawingNumber: string | null;
-    rawText: string | null;
-    textractData: TextractPageData | null;
-    keynotes: KeynoteData[] | null;
-    csiCodes: CsiCode[] | null;
-    textAnnotations: unknown | null;
   }>;
-  annotations: ClientAnnotation[];
   takeoffItems?: ClientTakeoffItem[];
   chatMessages?: Array<{
     id: number;
@@ -40,6 +37,21 @@ interface ProjectResponse {
     content: string;
     model: string | null;
   }>;
+}
+
+interface ChunkResponse {
+  from: number;
+  to: number;
+  pages: Array<{
+    pageNumber: number;
+    name: string;
+    drawingNumber: string | null;
+    keynotes: KeynoteData[] | null;
+    csiCodes: CsiCode[] | null;
+    textAnnotations: unknown | null;
+    pageIntelligence: unknown | null;
+  }>;
+  annotations: ClientAnnotation[];
 }
 
 export default function ProjectPage() {
@@ -59,13 +71,8 @@ export default function ProjectPage() {
   const setPublicId = useViewerStore((s) => s.setPublicId);
   const setDataUrl = useViewerStore((s) => s.setDataUrl);
   const setNumPages = useViewerStore((s) => s.setNumPages);
-  const setAnnotations = useViewerStore((s) => s.setAnnotations);
   const initDetectionModels = useViewerStore((s) => s.initDetectionModels);
   const setPageNames = useViewerStore((s) => s.setPageNames);
-  const setKeynotes = useViewerStore((s) => s.setKeynotes);
-  const setCsiCodes = useViewerStore((s) => s.setCsiCodes);
-  const setTextractData = useViewerStore((s) => s.setTextractData);
-  const setTextAnnotations = useViewerStore((s) => s.setTextAnnotations);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const setChatMessages = useViewerStore((s) => s.setChatMessages);
@@ -82,76 +89,40 @@ export default function ProjectPage() {
       // Clear stale data from any previously viewed project
       resetProjectData();
 
+      // ─── Phase 1: Fetch lightweight project metadata + summaries ───
       const res = await fetch(`/api/projects/${id}`);
       if (!res.ok) throw new Error("Failed to load project");
 
       const data: ProjectResponse = await res.json();
       setProject(data);
 
-      // Hydrate store
+      // Hydrate core project state
       setProjectId(data.dbId);
       setPublicId(data.id);
       setDataUrl(data.dataUrl);
       setNumPages(data.numPages || 0);
-      if ((data as any).projectIntelligence) {
-        useViewerStore.getState().setProjectIntelligenceData((data as any).projectIntelligence);
+      if (data.projectIntelligence) {
+        useViewerStore.getState().setProjectIntelligenceData(data.projectIntelligence);
       }
-      setAnnotations(data.annotations);
-      const yoloModelNames = [...new Set(
-        data.annotations
-          .filter((a: any) => a.source === "yolo" && a.data?.modelName)
-          .map((a: any) => a.data.modelName as string)
-      )];
-      if (yoloModelNames.length > 0) initDetectionModels(yoloModelNames);
 
-      // Page names and data
+      // Hydrate summaries (powers sidebar filters, panel lists, annotation counts)
+      if (data.summaries) {
+        useViewerStore.getState().setSummaries(data.summaries);
+        // Use summary-derived trades/CSI codes instead of iterating all pages
+        setAllTrades(data.summaries.allTrades);
+        setAllCsiCodes(data.summaries.allCsiCodes);
+        // Init detection models from summary instead of iterating annotations
+        if (data.summaries.annotationSummary.modelNames.length > 0) {
+          initDetectionModels(data.summaries.annotationSummary.modelNames);
+        }
+      }
+
+      // Page names from lightweight page list
       const names: Record<number, string> = {};
-      const allTradeSet = new Set<string>();
-      const allCsiMap = new Map<string, string>();
-
-      // Batch all page data into maps, then update store ONCE (avoids N sequential re-renders)
-      const keynoteMap: Record<number, KeynoteData[]> = {};
-      const csiMap: Record<number, CsiCode[]> = {};
-      const textractMap: Record<number, TextractPageData> = {};
-      const textAnnMap: Record<number, any[]> = {};
-      const intelMap: Record<number, any> = {};
-
       for (const page of data.pages) {
         names[page.pageNumber] = page.drawingNumber || page.name;
-
-        if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes as KeynoteData[];
-        if (page.csiCodes) {
-          const codes = page.csiCodes as CsiCode[];
-          csiMap[page.pageNumber] = codes;
-          codes.forEach((c) => {
-            allTradeSet.add(c.trade);
-            allCsiMap.set(c.code, c.description);
-          });
-        }
-        if (page.textractData) textractMap[page.pageNumber] = page.textractData as TextractPageData;
-        if (page.textAnnotations) {
-          const result = page.textAnnotations as any;
-          textAnnMap[page.pageNumber] = result.annotations || [];
-        }
-        if ((page as any).pageIntelligence) intelMap[page.pageNumber] = (page as any).pageIntelligence;
       }
-
-      // Single batched store update — triggers ONE re-render instead of 5×N
-      useViewerStore.setState((s) => ({
-        keynotes: { ...s.keynotes, ...keynoteMap },
-        csiCodes: { ...s.csiCodes, ...csiMap },
-        textractData: { ...s.textractData, ...textractMap },
-        textAnnotations: { ...s.textAnnotations, ...textAnnMap },
-        pageIntelligence: { ...s.pageIntelligence, ...intelMap },
-      }));
-
       setPageNames(names);
-      setAllTrades(Array.from(allTradeSet).sort());
-      setAllCsiCodes(
-        Array.from(allCsiMap.entries())
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([code, description]) => ({ code, description }))
-      );
 
       // Apply filters from URL query params
       if (csiParam) setCsiFilter(csiParam);
@@ -174,10 +145,70 @@ export default function ProjectPage() {
         setTakeoffItems(data.takeoffItems);
       }
 
-      // Hydrate scale calibrations from annotations
-      for (const ann of data.annotations) {
-        if (ann.source === "takeoff-scale" && (ann.data as any)?.type === "scale-calibration") {
-          setScaleCalibration(ann.pageNumber, ann.data as any);
+      // ─── Phase 2: Fetch initial chunk (pages 1-9) ───
+      const chunkTo = Math.min(data.numPages || 1, 9);
+      const chunkRes = await fetch(`/api/projects/${id}/pages?from=1&to=${chunkTo}`);
+      if (chunkRes.ok) {
+        const chunk: ChunkResponse = await chunkRes.json();
+
+        // Batch page data into maps
+        const keynoteMap: Record<number, KeynoteData[]> = {};
+        const csiMap: Record<number, CsiCode[]> = {};
+        const textAnnMap: Record<number, any[]> = {};
+        const intelMap: Record<number, any> = {};
+
+        for (const page of chunk.pages) {
+          if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes as KeynoteData[];
+          if (page.csiCodes) csiMap[page.pageNumber] = page.csiCodes as CsiCode[];
+          if (page.textAnnotations) {
+            const result = page.textAnnotations as any;
+            textAnnMap[page.pageNumber] = result.annotations || [];
+          }
+          if (page.pageIntelligence) intelMap[page.pageNumber] = page.pageIntelligence;
+        }
+
+        // Single batched store update for chunk data
+        useViewerStore.setState(() => ({
+          keynotes: keynoteMap,
+          csiCodes: csiMap,
+          textAnnotations: textAnnMap,
+          pageIntelligence: intelMap,
+          annotations: chunk.annotations,
+          loadedPageRange: { from: 1, to: chunkTo },
+        }));
+
+        // Hydrate scale calibrations from chunk annotations
+        for (const ann of chunk.annotations) {
+          if (ann.source === "takeoff-scale" && (ann.data as any)?.type === "scale-calibration") {
+            setScaleCalibration(ann.pageNumber, ann.data as any);
+          }
+        }
+
+        // If summaries were missing (old project), fall back to chunk data for trades/CSI
+        if (!data.summaries) {
+          const allTradeSet = new Set<string>();
+          const allCsiMap = new Map<string, string>();
+          for (const page of chunk.pages) {
+            if (page.csiCodes) {
+              for (const c of page.csiCodes as CsiCode[]) {
+                allTradeSet.add(c.trade);
+                allCsiMap.set(c.code, c.description);
+              }
+            }
+          }
+          setAllTrades(Array.from(allTradeSet).sort());
+          setAllCsiCodes(
+            Array.from(allCsiMap.entries())
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([code, description]) => ({ code, description }))
+          );
+          // Init detection models from annotations
+          const yoloModelNames = [...new Set(
+            chunk.annotations
+              .filter((a: any) => a.source === "yolo" && a.data?.modelName)
+              .map((a: any) => a.data.modelName as string)
+          )];
+          if (yoloModelNames.length > 0) initDetectionModels(yoloModelNames);
         }
       }
     } catch (err) {
@@ -191,13 +222,8 @@ export default function ProjectPage() {
     setPublicId,
     setDataUrl,
     setNumPages,
-    setAnnotations,
     initDetectionModels,
     setPageNames,
-    setKeynotes,
-    setCsiCodes,
-    setTextractData,
-    setTextAnnotations,
     setAllTrades,
     setAllCsiCodes,
     setChatMessages,

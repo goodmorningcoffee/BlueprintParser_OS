@@ -14,7 +14,7 @@ import { classifyTextRegions } from "@/lib/text-region-classifier";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
-import { analyzeProject } from "@/lib/project-analysis";
+import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
 
 const PAGE_CONCURRENCY = 20;
 
@@ -131,8 +131,19 @@ export async function processProject(projectId: number): Promise<{
           return;
         }
 
-        // Rasterize page once at 300 DPI — used for both Textract and keynotes
+        // Rasterize page once at 300 DPI — used for Textract, keynotes, AND stored for instant page display
         const pngBuffer = await rasterizePage(pdfBuffer, pageNum, 300);
+
+        // Store page image + thumbnail to S3 for instant client-side rendering
+        const pageKey = String(pageNum).padStart(4, "0");
+        try {
+          await uploadToS3(`${project.dataUrl}/pages/page_${pageKey}.png`, pngBuffer, "image/png");
+          // Generate 72 DPI thumbnail
+          const thumbBuffer = await rasterizePage(pdfBuffer, pageNum, 72);
+          await uploadToS3(`${project.dataUrl}/thumbnails/page_${pageKey}.png`, thumbBuffer, "image/png");
+        } catch (err) {
+          console.warn(`[processing] Page ${pageNum} image upload failed:`, err);
+        }
 
         // Run Textract OCR
         const textractData = await analyzePageImageWithFallback(pngBuffer);
@@ -338,6 +349,14 @@ export async function processProject(projectId: number): Promise<{
       console.log(`[processing] Project analysis complete: ${summary.split("\n")[0]}`);
     } catch (err) {
       console.error("[processing] Project analysis failed:", err);
+    }
+
+    // Compute project summaries (chunking indexes for sidebar/panels)
+    try {
+      await computeProjectSummaries(project.id);
+      console.log(`[processing] Project summaries computed for ${numPages} pages`);
+    } catch (err) {
+      console.error("[processing] Project summary computation failed:", err);
     }
 
     // Update project status

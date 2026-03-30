@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, pages, models, processingJobs } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -11,10 +11,8 @@ import { audit } from "@/lib/audit";
 import { getToggles } from "@/lib/toggles";
 
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
   if (!session.user.canRunModels) {
     return NextResponse.json({ error: "You don't have permission to run models. Ask your admin to enable it." }, { status: 403 });
   }

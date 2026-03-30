@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useProject, usePageData, useDetection, useTextAnnotationDisplay, useYoloTags, useSymbolSearch, useSummaries } from "@/stores/viewerStore";
 import { findPhraseMatches } from "./SearchHighlightOverlay";
 
 interface PageSidebarProps {
@@ -36,47 +36,39 @@ function disciplineOrder(prefix: string): number {
 }
 
 export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
-  const {
-    pageNumber,
-    numPages,
-    setPage,
-    pageNames,
-    setPageName,
-    publicId,
-    searchResults,
-    searchQuery,
-    searchMatches,
-    keynotes,
-    activeKeynoteFilter,
-    setKeynoteFilter,
-    annotations,
-    activeAnnotationFilter,
-    setAnnotationFilter,
-    csiCodes,
-    activeTradeFilter,
-    setTradeFilter,
-    activeCsiFilter,
-    setCsiFilter,
-    textractData,
-    textAnnotations,
-    activeTextAnnotationFilter,
-    setTextAnnotationFilter,
-    activeTakeoffFilter,
-    setTakeoffFilter,
-    yoloTags,
-    activeYoloTagFilter,
-    setYoloTagFilter,
-    setActiveYoloTagId,
-    symbolSearchResults,
-    symbolSearchConfidence,
-    dismissedSymbolMatches,
-  } = useViewerStore();
+  // Slice selectors (only re-render when relevant slice changes)
+  const { pageNumber, numPages, setPage } = useNavigation();
+  const { pageNames, publicId } = useProject();
+  const { keynotes, csiCodes, textractData, textAnnotations, activeCsiFilter, setCsiFilter } = usePageData();
+  const { annotations, activeAnnotationFilter, setAnnotationFilter, searchQuery } = useDetection();
+  const { activeTextAnnotationFilter, setTextAnnotationFilter } = useTextAnnotationDisplay();
+  const { yoloTags, setActiveYoloTagId, setYoloTagFilter } = useYoloTags();
+  const { symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches } = useSymbolSearch();
+  const { summaries } = useSummaries();
+
+  // Fields not in any slice selector — individual selectors
+  const setPageName = useViewerStore((s) => s.setPageName);
+  const searchResults = useViewerStore((s) => s.searchResults);
+  const searchMatches = useViewerStore((s) => s.searchMatches);
+  const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);
+  const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
+  const activeTradeFilter = useViewerStore((s) => s.activeTradeFilter);
+  const setTradeFilter = useViewerStore((s) => s.setTradeFilter);
+  const activeTakeoffFilter = useViewerStore((s) => s.activeTakeoffFilter);
+  const setTakeoffFilter = useViewerStore((s) => s.setTakeoffFilter);
+  const activeYoloTagFilter = useViewerStore((s) => s.activeYoloTagFilter);
 
   const [thumbnails, setThumbnails] = useState<ThumbnailCache>({});
   const renderedPagesRef = useRef<Set<number>>(new Set());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
+
+  // Virtual scrolling state for large projects
+  const ITEM_HEIGHT = 76; // px per page button (thumbnail + padding)
+  const VIRTUAL_BUFFER = 10; // extra items above/below viewport
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(600);
 
   // Group-by-sheet state
   const [groupBySheet, setGroupBySheet] = useState(false);
@@ -126,7 +118,58 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     setThumbnails({});
   }, [pdfDoc]);
 
-  // Generate thumbnails in batches, prioritizing visible + current page
+  // Try pre-generated S3 thumbnails first, fall back to pdf.js rendering
+  const dataUrl = useViewerStore((s) => s.dataUrl);
+  useEffect(() => {
+    if (!dataUrl || !pdfDoc) return;
+    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "beaver-app-uploads";
+    const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
+    const baseUrl = cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
+
+    // Load thumbnails in batches around current page (not all at once)
+    // For large projects this prevents 460 concurrent S3 requests
+    const loadBatch = (pages: number[]) => {
+      for (const pg of pages) {
+        if (renderedPagesRef.current.has(pg)) continue;
+        const key = String(pg).padStart(4, "0");
+        const img = new Image();
+        img.onload = () => {
+          renderedPagesRef.current.add(pg);
+          setThumbnails((prev) => ({ ...prev, [pg]: img.src }));
+        };
+        img.onerror = () => {};
+        img.src = `${baseUrl}/thumbnails/page_${key}.png`;
+      }
+    };
+
+    // Initial batch: load thumbnails for first 20 pages
+    const initialBatch = Array.from({ length: Math.min(20, pdfDoc.numPages) }, (_, i) => i + 1);
+    loadBatch(initialBatch);
+
+    // Remaining pages load on scroll (via IntersectionObserver + visiblePages state)
+  }, [dataUrl, pdfDoc]);
+
+  // Load S3 thumbnails for pages that become visible (lazy)
+  useEffect(() => {
+    if (!dataUrl || visiblePages.size === 0) return;
+    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "beaver-app-uploads";
+    const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
+    const baseUrl = cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
+
+    for (const pg of visiblePages) {
+      if (renderedPagesRef.current.has(pg)) continue;
+      const key = String(pg).padStart(4, "0");
+      const img = new Image();
+      img.onload = () => {
+        renderedPagesRef.current.add(pg);
+        setThumbnails((prev) => ({ ...prev, [pg]: img.src }));
+      };
+      img.onerror = () => {};
+      img.src = `${baseUrl}/thumbnails/page_${key}.png`;
+    }
+  }, [visiblePages, dataUrl]);
+
+  // Generate thumbnails via pdf.js for pages that don't have S3 thumbnails
   useEffect(() => {
     if (!pdfDoc) return;
 
@@ -221,27 +264,33 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   // Filter pages based on search or keynote filter
   const isSearchFiltered = searchQuery.length > 0 && searchResults.length > 0;
 
-  // Compute keynote-filtered pages
+  // Compute keynote-filtered pages (use summary index when available)
   const keynoteFilteredPages = activeKeynoteFilter
-    ? Object.entries(keynotes)
-        .filter(([, pageKeynotes]) =>
-          pageKeynotes.some(
-            (k) =>
-              k.shape === activeKeynoteFilter.shape &&
-              k.text === activeKeynoteFilter.text
-          )
-        )
-        .map(([pageNum]) => Number(pageNum))
+    ? (summaries?.keynotePageIndex?.[`${activeKeynoteFilter.shape}:${activeKeynoteFilter.text}`] ||
+       // Fallback: iterate loaded keynotes (for old projects without summaries)
+       Object.entries(keynotes)
+         .filter(([, pageKeynotes]) =>
+           pageKeynotes.some(
+             (k) => k.shape === activeKeynoteFilter.shape && k.text === activeKeynoteFilter.text
+           )
+         )
+         .map(([pageNum]) => Number(pageNum)))
     : [];
   const isKeynoteFiltered = activeKeynoteFilter !== null && keynoteFilteredPages.length > 0;
 
-  // Compute annotation-filtered pages + per-page counts
+  // Compute annotation-filtered pages + per-page counts (use summary when available)
   const annotationFilteredPages = activeAnnotationFilter
-    ? [...new Set(annotations.filter((a) => a.name === activeAnnotationFilter).map((a) => a.pageNumber))]
+    ? (summaries?.annotationSummary?.categoryCounts?.[activeAnnotationFilter]?.pages ||
+       [...new Set(annotations.filter((a) => a.name === activeAnnotationFilter).map((a) => a.pageNumber))])
     : [];
   const isAnnotationFiltered = activeAnnotationFilter !== null && annotationFilteredPages.length > 0;
   const annotationPageCounts: Record<number, number> = {};
-  if (activeAnnotationFilter) {
+  if (activeAnnotationFilter && summaries?.annotationSummary?.pageAnnotationCounts) {
+    // Use summary counts — not exact per-label-per-page, but sufficient for badges
+    for (const pn of annotationFilteredPages) {
+      annotationPageCounts[pn] = 1; // Summary knows pages, not exact per-label counts
+    }
+  } else if (activeAnnotationFilter) {
     for (const a of annotations) {
       if (a.name === activeAnnotationFilter) {
         annotationPageCounts[a.pageNumber] = (annotationPageCounts[a.pageNumber] || 0) + 1;
@@ -249,23 +298,21 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     }
   }
 
-  // Compute trade-filtered pages
+  // Compute trade-filtered pages (use summary index when available)
   const tradeFilteredPages = activeTradeFilter
-    ? Object.entries(csiCodes)
-        .filter(([, codes]) =>
-          codes.some((c) => c.trade === activeTradeFilter)
-        )
-        .map(([pageNum]) => Number(pageNum))
+    ? (summaries?.tradePageIndex?.[activeTradeFilter] ||
+       Object.entries(csiCodes)
+         .filter(([, codes]) => codes.some((c) => c.trade === activeTradeFilter))
+         .map(([pageNum]) => Number(pageNum)))
     : [];
   const isTradeFiltered = activeTradeFilter !== null && tradeFilteredPages.length > 0;
 
-  // Compute CSI code-filtered pages
+  // Compute CSI code-filtered pages (use summary index when available)
   const csiFilteredPages = activeCsiFilter
-    ? Object.entries(csiCodes)
-        .filter(([, codes]) =>
-          codes.some((c) => c.code === activeCsiFilter)
-        )
-        .map(([pageNum]) => Number(pageNum))
+    ? (summaries?.csiPageIndex?.[activeCsiFilter] ||
+       Object.entries(csiCodes)
+         .filter(([, codes]) => codes.some((c) => c.code === activeCsiFilter))
+         .map(([pageNum]) => Number(pageNum)))
     : [];
   const isCsiFiltered = activeCsiFilter !== null && csiFilteredPages.length > 0;
 
@@ -307,13 +354,14 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     return counts;
   }, [activeCsiFilter, csiFilteredPages, csiCodes, textractData]);
 
-  // Compute text annotation-filtered pages
+  // Compute text annotation-filtered pages (use summary index when available)
   const textAnnotationFilteredPages = activeTextAnnotationFilter
-    ? Object.entries(textAnnotations)
-        .filter(([, anns]) =>
-          anns.some((a) => a.type === activeTextAnnotationFilter!.type && a.text === activeTextAnnotationFilter!.text)
-        )
-        .map(([pageNum]) => Number(pageNum))
+    ? (summaries?.textAnnotationPageIndex?.[`${activeTextAnnotationFilter.type}:${activeTextAnnotationFilter.text}`] ||
+       Object.entries(textAnnotations)
+         .filter(([, anns]) =>
+           anns.some((a) => a.type === activeTextAnnotationFilter!.type && a.text === activeTextAnnotationFilter!.text)
+         )
+         .map(([pageNum]) => Number(pageNum)))
     : [];
   const isTextAnnotationFiltered = activeTextAnnotationFilter !== null && textAnnotationFilteredPages.length > 0;
 
@@ -330,9 +378,14 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     return counts;
   }, [activeTextAnnotationFilter, textAnnotationFilteredPages, textAnnotations]);
 
-  // Compute QTO takeoff-filtered pages
+  // Compute QTO takeoff-filtered pages (use summary when available)
   const takeoffFilteredPages = useMemo(() => {
     if (activeTakeoffFilter === null) return [];
+    // Use summary if available
+    if (summaries?.takeoffTotals?.[activeTakeoffFilter]) {
+      return summaries.takeoffTotals[activeTakeoffFilter].pages;
+    }
+    // Fallback: iterate loaded annotations
     const pages: number[] = [];
     const seen = new Set<number>();
     for (const ann of annotations) {
@@ -344,7 +397,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
       }
     }
     return pages;
-  }, [activeTakeoffFilter, annotations]);
+  }, [activeTakeoffFilter, annotations, summaries]);
   const isTakeoffFiltered = activeTakeoffFilter !== null && takeoffFilteredPages.length > 0;
 
   const takeoffCounts = useMemo(() => {
@@ -560,6 +613,11 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     <div
       ref={containerRef}
       className="w-48 border-r border-[var(--border)] bg-[var(--surface)] overflow-y-auto shrink-0"
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        setScrollTop(el.scrollTop);
+        setContainerHeight(el.clientHeight);
+      }}
     >
       <div className="p-2">
         {/* Group by sheet type toggle */}
@@ -745,11 +803,44 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
             );
           })
         ) : (
-          // ─── Flat view (original) ──────────────────────────────
-          Array.from({ length: numPages }, (_, i) => i + 1).map((n) => {
-            if (isPageHidden(n)) return null;
-            return renderPageButton(n);
-          })
+          // ─── Flat view (virtualized for large projects) ──────────
+          (() => {
+            const allPages = Array.from({ length: numPages }, (_, i) => i + 1)
+              .filter((n) => !isPageHidden(n));
+            const totalHeight = allPages.length * ITEM_HEIGHT;
+
+            // For small projects (< 50 pages), render all — no virtualization overhead
+            if (allPages.length < 50) {
+              return allPages.map((n) => renderPageButton(n));
+            }
+
+            // Virtual scrolling: only render visible items + buffer
+            const startIdx = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - VIRTUAL_BUFFER);
+            const endIdx = Math.min(
+              allPages.length,
+              Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + VIRTUAL_BUFFER
+            );
+            const visibleSlice = allPages.slice(startIdx, endIdx);
+
+            return (
+              <div style={{ height: totalHeight, position: "relative" }}>
+                {visibleSlice.map((n, i) => (
+                  <div
+                    key={n}
+                    style={{
+                      position: "absolute",
+                      top: (startIdx + i) * ITEM_HEIGHT,
+                      left: 0,
+                      right: 0,
+                      height: ITEM_HEIGHT,
+                    }}
+                  >
+                    {renderPageButton(n)}
+                  </div>
+                ))}
+              </div>
+            );
+          })()
         )}
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/api-utils";
 import { createLLMClient, LLMError } from "@/lib/llm";
 
 /**
@@ -8,10 +8,8 @@ import { createLLMClient, LLMError } from "@/lib/llm";
  * Makes a tiny completion request (max_tokens: 5) to verify the key works.
  */
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const { provider, model, apiKey, baseUrl } = await req.json();
   if (!provider || !model) {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 
@@ -17,10 +17,8 @@ interface GlobalSearchResult {
  * GET /api/search/global?q=<term>
  */
 export async function GET(req: Request) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const url = new URL(req.url);
   const query = url.searchParams.get("q")?.trim();

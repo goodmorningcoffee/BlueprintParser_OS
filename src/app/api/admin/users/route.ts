@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -7,10 +7,8 @@ import bcrypt from "bcrypt";
 
 // GET - list all users in admin's company
 export async function GET() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   // Select core fields first (always available)
   const coreUsers = await db
@@ -47,10 +45,8 @@ export async function GET() {
 
 // POST - create new user
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const { username, email, password, role } = await req.json();
 
@@ -102,10 +98,8 @@ export async function POST(req: Request) {
 
 // PUT - toggle user permissions (canRunModels)
 export async function PUT(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const { id, canRunModels } = await req.json();
 
@@ -139,10 +133,8 @@ export async function PUT(req: Request) {
 
 // DELETE - remove a user
 export async function DELETE(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const { id } = await req.json();
 

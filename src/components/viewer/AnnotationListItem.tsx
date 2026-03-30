@@ -8,6 +8,8 @@ import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
 interface AnnotationListItemProps {
   annotation: ClientAnnotation;
   isActive: boolean;
+  isHidden?: boolean;
+  onToggleVisibility?: (id: number) => void;
   onToggleFilter: (name: string) => void;
   onSearchKeyword: (keyword: string) => void;
   color?: string;
@@ -15,7 +17,7 @@ interface AnnotationListItemProps {
 }
 
 export default function AnnotationListItem({
-  annotation, isActive, onToggleFilter, onSearchKeyword,
+  annotation, isActive, isHidden, onToggleVisibility, onToggleFilter, onSearchKeyword,
   color = "#a855f7", showPageNumber = true,
 }: AnnotationListItemProps) {
   const [expanded, setExpanded] = useState(false);
@@ -63,7 +65,7 @@ export default function AnnotationListItem({
       isActive ? "bg-[var(--accent)]/10 border-l-2 border-[var(--accent)]" : "hover:bg-[var(--surface-hover)]"
     }`}>
       {/* Collapsed row */}
-      <div className="flex items-center gap-2 px-2 py-1.5 cursor-pointer" onClick={handleRowClick}>
+      <div className="flex items-center gap-2 px-2 py-1.5 cursor-pointer group" onClick={handleRowClick}>
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
           className="text-[10px] text-[var(--muted)] hover:text-[var(--fg)] shrink-0 w-3 text-center"
@@ -78,6 +80,15 @@ export default function AnnotationListItem({
         </span>
         {confidence !== undefined && (
           <span className="text-[10px] text-[var(--muted)] shrink-0">{Math.round(confidence * 100)}%</span>
+        )}
+        {onToggleVisibility && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleVisibility(annotation.id); }}
+            className={`text-[10px] shrink-0 opacity-0 group-hover:opacity-100 ${isHidden ? "text-[var(--muted)] opacity-40" : "text-[var(--fg)]"}`}
+            title={isHidden ? "Show" : "Hide"}
+          >
+            {isHidden ? "\u2014" : "\u{1F441}"}
+          </button>
         )}
         {showPageNumber && (
           <span className="text-[10px] px-1 py-0.5 rounded bg-[var(--surface)] text-[var(--muted)] shrink-0">

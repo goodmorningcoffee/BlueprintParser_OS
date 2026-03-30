@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, pages, chatMessages, annotations, takeoffItems, models, companies } from "@/lib/db/schema";
 import { eq, and, desc, sql, isNull, inArray } from "drizzle-orm";
@@ -475,10 +476,8 @@ export async function POST(req: Request) {
  * Query params: projectId, scope (page|project|all), pageNumber (for page scope)
  */
 export async function DELETE(req: Request) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const url = new URL(req.url);
   const projectId = url.searchParams.get("projectId");

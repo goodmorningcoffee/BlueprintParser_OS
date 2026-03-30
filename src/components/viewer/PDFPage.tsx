@@ -32,6 +32,23 @@ export default function PDFPage({
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
 
+  // Pre-rendered PNG fallback for instant page display while pdf.js renders
+  const dataUrl = useViewerStore((s) => s.dataUrl);
+  const pageKey = String(pageNumber).padStart(4, "0");
+  const cdnDomain = typeof window !== "undefined" ? undefined : undefined; // client-side only
+  const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "beaver-app-uploads";
+  const cloudfront = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
+  const fallbackSrc = dataUrl
+    ? cloudfront
+      ? `https://${cloudfront}/${dataUrl}/pages/page_${pageKey}.png`
+      : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}/pages/page_${pageKey}.png`
+    : null;
+  const [canvasReady, setCanvasReady] = useState(false);
+  const [fallbackError, setFallbackError] = useState(false);
+
+  // Reset states when page changes
+  useEffect(() => { setCanvasReady(false); setFallbackError(false); }, [pageNumber]);
+
   // Base width = container width minus padding, so page fills the viewport
   const baseWidth = Math.max(containerWidth - 32, 400);
 
@@ -81,8 +98,9 @@ export default function PDFPage({
         await renderTask.promise;
         renderTaskRef.current = null;
         setRenderedScale(targetScale);
+        setCanvasReady(true);
       } catch (err: any) {
-        if (err?.name !== "RenderingCancelled") {
+        if (err?.name !== "RenderingCancelledException") {
           console.error("Render error:", err);
         }
       }
@@ -133,12 +151,31 @@ export default function PDFPage({
         height: displayHeight,
       }}
     >
+      {/* Pre-rendered PNG fallback — shows instantly while pdf.js canvas renders */}
+      {fallbackSrc && !canvasReady && !fallbackError && (
+        <img
+          src={fallbackSrc}
+          alt=""
+          onError={() => setFallbackError(true)}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: displayWidth || "100%",
+            height: displayHeight || "auto",
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        />
+      )}
       <canvas
         ref={canvasRef}
         style={{
           transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
           transformOrigin: "top left",
           willChange: "transform",
+          opacity: canvasReady ? 1 : 0,
+          transition: "opacity 150ms ease-in",
         }}
       />
       <SearchHighlightOverlay

@@ -8,11 +8,19 @@
 import type {
   PageIntelligence,
   ProjectIntelligence,
+  ProjectSummaries,
   DisciplineBreakdown,
   RefGraphEdge,
   CsiCode,
+  ScheduleSummaryEntry,
+  ParsedTableSummaryEntry,
+  AnnotationSummary,
+  TakeoffItemTotal,
 } from "@/types";
 import { buildCsiGraph } from "@/lib/csi-graph";
+import { db } from "@/lib/db";
+import { pages, annotations, projects } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 interface PageSummary {
   pageNumber: number;
@@ -241,26 +249,298 @@ function generateProjectReport(
 // Main Export
 // ═══════════════════════════════════════════════════════════════════
 
-export function analyzeProject(pages: PageSummary[]): {
+export function analyzeProject(pageSummaries: PageSummary[]): {
   intelligence: ProjectIntelligence;
   summary: string;
 } {
-  const disciplines = analyzeDrawingSequence(pages);
-  const refGraph = assembleRefGraph(pages);
-  const csiTopology = analyzeCsiTopology(pages);
-  const csiGraph = buildCsiGraph(pages.map(p => ({
+  const disciplines = analyzeDrawingSequence(pageSummaries);
+  const refGraph = assembleRefGraph(pageSummaries);
+  const csiTopology = analyzeCsiTopology(pageSummaries);
+  const csiGraph = buildCsiGraph(pageSummaries.map(p => ({
     ...p,
     csiCodes: (p.csiCodes || []) as { code: string; description: string; trade: string; division: string }[],
   })));
-  const summary = generateProjectReport(pages.length, disciplines, refGraph, csiTopology);
+  const summary = generateProjectReport(pageSummaries.length, disciplines, refGraph, csiTopology);
 
   return {
     intelligence: {
       disciplines: disciplines.length > 0 ? disciplines : undefined,
       refGraph: refGraph.edges.length > 0 ? refGraph : undefined,
       csiGraph: csiGraph || undefined,
-      pageCount: pages.length,
+      pageCount: pageSummaries.length,
     },
     summary,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Project Summaries (chunking support)
+// Pre-compute lightweight indexes so browser can power sidebar/panels
+// without loading all page data.
+// ═══════════════════════════════════════════════════════════════════
+
+interface PageRow {
+  pageNumber: number;
+  name: string | null;
+  keynotes: any;
+  csiCodes: any;
+  textAnnotations: any;
+  pageIntelligence: any;
+}
+
+interface AnnotationRow {
+  id: number;
+  pageNumber: number;
+  name: string;
+  source: string;
+  data: any;
+}
+
+/**
+ * Compute summary indexes for a project from DB data.
+ * Called at end of processing pipeline and after YOLO load.
+ * Stores result in projects.projectIntelligence.summaries.
+ */
+export async function computeProjectSummaries(projectId: number): Promise<ProjectSummaries> {
+  // Fetch all page metadata (lightweight columns only, no textractData/rawText)
+  const pageRows: PageRow[] = await db
+    .select({
+      pageNumber: pages.pageNumber,
+      name: pages.name,
+      keynotes: pages.keynotes,
+      csiCodes: pages.csiCodes,
+      textAnnotations: pages.textAnnotations,
+      pageIntelligence: pages.pageIntelligence,
+    })
+    .from(pages)
+    .where(eq(pages.projectId, projectId))
+    .orderBy(pages.pageNumber);
+
+  // Fetch all annotations (lightweight: no full bbox needed for summary)
+  const annotationRows: AnnotationRow[] = await db
+    .select({
+      id: annotations.id,
+      pageNumber: annotations.pageNumber,
+      name: annotations.name,
+      source: annotations.source,
+      data: annotations.data,
+    })
+    .from(annotations)
+    .where(eq(annotations.projectId, projectId));
+
+  // ─── Build schedule + parsed table + keynote table catalogs ───
+  const schedules: ScheduleSummaryEntry[] = [];
+  const parsedTables: ParsedTableSummaryEntry[] = [];
+  const keynoteTablePages: { pageNum: number; confidence: number }[] = [];
+
+  // ─── Build page indexes ───
+  const csiPageIndex: Record<string, number[]> = {};
+  const tradePageIndex: Record<string, number[]> = {};
+  const keynotePageIndex: Record<string, number[]> = {};
+  const textAnnotationPageIndex: Record<string, number[]> = {};
+  const pageClassifications: Record<number, { discipline: string; prefix: string }> = {};
+  const allTradesSet = new Set<string>();
+  const allCsiMap = new Map<string, string>(); // code -> description
+
+  for (const page of pageRows) {
+    const pn = page.pageNumber;
+
+    // classifiedTables → schedule catalog + keynote table catalog
+    const pi = page.pageIntelligence as any;
+    if (pi?.classifiedTables) {
+      for (const t of pi.classifiedTables) {
+        schedules.push({
+          pageNum: pn,
+          category: t.category,
+          name: page.name || `Page ${pn}`,
+          confidence: t.confidence,
+        });
+        if (t.category === "keynote-table") {
+          keynoteTablePages.push({ pageNum: pn, confidence: t.confidence });
+        }
+      }
+    }
+
+    // parsedRegions → parsed table catalog
+    if (pi?.parsedRegions) {
+      for (const pr of pi.parsedRegions) {
+        if (pr.type === "schedule" || pr.type === "keynote") {
+          parsedTables.push({
+            pageNum: pn,
+            name: pr.data?.tableName || pr.category || "Unnamed Table",
+            category: pr.category,
+            rowCount: pr.data?.rowCount || pr.data?.rows?.length || 0,
+            colCount: pr.data?.columnCount || pr.data?.headers?.length || 0,
+          });
+        }
+      }
+    }
+
+    // classification → pageClassifications
+    if (pi?.classification) {
+      pageClassifications[pn] = {
+        discipline: pi.classification.discipline,
+        prefix: pi.classification.disciplinePrefix,
+      };
+    }
+
+    // csiCodes → csiPageIndex + tradePageIndex + allTrades + allCsiCodes
+    const codes = page.csiCodes as CsiCode[] | null;
+    if (codes && Array.isArray(codes)) {
+      for (const c of codes) {
+        // CSI page index
+        if (!csiPageIndex[c.code]) csiPageIndex[c.code] = [];
+        if (!csiPageIndex[c.code].includes(pn)) csiPageIndex[c.code].push(pn);
+
+        // Trade page index
+        if (c.trade) {
+          if (!tradePageIndex[c.trade]) tradePageIndex[c.trade] = [];
+          if (!tradePageIndex[c.trade].includes(pn)) tradePageIndex[c.trade].push(pn);
+          allTradesSet.add(c.trade);
+        }
+
+        // Unique CSI codes
+        if (!allCsiMap.has(c.code)) allCsiMap.set(c.code, c.description);
+      }
+    }
+
+    // keynotes → keynotePageIndex
+    const kn = page.keynotes as any[] | null;
+    if (kn && Array.isArray(kn)) {
+      for (const k of kn) {
+        const key = `${k.shape || ""}:${k.text || ""}`;
+        if (!keynotePageIndex[key]) keynotePageIndex[key] = [];
+        if (!keynotePageIndex[key].includes(pn)) keynotePageIndex[key].push(pn);
+      }
+    }
+
+    // textAnnotations → textAnnotationPageIndex
+    const ta = page.textAnnotations as any;
+    if (ta?.annotations && Array.isArray(ta.annotations)) {
+      for (const a of ta.annotations) {
+        const key = `${a.type}:${a.text}`;
+        if (!textAnnotationPageIndex[key]) textAnnotationPageIndex[key] = [];
+        if (!textAnnotationPageIndex[key].includes(pn)) textAnnotationPageIndex[key].push(pn);
+      }
+    }
+  }
+
+  // ─── Build annotation summary ───
+  const modelNamesSet = new Set<string>();
+  const categoryCounts: Record<string, { count: number; pages: number[] }> = {};
+  const pageAnnotationCounts: Record<number, { yolo: number; user: number; takeoff: number }> = {};
+  const takeoffTotals: Record<number, TakeoffItemTotal> = {};
+
+  for (const ann of annotationRows) {
+    const pn = ann.pageNumber;
+
+    // Per-page counts
+    if (!pageAnnotationCounts[pn]) pageAnnotationCounts[pn] = { yolo: 0, user: 0, takeoff: 0 };
+    if (ann.source === "yolo") {
+      pageAnnotationCounts[pn].yolo++;
+    } else if (ann.source === "takeoff") {
+      pageAnnotationCounts[pn].takeoff++;
+    } else {
+      pageAnnotationCounts[pn].user++;
+    }
+
+    // YOLO model names
+    if (ann.source === "yolo" && ann.data?.modelName) {
+      modelNamesSet.add(ann.data.modelName as string);
+    }
+
+    // Category counts (by annotation name)
+    if (!categoryCounts[ann.name]) categoryCounts[ann.name] = { count: 0, pages: [] };
+    categoryCounts[ann.name].count++;
+    if (!categoryCounts[ann.name].pages.includes(pn)) {
+      categoryCounts[ann.name].pages.push(pn);
+    }
+
+    // Takeoff totals
+    if (ann.source === "takeoff" && ann.data) {
+      const d = ann.data as any;
+      const itemId = d.takeoffItemId as number;
+      if (itemId != null) {
+        if (!takeoffTotals[itemId]) takeoffTotals[itemId] = { count: 0, totalArea: 0, pages: [] };
+        takeoffTotals[itemId].count++;
+        if (d.areaSqUnits) takeoffTotals[itemId].totalArea += d.areaSqUnits as number;
+        if (!takeoffTotals[itemId].pages.includes(pn)) {
+          takeoffTotals[itemId].pages.push(pn);
+        }
+      }
+    }
+  }
+
+  const annotationSummary: AnnotationSummary = {
+    modelNames: [...modelNamesSet],
+    categoryCounts,
+    pageAnnotationCounts,
+  };
+
+  const summaries: ProjectSummaries = {
+    schedules,
+    parsedTables,
+    keynoteTablePages,
+    csiPageIndex,
+    tradePageIndex,
+    keynotePageIndex,
+    textAnnotationPageIndex,
+    pageClassifications,
+    annotationSummary,
+    takeoffTotals,
+    allTrades: [...allTradesSet].sort(),
+    allCsiCodes: [...allCsiMap.entries()]
+      .map(([code, description]) => ({ code, description }))
+      .sort((a, b) => a.code.localeCompare(b.code)),
+  };
+
+  // Persist: merge summaries into existing projectIntelligence
+  const [currentProject] = await db
+    .select({ pi: projects.projectIntelligence })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+
+  const existingPi = (currentProject?.pi as Record<string, unknown>) || {};
+  await db
+    .update(projects)
+    .set({
+      projectIntelligence: { ...existingPi, summaries },
+      updatedAt: new Date(),
+    })
+    .where(eq(projects.id, projectId));
+
+  return summaries;
+}
+
+/**
+ * Patch a specific field in project summaries without full recomputation.
+ * Used for incremental updates when a single table is parsed, annotation
+ * is added/removed, etc.
+ */
+export async function patchProjectSummaries(
+  projectId: number,
+  patch: Partial<ProjectSummaries>,
+): Promise<void> {
+  const [currentProject] = await db
+    .select({ pi: projects.projectIntelligence })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+
+  const existingPi = (currentProject?.pi as Record<string, unknown>) || {};
+  const existingSummaries = (existingPi.summaries as ProjectSummaries) || null;
+
+  if (!existingSummaries) {
+    // No summaries yet — do a full computation instead
+    await computeProjectSummaries(projectId);
+    return;
+  }
+
+  const mergedSummaries = { ...existingSummaries, ...patch };
+  await db
+    .update(projects)
+    .set({
+      projectIntelligence: { ...existingPi, summaries: mergedSummaries },
+      updatedAt: new Date(),
+    })
+    .where(eq(projects.id, projectId));
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, pages, companies, annotations } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -12,7 +12,7 @@ import { classifyTextRegions } from "@/lib/text-region-classifier";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
-import { analyzeProject } from "@/lib/project-analysis";
+import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
 import type { TextractPageData, TextAnnotation, TextAnnotationResult, CsiCode } from "@/types";
 
 /**
@@ -27,10 +27,8 @@ import type { TextractPageData, TextAnnotation, TextAnnotationResult, CsiCode } 
 export async function POST(req: Request) {
   const url = new URL(req.url);
   const scope = url.searchParams.get("scope"); // "intelligence" or null (full)
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   // Load pipeline config for this company
   const [company] = await db
@@ -295,6 +293,14 @@ export async function POST(req: Request) {
           } catch (err) {
             console.error(`[reprocess-intel] Project analysis failed for ${project.name}:`, err);
           }
+
+          // Recompute project summaries (chunking indexes)
+          try {
+            await computeProjectSummaries(project.id);
+            send({ type: "project-summaries", project: project.name });
+          } catch (err) {
+            console.error(`[reprocess-intel] Summary computation failed for ${project.name}:`, err);
+          }
         }
 
         send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
@@ -379,6 +385,14 @@ export async function POST(req: Request) {
           if (updatedPages % 5 === 0) {
             send({ type: "progress", updated: updatedPages, total: totalPages, project: project.name });
           }
+        }
+
+        // Recompute project summaries after full reprocess
+        try {
+          await computeProjectSummaries(project.id);
+          send({ type: "project-summaries", project: project.name });
+        } catch (err) {
+          console.error(`[reprocess] Summary computation failed for ${project.name}:`, err);
         }
       }
 

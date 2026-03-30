@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePageData } from "@/stores/viewerStore";
 import { SHAPE_COLORS } from "@/types";
 import type { Shape } from "@/types";
 
@@ -21,8 +21,8 @@ export default function KeynoteOverlay({
   cssScale,
 }: KeynoteOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
-  const keynotes = useViewerStore((s) => s.keynotes);
+  const { pageNumber } = useNavigation();
+  const { keynotes } = usePageData();
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
   const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);
 

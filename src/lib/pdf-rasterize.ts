@@ -31,6 +31,7 @@ export async function rasterizePage(
       "-dNOPAUSE",
       "-dBATCH",
       "-dSAFER",
+      "-dMaxBitmap=500000000",
       "-sDEVICE=png16m",
       `-dFirstPage=${pageNumber}`,
       `-dLastPage=${pageNumber}`,

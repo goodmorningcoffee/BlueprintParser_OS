@@ -14,6 +14,8 @@ import type {
   YoloTag,
   SymbolSearchResult,
   SymbolSearchMatch,
+  QtoWorkflow,
+  ProjectSummaries,
 } from "@/types";
 
 interface ViewerState {
@@ -78,6 +80,14 @@ interface ViewerState {
   labelingCredentials: { email: string; password: string } | null;
   setLabelingCredentials: (creds: { email: string; password: string } | null) => void;
 
+  // ─── Project Summaries (chunking support) ────────────────
+  summaries: ProjectSummaries | null;
+  setSummaries: (s: ProjectSummaries | null) => void;
+  loadedPageRange: { from: number; to: number } | null;
+  setLoadedPageRange: (range: { from: number; to: number } | null) => void;
+  chunkLoading: boolean;
+  setChunkLoading: (v: boolean) => void;
+
   // ─── Textract data per page ──────────────────────────────
   textractData: Record<number, TextractPageData>;
   setTextractData: (pageNum: number, data: TextractPageData) => void;
@@ -139,6 +149,8 @@ interface ViewerState {
   confidenceThresholds: Record<string, number>;
   setModelConfidence: (model: string, threshold: number) => void;
   initDetectionModels: (modelNames: string[]) => void;
+  hiddenAnnotationIds: Set<number>;
+  toggleAnnotationVisibility: (id: number) => void;
 
   // ─── Help tips ─────────────────────────────────────────
   showTips: boolean;
@@ -209,6 +221,12 @@ interface ViewerState {
   addPolygonVertex: (v: { x: number; y: number }) => void;
   undoLastVertex: () => void;
   resetPolygonDrawing: () => void;
+
+  // ─── Auto-QTO ────────────────────────────────────────────
+  activeQtoWorkflow: QtoWorkflow | null;
+  setActiveQtoWorkflow: (w: QtoWorkflow | null) => void;
+  qtoWorkflows: QtoWorkflow[];
+  setQtoWorkflows: (workflows: QtoWorkflow[]) => void;
 
   // ─── Table Parse ───────────────────────────────────────
   showTableParsePanel: boolean;
@@ -381,6 +399,13 @@ export const useViewerStore = create<ViewerState>((set) => ({
   labelingCredentials: null,
   setLabelingCredentials: (labelingCredentials) => set({ labelingCredentials }),
 
+  summaries: null,
+  setSummaries: (summaries) => set({ summaries }),
+  loadedPageRange: null,
+  setLoadedPageRange: (loadedPageRange) => set({ loadedPageRange }),
+  chunkLoading: false,
+  setChunkLoading: (chunkLoading) => set({ chunkLoading }),
+
   textractData: {},
   setTextractData: (pageNum, data) =>
     set((s) => ({ textractData: { ...s.textractData, [pageNum]: data } })),
@@ -467,6 +492,13 @@ export const useViewerStore = create<ViewerState>((set) => ({
       }
       return { activeModels, confidenceThresholds };
     }),
+  hiddenAnnotationIds: new Set<number>(),
+  toggleAnnotationVisibility: (id) =>
+    set((s) => {
+      const next = new Set(s.hiddenAnnotationIds);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return { hiddenAnnotationIds: next };
+    }),
 
   showTips: true,
   toggleTips: () => set((s) => ({ showTips: !s.showTips })),
@@ -548,6 +580,12 @@ export const useViewerStore = create<ViewerState>((set) => ({
     set((s) => ({ polygonVertices: s.polygonVertices.slice(0, -1) })),
   resetPolygonDrawing: () =>
     set({ polygonDrawingMode: "idle", polygonVertices: [] }),
+
+  // ─── Auto-QTO ────────────────────────────────────────────
+  activeQtoWorkflow: null,
+  setActiveQtoWorkflow: (activeQtoWorkflow) => set({ activeQtoWorkflow }),
+  qtoWorkflows: [],
+  setQtoWorkflows: (qtoWorkflows) => set({ qtoWorkflows }),
 
   showTableParsePanel: false,
   toggleTableParsePanel: () =>
@@ -727,6 +765,9 @@ export const useViewerStore = create<ViewerState>((set) => ({
       publicId: "",
       isDemo: false,
       projectIntelligenceData: null,
+      summaries: null,
+      loadedPageRange: null,
+      chunkLoading: false,
       showLabelingWizard: false,
       labelingWizardStep: 1,
       labelingSessions: [],
@@ -761,10 +802,13 @@ export const useViewerStore = create<ViewerState>((set) => ({
       confidenceThreshold: 0.25,
       activeModels: {},
       confidenceThresholds: {},
+      hiddenAnnotationIds: new Set<number>(),
       showTakeoffPanel: false,
       takeoffItems: [],
       activeTakeoffItemId: null,
       takeoffTab: "count",
+      activeQtoWorkflow: null,
+      qtoWorkflows: [],
       pageDimensions: {},
       scaleCalibrations: {},
       calibrationMode: "idle",
@@ -806,3 +850,254 @@ export const useViewerStore = create<ViewerState>((set) => ({
       guidedParseCols: [],
     }),
 }));
+
+// ═══════════════════════════════════════════════════════════════════
+// Typed Slice Selectors
+// ═══════════════════════════════════════════════════════════════════
+//
+// Use these instead of raw `useViewerStore((s) => s.field)` calls.
+// Each selector uses `useShallow` to prevent re-renders when
+// unrelated fields change. Components import these selectors
+// instead of accessing the store directly.
+//
+// Migration: Replace `useViewerStore((s) => s.pageNumber)` with
+// `const { pageNumber } = useNavigation()`
+//
+// Per REFACTORING_RESEARCH.md Part 1: "Store Slices + Bridge"
+
+import { useShallow } from "zustand/react/shallow";
+
+/** Page navigation + zoom state */
+export const useNavigation = () =>
+  useViewerStore(useShallow((s) => ({
+    pageNumber: s.pageNumber,
+    numPages: s.numPages,
+    scale: s.scale,
+    mode: s.mode,
+    setPage: s.setPage,
+    setNumPages: s.setNumPages,
+    setScale: s.setScale,
+    setMode: s.setMode,
+  })));
+
+/** Panel visibility toggles */
+export const usePanels = () =>
+  useViewerStore(useShallow((s) => ({
+    showTextPanel: s.showTextPanel,
+    toggleTextPanel: s.toggleTextPanel,
+    showChatPanel: s.showChatPanel,
+    toggleChatPanel: s.toggleChatPanel,
+    showTakeoffPanel: s.showTakeoffPanel,
+    toggleTakeoffPanel: s.toggleTakeoffPanel,
+    showDetectionPanel: s.showDetectionPanel,
+    toggleDetectionPanel: s.toggleDetectionPanel,
+    showCsiPanel: s.showCsiPanel,
+    toggleCsiPanel: s.toggleCsiPanel,
+    showPageIntelPanel: s.showPageIntelPanel,
+    togglePageIntelPanel: s.togglePageIntelPanel,
+    showTableParsePanel: s.showTableParsePanel,
+    toggleTableParsePanel: s.toggleTableParsePanel,
+    showKeynoteParsePanel: s.showKeynoteParsePanel,
+    toggleKeynoteParsePanel: s.toggleKeynoteParsePanel,
+    sidebarCollapsed: s.sidebarCollapsed,
+    toggleSidebar: s.toggleSidebar,
+    textPanelTab: s.textPanelTab,
+    setTextPanelTab: s.setTextPanelTab,
+  })));
+
+/** Drawing state (only DrawingPreviewLayer should subscribe) */
+export const useDrawingState = () =>
+  useViewerStore(useShallow((s) => ({
+    _drawing: s._drawing,
+    _drawStart: s._drawStart,
+    _drawEnd: s._drawEnd,
+    _mousePos: s._mousePos,
+    _setDrawing: s._setDrawing,
+    _setDrawStart: s._setDrawStart,
+    _setDrawEnd: s._setDrawEnd,
+    _setMousePos: s._setMousePos,
+  })));
+
+/** Symbol search state */
+export const useSymbolSearch = () =>
+  useViewerStore(useShallow((s) => ({
+    symbolSearchActive: s.symbolSearchActive,
+    setSymbolSearchActive: s.setSymbolSearchActive,
+    symbolSearchLoading: s.symbolSearchLoading,
+    setSymbolSearchLoading: s.setSymbolSearchLoading,
+    symbolSearchProgress: s.symbolSearchProgress,
+    setSymbolSearchProgress: s.setSymbolSearchProgress,
+    symbolSearchResults: s.symbolSearchResults,
+    setSymbolSearchResults: s.setSymbolSearchResults,
+    symbolSearchConfidence: s.symbolSearchConfidence,
+    setSymbolSearchConfidence: s.setSymbolSearchConfidence,
+    symbolSearchError: s.symbolSearchError,
+    setSymbolSearchError: s.setSymbolSearchError,
+    symbolSearchTemplateBbox: s.symbolSearchTemplateBbox,
+    setSymbolSearchTemplateBbox: s.setSymbolSearchTemplateBbox,
+    symbolSearchSourcePage: s.symbolSearchSourcePage,
+    setSymbolSearchSourcePage: s.setSymbolSearchSourcePage,
+    dismissedSymbolMatches: s.dismissedSymbolMatches,
+    dismissSymbolMatch: s.dismissSymbolMatch,
+    clearSymbolSearch: s.clearSymbolSearch,
+  })));
+
+/** Chat state */
+export const useChat = () =>
+  useViewerStore(useShallow((s) => ({
+    chatMessages: s.chatMessages,
+    addChatMessage: s.addChatMessage,
+    setChatMessages: s.setChatMessages,
+    clearChatMessages: s.clearChatMessages,
+    chatScope: s.chatScope,
+    setChatScope: s.setChatScope,
+  })));
+
+/** Table parse state */
+export const useTableParse = () =>
+  useViewerStore(useShallow((s) => ({
+    tableParseStep: s.tableParseStep,
+    setTableParseStep: s.setTableParseStep,
+    tableParseRegion: s.tableParseRegion,
+    setTableParseRegion: s.setTableParseRegion,
+    tableParsedGrid: s.tableParsedGrid,
+    setTableParsedGrid: s.setTableParsedGrid,
+    tableParseColumnBBs: s.tableParseColumnBBs,
+    addTableParseColumnBB: s.addTableParseColumnBB,
+    tableParseRowBBs: s.tableParseRowBBs,
+    addTableParseRowBB: s.addTableParseRowBB,
+    tableParseColumnNames: s.tableParseColumnNames,
+    setTableParseColumnNames: s.setTableParseColumnNames,
+    tableParseTab: s.tableParseTab,
+    setTableParseTab: s.setTableParseTab,
+    showTableCompareModal: s.showTableCompareModal,
+    toggleTableCompareModal: s.toggleTableCompareModal,
+    resetTableParse: s.resetTableParse,
+    showParsedRegions: s.showParsedRegions,
+    toggleParsedRegions: s.toggleParsedRegions,
+  })));
+
+/** Keynote parse + guided parse state */
+export const useKeynoteParse = () =>
+  useViewerStore(useShallow((s) => ({
+    keynoteParseStep: s.keynoteParseStep,
+    setKeynoteParseStep: s.setKeynoteParseStep,
+    keynoteParseRegion: s.keynoteParseRegion,
+    setKeynoteParseRegion: s.setKeynoteParseRegion,
+    keynoteColumnBBs: s.keynoteColumnBBs,
+    addKeynoteColumnBB: s.addKeynoteColumnBB,
+    keynoteRowBBs: s.keynoteRowBBs,
+    addKeynoteRowBB: s.addKeynoteRowBB,
+    keynoteParseTab: s.keynoteParseTab,
+    setKeynoteParseTab: s.setKeynoteParseTab,
+    keynoteYoloClass: s.keynoteYoloClass,
+    setKeynoteYoloClass: s.setKeynoteYoloClass,
+    resetKeynoteParse: s.resetKeynoteParse,
+    guidedParseActive: s.guidedParseActive,
+    setGuidedParseActive: s.setGuidedParseActive,
+    guidedParseRegion: s.guidedParseRegion,
+    setGuidedParseRegion: s.setGuidedParseRegion,
+    guidedParseRows: s.guidedParseRows,
+    setGuidedParseRows: s.setGuidedParseRows,
+    guidedParseCols: s.guidedParseCols,
+    setGuidedParseCols: s.setGuidedParseCols,
+    resetGuidedParse: s.resetGuidedParse,
+  })));
+
+/** Project-level context (read-mostly) */
+export const useProject = () =>
+  useViewerStore(useShallow((s) => ({
+    projectId: s.projectId,
+    publicId: s.publicId,
+    dataUrl: s.dataUrl,
+    isDemo: s.isDemo,
+    pageNames: s.pageNames,
+    projectIntelligenceData: s.projectIntelligenceData,
+  })));
+
+/** Per-page data cache */
+export const usePageData = () =>
+  useViewerStore(useShallow((s) => ({
+    textractData: s.textractData,
+    setTextractData: s.setTextractData,
+    keynotes: s.keynotes,
+    setKeynotes: s.setKeynotes,
+    csiCodes: s.csiCodes,
+    setCsiCodes: s.setCsiCodes,
+    textAnnotations: s.textAnnotations,
+    setTextAnnotations: s.setTextAnnotations,
+    pageIntelligence: s.pageIntelligence,
+    setPageIntelligence: s.setPageIntelligence,
+    allCsiCodes: s.allCsiCodes,
+    activeCsiFilter: s.activeCsiFilter,
+    setCsiFilter: s.setCsiFilter,
+  })));
+
+/** YOLO detection model state + annotation list + filters */
+export const useDetection = () =>
+  useViewerStore(useShallow((s) => ({
+    annotations: s.annotations,
+    activeModels: s.activeModels,
+    setModelActive: s.setModelActive,
+    confidenceThreshold: s.confidenceThreshold,
+    setConfidenceThreshold: s.setConfidenceThreshold,
+    activeAnnotationFilter: s.activeAnnotationFilter,
+    setAnnotationFilter: s.setAnnotationFilter,
+    // Cross-cutting: searchQuery/setSearch included here because consumers
+    // pair them with filter toggles. May extract to useSearch() later.
+    searchQuery: s.searchQuery,
+    setSearch: s.setSearch,
+    hiddenAnnotationIds: s.hiddenAnnotationIds,
+    toggleAnnotationVisibility: s.toggleAnnotationVisibility,
+  })));
+
+/** YOLO tag CRUD + visibility state */
+export const useYoloTags = () =>
+  useViewerStore(useShallow((s) => ({
+    yoloTags: s.yoloTags,
+    activeYoloTagId: s.activeYoloTagId,
+    setActiveYoloTagId: s.setActiveYoloTagId,
+    yoloTagVisibility: s.yoloTagVisibility,
+    setYoloTagVisibility: s.setYoloTagVisibility,
+    setYoloTagFilter: s.setYoloTagFilter,
+    removeYoloTag: s.removeYoloTag,
+    updateYoloTag: s.updateYoloTag,
+    yoloTagPickingMode: s.yoloTagPickingMode,
+    setYoloTagPickingMode: s.setYoloTagPickingMode,
+  })));
+
+/** Text annotation visibility + styling controls */
+export const useTextAnnotationDisplay = () =>
+  useViewerStore(useShallow((s) => ({
+    showTextAnnotations: s.showTextAnnotations,
+    toggleTextAnnotations: s.toggleTextAnnotations,
+    activeTextAnnotationTypes: s.activeTextAnnotationTypes,
+    setTextAnnotationType: s.setTextAnnotationType,
+    setAllTextAnnotationTypes: s.setAllTextAnnotationTypes,
+    hiddenTextAnnotations: s.hiddenTextAnnotations,
+    toggleTextAnnotationVisibility: s.toggleTextAnnotationVisibility,
+    textAnnotationColors: s.textAnnotationColors,
+    setTextAnnotationColor: s.setTextAnnotationColor,
+    activeTextAnnotationFilter: s.activeTextAnnotationFilter,
+    setTextAnnotationFilter: s.setTextAnnotationFilter,
+  })));
+
+/** Auto-QTO workflow state */
+export const useQtoWorkflow = () =>
+  useViewerStore(useShallow((s) => ({
+    activeQtoWorkflow: s.activeQtoWorkflow,
+    setActiveQtoWorkflow: s.setActiveQtoWorkflow,
+    qtoWorkflows: s.qtoWorkflows,
+    setQtoWorkflows: s.setQtoWorkflows,
+  })));
+
+export const useSummaries = () =>
+  useViewerStore(useShallow((s) => ({
+    summaries: s.summaries,
+    setSummaries: s.setSummaries,
+    loadedPageRange: s.loadedPageRange,
+    setLoadedPageRange: s.setLoadedPageRange,
+    chunkLoading: s.chunkLoading,
+    setChunkLoading: s.setChunkLoading,
+  })));
+
