@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { annotations, projects } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { computeProjectSummaries } from "@/lib/project-analysis";
 
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const { projectId, pageNumber, name, bbox, note, source, data } = await req.json();
 
@@ -62,6 +61,11 @@ export async function POST(req: Request) {
       projectId: project.id,
     })
     .returning();
+
+  // Recompute summaries in background (annotation counts changed)
+  computeProjectSummaries(project.id).catch((e) =>
+    console.error("[annotations/create] Summary recompute failed:", e)
+  );
 
   return NextResponse.json({
     id: annotation.id,

@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { CsiCode } from "@/types";
+import { computeProjectSummaries } from "@/lib/project-analysis";
 
 /**
  * PATCH /api/pages/intelligence
@@ -12,10 +13,8 @@ import type { CsiCode } from "@/types";
  * from parsed regions into the page-level csiCodes list.
  */
 export async function PATCH(req: Request) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error: authError } = await requireAuth();
+  if (authError) return authError;
 
   try {
     const body = await req.json();
@@ -78,6 +77,13 @@ export async function PATCH(req: Request) {
         csiCodes: newCsi,
       })
       .where(eq(pages.id, pageRow.id));
+
+    // Recompute summaries if parsedRegions changed (new table/keynote parsed)
+    if (intelligence.parsedRegions) {
+      computeProjectSummaries(projectId).catch((e) =>
+        console.error("[pages/intelligence] Summary recompute failed:", e)
+      );
+    }
 
     return NextResponse.json({ ok: true, csiCodeCount: newCsi.length });
   } catch (err) {

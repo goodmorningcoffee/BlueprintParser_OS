@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useChat, useProject, useNavigation } from "@/stores/viewerStore";
 
 const DISCIPLINE_PROMPTS: Record<string, string[]> = {
   A: ["What rooms are shown?", "Door/window schedules?", "What finishes are specified?", "Any accessibility notes?"],
@@ -34,16 +34,9 @@ function getDisciplineFromPageName(pageName: string): string | null {
 }
 
 export default function ChatPanel() {
-  const {
-    chatMessages,
-    addChatMessage,
-    clearChatMessages,
-    chatScope,
-    setChatScope,
-    publicId,
-    pageNumber,
-    pageNames,
-  } = useViewerStore();
+  const { chatMessages, addChatMessage, clearChatMessages, chatScope, setChatScope } = useChat();
+  const { publicId, pageNames } = useProject();
+  const { pageNumber } = useNavigation();
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);

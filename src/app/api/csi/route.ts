@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { sql } from "drizzle-orm";
 
@@ -8,10 +8,8 @@ import { sql } from "drizzle-orm";
  * Aggregate CSI codes across all company projects (authenticated).
  */
 export async function GET() {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const results = await db.execute(sql`
     SELECT

@@ -34,9 +34,14 @@ export interface MergedGrid {
  * 3. For each cell: check agreement, fill empties, flag disagreements
  * 4. Compute final confidence boosted by agreement rate
  */
+const MAX_ROWS = 10000;
+const MAX_COLS = 500;
+
 export function mergeGrids(results: MethodResult[]): MergedGrid {
-  // Filter out empty results
-  const valid = results.filter((r) => r.headers.length > 0 && r.rows.length > 0);
+  // Filter out empty results and enforce size limits
+  const valid = results
+    .filter((r) => r.headers.length > 0 && r.rows.length > 0)
+    .filter((r) => r.headers.length <= MAX_COLS && r.rows.length <= MAX_ROWS);
 
   if (valid.length === 0) {
     return {

@@ -46,7 +46,7 @@ const RATE_RULES: RateRule[] = [
 
   // Expensive operations - per user
   { pattern: "/api/ai/chat", method: "POST", limit: 30, windowMs: 60 * 60 * 1000, keyType: "user" },
-  { pattern: "/api/yolo/run", method: "POST", limit: 5, windowMs: 60 * 60 * 1000, keyType: "user" },
+  { pattern: "/api/yolo/run", method: "POST", limit: 9999, windowMs: 60 * 60 * 1000, keyType: "user" },
   { pattern: "/api/projects", method: "POST", limit: 10, windowMs: 60 * 60 * 1000, keyType: "user" },
   { pattern: "/api/s3/credentials", method: "POST", limit: 10, windowMs: 60 * 60 * 1000, keyType: "user" },
 

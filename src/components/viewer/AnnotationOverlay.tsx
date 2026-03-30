@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useYoloTags, useSymbolSearch } from "@/stores/viewerStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData } from "@/types";
 import { polygonCentroid, pointInPolygon, computeRealArea } from "@/lib/areaCalc";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
+import MarkupDialog from "./MarkupDialog";
 
 interface AnnotationOverlayProps {
   width: number;
@@ -97,14 +98,28 @@ export default function AnnotationOverlay({
   cssScale,
 }: AnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const { pageNumber, mode } = useNavigation();
+  const { publicId, isDemo } = useProject();
+  const {
+    tableParseStep, setTableParseStep, tableParseRegion, setTableParseRegion,
+    tableParseColumnBBs, tableParseRowBBs, showParsedRegions,
+  } = useTableParse();
+  const {
+    keynoteParseStep, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs,
+    setKeynoteYoloClass,
+  } = useKeynoteParse();
+  const {
+    yoloTags, activeYoloTagId, setActiveYoloTagId, setYoloTagFilter,
+    yoloTagVisibility, yoloTagPickingMode, setYoloTagPickingMode,
+  } = useYoloTags();
+  const {
+    symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches,
+  } = useSymbolSearch();
+
   const annotations = useViewerStore((s) => s.annotations);
-  const mode = useViewerStore((s) => s.mode);
   const addAnnotation = useViewerStore((s) => s.addAnnotation);
   const removeAnnotation = useViewerStore((s) => s.removeAnnotation);
   const updateAnnotation = useViewerStore((s) => s.updateAnnotation);
-  const publicId = useViewerStore((s) => s.publicId);
-  const isDemo = useViewerStore((s) => s.isDemo);
   const keynotes = useViewerStore((s) => s.keynotes);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
 
@@ -152,39 +167,20 @@ export default function AnnotationOverlay({
   const resetPolygonDrawing = useViewerStore((s) => s.resetPolygonDrawing);
   const undoLastVertex = useViewerStore((s) => s.undoLastVertex);
   const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
-  const tableParseStep = useViewerStore((s) => s.tableParseStep);
-  const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
-  const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
-  const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
-  const tableParseColumnBBs = useViewerStore((s) => s.tableParseColumnBBs);
-  const tableParseRowBBs = useViewerStore((s) => s.tableParseRowBBs);
-  const keynoteParseStep = useViewerStore((s) => s.keynoteParseStep);
-  const keynoteParseRegion = useViewerStore((s) => s.keynoteParseRegion);
-  const keynoteColumnBBs = useViewerStore((s) => s.keynoteColumnBBs);
-  const keynoteRowBBs = useViewerStore((s) => s.keynoteRowBBs);
-  const setKeynoteYoloClass = useViewerStore((s) => s.setKeynoteYoloClass);
-  const yoloTagPickingMode = useViewerStore((s) => s.yoloTagPickingMode);
-  const setYoloTagPickingMode = useViewerStore((s) => s.setYoloTagPickingMode);
-  const yoloTags = useViewerStore((s) => s.yoloTags);
-  const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
-  const setActiveYoloTagId = useViewerStore((s) => s.setActiveYoloTagId);
-  const setYoloTagFilter = useViewerStore((s) => s.setYoloTagFilter);
-  const yoloTagVisibility = useViewerStore((s) => s.yoloTagVisibility);
   const addYoloTag = useViewerStore((s) => s.addYoloTag);
   const showTableParsePanel = useViewerStore((s) => s.showTableParsePanel);
   const showKeynoteParsePanel = useViewerStore((s) => s.showKeynoteParsePanel);
-  const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
-  const symbolSearchActive = useViewerStore((s) => s.symbolSearchActive);
-  const symbolSearchResults = useViewerStore((s) => s.symbolSearchResults);
-  const symbolSearchConfidence = useViewerStore((s) => s.symbolSearchConfidence);
-  const dismissedSymbolMatches = useViewerStore((s) => s.dismissedSymbolMatches);
 
   // During keynote Step 2 with Column A drawn: only show YOLO fully inside Column A
   const isKeynoteYoloPicking = keynoteParseStep === "define-column" && keynoteColumnBBs.length >= 1;
   const keynoteColA = keynoteColumnBBs.length >= 1 ? keynoteColumnBBs[0] : null;
 
+  const hiddenAnnotationIds = useViewerStore((s) => s.hiddenAnnotationIds);
+
   const pageAnnotations = useMemo(() => annotations.filter((a) => {
     if (a.pageNumber !== pageNumber) return false;
+    // Individual annotation visibility toggle
+    if (hiddenAnnotationIds.has(a.id)) return false;
     // Filter YOLO annotations by toggle, per-model active state, and per-model confidence
     if (a.source === "yolo") {
       // During keynote YOLO picking: ONLY show annotations fully inside Column A
@@ -224,7 +220,7 @@ export default function AnnotationOverlay({
     // Filter by active annotation label
     if (activeAnnotationFilter && a.name !== activeAnnotationFilter) return false;
     return true;
-  }), [annotations, pageNumber, showDetections, activeModels, confidenceThresholds, confidenceThreshold, activeCsiFilter, activeAnnotationFilter, isKeynoteYoloPicking, keynoteColA]);
+  }), [annotations, pageNumber, showDetections, activeModels, confidenceThresholds, confidenceThreshold, activeCsiFilter, activeAnnotationFilter, isKeynoteYoloPicking, keynoteColA, hiddenAnnotationIds]);
 
   const pageKeynotes = keynotes[pageNumber] || [];
 
@@ -255,7 +251,7 @@ export default function AnnotationOverlay({
     const visibleTagInstances: { bbox: [number, number, number, number]; color: string; name: string }[] = [];
     for (const tag of yoloTags) {
       if (tag.id === activeYoloTagId) continue; // active tag drawn separately
-      if (yoloTagVisibility[tag.id] !== true) continue; // only draw if explicitly toggled on
+      if (yoloTagVisibility[tag.id] === false) continue; // hidden if explicitly toggled off
       for (const inst of tag.instances) {
         if (inst.pageNumber === pageNumber) {
           visibleTagInstances.push({ bbox: inst.bbox, color: tag.color || "#22d3ee", name: tag.tagText });
@@ -1497,51 +1493,15 @@ export default function AnnotationOverlay({
 
       {/* Markup name + notes dialog */}
       {pendingMarkup && (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) { setPendingMarkup(null); setEditingAnnotationId(null); } }}
-        >
-          <div
-            style={{ background: "var(--surface, #161616)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 8, padding: 20, width: 360, color: "var(--fg, #ededed)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 600 }}>{editingAnnotationId ? "Edit Markup" : "New Markup"}</h3>
-            <label style={{ display: "block", fontSize: 12, color: "var(--muted, #aaa)", marginBottom: 4 }}>Name</label>
-            <input
-              ref={nameInputRef}
-              type="text"
-              value={markupName}
-              onChange={(e) => setMarkupName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && markupName.trim()) saveMarkup(); if (e.key === "Escape") setPendingMarkup(null); }}
-              placeholder="e.g. RFI #12, Missing detail, Check dimension..."
-              style={{ width: "100%", padding: "6px 8px", background: "var(--bg, #0a0a0a)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 4, color: "var(--fg, #ededed)", fontSize: 14, marginBottom: 12, boxSizing: "border-box" }}
-            />
-            <label style={{ display: "block", fontSize: 12, color: "var(--muted, #aaa)", marginBottom: 4 }}>Notes</label>
-            <textarea
-              value={markupNote}
-              onChange={(e) => setMarkupNote(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Escape") setPendingMarkup(null); }}
-              placeholder="Add details about this markup..."
-              rows={3}
-              style={{ width: "100%", padding: "6px 8px", background: "var(--bg, #0a0a0a)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 4, color: "var(--fg, #ededed)", fontSize: 13, resize: "vertical", marginBottom: 14, fontFamily: "inherit", boxSizing: "border-box" }}
-            />
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button
-                onClick={() => { setPendingMarkup(null); setEditingAnnotationId(null); }}
-                style={{ padding: "6px 14px", background: "transparent", border: "1px solid var(--border, #3a3a3a)", borderRadius: 4, color: "var(--muted, #aaa)", cursor: "pointer", fontSize: 13 }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveMarkup}
-                disabled={!markupName.trim()}
-                style={{ padding: "6px 14px", background: markupName.trim() ? "var(--accent, #3b82f6)" : "#333", border: "none", borderRadius: 4, color: "#fff", cursor: markupName.trim() ? "pointer" : "default", fontSize: 13, fontWeight: 500 }}
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
+        <MarkupDialog
+          isEditing={!!editingAnnotationId}
+          name={markupName}
+          note={markupNote}
+          onNameChange={setMarkupName}
+          onNoteChange={setMarkupNote}
+          onSave={saveMarkup}
+          onCancel={() => { setPendingMarkup(null); setEditingAnnotationId(null); }}
+        />
       )}
     </>
   );

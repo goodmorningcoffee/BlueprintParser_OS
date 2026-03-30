@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useNavigation, usePageData, usePanels, useProject, useDetection } from "@/stores/viewerStore";
 import type { CsiCode } from "@/types";
+import HelpTooltip from "./HelpTooltip";
 
 /** Group CSI codes by division (first 2 digits). */
 function groupByDivision(codes: CsiCode[]): Map<string, CsiCode[]> {
@@ -28,15 +29,11 @@ const DIVISION_NAMES: Record<string, string> = {
 };
 
 export default function CsiPanel() {
-  const csiCodes = useViewerStore((s) => s.csiCodes);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
-  const allCsiCodes = useViewerStore((s) => s.allCsiCodes);
-  const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
-  const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
-  const toggleCsiPanel = useViewerStore((s) => s.toggleCsiPanel);
-  const setSearch = useViewerStore((s) => s.setSearch);
-  const publicId = useViewerStore((s) => s.publicId);
-  const projectIntelligenceData = useViewerStore((s) => s.projectIntelligenceData);
+  const { pageNumber } = useNavigation();
+  const { csiCodes, allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
+  const { toggleCsiPanel } = usePanels();
+  const { publicId, projectIntelligenceData } = useProject();
+  const { setSearch } = useDetection();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedDivisions, setExpandedDivisions] = useState<Record<string, boolean>>({});
@@ -133,8 +130,8 @@ export default function CsiPanel() {
         <span className="ml-auto text-[10px] text-[var(--muted)]">{filtered.length} codes</span>
       </div>
 
-      {/* Network Graph Summary (project scope only) */}
-      {scope === "project" && csiGraph?.nodes?.length > 0 && (
+      {/* Network Graph Summary (visible in both page and project scope) */}
+      {csiGraph?.nodes?.length > 0 && (
         <div className="border-b border-[var(--border)]">
           <button
             onClick={() => setShowGraph(!showGraph)}
@@ -177,12 +174,14 @@ export default function CsiPanel() {
                 </div>
               )}
               {/* Open full graph link */}
-              <button
-                onClick={() => window.open(`/project/${publicId}/csi-graph`, "_blank")}
-                className="text-[10px] text-cyan-400 hover:text-cyan-300 underline"
-              >
-                Open Full Graph →
-              </button>
+              <HelpTooltip id="csi-network-graph">
+                <button
+                  onClick={() => window.open(`/project/${publicId}/csi-graph`, "_blank")}
+                  className="text-[10px] text-cyan-400 hover:text-cyan-300 underline"
+                >
+                  Open Full Graph →
+                </button>
+              </HelpTooltip>
             </div>
           )}
         </div>

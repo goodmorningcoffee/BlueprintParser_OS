@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, pages, annotations, chatMessages, processingJobs, takeoffItems } from "@/lib/db/schema";
+import { projects, pages, annotations, chatMessages, processingJobs, takeoffItems, labelingSessions } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getS3Url, deleteProjectFiles } from "@/lib/s3";
 import { audit } from "@/lib/audit";
@@ -11,10 +11,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const [project] = await db
     .select()
@@ -31,50 +29,16 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Fetch pages with core data (explicit columns to avoid schema/migration mismatch)
+  // Fetch lightweight page list (names only — detail data comes via /pages?from=N&to=M)
   const projectPages = await db
     .select({
       pageNumber: pages.pageNumber,
       name: pages.name,
       drawingNumber: pages.drawingNumber,
-      rawText: pages.rawText,
-      textractData: pages.textractData,
-      keynotes: pages.keynotes,
-      csiCodes: pages.csiCodes,
     })
     .from(pages)
     .where(eq(pages.projectId, project.id))
     .orderBy(pages.pageNumber);
-
-  // Try to fetch textAnnotations separately (column may not exist if migration 0010 pending)
-  let textAnnotationsMap: Record<number, unknown> = {};
-  try {
-    const taRows = await db
-      .select({ pageNumber: pages.pageNumber, textAnnotations: pages.textAnnotations })
-      .from(pages)
-      .where(eq(pages.projectId, project.id));
-    for (const r of taRows) {
-      if (r.textAnnotations) textAnnotationsMap[r.pageNumber] = r.textAnnotations;
-    }
-  } catch { /* migration 0010 hasn't run */ }
-
-  // Try to fetch pageIntelligence separately (column may not exist if migration 0012 pending)
-  let pageIntelligenceMap: Record<number, unknown> = {};
-  try {
-    const piRows = await db
-      .select({ pageNumber: pages.pageNumber, pageIntelligence: pages.pageIntelligence })
-      .from(pages)
-      .where(eq(pages.projectId, project.id));
-    for (const r of piRows) {
-      if (r.pageIntelligence) pageIntelligenceMap[r.pageNumber] = r.pageIntelligence;
-    }
-  } catch { /* migration 0012 hasn't run */ }
-
-  // Fetch annotations
-  const projectAnnotations = await db
-    .select()
-    .from(annotations)
-    .where(eq(annotations.projectId, project.id));
 
   // Fetch takeoff items (table may not exist if migration hasn't run)
   let projectTakeoffItems: any[] = [];
@@ -96,6 +60,10 @@ export async function GET(
   // Build PDF URL server-side (has access to CLOUDFRONT_DOMAIN / S3_BUCKET env vars)
   const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
 
+  // Extract summaries from projectIntelligence (computed during processing)
+  const pi = project.projectIntelligence as Record<string, unknown> | null;
+  const summaries = (pi?.summaries as Record<string, unknown>) || null;
+
   return NextResponse.json({
     id: project.publicId,
     dbId: project.id,
@@ -106,25 +74,11 @@ export async function GET(
     status: project.status,
     address: project.address,
     projectIntelligence: project.projectIntelligence || null,
+    summaries,
     pages: projectPages.map((p) => ({
       pageNumber: p.pageNumber,
       name: p.name,
       drawingNumber: p.drawingNumber,
-      rawText: p.rawText,
-      textractData: p.textractData,
-      keynotes: p.keynotes,
-      csiCodes: p.csiCodes,
-      textAnnotations: textAnnotationsMap[p.pageNumber] || null,
-      pageIntelligence: pageIntelligenceMap[p.pageNumber] || null,
-    })),
-    annotations: projectAnnotations.map((a) => ({
-      id: a.id,
-      pageNumber: a.pageNumber,
-      name: a.name,
-      bbox: [a.minX, a.minY, a.maxX, a.maxY],
-      note: a.note,
-      source: a.source,
-      data: a.data,
     })),
     takeoffItems: projectTakeoffItems.map((t) => ({
       id: t.id,
@@ -147,10 +101,8 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const body = await req.json();
 
@@ -191,10 +143,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const [project] = await db
     .select()
@@ -211,26 +161,32 @@ export async function DELETE(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Delete S3 files (PDF, thumbnail, etc.)
   try {
-    await deleteProjectFiles(project.dataUrl);
+    // Delete S3 files (PDF, thumbnail, etc.)
+    try {
+      await deleteProjectFiles(project.dataUrl);
+    } catch (err) {
+      console.error("[project-delete] Failed to delete S3 files:", err);
+    }
+
+    // Delete DB records in dependency order (all tables with FK to projects.id)
+    await db.delete(chatMessages).where(eq(chatMessages.projectId, project.id));
+    await db.delete(annotations).where(eq(annotations.projectId, project.id));
+    try { await db.delete(takeoffItems).where(eq(takeoffItems.projectId, project.id)); } catch { /* table may not exist yet */ }
+    try { await db.delete(labelingSessions).where(eq(labelingSessions.projectId, project.id)); } catch { /* table may not exist yet */ }
+    await db.delete(processingJobs).where(eq(processingJobs.projectId, project.id));
+    await db.delete(pages).where(eq(pages.projectId, project.id));
+    await db.delete(projects).where(eq(projects.id, project.id));
+
+    audit("project_deleted", {
+      userId: session.user.dbId,
+      companyId: session.user.companyId,
+      details: { projectId: id, projectName: project.name },
+    });
+
+    return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("Failed to delete S3 files:", err);
+    console.error("[project-delete] Failed to delete project:", id, err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Delete failed" }, { status: 500 });
   }
-
-  // Delete DB records in dependency order
-  await db.delete(chatMessages).where(eq(chatMessages.projectId, project.id));
-  await db.delete(annotations).where(eq(annotations.projectId, project.id));
-  try { await db.delete(takeoffItems).where(eq(takeoffItems.projectId, project.id)); } catch { /* table may not exist yet */ }
-  await db.delete(processingJobs).where(eq(processingJobs.projectId, project.id));
-  await db.delete(pages).where(eq(pages.projectId, project.id));
-  await db.delete(projects).where(eq(projects.id, project.id));
-
-  audit("project_deleted", {
-    userId: session.user.dbId,
-    companyId: session.user.companyId,
-    details: { projectId: id, projectName: project.name },
-  });
-
-  return NextResponse.json({ success: true });
 }

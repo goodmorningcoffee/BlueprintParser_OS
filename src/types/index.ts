@@ -62,9 +62,61 @@ export const TAKEOFF_SHAPES = ["circle", "square", "diamond", "triangle", "cross
 export type TakeoffShape = (typeof TAKEOFF_SHAPES)[number];
 export type TakeoffItemShape = TakeoffShape | "polygon";
 
-export type TakeoffTab = "count" | "area";
+export type TakeoffTab = "count" | "area" | "auto-qto";
 
 export type AreaUnit = "ft" | "in" | "m" | "cm";
+
+// ─── Auto-QTO Types ──────────────────────────────────────────
+
+export type QtoWorkflowStep = "pick" | "select-schedule" | "confirm-tags" | "map-tags" | "review" | "done";
+
+export interface QtoWorkflow {
+  id: number;
+  projectId: number;
+  materialType: string;
+  materialLabel: string | null;
+  step: QtoWorkflowStep;
+  schedulePageNumber: number | null;
+  yoloModelFilter: string | null;
+  yoloClassFilter: string | null;
+  tagPattern: string | null;
+  parsedSchedule: QtoParsedSchedule | null;
+  lineItems: QtoLineItem[] | null;
+  userEdits: QtoUserEdits | null;
+  exportedAt: string | null;
+}
+
+export interface QtoParsedSchedule {
+  headers: string[];
+  rows: Record<string, string>[];
+  tagColumn: string;
+  tableName: string;
+  scheduleCategory: string;
+  sourcePageNumber: number;
+}
+
+export interface QtoLineItem {
+  tag: string;
+  specs: Record<string, string>;
+  autoQuantity: number;
+  manualQuantity?: number;
+  instances: { pageNumber: number; bbox: [number, number, number, number]; confidence: number }[];
+  pages: number[];
+  csiCodes: string[];
+  flags: QtoFlag[];
+  notes: string;
+}
+
+export type QtoFlag = "not-found" | "extra" | "low-confidence" | "qty-mismatch" | "manual-override";
+
+export interface QtoUserEdits {
+  addedInstances: { tag: string; pageNumber: number; bbox: [number, number, number, number] }[];
+  removedInstances: { tag: string; pageNumber: number; bbox: [number, number, number, number] }[];
+  quantityOverrides: Record<string, number>;
+  addedRows: Record<string, string>[];
+  deletedTags: string[];
+  cellEdits: Record<string, string>;
+}
 export type AreaUnitSq = "SF" | "SI" | "SM" | "SC";
 export const AREA_UNIT_MAP: Record<AreaUnit, AreaUnitSq> = {
   ft: "SF", in: "SI", m: "SM", cm: "SC",
@@ -309,6 +361,25 @@ export interface PageIntelligence {
   heuristicInferences?: HeuristicInference[];
   classifiedTables?: ClassifiedTable[];
   parsedRegions?: ParsedRegion[];
+  csiSpatialMap?: { pageNumber: number; zones: Array<{ zone: string; divisions: Array<{ division: string; name: string; count: number; codes: string[] }>; totalInstances: number; dominantDivision?: string }>; summary: string } | null;
+}
+
+/** Typed data field for annotations (YOLO + user markups) */
+export interface AnnotationData {
+  modelId?: number;
+  modelName?: string;
+  classId?: number;
+  confidence?: number;
+  csiCodes?: string[];
+  keywords?: string[];
+  type?: "count-marker" | "area-polygon" | "takeoff-scale";
+  shape?: TakeoffShape;
+  color?: string;
+  takeoffItemId?: number;
+  vertices?: Array<{ x: number; y: number }>;
+  areaSqUnits?: number;
+  unit?: string;
+  [key: string]: unknown;
 }
 
 // ─── Parsed Region types (System 4: structured data extraction) ──
@@ -370,6 +441,63 @@ export interface ProjectIntelligence {
   refGraph?: { edges: RefGraphEdge[]; hubs: string[]; leaves: string[] };
   csiGraph?: unknown; // CsiNetworkGraph — imported from csi-graph.ts at usage sites
   pageCount?: number;
+  summaries?: ProjectSummaries;
+}
+
+// ─── Project Summaries (chunking support) ────────────────────
+// Pre-computed indexes that power sidebar filters, panel lists, and
+// annotation summaries without loading all page data into the browser.
+// Computed at end of processing pipeline and after YOLO load.
+
+export interface ProjectSummaries {
+  // Catalog: schedule/table/keynote locations across all pages
+  schedules: ScheduleSummaryEntry[];
+  parsedTables: ParsedTableSummaryEntry[];
+  keynoteTablePages: { pageNum: number; confidence: number }[];
+
+  // Page indexes: which pages contain each filter value
+  csiPageIndex: Record<string, number[]>;           // "08 11 16" -> [3, 7, 12]
+  tradePageIndex: Record<string, number[]>;          // "Openings" -> [3, 7, 12]
+  keynotePageIndex: Record<string, number[]>;        // "circle:T-01" -> [5, 8]
+  textAnnotationPageIndex: Record<string, number[]>; // "phone:555-1234" -> [1, 3]
+  pageClassifications: Record<number, { discipline: string; prefix: string }>;
+
+  // Annotation summary: model names, category counts, per-page counts
+  annotationSummary: AnnotationSummary;
+
+  // Takeoff totals: aggregated counts/areas per takeoff item
+  takeoffTotals: Record<number, TakeoffItemTotal>; // takeoffItemId -> totals
+
+  // General
+  allTrades: string[];
+  allCsiCodes: { code: string; description: string }[];
+}
+
+export interface ScheduleSummaryEntry {
+  pageNum: number;
+  category: string;      // "door-schedule", "finish-schedule", etc.
+  name: string;          // page name or classified table header
+  confidence: number;
+}
+
+export interface ParsedTableSummaryEntry {
+  pageNum: number;
+  name: string;
+  category: string;
+  rowCount: number;
+  colCount: number;
+}
+
+export interface AnnotationSummary {
+  modelNames: string[];
+  categoryCounts: Record<string, { count: number; pages: number[] }>;
+  pageAnnotationCounts: Record<number, { yolo: number; user: number; takeoff: number }>;
+}
+
+export interface TakeoffItemTotal {
+  count: number;
+  totalArea: number;
+  pages: number[];
 }
 
 // ─── Chat types ──────────────────────────────────────────────

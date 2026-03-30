@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
 import bcrypt from "bcrypt";
 import { db } from "@/lib/db";
 import { users, companies } from "@/lib/db/schema";
@@ -35,9 +36,14 @@ export async function POST(req: Request) {
   for (const c of allCompanies) {
     // Support both hashed and plaintext keys during migration
     const isHashed = c.accessKey.startsWith("$2");
-    const match = isHashed
-      ? await bcrypt.compare(accessKey, c.accessKey)
-      : c.accessKey === accessKey;
+    let match: boolean;
+    if (isHashed) {
+      match = await bcrypt.compare(accessKey, c.accessKey);
+    } else {
+      // Timing-safe comparison for plaintext keys
+      match = c.accessKey.length === accessKey.length &&
+        timingSafeEqual(Buffer.from(c.accessKey), Buffer.from(accessKey));
+    }
     if (match) {
       company = c;
       break;

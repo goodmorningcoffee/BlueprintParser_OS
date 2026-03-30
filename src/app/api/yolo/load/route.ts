@@ -5,6 +5,7 @@ import { projects, pages, annotations, models, companies } from "@/lib/db/schema
 import { eq, and, sql } from "drizzle-orm";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
+import { computeProjectSummaries } from "@/lib/project-analysis";
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { S3_BUCKET } from "@/lib/s3";
 
@@ -276,6 +277,14 @@ export async function POST(req: Request) {
     } catch (err) {
       console.error("[YOLO-LOAD] Post-YOLO heuristic engine failed:", err);
     }
+  }
+
+  // Recompute project summaries (annotation counts changed after YOLO load)
+  try {
+    await computeProjectSummaries(project.id);
+    console.log(`[YOLO-LOAD] Project summaries recomputed`);
+  } catch (err) {
+    console.error("[YOLO-LOAD] Summary recomputation failed:", err);
   }
 
   return NextResponse.json({

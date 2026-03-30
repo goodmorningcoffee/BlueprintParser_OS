@@ -2,29 +2,30 @@
 
 import { useMemo, useEffect, useState, useRef } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore, useSymbolSearch, useProject, useNavigation } from "@/stores/viewerStore";
 
 interface SymbolSearchPanelProps {
   pdfDoc: PDFDocumentProxy | null;
 }
 
 export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
-  const symbolSearchActive = useViewerStore((s) => s.symbolSearchActive);
-  const symbolSearchResults = useViewerStore((s) => s.symbolSearchResults);
-  const symbolSearchLoading = useViewerStore((s) => s.symbolSearchLoading);
-  const symbolSearchProgress = useViewerStore((s) => s.symbolSearchProgress);
-  const symbolSearchConfidence = useViewerStore((s) => s.symbolSearchConfidence);
-  const setSymbolSearchConfidence = useViewerStore((s) => s.setSymbolSearchConfidence);
-  const dismissedSymbolMatches = useViewerStore((s) => s.dismissedSymbolMatches);
-  const dismissSymbolMatch = useViewerStore((s) => s.dismissSymbolMatch);
-  const clearSymbolSearch = useViewerStore((s) => s.clearSymbolSearch);
-  const symbolSearchError = useViewerStore((s) => s.symbolSearchError);
-  const symbolSearchTemplateBbox = useViewerStore((s) => s.symbolSearchTemplateBbox);
-  const symbolSearchSourcePage = useViewerStore((s) => s.symbolSearchSourcePage);
-  const setSymbolSearchActive = useViewerStore((s) => s.setSymbolSearchActive);
-  const setPage = useViewerStore((s) => s.setPage);
-  const pageNames = useViewerStore((s) => s.pageNames);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const {
+    symbolSearchActive,
+    symbolSearchResults,
+    symbolSearchLoading,
+    symbolSearchProgress,
+    symbolSearchConfidence,
+    setSymbolSearchConfidence,
+    dismissedSymbolMatches,
+    dismissSymbolMatch,
+    clearSymbolSearch,
+    symbolSearchError,
+    symbolSearchTemplateBbox,
+    symbolSearchSourcePage,
+    setSymbolSearchActive,
+  } = useSymbolSearch();
+  const { pageNames } = useProject();
+  const { pageNumber, setPage } = useNavigation();
 
   // Template preview image
   const [templateImageUrl, setTemplateImageUrl] = useState<string | null>(null);

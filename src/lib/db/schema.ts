@@ -342,3 +342,28 @@ export const labelingSessions = pgTable(
   },
   (table) => [index("idx_labeling_sessions_project").on(table.projectId)]
 );
+
+// ─── QTO Workflows (Auto-QTO feature) ──────────────────────
+export const qtoWorkflows = pgTable(
+  "qto_workflows",
+  {
+    id: serial("id").primaryKey(),
+    projectId: integer("project_id")
+      .notNull()
+      .references(() => projects.id),
+    materialType: text("material_type").notNull(),
+    materialLabel: text("material_label"),
+    step: text("step").notNull().default("pick"),
+    schedulePageNumber: integer("schedule_page_number"),
+    yoloModelFilter: text("yolo_model_filter"),
+    yoloClassFilter: text("yolo_class_filter"),
+    tagPattern: text("tag_pattern"),
+    parsedSchedule: jsonb("parsed_schedule"),
+    lineItems: jsonb("line_items"),
+    userEdits: jsonb("user_edits"),
+    exportedAt: timestamp("exported_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [index("idx_qto_workflows_project").on(table.projectId)]
+);

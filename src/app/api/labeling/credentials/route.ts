@@ -9,8 +9,8 @@ import { auth } from "@/lib/auth";
  */
 export async function GET() {
   const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session?.user || session.user.role !== "admin") {
+    return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 
   const email = process.env.LABEL_STUDIO_ADMIN_EMAIL;

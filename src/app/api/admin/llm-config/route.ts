@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { llmConfigs, companies } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
@@ -10,10 +10,8 @@ import { encryptApiKey, maskApiKey, decryptApiKey } from "@/lib/crypto";
  * Returns LLM configs for the admin's company (keys masked) + which env vars are set.
  */
 export async function GET() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   let configs: any[] = [];
   try {
@@ -66,10 +64,8 @@ export async function GET() {
  * Create or update an LLM config for the admin's company.
  */
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const { provider, model, apiKey, baseUrl, isDemo, config } = await req.json();
 
@@ -159,10 +155,8 @@ export async function POST(req: Request) {
  * Remove an LLM config. Chat falls back to env var.
  */
 export async function DELETE(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const { id } = await req.json();
   if (!id) {
@@ -191,10 +185,8 @@ export async function DELETE(req: Request) {
  * Update company-level LLM settings (system prompt).
  */
 export async function PUT(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const { systemPrompt } = await req.json();
 

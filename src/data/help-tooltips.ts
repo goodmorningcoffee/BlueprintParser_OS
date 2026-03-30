@@ -61,6 +61,10 @@ export const HELP_TOOLTIPS: Record<string, { title: string; body: string }> = {
     title: "CSI Code Filter",
     body: "Filter pages by a specific CSI MasterFormat code (e.g., 09 21 16 — Gypsum Board). Shows word-level highlighting on matching pages. CSI codes are auto-detected from OCR text during processing.",
   },
+  "csi-network-graph": {
+    title: "CSI Network Graph",
+    body: "Opens an interactive force-directed graph showing relationships between CSI divisions across the project. Nodes = divisions, edges = co-occurrence on same pages. Clusters group related trades (MEP, Architectural, Structural). Click 'Refresh Graph' to update after parsing new tables.",
+  },
 
   // ═══════════════════════════════════════════════════════════
   // TOGGLE BUTTONS (right side of toolbar)

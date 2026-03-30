@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, takeoffItems } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { TAKEOFF_SHAPES, TWENTY_COLORS } from "@/types";
 
 export async function GET(req: Request) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const url = new URL(req.url);
   const projectId = url.searchParams.get("projectId");
@@ -52,10 +50,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const { projectId, name, shape, color, size } = await req.json();
 

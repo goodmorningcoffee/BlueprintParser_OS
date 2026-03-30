@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { annotations, projects } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { detectCsiCodes } from "@/lib/csi-detect";
+import { computeProjectSummaries } from "@/lib/project-analysis";
 
 async function verifyAnnotationOwnership(annotationId: number, companyId: number) {
   const [annotation] = await db
@@ -31,10 +32,8 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const annotation = await verifyAnnotationOwnership(
     parseInt(id),
@@ -85,10 +84,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const annotation = await verifyAnnotationOwnership(
     parseInt(id),
@@ -99,6 +96,11 @@ export async function DELETE(
   }
 
   await db.delete(annotations).where(eq(annotations.id, annotation.id));
+
+  // Recompute summaries in background (annotation counts changed)
+  computeProjectSummaries(annotation.projectId).catch((e) =>
+    console.error("[annotations/delete] Summary recompute failed:", e)
+  );
 
   return NextResponse.json({ success: true });
 }

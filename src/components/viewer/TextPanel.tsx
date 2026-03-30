@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect, useRef } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePageData, usePanels, useProject, useDetection, useTextAnnotationDisplay } from "@/stores/viewerStore";
 import { TEXT_ANNOTATION_COLORS } from "@/types";
 import type { TextAnnotation, AnnotationCategory, ClientAnnotation } from "@/types";
 import HelpTooltip from "./HelpTooltip";
@@ -20,13 +20,11 @@ const CATEGORY_LABELS: Record<AnnotationCategory, string> = {
 };
 
 export default function TextPanel() {
-  const pageNumber = useViewerStore((s) => s.pageNumber);
-  const textractData = useViewerStore((s) => s.textractData);
-  const searchQuery = useViewerStore((s) => s.searchQuery);
-  const textAnnotations = useViewerStore((s) => s.textAnnotations);
-  const tab = useViewerStore((s) => s.textPanelTab);
-  const setTab = useViewerStore((s) => s.setTextPanelTab);
-  const userMarkups = useViewerStore((s) => s.annotations).filter((a) => a.source === "user");
+  const { pageNumber } = useNavigation();
+  const { textractData, textAnnotations } = usePageData();
+  const { textPanelTab: tab, setTextPanelTab: setTab } = usePanels();
+  const { searchQuery, annotations: allAnnotations } = useDetection();
+  const userMarkups = allAnnotations.filter((a) => a.source === "user");
 
   const pageData = textractData[pageNumber];
   const annotations = textAnnotations[pageNumber] || [];
@@ -127,17 +125,14 @@ function OcrTab({ pageData, searchQuery, pageNumber }: { pageData: any; searchQu
 // ─── Annotations Tab ──────────────────────────────────────────
 
 function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotation[]; pageNumber: number }) {
-  const showAll = useViewerStore((s) => s.showTextAnnotations);
-  const toggleAll = useViewerStore((s) => s.toggleTextAnnotations);
-  const activeTypes = useViewerStore((s) => s.activeTextAnnotationTypes);
-  const setType = useViewerStore((s) => s.setTextAnnotationType);
-  const setAllTypes = useViewerStore((s) => s.setAllTextAnnotationTypes);
-  const hiddenSet = useViewerStore((s) => s.hiddenTextAnnotations);
-  const toggleIndividual = useViewerStore((s) => s.toggleTextAnnotationVisibility);
-  const customColors = useViewerStore((s) => s.textAnnotationColors);
-  const setColor = useViewerStore((s) => s.setTextAnnotationColor);
-  const setFilter = useViewerStore((s) => s.setTextAnnotationFilter);
-  const activeFilter = useViewerStore((s) => s.activeTextAnnotationFilter);
+  const {
+    showTextAnnotations: showAll, toggleTextAnnotations: toggleAll,
+    activeTextAnnotationTypes: activeTypes, setTextAnnotationType: setType,
+    setAllTextAnnotationTypes: setAllTypes,
+    hiddenTextAnnotations: hiddenSet, toggleTextAnnotationVisibility: toggleIndividual,
+    textAnnotationColors: customColors, setTextAnnotationColor: setColor,
+    activeTextAnnotationFilter: activeFilter, setTextAnnotationFilter: setFilter,
+  } = useTextAnnotationDisplay();
 
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
 
@@ -283,10 +278,9 @@ function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotati
 // ─── Graph Tab ────────────────────────────────────────────────
 
 function GraphTab({ pageNumber }: { pageNumber: number }) {
-  const textAnnotations = useViewerStore((s) => s.textAnnotations);
-  const pageNames = useViewerStore((s) => s.pageNames);
-  const numPages = useViewerStore((s) => s.numPages);
-  const setPage = useViewerStore((s) => s.setPage);
+  const { textAnnotations } = usePageData();
+  const { pageNames } = useProject();
+  const { numPages, setPage } = useNavigation();
 
   // Build cross-reference data from sheet-ref annotations across all pages
   const { outgoing, incoming } = useMemo(() => {
@@ -408,12 +402,10 @@ function GraphTab({ pageNumber }: { pageNumber: number }) {
 // ─── Markups Tab ────────────────────────────────────────────────
 
 function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
-  const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
-  const setAnnotationFilter = useViewerStore((s) => s.setAnnotationFilter);
-  const setSearch = useViewerStore((s) => s.setSearch);
-  const setPage = useViewerStore((s) => s.setPage);
+  const { activeAnnotationFilter, setAnnotationFilter, setSearch } = useDetection();
+  const { setPage } = useNavigation();
+  const { pageNames } = useProject();
   const activeMarkupId = useViewerStore((s) => s.activeMarkupId);
-  const pageNames = useViewerStore((s) => s.pageNames);
   const scrollRef = useRef<Record<number, HTMLDivElement | null>>({});
 
   // Scroll to active markup when it changes

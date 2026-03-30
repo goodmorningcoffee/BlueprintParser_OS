@@ -53,8 +53,15 @@ export async function templateMatch(
   return new Promise<TemplateMatchResult>((resolve, reject) => {
     const proc = spawn("python3", [scriptPath], {
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: 300_000, // 5 minutes
     });
+
+    // Enforce timeout with explicit kill (spawn timeout option unreliable)
+    const timeoutMs = 300_000; // 5 minutes
+    const killTimer = setTimeout(() => {
+      proc.kill("SIGTERM");
+      setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 5000);
+      reject(new Error("Template matching timed out (5 min)"));
+    }, timeoutMs);
 
     let stdout = "";
     let stderr = "";
@@ -104,6 +111,7 @@ export async function templateMatch(
     });
 
     proc.on("close", (code) => {
+      clearTimeout(killTimer);
       if (stderr?.trim()) {
         console.log(`[TEMPLATE_MATCH] ${stderr.trim()}`);
       }

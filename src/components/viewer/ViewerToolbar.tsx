@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useProject, usePanels, usePageData, useDetection, useSymbolSearch, useSummaries } from "@/stores/viewerStore";
 import Link from "next/link";
 import LabelingWizard from "./LabelingWizard";
 import HelpTooltip from "./HelpTooltip";
@@ -15,73 +15,50 @@ interface ViewerToolbarProps {
 export default function ViewerToolbar({ projectName, backHref = "/home", onRename }: ViewerToolbarProps) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(projectName);
+  // Slice selectors
+  const { pageNumber, numPages, setPage, scale, mode, setMode } = useNavigation();
+  const { publicId, isDemo } = useProject();
   const {
-    pageNumber,
-    numPages,
-    setPage,
-    scale,
-    zoomIn,
-    zoomOut,
-    zoomFit,
-    mode,
-    setMode,
-    searchQuery,
-    setSearch,
-    searchResults,
-    searchLoading,
-    showTextPanel,
-    toggleTextPanel,
-    showChatPanel,
-    toggleChatPanel,
-    showTakeoffPanel,
-    toggleTakeoffPanel,
-    showDetections,
-    toggleDetections,
-    activeModels,
-    setModelActive,
-    confidenceThresholds,
-    setModelConfidence,
-    annotations,
-    allTrades,
-    activeTradeFilter,
-    setTradeFilter,
-    allCsiCodes,
-    activeCsiFilter,
-    setCsiFilter,
-    showCsiPanel,
-    toggleCsiPanel,
-    showPageIntelPanel,
-    togglePageIntelPanel,
-    showDetectionPanel,
-    toggleDetectionPanel,
-    showKeynotes,
-    toggleKeynotes,
-    showTableParsePanel,
-    toggleTableParsePanel,
-    showKeynoteParsePanel,
-    toggleKeynoteParsePanel,
-    symbolSearchActive,
-    setSymbolSearchActive,
-    symbolSearchResults,
-    symbolSearchLoading,
-    clearSymbolSearch,
-  } = useViewerStore();
+    showTextPanel, toggleTextPanel, showChatPanel, toggleChatPanel,
+    showTakeoffPanel, toggleTakeoffPanel, showDetectionPanel, toggleDetectionPanel,
+    showCsiPanel, toggleCsiPanel, showPageIntelPanel, togglePageIntelPanel,
+    showTableParsePanel, toggleTableParsePanel, showKeynoteParsePanel, toggleKeynoteParsePanel,
+  } = usePanels();
+  const { allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
+  const { annotations, activeModels, setModelActive, searchQuery, setSearch } = useDetection();
+  const { symbolSearchActive, setSymbolSearchActive, symbolSearchResults, symbolSearchLoading, clearSymbolSearch } = useSymbolSearch();
 
-  const publicId = useViewerStore((s) => s.publicId);
+  // Fields not in slice selectors
+  const zoomIn = useViewerStore((s) => s.zoomIn);
+  const zoomOut = useViewerStore((s) => s.zoomOut);
+  const zoomFit = useViewerStore((s) => s.zoomFit);
+  const searchResults = useViewerStore((s) => s.searchResults);
+  const searchLoading = useViewerStore((s) => s.searchLoading);
+  const showDetections = useViewerStore((s) => s.showDetections);
+  const toggleDetections = useViewerStore((s) => s.toggleDetections);
+  const confidenceThresholds = useViewerStore((s) => s.confidenceThresholds);
+  const setModelConfidence = useViewerStore((s) => s.setModelConfidence);
+  const allTrades = useViewerStore((s) => s.allTrades);
+  const activeTradeFilter = useViewerStore((s) => s.activeTradeFilter);
+  const setTradeFilter = useViewerStore((s) => s.setTradeFilter);
+  const showKeynotes = useViewerStore((s) => s.showKeynotes);
+  const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
+  const showLabelingWizard = useViewerStore((s) => s.showLabelingWizard);
+  const setShowLabelingWizard = useViewerStore((s) => s.setShowLabelingWizard);
+
   const hasYoloAnnotations = annotations.some((a) => a.source === "yolo");
   const [yoloDropdownOpen, setYoloDropdownOpen] = useState(false);
   const [csiDropdownOpen, setCsiDropdownOpen] = useState(false);
   const [csiSearchQuery, setCsiSearchQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
-  const showLabelingWizard = useViewerStore((s) => s.showLabelingWizard);
-  const setShowLabelingWizard = useViewerStore((s) => s.setShowLabelingWizard);
   const menuRef = useRef<HTMLDivElement>(null);
-  const isDemo = useViewerStore((s) => s.isDemo);
   const yoloDropdownRef = useRef<HTMLDivElement>(null);
   const csiDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Derive unique model names from YOLO annotations
-  const yoloModelNames = [...new Set(
+  const { summaries } = useSummaries();
+
+  // Derive unique model names — use summary when available, else iterate annotations
+  const yoloModelNames = summaries?.annotationSummary?.modelNames || [...new Set(
     annotations
       .filter((a) => a.source === "yolo" && (a as any).data?.modelName)
       .map((a) => (a as any).data.modelName as string)
@@ -217,37 +194,37 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         <HelpTooltip id="pointer-mode">
           <button
             onClick={() => setMode("pointer")}
-            className={`px-3 py-1 text-xs rounded-l ${
+            className={`px-2 py-0.5 text-[10px] leading-tight text-center rounded-l ${
               mode === "pointer"
                 ? "bg-[var(--accent)] text-white"
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
             }`}
           >
-            Pointer/Select
+            <span className="block">Pointer</span><span className="block">Select</span>
           </button>
         </HelpTooltip>
         <HelpTooltip id="pan-mode">
           <button
             onClick={() => setMode("move")}
-            className={`px-3 py-1 text-xs ${
+            className={`px-2 py-0.5 text-[10px] leading-tight text-center ${
               mode === "move"
                 ? "bg-[var(--accent)] text-white"
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
             }`}
           >
-            Pan/Zoom
+            <span className="block">Pan</span><span className="block">Zoom</span>
           </button>
         </HelpTooltip>
         <HelpTooltip id="markup-mode">
           <button
             onClick={() => setMode("markup")}
-            className={`px-3 py-1 text-xs rounded-r ${
+            className={`px-2 py-0.5 text-[10px] leading-tight text-center rounded-r ${
               mode === "markup"
                 ? "bg-[var(--accent)] text-white"
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
             }`}
           >
-            Add Markup
+            Markup
           </button>
         </HelpTooltip>
       </div>
@@ -281,7 +258,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             <line x1="10" y1="10" x2="14" y2="14" />
             <rect x="3.5" y="3.5" width="6" height="6" rx="0.5" strokeDasharray="2 1" strokeWidth="1" />
           </svg>
-          {symbolSearchLoading ? "Searching..." : symbolSearchResults ? `${symbolSearchResults.totalMatches} found` : "Symbol Search"}
+          {symbolSearchLoading ? "Searching..." : symbolSearchResults ? `${symbolSearchResults.totalMatches} found` : "Symbol"}
         </button>
       </HelpTooltip>
 
@@ -487,8 +464,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             onClick={() => { toggleDetectionPanel(); if (!showDetections) toggleDetections(); }}
             className={`px-2 py-1 text-xs rounded-l border ${
               showDetectionPanel
-                ? "border-green-400/30 text-green-400/50 bg-green-400/5"
-                : "border-red-400/20 text-red-400/35 hover:text-red-300/45 hover:border-red-400/30"
+                ? "border-green-400/45 text-green-400/70 bg-green-400/8"
+                : "border-red-400/30 text-red-400/50 hover:text-red-300/60 hover:border-red-400/40"
             }`}
           >
             YOLO
@@ -498,8 +475,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
               onClick={() => setYoloDropdownOpen((o) => !o)}
               className={`px-1.5 py-1 text-xs border border-l-0 rounded-r ${
                 yoloDropdownOpen
-                  ? "border-green-400/30 text-green-400/50 bg-green-400/5"
-                  : "border-red-400/20 text-red-400/35 hover:text-red-300/45 hover:border-red-400/30"
+                  ? "border-green-400/45 text-green-400/70 bg-green-400/8"
+                  : "border-red-400/30 text-red-400/50 hover:text-red-300/60 hover:border-red-400/40"
               }`}
             >
               ▾
@@ -559,8 +536,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           onClick={toggleTextPanel}
           className={`px-2 py-1 text-xs rounded border ${
             showTextPanel
-              ? "border-green-400/40 text-green-400/60 bg-green-400/8"
-              : "border-red-400/25 text-red-400/40 hover:text-red-300/50 hover:border-red-400/35"
+              ? "border-green-400/60 text-green-300 bg-green-400/12"
+              : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
           }`}
         >
           Text
@@ -573,8 +550,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           onClick={toggleCsiPanel}
           className={`px-2 py-1 text-xs rounded border ${
             showCsiPanel
-              ? "border-green-400/50 text-green-400/70 bg-green-400/10"
-              : "border-red-400/30 text-red-400/45 hover:text-red-300/55 hover:border-red-400/40"
+              ? "border-green-400/60 text-green-300 bg-green-400/12"
+              : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
           }`}
         >
           CSI
@@ -587,8 +564,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           onClick={toggleChatPanel}
           className={`px-2 py-1 text-xs rounded border ${
             showChatPanel
-              ? "border-green-400/55 text-green-400/80 bg-green-400/12"
-              : "border-red-400/35 text-red-400/50 hover:text-red-300/60 hover:border-red-400/45"
+              ? "border-green-400/60 text-green-300 bg-green-400/12"
+              : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
           }`}
         >
           LLM Chat
@@ -600,8 +577,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         onClick={togglePageIntelPanel}
         className={`px-2 py-1 text-xs rounded border ${
           showPageIntelPanel
-            ? "border-green-400/65 text-green-300/85 bg-green-400/15"
-            : "border-red-400/40 text-red-400/55 hover:text-red-300/65 hover:border-red-400/50"
+            ? "border-green-400/60 text-green-300 bg-green-400/12"
+            : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
         }`}
         title="Page Intelligence"
       >
@@ -614,8 +591,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           onClick={toggleTakeoffPanel}
           className={`px-2 py-1 text-xs rounded border ${
             showTakeoffPanel
-              ? "border-green-400/75 text-green-300/95 bg-green-400/18"
-              : "border-red-400/45 text-red-400/60 hover:text-red-300/70 hover:border-red-400/55"
+              ? "border-green-400/60 text-green-300 bg-green-400/12"
+              : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
           }`}
         >
           QTO
@@ -626,14 +603,14 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       <HelpTooltip id="table-panel-button">
       <button
         onClick={toggleTableParsePanel}
-        className={`px-2 py-1 text-xs rounded border ${
+        className={`px-2 py-0.5 text-[10px] leading-tight text-center rounded border ${
           showTableParsePanel
-            ? "border-pink-400/75 text-pink-300/95 bg-pink-400/18"
-            : "border-red-400/45 text-red-400/60 hover:text-red-300/70 hover:border-red-400/55"
+            ? "border-pink-400/60 text-pink-300 bg-pink-400/12"
+            : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
         }`}
         title="Schedules & Table Parser"
       >
-        Schedules/Tables
+        <span className="block">Schedules</span><span className="block">Tables</span>
       </button>
       </HelpTooltip>
 
@@ -643,8 +620,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         onClick={toggleKeynoteParsePanel}
         className={`px-2 py-1 text-xs rounded border ${
           showKeynoteParsePanel
-            ? "border-amber-400/75 text-amber-300/95 bg-amber-400/18"
-            : "border-red-400/45 text-red-400/60 hover:text-red-300/70 hover:border-red-400/55"
+            ? "border-amber-400/60 text-amber-300 bg-amber-400/12"
+            : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
         }`}
         title="Keynote Parser"
       >

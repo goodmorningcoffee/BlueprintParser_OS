@@ -8,7 +8,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -21,10 +21,8 @@ import { templateMatch } from "@/lib/template-match";
 import type { TemplateMatchProgress, SymbolSearchMatch } from "@/types";
 
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, error } = await requireAuth();
+  if (error) return error;
 
   const body = await req.json();
   const {
@@ -52,15 +50,26 @@ export async function POST(req: Request) {
     );
   }
 
+  // Bbox validation
+  const { x, y, w, h } = templateBbox;
+  if (![x, y, w, h].every((v) => typeof v === "number" && isFinite(v) && v >= 0 && v <= 1) || w <= 0 || h <= 0) {
+    return NextResponse.json({ error: "Invalid templateBbox" }, { status: 400 });
+  }
+
   const tempDir = await mkdtemp(join(tmpdir(), "bp2-symbol-search-"));
 
   try {
-    // ─── Fetch project ───────────────────────────────────────
+    // ─── Fetch project (with company authorization) ─────────
     const [project] = await db
-      .select({ id: projects.id, dataUrl: projects.dataUrl })
+      .select({ id: projects.id, dataUrl: projects.dataUrl, isDemo: projects.isDemo, companyId: projects.companyId })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1);
+
+    // Company authorization: non-demo projects must belong to user's company
+    if (project && !project.isDemo && session.user.companyId !== project.companyId) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    }
 
     if (!project?.dataUrl) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
@@ -107,15 +116,22 @@ export async function POST(req: Request) {
     const cropW = Math.max(1, Math.round(templateBbox.w * imgW));
     const cropH = Math.max(1, Math.round(templateBbox.h * imgH));
 
-    // Use Python/OpenCV to crop (one-liner via subprocess)
+    // Use Python/OpenCV to crop (safe: no string interpolation of user input)
     const { execFile } = await import("child_process");
     const { promisify } = await import("util");
     const execFileAsync = promisify(execFile);
 
     const templatePath = join(tempDir, "template.png");
+    const cropScript = `
+import cv2, json, sys
+cfg = json.loads(sys.argv[1])
+img = cv2.imread(cfg["src"])
+crop = img[cfg["y"]:cfg["y"]+cfg["h"], cfg["x"]:cfg["x"]+cfg["w"]]
+cv2.imwrite(cfg["dst"], crop)
+`.trim();
     await execFileAsync("python3", [
-      "-c",
-      `import cv2; img=cv2.imread("${sourcePagePath}"); crop=img[${cropY}:${cropY + cropH}, ${cropX}:${cropX + cropW}]; cv2.imwrite("${templatePath}", crop)`,
+      "-c", cropScript,
+      JSON.stringify({ src: sourcePagePath, dst: templatePath, x: cropX, y: cropY, w: cropW, h: cropH }),
     ], { timeout: 10000 });
 
     // ─── Rasterize all target pages ──────────────────────────

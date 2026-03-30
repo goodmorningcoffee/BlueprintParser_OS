@@ -27,6 +27,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing projectId, pageNumber, or regionBbox" }, { status: 400 });
     }
 
+    // Bbox validation
+    const [bx0, by0, bx1, by1] = regionBbox;
+    if (![bx0, by0, bx1, by1].every((v) => typeof v === "number" && isFinite(v) && v >= 0 && v <= 1) || bx0 >= bx1 || by0 >= by1) {
+      return NextResponse.json({ error: "Invalid regionBbox" }, { status: 400 });
+    }
+
     // Fetch page OCR data
     const [pageRow] = await db
       .select({ textractData: pages.textractData })

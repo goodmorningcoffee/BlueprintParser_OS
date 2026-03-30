@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { processingJobs, projects } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
@@ -10,10 +10,8 @@ import { eq, and, sql } from "drizzle-orm";
  * Used to resume polling after navigating away from admin panel.
  */
 export async function GET() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   try {
     const rows = await db.execute(sql`
@@ -50,10 +48,8 @@ export async function GET() {
  * Update a job's status when polling detects completion.
  */
 export async function PUT(req: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const { session, error } = await requireAdmin();
+  if (error) return error;
 
   const { executionId, status } = await req.json();
   if (!executionId || !status) {
