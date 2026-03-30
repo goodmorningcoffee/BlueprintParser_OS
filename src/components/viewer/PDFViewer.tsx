@@ -327,7 +327,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
       {/* Help tips banner — dismissible, toggleable from Menu → Help */}
       {showTips && (
-        <div className="h-8 bg-[#1a1a2e] border-b border-[var(--border)] flex items-center justify-center px-4 shrink-0">
+        <div className="h-8 bg-[var(--surface)] border-b border-[var(--border)] flex items-center justify-center px-4 shrink-0">
           <div className="flex items-center gap-3 text-[11px] -ml-16">
             <span className="text-[var(--fg)]/50 font-medium">BUTTONS:</span>
             <span className="text-[var(--fg)]/60">Menu — Data labeling & more</span>
@@ -379,7 +379,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
           <div
             ref={containerRef}
-            className="flex-1 bg-[#1a1a1a] overflow-auto relative"
+            className="flex-1 bg-[var(--bg)] overflow-auto relative"
             style={{ cursor: mode === "move" ? "grab" : "default" }}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
@@ -414,7 +414,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
             <button
               onClick={toggleAnnotationPanel}
               className="border-t border-[var(--border)] px-3 py-1 text-xs text-[var(--muted)] hover:text-[var(--fg)] text-left shrink-0"
-              style={{ backgroundColor: "#1e1e22" }}
+              style={{ backgroundColor: "var(--surface)" }}
             >
               View Annotations
             </button>
@@ -424,7 +424,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
               <button
                 onClick={toggleAnnotationPanel}
                 className="border-t border-[var(--border)] px-3 py-0.5 text-[10px] text-[var(--muted)] hover:text-[var(--fg)] text-center shrink-0"
-                style={{ backgroundColor: "#1e1e22" }}
+                style={{ backgroundColor: "var(--surface)" }}
               >
                 Collapse
               </button>
@@ -433,14 +433,17 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
         </div>
 
-        {showTextPanel && <TextPanel />}
-        {showChatPanel && <ChatPanel />}
-        {showTakeoffPanel && <TakeoffPanel />}
-        {showDetectionPanel && <DetectionPanel />}
-        {showCsiPanel && <CsiPanel />}
-        {showPageIntelPanel && <PageIntelligencePanel />}
-        {showTableParsePanel && <TableParsePanel />}
-        {showKeynoteParsePanel && <KeynotePanel />}
+        {/* Right-side panels — wrapped for UI scale */}
+        <div className="viewer-scalable flex shrink-0">
+          {showTextPanel && <TextPanel />}
+          {showChatPanel && <ChatPanel />}
+          {showTakeoffPanel && <TakeoffPanel />}
+          {showDetectionPanel && <DetectionPanel />}
+          {showCsiPanel && <CsiPanel />}
+          {showPageIntelPanel && <PageIntelligencePanel />}
+          {showTableParsePanel && <TableParsePanel />}
+          {showKeynoteParsePanel && <KeynotePanel />}
+        </div>
       </div>
 
       {/* Fullscreen modal overlays */}

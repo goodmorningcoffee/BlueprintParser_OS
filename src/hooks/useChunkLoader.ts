@@ -107,7 +107,7 @@ export function useChunkLoader() {
         // Hydrate scale calibrations from new chunk
         for (const ann of chunk.annotations) {
           if (ann.source === "takeoff-scale" && (ann.data as any)?.type === "scale-calibration") {
-            useViewerStore.getState().setScaleCalibration(ann.pageNumber, ann.data as ScaleCalibrationData);
+            useViewerStore.getState().setScaleCalibration(ann.pageNumber, ann.data as unknown as ScaleCalibrationData);
           }
         }
       })

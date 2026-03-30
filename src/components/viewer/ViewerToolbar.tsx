@@ -5,6 +5,7 @@ import { useViewerStore, useNavigation, useProject, usePanels, usePageData, useD
 import Link from "next/link";
 import LabelingWizard from "./LabelingWizard";
 import HelpTooltip from "./HelpTooltip";
+import SettingsModal from "./SettingsModal";
 
 interface ViewerToolbarProps {
   projectName: string;
@@ -51,6 +52,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const [csiDropdownOpen, setCsiDropdownOpen] = useState(false);
   const [csiSearchQuery, setCsiSearchQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const yoloDropdownRef = useRef<HTMLDivElement>(null);
   const csiDropdownRef = useRef<HTMLDivElement>(null);
@@ -115,7 +117,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   }
 
   return (
-    <div className="h-12 border-b border-[var(--border)] bg-[#222226] flex items-center px-3 gap-2 shrink-0">
+    <div className="viewer-scalable h-12 border-b border-[var(--border)] bg-[var(--surface)] flex items-center px-3 gap-2 shrink-0">
       {/* Back to home */}
       <Link
         href={backHref}
@@ -187,6 +189,10 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           projectName={projectName}
           isDemo={isDemo}
         />
+      )}
+
+      {showSettings && (
+        <SettingsModal onClose={() => setShowSettings(false)} />
       )}
 
       {/* Mode toggle */}
@@ -295,10 +301,10 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
               Export PDF (coming soon)
             </button>
             <button
-              disabled
-              className="w-full text-left px-3 py-2 text-xs text-[var(--muted)]/50 cursor-not-allowed"
+              onClick={() => { setMenuOpen(false); setShowSettings(true); }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
             >
-              Settings (coming soon)
+              Settings
             </button>
             <div className="border-t border-[var(--border)]" />
             <button
