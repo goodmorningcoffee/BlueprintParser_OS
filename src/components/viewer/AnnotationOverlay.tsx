@@ -754,28 +754,32 @@ export default function AnnotationOverlay({
             const model = (ann as any).data?.modelName as string || "unknown";
             const tagName = prompt(`Create tag from "${ocrText}"?\n\nEnter display name:`, ocrText);
             if (!tagName) { setYoloTagPickingMode(false); return; }
-            const instances = mapYoloToOcrText({
-              tagText: ocrText,
-              yoloClass: ann.name,
-              yoloModel: model,
-              scope: "project",
-              annotations: useViewerStore.getState().annotations,
-              textractData,
-            });
-            const newTag = {
-              id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              name: tagName,
-              tagText: ocrText,
-              yoloClass: ann.name,
-              yoloModel: model,
-              source: "manual" as const,
-              scope: "project" as const,
-              instances,
-            };
-            addYoloTag(newTag);
-            setActiveYoloTagId(newTag.id);
-            setYoloTagFilter(newTag.id);
             setYoloTagPickingMode(false);
+            // Use batch API for full-project scanning (all pages, not just loaded chunk)
+            const pid = useViewerStore.getState().publicId;
+            fetch(`/api/projects/${pid}/map-tags-batch`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tags: [ocrText], yoloClass: ann.name, yoloModel: model }),
+            })
+              .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+              .then(({ results }: { results: Record<string, any[]> }) => {
+                const instances = results[ocrText] || [];
+                const newTag = {
+                  id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                  name: tagName,
+                  tagText: ocrText,
+                  yoloClass: ann.name,
+                  yoloModel: model,
+                  source: "manual" as const,
+                  scope: "project" as const,
+                  instances,
+                };
+                useViewerStore.getState().addYoloTag(newTag);
+                useViewerStore.getState().setActiveYoloTagId(newTag.id);
+                useViewerStore.getState().setYoloTagFilter(newTag.id);
+              })
+              .catch((err) => console.error("[YOLO_TAG] Create tag failed:", err));
             return;
           }
         }

@@ -64,29 +64,25 @@ export default function AutoQtoTab() {
     return detections;
   }, [summaries, pageIntelligence, pageNames]);
 
-  // Find already-parsed schedules (from parsedRegions)
+  // Find already-parsed schedules — merge pageIntelligence (user-parsed, has full data) + summaries (pre-computed, all pages)
   const parsedSchedules = useMemo(() => {
-    if (summaries?.parsedTables) {
-      return summaries.parsedTables.map((pt) => ({
-        pageNum: pt.pageNum,
-        region: null,
-        name: pt.name,
-        rowCount: pt.rowCount,
-        colCount: pt.colCount,
-        category: pt.category,
-      }));
-    }
-    // Fallback: iterate loaded pageIntelligence
     const schedules: { pageNum: number; region: any; name: string; rowCount: number; colCount: number; category: string }[] = [];
+    const seen = new Set<string>();
+
+    // Source 1: pageIntelligence (includes user-parsed during this session, has region with data)
     for (const [pn, intel] of Object.entries(pageIntelligence)) {
       const pi = intel as any;
       if (pi?.parsedRegions) {
         for (const pr of pi.parsedRegions) {
           if (pr.type === "schedule" || pr.type === "keynote") {
+            const name = pr.data?.tableName || pr.category || "Unnamed";
+            const key = `${pn}:${name}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
             schedules.push({
               pageNum: Number(pn),
               region: pr,
-              name: pr.data?.tableName || pr.category || "Unnamed",
+              name,
               rowCount: pr.data?.rowCount || pr.data?.rows?.length || 0,
               colCount: pr.data?.columnCount || pr.data?.headers?.length || 0,
               category: pr.category || "",
@@ -95,6 +91,24 @@ export default function AutoQtoTab() {
         }
       }
     }
+
+    // Source 2: summaries.parsedTables (pre-computed, covers all pages, region is null)
+    if (summaries?.parsedTables) {
+      for (const pt of summaries.parsedTables) {
+        const key = `${pt.pageNum}:${pt.name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        schedules.push({
+          pageNum: pt.pageNum,
+          region: null,
+          name: pt.name,
+          rowCount: pt.rowCount,
+          colCount: pt.colCount,
+          category: pt.category,
+        });
+      }
+    }
+
     return schedules;
   }, [summaries, pageIntelligence]);
 
@@ -220,14 +234,64 @@ export default function AutoQtoTab() {
                     {matching.map((s, i) => (
                       <button
                         key={i}
-                        onClick={() => {
+                        onClick={async () => {
+                          let headers: string[] = [];
+                          let rows: Record<string, string>[] = [];
+                          let tagColumn = "";
+
+                          if (s.region?.data) {
+                            // Local data available (from pageIntelligence)
+                            headers = s.region.data.headers || [];
+                            rows = s.region.data.rows || [];
+                            tagColumn = s.region.data.tagColumn || headers[0] || "";
+                          } else {
+                            // Summaries path: region is null, need to fetch page data
+                            const localIntel = useViewerStore.getState().pageIntelligence[s.pageNum] as any;
+                            const localPr = localIntel?.parsedRegions?.find((r: any) =>
+                              r.data?.tableName === s.name || r.category === s.category
+                            );
+                            if (localPr?.data) {
+                              headers = localPr.data.headers || [];
+                              rows = localPr.data.rows || [];
+                              tagColumn = localPr.data.tagColumn || headers[0] || "";
+                            } else {
+                              // Fetch from API
+                              try {
+                                const res = await fetch(`/api/projects/${publicId}/pages?from=${s.pageNum}&to=${s.pageNum}`);
+                                if (res.ok) {
+                                  const data = await res.json();
+                                  const pageData = data.pages?.[0];
+                                  const pr = pageData?.pageIntelligence?.parsedRegions?.find((r: any) =>
+                                    r.data?.tableName === s.name || r.category === s.category
+                                  );
+                                  if (pr?.data) {
+                                    headers = pr.data.headers || [];
+                                    rows = pr.data.rows || [];
+                                    tagColumn = pr.data.tagColumn || headers[0] || "";
+                                  }
+                                  // Cache in store
+                                  if (pageData?.pageIntelligence) {
+                                    useViewerStore.getState().setPageIntelligence(s.pageNum, pageData.pageIntelligence);
+                                  }
+                                }
+                              } catch (err) {
+                                console.error("[AUTO_QTO] Failed to fetch schedule data:", err);
+                              }
+                            }
+                          }
+
+                          if (headers.length === 0) {
+                            alert("Could not load schedule data. Try parsing the schedule first.");
+                            return;
+                          }
+
                           updateWorkflowStep(activeQtoWorkflow, {
                             step: "confirm-tags",
                             schedulePageNumber: s.pageNum,
                             parsedSchedule: {
-                              headers: s.region.data?.headers || [],
-                              rows: s.region.data?.rows || [],
-                              tagColumn: s.region.data?.tagColumn || s.region.data?.headers?.[0] || "",
+                              headers,
+                              rows,
+                              tagColumn,
                               tableName: s.name,
                               scheduleCategory: s.category,
                               sourcePageNumber: s.pageNum,
@@ -828,7 +892,34 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
             <button
               key={li.tag}
               onClick={() => {
-                if (li.instances.length > 0) setPage(li.instances[0].pageNumber);
+                if (li.instances.length === 0) return;
+                setPage(li.instances[0].pageNumber);
+                // Activate or create a YoloTag for canvas highlighting
+                const store = useViewerStore.getState();
+                const existing = store.yoloTags.find((t) => t.tagText === li.tag && t.source === "schedule");
+                if (existing) {
+                  store.setActiveYoloTagId(existing.id);
+                  store.setYoloTagFilter(existing.id);
+                } else {
+                  const newTag = {
+                    id: `qto-${li.tag}-${Date.now()}`,
+                    name: li.tag,
+                    tagText: li.tag,
+                    yoloClass: activeQtoWorkflow?.yoloClassFilter || "",
+                    yoloModel: activeQtoWorkflow?.yoloModelFilter || "",
+                    source: "schedule" as const,
+                    scope: "project" as const,
+                    instances: li.instances.map((inst: any) => ({
+                      pageNumber: inst.pageNumber,
+                      annotationId: -1,
+                      bbox: inst.bbox,
+                      confidence: inst.confidence,
+                    })),
+                  };
+                  store.addYoloTag(newTag);
+                  store.setActiveYoloTagId(newTag.id);
+                  store.setYoloTagFilter(newTag.id);
+                }
               }}
               className="w-full text-left px-3 py-1.5 border-b border-[var(--border)]/50 hover:bg-[var(--surface-hover)] transition-colors"
             >

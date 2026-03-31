@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useCallback } from "react";
-import { useViewerStore, useSummaries } from "@/stores/viewerStore";
+import { useViewerStore, useSummaries, useProject } from "@/stores/viewerStore";
 import ParsedTableItem from "./ParsedTableItem";
 import AutoParseTab from "./AutoParseTab";
 import GuidedParseTab from "./GuidedParseTab";
@@ -36,6 +36,7 @@ export default function TableParsePanel() {
   const yoloTags = useViewerStore((s) => s.yoloTags);
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
   const toggleParsedRegions = useViewerStore((s) => s.toggleParsedRegions);
+  const { publicId } = useProject();
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
 
   const [showExportModal, setShowExportModal] = useState(false);
@@ -338,6 +339,7 @@ export default function TableParsePanel() {
                     onNavigate={() => setPage(t.pageNum)}
                     yoloTags={yoloTags}
                     pageNumber={pageNumber}
+                    publicId={publicId}
                     onDelete={() => {
                       const pi = useViewerStore.getState().pageIntelligence[t.pageNum] || {};
                       const regions = ((pi as any)?.parsedRegions || []).filter((r: any) => r.id !== t.region.id);
