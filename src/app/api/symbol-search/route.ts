@@ -140,7 +140,7 @@ cv2.imwrite(cfg["dst"], crop)
     const pageMap: number[] = []; // index -> pageNumber
 
     for (const pageNum of pageNumbers) {
-      const s3Key = `${project.dataUrl}/images/page_${String(pageNum).padStart(4, "0")}.png`;
+      const s3Key = `${project.dataUrl}/pages/page_${String(pageNum).padStart(4, "0")}.png`;
       let pngBuffer: Buffer | null = null;
 
       try {

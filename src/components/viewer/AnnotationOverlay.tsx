@@ -1138,80 +1138,12 @@ export default function AnnotationOverlay({
     // Minimum size check
     if (Math.abs(maxX - minX) < 0.01 || Math.abs(maxY - minY) < 0.01) return;
 
-    // Symbol search: capture template BB and trigger search API
+    // Symbol search: capture template BB — don't auto-fire, let panel show config first
     if (symbolSearchActive) {
       const store = useViewerStore.getState();
       store.setSymbolSearchActive(false);
-      store.setSymbolSearchLoading(true);
-      store.setSymbolSearchError(null);
       store.setSymbolSearchTemplateBbox([minX, minY, maxX, maxY]);
       store.setSymbolSearchSourcePage(pageNumber);
-
-      // Fire the search API (async, non-blocking)
-      (async () => {
-        try {
-          const resp = await fetch("/api/symbol-search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              projectId: store.projectId,
-              sourcePageNumber: pageNumber,
-              templateBbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
-              confidenceThreshold: store.symbolSearchConfidence,
-            }),
-          });
-
-          if (!resp.ok || !resp.body) {
-            const errorText = resp.ok ? "No response body" : await resp.text().catch(() => `HTTP ${resp.status}`);
-            throw new Error(errorText);
-          }
-
-          // Read NDJSON stream
-          const reader = resp.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-              if (!line.trim()) continue;
-              try {
-                const msg = JSON.parse(line);
-                if (msg.type === "progress") {
-                  useViewerStore.getState().setSymbolSearchProgress({
-                    page: msg.page,
-                    pageIndex: msg.pageIndex,
-                    totalPages: msg.totalPages,
-                    matches: msg.matches,
-                  });
-                } else if (msg.type === "done") {
-                  useViewerStore.getState().setSymbolSearchResults({
-                    templateBbox: msg.templateBbox,
-                    sourcePageNumber: msg.sourcePageNumber,
-                    totalMatches: msg.totalMatches,
-                    pagesWithMatches: msg.pagesWithMatches,
-                    matches: msg.matches,
-                    searchedAt: msg.searchedAt,
-                  });
-                }
-              } catch { /* skip malformed lines */ }
-            }
-          }
-        } catch (err) {
-          console.error("[SYMBOL_SEARCH] Failed:", err);
-          useViewerStore.getState().setSymbolSearchError(
-            err instanceof Error ? err.message : "Symbol search failed"
-          );
-        } finally {
-          useViewerStore.getState().setSymbolSearchLoading(false);
-          useViewerStore.getState().setSymbolSearchProgress(null);
-        }
-      })();
       return;
     }
 

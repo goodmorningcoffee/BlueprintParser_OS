@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, pages, models, processingJobs } from "@/lib/db/schema";
+import { projects, models, processingJobs } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { startYoloJob } from "@/lib/yolo";
-import { rasterizePage } from "@/lib/pdf-rasterize";
-import { uploadToS3, getS3Url } from "@/lib/s3";
+import { s3Client, S3_BUCKET } from "@/lib/s3";
+import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { checkYoloQuota } from "@/lib/quotas";
 import { audit } from "@/lib/audit";
 import { getToggles } from "@/lib/toggles";
@@ -68,49 +68,17 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Download PDF
-    const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
-    let pdfBuffer: Buffer;
+    // Verify page PNGs exist from processing (stored at {dataUrl}/pages/)
+    // SageMaker reads from this path directly — no rasterization needed
     try {
-      const pdfResponse = await fetch(pdfUrl);
-      if (!pdfResponse.ok) throw new Error(`HTTP ${pdfResponse.status}`);
-      pdfBuffer = Buffer.from(await pdfResponse.arrayBuffer());
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "unknown";
+      await s3Client.send(new HeadObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: `${project.dataUrl}/pages/page_0001.png`,
+      }));
+    } catch {
       return NextResponse.json(
-        { error: `Failed to download PDF: ${msg}` },
-        { status: 500 }
-      );
-    }
-
-    // Rasterize pages and upload to S3
-    const projectPages = await db
-      .select({ pageNumber: pages.pageNumber })
-      .from(pages)
-      .where(eq(pages.projectId, project.id))
-      .orderBy(pages.pageNumber);
-
-    // Rasterize pages in parallel (batches of 10 to avoid OOM)
-    try {
-      const BATCH = 10;
-      for (let i = 0; i < projectPages.length; i += BATCH) {
-        const batch = projectPages.slice(i, i + BATCH);
-        await Promise.all(
-          batch.map(async (page) => {
-            const pngBuffer = await rasterizePage(pdfBuffer, page.pageNumber, 200);
-            await uploadToS3(
-              `${project.dataUrl}/images/page_${String(page.pageNumber).padStart(4, "0")}.png`,
-              pngBuffer,
-              "image/png"
-            );
-          })
-        );
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "unknown";
-      return NextResponse.json(
-        { error: `Failed to rasterize pages: ${msg}` },
-        { status: 500 }
+        { error: "Page images not found. The project needs to be processed first (or reprocessed if it was uploaded before the image pipeline was added)." },
+        { status: 400 }
       );
     }
 

@@ -139,4 +139,4 @@ export async function deleteFromS3(key: string): Promise<void> {
   );
 }
 
-export { S3_BUCKET };
+export { s3Client, S3_BUCKET };

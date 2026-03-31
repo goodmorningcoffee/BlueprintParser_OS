@@ -58,7 +58,7 @@ export async function startYoloJob(
       {
         InputName: "images",
         S3Input: {
-          S3Uri: `s3://${S3_BUCKET}/${projectDataUrl}/images/`,
+          S3Uri: `s3://${S3_BUCKET}/${projectDataUrl}/pages/`,
           LocalPath: "/opt/ml/processing/input/images",
           S3DataType: "S3Prefix",
           S3InputMode: "File",

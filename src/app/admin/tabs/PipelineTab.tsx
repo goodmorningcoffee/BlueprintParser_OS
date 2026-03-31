@@ -144,7 +144,7 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
             <div className="text-[10px] text-[var(--muted)]">Resolution for CSI spatial heatmap. Higher = more precise LLM context. Requires reprocess.</div>
           </div>
           <select
-            value={`${config.csiSpatialGrid?.rows ?? 3}x${config.csiSpatialGrid?.cols ?? 3}`}
+            value={String(config.csiSpatialGrid?.rows ?? 3)}
             onChange={(e) => {
               const n = parseInt(e.target.value);
               const updated = { ...config, csiSpatialGrid: { rows: n, cols: n } };

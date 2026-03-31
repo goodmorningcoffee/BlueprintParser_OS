@@ -89,8 +89,12 @@ export default function ProjectPage() {
       // Clear stale data from any previously viewed project
       resetProjectData();
 
-      // ─── Phase 1: Fetch lightweight project metadata + summaries ───
-      const res = await fetch(`/api/projects/${id}`);
+      // ─── Fetch metadata + initial chunk in parallel ───
+      // Both APIs resolve publicId independently — no dependency between them
+      const [res, chunkRes] = await Promise.all([
+        fetch(`/api/projects/${id}`),
+        fetch(`/api/projects/${id}/pages?from=1&to=15`),
+      ]);
       if (!res.ok) throw new Error("Failed to load project");
 
       const data: ProjectResponse = await res.json();
@@ -147,9 +151,7 @@ export default function ProjectPage() {
         setTakeoffItems(data.takeoffItems);
       }
 
-      // ─── Phase 2: Fetch initial chunk (pages 1-9) ───
-      const chunkTo = Math.min(data.numPages || 1, 15);
-      const chunkRes = await fetch(`/api/projects/${id}/pages?from=1&to=${chunkTo}`);
+      // ─── Hydrate initial chunk (already fetched in parallel above) ───
       if (chunkRes.ok) {
         const chunk: ChunkResponse = await chunkRes.json();
 
@@ -176,7 +178,7 @@ export default function ProjectPage() {
           textAnnotations: textAnnMap,
           pageIntelligence: intelMap,
           annotations: chunk.annotations,
-          loadedPageRange: { from: 1, to: chunkTo },
+          loadedPageRange: { from: 1, to: chunk.pages.length > 0 ? Math.max(...chunk.pages.map((p: any) => p.pageNumber)) : Math.min(data.numPages || 1, 15) },
         }));
 
         // Hydrate scale calibrations from chunk annotations
