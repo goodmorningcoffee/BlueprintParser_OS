@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -21,8 +21,6 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
 
   const body = await req.json();
   const { tags, yoloClass, yoloModel, selectedPages } = body as {
@@ -40,16 +38,24 @@ export async function POST(
     return NextResponse.json({ error: "Max 500 tags per batch" }, { status: 400 });
   }
 
-  const [project] = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(
-      and(
-        eq(projects.publicId, id),
-        eq(projects.companyId, session.user.companyId)
-      )
-    )
-    .limit(1);
+  // Auth: check session for real projects, allow demo projects without auth
+  const session = await auth();
+  let project;
+  if (session?.user) {
+    const companyId = (session.user as any).companyId;
+    [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.publicId, id), eq(projects.companyId, companyId)))
+      .limit(1);
+  } else {
+    // Demo fallback: allow read-only access to demo projects
+    [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.publicId, id), eq(projects.isDemo, true)))
+      .limit(1);
+  }
 
   if (!project) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

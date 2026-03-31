@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useViewerStore, useProject, useNavigation, useQtoWorkflow, useSummaries } from "@/stores/viewerStore";
+import { useViewerStore, useProject, useNavigation, useQtoWorkflow, useSummaries, isDemoFeatureEnabled } from "@/stores/viewerStore";
 import type { QtoWorkflow, QtoLineItem, QtoFlag, YoloTagInstance } from "@/types";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
 import { escCsv } from "@/lib/table-parse-utils";
@@ -98,9 +98,9 @@ export default function AutoQtoTab() {
     return schedules;
   }, [summaries, pageIntelligence]);
 
-  // Load workflows from API on mount
+  // Load workflows from API on mount (skip for demo — no persisted workflows)
   const [loaded, setLoaded] = useState(false);
-  if (!loaded && publicId) {
+  if (!loaded && publicId && !isDemo) {
     setLoaded(true);
     fetch(`/api/qto-workflows?projectId=${publicId}`)
       .then((r) => r.ok ? r.json() : [])
@@ -109,7 +109,30 @@ export default function AutoQtoTab() {
   }
 
   const startWorkflow = useCallback(async (materialType: string, materialLabel: string) => {
-    if (isDemo || !publicId) return;
+    if (!publicId) return;
+
+    // Demo mode: create workflow locally in Zustand (no API, session-only)
+    if (isDemo) {
+      const tempWorkflow: QtoWorkflow = {
+        id: -Date.now(),
+        projectId: 0,
+        materialType,
+        materialLabel,
+        step: "select-schedule",
+        schedulePageNumber: null,
+        yoloModelFilter: null,
+        yoloClassFilter: null,
+        tagPattern: null,
+        parsedSchedule: null,
+        lineItems: null,
+        userEdits: null,
+        exportedAt: null,
+      };
+      setActiveQtoWorkflow(tempWorkflow);
+      setQtoWorkflows([tempWorkflow, ...qtoWorkflows]);
+      return;
+    }
+
     setCreating(true);
     try {
       const res = await fetch("/api/qto-workflows", {
@@ -130,7 +153,14 @@ export default function AutoQtoTab() {
   }, [publicId, isDemo, qtoWorkflows, setActiveQtoWorkflow, setQtoWorkflows]);
 
   const updateWorkflowStep = useCallback(async (workflow: QtoWorkflow, updates: Partial<QtoWorkflow>) => {
+    // Always update Zustand
+    const updated = { ...workflow, ...updates };
+    setActiveQtoWorkflow(updated);
+    setQtoWorkflows(qtoWorkflows.map((w) => w.id === updated.id ? updated : w));
+
+    // Skip API for demo (session-only, lost on reload)
     if (isDemo) return;
+
     try {
       const res = await fetch(`/api/qto-workflows/${workflow.id}`, {
         method: "PUT",
@@ -138,14 +168,19 @@ export default function AutoQtoTab() {
         body: JSON.stringify(updates),
       });
       if (res.ok) {
-        const updated = await res.json();
-        setActiveQtoWorkflow(updated);
-        setQtoWorkflows(qtoWorkflows.map((w) => w.id === updated.id ? updated : w));
+        const serverUpdated = await res.json();
+        setActiveQtoWorkflow(serverUpdated);
+        setQtoWorkflows(qtoWorkflows.map((w) => w.id === serverUpdated.id ? serverUpdated : w));
       }
     } catch (err) {
       console.error("[auto-qto] Failed to update workflow:", err);
     }
   }, [isDemo, qtoWorkflows, setActiveQtoWorkflow, setQtoWorkflows]);
+
+  // ─── Demo feature gate ─────────────────────────────────
+  if (isDemo && !isDemoFeatureEnabled("autoQto")) {
+    return <div className="text-[10px] text-[var(--muted)] text-center py-8 px-2">Auto-QTO is not available in demo mode.</div>;
+  }
 
   // ─── Active workflow view ──────────────────────────────
   if (activeQtoWorkflow) {

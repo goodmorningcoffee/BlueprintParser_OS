@@ -69,6 +69,8 @@ interface ViewerState {
   setPublicId: (id: string) => void;
   isDemo: boolean;
   setIsDemo: (v: boolean) => void;
+  demoFeatureConfig: Record<string, boolean> | null;
+  setDemoFeatureConfig: (config: Record<string, boolean>) => void;
   projectIntelligenceData: any;
   setProjectIntelligenceData: (data: any) => void;
   showLabelingWizard: boolean;
@@ -388,6 +390,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setPublicId: (publicId) => set({ publicId }),
   isDemo: false,
   setIsDemo: (isDemo) => set({ isDemo }),
+  demoFeatureConfig: null,
+  setDemoFeatureConfig: (demoFeatureConfig) => set({ demoFeatureConfig }),
   projectIntelligenceData: null,
   setProjectIntelligenceData: (data) => set({ projectIntelligenceData: data }),
   showLabelingWizard: false,
@@ -764,6 +768,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       dataUrl: "",
       publicId: "",
       isDemo: false,
+      demoFeatureConfig: null,
       projectIntelligenceData: null,
       summaries: null,
       loadedPageRange: null,
@@ -1011,9 +1016,21 @@ export const useProject = () =>
     publicId: s.publicId,
     dataUrl: s.dataUrl,
     isDemo: s.isDemo,
+    demoFeatureConfig: s.demoFeatureConfig,
     pageNames: s.pageNames,
     projectIntelligenceData: s.projectIntelligenceData,
   })));
+
+/**
+ * Check if a feature is enabled for demo visitors.
+ * Non-demo always returns true. Demo checks company config (default: enabled).
+ */
+export function isDemoFeatureEnabled(feature: string): boolean {
+  const { isDemo, demoFeatureConfig } = useViewerStore.getState();
+  if (!isDemo) return true;
+  if (!demoFeatureConfig) return true; // no config = all features enabled
+  return demoFeatureConfig[feature] !== false; // default: enabled unless explicitly off
+}
 
 /** Per-page data cache */
 export const usePageData = () =>
