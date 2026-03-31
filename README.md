@@ -91,7 +91,7 @@ Step Functions → ECS Task
   │     Returns: words[], lines[], tables[] (never throws — empty on total failure)
   │
   ├── 3. Drawing number extraction (title block regex + position scoring)
-  ├── 4. CSI code detection (3-tier matching, see below)
+  ├── 4. CSI code detection (3-tier matching against 8,951-row MasterFormat DB)
   ├── 5. Text annotation detection (30+ regex detectors: phone, email, equipment, dims...)
   ├── 6. Page intelligence:
   │     ├── System 1: Text region classification (OCR word clustering → table-like, notes, key-value)
@@ -126,7 +126,7 @@ CSI MasterFormat codes are the universal embedding layer that connects every sys
 
 ### Detection Algorithm (`csi-detect.ts`)
 
-Matches raw OCR text against a 2,800-row CSI database. Three independent tiers, each with configurable thresholds:
+Matches raw OCR text against the 8,951-row MasterFormat 2004 database (`csi-masterformat.tsv`). Three independent tiers, each with configurable thresholds:
 
 | Tier | Method | Confidence | Description |
 |------|--------|------------|-------------|
