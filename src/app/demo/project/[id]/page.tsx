@@ -77,8 +77,11 @@ export default function DemoProjectPage() {
       useViewerStore.getState().setConfidenceThreshold(0);
       useViewerStore.setState({ helpMode: false });
 
-      // ─── Phase 1: Lightweight project metadata + summaries ───
-      const res = await fetch(`/api/demo/projects/${id}`);
+      // ─── Fetch metadata + initial chunk in parallel ───
+      const [res, chunkRes] = await Promise.all([
+        fetch(`/api/demo/projects/${id}`),
+        fetch(`/api/demo/projects/${id}/pages?from=1&to=15`),
+      ]);
       if (!res.ok) throw new Error("Project not found");
 
       const data: ProjectResponse = await res.json();
@@ -122,9 +125,7 @@ export default function DemoProjectPage() {
       if (csiParam) setCsiFilter(csiParam);
       if (qParam) useViewerStore.getState().setSearch(qParam);
 
-      // ─── Phase 2: Fetch initial chunk ───
-      const chunkTo = Math.min(data.numPages || 1, 15);
-      const chunkRes = await fetch(`/api/demo/projects/${id}/pages?from=1&to=${chunkTo}`);
+      // ─── Hydrate initial chunk (already fetched in parallel above) ───
       if (chunkRes.ok) {
         const chunk: ChunkResponse = await chunkRes.json();
 
@@ -149,7 +150,7 @@ export default function DemoProjectPage() {
           textAnnotations: textAnnMap,
           pageIntelligence: intelMap,
           annotations: chunk.annotations,
-          loadedPageRange: { from: 1, to: chunkTo },
+          loadedPageRange: { from: 1, to: chunk.pages.length > 0 ? Math.max(...chunk.pages.map((p: any) => p.pageNumber)) : Math.min(data.numPages || 1, 15) },
         }));
 
         // Fallback if no summaries (old demo project)

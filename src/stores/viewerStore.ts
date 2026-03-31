@@ -311,6 +311,8 @@ interface ViewerState {
   setSymbolSearchTemplateBbox: (bbox: [number, number, number, number] | null) => void;
   symbolSearchSourcePage: number | null;
   setSymbolSearchSourcePage: (page: number | null) => void;
+  symbolSearchConfig: { multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null };
+  setSymbolSearchConfig: (patch: Partial<{ multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null }>) => void;
   clearSymbolSearch: () => void;
 
   // ─── Drawing State (used by DrawingPreviewLayer, NOT subscribed by AnnotationOverlay) ──
@@ -721,6 +723,13 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setSymbolSearchTemplateBbox: (symbolSearchTemplateBbox) => set({ symbolSearchTemplateBbox }),
   symbolSearchSourcePage: null,
   setSymbolSearchSourcePage: (symbolSearchSourcePage) => set({ symbolSearchSourcePage }),
+  symbolSearchConfig: {
+    multiScale: true,
+    useSiftFallback: true,
+    searchPages: null as number[] | null,
+  },
+  setSymbolSearchConfig: (patch: Partial<{ multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null }>) =>
+    set((s) => ({ symbolSearchConfig: { ...s.symbolSearchConfig, ...patch } })),
   clearSymbolSearch: () =>
     set({
       symbolSearchActive: false,
@@ -732,6 +741,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       symbolSearchError: null,
       symbolSearchTemplateBbox: null,
       symbolSearchSourcePage: null,
+      symbolSearchConfig: { multiScale: true, useSiftFallback: true, searchPages: null },
     }),
 
   guidedParseActive: false,
@@ -849,6 +859,10 @@ export const useViewerStore = create<ViewerState>((set) => ({
       symbolSearchResults: null,
       symbolSearchConfidence: 0.75,
       dismissedSymbolMatches: new Set<string>(),
+      symbolSearchError: null,
+      symbolSearchTemplateBbox: null,
+      symbolSearchSourcePage: null,
+      symbolSearchConfig: { multiScale: true, useSiftFallback: true, searchPages: null },
       guidedParseActive: false,
       guidedParseRegion: null,
       guidedParseRows: [],
@@ -945,6 +959,8 @@ export const useSymbolSearch = () =>
     dismissedSymbolMatches: s.dismissedSymbolMatches,
     dismissSymbolMatch: s.dismissSymbolMatch,
     clearSymbolSearch: s.clearSymbolSearch,
+    symbolSearchConfig: s.symbolSearchConfig,
+    setSymbolSearchConfig: s.setSymbolSearchConfig,
   })));
 
 /** Chat state */

@@ -51,6 +51,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const symbolSearchActive = useViewerStore((s) => s.symbolSearchActive);
   const symbolSearchResults = useViewerStore((s) => s.symbolSearchResults);
   const symbolSearchLoading = useViewerStore((s) => s.symbolSearchLoading);
+  const symbolSearchTemplateBbox = useViewerStore((s) => s.symbolSearchTemplateBbox);
+  const symbolSearchError = useViewerStore((s) => s.symbolSearchError);
   const setMode = useViewerStore((s) => s.setMode);
   const projectId = useViewerStore((s) => s.projectId);
 
@@ -378,7 +380,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
           </button>
 
           {/* Symbol Search floating panel — outside scroll container to avoid stacking context issues */}
-          {(symbolSearchActive || symbolSearchResults || symbolSearchLoading) && (
+          {(symbolSearchActive || symbolSearchResults || symbolSearchLoading || symbolSearchTemplateBbox || symbolSearchError) && (
             <div className="absolute top-12 left-10 z-50">
               <SymbolSearchPanel pdfDoc={pdfDoc} />
             </div>

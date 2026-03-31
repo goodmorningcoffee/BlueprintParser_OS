@@ -36,7 +36,13 @@ export default function HomePage() {
   const [activeCsiFilter, setActiveCsiFilter] = useState<string | null>(null);
   const [showCsi, setShowCsi] = useState(false);
 
-  const [chatOpen, setChatOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("bp2-dashboard-chat-open");
+      return saved !== null ? saved === "true" : true;
+    }
+    return true;
+  });
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [chatLoading, setChatLoading] = useState(false);
@@ -291,7 +297,7 @@ export default function HomePage() {
           <div className="w-96 h-[500px] bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-2xl flex flex-col">
             <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between shrink-0">
               <span className="text-sm font-medium">LLM Chat — All Projects</span>
-              <button onClick={() => setChatOpen(false)} className="text-[var(--muted)] hover:text-[var(--fg)] text-xs">x</button>
+              <button onClick={() => { setChatOpen(false); localStorage.setItem("bp2-dashboard-chat-open", "false"); }} className="text-[var(--muted)] hover:text-[var(--fg)] text-xs">x</button>
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
               {chatMessages.length === 0 && !chatLoading && (
@@ -336,7 +342,7 @@ export default function HomePage() {
           </div>
         ) : (
           <button
-            onClick={() => setChatOpen(true)}
+            onClick={() => { setChatOpen(true); localStorage.setItem("bp2-dashboard-chat-open", "true"); }}
             className="w-12 h-12 rounded-full bg-[var(--accent)] text-white shadow-lg hover:bg-[var(--accent-hover)] transition-colors flex items-center justify-center text-lg"
             title="LLM Chat across all projects"
           >
