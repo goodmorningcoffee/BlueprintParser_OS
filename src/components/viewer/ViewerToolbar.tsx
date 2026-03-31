@@ -18,7 +18,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const [editName, setEditName] = useState(projectName);
   // Slice selectors
   const { pageNumber, numPages, setPage, scale, mode, setMode } = useNavigation();
-  const { publicId, isDemo } = useProject();
+  const { publicId, isDemo, demoFeatureConfig } = useProject();
   const {
     showTextPanel, toggleTextPanel, showChatPanel, toggleChatPanel,
     showTakeoffPanel, toggleTakeoffPanel, showDetectionPanel, toggleDetectionPanel,
@@ -286,7 +286,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </button>
         {menuOpen && (
           <div className="absolute top-full left-0 mt-1 bg-[var(--surface)] border border-[var(--border)] rounded shadow-lg z-50 min-w-[160px]">
-            {!isDemo && (
+            {(!isDemo || demoFeatureConfig?.labeling) && (
               <button
                 onClick={() => { setMenuOpen(false); setShowLabelingWizard(true); }}
                 className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"

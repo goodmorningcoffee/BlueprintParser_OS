@@ -22,6 +22,7 @@ interface ProjectResponse {
   status: string;
   summaries: ProjectSummaries | null;
   projectIntelligence: Record<string, unknown> | null;
+  demoConfig?: Record<string, boolean>;
   pages: Array<{
     pageNumber: number;
     name: string;
@@ -91,6 +92,11 @@ export default function DemoProjectPage() {
       // Hydrate project intelligence (CSI graph)
       if (data.projectIntelligence) {
         useViewerStore.getState().setProjectIntelligenceData(data.projectIntelligence);
+      }
+
+      // Hydrate demo feature config
+      if (data.demoConfig) {
+        useViewerStore.getState().setDemoFeatureConfig(data.demoConfig);
       }
 
       // Hydrate summaries
