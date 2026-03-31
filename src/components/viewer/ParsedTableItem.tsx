@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
-import { mapYoloToOcrText } from "@/lib/yolo-tag-engine";
+import type { YoloTagInstance } from "@/types";
 
 interface ParsedTableItemProps {
   table: { pageNum: number; region: any; name: string; category: string; rowCount: number; colCount: number; csiTags: any[] };
@@ -11,6 +11,7 @@ interface ParsedTableItemProps {
   onNavigate: () => void;
   yoloTags: any[];
   pageNumber: number;
+  publicId: string;
   onDelete: () => void;
 }
 
@@ -22,6 +23,7 @@ export default function ParsedTableItem({
   onNavigate,
   yoloTags,
   pageNumber,
+  publicId,
   onDelete,
 }: ParsedTableItemProps) {
   const [expanded, setExpanded] = useState(false);
@@ -42,6 +44,7 @@ export default function ParsedTableItem({
   const [mapTagType, setMapTagType] = useState<"free-floating" | "yolo">("free-floating");
   const [mapYoloClass, setMapYoloClass] = useState<{ model: string; className: string } | null>(null);
   const [mapping, setMapping] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
 
   // Reactive selector for render-path highlight (not getState)
   const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
@@ -381,25 +384,35 @@ export default function ParsedTableItem({
                   disabled={mapping}
                   onClick={async () => {
                     setMapping(true);
+                    setMapError(null);
                     try {
                       const store = useViewerStore.getState();
-                      const allAnns = store.annotations;
-                      const td = store.textractData;
-                      let count = 0;
-                      for (const row of rows) {
-                        const tag = (row[mapTagColumn] || "").trim();
-                        if (!tag) continue;
-                        if (store.yoloTags.some((t) => t.tagText === tag && t.source === "schedule")) continue;
-                        const descParts = headers.filter((h: string) => h !== mapTagColumn).map((h: string) => row[h] || "");
-                        const desc = descParts.join(" ").trim();
-                        const instances = mapYoloToOcrText({
-                          tagText: tag,
+                      // Collect unique tags from the selected column
+                      const tags = [...new Set(
+                        rows.map((row: Record<string, string>) => (row[mapTagColumn] || "").trim()).filter(Boolean)
+                      )].filter((tag) => !store.yoloTags.some((t) => t.tagText === tag && t.source === "schedule"));
+
+                      if (tags.length === 0) { setShowMapTags(false); return; }
+
+                      // Use batch API for full-project scanning (server loads ALL textractData from DB)
+                      const res = await fetch(`/api/projects/${publicId}/map-tags-batch`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          tags,
                           yoloClass: mapTagType === "yolo" ? mapYoloClass?.className : undefined,
                           yoloModel: mapTagType === "yolo" ? mapYoloClass?.model : undefined,
-                          scope: "project",
-                          annotations: allAnns,
-                          textractData: td,
-                        });
+                        }),
+                      });
+                      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+                      const { results }: { results: Record<string, YoloTagInstance[]> } = await res.json();
+
+                      // Create YoloTags from results
+                      for (const tag of tags) {
+                        const instances = results[tag] || [];
+                        const row = rows.find((r: Record<string, string>) => (r[mapTagColumn] || "").trim() === tag);
+                        const descParts = headers.filter((h: string) => h !== mapTagColumn).map((h: string) => row?.[h] || "");
+                        const desc = descParts.join(" ").trim();
                         store.addYoloTag({
                           id: `schedule-${table.pageNum}-${tag}-${Date.now()}`,
                           name: tag,
@@ -411,9 +424,11 @@ export default function ParsedTableItem({
                           description: desc.slice(0, 200),
                           instances,
                         });
-                        count++;
                       }
                       setShowMapTags(false);
+                    } catch (err) {
+                      console.error("[MAP_TAGS] Batch mapping failed:", err);
+                      setMapError(err instanceof Error ? err.message : "Mapping failed");
                     } finally {
                       setMapping(false);
                     }
@@ -427,6 +442,11 @@ export default function ParsedTableItem({
                   className="text-[9px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)]"
                 >Cancel</button>
               </div>
+              {mapError && (
+                <div className="text-[9px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1 mt-1">
+                  {mapError}
+                </div>
+              )}
             </div>
           )}
 

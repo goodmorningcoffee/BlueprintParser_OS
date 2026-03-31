@@ -87,7 +87,7 @@ export async function POST(req: Request) {
       const batch = pageNumbers.slice(b, b + batchSize);
       const batchResults = await Promise.all(
         batch.map(async (pageNum) => {
-          const key = `${project.dataUrl}/images/page_${pageNum}.png`;
+          const key = `${project.dataUrl}/pages/page_${pageNum}.png`;
           const buffer = await downloadFromS3(key);
           const metadata = await sharp(buffer).metadata();
           const tileW = Math.floor((metadata.width || 3000) / 3);
@@ -113,7 +113,7 @@ export async function POST(req: Request) {
     }
   } else {
     tasks = pageNumbers.map((pageNum) => ({
-      data: { image: getS3Url(project.dataUrl, `images/page_${pageNum}.png`) },
+      data: { image: getS3Url(project.dataUrl, `pages/page_${pageNum}.png`) },
       meta: { pageNumber: pageNum },
     }));
   }

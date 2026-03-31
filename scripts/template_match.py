@@ -183,11 +183,14 @@ def process_target(template_gray, target_path, config):
 
     # Tier 2: SIFT fallback if too few hits
     if use_sift and len(hits) < sift_threshold:
-        sift_hits = tier2_sift_match(template_gray, target)
-        if sift_hits:
-            # Merge and deduplicate
-            all_hits = hits + sift_hits
-            hits = nms_boxes(all_hits, nms_iou)
+        try:
+            sift_hits = tier2_sift_match(template_gray, target)
+            if sift_hits:
+                # Merge and deduplicate
+                all_hits = hits + sift_hits
+                hits = nms_boxes(all_hits, nms_iou)
+        except Exception as e:
+            print(f"[template_match] SIFT fallback failed (opencv-contrib may not be installed): {e}", file=sys.stderr)
 
     # Cap matches
     if len(hits) > max_matches:
