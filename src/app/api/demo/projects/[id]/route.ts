@@ -45,8 +45,8 @@ export async function GET(
     pdfUrl,
     numPages: project.numPages,
     status: project.status,
-    projectIntelligence: project.projectIntelligence || null,
     summaries,
+    projectIntelligence: pi || null,
     pages: projectPages.map((p) => ({
       pageNumber: p.pageNumber,
       name: p.name,

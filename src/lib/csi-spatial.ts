@@ -87,17 +87,23 @@ const DIVISION_NAMES: Record<string, string> = {
 // Zone classification
 // ═══════════════════════════════════════════════════════════════════
 
-/** Row/column thresholds for the 3x3 drawing grid. */
-const COL_THRESHOLDS = [0, 1 / 3, 2 / 3, 1] as const;
-const ROW_THRESHOLDS = [0, 1 / 3, 2 / 3, 1] as const;
+/** Row/column labels for the classic 3x3 grid (backwards compat). */
 const ROW_LABELS = ["top", "mid", "bottom"] as const;
 const COL_LABELS = ["left", "center", "right"] as const;
 
+/** Grid config for spatial resolution. */
+export interface CsiSpatialGridConfig {
+  rows: number;
+  cols: number;
+}
+
+const DEFAULT_GRID: CsiSpatialGridConfig = { rows: 3, cols: 3 };
+
 /**
  * Human-readable labels used in the summary string.
- * Mirrors the zone names but with friendlier phrasing.
+ * For 3x3 grids, uses friendly names. For higher resolution, generates "row R, col C" labels.
  */
-const ZONE_DISPLAY: Record<string, string> = {
+const ZONE_DISPLAY_3X3: Record<string, string> = {
   "top-left": "top-left drawing area",
   "top-center": "top-center drawing area",
   "top-right": "top-right drawing area",
@@ -111,21 +117,31 @@ const ZONE_DISPLAY: Record<string, string> = {
   "right-margin": "right margin",
 };
 
+function zoneDisplayName(zone: string): string {
+  return ZONE_DISPLAY_3X3[zone] || zone.replace(/^r(\d+)-c(\d+)$/, "row $1, col $2");
+}
+
 /**
  * Map a bbox center (normalized 0-1) to a zone name.
- * Special zones take precedence over the 3x3 grid.
+ * Special zones take precedence over the NxN grid.
  */
-function classifyZone(cx: number, cy: number): string {
+function classifyZone(cx: number, cy: number, nRows: number, nCols: number): string {
   // Special zone: title-block (bottom strip)
   if (cy > 0.85) return "title-block";
 
   // Special zone: right-margin (right strip above title-block)
   if (cx > 0.75) return "right-margin";
 
-  // 3x3 drawing grid
-  const col = cx < COL_THRESHOLDS[1] ? 0 : cx < COL_THRESHOLDS[2] ? 1 : 2;
-  const row = cy < ROW_THRESHOLDS[1] ? 0 : cy < ROW_THRESHOLDS[2] ? 1 : 2;
-  return `${ROW_LABELS[row]}-${COL_LABELS[col]}`;
+  const col = Math.min(Math.floor(cx * nCols), nCols - 1);
+  const row = Math.min(Math.floor(cy * nRows), nRows - 1);
+
+  // Classic 3x3: use human-readable names for backwards compat
+  if (nRows === 3 && nCols === 3) {
+    return `${ROW_LABELS[row]}-${COL_LABELS[col]}`;
+  }
+
+  // Higher resolution: coordinate-based names
+  return `r${row + 1}-c${col + 1}`;
 }
 
 /**
@@ -150,10 +166,12 @@ function minMaxCenter(minX: number, minY: number, maxX: number, maxY: number): {
 interface ZoneAccumulator {
   /** zone name -> division code -> set of full CSI codes */
   bins: Map<string, Map<string, Set<string>>>;
+  nRows: number;
+  nCols: number;
 }
 
-function createAccumulator(): ZoneAccumulator {
-  return { bins: new Map() };
+function createAccumulator(grid: CsiSpatialGridConfig): ZoneAccumulator {
+  return { bins: new Map(), nRows: grid.rows, nCols: grid.cols };
 }
 
 function addCode(acc: ZoneAccumulator, zone: string, code: string): void {
@@ -175,7 +193,7 @@ function collectFromAnnotations(acc: ZoneAccumulator, annotations: TextAnnotatio
   for (const ann of annotations) {
     if (!ann.csiTags || ann.csiTags.length === 0) continue;
     const { cx, cy } = bboxCenter(ann.bbox as BboxLTWH);
-    const zone = classifyZone(cx, cy);
+    const zone = classifyZone(cx, cy, acc.nRows, acc.nCols);
     for (const tag of ann.csiTags) {
       addCode(acc, zone, tag.code);
     }
@@ -187,7 +205,7 @@ function collectFromYoloDetections(acc: ZoneAccumulator, detections: YoloDetecti
     const codes = det.data?.csiCodes;
     if (!codes || codes.length === 0) continue;
     const { cx, cy } = minMaxCenter(det.minX, det.minY, det.maxX, det.maxY);
-    const zone = classifyZone(cx, cy);
+    const zone = classifyZone(cx, cy, acc.nRows, acc.nCols);
     for (const code of codes) {
       addCode(acc, zone, code);
     }
@@ -198,7 +216,7 @@ function collectFromTables(acc: ZoneAccumulator, tables: ClassifiedTable[]): voi
   for (const table of tables) {
     if (!table.csiTags || table.csiTags.length === 0) continue;
     const { cx, cy } = bboxCenter(table.bbox as BboxLTWH);
-    const zone = classifyZone(cx, cy);
+    const zone = classifyZone(cx, cy, acc.nRows, acc.nCols);
     for (const tag of table.csiTags) {
       addCode(acc, zone, tag.code);
     }
@@ -212,7 +230,7 @@ function collectFromParsedRegions(acc: ZoneAccumulator, regions: ParsedRegion[])
     const bbox = region.bbox;
     const cx = (bbox[0] + bbox[2]) / 2;
     const cy = (bbox[1] + bbox[3]) / 2;
-    const zone = classifyZone(cx, cy);
+    const zone = classifyZone(cx, cy, acc.nRows, acc.nCols);
     for (const tag of region.csiTags) {
       addCode(acc, zone, tag.code);
     }
@@ -225,7 +243,7 @@ function collectFromYoloTags(acc: ZoneAccumulator, tags: YoloTag[], pageNumber: 
     for (const inst of tag.instances) {
       if (inst.pageNumber !== pageNumber) continue;
       const { cx, cy } = minMaxCenter(inst.bbox[0], inst.bbox[1], inst.bbox[2], inst.bbox[3]);
-      const zone = classifyZone(cx, cy);
+      const zone = classifyZone(cx, cy, acc.nRows, acc.nCols);
       for (const code of tag.csiCodes) {
         addCode(acc, zone, code);
       }
@@ -238,7 +256,7 @@ function collectFromDbAnnotations(acc: ZoneAccumulator, annotations: ClientAnnot
     const codes = (ann as any).data?.csiCodes as string[] | undefined;
     if (!codes || codes.length === 0) continue;
     const { cx, cy } = minMaxCenter(ann.bbox[0], ann.bbox[1], ann.bbox[2], ann.bbox[3]);
-    const zone = classifyZone(cx, cy);
+    const zone = classifyZone(cx, cy, acc.nRows, acc.nCols);
     for (const code of codes) {
       addCode(acc, zone, code);
     }
@@ -285,7 +303,7 @@ function buildSummary(zones: CsiSpatialZone[]): string {
   for (const zone of zones) {
     if (!zone.dominantDivision) continue;
     const label = divisionLabel(zone.dominantDivision);
-    const display = ZONE_DISPLAY[zone.zone] || zone.zone;
+    const display = zoneDisplayName(zone.zone);
     parts.push(`${label} clusters in ${display}`);
   }
 
@@ -315,8 +333,9 @@ export function computeCsiSpatialMap(
   parsedRegions?: ParsedRegion[],
   yoloTags?: YoloTag[],
   dbAnnotations?: ClientAnnotation[],
+  gridConfig?: CsiSpatialGridConfig,
 ): CsiSpatialMap | null {
-  const acc = createAccumulator();
+  const acc = createAccumulator(gridConfig || DEFAULT_GRID);
 
   // Collect from all sources
   collectFromAnnotations(acc, textAnnotations);

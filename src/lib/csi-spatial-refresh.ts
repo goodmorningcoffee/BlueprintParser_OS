@@ -7,14 +7,14 @@
  * csi-spatial.ts is client-safe (no Node.js deps), so this runs in the browser.
  */
 
-import { computeCsiSpatialMap } from "@/lib/csi-spatial";
+import { computeCsiSpatialMap, type CsiSpatialGridConfig } from "@/lib/csi-spatial";
 import { useViewerStore } from "@/stores/viewerStore";
 
 /**
  * Recompute the CSI spatial map for a given page using all available data
  * from the Zustand store, and update pageIntelligence with the result.
  */
-export function refreshPageCsiSpatialMap(pageNumber: number): void {
+export function refreshPageCsiSpatialMap(pageNumber: number, gridConfig?: CsiSpatialGridConfig): void {
   const store = useViewerStore.getState();
 
   // Gather data sources
@@ -40,6 +40,7 @@ export function refreshPageCsiSpatialMap(pageNumber: number): void {
     parsedRegions,
     yoloTags,
     dbAnnotations,
+    gridConfig,
   );
 
   // Update pageIntelligence in store

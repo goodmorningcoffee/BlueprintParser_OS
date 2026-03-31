@@ -4,7 +4,6 @@ import { db } from "@/lib/db";
 import { annotations, projects } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { detectCsiCodes } from "@/lib/csi-detect";
-import { computeProjectSummaries } from "@/lib/project-analysis";
 
 async function verifyAnnotationOwnership(annotationId: number, companyId: number) {
   const [annotation] = await db
@@ -96,11 +95,6 @@ export async function DELETE(
   }
 
   await db.delete(annotations).where(eq(annotations.id, annotation.id));
-
-  // Recompute summaries in background (annotation counts changed)
-  computeProjectSummaries(annotation.projectId).catch((e) =>
-    console.error("[annotations/delete] Summary recompute failed:", e)
-  );
 
   return NextResponse.json({ success: true });
 }

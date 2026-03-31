@@ -40,9 +40,149 @@ export function getContextBudget(provider?: string, model?: string): number {
 }
 
 export interface ContextSection {
+  id?: string;       // stable section ID for config (optional for backwards compat)
   header: string;
   content: string;
   priority: number;
+}
+
+/** Stable section IDs for config references (headers are dynamic, IDs are stable) */
+export const SECTION_REGISTRY: Record<string, { label: string; defaultPriority: number; description: string }> = {
+  "project-report": { label: "Project Intelligence Report", defaultPriority: 0.5, description: "Auto-generated project summary with discipline breakdown" },
+  "yolo-counts": { label: "YOLO Detection Counts", defaultPriority: 1.0, description: "Object counts by class per page with confidence" },
+  "yolo-detail": { label: "YOLO Annotation Detail", defaultPriority: 1.2, description: "Per-annotation bbox locations + class descriptions + CSI tags" },
+  "csi-graph": { label: "CSI Network Graph", defaultPriority: 1.0, description: "Project-wide division relationships and clusters" },
+  "page-classification": { label: "Page Classification", defaultPriority: 1.5, description: "Discipline, drawing type, series" },
+  "user-annotations": { label: "User Annotations", defaultPriority: 2.0, description: "User-drawn markups with notes" },
+  "takeoff-notes": { label: "Takeoff Notes", defaultPriority: 3.0, description: "Quantity takeoff items with estimator notes" },
+  "cross-refs": { label: "Cross-References", defaultPriority: 3.5, description: "Sheet-to-sheet reference links" },
+  "csi-codes": { label: "CSI Codes", defaultPriority: 4.0, description: "CSI MasterFormat codes detected on page" },
+  "text-annotations": { label: "Text Annotations", defaultPriority: 5.0, description: "Phone, email, equipment tags, dimensions, abbreviations (37 types)" },
+  "note-blocks": { label: "Note Blocks", defaultPriority: 5.5, description: "General notes extracted from drawings" },
+  "parsed-tables": { label: "Parsed Tables/Keynotes", defaultPriority: 5.8, description: "Structured schedule data with headers + sample rows" },
+  "detected-regions": { label: "Detected Regions", defaultPriority: 6.0, description: "Classified table/schedule regions from heuristics" },
+  "csi-parsed": { label: "CSI from Parsed Data", defaultPriority: 6.2, description: "CSI codes extracted from parsed schedules" },
+  "heuristic-inferences": { label: "Heuristic Inferences", defaultPriority: 6.5, description: "Rule-based detections with evidence chains" },
+  "csi-spatial": { label: "CSI Spatial Distribution", defaultPriority: 7.0, description: "Zone-based heatmap of CSI divisions on page" },
+  "spatial-context": { label: "Spatial OCR→YOLO Context", defaultPriority: 8.0, description: "OCR text mapped into YOLO spatial regions" },
+  "tag-patterns": { label: "Tag Patterns", defaultPriority: 8.5, description: "Repeating YOLO+OCR groups (e.g., circles with T-## text)" },
+  "qto-results": { label: "QTO Workflow Results", defaultPriority: 9.0, description: "Auto-QTO tag counts and page locations" },
+  "raw-ocr": { label: "Raw OCR Text", defaultPriority: 10.0, description: "Full OCR text (fallback, often truncated)" },
+};
+
+/** Section config from admin LLM/Context panel */
+export interface LlmSectionConfig {
+  disabledSections?: string[];
+  priorityOverrides?: Record<string, number>;
+  percentAllocations?: Record<string, number>;
+  preset?: "balanced" | "structured" | "verbose" | "custom";
+}
+
+/** Default percent allocations for presets */
+export const SECTION_PRESETS: Record<string, Record<string, number>> = {
+  balanced: {},  // even distribution (no overrides, each section gets equal share)
+  structured: {
+    "parsed-tables": 25, "csi-codes": 8, "csi-spatial": 8, "spatial-context": 12,
+    "yolo-counts": 10, "detected-regions": 5, "raw-ocr": 5,
+  },
+  verbose: {
+    "raw-ocr": 40, "spatial-context": 15, "parsed-tables": 10,
+  },
+};
+
+/**
+ * Enhanced context assembly with section config + percentage allocation.
+ */
+export function assembleContextWithConfig(
+  sections: ContextSection[],
+  budget: number,
+  config?: LlmSectionConfig,
+): { assembled: string; sectionMeta: Array<{ id: string; header: string; priority: number; chars: number; allocated: number; included: boolean; truncated: boolean }> } {
+  // Filter disabled sections (sections without IDs are always included)
+  const enabled = config?.disabledSections
+    ? sections.filter((s) => !s.id || !config.disabledSections!.includes(s.id))
+    : sections;
+
+  // Apply priority overrides
+  for (const s of enabled) {
+    const id = s.id ?? "";
+    if (id && config?.priorityOverrides?.[id] !== undefined) {
+      s.priority = config.priorityOverrides[id];
+    }
+  }
+
+  // Sort by priority
+  enabled.sort((a, b) => a.priority - b.priority);
+
+  // Calculate per-section budgets from % allocations
+  const pctConfig = config?.preset && config.preset !== "custom"
+    ? SECTION_PRESETS[config.preset] || {}
+    : config?.percentAllocations || {};
+
+  const defaultPct = 100 / Math.max(enabled.length, 1);
+  const sectionBudgets: Record<string, number> = {};
+  let totalAllocated = 0;
+
+  for (const s of enabled) {
+    const id = s.id ?? "";
+    const pct = (id ? pctConfig[id] : undefined) ?? defaultPct;
+    if (id) sectionBudgets[id] = Math.floor(budget * pct / 100);
+    totalAllocated += pct;
+  }
+
+  // If using custom % and total < 100, distribute remainder as overflow
+  const overflowBudget = Math.max(0, budget - Object.values(sectionBudgets).reduce((a, b) => a + b, 0));
+
+  // Fill sections within budgets, track metadata
+  const sectionMeta: Array<{ id: string; header: string; priority: number; chars: number; allocated: number; included: boolean; truncated: boolean }> = [];
+  let result = "";
+  let totalChars = 0;
+  let overflow = overflowBudget;
+
+  for (const section of enabled) {
+    const sid = section.id ?? "";
+    const sectionBudget = (sid ? sectionBudgets[sid] : undefined) || 0;
+    const block = `\n=== ${section.header} ===\n${section.content}\n`;
+
+    if (block.length <= sectionBudget) {
+      // Fits within allocation
+      result += block;
+      totalChars += block.length;
+      overflow += sectionBudget - block.length; // unused allocation flows to overflow
+      sectionMeta.push({ id: sid, header: section.header, priority: section.priority, chars: block.length, allocated: sectionBudget, included: true, truncated: false });
+    } else if (sectionBudget + overflow >= block.length) {
+      // Fits with overflow
+      const used = block.length - sectionBudget;
+      overflow -= used;
+      result += block;
+      totalChars += block.length;
+      sectionMeta.push({ id: sid, header: section.header, priority: section.priority, chars: block.length, allocated: sectionBudget, included: true, truncated: false });
+    } else {
+      // Must truncate
+      const available = sectionBudget + Math.min(overflow, budget - totalChars - sectionBudget);
+      if (available > 200) {
+        const truncated = `\n=== ${section.header} ===\n${section.content.substring(0, available - 30)}\n... (truncated)\n`;
+        result += truncated;
+        totalChars += truncated.length;
+        overflow = 0;
+        sectionMeta.push({ id: sid, header: section.header, priority: section.priority, chars: truncated.length, allocated: sectionBudget, included: true, truncated: true });
+      } else {
+        sectionMeta.push({ id: sid, header: section.header, priority: section.priority, chars: 0, allocated: sectionBudget, included: false, truncated: false });
+      }
+    }
+  }
+
+  // Add disabled sections to meta
+  if (config?.disabledSections) {
+    for (const s of sections) {
+      const id = s.id ?? "";
+      if (id && config.disabledSections.includes(id)) {
+        sectionMeta.push({ id, header: s.header, priority: s.priority, chars: 0, allocated: 0, included: false, truncated: false });
+      }
+    }
+  }
+
+  return { assembled: result, sectionMeta };
 }
 
 /** Default system prompt used when no custom prompt is configured. */

@@ -20,8 +20,8 @@ interface ProjectResponse {
   pdfUrl: string;
   numPages: number;
   status: string;
-  projectIntelligence: any;
   summaries: ProjectSummaries | null;
+  projectIntelligence: Record<string, unknown> | null;
   pages: Array<{
     pageNumber: number;
     name: string;
@@ -74,6 +74,7 @@ export default function DemoProjectPage() {
       resetProjectData();
       setIsDemo(true);
       useViewerStore.getState().setConfidenceThreshold(0);
+      useViewerStore.setState({ helpMode: false });
 
       // ─── Phase 1: Lightweight project metadata + summaries ───
       const res = await fetch(`/api/demo/projects/${id}`);
@@ -86,6 +87,8 @@ export default function DemoProjectPage() {
       setPublicId(data.id);
       setDataUrl(data.dataUrl);
       setNumPages(data.numPages || 0);
+
+      // Hydrate project intelligence (CSI graph)
       if (data.projectIntelligence) {
         useViewerStore.getState().setProjectIntelligenceData(data.projectIntelligence);
       }
@@ -114,7 +117,7 @@ export default function DemoProjectPage() {
       if (qParam) useViewerStore.getState().setSearch(qParam);
 
       // ─── Phase 2: Fetch initial chunk ───
-      const chunkTo = Math.min(data.numPages || 1, 9);
+      const chunkTo = Math.min(data.numPages || 1, 15);
       const chunkRes = await fetch(`/api/demo/projects/${id}/pages?from=1&to=${chunkTo}`);
       if (chunkRes.ok) {
         const chunk: ChunkResponse = await chunkRes.json();

@@ -15,8 +15,9 @@ import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
 import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
+import type { CsiCode, TextAnnotationResult } from "@/types";
 
-const PAGE_CONCURRENCY = 20;
+const DEFAULT_PAGE_CONCURRENCY = 8;
 
 /** Run async tasks with a concurrency limit. */
 async function mapConcurrent<T, R>(
@@ -98,21 +99,28 @@ export async function processProject(projectId: number): Promise<{
       console.warn("Thumbnail generation failed:", err);
     }
 
-    // Fetch company heuristic config for this project
+    // Fetch company config for this project (heuristics + pipeline settings)
     let companyHeuristics: any[] | undefined;
+    let pageConcurrency = DEFAULT_PAGE_CONCURRENCY;
+    let csiSpatialGrid: { rows: number; cols: number } | undefined;
     try {
       const [company] = await db
         .select({ pipelineConfig: companies.pipelineConfig })
         .from(companies)
         .where(eq(companies.id, project.companyId))
         .limit(1);
-      companyHeuristics = (company?.pipelineConfig as any)?.heuristics;
+      const pipelineConfig = company?.pipelineConfig as any;
+      companyHeuristics = pipelineConfig?.heuristics;
+      pageConcurrency = pipelineConfig?.pipeline?.pageConcurrency || DEFAULT_PAGE_CONCURRENCY;
+      csiSpatialGrid = pipelineConfig?.pipeline?.csiSpatialGrid;
     } catch { /* ignore — use built-in defaults */ }
+
+    console.log(`[processing] Processing ${numPages} pages with concurrency ${pageConcurrency}`);
 
     // Process pages in parallel with concurrency limit
     const pageNums = Array.from({ length: numPages }, (_, i) => i + 1);
 
-    await mapConcurrent(pageNums, PAGE_CONCURRENCY, async (pageNum) => {
+    await mapConcurrent(pageNums, pageConcurrency, async (pageNum) => {
       try {
         // Check if page already has textract data (skip if re-processing)
         const [existingPage] = await db
@@ -150,15 +158,30 @@ export async function processProject(projectId: number): Promise<{
         const rawText = extractRawText(textractData);
 
         // Extract drawing number from title block
-        const drawingNumber = extractDrawingNumber(textractData);
+        let drawingNumber: string | null = null;
+        try {
+          drawingNumber = extractDrawingNumber(textractData);
+        } catch (err) {
+          console.error(`[processing] Drawing number extraction FAILED for page ${pageNum}:`, err);
+        }
 
         // Detect CSI codes from OCR text
-        const csiCodes = detectCsiCodes(rawText);
+        let csiCodes: CsiCode[] = [];
+        try {
+          csiCodes = detectCsiCodes(rawText);
+        } catch (err) {
+          console.error(`[processing] CSI detection FAILED for page ${pageNum}:`, err);
+        }
 
         // Detect text annotations (phone, address, equipment tags, abbreviations, etc.)
-        const textAnnotationResult = detectTextAnnotations(textractData, csiCodes);
-        if (textAnnotationResult.annotations.length > 0) {
-          console.log(`[processing] Page ${pageNum}: found ${textAnnotationResult.annotations.length} text annotations`);
+        let textAnnotationResult: TextAnnotationResult = { annotations: [], groups: [], summary: {} };
+        try {
+          textAnnotationResult = detectTextAnnotations(textractData, csiCodes);
+          if (textAnnotationResult.annotations.length > 0) {
+            console.log(`[processing] Page ${pageNum}: found ${textAnnotationResult.annotations.length} text annotations`);
+          }
+        } catch (err) {
+          console.error(`[processing] Text annotation detection FAILED for page ${pageNum}:`, err);
         }
 
         // NOTE: Keynote extraction (OpenCV + Tesseract) is now user-initiated via the Keynotes panel.
@@ -234,6 +257,10 @@ export async function processProject(projectId: number): Promise<{
             textAnnotationResult.annotations,
             undefined, // YOLO not available during initial processing
             (pageIntelligence as any)?.classifiedTables,
+            undefined, // parsedRegions
+            undefined, // yoloTags
+            undefined, // dbAnnotations
+            csiSpatialGrid,
           );
           if (spatialMap) {
             if (!pageIntelligence) pageIntelligence = {};

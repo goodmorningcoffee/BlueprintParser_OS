@@ -244,8 +244,8 @@ interface ViewerState {
   tableParseRowBBs: [number, number, number, number][]; // user-drawn row BBs
   addTableParseRowBB: (bb: [number, number, number, number]) => void;
   resetTableParse: () => void;
-  tableParseTab: "all" | "auto" | "manual" | "compare";
-  setTableParseTab: (tab: "all" | "auto" | "manual" | "compare") => void;
+  tableParseTab: "all" | "auto" | "guided" | "manual" | "compare";
+  setTableParseTab: (tab: "all" | "auto" | "guided" | "manual" | "compare") => void;
   showTableCompareModal: boolean;
   toggleTableCompareModal: () => void;
 

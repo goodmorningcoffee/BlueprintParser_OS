@@ -110,6 +110,7 @@ export interface QtoLineItem {
 export type QtoFlag = "not-found" | "extra" | "low-confidence" | "qty-mismatch" | "manual-override";
 
 export interface QtoUserEdits {
+  selectedPages?: number[];
   addedInstances: { tag: string; pageNumber: number; bbox: [number, number, number, number] }[];
   removedInstances: { tag: string; pageNumber: number; bbox: [number, number, number, number] }[];
   quantityOverrides: Record<string, number>;

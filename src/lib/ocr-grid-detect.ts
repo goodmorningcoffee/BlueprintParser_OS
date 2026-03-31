@@ -50,11 +50,18 @@ export interface LayoutHint {
   tagColumnPosition?: "left" | "right";
 }
 
+/** Tunable parameters for grid detection. All optional — defaults to built-in constants. */
+export interface GridDetectOptions {
+  rowTolerance?: number;    // default 0.006 — vertical tolerance for row clustering
+  minColGap?: number;       // default 0.015 — minimum gap to split columns
+  minHitsRatio?: number;    // default 0.3 — fraction of rows a column must appear in
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Row detection
 // ═══════════════════════════════════════════════════════════════════
 
-function clusterRows(words: TextractWord[]): RowCluster[] {
+function clusterRows(words: TextractWord[], rowTolerance: number = ROW_Y_TOL): RowCluster[] {
   if (words.length === 0) return [];
 
   const sorted = [...words].sort(
@@ -67,7 +74,7 @@ function clusterRows(words: TextractWord[]): RowCluster[] {
 
   for (let i = 1; i < sorted.length; i++) {
     const wy = sorted[i].bbox[1] + sorted[i].bbox[3] / 2;
-    if (Math.abs(wy - curY) <= ROW_Y_TOL) {
+    if (Math.abs(wy - curY) <= rowTolerance) {
       cur.push(sorted[i]);
     } else {
       const sortedRow = cur.sort((a, b) => a.bbox[0] - b.bbox[0]);
@@ -105,17 +112,19 @@ function detectColumns(
   rowCount: number,
   regionBbox: [number, number, number, number],
   hint?: LayoutHint,
+  colGap: number = MIN_COL_GAP,
+  hitsRatio: number = 0.3,
 ): ColBound[] {
   const [rMinX, , rMaxX] = regionBbox;
 
   const allLefts = regionWords.map((w) => w.bbox[0]).sort((a, b) => a - b);
   const clusters: number[][] = [[allLefts[0]]];
   for (let i = 1; i < allLefts.length; i++) {
-    if (allLefts[i] - allLefts[i - 1] > MIN_COL_GAP) clusters.push([allLefts[i]]);
+    if (allLefts[i] - allLefts[i - 1] > colGap) clusters.push([allLefts[i]]);
     else clusters[clusters.length - 1].push(allLefts[i]);
   }
 
-  const minHits = Math.max(2, Math.floor(rowCount * 0.3));
+  const minHits = Math.max(2, Math.floor(rowCount * hitsRatio));
   let stableClusters = clusters.filter((c) => c.length >= minHits);
   if (stableClusters.length < 2) {
     stableClusters = clusters.length >= 2 ? clusters : [];
@@ -216,6 +225,7 @@ export function detectRowsAndColumns(
   words: TextractWord[],
   regionBbox: [number, number, number, number],
   hint?: LayoutHint,
+  options?: GridDetectOptions,
 ): GridProposal {
   const [rMinX, rMinY, rMaxX, rMaxY] = regionBbox;
 
@@ -230,12 +240,12 @@ export function detectRowsAndColumns(
     return { rows: [], cols: [], rowBoundaries: [], colBoundaries: [], wordCount: regionWords.length, confidence: 0 };
   }
 
-  const rows = clusterRows(regionWords);
+  const rows = clusterRows(regionWords, options?.rowTolerance);
   if (rows.length < 2) {
     return { rows, cols: [], rowBoundaries: [], colBoundaries: [], wordCount: regionWords.length, confidence: 0.1 };
   }
 
-  const cols = detectColumns(regionWords, rows.length, regionBbox, hint);
+  const cols = detectColumns(regionWords, rows.length, regionBbox, hint, options?.minColGap, options?.minHitsRatio);
   if (cols.length < 2) {
     return { rows, cols, rowBoundaries: [], colBoundaries: [], wordCount: regionWords.length, confidence: 0.1 };
   }

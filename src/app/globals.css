@@ -76,9 +76,9 @@ canvas {
 
 /* Chat button slow color pulse when inactive */
 @keyframes chat-pulse {
-  0%, 100% { background-color: #2a3040; border-color: #3a4560; color: #8899bb; }
-  33%      { background-color: #1e2838; border-color: #334466; color: #99aacc; }
-  66%      { background-color: #2c3548; border-color: #445577; color: #7788aa; }
+  0%, 100% { background-color: var(--surface-hover); border-color: var(--border); color: var(--muted); }
+  33%      { background-color: var(--surface); border-color: var(--border); color: var(--muted); }
+  66%      { background-color: var(--surface-hover); border-color: var(--border); color: var(--muted); }
 }
 .chat-pulse {
   animation: chat-pulse 20s ease-in-out infinite;

@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useViewerStore, useTableParse, useNavigation, useProject } from "@/stores/viewerStore";
 import { exportTableCsv } from "@/lib/table-parse-utils";
 import HelpTooltip from "./HelpTooltip";
 import MapTagsSection from "./MapTagsSection";
+
+type ProposedRegion = [number, number, number, number]; // [minX, minY, maxX, maxY]
 
 interface AutoParseTabProps {
   autoDetectedTables: any[];
@@ -47,36 +49,94 @@ export default function AutoParseTab({
   const [autoParseError, setAutoParseError] = useState<string | null>(null);
   const [autoParseMethodInfo, setAutoParseMethodInfo] = useState<any[] | null>(null);
 
-  const autoParseRegion = useCallback(
-    async (bbox: [number, number, number, number]) => {
+  // Multi-BB: accumulate proposed regions before processing
+  const [proposedRegions, setProposedRegions] = useState<ProposedRegion[]>([]);
+  const lastRegionRef = useRef<string | null>(null);
+
+  // Capture drawn region into proposed list (instead of auto-parsing)
+  useEffect(() => {
+    if (tableParseRegion && tableParseTab === "auto") {
+      const key = tableParseRegion.join(",");
+      if (key !== lastRegionRef.current) {
+        lastRegionRef.current = key;
+        setProposedRegions((prev) => [...prev, tableParseRegion as ProposedRegion]);
+        // Reset store region so user can draw another
+        setTableParseRegion(null);
+      }
+    }
+  }, [tableParseRegion, tableParseTab, setTableParseRegion]);
+
+  const removeProposedRegion = (index: number) => {
+    setProposedRegions((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const processRegions = useCallback(
+    async () => {
+      if (proposedRegions.length === 0) return;
       setAutoParsing(true);
       setAutoParseError(null);
       setAutoParseMethodInfo(null);
 
       try {
-        const resp = await fetch("/api/table-parse", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId, pageNumber, regionBbox: bbox }),
-        });
+        // Parse each region independently then merge
+        let mergedHeaders: string[] = [];
+        let mergedRows: Record<string, string>[] = [];
+        let lastMethodInfo: any[] | null = null;
+        let tagColumn: string | undefined;
 
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          throw new Error(err.error || `API error ${resp.status}`);
+        for (let i = 0; i < proposedRegions.length; i++) {
+          const bbox = proposedRegions[i];
+          const resp = await fetch("/api/table-parse", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectId, pageNumber, regionBbox: bbox }),
+          });
+
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.error || `Region ${i + 1}: API error ${resp.status}`);
+          }
+
+          const result = await resp.json();
+          lastMethodInfo = result.methods || null;
+
+          if (i === 0) {
+            // First region: use its headers as canonical
+            mergedHeaders = result.headers || [];
+            tagColumn = result.tagColumn;
+          } else if (mergedHeaders.length > 0 && result.headers?.length > 0) {
+            // Validate subsequent regions have compatible headers
+            const h1 = JSON.stringify(mergedHeaders);
+            const h2 = JSON.stringify(result.headers);
+            if (h1 !== h2) {
+              throw new Error(`Region ${i + 1} has different columns than Region 1. All regions must have the same column structure to merge.`);
+            }
+          }
+          // Append rows (top-to-bottom order)
+          mergedRows = [...mergedRows, ...(result.rows || [])];
         }
 
-        const result = await resp.json();
-        setAutoParseMethodInfo(result.methods || null);
+        setAutoParseMethodInfo(lastMethodInfo);
         const grid = {
-          headers: result.headers || [],
-          rows: result.rows || [],
-          tagColumn: result.tagColumn,
-          csiTags: result.csiTags || [],
+          headers: mergedHeaders,
+          rows: mergedRows,
+          tagColumn,
+          csiTags: [],
+          tableName: proposedRegions.length > 1 ? `Merged (${proposedRegions.length} regions)` : undefined,
         };
         setTableParsedGrid(grid);
         detectCsiAndPersist(grid);
+        // Set tableParseRegion to merged bbox so TableCompareModal can crop the image
+        const allRegions = proposedRegions;
+        setTableParseRegion([
+          Math.min(...allRegions.map((r) => r[0])),
+          Math.min(...allRegions.map((r) => r[1])),
+          Math.max(...allRegions.map((r) => r[2])),
+          Math.max(...allRegions.map((r) => r[3])),
+        ]);
         setTableParseStep("review");
         useViewerStore.getState().setMode("move");
+        setProposedRegions([]);
       } catch (err: any) {
         console.error("[auto-parse] Failed:", err);
         setAutoParseError(err.message || "Auto-parse failed");
@@ -87,15 +147,8 @@ export default function AutoParseTab({
         setAutoParsing(false);
       }
     },
-    [projectId, pageNumber, setTableParsedGrid, setTableParseStep, detectCsiAndPersist]
+    [proposedRegions, projectId, pageNumber, setTableParsedGrid, setTableParseStep, detectCsiAndPersist]
   );
-
-  // Auto-parse when user draws region on canvas
-  useEffect(() => {
-    if (tableParseRegion && tableParseTab === "auto") {
-      autoParseRegion(tableParseRegion);
-    }
-  }, [tableParseRegion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const exportCsv = () => {
     if (tableParsedGrid) exportTableCsv(tableParsedGrid, pageNumber);
@@ -126,8 +179,39 @@ export default function AutoParseTab({
                 : "border-[var(--border)] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
             }`}
           >
-            {tableParseStep === "select-region" ? "Cancel Drawing" : "Draw Table Region"}
+            {tableParseStep === "select-region" ? "Cancel Drawing" : proposedRegions.length > 0 ? "Draw Another Region" : "Draw Table Region"}
           </button></HelpTooltip>
+
+          {/* Proposed regions + process button */}
+          {proposedRegions.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1">
+                Regions ({proposedRegions.length})
+                {proposedRegions.length > 1 && <span className="normal-case ml-1">— will merge top to bottom</span>}
+              </div>
+              {proposedRegions.map((r, i) => (
+                <div key={i} className="flex items-center gap-1 px-2 py-1 rounded border border-pink-500/20 bg-pink-500/5 text-[10px]">
+                  <span className="text-pink-300 font-mono w-4">{i + 1}</span>
+                  <span className="text-[var(--muted)] flex-1 truncate">
+                    ({(r[0] * 100).toFixed(0)}%, {(r[1] * 100).toFixed(0)}%) → ({(r[2] * 100).toFixed(0)}%, {(r[3] * 100).toFixed(0)}%)
+                  </span>
+                  <button
+                    onClick={() => removeProposedRegion(i)}
+                    className="text-red-400 hover:text-red-300 px-1"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={processRegions}
+                disabled={autoParsing}
+                className="w-full text-xs px-3 py-2 rounded bg-pink-600 text-white font-medium hover:bg-pink-500 disabled:opacity-50"
+              >
+                {autoParsing ? "Processing..." : proposedRegions.length > 1 ? "Process & Merge" : "Process Region"}
+              </button>
+            </div>
+          )}
 
           {autoDetectedTables.length > 0 && (
             <div className="space-y-1">

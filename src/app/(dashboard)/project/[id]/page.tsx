@@ -23,8 +23,8 @@ interface ProjectResponse {
   pdfUrl: string;
   numPages: number;
   status: string;
-  projectIntelligence: any;
   summaries: ProjectSummaries | null;
+  projectIntelligence: Record<string, unknown> | null;
   pages: Array<{
     pageNumber: number;
     name: string;
@@ -101,6 +101,8 @@ export default function ProjectPage() {
       setPublicId(data.id);
       setDataUrl(data.dataUrl);
       setNumPages(data.numPages || 0);
+
+      // Hydrate project intelligence (CSI graph, classCsiOverrides, etc.)
       if (data.projectIntelligence) {
         useViewerStore.getState().setProjectIntelligenceData(data.projectIntelligence);
       }
@@ -146,7 +148,7 @@ export default function ProjectPage() {
       }
 
       // ─── Phase 2: Fetch initial chunk (pages 1-9) ───
-      const chunkTo = Math.min(data.numPages || 1, 9);
+      const chunkTo = Math.min(data.numPages || 1, 15);
       const chunkRes = await fetch(`/api/projects/${id}/pages?from=1&to=${chunkTo}`);
       if (chunkRes.ok) {
         const chunk: ChunkResponse = await chunkRes.json();
@@ -191,7 +193,7 @@ export default function ProjectPage() {
           for (const page of chunk.pages) {
             if (page.csiCodes) {
               for (const c of page.csiCodes as CsiCode[]) {
-                allTradeSet.add(c.trade);
+                if (c.trade) allTradeSet.add(c.trade);
                 allCsiMap.set(c.code, c.description);
               }
             }
@@ -231,6 +233,7 @@ export default function ProjectPage() {
     setScaleCalibration,
     resetProjectData,
     csiParam,
+    qParam,
     setCsiFilter,
   ]);
 

@@ -278,6 +278,11 @@ export default function KeynotePanel() {
   // ─── Guided parse: propose grid ─────────────────────────
   const [guidedLoading, setGuidedLoading] = useState(false);
   const [guidedError, setGuidedError] = useState<string | null>(null);
+  const [showGuidedTune, setShowGuidedTune] = useState(false);
+  const [guidedRowTol, setGuidedRowTol] = useState(0.006);
+  const [guidedColGap, setGuidedColGap] = useState(0.015);
+  const [guidedColConf, setGuidedColConf] = useState(0.3);
+  const [guidedExpCols, setGuidedExpCols] = useState<number | null>(2); // keynotes default 2
 
   const proposeGrid = useCallback(async () => {
     const region = useViewerStore.getState().keynoteParseRegion;
@@ -293,7 +298,12 @@ export default function KeynotePanel() {
           projectId,
           pageNumber,
           regionBbox: region,
-          layoutHint: { columns: 2 },
+          layoutHint: guidedExpCols ? { columns: guidedExpCols } : undefined,
+          gridOptions: {
+            rowTolerance: guidedRowTol,
+            minColGap: guidedColGap,
+            minHitsRatio: guidedColConf,
+          },
         }),
       });
       if (!resp.ok) throw new Error("Proposal failed");
@@ -573,6 +583,61 @@ export default function KeynotePanel() {
                     {guidedParseRows.length - 1} rows, {guidedParseCols.length - 1} columns
                   </span>
                 </div>
+
+                {/* Tune Detection */}
+                <button
+                  onClick={() => setShowGuidedTune(!showGuidedTune)}
+                  className="text-[10px] text-[var(--muted)] hover:text-[var(--fg)] px-1 flex items-center gap-1"
+                >
+                  <span className={`transition-transform ${showGuidedTune ? "rotate-90" : ""}`}>&#9656;</span>
+                  Tune Detection
+                </button>
+                {showGuidedTune && (
+                  <div className="space-y-2 px-2 py-2 rounded border border-[var(--border)] bg-[var(--surface)]">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] text-[var(--muted)]">Row Sensitivity</label>
+                        <span className="text-[9px] text-[var(--fg)] tabular-nums">{guidedRowTol.toFixed(3)}</span>
+                      </div>
+                      <input type="range" min={0.002} max={0.02} step={0.001} value={guidedRowTol}
+                        onChange={(e) => { setGuidedRowTol(parseFloat(e.target.value)); proposeGrid(); }}
+                        className="w-full h-1 accent-amber-400" />
+                      <div className="flex justify-between text-[8px] text-[var(--muted)]"><span>Tight</span><span>Loose</span></div>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] text-[var(--muted)]">Column Sensitivity</label>
+                        <span className="text-[9px] text-[var(--fg)] tabular-nums">{guidedColGap.toFixed(3)}</span>
+                      </div>
+                      <input type="range" min={0.005} max={0.05} step={0.005} value={guidedColGap}
+                        onChange={(e) => { setGuidedColGap(parseFloat(e.target.value)); proposeGrid(); }}
+                        className="w-full h-1 accent-amber-400" />
+                      <div className="flex justify-between text-[8px] text-[var(--muted)]"><span>More cols</span><span>Fewer cols</span></div>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] text-[var(--muted)]">Column Confidence</label>
+                        <span className="text-[9px] text-[var(--fg)] tabular-nums">{(guidedColConf * 100).toFixed(0)}%</span>
+                      </div>
+                      <input type="range" min={0.1} max={0.8} step={0.05} value={guidedColConf}
+                        onChange={(e) => { setGuidedColConf(parseFloat(e.target.value)); proposeGrid(); }}
+                        className="w-full h-1 accent-amber-400" />
+                      <div className="flex justify-between text-[8px] text-[var(--muted)]"><span>Keep weak</span><span>Strict</span></div>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] text-[var(--muted)]">Expected Columns</label>
+                        <select value={guidedExpCols ?? "auto"}
+                          onChange={(e) => { setGuidedExpCols(e.target.value === "auto" ? null : parseInt(e.target.value)); proposeGrid(); }}
+                          className="text-[9px] px-1 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] text-[var(--fg)]">
+                          <option value="auto">Auto</option>
+                          {[2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <button
                   onClick={parseFromGuidedGrid}
                   className="w-full text-xs px-3 py-2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 font-medium"

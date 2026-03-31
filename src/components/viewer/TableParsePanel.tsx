@@ -4,6 +4,7 @@ import { useMemo, useState, useCallback } from "react";
 import { useViewerStore, useSummaries } from "@/stores/viewerStore";
 import ParsedTableItem from "./ParsedTableItem";
 import AutoParseTab from "./AutoParseTab";
+import GuidedParseTab from "./GuidedParseTab";
 import ManualParseTab from "./ManualParseTab";
 import CompareEditTab from "./CompareEditTab";
 import { mapYoloToOcrText } from "@/lib/yolo-tag-engine";
@@ -274,7 +275,7 @@ export default function TableParsePanel() {
 
       {/* Tab bar */}
       <div className="flex border-b border-[var(--border)]">
-        {(["all", "auto", "manual", "compare"] as const).map((tab) => (
+        {(["all", "auto", "guided", "manual", "compare"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => {
@@ -290,7 +291,7 @@ export default function TableParsePanel() {
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
             }`}
           >
-            {tab === "all" ? "All Tables" : tab === "auto" ? "Auto Parse" : tab === "manual" ? "Manual" : "Compare/Edit Cells"}
+            {tab === "all" ? "All Tables" : tab === "auto" ? "Auto Parse" : tab === "guided" ? "Guided" : tab === "manual" ? "Manual" : "Compare/Edit Cells"}
           </button>
         ))}
       </div>
@@ -357,6 +358,15 @@ export default function TableParsePanel() {
             yoloInTableRegion={yoloInTableRegion}
             loadExistingParsed={loadExistingParsed}
             detectCsiAndPersist={detectCsiAndPersist}
+            {...mapTagsProps}
+          />
+        )}
+
+        {/* ════════ TAB: Guided Parse ════════ */}
+        {tableParseTab === "guided" && (
+          <GuidedParseTab
+            detectCsiAndPersist={detectCsiAndPersist}
+            yoloInTableRegion={yoloInTableRegion}
             {...mapTagsProps}
           />
         )}
