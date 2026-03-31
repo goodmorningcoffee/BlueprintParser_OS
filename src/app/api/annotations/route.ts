@@ -3,7 +3,6 @@ import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { annotations, projects } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { computeProjectSummaries } from "@/lib/project-analysis";
 
 export async function POST(req: Request) {
   const { session, error } = await requireAuth();
@@ -61,11 +60,6 @@ export async function POST(req: Request) {
       projectId: project.id,
     })
     .returning();
-
-  // Recompute summaries in background (annotation counts changed)
-  computeProjectSummaries(project.id).catch((e) =>
-    console.error("[annotations/create] Summary recompute failed:", e)
-  );
 
   return NextResponse.json({
     id: annotation.id,

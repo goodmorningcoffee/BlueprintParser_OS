@@ -54,7 +54,7 @@ export default function AnnotationPanel() {
   if (annotations.length === 0) {
     return (
       <div className="border-t border-[var(--border)] p-3" style={{ backgroundColor: "var(--surface)" }}>
-        <span className="text-xs" style={{ color: "#6b8aad" }}>
+        <span className="text-xs text-[var(--muted)]">
           No annotations. Run YOLO or switch to markup mode to draw.
         </span>
       </div>

@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects, pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { detectRowsAndColumns } from "@/lib/ocr-grid-detect";
+import { detectRowsAndColumns, type GridDetectOptions } from "@/lib/ocr-grid-detect";
 import type { TextractPageData } from "@/types";
 
 /**
@@ -16,11 +16,12 @@ export async function POST(req: Request) {
   // Auth handled at project level — demo projects allowed without session
   try {
     const body = await req.json();
-    const { projectId, pageNumber, regionBbox, layoutHint } = body as {
+    const { projectId, pageNumber, regionBbox, layoutHint, gridOptions } = body as {
       projectId: number;
       pageNumber: number;
       regionBbox: [number, number, number, number];
       layoutHint?: { columns?: number; tagColumnPosition?: "left" | "right" };
+      gridOptions?: GridDetectOptions;
     };
 
     if (!projectId || !pageNumber || !regionBbox || regionBbox.length !== 4) {
@@ -55,6 +56,7 @@ export async function POST(req: Request) {
       textractData.words,
       regionBbox,
       layoutHint,
+      gridOptions,
     );
 
     return NextResponse.json({

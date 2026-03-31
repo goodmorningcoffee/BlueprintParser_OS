@@ -60,9 +60,10 @@ export async function GET(
   // Build PDF URL server-side (has access to CLOUDFRONT_DOMAIN / S3_BUCKET env vars)
   const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
 
-  // Extract summaries from projectIntelligence (computed during processing)
+  // Extract summaries + graph from projectIntelligence (computed during processing)
   const pi = project.projectIntelligence as Record<string, unknown> | null;
   const summaries = (pi?.summaries as Record<string, unknown>) || null;
+  const projectIntelligence = pi || null;
 
   return NextResponse.json({
     id: project.publicId,
@@ -73,8 +74,8 @@ export async function GET(
     numPages: project.numPages,
     status: project.status,
     address: project.address,
-    projectIntelligence: project.projectIntelligence || null,
     summaries,
+    projectIntelligence,
     pages: projectPages.map((p) => ({
       pageNumber: p.pageNumber,
       name: p.name,

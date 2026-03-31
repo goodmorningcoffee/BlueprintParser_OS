@@ -517,41 +517,43 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
                       </select>
                     </div>
 
-                    {/* Class chips from selected model */}
+                    {/* Class chips from selected model (or all models if none selected) */}
                     {(() => {
                       const selectedModel = yoloModels.find((m) => m.id === rule.modelId);
+                      // When a model is selected, use its classes. Otherwise, collect from ALL models.
                       const modelClasses = selectedModel?.config?.classes || [];
-                      if (modelClasses.length === 0) return (
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[10px] text-[var(--muted)] block mb-1">YOLO Required (comma-separated)</label>
-                            <input type="text" value={rule.yoloRequired.join(", ")}
-                              onChange={(e) => updateRule(rule.id, { yoloRequired: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
-                              placeholder="e.g. table" className="w-full px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-purple-400/50" />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-[var(--muted)] block mb-1">YOLO Boosters (comma-separated)</label>
-                            <input type="text" value={rule.yoloBoosters.join(", ")}
-                              onChange={(e) => updateRule(rule.id, { yoloBoosters: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
-                              placeholder="e.g. grid, horizontal_area" className="w-full px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-purple-400/50" />
-                          </div>
-                        </div>
+                      const allModelClasses: { cls: string; modelName: string }[] = [];
+                      if (modelClasses.length === 0 && yoloModels.length > 0) {
+                        for (const m of yoloModels) {
+                          for (const cls of m.config?.classes || []) {
+                            if (!allModelClasses.some((c) => c.cls === cls)) {
+                              allModelClasses.push({ cls, modelName: m.name });
+                            }
+                          }
+                        }
+                      }
+                      const chipClasses = modelClasses.length > 0
+                        ? modelClasses.map((cls: string) => ({ cls, modelName: selectedModel?.name || "" }))
+                        : allModelClasses;
+                      if (chipClasses.length === 0) return (
+                        <div className="text-[10px] text-[var(--muted)]">No YOLO models available — upload a model first.</div>
                       );
+                      const showModelLabel = modelClasses.length === 0; // show "Model: class" when using all models
                       return (
                         <div className="grid grid-cols-2 gap-3">
                           <div>
                             <label className="text-[10px] text-[var(--muted)] block mb-1">Required Classes (click to toggle)</label>
                             <div className="flex flex-wrap gap-1">
-                              {modelClasses.map((cls) => {
+                              {chipClasses.map(({ cls, modelName }) => {
                                 const active = rule.yoloRequired.includes(cls);
                                 return (
-                                  <button key={cls} onClick={() => {
-                                    const next = active ? rule.yoloRequired.filter((c) => c !== cls) : [...rule.yoloRequired, cls];
+                                  <button key={`${modelName}:${cls}`} onClick={() => {
+                                    const next = active ? rule.yoloRequired.filter((c: string) => c !== cls) : [...rule.yoloRequired, cls];
                                     updateRule(rule.id, { yoloRequired: next });
                                   }} className={`px-1.5 py-0.5 text-[9px] rounded border ${active
                                     ? "border-purple-400/50 text-purple-300 bg-purple-500/15"
                                     : "border-[var(--border)] text-[var(--muted)] hover:border-purple-400/30"}`}>
-                                    {cls}
+                                    {showModelLabel ? `${modelName}: ${cls}` : cls}
                                   </button>
                                 );
                               })}
@@ -560,16 +562,16 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
                           <div>
                             <label className="text-[10px] text-[var(--muted)] block mb-1">Booster Classes (click to toggle)</label>
                             <div className="flex flex-wrap gap-1">
-                              {modelClasses.map((cls) => {
+                              {chipClasses.map(({ cls, modelName }) => {
                                 const active = rule.yoloBoosters.includes(cls);
                                 return (
-                                  <button key={cls} onClick={() => {
-                                    const next = active ? rule.yoloBoosters.filter((c) => c !== cls) : [...rule.yoloBoosters, cls];
+                                  <button key={`${modelName}:${cls}`} onClick={() => {
+                                    const next = active ? rule.yoloBoosters.filter((c: string) => c !== cls) : [...rule.yoloBoosters, cls];
                                     updateRule(rule.id, { yoloBoosters: next });
                                   }} className={`px-1.5 py-0.5 text-[9px] rounded border ${active
                                     ? "border-amber-400/50 text-amber-300 bg-amber-500/15"
                                     : "border-[var(--border)] text-[var(--muted)] hover:border-amber-400/30"}`}>
-                                    {cls}
+                                    {showModelLabel ? `${modelName}: ${cls}` : cls}
                                   </button>
                                 );
                               })}

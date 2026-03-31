@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore, useNavigation, useProject, usePageData, useDetection, useTextAnnotationDisplay, useYoloTags, useSymbolSearch, useSummaries } from "@/stores/viewerStore";
 import { findPhraseMatches } from "./SearchHighlightOverlay";
+import { extractDisciplinePrefix, disciplineOrder } from "@/lib/page-utils";
 
 interface PageSidebarProps {
   pdfDoc: PDFDocumentProxy;
@@ -15,25 +16,6 @@ interface ThumbnailCache {
 
 const BATCH_SIZE = 5;
 const THUMB_WIDTH = 150;
-
-/** Extract discipline prefix from a drawing number like "A-101.00" → "A", "ES-201" → "ES" */
-function extractDisciplinePrefix(name: string): string {
-  const match = name.match(/^([A-Za-z]+)[\s\-\.0-9]/);
-  if (match) return match[1].toUpperCase();
-  // "Page 5" or similar → no discipline
-  if (/^page\s/i.test(name)) return "OTHER";
-  // Pure letters → use as prefix
-  const letters = name.match(/^([A-Za-z]+)/);
-  return letters ? letters[1].toUpperCase() : "OTHER";
-}
-
-/** Standard construction discipline sort order */
-function disciplineOrder(prefix: string): number {
-  const order: Record<string, number> = {
-    G: 0, A: 1, S: 2, M: 3, E: 4, P: 5, FP: 6, L: 7, C: 8, T: 9, D: 10,
-  };
-  return order[prefix] ?? 50;
-}
 
 export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   // Slice selectors (only re-render when relevant slice changes)
@@ -63,12 +45,6 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
-
-  // Virtual scrolling state for large projects
-  const ITEM_HEIGHT = 76; // px per page button (thumbnail + padding)
-  const VIRTUAL_BUFFER = 10; // extra items above/below viewport
-  const [scrollTop, setScrollTop] = useState(0);
-  const [containerHeight, setContainerHeight] = useState(600);
 
   // Group-by-sheet state
   const [groupBySheet, setGroupBySheet] = useState(false);
@@ -126,37 +102,9 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
     const baseUrl = cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
 
-    // Load thumbnails in batches around current page (not all at once)
-    // For large projects this prevents 460 concurrent S3 requests
-    const loadBatch = (pages: number[]) => {
-      for (const pg of pages) {
-        if (renderedPagesRef.current.has(pg)) continue;
-        const key = String(pg).padStart(4, "0");
-        const img = new Image();
-        img.onload = () => {
-          renderedPagesRef.current.add(pg);
-          setThumbnails((prev) => ({ ...prev, [pg]: img.src }));
-        };
-        img.onerror = () => {};
-        img.src = `${baseUrl}/thumbnails/page_${key}.png`;
-      }
-    };
-
-    // Initial batch: load thumbnails for first 20 pages
-    const initialBatch = Array.from({ length: Math.min(20, pdfDoc.numPages) }, (_, i) => i + 1);
-    loadBatch(initialBatch);
-
-    // Remaining pages load on scroll (via IntersectionObserver + visiblePages state)
-  }, [dataUrl, pdfDoc]);
-
-  // Load S3 thumbnails for pages that become visible (lazy)
-  useEffect(() => {
-    if (!dataUrl || visiblePages.size === 0) return;
-    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "beaver-app-uploads";
-    const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
-    const baseUrl = cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
-
-    for (const pg of visiblePages) {
+    // Try to load all thumbnails from S3 (parallel, fire-and-forget)
+    const allPages = Array.from({ length: pdfDoc.numPages }, (_, i) => i + 1);
+    for (const pg of allPages) {
       if (renderedPagesRef.current.has(pg)) continue;
       const key = String(pg).padStart(4, "0");
       const img = new Image();
@@ -167,7 +115,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
       img.onerror = () => {};
       img.src = `${baseUrl}/thumbnails/page_${key}.png`;
     }
-  }, [visiblePages, dataUrl]);
+  }, [dataUrl, pdfDoc]);
 
   // Generate thumbnails via pdf.js for pages that don't have S3 thumbnails
   useEffect(() => {
@@ -612,12 +560,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   return (
     <div
       ref={containerRef}
-      className="w-48 border-r border-[var(--border)] bg-[var(--surface)] overflow-y-auto shrink-0"
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        setScrollTop(el.scrollTop);
-        setContainerHeight(el.clientHeight);
-      }}
+      className="viewer-scalable w-48 border-r border-[var(--border)] bg-[var(--surface)] overflow-y-auto shrink-0"
     >
       <div className="p-2">
         {/* Group by sheet type toggle */}
@@ -803,44 +746,11 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
             );
           })
         ) : (
-          // ─── Flat view (virtualized for large projects) ──────────
-          (() => {
-            const allPages = Array.from({ length: numPages }, (_, i) => i + 1)
-              .filter((n) => !isPageHidden(n));
-            const totalHeight = allPages.length * ITEM_HEIGHT;
-
-            // For small projects (< 50 pages), render all — no virtualization overhead
-            if (allPages.length < 50) {
-              return allPages.map((n) => renderPageButton(n));
-            }
-
-            // Virtual scrolling: only render visible items + buffer
-            const startIdx = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - VIRTUAL_BUFFER);
-            const endIdx = Math.min(
-              allPages.length,
-              Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + VIRTUAL_BUFFER
-            );
-            const visibleSlice = allPages.slice(startIdx, endIdx);
-
-            return (
-              <div style={{ height: totalHeight, position: "relative" }}>
-                {visibleSlice.map((n, i) => (
-                  <div
-                    key={n}
-                    style={{
-                      position: "absolute",
-                      top: (startIdx + i) * ITEM_HEIGHT,
-                      left: 0,
-                      right: 0,
-                      height: ITEM_HEIGHT,
-                    }}
-                  >
-                    {renderPageButton(n)}
-                  </div>
-                ))}
-              </div>
-            );
-          })()
+          // ─── Flat view ──────────────────────────────────────
+          Array.from({ length: numPages }, (_, i) => i + 1).map((n) => {
+            if (isPageHidden(n)) return null;
+            return renderPageButton(n);
+          })
         )}
       </div>
     </div>

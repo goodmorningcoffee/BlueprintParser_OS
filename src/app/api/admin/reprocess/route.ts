@@ -30,6 +30,15 @@ export async function POST(req: Request) {
   const { session, error } = await requireAdmin();
   if (error) return error;
 
+  // Read optional projectIds filter from request body
+  let selectedProjectIds: string[] | undefined;
+  try {
+    const body = await req.json();
+    if (body.projectIds && Array.isArray(body.projectIds)) {
+      selectedProjectIds = body.projectIds;
+    }
+  } catch { /* no body = process all projects */ }
+
   // Load pipeline config for this company
   const [company] = await db
     .select({ pipelineConfig: companies.pipelineConfig })
@@ -39,10 +48,15 @@ export async function POST(req: Request) {
   const enabledDetectorIds = (company?.pipelineConfig as any)?.textAnnotation?.enabledDetectors as string[] | undefined;
 
   // Get all completed projects for this company
-  const allProjects = await db
+  const allCompanyProjects = await db
     .select({ id: projects.id, name: projects.name, publicId: projects.publicId })
     .from(projects)
     .where(eq(projects.companyId, session.user.companyId));
+
+  // Filter to selected projects if specified
+  const allProjects = selectedProjectIds
+    ? allCompanyProjects.filter((p) => selectedProjectIds!.includes(p.publicId))
+    : allCompanyProjects;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

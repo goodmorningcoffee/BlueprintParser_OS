@@ -18,10 +18,11 @@ import {
   buildCsiGraphSection,
   buildParsedDataCsiSection,
   buildParsedTablesSection,
-  assembleContext,
+  assembleContextWithConfig,
   getContextBudget,
   DEFAULT_CONTEXT_BUDGET,
   type ContextSection,
+  type LlmSectionConfig,
 } from "@/lib/context-builder";
 import type { ChatMessage } from "@/lib/llm/types";
 import type { TextractPageData } from "@/types";
@@ -417,19 +418,22 @@ export async function POST(req: Request) {
     }
   }
 
-  // ─── Fetch custom system prompt if configured ──────────────
+  // ─── Fetch company LLM config (system prompt + section config) ──────────────
   let customSystemPrompt: string | undefined;
+  let sectionConfig: LlmSectionConfig | undefined;
   try {
     const [companyConfig] = await db
       .select({ pipelineConfig: companies.pipelineConfig })
       .from(companies)
       .where(eq(companies.id, session?.user?.companyId || project.companyId))
       .limit(1);
-    customSystemPrompt = (companyConfig?.pipelineConfig as any)?.llm?.systemPrompt;
+    const llmConfig = (companyConfig?.pipelineConfig as any)?.llm;
+    customSystemPrompt = llmConfig?.systemPrompt;
+    sectionConfig = llmConfig?.sectionConfig as LlmSectionConfig | undefined;
   } catch { /* ignore */ }
 
   // ─── Build messages array ──────────────────────────────────
-  const contextText = assembleContext(sections, contextBudget);
+  const { assembled: contextText } = assembleContextWithConfig(sections, contextBudget, sectionConfig);
   const systemPrompt = buildSystemPrompt(dataSummary, customSystemPrompt);
 
   // Single system message with prompt + context (avoids Anthropic adapter bug)

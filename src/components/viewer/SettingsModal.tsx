@@ -27,21 +27,13 @@ function getStoredScale(): UiScale {
   return (localStorage.getItem("bp-ui-scale") as UiScale) || "default";
 }
 
-export function applySettings() {
-  if (typeof window === "undefined") return;
-  const theme = getStoredTheme();
-  const scale = getStoredScale();
-  document.documentElement.setAttribute("data-theme", theme);
-  document.documentElement.setAttribute("data-ui-scale", scale);
-}
-
 interface SettingsModalProps {
   onClose: () => void;
 }
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
-  const [theme, setTheme] = useState<ThemeId>(getStoredTheme);
-  const [scale, setScale] = useState<UiScale>(getStoredScale);
+  const [theme, setTheme] = useState<ThemeId>(getStoredTheme());
+  const [scale, setScale] = useState<UiScale>(getStoredScale());
 
   useEffect(() => {
     localStorage.setItem("bp-theme", theme);

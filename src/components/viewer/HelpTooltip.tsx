@@ -87,11 +87,11 @@ export default function HelpTooltip({ id, children, position = "below" }: HelpTo
             zIndex: 9999,
             pointerEvents: "none",
           }}
-          className="px-3 py-2 rounded-lg shadow-xl border border-[var(--border)] bg-[#1a1a2e]/95 backdrop-blur-sm"
+          className="px-3 py-2 rounded-lg shadow-xl border border-[var(--border)] bg-[var(--surface)] opacity-95 backdrop-blur-sm"
         >
           {/* Arrow */}
           <div
-            className={`absolute w-2 h-2 rotate-45 bg-[#1a1a2e]/95 border-[var(--border)] ${
+            className={`absolute w-2 h-2 rotate-45 bg-[var(--surface)] border-[var(--border)] ${
               coords.actualPos === "above"
                 ? "bottom-[-5px] border-b border-r"
                 : "top-[-5px] border-t border-l"

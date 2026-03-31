@@ -275,29 +275,57 @@ async function analyzeWithTesseract(pngBuffer: Buffer): Promise<TextractPageData
   }
 }
 
+/** Retry a function with exponential backoff for throttling errors. */
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelayMs: number = 1000,
+): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const isThrottled =
+        err?.name === "ThrottlingException" ||
+        err?.name === "ProvisionedThroughputExceededException" ||
+        err?.__type === "ThrottlingException" ||
+        err?.__type === "ProvisionedThroughputExceededException" ||
+        err?.message?.includes("Rate exceeded") ||
+        err?.message?.includes("Too many requests");
+
+      if (!isThrottled || attempt === maxRetries) throw err;
+
+      const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 500;
+      console.warn(`[textract] Throttled, retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw new Error("retryWithBackoff: unreachable");
+}
+
 /**
- * OCR with fallback chain: Textract (full) → Textract (half-size) → Tesseract.
+ * OCR with fallback chain: Textract (full, with retry) → Textract (half-size) → Tesseract.
  * Degrades gracefully — project completes even if Textract rejects pages.
+ * All Textract errors now fall through to Tesseract instead of killing the page.
  */
 export async function analyzePageImageWithFallback(
   pngBuffer: Buffer
 ): Promise<TextractPageData> {
-  // Strategy A: Textract at original resolution
+  // Strategy A: Textract at original resolution (with retry for throttling)
   try {
-    return await analyzePageImage(pngBuffer);
+    return await retryWithBackoff(() => analyzePageImage(pngBuffer));
   } catch (err: any) {
-    const isUnsupported = err?.__type === "UnsupportedDocumentException" ||
-      err?.name === "UnsupportedDocumentException";
-    if (!isUnsupported) throw err;
-    console.warn("Textract rejected page (full res), trying half resolution...");
+    const errName = err?.name || err?.__type || "";
+    console.warn(`[textract] Full-res failed (${errName}), trying half resolution...`);
   }
 
   // Strategy B: Textract at half resolution (cuts size by ~75%)
   try {
     const halfBuffer = await downscalePng(pngBuffer, 0.5);
-    return await analyzePageImage(halfBuffer);
+    return await retryWithBackoff(() => analyzePageImage(halfBuffer), 2);
   } catch (err: any) {
-    console.warn("Textract rejected page (half res), falling back to Tesseract...");
+    const errName = err?.name || err?.__type || "";
+    console.warn(`[textract] Half-res failed (${errName}), falling back to Tesseract...`);
   }
 
   // Strategy C: Tesseract (local, no AWS dependency)

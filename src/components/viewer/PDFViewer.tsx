@@ -377,6 +377,13 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
             {sidebarCollapsed ? ">" : "<"}
           </button>
 
+          {/* Symbol Search floating panel — outside scroll container to avoid stacking context issues */}
+          {(symbolSearchActive || symbolSearchResults || symbolSearchLoading) && (
+            <div className="absolute top-12 left-10 z-50">
+              <SymbolSearchPanel pdfDoc={pdfDoc} />
+            </div>
+          )}
+
           <div
             ref={containerRef}
             className="flex-1 bg-[var(--bg)] overflow-auto relative"
@@ -386,12 +393,6 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
           >
-            {/* Symbol Search floating panel */}
-            {(symbolSearchActive || symbolSearchResults || symbolSearchLoading) && (
-              <div className="absolute top-2 left-2 z-40">
-                <SymbolSearchPanel pdfDoc={pdfDoc} />
-              </div>
-            )}
             <div
               className="p-4"
               style={{ width: "fit-content", paddingTop: "50vh", paddingBottom: "50vh", paddingLeft: "25vw", paddingRight: "25vw" }}

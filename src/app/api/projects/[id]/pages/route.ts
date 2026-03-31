@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
-import { eq, and, gte, lte, sql } from "drizzle-orm";
+import { eq, and, gte, lte } from "drizzle-orm";
 
 /**
  * GET /api/projects/[id]/pages?from=1&to=9

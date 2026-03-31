@@ -14,6 +14,8 @@ import HeuristicsTab from "./tabs/HeuristicsTab";
 import PageIntelligenceTab from "./tabs/PageIntelligenceTab";
 import UsersTab from "./tabs/UsersTab";
 import SettingsTab from "./tabs/SettingsTab";
+import PipelineTab from "./tabs/PipelineTab";
+import LlmContextTab from "./tabs/LlmContextTab";
 
 interface ProjectItem {
   id: string;
@@ -454,11 +456,15 @@ export default function AdminPage() {
     }
   }
 
-  async function reprocessAll() {
+  async function reprocessAll(scope?: string, projectIds?: string[]) {
     setReprocessing(true);
     setReprocessLog(["Starting reprocess..."]);
     try {
-      const res = await fetch("/api/admin/reprocess", { method: "POST" });
+      const url = scope ? `/api/admin/reprocess?scope=${scope}` : "/api/admin/reprocess";
+      const res = await fetch(url, {
+        method: "POST",
+        ...(projectIds ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectIds }) } : {}),
+      });
       if (!res.ok || !res.body) {
         setReprocessLog((prev) => [...prev, `Error: ${res.status}`]);
         setReprocessing(false);
@@ -632,6 +638,19 @@ export default function AdminPage() {
             onToggle={handleToggle}
             onSetTogglePassword={handleSetTogglePassword}
           />
+        )}
+
+        {activeTab === "pipeline" && (
+          <PipelineTab
+            reprocessing={reprocessing}
+            reprocessLog={reprocessLog}
+            onReprocess={reprocessAll}
+            projects={projects}
+          />
+        )}
+
+        {activeTab === "llm-context" && (
+          <LlmContextTab projects={projects} />
         )}
 
         {activeTab === "text-annotations" && (
