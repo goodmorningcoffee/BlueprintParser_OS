@@ -29,6 +29,19 @@ import type { TextractPageData } from "@/types";
 import { BP_TOOLS, executeToolCall, type ToolContext } from "@/lib/llm/tools";
 import { createLLMClient } from "@/lib/llm";
 
+// Cache default domain knowledge file in memory (never changes at runtime)
+let _cachedDomainKnowledge: string | null = null;
+async function getCachedDomainKnowledge(): Promise<string> {
+  if (_cachedDomainKnowledge !== null) return _cachedDomainKnowledge;
+  try {
+    const { readFile } = await import("fs/promises");
+    const { join } = await import("path");
+    _cachedDomainKnowledge = await readFile(join(process.cwd(), "src/data/domain-knowledge.md"), "utf-8");
+  } catch {
+    _cachedDomainKnowledge = "";
+  }
+  return _cachedDomainKnowledge;
+}
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -150,16 +163,18 @@ export async function POST(req: Request) {
   }
   const contextBudget = getContextBudget(config.provider, config.model);
 
-  // ─── Check if tool use is enabled ─────────────────────────
-  let toolUseEnabled = false;
+  // ─── Fetch company config once (reused for tool use check + context config) ───
+  let companyPipelineConfig: Record<string, unknown> = {};
   try {
     const [companyRow] = await db
       .select({ pipelineConfig: companies.pipelineConfig })
       .from(companies)
       .where(eq(companies.id, session?.user?.companyId || project.companyId))
       .limit(1);
-    toolUseEnabled = !!(companyRow?.pipelineConfig as any)?.llm?.toolUse;
+    companyPipelineConfig = (companyRow?.pipelineConfig as Record<string, unknown>) || {};
   } catch { /* ignore */ }
+
+  const toolUseEnabled = !!(companyPipelineConfig as any)?.llm?.toolUse;
 
   // Tool use only works with providers that support it (Anthropic, OpenAI)
   const providerSupportsTools = config.provider === "anthropic" || config.provider === "openai";
@@ -438,19 +453,10 @@ export async function POST(req: Request) {
     }
   }
 
-  // ─── Fetch company LLM config (system prompt + section config) ──────────────
-  let customSystemPrompt: string | undefined;
-  let sectionConfig: LlmSectionConfig | undefined;
-  try {
-    const [companyConfig] = await db
-      .select({ pipelineConfig: companies.pipelineConfig })
-      .from(companies)
-      .where(eq(companies.id, session?.user?.companyId || project.companyId))
-      .limit(1);
-    const llmConfig = (companyConfig?.pipelineConfig as any)?.llm;
-    customSystemPrompt = llmConfig?.systemPrompt;
-    sectionConfig = llmConfig?.sectionConfig as LlmSectionConfig | undefined;
-  } catch { /* ignore */ }
+  // ─── Extract LLM config from already-fetched company config ──────────────
+  const llmPipelineConfig = (companyPipelineConfig as any)?.llm;
+  const customSystemPrompt: string | undefined = llmPipelineConfig?.systemPrompt;
+  const sectionConfig: LlmSectionConfig | undefined = llmPipelineConfig?.sectionConfig;
 
   // ─── Build messages array ──────────────────────────────────
   const { assembled: contextText } = assembleContextWithConfig(sections, contextBudget, sectionConfig);
@@ -516,7 +522,7 @@ async function handleToolUseChat(
     pageNumber,
   };
 
-  // Load domain knowledge: custom from company config, or default from file
+  // Load domain knowledge: custom from company config, or cached default from file
   let domainKnowledge = "";
   try {
     const [companyDk] = await db
@@ -528,9 +534,7 @@ async function handleToolUseChat(
     if (customDk) {
       domainKnowledge = customDk;
     } else {
-      const { readFile } = await import("fs/promises");
-      const { join } = await import("path");
-      domainKnowledge = await readFile(join(process.cwd(), "src/data/domain-knowledge.md"), "utf-8").catch(() => "");
+      domainKnowledge = await getCachedDomainKnowledge();
     }
   } catch { /* use empty */ }
 

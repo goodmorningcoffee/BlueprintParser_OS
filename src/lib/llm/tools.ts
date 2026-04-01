@@ -290,35 +290,46 @@ export async function executeToolCall(
 ): Promise<unknown> {
   switch (name) {
     case "searchPages":
-      return execSearchPages(input.query as string, ctx);
+      if (typeof input.query !== "string") return { error: "query must be a string" };
+      return execSearchPages(input.query, ctx);
     case "getProjectOverview":
       return execGetProjectOverview(ctx);
     case "getPageDetails":
-      return execGetPageDetails(input.pageNumber as number, ctx);
+      if (typeof input.pageNumber !== "number") return { error: "pageNumber must be a number" };
+      return execGetPageDetails(input.pageNumber, ctx);
     case "lookupPagesByIndex":
-      return execLookupPagesByIndex(input.index as string, input.key as string, ctx);
+      if (typeof input.index !== "string" || typeof input.key !== "string") return { error: "index and key must be strings" };
+      return execLookupPagesByIndex(input.index, input.key, ctx);
     case "getAnnotations":
       return execGetAnnotations(input, ctx);
     case "getParsedSchedule":
-      return execGetParsedSchedule(input.pageNumber as number, input.category as string | undefined, ctx);
+      if (typeof input.pageNumber !== "number") return { error: "pageNumber must be a number" };
+      return execGetParsedSchedule(input.pageNumber, input.category as string | undefined, ctx);
     case "getCsiSpatialMap":
-      return execGetCsiSpatialMap(input.pageNumber as number, ctx);
+      if (typeof input.pageNumber !== "number") return { error: "pageNumber must be a number" };
+      return execGetCsiSpatialMap(input.pageNumber, ctx);
     case "getCrossReferences":
-      return execGetCrossReferences(input.pageNumber as number | undefined, ctx);
+      return execGetCrossReferences(typeof input.pageNumber === "number" ? input.pageNumber : undefined, ctx);
     case "getSpatialContext":
-      return execGetSpatialContext(input.pageNumber as number, ctx);
+      if (typeof input.pageNumber !== "number") return { error: "pageNumber must be a number" };
+      return execGetSpatialContext(input.pageNumber, ctx);
     case "getPageOcrText":
-      return execGetPageOcrText(input.pageNumber as number, ctx);
+      if (typeof input.pageNumber !== "number") return { error: "pageNumber must be a number" };
+      return execGetPageOcrText(input.pageNumber, ctx);
     case "detectCsiFromText":
-      return detectCsiCodes(input.text as string);
+      if (typeof input.text !== "string") return { error: "text must be a string" };
+      return detectCsiCodes(input.text);
     case "scanYoloClassTexts":
-      return execScanYoloClassTexts(input.yoloClass as string, input.yoloModel as string | undefined, input.pageNumber as number | undefined, ctx);
+      if (typeof input.yoloClass !== "string") return { error: "yoloClass must be a string" };
+      return execScanYoloClassTexts(input.yoloClass, input.yoloModel as string | undefined, typeof input.pageNumber === "number" ? input.pageNumber : undefined, ctx);
     case "mapTagsToPages":
-      return execMapTagsToPages(input.tags as string, input.yoloClass as string | undefined, input.yoloModel as string | undefined, input.pageNumber as number | undefined, ctx);
+      if (typeof input.tags !== "string") return { error: "tags must be a comma-separated string" };
+      return execMapTagsToPages(input.tags, input.yoloClass as string | undefined, input.yoloModel as string | undefined, typeof input.pageNumber === "number" ? input.pageNumber : undefined, ctx);
     case "detectTagPatterns":
       return execDetectTagPatterns(ctx);
     case "getOcrTextInRegion":
-      return execGetOcrTextInRegion(input.pageNumber as number, input as Record<string, number>, ctx);
+      if (typeof input.pageNumber !== "number" || typeof input.minX !== "number") return { error: "pageNumber and bbox coordinates required" };
+      return execGetOcrTextInRegion(input.pageNumber, input as Record<string, number>, ctx);
     // Actions return action descriptors (frontend interprets them)
     case "navigateToPage":
       return { action: "navigate", pageNumber: input.pageNumber };

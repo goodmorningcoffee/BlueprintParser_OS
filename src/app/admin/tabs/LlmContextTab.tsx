@@ -68,16 +68,18 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
   }, []);
 
   const save = async (updated: LlmConfig) => {
-    setConfig(updated);
+    const prev = config;
+    setConfig(updated); // optimistic
     setSaving(true);
     try {
-      await fetch("/api/admin/llm/config", {
+      const res = await fetch("/api/admin/llm/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ llm: updated }),
       });
-    } catch (err) {
-      console.error("[llm-config] Save failed:", err);
+      if (!res.ok) setConfig(prev); // revert on failure
+    } catch {
+      setConfig(prev); // revert on error
     } finally {
       setSaving(false);
     }

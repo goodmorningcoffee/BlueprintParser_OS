@@ -349,7 +349,7 @@ export default function DetectionPanel() {
                 {" "}({tagScanResults.texts.reduce((s, t) => s + t.count, 0)} annotations)
               </div>
               <div className="max-h-48 overflow-y-auto space-y-px">
-                {tagScanResults.texts.map((t) => {
+                {tagScanResults.texts.slice(0, 100).map((t) => {
                   const key = t.text || "__empty__";
                   const checked = scanSelections[key] ?? (t.text !== "");
                   return (
@@ -366,6 +366,9 @@ export default function DetectionPanel() {
                   );
                 })}
               </div>
+              {tagScanResults.texts.length > 100 && (
+                <div className="px-2 py-1 text-[9px] text-[var(--muted)]">Showing 100 of {tagScanResults.texts.length}</div>
+              )}
               <div className="flex gap-1 px-2 py-2 border-t border-amber-500/20">
                 <button
                   onClick={() => {

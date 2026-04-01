@@ -140,9 +140,13 @@ export default function ChatPanel() {
                     if (act.action === "navigate" && act.pageNumber) {
                       store.setPage(act.pageNumber);
                     } else if (act.action === "highlight" && act.bbox) {
-                      // Store highlight for AnnotationOverlay to render
                       store.setPage(act.pageNumber);
-                      // TODO: add llmHighlight state to store for rendering
+                      store.setLlmHighlight({
+                        pageNumber: act.pageNumber,
+                        bbox: act.bbox,
+                        label: act.label,
+                      });
+                      setTimeout(() => useViewerStore.getState().setLlmHighlight(null), 8000);
                     }
                   } else if (parsed.error) {
                     fullContent = `Error: ${parsed.error}`;
