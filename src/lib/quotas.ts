@@ -11,7 +11,8 @@ interface QuotaCheck {
 /**
  * Check if a company has exceeded its daily upload quota.
  */
-export async function checkUploadQuota(companyId: number, role: string = "member"): Promise<QuotaCheck> {
+export async function checkUploadQuota(companyId: number, role: string = "member", isRootAdmin: boolean = false): Promise<QuotaCheck> {
+  if (isRootAdmin) return { allowed: true };
   const DAILY_LIMIT = role === "admin" ? 10 : 3;
   const result = await db.execute(sql`
     SELECT COUNT(*)::int AS cnt FROM projects

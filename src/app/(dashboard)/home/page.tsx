@@ -35,6 +35,7 @@ export default function HomePage() {
   const [csiCodes, setCsiCodes] = useState<Array<{ code: string; description: string; trade: string; division: string; projectCount: number; pageCount: number; projectIds: string[]; projectSheetCounts: Record<string, number> }>>([]);
   const [activeCsiFilter, setActiveCsiFilter] = useState<string | null>(null);
   const [showCsi, setShowCsi] = useState(false);
+  const [companyFilter, setCompanyFilter] = useState<string>("all");
 
   const [chatOpen, setChatOpen] = useState(() => {
     if (typeof window !== "undefined") {
@@ -183,8 +184,12 @@ export default function HomePage() {
 
   // Filter: CSI filter + name/content search
   const hasContentResults = Object.keys(contentMatches).length > 0;
+  const isRootAdmin = (session?.user as any)?.isRootAdmin;
+  const companyNames = [...new Set(projects.map((p) => (p as any).companyName).filter(Boolean))] as string[];
+
   const activeCsi = activeCsiFilter ? csiCodes.find((c) => c.code === activeCsiFilter) : null;
   const filtered = projects.filter((p) => {
+    if (companyFilter !== "all" && (p as any).companyName !== companyFilter) return false;
     if (activeCsi && !activeCsi.projectIds.includes(p.id)) return false;
     if (!search) return true;
     const nameMatch = p.name.toLowerCase().includes(search.toLowerCase());
@@ -235,6 +240,18 @@ export default function HomePage() {
               </div>
             </div>
           </div>
+          {isRootAdmin && companyNames.length > 1 && (
+            <select
+              value={companyFilter}
+              onChange={(e) => setCompanyFilter(e.target.value)}
+              className="text-xs px-2 py-1.5 bg-[var(--surface)] border border-[var(--border)] rounded text-[var(--fg)]"
+            >
+              <option value="all">All Companies ({companyNames.length})</option>
+              {companyNames.sort().map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          )}
           <UploadWidget onUploadComplete={loadProjects} />
         </div>
 

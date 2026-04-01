@@ -12,6 +12,7 @@ declare module "next-auth" {
     username: string;
     role: string;
     canRunModels: boolean;
+    isRootAdmin: boolean;
   }
   interface Session {
     user: DefaultSession["user"] & {
@@ -20,6 +21,7 @@ declare module "next-auth" {
       username: string;
       role: string;
       canRunModels: boolean;
+      isRootAdmin: boolean;
     };
   }
 }
@@ -31,6 +33,7 @@ declare module "@auth/core/jwt" {
     username: string;
     role: string;
     canRunModels: boolean;
+    isRootAdmin: boolean;
   }
 }
 
@@ -121,17 +124,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        // Fetch canRunModels separately — column may not exist if migration pending
+        // Fetch canRunModels + isRootAdmin separately — columns may not exist if migration pending
         let canRunModels = user.role === "admin"; // default: admins can run
+        let isRootAdmin = false;
         try {
           const [perms] = await db
-            .select({ canRunModels: users.canRunModels })
+            .select({ canRunModels: users.canRunModels, isRootAdmin: users.isRootAdmin })
             .from(users)
             .where(eq(users.id, user.id))
             .limit(1);
-          if (perms) canRunModels = perms.canRunModels;
+          if (perms) {
+            canRunModels = perms.canRunModels;
+            isRootAdmin = perms.isRootAdmin;
+          }
         } catch {
-          // Migration 0009 hasn't run yet — use default
+          // Migration hasn't run yet — use defaults
+        }
+
+        // Bootstrap: auto-promote to root admin if email matches env var
+        if (process.env.ROOT_ADMIN_EMAIL && email.toLowerCase() === process.env.ROOT_ADMIN_EMAIL.toLowerCase() && !isRootAdmin) {
+          try {
+            await db.update(users).set({ isRootAdmin: true }).where(eq(users.id, user.id));
+            isRootAdmin = true;
+          } catch { /* migration not run yet */ }
         }
 
         clearFailedLogins(email);
@@ -145,6 +160,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           username: user.username,
           role: user.role,
           canRunModels,
+          isRootAdmin,
         };
       },
     }),
@@ -164,14 +180,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.username = user.username;
         token.role = user.role;
         token.canRunModels = user.canRunModels;
+        token.isRootAdmin = user.isRootAdmin;
       }
-      // Refresh canRunModels from DB on each request (admin may toggle it)
+      // Refresh canRunModels + isRootAdmin from DB on each request (admin may toggle them)
       if (trigger !== "signIn" && token.dbId) {
         try {
-          const [fresh] = await db.select({ canRunModels: users.canRunModels }).from(users).where(eq(users.id, token.dbId)).limit(1);
-          if (fresh) token.canRunModels = fresh.canRunModels;
+          const [fresh] = await db.select({ canRunModels: users.canRunModels, isRootAdmin: users.isRootAdmin }).from(users).where(eq(users.id, token.dbId)).limit(1);
+          if (fresh) {
+            token.canRunModels = fresh.canRunModels;
+            token.isRootAdmin = fresh.isRootAdmin;
+          }
         } catch {
-          // Column may not exist yet if migration 0009 hasn't run
+          // Columns may not exist yet
         }
       }
       return token;
@@ -183,6 +203,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.username = token.username;
         session.user.role = token.role;
         session.user.canRunModels = token.canRunModels;
+        session.user.isRootAdmin = token.isRootAdmin;
       }
       return session;
     },

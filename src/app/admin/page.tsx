@@ -13,6 +13,7 @@ import CsiTab from "./tabs/CsiTab";
 import HeuristicsTab from "./tabs/HeuristicsTab";
 import PageIntelligenceTab from "./tabs/PageIntelligenceTab";
 import UsersTab from "./tabs/UsersTab";
+import CompaniesUsersTab from "./tabs/CompaniesUsersTab";
 import SettingsTab from "./tabs/SettingsTab";
 import PipelineTab from "./tabs/PipelineTab";
 import LlmContextTab from "./tabs/LlmContextTab";
@@ -518,7 +519,7 @@ export default function AdminPage() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get("tab") as AdminTab;
-      if (tab && ["overview", "projects", "ai-models", "text-annotations", "csi", "users", "settings"].includes(tab)) return tab;
+      if (tab && ["overview", "projects", "ai-models", "text-annotations", "csi", "companies", "users", "settings"].includes(tab)) return tab;
     }
     return "overview";
   });
@@ -591,6 +592,7 @@ export default function AdminPage() {
           active={activeTab}
           onChange={handleTabChange}
           badges={unseenInvites > 0 ? { overview: unseenInvites } : undefined}
+          isRootAdmin={(session?.user as any)?.isRootAdmin}
         />
 
         {activeTab === "overview" && (
@@ -683,6 +685,10 @@ export default function AdminPage() {
             reprocessLog={reprocessLog}
             onReprocess={reprocessAll}
           />
+        )}
+
+        {activeTab === "companies" && (session?.user as any)?.isRootAdmin && (
+          <CompaniesUsersTab />
         )}
 
         {activeTab === "users" && (

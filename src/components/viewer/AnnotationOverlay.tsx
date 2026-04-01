@@ -285,12 +285,12 @@ export default function AnnotationOverlay({
       const dimmed = (activeTag && !isTagMatch) || (symbolSearchResults !== null);
 
       if (isTagMatch) {
-        // Bright highlight for active tag instances
+        // Bright magenta fill + tag color stroke for active tag instances
+        ctx.fillStyle = "#ff00ff40"; // magenta at 25% opacity
+        ctx.fillRect(x, y, w, h);
         ctx.strokeStyle = activeTag.color || "#22d3ee";
         ctx.lineWidth = 3;
         ctx.strokeRect(x, y, w, h);
-        ctx.fillStyle = (activeTag.color || "#22d3ee") + "30";
-        ctx.fillRect(x, y, w, h);
       } else {
         ctx.globalAlpha = dimmed ? 0.25 : 1;
         ctx.strokeStyle = color;
@@ -361,11 +361,11 @@ export default function AnnotationOverlay({
         const fy = bMinY * height;
         const fw = (bMaxX - bMinX) * width;
         const fh = (bMaxY - bMinY) * height;
+        ctx.fillStyle = "#ff00ff40"; // magenta fill
+        ctx.fillRect(fx, fy, fw, fh);
         ctx.strokeStyle = activeTag.color || "#22d3ee";
         ctx.lineWidth = 3;
         ctx.strokeRect(fx, fy, fw, fh);
-        ctx.fillStyle = (activeTag.color || "#22d3ee") + "30";
-        ctx.fillRect(fx, fy, fw, fh);
         // Label
         const tagLabel = activeTag.name || activeTag.tagText;
         ctx.font = "bold 11px sans-serif";

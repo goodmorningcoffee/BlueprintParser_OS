@@ -23,11 +23,11 @@ export const LLM_PRESETS: Record<string, ProviderPreset> = {
   anthropic: {
     label: "Anthropic (Claude)",
     models: [
-      { id: "claude-opus-4-6-20250501", label: "Claude Opus 4.6 (most capable, 1M context)" },
-      { id: "claude-sonnet-4-6-20250514", label: "Claude Sonnet 4.6 (fast + capable)" },
+      { id: "claude-opus-4-20250514", label: "Claude Opus 4 (most capable, 200K context)" },
+      { id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4 (fast + capable)" },
       { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (fastest + cheapest)" },
     ],
-    defaultModel: "claude-opus-4-6-20250501",
+    defaultModel: "claude-sonnet-4-20250514",
     needsKey: true,
     needsUrl: false,
     keyPrefix: "sk-ant-",

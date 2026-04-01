@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, pages, processingJobs } from "@/lib/db/schema";
+import { projects, pages, processingJobs, companies } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { processProject } from "@/lib/processing";
 import { getS3Url } from "@/lib/s3";
@@ -106,7 +106,7 @@ export async function GET() {
   const allProjects = await db
     .select()
     .from(projects)
-    .where(eq(projects.companyId, session.user.companyId))
+    .where(session.user.isRootAdmin ? undefined : eq(projects.companyId, session.user.companyId))
     .orderBy(projects.createdAt);
 
   // Get actual page counts from pages table for all projects
@@ -117,6 +117,13 @@ export async function GET() {
       WHERE project_id = ${proj.id}
     `);
     pageCounts[proj.id] = (result.rows[0] as any)?.cnt || 0;
+  }
+
+  // For root admin: fetch company names for grouping
+  let companyNames: Record<number, string> = {};
+  if (session.user.isRootAdmin) {
+    const allCompanies = await db.select({ id: companies.id, name: companies.name }).from(companies);
+    for (const c of allCompanies) companyNames[c.id] = c.name;
   }
 
   return NextResponse.json(
@@ -131,6 +138,8 @@ export async function GET() {
         p.status === "completed" ? getS3Url(p.dataUrl, "thumbnail.png") : null,
       isDemo: p.isDemo,
       createdAt: p.createdAt,
+      companyId: session.user.isRootAdmin ? p.companyId : undefined,
+      companyName: session.user.isRootAdmin ? companyNames[p.companyId] : undefined,
     }))
   );
 }

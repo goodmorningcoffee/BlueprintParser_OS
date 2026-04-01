@@ -1,8 +1,8 @@
 "use client";
 
-export type AdminTab = "overview" | "projects" | "ai-models" | "pipeline" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "users" | "settings";
+export type AdminTab = "overview" | "projects" | "ai-models" | "pipeline" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "companies" | "users" | "settings";
 
-const TABS: { id: AdminTab; label: string }[] = [
+const TABS: { id: AdminTab; label: string; rootOnly?: boolean }[] = [
   { id: "overview", label: "Overview" },
   { id: "projects", label: "Demo Projects" },
   { id: "ai-models", label: "AI Models" },
@@ -12,6 +12,7 @@ const TABS: { id: AdminTab; label: string }[] = [
   { id: "csi", label: "CSI Codes" },
   { id: "heuristics", label: "Heuristics" },
   { id: "page-intelligence", label: "Page Intelligence" },
+  { id: "companies", label: "Companies / Users", rootOnly: true },
   { id: "users", label: "Users" },
   { id: "settings", label: "Settings" },
 ];
@@ -20,12 +21,13 @@ interface AdminTabsProps {
   active: AdminTab;
   onChange: (tab: AdminTab) => void;
   badges?: Partial<Record<AdminTab, number>>;
+  isRootAdmin?: boolean;
 }
 
-export default function AdminTabs({ active, onChange, badges }: AdminTabsProps) {
+export default function AdminTabs({ active, onChange, badges, isRootAdmin }: AdminTabsProps) {
   return (
-    <div className="flex gap-1 border-b border-[var(--border)] mb-6">
-      {TABS.map((tab) => (
+    <div className="flex gap-1 border-b border-[var(--border)] mb-6 overflow-x-auto">
+      {TABS.filter((tab) => !tab.rootOnly || isRootAdmin).map((tab) => (
         <button
           key={tab.id}
           onClick={() => onChange(tab.id)}

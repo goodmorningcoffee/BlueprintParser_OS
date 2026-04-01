@@ -118,7 +118,7 @@ export async function resolveLLMConfig(
     return { provider: "groq", model: "llama-3.3-70b-versatile", apiKey: process.env.GROQ_API_KEY };
   }
   if (process.env.ANTHROPIC_API_KEY) {
-    return { provider: "anthropic", model: "claude-opus-4-6-20250501", apiKey: process.env.ANTHROPIC_API_KEY };
+    return { provider: "anthropic", model: "claude-sonnet-4-20250514", apiKey: process.env.ANTHROPIC_API_KEY };
   }
   if (process.env.OPENAI_API_KEY) {
     return { provider: "openai", model: "gpt-4o-mini", apiKey: process.env.OPENAI_API_KEY };
@@ -139,7 +139,7 @@ function getEnvKey(provider: string): string | undefined {
 function getDefaultModel(provider: string): string {
   switch (provider) {
     case "groq": return "llama-3.3-70b-versatile";
-    case "anthropic": return "claude-opus-4-6-20250501";
+    case "anthropic": return "claude-sonnet-4-20250514";
     case "openai": return "gpt-4o-mini";
     default: return "";
   }

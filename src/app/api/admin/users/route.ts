@@ -1,54 +1,70 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { users } from "@/lib/db/schema";
+import { users, companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
 
-// GET - list all users in admin's company
+// GET - list users (root admin: all companies, regular admin: own company)
 export async function GET() {
   const { session, error } = await requireAdmin();
   if (error) return error;
 
-  // Select core fields first (always available)
+  const isRoot = session.user.isRootAdmin;
+
   const coreUsers = await db
     .select({
       id: users.publicId,
+      dbId: users.id,
       username: users.username,
       email: users.email,
       role: users.role,
+      companyId: users.companyId,
       createdAt: users.createdAt,
     })
     .from(users)
-    .where(eq(users.companyId, session.user.companyId));
+    .where(isRoot ? undefined : eq(users.companyId, session.user.companyId));
 
-  // Try to fetch canRunModels — column may not exist yet
-  let permsMap: Record<string, boolean> = {};
+  // Fetch canRunModels + isRootAdmin
+  let permsMap: Record<number, { canRunModels: boolean; isRootAdmin: boolean }> = {};
   try {
     const perms = await db
-      .select({ id: users.publicId, canRunModels: users.canRunModels })
+      .select({ dbId: users.id, canRunModels: users.canRunModels, isRootAdmin: users.isRootAdmin })
       .from(users)
-      .where(eq(users.companyId, session.user.companyId));
-    for (const p of perms) permsMap[p.id] = p.canRunModels;
+      .where(isRoot ? undefined : eq(users.companyId, session.user.companyId));
+    for (const p of perms) permsMap[p.dbId] = { canRunModels: p.canRunModels, isRootAdmin: p.isRootAdmin };
   } catch {
-    // Migration 0009 hasn't run — default admins to true
-    for (const u of coreUsers) permsMap[u.id] = u.role === "admin";
+    for (const u of coreUsers) permsMap[u.dbId] = { canRunModels: u.role === "admin", isRootAdmin: false };
+  }
+
+  // Fetch company names for root admin
+  let companyMap: Record<number, string> = {};
+  if (isRoot) {
+    const allCompanies = await db.select({ id: companies.id, name: companies.name }).from(companies);
+    for (const c of allCompanies) companyMap[c.id] = c.name;
   }
 
   const allUsers = coreUsers.map((u) => ({
-    ...u,
-    canRunModels: permsMap[u.id] ?? u.role === "admin",
+    id: u.id,
+    username: u.username,
+    email: u.email,
+    role: u.role,
+    companyId: u.companyId,
+    companyName: companyMap[u.companyId] || undefined,
+    canRunModels: permsMap[u.dbId]?.canRunModels ?? u.role === "admin",
+    isRootAdmin: permsMap[u.dbId]?.isRootAdmin ?? false,
+    createdAt: u.createdAt,
   }));
 
   return NextResponse.json(allUsers);
 }
 
-// POST - create new user
+// POST - create new user (root admin can specify companyId)
 export async function POST(req: Request) {
   const { session, error } = await requireAdmin();
   if (error) return error;
 
-  const { username, email, password, role } = await req.json();
+  const { username, email, password, role, companyId } = await req.json();
 
   if (!username || !email || !password) {
     return NextResponse.json({ error: "username, email, password required" }, { status: 400 });
@@ -58,7 +74,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
   }
 
-  // Check email uniqueness
+  // Root admin can create in any company, regular admin only in own company
+  const targetCompanyId = session.user.isRootAdmin && companyId
+    ? companyId
+    : session.user.companyId;
+
   const [existing] = await db
     .select({ id: users.id })
     .from(users)
@@ -72,7 +92,6 @@ export async function POST(req: Request) {
   const passwordHash = await bcrypt.hash(password, 12);
   const isAdmin = role === "admin";
 
-  // Try with canRunModels first, fall back to without if column doesn't exist
   try {
     await db.insert(users).values({
       username,
@@ -80,55 +99,59 @@ export async function POST(req: Request) {
       passwordHash,
       role: isAdmin ? "admin" : "member",
       canRunModels: isAdmin,
-      companyId: session.user.companyId,
+      companyId: targetCompanyId,
     });
   } catch {
-    // canRunModels column may not exist yet — insert without it
     await db.insert(users).values({
       username,
       email,
       passwordHash,
       role: isAdmin ? "admin" : "member",
-      companyId: session.user.companyId,
+      companyId: targetCompanyId,
     } as any);
   }
 
   return NextResponse.json({ success: true });
 }
 
-// PUT - toggle user permissions (canRunModels)
+// PUT - update user permissions, role, or company
 export async function PUT(req: Request) {
   const { session, error } = await requireAdmin();
   if (error) return error;
 
-  const { id, canRunModels } = await req.json();
+  const { id, canRunModels, role, companyId } = await req.json();
 
-  if (!id || typeof canRunModels !== "boolean") {
-    return NextResponse.json({ error: "id and canRunModels required" }, { status: 400 });
+  if (!id) {
+    return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
-  // Ensure user belongs to same company
   const [target] = await db
     .select({ id: users.id, companyId: users.companyId })
     .from(users)
     .where(eq(users.publicId, id))
     .limit(1);
 
-  if (!target || target.companyId !== session.user.companyId) {
+  if (!target) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  try {
-    await db
-      .update(users)
-      .set({ canRunModels, updatedAt: new Date() })
-      .where(eq(users.publicId, id));
-  } catch {
-    // canRunModels column may not exist yet
-    return NextResponse.json({ error: "Migration pending — try again after restart" }, { status: 503 });
+  // Regular admin: can only manage own company users
+  if (!session.user.isRootAdmin && target.companyId !== session.user.companyId) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ success: true, canRunModels });
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (typeof canRunModels === "boolean") updates.canRunModels = canRunModels;
+  if (role && session.user.isRootAdmin) updates.role = role; // Only root admin can change roles
+  if (companyId && session.user.isRootAdmin) updates.companyId = companyId; // Only root admin can move between companies
+
+  try {
+    await db.update(users).set(updates).where(eq(users.publicId, id));
+  } catch {
+    return NextResponse.json({ error: "Update failed" }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
 }
 
 // DELETE - remove a user
@@ -137,28 +160,33 @@ export async function DELETE(req: Request) {
   if (error) return error;
 
   const { id } = await req.json();
-
   if (!id) {
     return NextResponse.json({ error: "User id required" }, { status: 400 });
   }
 
-  // Ensure user belongs to same company
   const [target] = await db
-    .select({ id: users.id, companyId: users.companyId })
+    .select({ id: users.id, companyId: users.companyId, isRootAdmin: users.isRootAdmin })
     .from(users)
     .where(eq(users.publicId, id))
     .limit(1);
 
-  if (!target || target.companyId !== session.user.companyId) {
+  if (!target) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  // Prevent self-deletion
+  // Regular admin: can only delete own company users
+  if (!session.user.isRootAdmin && target.companyId !== session.user.companyId) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+
+  // Prevent self-deletion and root admin deletion
   if (target.id === session.user.dbId) {
     return NextResponse.json({ error: "Cannot delete yourself" }, { status: 400 });
   }
+  if (target.isRootAdmin) {
+    return NextResponse.json({ error: "Cannot delete root admin" }, { status: 400 });
+  }
 
   await db.delete(users).where(eq(users.publicId, id));
-
   return NextResponse.json({ success: true });
 }
