@@ -12,6 +12,7 @@ interface LlmConfig {
   customContextWindow?: number;
   budgetOverrides?: Record<string, number>;
   toolUse?: boolean;
+  domainKnowledge?: string;
   sectionConfig?: {
     disabledSections?: string[];
     priorityOverrides?: Record<string, number>;
@@ -44,8 +45,9 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
   const [config, setConfig] = useState<LlmConfig>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activePanel, setActivePanel] = useState<"budget" | "prompt" | "sections" | "preview">("sections");
+  const [activePanel, setActivePanel] = useState<"budget" | "prompt" | "sections" | "preview" | "domain">("sections");
   const [sortBy, setSortBy] = useState<"default" | "priority-asc" | "priority-desc" | "pct-asc" | "pct-desc">("default");
+  const [defaultDomainKnowledge, setDefaultDomainKnowledge] = useState("");
 
   // Preview state
   const [previewProject, setPreviewProject] = useState("");
@@ -56,8 +58,12 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
 
   useEffect(() => {
     fetch("/api/admin/llm/config")
-      .then((r) => r.ok ? r.json() : { llm: {} })
-      .then((data) => { setConfig(data.llm || {}); setLoading(false); })
+      .then((r) => r.ok ? r.json() : { llm: {}, defaultDomainKnowledge: "" })
+      .then((data) => {
+        setConfig(data.llm || {});
+        setDefaultDomainKnowledge(data.defaultDomainKnowledge || "");
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, []);
 
@@ -136,6 +142,7 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
         {[
           { id: "sections" as const, label: "Context Sections" },
           { id: "prompt" as const, label: "System Prompt" },
+          { id: "domain" as const, label: "Domain Knowledge" },
           { id: "budget" as const, label: "Budget" },
           { id: "preview" as const, label: "Preview" },
         ].map((tab) => (
@@ -337,6 +344,43 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
           >
             Reset to Default
           </button>
+        </div>
+      )}
+
+      {/* ─── Panel: Domain Knowledge ─── */}
+      {activePanel === "domain" && (
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold">Domain Knowledge</h3>
+            <p className="text-xs text-[var(--muted)]">
+              Construction domain reference injected into the LLM system prompt when Tool Use is ON.
+              Teaches the AI about drawing conventions, YOLO classes, CSI divisions, heuristic patterns, and how to interpret blueprint data.
+              Edit to add your company&apos;s specific conventions.
+            </p>
+          </div>
+
+          <textarea
+            value={config.domainKnowledge || defaultDomainKnowledge}
+            onChange={(e) => save({ ...config, domainKnowledge: e.target.value })}
+            rows={24}
+            className="w-full text-xs bg-[var(--bg)] border border-[var(--border)] rounded p-3 text-[var(--fg)] font-mono outline-none focus:border-[var(--accent)]/50 resize-y leading-relaxed"
+          />
+
+          <div className="flex items-center gap-2">
+            {config.domainKnowledge && (
+              <button
+                onClick={() => save({ ...config, domainKnowledge: undefined })}
+                className="text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+              >
+                Reset to Built-in Default
+              </button>
+            )}
+            <span className="text-[10px] text-[var(--muted)]">
+              {config.domainKnowledge
+                ? `Custom (${config.domainKnowledge.length} chars) — editing will save to your company config`
+                : `Showing built-in default (${defaultDomainKnowledge.length} chars) — edit to customize`}
+            </span>
+          </div>
         </div>
       )}
 

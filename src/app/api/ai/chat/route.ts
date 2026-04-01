@@ -516,7 +516,25 @@ async function handleToolUseChat(
     pageNumber,
   };
 
-  // Lightweight system prompt — just project overview, tools handle the rest
+  // Load domain knowledge: custom from company config, or default from file
+  let domainKnowledge = "";
+  try {
+    const [companyDk] = await db
+      .select({ pipelineConfig: companies.pipelineConfig })
+      .from(companies)
+      .where(eq(companies.id, session?.user?.companyId || project.companyId))
+      .limit(1);
+    const customDk = (companyDk?.pipelineConfig as any)?.llm?.domainKnowledge;
+    if (customDk) {
+      domainKnowledge = customDk;
+    } else {
+      const { readFile } = await import("fs/promises");
+      const { join } = await import("path");
+      domainKnowledge = await readFile(join(process.cwd(), "src/data/domain-knowledge.md"), "utf-8").catch(() => "");
+    }
+  } catch { /* use empty */ }
+
+  // Lightweight system prompt — project context + domain knowledge, tools handle the data
   const systemPrompt = `You are an expert construction blueprint analyst with access to tools that query blueprint data.
 
 PROJECT: "${project.name}" (${project.numPages} pages, status: ${project.status})
@@ -527,7 +545,8 @@ IMPORTANT RULES:
 - ONLY reference data returned by your tools. Never invent page numbers, counts, or details.
 - Use navigateToPage and highlightRegion to SHOW the user what you're talking about.
 - When citing counts or locations, be specific — give exact page numbers and coordinates.
-- Keep tool calls focused — don't fetch data you won't use.`;
+- Keep tool calls focused — don't fetch data you won't use.
+${domainKnowledge ? `\n--- DOMAIN KNOWLEDGE ---\n${domainKnowledge}` : ""}`;
 
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },

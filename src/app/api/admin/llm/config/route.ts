@@ -19,7 +19,16 @@ export async function GET() {
     .limit(1);
 
   const config = (company?.pipelineConfig as Record<string, unknown>) || {};
-  return NextResponse.json({ llm: config.llm || {} });
+
+  // Include default domain knowledge so admin editor can show it
+  let defaultDomainKnowledge = "";
+  try {
+    const { readFile } = await import("fs/promises");
+    const { join } = await import("path");
+    defaultDomainKnowledge = await readFile(join(process.cwd(), "src/data/domain-knowledge.md"), "utf-8");
+  } catch { /* file not found in production — try dist path */ }
+
+  return NextResponse.json({ llm: config.llm || {}, defaultDomainKnowledge });
 }
 
 /**

@@ -584,17 +584,18 @@ async function execGetSpatialContext(pageNumber: number, ctx: ToolContext) {
 
   if (spatialAnns.length === 0) return { note: "No spatial YOLO regions on this page (title blocks, grids, etc.). Try getPageOcrText instead." };
 
-  const regions = mapWordsToRegions(textractData.words, spatialAnns.map((a) => ({
-    className: a.name,
-    displayName: a.name,
-    bbox: [a.minX, a.minY, a.maxX, a.maxY] as [number, number, number, number],
+  const result = mapWordsToRegions(textractData, spatialAnns.map((a) => ({
+    name: a.name,
+    minX: a.minX,
+    minY: a.minY,
+    maxX: a.maxX,
+    maxY: a.maxY,
     confidence: (a.data as any)?.confidence || 0,
-    text: "",
   })));
 
   return {
-    regions: regions.regions.map((r) => ({ name: r.className, text: r.text.substring(0, 2000) })),
-    unmappedTextPreview: regions.unmappedText.substring(0, 1000),
+    regions: result.regions.map((r) => ({ name: r.className, text: r.text.substring(0, 2000) })),
+    unmappedTextPreview: result.unmappedText.substring(0, 1000),
   };
 }
 
