@@ -134,33 +134,47 @@ cv2.imwrite(cfg["dst"], crop)
       JSON.stringify({ src: sourcePagePath, dst: templatePath, x: cropX, y: cropY, w: cropW, h: cropH }),
     ], { timeout: 10000 });
 
-    // ─── Rasterize all target pages ──────────────────────────
-    // Try to use existing page images from S3 first, fall back to rasterization
+    // ─── Load all target pages (parallel, 4 at a time) ───────
+    // Try S3 pre-rendered PNGs first, fall back to rasterization from PDF
     const targetPaths: string[] = [];
     const pageMap: number[] = []; // index -> pageNumber
 
-    for (const pageNum of pageNumbers) {
-      const s3Key = `${project.dataUrl}/pages/page_${String(pageNum).padStart(4, "0")}.png`;
-      let pngBuffer: Buffer | null = null;
+    const CONCURRENCY = 4;
+    const pageResults = await (async () => {
+      const results: { pageNum: number; path: string }[] = [];
+      let idx = 0;
+      async function worker() {
+        while (idx < pageNumbers.length) {
+          const i = idx++;
+          const pageNum = pageNumbers[i];
+          const s3Key = `${project.dataUrl}/pages/page_${String(pageNum).padStart(4, "0")}.png`;
+          let pngBuffer: Buffer | null = null;
 
-      try {
-        pngBuffer = await downloadFromS3(s3Key);
-      } catch {
-        // No pre-rendered image in S3 — rasterize from PDF
-        try {
-          pngBuffer = await rasterizePage(pdfBuffer, pageNum, 200);
-        } catch (err) {
-          console.error(`[SYMBOL_SEARCH] Failed to rasterize page ${pageNum}:`, err);
-          continue;
+          try {
+            pngBuffer = await downloadFromS3(s3Key);
+          } catch {
+            try {
+              pngBuffer = await rasterizePage(pdfBuffer, pageNum, 200);
+            } catch (err) {
+              console.error(`[SYMBOL_SEARCH] Failed to load page ${pageNum}:`, err);
+              continue;
+            }
+          }
+
+          if (pngBuffer) {
+            const targetPath = join(tempDir, `target_${String(pageNum).padStart(4, "0")}.png`);
+            await writeFile(targetPath, pngBuffer);
+            results.push({ pageNum, path: targetPath });
+          }
         }
       }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pageNumbers.length) }, () => worker()));
+      return results.sort((a, b) => a.pageNum - b.pageNum);
+    })();
 
-      if (pngBuffer) {
-        const targetPath = join(tempDir, `target_${String(pageNum).padStart(4, "0")}.png`);
-        await writeFile(targetPath, pngBuffer);
-        targetPaths.push(targetPath);
-        pageMap.push(pageNum);
-      }
+    for (const r of pageResults) {
+      targetPaths.push(r.path);
+      pageMap.push(r.pageNum);
     }
 
     if (targetPaths.length === 0) {

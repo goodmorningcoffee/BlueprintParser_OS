@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -13,7 +13,9 @@ import type { TextractPageData } from "@/types";
  * Used by guided parse flow — user can edit boundaries before parsing.
  */
 export async function POST(req: Request) {
-  // Auth handled at project level — demo projects allowed without session
+  const { session, error } = await requireAuth();
+  if (error) return error;
+
   try {
     const body = await req.json();
     const { projectId, pageNumber, regionBbox, layoutHint, gridOptions } = body as {
@@ -34,13 +36,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid regionBbox" }, { status: 400 });
     }
 
+    // Verify project belongs to user's company
+    const [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.companyId, session.user.companyId)))
+      .limit(1);
+    if (!project) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    }
+
     // Fetch page OCR data
     const [pageRow] = await db
       .select({ textractData: pages.textractData })
       .from(pages)
       .where(
         and(
-          eq(pages.projectId, projectId),
+          eq(pages.projectId, project.id),
           eq(pages.pageNumber, pageNumber),
         ),
       )

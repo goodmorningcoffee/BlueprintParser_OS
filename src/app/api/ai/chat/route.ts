@@ -24,8 +24,10 @@ import {
   type ContextSection,
   type LlmSectionConfig,
 } from "@/lib/context-builder";
-import type { ChatMessage } from "@/lib/llm/types";
+import type { ChatMessage, ToolStreamEvent } from "@/lib/llm/types";
 import type { TextractPageData } from "@/types";
+import { BP_TOOLS, executeToolCall, type ToolContext } from "@/lib/llm/tools";
+import { createLLMClient } from "@/lib/llm";
 
 
 export async function POST(req: Request) {
@@ -147,6 +149,24 @@ export async function POST(req: Request) {
     );
   }
   const contextBudget = getContextBudget(config.provider, config.model);
+
+  // ─── Check if tool use is enabled ─────────────────────────
+  let toolUseEnabled = false;
+  try {
+    const [companyRow] = await db
+      .select({ pipelineConfig: companies.pipelineConfig })
+      .from(companies)
+      .where(eq(companies.id, session?.user?.companyId || project.companyId))
+      .limit(1);
+    toolUseEnabled = !!(companyRow?.pipelineConfig as any)?.llm?.toolUse;
+  } catch { /* ignore */ }
+
+  // Tool use only works with providers that support it (Anthropic, OpenAI)
+  const providerSupportsTools = config.provider === "anthropic" || config.provider === "openai";
+
+  if (toolUseEnabled && providerSupportsTools && scope !== "global") {
+    return handleToolUseChat(config, project, message, scope, pageNumber, session, isDemo, history);
+  }
 
   // ─── Build context sections with priority ordering ─────────
   const sections: ContextSection[] = [];
@@ -473,6 +493,132 @@ export async function POST(req: Request) {
     scope === "page" ? pageNumber : null,
     session?.user?.dbId || null
   );
+}
+
+/**
+ * Tool-use chat handler: lightweight system prompt + tool loop.
+ * LLM decides what data it needs and calls tools to get it.
+ */
+async function handleToolUseChat(
+  config: any,
+  project: any,
+  message: string,
+  scope: string,
+  pageNumber: number | undefined,
+  session: any,
+  isDemo: boolean,
+  history: any[],
+) {
+  const toolCtx: ToolContext = {
+    projectId: project.id,
+    publicId: project.publicId,
+    companyId: project.companyId,
+    pageNumber,
+  };
+
+  // Lightweight system prompt — just project overview, tools handle the rest
+  const systemPrompt = `You are an expert construction blueprint analyst with access to tools that query blueprint data.
+
+PROJECT: "${project.name}" (${project.numPages} pages, status: ${project.status})
+${scope === "page" && pageNumber ? `CURRENT PAGE: ${pageNumber}` : "SCOPE: Full project"}
+
+IMPORTANT RULES:
+- Call getProjectOverview FIRST to understand the project structure before answering.
+- ONLY reference data returned by your tools. Never invent page numbers, counts, or details.
+- Use navigateToPage and highlightRegion to SHOW the user what you're talking about.
+- When citing counts or locations, be specific — give exact page numbers and coordinates.
+- Keep tool calls focused — don't fetch data you won't use.`;
+
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemPrompt },
+  ];
+
+  // Add chat history (DB returns newest-first, reverse to chronological)
+  for (const msg of [...history].reverse()) {
+    messages.push({ role: msg.role as "user" | "assistant", content: msg.content });
+  }
+  messages.push({ role: "user", content: message });
+
+  // Save user message
+  await db.insert(chatMessages).values({
+    projectId: project.id,
+    pageNumber: scope === "page" ? pageNumber : null,
+    role: "user",
+    content: message,
+    model: `${config.provider}/${config.model}`,
+    userId: session?.user?.dbId || null,
+  });
+
+  // Create LLM client
+  const client = createLLMClient(config.provider, config.apiKey, config.baseUrl);
+  if (!client.streamChatWithTools) {
+    // Fallback: provider loaded but doesn't support tools
+    return NextResponse.json({ error: "Provider does not support tool use" }, { status: 400 });
+  }
+
+  // Stream tool use events as SSE
+  const encoder = new TextEncoder();
+  let fullResponse = "";
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        const events = client.streamChatWithTools!({
+          model: config.model,
+          messages,
+          tools: BP_TOOLS,
+          executeToolCall: (name, input) => executeToolCall(name, input, toolCtx),
+          maxToolRounds: 10,
+          temperature: config.temperature,
+          maxTokens: config.maxTokens ?? 4096,
+        });
+
+        for await (const event of events) {
+          if (event.type === "text_delta") {
+            fullResponse += event.text;
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: event.text })}\n\n`));
+          } else if (event.type === "tool_call_start") {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ tool_call: event.name, status: "start" })}\n\n`));
+          } else if (event.type === "tool_call_result") {
+            // Check for action results (navigate, highlight, createMarkup)
+            try {
+              const result = JSON.parse(event.result);
+              if (result.action) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ action: result })}\n\n`));
+              }
+            } catch { /* not JSON or no action */ }
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ tool_call: event.name, status: "done" })}\n\n`));
+          } else if (event.type === "done") {
+            controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Tool use failed";
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`));
+      } finally {
+        // Save assistant response to DB
+        if (fullResponse) {
+          await db.insert(chatMessages).values({
+            projectId: project.id,
+            pageNumber: scope === "page" ? pageNumber : null,
+            role: "assistant",
+            content: fullResponse,
+            model: `${config.provider}/${config.model}`,
+            userId: null,
+          }).catch(() => {});
+        }
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
 
 /**

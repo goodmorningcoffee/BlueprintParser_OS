@@ -201,6 +201,83 @@ export function getOcrTextInAnnotation(
     .trim();
 }
 
+/**
+ * Scan all annotations of a given class and extract OCR text inside each bbox.
+ * Groups by unique text → returns sorted list of { text, count, pages, instances }.
+ * Used by the class-scan "Create Tag" flow.
+ */
+export interface ClassScanResult {
+  text: string;
+  count: number;
+  pages: number[];
+  instances: YoloTagInstance[];
+}
+
+export function scanClassForTexts(
+  yoloClass: string,
+  yoloModel: string | undefined,
+  annotations: ClientAnnotation[],
+  textractData: Record<number, TextractPageData>,
+): ClassScanResult[] {
+  // Filter annotations by class + model
+  const filtered = annotations.filter((a) => {
+    if (a.source !== "yolo") return false;
+    if (a.name !== yoloClass) return false;
+    if (yoloModel && (a.data as any)?.modelName !== yoloModel) return false;
+    return true;
+  });
+
+  // For each annotation, extract OCR text inside bbox
+  const textMap = new Map<string, { instances: YoloTagInstance[]; pages: Set<number> }>();
+
+  for (const ann of filtered) {
+    const words = textractData[ann.pageNumber]?.words;
+    if (!words || words.length === 0) {
+      // No OCR data — group under empty text
+      const key = "";
+      if (!textMap.has(key)) textMap.set(key, { instances: [], pages: new Set() });
+      const entry = textMap.get(key)!;
+      entry.instances.push({ pageNumber: ann.pageNumber, annotationId: ann.id, bbox: ann.bbox, confidence: 1.0 });
+      entry.pages.add(ann.pageNumber);
+      continue;
+    }
+
+    const annBbox: BboxMinMax = [ann.bbox[0], ann.bbox[1], ann.bbox[2], ann.bbox[3]];
+
+    const insideWords = words.filter((w) => {
+      const center = bboxCenterLTWH(w.bbox);
+      return bboxContainsPoint(annBbox, center);
+    });
+
+    const text = insideWords
+      .sort((a, b) => a.bbox[0] - b.bbox[0])
+      .map((w) => w.text)
+      .join(" ")
+      .trim();
+
+    const key = text.toUpperCase();
+    if (!textMap.has(key)) textMap.set(key, { instances: [], pages: new Set() });
+    const entry = textMap.get(key)!;
+    entry.instances.push({ pageNumber: ann.pageNumber, annotationId: ann.id, bbox: ann.bbox, confidence: 1.0 });
+    entry.pages.add(ann.pageNumber);
+  }
+
+  // Convert to sorted array (most instances first, empty text last)
+  return [...textMap.entries()]
+    .map(([text, data]) => ({
+      text: text || "",
+      count: data.instances.length,
+      pages: [...data.pages].sort((a, b) => a - b),
+      instances: data.instances,
+    }))
+    .sort((a, b) => {
+      // Empty text goes last
+      if (!a.text && b.text) return 1;
+      if (a.text && !b.text) return -1;
+      return b.count - a.count;
+    });
+}
+
 /** Simple Levenshtein edit distance. */
 function editDistance(a: string, b: string): number {
   if (a === b) return 0;

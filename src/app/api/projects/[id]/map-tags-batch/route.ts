@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { mapYoloToOcrText } from "@/lib/yolo-tag-engine";
+import { mapYoloToOcrText, scanClassForTexts } from "@/lib/yolo-tag-engine";
 import type { ClientAnnotation, TextractPageData, YoloTagInstance } from "@/types";
 
 /**
@@ -23,19 +23,26 @@ export async function POST(
   const { id } = await params;
 
   const body = await req.json();
-  const { tags, yoloClass, yoloModel, selectedPages } = body as {
-    tags: string[];
+  const { action, tags, yoloClass, yoloModel, selectedPages } = body as {
+    action?: "map" | "scanClass";
+    tags?: string[];
     yoloClass?: string;
     yoloModel?: string;
     selectedPages?: number[];
   };
 
-  if (!tags || !Array.isArray(tags) || tags.length === 0) {
-    return NextResponse.json({ error: "tags array required" }, { status: 400 });
+  // Validate based on action
+  const isScan = action === "scanClass";
+  if (!isScan) {
+    if (!tags || !Array.isArray(tags) || tags.length === 0) {
+      return NextResponse.json({ error: "tags array required" }, { status: 400 });
+    }
+    if (tags.length > 500) {
+      return NextResponse.json({ error: "Max 500 tags per batch" }, { status: 400 });
+    }
   }
-
-  if (tags.length > 500) {
-    return NextResponse.json({ error: "Max 500 tags per batch" }, { status: 400 });
+  if (isScan && !yoloClass) {
+    return NextResponse.json({ error: "yoloClass required for scanClass" }, { status: 400 });
   }
 
   // Auth: check session for real projects, allow demo projects without auth
@@ -101,15 +108,20 @@ export async function POST(
     }
   }
 
-  // Page filter set (if provided)
+  // ─── scanClass mode: find all unique texts inside annotations of a class ───
+  if (isScan) {
+    const scanResults = scanClassForTexts(yoloClass!, yoloModel, clientAnnotations, textractMap);
+    return NextResponse.json({ texts: scanResults });
+  }
+
+  // ─── map mode (default): map specific tag texts to instances ───
   const pageFilter = selectedPages && selectedPages.length > 0
     ? new Set(selectedPages)
     : null;
 
-  // Map all tags
   const results: Record<string, YoloTagInstance[]> = {};
 
-  for (const tag of tags) {
+  for (const tag of tags!) {
     const trimmed = tag.trim();
     if (!trimmed) continue;
 
@@ -122,7 +134,6 @@ export async function POST(
       textractData: textractMap,
     });
 
-    // Filter to selected pages
     if (pageFilter) {
       instances = instances.filter((inst) => pageFilter.has(inst.pageNumber));
     }

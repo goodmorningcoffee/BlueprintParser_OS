@@ -45,7 +45,7 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Fetch page data for the requested range
+  // Fetch all page data in a single query (migration safety no longer needed — all migrations have run)
   const pageRows = await db
     .select({
       pageNumber: pages.pageNumber,
@@ -53,6 +53,8 @@ export async function GET(
       drawingNumber: pages.drawingNumber,
       keynotes: pages.keynotes,
       csiCodes: pages.csiCodes,
+      textAnnotations: pages.textAnnotations,
+      pageIntelligence: pages.pageIntelligence,
     })
     .from(pages)
     .where(
@@ -63,42 +65,6 @@ export async function GET(
       )
     )
     .orderBy(pages.pageNumber);
-
-  // Fetch textAnnotations separately (migration safety)
-  let textAnnotationsMap: Record<number, unknown> = {};
-  try {
-    const taRows = await db
-      .select({ pageNumber: pages.pageNumber, textAnnotations: pages.textAnnotations })
-      .from(pages)
-      .where(
-        and(
-          eq(pages.projectId, project.id),
-          gte(pages.pageNumber, from),
-          lte(pages.pageNumber, to)
-        )
-      );
-    for (const r of taRows) {
-      if (r.textAnnotations) textAnnotationsMap[r.pageNumber] = r.textAnnotations;
-    }
-  } catch { /* migration 0010 hasn't run */ }
-
-  // Fetch pageIntelligence separately (migration safety)
-  let pageIntelligenceMap: Record<number, unknown> = {};
-  try {
-    const piRows = await db
-      .select({ pageNumber: pages.pageNumber, pageIntelligence: pages.pageIntelligence })
-      .from(pages)
-      .where(
-        and(
-          eq(pages.projectId, project.id),
-          gte(pages.pageNumber, from),
-          lte(pages.pageNumber, to)
-        )
-      );
-    for (const r of piRows) {
-      if (r.pageIntelligence) pageIntelligenceMap[r.pageNumber] = r.pageIntelligence;
-    }
-  } catch { /* migration 0012 hasn't run */ }
 
   // Fetch annotations for pages in range
   const rangeAnnotations = await db
@@ -121,8 +87,8 @@ export async function GET(
       drawingNumber: p.drawingNumber,
       keynotes: p.keynotes,
       csiCodes: p.csiCodes,
-      textAnnotations: textAnnotationsMap[p.pageNumber] || null,
-      pageIntelligence: pageIntelligenceMap[p.pageNumber] || null,
+      textAnnotations: p.textAnnotations || null,
+      pageIntelligence: p.pageIntelligence || null,
     })),
     annotations: rangeAnnotations.map((a) => ({
       id: a.id,

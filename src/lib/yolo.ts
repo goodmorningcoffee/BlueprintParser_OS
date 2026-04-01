@@ -17,11 +17,11 @@ const sagemakerClient = new SageMakerClient({
 
 const ECR_IMAGE =
   process.env.YOLO_ECR_IMAGE ||
-  `${process.env.AWS_ACCOUNT || "100328509916"}.dkr.ecr.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/beaver-yolo-pipeline:latest`;
+  `${process.env.AWS_ACCOUNT}.dkr.ecr.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/beaver-yolo-pipeline:latest`;
 
 const SAGEMAKER_ROLE =
   process.env.SAGEMAKER_ROLE_ARN ||
-  `arn:aws:iam::${process.env.AWS_ACCOUNT || "100328509916"}:role/beaver-sagemaker-role`;
+  `arn:aws:iam::${process.env.AWS_ACCOUNT}:role/beaver-sagemaker-role`;
 
 /**
  * Start a SageMaker processing job for YOLO inference.

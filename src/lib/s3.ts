@@ -64,7 +64,8 @@ export async function downloadFromS3(key: string): Promise<Buffer> {
 export async function uploadToS3(
   key: string,
   body: Buffer,
-  contentType: string
+  contentType: string,
+  cacheControl?: string,
 ): Promise<void> {
   await s3Client.send(
     new PutObjectCommand({
@@ -72,6 +73,7 @@ export async function uploadToS3(
       Key: key,
       Body: body,
       ContentType: contentType,
+      CacheControl: cacheControl || "public, max-age=86400",
     })
   );
 }
@@ -137,6 +139,33 @@ export async function deleteFromS3(key: string): Promise<void> {
       Delete: { Objects: [{ Key: key }] },
     })
   );
+}
+
+/**
+ * Warm CloudFront edge cache by issuing HEAD requests for all project assets.
+ * Runs server-side from ECS (same AWS region as S3) so origin fetch is fast.
+ * Skips silently if CLOUDFRONT_DOMAIN is not configured.
+ */
+export async function warmCloudFrontCache(
+  projectPath: string,
+  numPages: number,
+): Promise<void> {
+  const cfDomain = process.env.CLOUDFRONT_DOMAIN;
+  if (!cfDomain) return;
+
+  const urls: string[] = [];
+  for (let i = 1; i <= numPages; i++) {
+    const key = String(i).padStart(4, "0");
+    urls.push(`https://${cfDomain}/${projectPath}/pages/page_${key}.png`);
+    urls.push(`https://${cfDomain}/${projectPath}/thumbnails/page_${key}.png`);
+  }
+
+  const BATCH = 20;
+  for (let i = 0; i < urls.length; i += BATCH) {
+    await Promise.allSettled(
+      urls.slice(i, i + BATCH).map((url) => fetch(url, { method: "HEAD" }).catch(() => {})),
+    );
+  }
 }
 
 export { s3Client, S3_BUCKET };

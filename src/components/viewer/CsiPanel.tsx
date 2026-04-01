@@ -106,7 +106,7 @@ export default function CsiPanel() {
   }
 
   return (
-    <div className="w-72 flex flex-col h-full border-l border-[var(--border)] bg-[var(--bg)]">
+    <div className="w-72 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
         <h3 className="text-sm font-semibold text-[var(--fg)]">CSI Codes</h3>

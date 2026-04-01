@@ -64,7 +64,7 @@ export default function TakeoffPanel() {
   }
 
   return (
-    <div className="w-80 shrink-0 border-l border-[var(--border)] flex flex-col" style={{ backgroundColor: "var(--surface)" }}>
+    <div className="w-80 shrink-0 border border-[var(--border)] bg-[var(--surface)] flex flex-col shadow-lg">
       <div className="p-3 border-b border-[var(--border)] flex items-center justify-between">
         <span className="text-sm font-medium">Quantity Takeoff</span>
         <button onClick={exportCSV} className="text-xs px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]" title="Export CSV">CSV</button>

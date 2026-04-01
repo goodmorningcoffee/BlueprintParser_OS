@@ -18,6 +18,12 @@ import type {
   ProjectSummaries,
 } from "@/types";
 
+interface TagScanResults {
+  yoloClass: string;
+  yoloModel: string;
+  texts: { text: string; count: number; pages: number[]; instances: { pageNumber: number; annotationId: number; bbox: [number, number, number, number]; confidence: number }[] }[];
+}
+
 interface ViewerState {
   // ─── Page navigation ─────────────────────────────────────
   pageNumber: number;
@@ -153,6 +159,8 @@ interface ViewerState {
   initDetectionModels: (modelNames: string[]) => void;
   hiddenAnnotationIds: Set<number>;
   toggleAnnotationVisibility: (id: number) => void;
+  hiddenClasses: Record<string, boolean>; // "model:class" -> false means hidden
+  toggleClassVisibility: (model: string, cls: string) => void;
 
   // ─── Help tips ─────────────────────────────────────────
   showTips: boolean;
@@ -287,6 +295,12 @@ interface ViewerState {
   setYoloTagFilter: (id: string | null) => void;
   yoloTagPickingMode: boolean;
   setYoloTagPickingMode: (v: boolean) => void;
+  // Class-scan flow: scan results pending user selection
+  tagScanResults: TagScanResults | null;
+  setTagScanResults: (r: TagScanResults | null) => void;
+  // Add-instance mode: draw BB to add to a specific tag
+  tagAddingMode: string | null; // tagId when active
+  setTagAddingMode: (tagId: string | null) => void;
 
   // ─── Parsed Region Visibility ──────────────────────────
   showParsedRegions: boolean;
@@ -505,6 +519,13 @@ export const useViewerStore = create<ViewerState>((set) => ({
       if (next.has(id)) next.delete(id); else next.add(id);
       return { hiddenAnnotationIds: next };
     }),
+  hiddenClasses: {},
+  toggleClassVisibility: (model, cls) =>
+    set((s) => {
+      const key = `${model}:${cls}`;
+      const current = s.hiddenClasses[key] !== false; // default visible
+      return { hiddenClasses: { ...s.hiddenClasses, [key]: !current } };
+    }),
 
   showTips: true,
   toggleTips: () => set((s) => ({ showTips: !s.showTips })),
@@ -696,6 +717,10 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setYoloTagFilter: (activeYoloTagFilter) => set({ activeYoloTagFilter }),
   yoloTagPickingMode: false,
   setYoloTagPickingMode: (yoloTagPickingMode) => set({ yoloTagPickingMode }),
+  tagScanResults: null,
+  setTagScanResults: (tagScanResults) => set({ tagScanResults }),
+  tagAddingMode: null,
+  setTagAddingMode: (tagAddingMode) => set({ tagAddingMode }),
 
   showParsedRegions: true,
   toggleParsedRegions: () => set((s) => ({ showParsedRegions: !s.showParsedRegions })),
@@ -853,6 +878,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
       yoloTagVisibility: {},
       activeYoloTagFilter: null,
       yoloTagPickingMode: false,
+      tagScanResults: null,
+      tagAddingMode: null,
       symbolSearchActive: false,
       symbolSearchLoading: false,
       symbolSearchProgress: null,
@@ -1082,6 +1109,8 @@ export const useDetection = () =>
     setSearch: s.setSearch,
     hiddenAnnotationIds: s.hiddenAnnotationIds,
     toggleAnnotationVisibility: s.toggleAnnotationVisibility,
+    hiddenClasses: s.hiddenClasses,
+    toggleClassVisibility: s.toggleClassVisibility,
   })));
 
 /** YOLO tag CRUD + visibility state */
@@ -1097,6 +1126,10 @@ export const useYoloTags = () =>
     updateYoloTag: s.updateYoloTag,
     yoloTagPickingMode: s.yoloTagPickingMode,
     setYoloTagPickingMode: s.setYoloTagPickingMode,
+    tagScanResults: s.tagScanResults,
+    setTagScanResults: s.setTagScanResults,
+    tagAddingMode: s.tagAddingMode,
+    setTagAddingMode: s.setTagAddingMode,
   })));
 
 /** Text annotation visibility + styling controls */

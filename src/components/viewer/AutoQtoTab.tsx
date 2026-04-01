@@ -214,152 +214,175 @@ export default function AutoQtoTab() {
           </button>
         </div>
 
-        {/* Step 2: Select Schedule */}
+        {/* Step 2: Find & Parse Schedule */}
         {activeQtoWorkflow.step === "select-schedule" && (
           <div className="px-3 py-3 space-y-3">
-            <div className="text-[11px] text-[var(--fg)] font-medium">Select {activeQtoWorkflow.materialLabel} Schedule</div>
+            <div className="text-[11px] text-[var(--fg)] font-medium">
+              Step 1: Find & Parse {activeQtoWorkflow.materialLabel} Schedule
+            </div>
+            <div className="text-[10px] text-[var(--muted)]">
+              Navigate to the page with your {(activeQtoWorkflow.materialLabel || activeQtoWorkflow.materialType).toLowerCase()} schedule, then parse it using Table Parse or Guided Parse. It will appear below automatically.
+            </div>
 
-            {/* Check for already-parsed schedules matching this material */}
+            {/* Suggested pages from heuristic detection */}
             {(() => {
-              const materialKey = activeQtoWorkflow.materialType.toLowerCase();
-              const matching = parsedSchedules.filter((s) =>
-                s.name.toLowerCase().includes(materialKey) ||
-                s.category.toLowerCase().includes(materialKey)
-              );
-
-              if (matching.length > 0) {
-                return (
-                  <div className="space-y-1.5">
-                    <div className="text-[10px] text-[var(--muted)]">Found parsed schedules:</div>
-                    {matching.map((s, i) => (
-                      <button
-                        key={i}
-                        onClick={async () => {
-                          let headers: string[] = [];
-                          let rows: Record<string, string>[] = [];
-                          let tagColumn = "";
-
-                          if (s.region?.data) {
-                            // Local data available (from pageIntelligence)
-                            headers = s.region.data.headers || [];
-                            rows = s.region.data.rows || [];
-                            tagColumn = s.region.data.tagColumn || headers[0] || "";
-                          } else {
-                            // Summaries path: region is null, need to fetch page data
-                            const localIntel = useViewerStore.getState().pageIntelligence[s.pageNum] as any;
-                            const localPr = localIntel?.parsedRegions?.find((r: any) =>
-                              r.data?.tableName === s.name || r.category === s.category
-                            );
-                            if (localPr?.data) {
-                              headers = localPr.data.headers || [];
-                              rows = localPr.data.rows || [];
-                              tagColumn = localPr.data.tagColumn || headers[0] || "";
-                            } else {
-                              // Fetch from API
-                              try {
-                                const res = await fetch(`/api/projects/${publicId}/pages?from=${s.pageNum}&to=${s.pageNum}`);
-                                if (res.ok) {
-                                  const data = await res.json();
-                                  const pageData = data.pages?.[0];
-                                  const pr = pageData?.pageIntelligence?.parsedRegions?.find((r: any) =>
-                                    r.data?.tableName === s.name || r.category === s.category
-                                  );
-                                  if (pr?.data) {
-                                    headers = pr.data.headers || [];
-                                    rows = pr.data.rows || [];
-                                    tagColumn = pr.data.tagColumn || headers[0] || "";
-                                  }
-                                  // Cache in store
-                                  if (pageData?.pageIntelligence) {
-                                    useViewerStore.getState().setPageIntelligence(s.pageNum, pageData.pageIntelligence);
-                                  }
-                                }
-                              } catch (err) {
-                                console.error("[AUTO_QTO] Failed to fetch schedule data:", err);
-                              }
-                            }
-                          }
-
-                          if (headers.length === 0) {
-                            alert("Could not load schedule data. Try parsing the schedule first.");
-                            return;
-                          }
-
-                          updateWorkflowStep(activeQtoWorkflow, {
-                            step: "confirm-tags",
-                            schedulePageNumber: s.pageNum,
-                            parsedSchedule: {
-                              headers,
-                              rows,
-                              tagColumn,
-                              tableName: s.name,
-                              scheduleCategory: s.category,
-                              sourcePageNumber: s.pageNum,
-                            },
-                          });
-                        }}
-                        className="w-full text-left px-3 py-2 rounded border border-green-500/30 bg-green-500/5 hover:bg-green-500/10 space-y-0.5"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-medium text-[var(--fg)]">{s.name}</span>
-                          <span className="text-[9px] text-green-400">Use This</span>
-                        </div>
-                        <div className="text-[10px] text-[var(--muted)]">
-                          {pageNames[s.pageNum] || `p.${s.pageNum}`} &middot; {s.rowCount} rows, {s.colCount} cols
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                );
-              }
-
-              // No matching parsed schedules
+              const cat = MATERIALS.find((m) => m.type === activeQtoWorkflow.materialType)?.scheduleCategory;
+              const detected = cat ? (scheduleDetections[cat] || []).sort((a, b) => b.confidence - a.confidence) : [];
+              if (detected.length === 0) return null;
               return (
-                <div className="space-y-2">
-                  <div className="text-[10px] text-[var(--muted)] px-1">
-                    No {(activeQtoWorkflow.materialLabel || activeQtoWorkflow.materialType).toLowerCase()} schedule found. Parse one first:
-                  </div>
-                  <button
-                    onClick={() => useViewerStore.getState().toggleTableParsePanel()}
-                    className="w-full text-xs px-3 py-2 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
-                  >
-                    Open Table Parse Panel
-                  </button>
-                  <button
-                    onClick={() => useViewerStore.getState().toggleKeynoteParsePanel()}
-                    className="w-full text-xs px-3 py-2 rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
-                  >
-                    Open Keynote Panel
-                  </button>
-
-                  {/* Show heuristic-detected pages as hints */}
-                  {(() => {
-                    const cat = MATERIALS.find((m) => m.type === activeQtoWorkflow.materialType)?.scheduleCategory;
-                    const detected = cat ? scheduleDetections[cat] || [] : [];
-                    if (detected.length === 0) return null;
-                    return (
-                      <div className="space-y-1 pt-1">
-                        <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide">Detected pages:</div>
-                        {detected.sort((a, b) => b.confidence - a.confidence).map((d, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setPage(d.pageNum)}
-                            className="w-full text-left text-[10px] px-2 py-1 rounded border border-[var(--border)] hover:bg-[var(--surface-hover)]"
-                          >
-                            <span className="text-[var(--fg)]">{d.name}</span>
-                            <span className="text-[var(--muted)] ml-1">({Math.round(d.confidence * 100)}%)</span>
-                          </button>
-                        ))}
-                      </div>
-                    );
-                  })()}
-
-                  <div className="text-[9px] text-[var(--muted)] px-1 pt-1">
-                    After parsing, come back here — the schedule will appear above.
-                  </div>
+                <div className="space-y-1">
+                  <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide">Suggested pages</div>
+                  {detected.map((d, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setPage(d.pageNum)}
+                      className="w-full text-left text-[10px] px-2 py-1.5 rounded border border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10 flex items-center justify-between"
+                    >
+                      <span className="text-[var(--fg)] font-medium">{d.name}</span>
+                      <span className="text-emerald-400 text-[9px]">{Math.round(d.confidence * 100)}% match</span>
+                    </button>
+                  ))}
                 </div>
               );
             })()}
+
+            {/* Parse tools */}
+            <div className="space-y-1">
+              <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide">Parse tools</div>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => {
+                    const store = useViewerStore.getState();
+                    if (!store.showTableParsePanel) store.toggleTableParsePanel();
+                  }}
+                  className="flex-1 text-[10px] px-2 py-1.5 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
+                >
+                  Table Parse
+                </button>
+                <button
+                  onClick={() => {
+                    const store = useViewerStore.getState();
+                    if (!store.showKeynoteParsePanel) store.toggleKeynoteParsePanel();
+                  }}
+                  className="flex-1 text-[10px] px-2 py-1.5 rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+                >
+                  Keynote Parse
+                </button>
+              </div>
+            </div>
+
+            {/* Parsed schedules (reactive — appears when user parses a table) */}
+            <div className="space-y-1">
+              <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide">Parsed schedules</div>
+              {(() => {
+                const materialKey = activeQtoWorkflow.materialType.toLowerCase();
+                // Show all parsed schedules, highlight matching ones
+                const matching = parsedSchedules.filter((s) =>
+                  s.name.toLowerCase().includes(materialKey) ||
+                  s.category.toLowerCase().includes(materialKey)
+                );
+                const other = parsedSchedules.filter((s) =>
+                  !s.name.toLowerCase().includes(materialKey) &&
+                  !s.category.toLowerCase().includes(materialKey)
+                );
+
+                if (parsedSchedules.length === 0) {
+                  return (
+                    <div className="text-[10px] text-[var(--muted)] italic px-2 py-3 text-center border border-dashed border-[var(--border)] rounded">
+                      No parsed schedules yet. Parse a table and it will appear here.
+                    </div>
+                  );
+                }
+
+                const renderScheduleButton = (s: typeof parsedSchedules[0], isMatch: boolean) => (
+                  <button
+                    key={`${s.pageNum}-${s.name}`}
+                    onClick={async () => {
+                      let headers: string[] = [];
+                      let rows: Record<string, string>[] = [];
+                      let tagColumn = "";
+
+                      if (s.region?.data) {
+                        headers = s.region.data.headers || [];
+                        rows = s.region.data.rows || [];
+                        tagColumn = s.region.data.tagColumn || headers[0] || "";
+                      } else {
+                        const localIntel = useViewerStore.getState().pageIntelligence[s.pageNum] as any;
+                        const localPr = localIntel?.parsedRegions?.find((r: any) =>
+                          r.data?.tableName === s.name || r.category === s.category
+                        );
+                        if (localPr?.data) {
+                          headers = localPr.data.headers || [];
+                          rows = localPr.data.rows || [];
+                          tagColumn = localPr.data.tagColumn || headers[0] || "";
+                        } else {
+                          try {
+                            const res = await fetch(`/api/projects/${publicId}/pages?from=${s.pageNum}&to=${s.pageNum}`);
+                            if (res.ok) {
+                              const data = await res.json();
+                              const pageData = data.pages?.[0];
+                              const pr = pageData?.pageIntelligence?.parsedRegions?.find((r: any) =>
+                                r.data?.tableName === s.name || r.category === s.category
+                              );
+                              if (pr?.data) {
+                                headers = pr.data.headers || [];
+                                rows = pr.data.rows || [];
+                                tagColumn = pr.data.tagColumn || headers[0] || "";
+                              }
+                              if (pageData?.pageIntelligence) {
+                                useViewerStore.getState().setPageIntelligence(s.pageNum, pageData.pageIntelligence);
+                              }
+                            }
+                          } catch (err) {
+                            console.error("[AUTO_QTO] Failed to fetch schedule data:", err);
+                          }
+                        }
+                      }
+
+                      if (headers.length === 0) {
+                        alert("Could not load schedule data. Try parsing the schedule first.");
+                        return;
+                      }
+
+                      updateWorkflowStep(activeQtoWorkflow, {
+                        step: "confirm-tags",
+                        schedulePageNumber: s.pageNum,
+                        parsedSchedule: {
+                          headers,
+                          rows,
+                          tagColumn,
+                          tableName: s.name,
+                          scheduleCategory: s.category,
+                          sourcePageNumber: s.pageNum,
+                        },
+                      });
+                    }}
+                    className={`w-full text-left px-2 py-1.5 rounded border space-y-0.5 ${
+                      isMatch
+                        ? "border-green-500/30 bg-green-500/5 hover:bg-green-500/10"
+                        : "border-[var(--border)] hover:bg-[var(--surface-hover)]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-medium text-[var(--fg)]">{s.name}</span>
+                      <span className={`text-[9px] ${isMatch ? "text-green-400" : "text-[var(--muted)]"}`}>
+                        {isMatch ? "Use This" : "Use"}
+                      </span>
+                    </div>
+                    <div className="text-[9px] text-[var(--muted)]">
+                      {pageNames[s.pageNum] || `p.${s.pageNum}`} &middot; {s.rowCount} rows, {s.colCount} cols
+                    </div>
+                  </button>
+                );
+
+                return (
+                  <div className="space-y-1">
+                    {matching.map((s) => renderScheduleButton(s, true))}
+                    {other.map((s) => renderScheduleButton(s, false))}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         )}
 
@@ -905,8 +928,8 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
                     id: `qto-${li.tag}-${Date.now()}`,
                     name: li.tag,
                     tagText: li.tag,
-                    yoloClass: activeQtoWorkflow?.yoloClassFilter || "",
-                    yoloModel: activeQtoWorkflow?.yoloModelFilter || "",
+                    yoloClass: workflow.yoloClassFilter || "",
+                    yoloModel: workflow.yoloModelFilter || "",
                     source: "schedule" as const,
                     scope: "project" as const,
                     instances: li.instances.map((inst: any) => ({
