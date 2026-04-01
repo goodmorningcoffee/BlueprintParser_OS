@@ -71,6 +71,7 @@ resource "aws_ecs_task_definition" "beaver_app" {
         { name = "NEXTAUTH_URL", value = "https://app.blueprintparser.com" },
         { name = "STEP_FUNCTION_ARN", value = aws_sfn_state_machine.beaver_process_blueprint.arn },
         { name = "LABEL_STUDIO_URL", value = "https://labelstudio.blueprintparser.com" },
+        { name = "AWS_ACCOUNT", value = data.aws_caller_identity.current.account_id },
       ]
 
       secrets = [

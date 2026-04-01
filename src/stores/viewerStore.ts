@@ -301,6 +301,9 @@ interface ViewerState {
   // Add-instance mode: draw BB to add to a specific tag
   tagAddingMode: string | null; // tagId when active
   setTagAddingMode: (tagId: string | null) => void;
+  // LLM tool use highlight (auto-clears after timeout)
+  llmHighlight: { pageNumber: number; bbox: [number, number, number, number]; label?: string } | null;
+  setLlmHighlight: (h: { pageNumber: number; bbox: [number, number, number, number]; label?: string } | null) => void;
 
   // ─── Parsed Region Visibility ──────────────────────────
   showParsedRegions: boolean;
@@ -721,6 +724,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setTagScanResults: (tagScanResults) => set({ tagScanResults }),
   tagAddingMode: null,
   setTagAddingMode: (tagAddingMode) => set({ tagAddingMode }),
+  llmHighlight: null,
+  setLlmHighlight: (llmHighlight) => set({ llmHighlight }),
 
   showParsedRegions: true,
   toggleParsedRegions: () => set((s) => ({ showParsedRegions: !s.showParsedRegions })),
@@ -880,6 +885,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       yoloTagPickingMode: false,
       tagScanResults: null,
       tagAddingMode: null,
+      llmHighlight: null,
       symbolSearchActive: false,
       symbolSearchLoading: false,
       symbolSearchProgress: null,

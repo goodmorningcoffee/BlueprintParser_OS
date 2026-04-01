@@ -109,14 +109,13 @@ export async function GET() {
     .where(session.user.isRootAdmin ? undefined : eq(projects.companyId, session.user.companyId))
     .orderBy(projects.createdAt);
 
-  // Get actual page counts from pages table for all projects
+  // Get actual page counts in a single query
   const pageCounts: Record<number, number> = {};
-  for (const proj of allProjects) {
-    const result = await db.execute(sql`
-      SELECT COUNT(*)::int as cnt FROM pages
-      WHERE project_id = ${proj.id}
+  if (allProjects.length > 0) {
+    const countResult = await db.execute(sql`
+      SELECT project_id, COUNT(*)::int AS cnt FROM pages GROUP BY project_id
     `);
-    pageCounts[proj.id] = (result.rows[0] as any)?.cnt || 0;
+    for (const row of countResult.rows as any[]) pageCounts[row.project_id] = row.cnt;
   }
 
   // For root admin: fetch company names for grouping

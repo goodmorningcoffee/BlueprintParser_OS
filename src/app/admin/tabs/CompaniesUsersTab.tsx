@@ -104,12 +104,18 @@ export default function CompaniesUsersTab() {
 
   const toggleRole = async (userId: string, currentRole: string) => {
     const newRole = currentRole === "admin" ? "member" : "admin";
-    await fetch("/api/admin/users", {
+    const res = await fetch("/api/admin/users", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: userId, role: newRole }),
     });
-    loadData();
+    if (res.ok) {
+      loadData();
+    } else {
+      const err = await res.json().catch(() => ({ error: "Failed" }));
+      setMessage(err.error || "Failed to update role");
+      setTimeout(() => setMessage(""), 4000);
+    }
   };
 
   const copyKey = (companyId: number, key: string) => {

@@ -101,14 +101,8 @@ export async function POST(req: Request) {
       canRunModels: isAdmin,
       companyId: targetCompanyId,
     });
-  } catch {
-    await db.insert(users).values({
-      username,
-      email,
-      passwordHash,
-      role: isAdmin ? "admin" : "member",
-      companyId: targetCompanyId,
-    } as any);
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Failed to create user" }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });

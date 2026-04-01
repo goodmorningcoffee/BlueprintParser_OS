@@ -146,6 +146,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           try {
             await db.update(users).set({ isRootAdmin: true }).where(eq(users.id, user.id));
             isRootAdmin = true;
+            audit("root_admin_bootstrap", { userId: user.id, companyId: user.companyId, details: { email } });
           } catch { /* migration not run yet */ }
         }
 
