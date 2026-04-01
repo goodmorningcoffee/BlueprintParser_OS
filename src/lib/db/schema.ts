@@ -87,6 +87,7 @@ export const users = pgTable("users", {
   passwordHash: varchar("password_hash", { length: 255 }).notNull(),
   role: varchar("role", { length: 50 }).default("member").notNull(),
   canRunModels: boolean("can_run_models").default(false).notNull(),
+  isRootAdmin: boolean("is_root_admin").default(false).notNull(),
   companyId: integer("company_id")
     .notNull()
     .references(() => companies.id),

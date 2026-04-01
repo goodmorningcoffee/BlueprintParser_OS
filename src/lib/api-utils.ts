@@ -25,6 +25,7 @@ export interface AuthSession {
     username: string;
     role: string;
     canRunModels: boolean;
+    isRootAdmin: boolean;
     email?: string | null;
     name?: string | null;
   };
@@ -57,15 +58,32 @@ export async function requireAdmin(): Promise<
   if (!session?.user) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
-  if ((session.user as any).role !== "admin") {
+  const user = session.user as any;
+  if (user.role !== "admin" && !user.isRootAdmin) {
     return { session: null, error: NextResponse.json({ error: "Admin only" }, { status: 403 }) };
   }
   return { session: session as unknown as AuthSession, error: null };
 }
 
 /**
+ * Require root admin role. Returns typed session or error response.
+ */
+export async function requireRootAdmin(): Promise<
+  { session: AuthSession; error: null } | { session: null; error: NextResponse }
+> {
+  const session = await auth();
+  if (!session?.user) {
+    return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+  }
+  if (!(session.user as any).isRootAdmin) {
+    return { session: null, error: NextResponse.json({ error: "Root admin only" }, { status: 403 }) };
+  }
+  return { session: session as unknown as AuthSession, error: null };
+}
+
+/**
  * Check if a project belongs to the user's company. Returns 404 for wrong company.
- * Skips check for demo projects.
+ * Skips check for demo projects and root admins.
  */
 export function requireCompanyAccess(
   session: AuthSession | null,
@@ -75,6 +93,7 @@ export function requireCompanyAccess(
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (session.user.isRootAdmin) return null; // Root admin can access any project
   if (session.user.companyId !== project.companyId) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

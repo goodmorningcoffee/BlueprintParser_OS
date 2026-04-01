@@ -9,7 +9,7 @@ import { auth } from "@/lib/auth";
  */
 export async function GET() {
   const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
+  if (!session?.user || (session.user.role !== "admin" && !(session.user as any).isRootAdmin)) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 

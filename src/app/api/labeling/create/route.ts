@@ -28,10 +28,9 @@ export async function POST(req: Request) {
     .select()
     .from(projects)
     .where(
-      and(
-        eq(projects.publicId, projectId),
-        eq(projects.companyId, session.user.companyId)
-      )
+      (session.user as any).isRootAdmin
+        ? eq(projects.publicId, projectId)
+        : and(eq(projects.publicId, projectId), eq(projects.companyId, session.user.companyId))
     )
     .limit(1);
 
@@ -160,7 +159,7 @@ export async function POST(req: Request) {
         .insert(labelingSessions)
         .values({
           projectId: project.id,
-          companyId: session.user.companyId,
+          companyId: project.companyId,
           labelStudioProjectId: lsProject.id,
           labelStudioUrl: projectUrl,
           taskType: "generic",

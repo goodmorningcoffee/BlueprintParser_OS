@@ -21,7 +21,7 @@ const s3Client = new S3Client({
 
 export async function POST(req: Request) {
   const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
+  if (!session?.user || (session.user.role !== "admin" && !(session.user as any).isRootAdmin)) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 

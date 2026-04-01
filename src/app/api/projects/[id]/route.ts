@@ -18,10 +18,9 @@ export async function GET(
     .select()
     .from(projects)
     .where(
-      and(
-        eq(projects.publicId, id),
-        eq(projects.companyId, session.user.companyId)
-      )
+      session.user.isRootAdmin
+        ? eq(projects.publicId, id)
+        : and(eq(projects.publicId, id), eq(projects.companyId, session.user.companyId))
     )
     .limit(1);
 
@@ -111,10 +110,9 @@ export async function PUT(
     .select()
     .from(projects)
     .where(
-      and(
-        eq(projects.publicId, id),
-        eq(projects.companyId, session.user.companyId)
-      )
+      session.user.isRootAdmin
+        ? eq(projects.publicId, id)
+        : and(eq(projects.publicId, id), eq(projects.companyId, session.user.companyId))
     )
     .limit(1);
 
@@ -151,10 +149,9 @@ export async function DELETE(
     .select()
     .from(projects)
     .where(
-      and(
-        eq(projects.publicId, id),
-        eq(projects.companyId, session.user.companyId)
-      )
+      session.user.isRootAdmin
+        ? eq(projects.publicId, id)
+        : and(eq(projects.publicId, id), eq(projects.companyId, session.user.companyId))
     )
     .limit(1);
 
