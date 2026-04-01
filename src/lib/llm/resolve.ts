@@ -36,9 +36,14 @@ export async function resolveLLMConfig(
         .limit(1);
 
       if (userConfig) {
-        const apiKey = userConfig.encryptedApiKey
-          ? decryptApiKey(userConfig.encryptedApiKey)
-          : getEnvKey(userConfig.provider);
+        let apiKey: string | undefined;
+        try {
+          apiKey = userConfig.encryptedApiKey
+            ? decryptApiKey(userConfig.encryptedApiKey)
+            : getEnvKey(userConfig.provider);
+        } catch {
+          apiKey = getEnvKey(userConfig.provider);
+        }
         if (apiKey) {
           return {
             provider: userConfig.provider,
@@ -71,9 +76,15 @@ export async function resolveLLMConfig(
       .limit(1);
 
     if (companyConfig) {
-      const apiKey = companyConfig.encryptedApiKey
-        ? decryptApiKey(companyConfig.encryptedApiKey)
-        : getEnvKey(companyConfig.provider);
+      let apiKey: string | undefined;
+      try {
+        apiKey = companyConfig.encryptedApiKey
+          ? decryptApiKey(companyConfig.encryptedApiKey)
+          : getEnvKey(companyConfig.provider);
+      } catch {
+        // Decryption failed (key secret changed between environments) — fall back to env key
+        apiKey = getEnvKey(companyConfig.provider);
+      }
       if (apiKey || companyConfig.provider === "custom") {
         return {
           provider: companyConfig.provider,
@@ -107,7 +118,7 @@ export async function resolveLLMConfig(
     return { provider: "groq", model: "llama-3.3-70b-versatile", apiKey: process.env.GROQ_API_KEY };
   }
   if (process.env.ANTHROPIC_API_KEY) {
-    return { provider: "anthropic", model: "claude-sonnet-4-20250514", apiKey: process.env.ANTHROPIC_API_KEY };
+    return { provider: "anthropic", model: "claude-opus-4-6-20250501", apiKey: process.env.ANTHROPIC_API_KEY };
   }
   if (process.env.OPENAI_API_KEY) {
     return { provider: "openai", model: "gpt-4o-mini", apiKey: process.env.OPENAI_API_KEY };
@@ -128,7 +139,7 @@ function getEnvKey(provider: string): string | undefined {
 function getDefaultModel(provider: string): string {
   switch (provider) {
     case "groq": return "llama-3.3-70b-versatile";
-    case "anthropic": return "claude-sonnet-4-20250514";
+    case "anthropic": return "claude-opus-4-6-20250501";
     case "openai": return "gpt-4o-mini";
     default: return "";
   }
