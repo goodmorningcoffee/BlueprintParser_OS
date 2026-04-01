@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { projects, pages, companies } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import { getS3Url, uploadToS3 } from "@/lib/s3";
+import { getS3Url, uploadToS3, warmCloudFrontCache } from "@/lib/s3";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
@@ -93,7 +93,8 @@ export async function processProject(projectId: number): Promise<{
       await uploadToS3(
         `${project.dataUrl}/thumbnail.png`,
         thumbBuffer,
-        "image/png"
+        "image/png",
+        "public, max-age=31536000, immutable",
       );
     } catch (err) {
       console.warn("Thumbnail generation failed:", err);
@@ -145,10 +146,10 @@ export async function processProject(projectId: number): Promise<{
         // Store page image + thumbnail to S3 for instant client-side rendering
         const pageKey = String(pageNum).padStart(4, "0");
         try {
-          await uploadToS3(`${project.dataUrl}/pages/page_${pageKey}.png`, pngBuffer, "image/png");
+          await uploadToS3(`${project.dataUrl}/pages/page_${pageKey}.png`, pngBuffer, "image/png", "public, max-age=31536000, immutable");
           // Generate 72 DPI thumbnail
           const thumbBuffer = await rasterizePage(pdfBuffer, pageNum, 72);
-          await uploadToS3(`${project.dataUrl}/thumbnails/page_${pageKey}.png`, thumbBuffer, "image/png");
+          await uploadToS3(`${project.dataUrl}/thumbnails/page_${pageKey}.png`, thumbBuffer, "image/png", "public, max-age=31536000, immutable");
         } catch (err) {
           console.warn(`[processing] Page ${pageNum} image upload failed:`, err);
         }
@@ -398,6 +399,11 @@ export async function processProject(projectId: number): Promise<{
         updatedAt: new Date(),
       })
       .where(eq(projects.id, project.id));
+
+    // Warm CloudFront edge cache so first user visit is fast
+    try {
+      await warmCloudFrontCache(project.dataUrl, numPages);
+    } catch { /* warming is best-effort */ }
 
     return { pagesProcessed, pageErrors, processingTime };
   } catch (err) {

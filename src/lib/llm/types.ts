@@ -3,6 +3,37 @@ export interface ChatMessage {
   content: string;
 }
 
+// ─── Tool Use Types ────────────────────────────────────────
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema: {
+    type: "object";
+    properties: Record<string, { type: string; description?: string; enum?: string[] }>;
+    required?: string[];
+  };
+}
+
+export interface ToolCallBlock {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface ToolResultBlock {
+  type: "tool_result";
+  tool_use_id: string;
+  content: string;
+}
+
+/** Events emitted during tool-use streaming */
+export type ToolStreamEvent =
+  | { type: "text_delta"; text: string }
+  | { type: "tool_call_start"; name: string; id: string }
+  | { type: "tool_call_result"; name: string; id: string; result: string }
+  | { type: "done" };
+
 export interface LLMStreamOptions {
   model: string;
   messages: ChatMessage[];
@@ -10,9 +41,16 @@ export interface LLMStreamOptions {
   maxTokens?: number;
 }
 
+export interface LLMToolUseOptions extends LLMStreamOptions {
+  tools: ToolDefinition[];
+  executeToolCall: (name: string, input: Record<string, unknown>) => Promise<unknown>;
+  maxToolRounds?: number; // safety limit, default 10
+}
+
 export interface LLMClient {
   provider: string;
   streamChat(options: LLMStreamOptions): AsyncIterable<string>;
+  streamChatWithTools?(options: LLMToolUseOptions): AsyncIterable<ToolStreamEvent>;
 }
 
 export interface ResolvedLLMConfig {

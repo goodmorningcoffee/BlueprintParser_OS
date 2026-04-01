@@ -143,6 +143,7 @@ export default function AnnotationOverlay({
   const showDetections = useViewerStore((s) => s.showDetections);
   const confidenceThreshold = useViewerStore((s) => s.confidenceThreshold);
   const activeModels = useViewerStore((s) => s.activeModels);
+  const hiddenClasses = useViewerStore((s) => s.hiddenClasses);
   const confidenceThresholds = useViewerStore((s) => s.confidenceThresholds);
   const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
   const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
@@ -194,6 +195,8 @@ export default function AnnotationOverlay({
       if (!showDetections) return false;
       const modelName = (a as any).data?.modelName as string | undefined;
       if (modelName && activeModels[modelName] === false) return false;
+      // Per-class visibility
+      if (modelName && hiddenClasses[`${modelName}:${a.name}`] === false) return false;
       const conf = (a as any).threshold || (a as any).data?.confidence || 0;
       const threshold = (modelName && confidenceThresholds[modelName] != null)
         ? confidenceThresholds[modelName]
@@ -220,7 +223,7 @@ export default function AnnotationOverlay({
     // Filter by active annotation label
     if (activeAnnotationFilter && a.name !== activeAnnotationFilter) return false;
     return true;
-  }), [annotations, pageNumber, showDetections, activeModels, confidenceThresholds, confidenceThreshold, activeCsiFilter, activeAnnotationFilter, isKeynoteYoloPicking, keynoteColA, hiddenAnnotationIds]);
+  }), [annotations, pageNumber, showDetections, activeModels, hiddenClasses, confidenceThresholds, confidenceThreshold, activeCsiFilter, activeAnnotationFilter, isKeynoteYoloPicking, keynoteColA, hiddenAnnotationIds]);
 
   const pageKeynotes = keynotes[pageNumber] || [];
 
@@ -746,40 +749,26 @@ export default function AnnotationOverlay({
           const [aMinX, aMinY, aMaxX, aMaxY] = ann.bbox;
           if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
             e.stopPropagation();
-            const ocrText = getOcrTextInAnnotation(ann, textractData);
-            if (!ocrText) {
-              setYoloTagPickingMode(false);
-              return;
-            }
             const model = (ann as any).data?.modelName as string || "unknown";
-            const tagName = prompt(`Create tag from "${ocrText}"?\n\nEnter display name:`, ocrText);
-            if (!tagName) { setYoloTagPickingMode(false); return; }
-            setYoloTagPickingMode(false);
-            // Use batch API for full-project scanning (all pages, not just loaded chunk)
-            const pid = useViewerStore.getState().publicId;
+            const store = useViewerStore.getState();
+            store.setYoloTagPickingMode(false);
+
+            // Trigger class scan — fetch all unique texts inside this class
+            const pid = store.publicId;
             fetch(`/api/projects/${pid}/map-tags-batch`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ tags: [ocrText], yoloClass: ann.name, yoloModel: model }),
+              body: JSON.stringify({ action: "scanClass", yoloClass: ann.name, yoloModel: model }),
             })
               .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-              .then(({ results }: { results: Record<string, any[]> }) => {
-                const instances = results[ocrText] || [];
-                const newTag = {
-                  id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                  name: tagName,
-                  tagText: ocrText,
+              .then(({ texts }) => {
+                useViewerStore.getState().setTagScanResults({
                   yoloClass: ann.name,
                   yoloModel: model,
-                  source: "manual" as const,
-                  scope: "project" as const,
-                  instances,
-                };
-                useViewerStore.getState().addYoloTag(newTag);
-                useViewerStore.getState().setActiveYoloTagId(newTag.id);
-                useViewerStore.getState().setYoloTagFilter(newTag.id);
+                  texts: texts || [],
+                });
               })
-              .catch((err) => console.error("[YOLO_TAG] Create tag failed:", err));
+              .catch((err) => console.error("[YOLO_TAG] Class scan failed:", err));
             return;
           }
         }
@@ -1052,8 +1041,8 @@ export default function AnnotationOverlay({
         }
       }
 
-      // Start drawing in markup mode
-      if (mode !== "markup") return;
+      // Start drawing in markup mode or tag-adding mode
+      if (mode !== "markup" && !useViewerStore.getState().tagAddingMode) return;
       e.stopPropagation();
       setSelectedId(null);
       setDrawing(true);
@@ -1179,6 +1168,26 @@ export default function AnnotationOverlay({
     }
     if (keynoteParseStep === "define-row") {
       useViewerStore.getState().addKeynoteRowBB([minX, minY, maxX, maxY]);
+      return;
+    }
+
+    // Tag adding mode: drawn BB becomes a new instance of the active tag
+    const tagAddingId = useViewerStore.getState().tagAddingMode;
+    if (tagAddingId) {
+      const store = useViewerStore.getState();
+      const tag = store.yoloTags.find((t) => t.id === tagAddingId);
+      if (tag) {
+        const newInstance = {
+          pageNumber,
+          annotationId: -1, // user-drawn, not a real YOLO annotation
+          bbox: [minX, minY, maxX, maxY] as [number, number, number, number],
+          confidence: 1.0,
+        };
+        store.updateYoloTag(tagAddingId, {
+          instances: [...tag.instances, newInstance],
+        });
+      }
+      store.setTagAddingMode(null);
       return;
     }
 

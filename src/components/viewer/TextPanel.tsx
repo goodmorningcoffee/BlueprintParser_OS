@@ -37,7 +37,7 @@ export default function TextPanel() {
   };
 
   return (
-    <div className="w-80 border-l border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0">
+    <div className="w-80 border border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0 shadow-lg">
       {/* Tab bar */}
       <div className="flex border-b border-[var(--border)]">
         {(["ocr", "annotations", "markups", "graph"] as const).map((t) => (

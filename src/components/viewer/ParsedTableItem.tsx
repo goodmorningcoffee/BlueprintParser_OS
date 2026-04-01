@@ -388,7 +388,7 @@ export default function ParsedTableItem({
                     try {
                       const store = useViewerStore.getState();
                       // Collect unique tags from the selected column
-                      const tags = [...new Set(
+                      const tags: string[] = [...new Set<string>(
                         rows.map((row: Record<string, string>) => (row[mapTagColumn] || "").trim()).filter(Boolean)
                       )].filter((tag) => !store.yoloTags.some((t) => t.tagText === tag && t.source === "schedule"));
 

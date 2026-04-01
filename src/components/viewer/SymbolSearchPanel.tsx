@@ -102,6 +102,10 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
     const abort = new AbortController();
     abortRef.current = abort;
 
+    // Auto-timeout after 120s
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; abort.abort(); }, 120000);
+
     const bbox = store.symbolSearchTemplateBbox;
     store.setSymbolSearchLoading(true);
     store.setSymbolSearchError(null);
@@ -170,12 +174,19 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
         }
       }
     } catch (err) {
-      if ((err as Error).name === "AbortError") return;
+      clearTimeout(timeout);
+      if ((err as Error).name === "AbortError") {
+        if (timedOut) {
+          useViewerStore.getState().setSymbolSearchError("Search timed out — try searching fewer pages");
+        }
+        return;
+      }
       console.error("[SYMBOL_SEARCH] Failed:", err);
       useViewerStore.getState().setSymbolSearchError(
         err instanceof Error ? err.message : "Symbol search failed"
       );
     } finally {
+      clearTimeout(timeout);
       useViewerStore.getState().setSymbolSearchLoading(false);
       useViewerStore.getState().setSymbolSearchProgress(null);
     }
@@ -220,7 +231,19 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
           />
           <div className="flex-1 text-[10px]">
             {state === "processing" && (
-              <div className="text-cyan-400 animate-pulse">Searching...</div>
+              <div className="space-y-1">
+                <div className="text-cyan-400 animate-pulse">
+                  {symbolSearchProgress
+                    ? `Page ${symbolSearchProgress.pageIndex + 1} of ${symbolSearchProgress.totalPages}...`
+                    : "Loading pages..."}
+                </div>
+                <button
+                  onClick={() => abortRef.current?.abort()}
+                  className="text-[9px] text-[var(--muted)] hover:text-red-400"
+                >
+                  Cancel
+                </button>
+              </div>
             )}
             {state === "configure" && (
               <div className="text-[var(--muted)]">Template captured. Configure options below.</div>
@@ -234,7 +257,7 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
               </div>
             )}
             {state === "error" && (
-              <div className="text-red-400">Search failed</div>
+              <div className="text-red-400 text-[10px]">{symbolSearchError || "Search failed"}</div>
             )}
           </div>
         </div>

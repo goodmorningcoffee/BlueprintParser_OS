@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useChat, useProject, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore, useChat, useProject, useNavigation } from "@/stores/viewerStore";
 
 const DISCIPLINE_PROMPTS: Record<string, string[]> = {
   A: ["What rooms are shown?", "Door/window schedules?", "What finishes are specified?", "Any accessibility notes?"],
@@ -42,6 +42,7 @@ export default function ChatPanel() {
   const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [activeToolCall, setActiveToolCall] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -125,6 +126,24 @@ export default function ChatPanel() {
                   if (parsed.content) {
                     fullContent += parsed.content;
                     setStreamingContent(fullContent);
+                  } else if (parsed.tool_call) {
+                    // Tool use progress
+                    if (parsed.status === "start") {
+                      setActiveToolCall(parsed.tool_call);
+                    } else {
+                      setActiveToolCall(null);
+                    }
+                  } else if (parsed.action) {
+                    // LLM action: navigate, highlight, createMarkup
+                    const act = parsed.action;
+                    const store = useViewerStore.getState();
+                    if (act.action === "navigate" && act.pageNumber) {
+                      store.setPage(act.pageNumber);
+                    } else if (act.action === "highlight" && act.bbox) {
+                      // Store highlight for AnnotationOverlay to render
+                      store.setPage(act.pageNumber);
+                      // TODO: add llmHighlight state to store for rendering
+                    }
                   } else if (parsed.error) {
                     fullContent = `Error: ${parsed.error}`;
                     setStreamingContent(fullContent);
@@ -151,12 +170,13 @@ export default function ChatPanel() {
     } finally {
       setLoading(false);
       setStreamingContent("");
+      setActiveToolCall(null);
       inputRef.current?.focus();
     }
   }
 
   return (
-    <div className="w-80 border-l border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0">
+    <div className="w-80 border border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0 shadow-lg">
       {/* Header with scope toggle */}
       <div className="p-3 border-b border-[var(--border)] flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -242,7 +262,14 @@ export default function ChatPanel() {
         {loading && !streamingContent && (
           <div className="mr-4 bg-[var(--bg)] rounded-lg p-2 text-sm">
             <div className="text-[10px] text-[var(--muted)] mb-1">AI</div>
-            <div className="text-[var(--muted)] animate-pulse">Thinking...</div>
+            {activeToolCall ? (
+              <div className="text-cyan-400 text-[10px] animate-pulse flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                {activeToolCall.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()).replace(/\bCsi\b/g, "CSI").replace(/\bOcr\b/g, "OCR").replace(/\bYolo\b/g, "YOLO")}...
+              </div>
+            ) : (
+              <div className="text-[var(--muted)] animate-pulse">Thinking...</div>
+            )}
           </div>
         )}
 

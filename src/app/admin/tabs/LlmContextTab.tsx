@@ -11,6 +11,7 @@ interface LlmConfig {
   systemPrompt?: string;
   customContextWindow?: number;
   budgetOverrides?: Record<string, number>;
+  toolUse?: boolean;
   sectionConfig?: {
     disabledSections?: string[];
     priorityOverrides?: Record<string, number>;
@@ -44,6 +45,7 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activePanel, setActivePanel] = useState<"budget" | "prompt" | "sections" | "preview">("sections");
+  const [sortBy, setSortBy] = useState<"default" | "priority-asc" | "priority-desc" | "pct-asc" | "pct-desc">("default");
 
   // Preview state
   const [previewProject, setPreviewProject] = useState("");
@@ -95,7 +97,8 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
   };
 
   const setAllocation = (id: string, value: number) => {
-    save({ ...config, sectionConfig: { ...sectionConfig, percentAllocations: { ...allocations, [id]: value }, preset: "custom" } });
+    const clamped = Math.max(0, Math.min(100, value));
+    save({ ...config, sectionConfig: { ...sectionConfig, percentAllocations: { ...allocations, [id]: clamped }, preset: "custom" } });
   };
 
   const setPreset = (p: string) => {
@@ -153,10 +156,36 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
       {/* ─── Panel 1: Context Sections ─── */}
       {activePanel === "sections" && (
         <div className="space-y-4">
+          {/* Tool Use Toggle */}
+          <div className="flex items-center justify-between px-3 py-2.5 rounded border border-[var(--border)] bg-[var(--bg)]">
+            <div>
+              <div className="text-xs font-semibold text-[var(--fg)]">Tool Use (Agentic Mode)</div>
+              <div className="text-[9px] text-[var(--muted)]">
+                LLM calls tools to fetch data on-demand instead of receiving pre-built context. Requires Claude or GPT-4o. Uses more tokens per message but gives dramatically better answers.
+              </div>
+            </div>
+            <button
+              onClick={() => save({ ...config, toolUse: !config.toolUse })}
+              className={`px-3 py-1 rounded text-[10px] font-medium border shrink-0 ml-3 ${
+                config.toolUse
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+                  : "border-[var(--border)] text-[var(--muted)]"
+              }`}
+            >
+              {config.toolUse ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          {config.toolUse && (
+            <div className="text-[10px] text-amber-400 px-3 py-2 rounded bg-amber-500/5 border border-amber-500/20">
+              When Tool Use is ON, the context sections below are bypassed. The LLM uses 27 tools to query project data on-demand. Turn OFF to use the traditional context-dump approach.
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold">Context Sections</h3>
-              <p className="text-xs text-[var(--muted)]">Control what data the LLM receives and how much budget each section gets.</p>
+              <p className="text-xs text-[var(--muted)]">Control what data the LLM receives. <strong>Priority</strong> (lower = included first). <strong>Budget %</strong> = share of context data sent to the model. Unused % overflows to sections that need more space.</p>
             </div>
             <div className="flex gap-1">
               {["balanced", "structured", "verbose", "custom"].map((p) => (
@@ -175,59 +204,107 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
             </div>
           </div>
 
+          {/* Column headers — clickable to sort */}
+          <div className="flex items-center gap-3 px-3 py-1">
+            <div className="w-8 shrink-0" />
+            <div className="flex-1 min-w-0" />
+            <button
+              onClick={() => setSortBy(sortBy === "priority-asc" ? "priority-desc" : "priority-asc")}
+              className="w-12 text-[9px] text-[var(--muted)] text-center hover:text-[var(--fg)] cursor-pointer"
+            >
+              Priority {sortBy === "priority-asc" ? "▲" : sortBy === "priority-desc" ? "▼" : ""}
+            </button>
+            <button
+              onClick={() => setSortBy(sortBy === "pct-desc" ? "pct-asc" : "pct-desc")}
+              className="w-16 text-[9px] text-[var(--muted)] text-center shrink-0 hover:text-[var(--fg)] cursor-pointer"
+            >
+              Budget % {sortBy === "pct-desc" ? "▼" : sortBy === "pct-asc" ? "▲" : ""}
+            </button>
+          </div>
+
           <div className="space-y-1">
-            {Object.entries(SECTION_REGISTRY).map(([id, reg]) => {
-              const enabled = !disabledSet.has(id);
-              const priority = priorities[id] ?? reg.defaultPriority;
-              const pct = allocations[id] ?? (SECTION_PRESETS[preset]?.[id] || Math.round(100 / Object.keys(SECTION_REGISTRY).length));
+            {(() => {
+              const enabledCount = Object.keys(SECTION_REGISTRY).filter((id) => !disabledSet.has(id)).length;
+              const defaultPct = Math.round(100 / Math.max(enabledCount, 1));
+              const rows = Object.entries(SECTION_REGISTRY).map(([id, reg]) => {
+                const enabled = !disabledSet.has(id);
+                const priority = priorities[id] ?? reg.defaultPriority;
+                const presetPct = SECTION_PRESETS[preset]?.[id];
+                // For presets with no explicit allocation (like "balanced"), show equal split
+                const pct = allocations[id] ?? (presetPct !== undefined ? presetPct : defaultPct);
+                return { id, reg, enabled, priority, pct };
+              });
+              const totalPct = rows.filter((r) => r.enabled).reduce((sum, r) => sum + r.pct, 0);
+
+              // Apply sort
+              const sorted = [...rows];
+              if (sortBy === "priority-asc") sorted.sort((a, b) => a.priority - b.priority);
+              else if (sortBy === "priority-desc") sorted.sort((a, b) => b.priority - a.priority);
+              else if (sortBy === "pct-desc") sorted.sort((a, b) => b.pct - a.pct);
+              else if (sortBy === "pct-asc") sorted.sort((a, b) => a.pct - b.pct);
 
               return (
-                <div
-                  key={id}
-                  className={`flex items-center gap-3 px-3 py-2 rounded border transition-colors ${
-                    enabled ? "border-emerald-500/20 bg-emerald-500/5" : "border-[var(--border)] opacity-40"
-                  }`}
-                >
-                  <button
-                    onClick={() => toggleSection(id)}
-                    className={`w-8 text-center text-[10px] font-medium rounded py-0.5 shrink-0 ${
-                      enabled ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--border)] text-[var(--muted)]"
-                    }`}
-                  >
-                    {enabled ? "ON" : "OFF"}
-                  </button>
+                <>
+                  {sorted.map(({ id, reg, enabled, priority, pct }) => (
+                    <div
+                      key={id}
+                      className={`flex items-center gap-3 px-3 py-2 rounded border transition-colors ${
+                        enabled ? "border-emerald-500/20 bg-emerald-500/5" : "border-[var(--border)] opacity-40"
+                      }`}
+                    >
+                      <button
+                        onClick={() => toggleSection(id)}
+                        className={`w-8 text-center text-[10px] font-medium rounded py-0.5 shrink-0 ${
+                          enabled ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--border)] text-[var(--muted)]"
+                        }`}
+                      >
+                        {enabled ? "ON" : "OFF"}
+                      </button>
 
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium text-[var(--fg)] truncate">{reg.label}</div>
-                    <div className="text-[9px] text-[var(--muted)] truncate">{reg.description}</div>
-                  </div>
-
-                  {enabled && (
-                    <>
-                      <input
-                        type="number"
-                        value={priority}
-                        onChange={(e) => setPriority(id, parseFloat(e.target.value) || 0)}
-                        className="w-12 text-[10px] text-center bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-0.5 text-[var(--fg)]"
-                        title="Priority (lower = included first)"
-                        step="0.5"
-                      />
-                      <div className="flex items-center gap-1 w-16 shrink-0">
-                        <input
-                          type="number"
-                          value={pct}
-                          onChange={(e) => setAllocation(id, parseInt(e.target.value) || 0)}
-                          className="w-10 text-[10px] text-center bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-0.5 text-[var(--fg)]"
-                          min={0}
-                          max={100}
-                        />
-                        <span className="text-[9px] text-[var(--muted)]">%</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium text-[var(--fg)] truncate">{reg.label}</div>
+                        <div className="text-[9px] text-[var(--muted)] truncate">{reg.description}</div>
                       </div>
-                    </>
-                  )}
-                </div>
+
+                      {enabled && (
+                        <>
+                          <input
+                            type="number"
+                            value={priority}
+                            onChange={(e) => setPriority(id, parseFloat(e.target.value) || 0)}
+                            className="w-12 text-[10px] text-center bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-0.5 text-[var(--fg)]"
+                            title="Priority: lower number = included first when budget is tight"
+                            step="0.5"
+                          />
+                          <div className="flex items-center gap-1 w-16 shrink-0">
+                            <input
+                              type="number"
+                              value={pct}
+                              onChange={(e) => setAllocation(id, parseInt(e.target.value) || 0)}
+                              className="w-10 text-[10px] text-center bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-0.5 text-[var(--fg)]"
+                              title="% of context budget allocated to this section"
+                              min={0}
+                              max={100}
+                            />
+                            <span className="text-[9px] text-[var(--muted)]">%</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+
+                  {/* Total allocation summary */}
+                  <div className={`flex items-center justify-end gap-2 px-3 py-1.5 rounded text-[10px] font-medium ${
+                    totalPct > 100 ? "text-red-400 bg-red-500/10 border border-red-500/20" :
+                    totalPct < 80 ? "text-amber-400" : "text-[var(--muted)]"
+                  }`}>
+                    {totalPct > 100 && <span>Over-allocated — excess sections will be truncated or dropped.</span>}
+                    {totalPct < 80 && <span>Under-allocated — unused budget becomes overflow for large sections.</span>}
+                    <span className="ml-auto">Total: {totalPct}%</span>
+                  </div>
+                </>
               );
-            })}
+            })()}
           </div>
         </div>
       )}

@@ -23,11 +23,13 @@ export default function DetectionPanel() {
     confidenceThreshold, setConfidenceThreshold,
     activeAnnotationFilter, setAnnotationFilter, setSearch,
     hiddenAnnotationIds, toggleAnnotationVisibility,
+    hiddenClasses, toggleClassVisibility,
   } = useDetection();
   const {
     yoloTags, activeYoloTagId, setActiveYoloTagId,
     setYoloTagFilter, yoloTagVisibility, setYoloTagVisibility,
     removeYoloTag, updateYoloTag, yoloTagPickingMode, setYoloTagPickingMode,
+    tagScanResults, setTagScanResults, tagAddingMode, setTagAddingMode,
   } = useYoloTags();
 
   const [detectionTab, setDetectionTab] = useState<"models" | "tags">("models");
@@ -38,6 +40,7 @@ export default function DetectionPanel() {
   const [expandedTagItems, setExpandedTagItems] = useState<Record<string, boolean>>({});
   const [editingTagId, setEditingTagId] = useState<string | null>(null);
   const [editingTagName, setEditingTagName] = useState("");
+  const [scanSelections, setScanSelections] = useState<Record<string, boolean>>({});
   const [showCsiTags, setShowCsiTags] = useState(false);
   const [csiEdits, setCsiEdits] = useState<Record<string, string>>({});
   const [savingCsi, setSavingCsi] = useState(false);
@@ -107,7 +110,7 @@ export default function DetectionPanel() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="w-72 flex flex-col h-full overflow-hidden border border-[var(--border)] bg-[var(--surface)] shadow-lg">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
         <h3 className="text-sm font-medium text-[var(--fg)]">YOLO</h3>
@@ -283,7 +286,8 @@ export default function DetectionPanel() {
                       <div key={cls}>
                         <ClassGroupHeader className={cls} count={classAnns.length} isExpanded={classExp}
                           onToggleExpand={() => setExpandedClasses((p) => ({ ...p, [gk]: !classExp }))}
-                          isVisible={modelVisible} onToggleVisibility={() => setModelActive(modelName, !modelVisible)}
+                          isVisible={modelVisible && hiddenClasses[gk] !== false}
+                          onToggleVisibility={() => toggleClassVisibility(modelName, cls)}
                           isActive={activeAnnotationFilter === cls} onToggleFilter={handleToggleFilter}
                           color={clr} csiCodes={csiCodes} keywords={keywords} />
                         {classExp && (
@@ -330,6 +334,104 @@ export default function DetectionPanel() {
             </button>
             </HelpTooltip>
           </div>
+
+          {/* ─── Class Scan Preview ─── */}
+          {tagScanResults && (
+            <div className="mx-2 mt-2 border border-amber-500/30 rounded bg-amber-500/5 overflow-hidden">
+              <div className="px-2 py-1.5 bg-amber-500/10 flex items-center justify-between">
+                <span className="text-[10px] font-medium text-amber-300">
+                  Scan: {tagScanResults.yoloClass} ({tagScanResults.yoloModel})
+                </span>
+                <button onClick={() => setTagScanResults(null)} className="text-[var(--muted)] hover:text-[var(--fg)] text-xs">&times;</button>
+              </div>
+              <div className="px-2 py-1 text-[9px] text-[var(--muted)]">
+                {tagScanResults.texts.length} unique text{tagScanResults.texts.length !== 1 ? "s" : ""} found
+                {" "}({tagScanResults.texts.reduce((s, t) => s + t.count, 0)} annotations)
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-px">
+                {tagScanResults.texts.map((t) => {
+                  const key = t.text || "__empty__";
+                  const checked = scanSelections[key] ?? (t.text !== "");
+                  return (
+                    <label key={key} className="flex items-center gap-2 px-2 py-1 hover:bg-[var(--surface-hover)] cursor-pointer text-[10px]">
+                      <input type="checkbox" checked={checked}
+                        onChange={() => setScanSelections((p) => ({ ...p, [key]: !checked }))}
+                        className="accent-amber-400 w-3 h-3" />
+                      <span className={`flex-1 truncate ${t.text ? "text-[var(--fg)] font-mono" : "text-[var(--muted)] italic"}`}>
+                        {t.text || "(empty)"}
+                      </span>
+                      <span className="text-[var(--muted)] shrink-0">{t.count}</span>
+                      <span className="text-[var(--muted)] shrink-0">{t.pages.length}pg</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="flex gap-1 px-2 py-2 border-t border-amber-500/20">
+                <button
+                  onClick={() => {
+                    const store = useViewerStore.getState();
+                    for (const t of tagScanResults.texts) {
+                      const key = t.text || "__empty__";
+                      const checked = scanSelections[key] ?? (t.text !== "");
+                      if (!checked || !t.text) continue;
+                      // Skip if tag already exists
+                      if (store.yoloTags.some((et) => et.tagText.toUpperCase() === t.text.toUpperCase() && et.yoloClass === tagScanResults.yoloClass)) continue;
+                      store.addYoloTag({
+                        id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                        name: t.text,
+                        tagText: t.text,
+                        yoloClass: tagScanResults.yoloClass,
+                        yoloModel: tagScanResults.yoloModel,
+                        source: "manual",
+                        scope: "project",
+                        instances: t.instances,
+                      });
+                    }
+                    setTagScanResults(null);
+                    setScanSelections({});
+                  }}
+                  className="flex-1 px-2 py-1 text-[10px] rounded bg-amber-600 text-white hover:bg-amber-500 font-medium"
+                >
+                  Accept Selected
+                </button>
+                <button
+                  onClick={() => {
+                    // Select all that have text
+                    const all: Record<string, boolean> = {};
+                    for (const t of tagScanResults.texts) {
+                      if (t.text) all[t.text] = true;
+                    }
+                    setScanSelections(all);
+                    // Then trigger accept
+                    const store = useViewerStore.getState();
+                    for (const t of tagScanResults.texts) {
+                      if (!t.text) continue;
+                      if (store.yoloTags.some((et) => et.tagText.toUpperCase() === t.text.toUpperCase() && et.yoloClass === tagScanResults.yoloClass)) continue;
+                      store.addYoloTag({
+                        id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                        name: t.text,
+                        tagText: t.text,
+                        yoloClass: tagScanResults.yoloClass,
+                        yoloModel: tagScanResults.yoloModel,
+                        source: "manual",
+                        scope: "project",
+                        instances: t.instances,
+                      });
+                    }
+                    setTagScanResults(null);
+                    setScanSelections({});
+                  }}
+                  className="px-2 py-1 text-[10px] rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+                >
+                  Accept All
+                </button>
+                <button onClick={() => { setTagScanResults(null); setScanSelections({}); }}
+                  className="px-2 py-1 text-[10px] text-[var(--muted)] hover:text-[var(--fg)]">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Active tag filter indicator */}
           {activeYoloTagId && (
@@ -474,6 +576,25 @@ export default function DetectionPanel() {
                                                 </button>
                                               ));
                                           })()}
+                                          {/* Add missing instance */}
+                                          <button
+                                            onClick={() => {
+                                              if (tagAddingMode === tag.id) {
+                                                setTagAddingMode(null);
+                                              } else {
+                                                setTagAddingMode(tag.id);
+                                                setActiveYoloTagId(tag.id);
+                                                useViewerStore.getState().setMode("pointer");
+                                              }
+                                            }}
+                                            className={`w-full text-left px-2 py-1 text-[9px] rounded border mt-1 ${
+                                              tagAddingMode === tag.id
+                                                ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                                                : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                                            }`}
+                                          >
+                                            {tagAddingMode === tag.id ? "Draw BB on canvas to add instance..." : "+ Add Missing"}
+                                          </button>
                                         </div>
                                       )}
                                     </div>
