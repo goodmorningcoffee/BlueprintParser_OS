@@ -4,13 +4,16 @@
 # Manage SageMaker, ECS, and Step Functions from your terminal.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-ROLE_NAME="beaver-ecs-task-role"
-SFN_ROLE="beaver-step-functions-role"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${SCRIPT_DIR}/../.deploy.env" ] && source "${SCRIPT_DIR}/../.deploy.env"
+
+ROLE_NAME="${ECS_TASK_ROLE:-beaver-ecs-task-role}"
+SFN_ROLE="${SFN_ROLE:-beaver-step-functions-role}"
 SM_KILL_POLICY="sagemaker-kill-switch"
 SFN_KILL_POLICY="stepfunctions-kill-switch"
-REGION="us-east-1"
-ECS_CLUSTER="beaver-cluster"
-ECS_SERVICE="beaver-app"
+REGION="${AWS_REGION:-us-east-1}"
+ECS_CLUSTER="${ECS_CLUSTER:-beaver-cluster}"
+ECS_SERVICE="${ECS_SERVICE:-beaver-app}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

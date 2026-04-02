@@ -1,8 +1,9 @@
 import NextAuth, { type DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
 import bcrypt from "bcrypt";
 import { db } from "@/lib/db";
-import { users } from "@/lib/db/schema";
+import { users, companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { audit } from "@/lib/audit";
 
@@ -80,6 +81,10 @@ function clearFailedLogins(email: string) {
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
   providers: [
+    ...(process.env.GOOGLE_CLIENT_ID ? [Google({
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    })] : []),
     Credentials({
       name: "credentials",
       credentials: {
@@ -114,6 +119,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (!user) {
           recordFailedLogin(email);
           audit("login_failed", { details: { email, reason: "user_not_found" } });
+          return null;
+        }
+
+        if (!user.passwordHash) {
+          recordFailedLogin(email);
+          audit("login_failed", { userId: user.id, companyId: user.companyId, details: { email, reason: "no_password" } });
           return null;
         }
 
@@ -174,8 +185,61 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: "/login",
   },
   callbacks: {
-    async jwt({ token, user, trigger }) {
-      if (user) {
+    async signIn({ user, account }) {
+      // OAuth: create or link user on sign-in
+      if (account?.provider === "google" && user.email) {
+        try {
+          const [existing] = await db.select().from(users).where(eq(users.email, user.email)).limit(1);
+          if (existing) {
+            // Link OAuth to existing account if not already linked
+            if (!existing.oauthProvider) {
+              await db.update(users).set({
+                oauthProvider: "google",
+                oauthProviderId: account.providerAccountId,
+              }).where(eq(users.id, existing.id));
+            }
+            return true;
+          }
+          // New user — auto-assign company by email domain
+          const domain = user.email.split("@")[1];
+          const [company] = await db.select().from(companies).where(eq(companies.emailDomain, domain)).limit(1);
+          if (!company) {
+            return "/login?error=no-company";
+          }
+          await db.insert(users).values({
+            email: user.email,
+            username: user.name || user.email.split("@")[0],
+            passwordHash: null,
+            role: "member",
+            companyId: company.id,
+            oauthProvider: "google",
+            oauthProviderId: account.providerAccountId,
+          });
+          audit("user_registered", { details: { email: user.email, provider: "google", companyId: company.id } });
+          return true;
+        } catch (err) {
+          return "/login?error=oauth-error";
+        }
+      }
+      return true; // credentials handled by authorize()
+    },
+    async jwt({ token, user, account, trigger }) {
+      // OAuth sign-in: look up full user data from DB
+      if (trigger === "signIn" && account?.provider === "google" && token.email) {
+        try {
+          const [dbUser] = await db.select().from(users).where(eq(users.email, token.email as string)).limit(1);
+          if (dbUser) {
+            token.companyId = dbUser.companyId;
+            token.dbId = dbUser.id;
+            token.username = dbUser.username;
+            token.role = dbUser.role;
+            token.canRunModels = dbUser.canRunModels;
+            token.isRootAdmin = dbUser.isRootAdmin;
+          }
+        } catch { /* migration pending */ }
+      }
+      // Credentials sign-in: user object has all fields from authorize()
+      if (trigger === "signIn" && user && account?.provider === "credentials") {
         token.companyId = user.companyId;
         token.dbId = Number(user.id);
         token.username = user.username;

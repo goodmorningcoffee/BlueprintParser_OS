@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, memo } from "react";
 import { useViewerStore, useNavigation, usePageData } from "@/stores/viewerStore";
 import { SHAPE_COLORS } from "@/types";
 import type { Shape } from "@/types";
@@ -15,7 +15,7 @@ interface KeynoteOverlayProps {
  * Canvas overlay that draws colored shape outlines for detected keynotes.
  * Positioned on top of the PDF page, same as SearchHighlightOverlay.
  */
-export default function KeynoteOverlay({
+export default memo(function KeynoteOverlay({
   width,
   height,
   cssScale,
@@ -149,4 +149,4 @@ export default function KeynoteOverlay({
       }}
     />
   );
-}
+})

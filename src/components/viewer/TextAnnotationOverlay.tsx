@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useMemo, useCallback } from "react";
+import { useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { TEXT_ANNOTATION_COLORS } from "@/types";
 import type { TextAnnotation } from "@/types";
@@ -11,7 +11,7 @@ interface TextAnnotationOverlayProps {
   cssScale: number;
 }
 
-export default function TextAnnotationOverlay({
+export default memo(function TextAnnotationOverlay({
   width,
   height,
   cssScale,
@@ -196,7 +196,7 @@ export default function TextAnnotationOverlay({
       }}
     />
   );
-}
+})
 
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);

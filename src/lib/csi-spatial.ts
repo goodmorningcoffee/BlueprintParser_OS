@@ -7,7 +7,7 @@
  * clusters on the page.
  *
  * Grid layout (normalized 0-1 coordinates):
- *   - 3x3 drawing grid (rows: top/mid/bottom, cols: left/center/right)
+ *   - 9x9 drawing grid (default, configurable via CsiSpatialGridConfig)
  *   - Special zone: title-block (y > 0.85)
  *   - Special zone: right-margin (x > 0.75, y < 0.85)
  *
@@ -22,6 +22,7 @@ import type {
   YoloTag,
   ClientAnnotation,
 } from "@/types";
+import { TITLE_BLOCK_Y_THRESHOLD, RIGHT_MARGIN_X_THRESHOLD } from "@/lib/spatial-constants";
 
 // ═══════════════════════════════════════════════════════════════════
 // Public types
@@ -97,7 +98,7 @@ export interface CsiSpatialGridConfig {
   cols: number;
 }
 
-const DEFAULT_GRID: CsiSpatialGridConfig = { rows: 3, cols: 3 };
+export const DEFAULT_GRID: CsiSpatialGridConfig = { rows: 9, cols: 9 };
 
 /**
  * Human-readable labels used in the summary string.
@@ -125,12 +126,12 @@ function zoneDisplayName(zone: string): string {
  * Map a bbox center (normalized 0-1) to a zone name.
  * Special zones take precedence over the NxN grid.
  */
-function classifyZone(cx: number, cy: number, nRows: number, nCols: number): string {
+export function classifyZone(cx: number, cy: number, nRows: number, nCols: number): string {
   // Special zone: title-block (bottom strip)
-  if (cy > 0.85) return "title-block";
+  if (cy > TITLE_BLOCK_Y_THRESHOLD) return "title-block";
 
   // Special zone: right-margin (right strip above title-block)
-  if (cx > 0.75) return "right-margin";
+  if (cx > RIGHT_MARGIN_X_THRESHOLD) return "right-margin";
 
   const col = Math.min(Math.floor(cx * nCols), nCols - 1);
   const row = Math.min(Math.floor(cy * nRows), nRows - 1);

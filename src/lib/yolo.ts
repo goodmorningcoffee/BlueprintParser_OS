@@ -15,13 +15,8 @@ const sagemakerClient = new SageMakerClient({
   }),
 });
 
-const ECR_IMAGE =
-  process.env.YOLO_ECR_IMAGE ||
-  `${process.env.AWS_ACCOUNT}.dkr.ecr.${process.env.AWS_REGION || "us-east-1"}.amazonaws.com/beaver-yolo-pipeline:latest`;
-
-const SAGEMAKER_ROLE =
-  process.env.SAGEMAKER_ROLE_ARN ||
-  `arn:aws:iam::${process.env.AWS_ACCOUNT}:role/beaver-sagemaker-role`;
+const ECR_IMAGE = process.env.YOLO_ECR_IMAGE;
+const SAGEMAKER_ROLE = process.env.SAGEMAKER_ROLE_ARN;
 
 /**
  * Start a SageMaker processing job for YOLO inference.
@@ -36,7 +31,10 @@ export async function startYoloJob(
   modelS3Path: string,
   modelName: string
 ): Promise<string> {
-  const jobName = `beaver-yolo-${modelName}-${Date.now()}`.replace(
+  if (!ECR_IMAGE) throw new Error("YOLO_ECR_IMAGE env var required for SageMaker jobs");
+  if (!SAGEMAKER_ROLE) throw new Error("SAGEMAKER_ROLE_ARN env var required for SageMaker jobs");
+
+  const jobName = `bp-yolo-${modelName}-${Date.now()}`.replace(
     /[^a-zA-Z0-9-]/g,
     "-"
   ).slice(0, 63);

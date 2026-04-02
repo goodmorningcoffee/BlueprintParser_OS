@@ -67,7 +67,7 @@ resource "aws_s3_bucket_cors_configuration" "beaver_data" {
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["GET", "PUT", "POST"]
-    allowed_origins = ["https://app.blueprintparser.com", "https://labelstudio.blueprintparser.com"]
+    allowed_origins = ["https://app.${var.domain_name}", "https://labelstudio.${var.domain_name}"]
     expose_headers  = ["ETag"]
     max_age_seconds = 3600
   }
@@ -97,9 +97,9 @@ resource "aws_cloudfront_response_headers_policy" "beaver_cors" {
 
     access_control_allow_origins {
       items = [
-        "https://app.blueprintparser.com",
-        "https://blueprintparser.com",
-        "https://labelstudio.blueprintparser.com",
+        "https://app.${var.domain_name}",
+        "https://${var.domain_name}",
+        "https://labelstudio.${var.domain_name}",
         "http://localhost:3000"
       ]
     }
@@ -131,7 +131,7 @@ resource "aws_cloudfront_distribution" "beaver" {
   comment             = "Beaver data CDN"
   default_root_object = ""
   price_class         = "PriceClass_100"
-  aliases             = ["assets.blueprintparser.com"]
+  aliases             = ["assets.${var.domain_name}"]
 
   origin {
     domain_name              = aws_s3_bucket.beaver_data.bucket_regional_domain_name

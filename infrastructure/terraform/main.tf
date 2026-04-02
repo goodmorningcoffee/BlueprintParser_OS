@@ -12,12 +12,14 @@ terraform {
     }
   }
 
+  # NOTE: Terraform backend config doesn't support variables.
+  # Update these values to match your AWS setup before running terraform init.
   backend "s3" {
-    bucket         = "beaver-terraform-state-100328509916"
+    bucket         = "CHANGEME-terraform-state"
     key            = "infrastructure/terraform.tfstate"
     region         = "us-east-1"
     encrypt        = true
-    dynamodb_table = "beaver-terraform-locks"
+    dynamodb_table = "CHANGEME-terraform-locks"
   }
 }
 

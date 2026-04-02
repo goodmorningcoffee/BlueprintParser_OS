@@ -141,7 +141,7 @@ export async function processProject(projectId: number): Promise<{
           return;
         }
 
-        // Rasterize page once at 300 DPI — used for Textract, keynotes, AND stored for instant page display
+        // Rasterize page at 300 DPI for display quality
         const pngBuffer = await rasterizePage(pdfBuffer, pageNum, 300);
 
         // Store page image + thumbnail to S3 for instant client-side rendering
@@ -155,8 +155,22 @@ export async function processProject(projectId: number): Promise<{
           logger.warn(`[processing] Page ${pageNum} image upload failed:`, err);
         }
 
+        // For OCR: check if 300 DPI image exceeds Textract's 10000px dimension limit.
+        // Large construction sheets (24x36", 30x42") at 300 DPI produce 10800+ px images.
+        // Re-rasterize at the max safe DPI for Textract when needed (263 DPI for 24x36", 226 for 30x42").
+        const TEXTRACT_MAX_PX = 9500;
+        const imgWidth = pngBuffer.readUInt32BE(16);
+        const imgHeight = pngBuffer.readUInt32BE(20);
+        let ocrBuffer = pngBuffer;
+        if (imgWidth > TEXTRACT_MAX_PX || imgHeight > TEXTRACT_MAX_PX) {
+          const maxDim = Math.max(imgWidth, imgHeight);
+          const safeDpi = Math.floor(300 * (TEXTRACT_MAX_PX / maxDim));
+          logger.info(`[processing] Page ${pageNum}: ${imgWidth}x${imgHeight}px exceeds Textract limit, re-rasterizing at ${safeDpi} DPI`);
+          ocrBuffer = await rasterizePage(pdfBuffer, pageNum, safeDpi);
+        }
+
         // Run Textract OCR
-        const textractData = await analyzePageImageWithFallback(pngBuffer);
+        const textractData = await analyzePageImageWithFallback(ocrBuffer);
         const rawText = extractRawText(textractData);
 
         // Extract drawing number from title block

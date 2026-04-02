@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, memo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore } from "@/stores/viewerStore";
 import SearchHighlightOverlay from "./SearchHighlightOverlay";
@@ -18,7 +18,7 @@ interface PDFPageProps {
   containerWidth: number;
 }
 
-export default function PDFPage({
+export default memo(function PDFPage({
   pdfDoc,
   pageNumber,
   scale,
@@ -36,7 +36,7 @@ export default function PDFPage({
   const dataUrl = useViewerStore((s) => s.dataUrl);
   const pageKey = String(pageNumber).padStart(4, "0");
   const cdnDomain = typeof window !== "undefined" ? undefined : undefined; // client-side only
-  const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "beaver-app-uploads";
+  const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";
   const cloudfront = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
   const fallbackSrc = dataUrl
     ? cloudfront
@@ -149,6 +149,7 @@ export default function PDFPage({
       style={{
         width: displayWidth,
         height: displayHeight,
+        contain: "layout",
       }}
     >
       {/* Pre-rendered PNG fallback — shows instantly while pdf.js canvas renders */}
@@ -212,4 +213,4 @@ export default function PDFPage({
       />
     </div>
   );
-}
+})

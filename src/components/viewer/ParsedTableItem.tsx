@@ -95,25 +95,17 @@ export default function ParsedTableItem({
       const updatedIntel = { ...intel, parsedRegions: regions };
       store.setPageIntelligence(table.pageNum, updatedIntel);
 
-      // Persist to DB (fire-and-forget)
+      // Persist to DB and refresh summaries
       const { projectId, isDemo } = store;
       if (projectId && !isDemo) {
         fetch("/api/pages/intelligence", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ projectId, pageNumber: table.pageNum, intelligence: updatedIntel }),
-        }).catch(() => {});
-      }
-
-      // Optimistic update of client-side summaries
-      const summaries = store.summaries;
-      if (summaries?.parsedTables) {
-        const updatedTables = summaries.parsedTables.map((pt: any) =>
-          pt.pageNum === table.pageNum && (pt.name === table.name || pt.category === table.category)
-            ? { ...pt, name: trimmed, category: trimmed }
-            : pt
-        );
-        store.setSummaries({ ...summaries, parsedTables: updatedTables });
+        })
+          .then((r) => r.ok ? r.json() : null)
+          .then((data) => { if (data?.summaries) useViewerStore.getState().setSummaries(data.summaries); })
+          .catch(() => {});
       }
     }
     setEditingName(false);
@@ -161,7 +153,17 @@ export default function ParsedTableItem({
         },
       };
     });
-    store.setPageIntelligence(table.pageNum, { ...intel, parsedRegions: regions });
+    const updatedIntel = { ...intel, parsedRegions: regions };
+    store.setPageIntelligence(table.pageNum, updatedIntel);
+    // Persist to DB
+    const { projectId, isDemo } = store;
+    if (projectId && !isDemo) {
+      fetch("/api/pages/intelligence", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, pageNumber: table.pageNum, intelligence: updatedIntel }),
+      }).catch(() => {});
+    }
     setShowSettings(false);
   };
 
@@ -516,6 +518,19 @@ export default function ParsedTableItem({
                     <span className="text-cyan-400/70 text-[9px] ml-1">({tagInstances(rt.tag)})</span>
                   )}
                 </button>
+                {tagInstances(rt.tag) > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const tag = yoloTags.find((t: any) => t.tagText === rt.tag && t.source === "schedule");
+                      if (tag) useViewerStore.getState().tagBrowseNavigate(tag.id, 0);
+                    }}
+                    className="text-[9px] text-cyan-400/40 hover:text-cyan-300 shrink-0 px-0.5"
+                    title="Browse all instances"
+                  >
+                    &#8594;
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     if (editingRowIdx === ri) { setEditingRowIdx(null); }

@@ -15,6 +15,7 @@ import CsiPanel from "./CsiPanel";
 import PageIntelligencePanel from "./PageIntelligencePanel";
 import TableParsePanel from "./TableParsePanel";
 import TableCompareModal from "./TableCompareModal";
+import TagBrowseBar from "./TagBrowseBar";
 import KeynotePanel from "./KeynotePanel";
 import SymbolSearchPanel from "./SymbolSearchPanel";
 import { useChunkLoader } from "@/hooks/useChunkLoader";
@@ -34,8 +35,11 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   const [containerWidth, setContainerWidth] = useState(1200);
 
-  const { pageNumber, numPages, setNumPages, scale, setScale } =
-    useViewerStore();
+  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const numPages = useViewerStore((s) => s.numPages);
+  const setNumPages = useViewerStore((s) => s.setNumPages);
+  const scale = useViewerStore((s) => s.scale);
+  const setScale = useViewerStore((s) => s.setScale);
 
   // Chunk loader: fetches page data when navigating beyond loaded range
   useChunkLoader();
@@ -75,6 +79,40 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
         .catch(() => {});
     }
   }, [pageNumber, projectId, numPages]);
+
+  // Prefetch adjacent page PNGs into browser cache for instant navigation
+  const dataUrl = useViewerStore((s) => s.dataUrl);
+  useEffect(() => {
+    if (!dataUrl) return;
+    const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
+    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";
+    const base = cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
+    for (let i = pageNumber + 1; i <= Math.min(pageNumber + 3, numPages); i++) {
+      const img = new Image();
+      img.src = `${base}/pages/page_${String(i).padStart(4, "0")}.png`;
+    }
+  }, [pageNumber, numPages, dataUrl]);
+
+  // Scroll to highlighted region (tag browse + LLM highlights)
+  const llmHighlight = useViewerStore((s) => s.llmHighlight);
+  const pageDimensions = useViewerStore((s) => s.pageDimensions);
+  useEffect(() => {
+    if (!llmHighlight || !containerRef.current) return;
+    const dim = pageDimensions[llmHighlight.pageNumber];
+    if (!dim) return;
+    const [minX, minY, maxX, maxY] = llmHighlight.bbox;
+    const centerX = ((minX + maxX) / 2) * dim.width * scale;
+    const centerY = ((minY + maxY) / 2) * dim.height * scale;
+    const container = containerRef.current;
+    // Small delay to let page render after navigation
+    setTimeout(() => {
+      container.scrollTo({
+        left: Math.max(0, centerX - container.clientWidth / 2),
+        top: Math.max(0, centerY - container.clientHeight / 2),
+        behavior: "smooth",
+      });
+    }, 100);
+  }, [llmHighlight, pageDimensions, scale]);
 
   // Keyboard shortcuts: a = pointer/select, v = pan/zoom
   useEffect(() => {
@@ -219,8 +257,10 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       const mouseY = e.clientY - rect.top + container.scrollTop;
 
       const oldScale = scaleRef.current;
-      // Smaller factor for Ctrl (pinch-zoom sends smaller deltas) vs trackpad scroll
-      const factor = e.deltaY < 0 ? 1 / 0.97 : 0.97;
+      // Finer zoom steps for trackpad (1% per step) vs mouse wheel (3% per step)
+      const isFineScroll = e.deltaMode === 0 && Math.abs(e.deltaY) < 50;
+      const step = isFineScroll ? 0.995 : 0.97;
+      const factor = e.deltaY < 0 ? 1 / step : step;
       const newScale = Math.max(0.2, Math.min(oldScale * factor, 10));
       scaleRef.current = newScale;
 
@@ -451,6 +491,9 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
       {/* Fullscreen modal overlays */}
       {showTableCompareModal && pdfDoc && <TableCompareModal pdfDoc={pdfDoc} />}
+
+      {/* Tag instance browser bar */}
+      <TagBrowseBar />
     </div>
   );
 }

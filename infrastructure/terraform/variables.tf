@@ -152,7 +152,7 @@ variable "label_studio_admin_email" {
   description = "Label Studio admin account email"
   type        = string
   sensitive   = true
-  default     = "admin@blueprintparser.com"
+  default     = ""
 }
 
 variable "label_studio_admin_password" {

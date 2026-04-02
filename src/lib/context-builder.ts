@@ -5,6 +5,8 @@
  * Extracted from the chat API route for reuse and testability.
  */
 
+import { classifyZone, DEFAULT_GRID } from "@/lib/csi-spatial";
+
 export const DEFAULT_CONTEXT_BUDGET = 24000; // ~6000 tokens
 
 /**
@@ -49,8 +51,8 @@ export interface ContextSection {
 /** Stable section IDs for config references (headers are dynamic, IDs are stable) */
 export const SECTION_REGISTRY: Record<string, { label: string; defaultPriority: number; description: string }> = {
   "project-report": { label: "Project Intelligence Report", defaultPriority: 0.5, description: "Auto-generated project summary with discipline breakdown" },
-  "yolo-counts": { label: "YOLO Detection Counts", defaultPriority: 1.0, description: "Object counts by class per page with confidence" },
-  "yolo-detail": { label: "YOLO Annotation Detail", defaultPriority: 1.2, description: "Per-annotation bbox locations + class descriptions + CSI tags" },
+  "yolo-counts": { label: "YOLO Detection Counts", defaultPriority: 5.0, description: "Object counts by class per page with confidence" },
+  "yolo-detail": { label: "YOLO Annotation Detail", defaultPriority: 5.2, description: "Per-annotation bbox locations + class descriptions + CSI tags" },
   "csi-graph": { label: "CSI Network Graph", defaultPriority: 1.0, description: "Project-wide division relationships and clusters" },
   "page-classification": { label: "Page Classification", defaultPriority: 1.5, description: "Discipline, drawing type, series" },
   "user-annotations": { label: "User Annotations", defaultPriority: 2.0, description: "User-drawn markups with notes" },
@@ -61,10 +63,10 @@ export const SECTION_REGISTRY: Record<string, { label: string; defaultPriority: 
   "note-blocks": { label: "Note Blocks", defaultPriority: 5.5, description: "General notes extracted from drawings" },
   "parsed-tables": { label: "Parsed Tables/Keynotes", defaultPriority: 5.8, description: "Structured schedule data with headers + sample rows" },
   "detected-regions": { label: "Detected Regions", defaultPriority: 6.0, description: "Classified table/schedule regions from heuristics" },
-  "csi-parsed": { label: "CSI from Parsed Data", defaultPriority: 6.2, description: "CSI codes extracted from parsed schedules" },
-  "heuristic-inferences": { label: "Heuristic Inferences", defaultPriority: 6.5, description: "Rule-based detections with evidence chains" },
+  "csi-parsed": { label: "CSI from Parsed Data", defaultPriority: 1.2, description: "CSI codes extracted from parsed schedules" },
+  "heuristic-inferences": { label: "Heuristic Inferences", defaultPriority: 1.5, description: "Rule-based detections with evidence chains" },
   "csi-spatial": { label: "CSI Spatial Distribution", defaultPriority: 7.0, description: "Zone-based heatmap of CSI divisions on page" },
-  "spatial-context": { label: "Spatial OCR→YOLO Context", defaultPriority: 8.0, description: "OCR text mapped into YOLO spatial regions" },
+  "spatial-context": { label: "Spatial OCR→YOLO Context", defaultPriority: 2.0, description: "OCR text mapped into YOLO spatial regions" },
   "tag-patterns": { label: "Tag Patterns", defaultPriority: 8.5, description: "Repeating YOLO+OCR groups (e.g., circles with T-## text)" },
   "qto-results": { label: "QTO Workflow Results", defaultPriority: 9.0, description: "Auto-QTO tag counts and page locations" },
   "raw-ocr": { label: "Raw OCR Text", defaultPriority: 10.0, description: "Full OCR text (fallback, often truncated)" },
@@ -82,8 +84,8 @@ export interface LlmSectionConfig {
 export const SECTION_PRESETS: Record<string, Record<string, number>> = {
   balanced: {},  // even distribution (no overrides, each section gets equal share)
   structured: {
-    "parsed-tables": 25, "csi-codes": 8, "csi-spatial": 8, "spatial-context": 12,
-    "yolo-counts": 10, "detected-regions": 5, "raw-ocr": 5,
+    "parsed-tables": 25, "csi-codes": 11, "csi-spatial": 9, "spatial-context": 12,
+    "yolo-counts": 10, "detected-regions": 5, "raw-ocr": 1,
   },
   verbose: {
     "raw-ocr": 40, "spatial-context": 15, "parsed-tables": 10,
@@ -217,20 +219,28 @@ export function buildYoloSummary(
 ): { text: string; summaryLine: string } | null {
   if (yoloAnnotations.length === 0) return null;
 
-  const byPage: Record<number, Record<string, { count: number; totalConf: number; csiCodes: Set<string>; keywords: Set<string> }>> = {};
+  const { rows: nRows, cols: nCols } = DEFAULT_GRID;
+
+  const byPage: Record<number, Record<string, { count: number; totalConf: number; csiCodes: Set<string>; keywords: Set<string>; zones: Set<string> }>> = {};
   const globalCounts: Record<string, number> = {};
   const globalCsi: Record<string, Set<string>> = {};
 
   for (const a of yoloAnnotations) {
     if (!byPage[a.pageNumber]) byPage[a.pageNumber] = {};
     const cls = a.name;
-    if (!byPage[a.pageNumber][cls]) byPage[a.pageNumber][cls] = { count: 0, totalConf: 0, csiCodes: new Set(), keywords: new Set() };
+    if (!byPage[a.pageNumber][cls]) byPage[a.pageNumber][cls] = { count: 0, totalConf: 0, csiCodes: new Set(), keywords: new Set(), zones: new Set() };
     byPage[a.pageNumber][cls].count++;
     byPage[a.pageNumber][cls].totalConf += (a.data as any)?.confidence || 0;
     const annCsi = (a.data as any)?.csiCodes as string[] | undefined;
     const annKw = (a.data as any)?.keywords as string[] | undefined;
     annCsi?.forEach((c: string) => byPage[a.pageNumber][cls].csiCodes.add(c));
     annKw?.forEach((k: string) => byPage[a.pageNumber][cls].keywords.add(k));
+    // Compute zone from bbox center
+    const cx = (a.minX + a.maxX) / 2;
+    const cy = (a.minY + a.maxY) / 2;
+    if (typeof cx === "number" && typeof cy === "number" && !isNaN(cx) && !isNaN(cy)) {
+      byPage[a.pageNumber][cls].zones.add(classifyZone(cx, cy, nRows, nCols));
+    }
     globalCounts[cls] = (globalCounts[cls] || 0) + 1;
     if (!globalCsi[cls]) globalCsi[cls] = new Set();
     annCsi?.forEach((c: string) => globalCsi[cls].add(c));
@@ -253,7 +263,8 @@ export function buildYoloSummary(
     text += `\nPage ${pg} (${total} objects):`;
     for (const [cls, info] of Object.entries(classes).sort(([, a], [, b]) => b.count - a.count)) {
       const csiStr = info.csiCodes.size > 0 ? `, CSI ${[...info.csiCodes].join(", ")}` : "";
-      text += `\n  ${cls}: ${info.count} (avg confidence ${(info.totalConf / info.count).toFixed(2)}${csiStr})`;
+      const zoneStr = info.zones.size > 0 ? ` — zones: ${[...info.zones].join(", ")}` : "";
+      text += `\n  ${cls}: ${info.count} (avg confidence ${(info.totalConf / info.count).toFixed(2)}${csiStr}${zoneStr})`;
     }
   }
 

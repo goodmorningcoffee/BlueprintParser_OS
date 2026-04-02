@@ -19,7 +19,7 @@ const s3Client = new S3Client({
   }),
 });
 
-const S3_BUCKET = process.env.S3_BUCKET || "beaver-public";
+const S3_BUCKET = process.env.S3_BUCKET ?? "";
 
 export function generateProjectPath(companyDataKey: string): string {
   const projectId = crypto.randomBytes(10).toString("hex");

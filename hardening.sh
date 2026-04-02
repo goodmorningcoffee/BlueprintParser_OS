@@ -7,16 +7,21 @@ set -euo pipefail
 #  Estimated cost: ~$10-25/month total
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-REGION="us-east-1"
-ACCOUNT_ID="100328509916"
-CLUSTER="beaver-cluster"
-SERVICE="beaver-app"
-ECR_REPO="beaver-app"
-ALB_NAME="beaver-alb"
-RDS_ID="beaver-db"
-S3_BUCKET="beaver-data-${ACCOUNT_ID}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${SCRIPT_DIR}/.deploy.env" ] && source "${SCRIPT_DIR}/.deploy.env"
+
+: "${AWS_ACCOUNT:?ERROR: Set AWS_ACCOUNT in .deploy.env or environment}"
+
+REGION="${AWS_REGION:-us-east-1}"
+ACCOUNT_ID="${AWS_ACCOUNT}"
+CLUSTER="${ECS_CLUSTER:-beaver-cluster}"
+SERVICE="${ECS_SERVICE:-beaver-app}"
+ECR_REPO="${ECR_REPO:-beaver-app}"
+ALB_NAME="${ALB_NAME:-beaver-alb}"
+RDS_ID="${RDS_ID:-beaver-db}"
+S3_BUCKET="${S3_BUCKET:-beaver-data-${ACCOUNT_ID}}"
 LOG_BUCKET="${S3_BUCKET}"  # reuse data bucket for logs (separate prefix)
-SNS_TOPIC="beaver-alerts"
+SNS_TOPIC="${SNS_TOPIC:-beaver-alerts}"
 
 # ── CONFIGURE THIS ──────────────────────────────────────────────
 ALERT_EMAIL="${1:-}"

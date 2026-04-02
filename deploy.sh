@@ -7,13 +7,16 @@ set -euo pipefail
 # Uses the SAME ECR repo and ECS service as blueprintparser_current.
 # ─────────────────────────────────────────────────────────────────────────────
 
-AWS_ACCOUNT="100328509916"
-AWS_REGION="us-east-1"
-ECR_BASE="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-ECR_REPO="beaver-app"
-ECS_CLUSTER="beaver-cluster"
-ECS_SERVICE="beaver-app"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${PROJECT_DIR}/.deploy.env" ] && source "${PROJECT_DIR}/.deploy.env"
+
+: "${AWS_ACCOUNT:?ERROR: Set AWS_ACCOUNT in .deploy.env or environment}"
+: "${AWS_REGION:?ERROR: Set AWS_REGION in .deploy.env or environment}"
+: "${ECR_REPO:?ERROR: Set ECR_REPO in .deploy.env or environment}"
+: "${ECS_CLUSTER:?ERROR: Set ECS_CLUSTER in .deploy.env or environment}"
+: "${ECS_SERVICE:?ERROR: Set ECS_SERVICE in .deploy.env or environment}"
+
+ECR_BASE="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -64,5 +67,5 @@ echo -e "  Watch deployment progress:"
 echo -e "  ${CYAN}aws ecs describe-services --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE} --region ${AWS_REGION} --query 'services[0].{running:runningCount,desired:desiredCount,pending:pendingCount}'${NC}"
 echo ""
 echo -e "  View logs:"
-echo -e "  ${CYAN}aws logs tail /ecs/beaver-app --since 5m --region ${AWS_REGION} --follow${NC}"
+echo -e "  ${CYAN}aws logs tail ${LOG_GROUP:-/ecs/${ECS_SERVICE}} --since 5m --region ${AWS_REGION} --follow${NC}"
 echo ""

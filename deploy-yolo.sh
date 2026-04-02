@@ -6,11 +6,13 @@ set -euo pipefail
 # Builds GPU inference image and pushes to ECR for SageMaker.
 # ─────────────────────────────────────────────────────────────────────────────
 
-AWS_ACCOUNT="100328509916"
-AWS_REGION="us-east-1"
-ECR_BASE="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-ECR_REPO="beaver-yolo-pipeline"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${PROJECT_DIR}/.deploy.env" ] && source "${PROJECT_DIR}/.deploy.env"
+
+: "${AWS_ACCOUNT:?ERROR: Set AWS_ACCOUNT in .deploy.env or environment}"
+: "${AWS_REGION:?ERROR: Set AWS_REGION in .deploy.env or environment}"
+ECR_REPO="${ECR_YOLO_REPO:-${ECR_REPO:?ERROR: Set ECR_YOLO_REPO or ECR_REPO in .deploy.env}}"
+ECR_BASE="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'

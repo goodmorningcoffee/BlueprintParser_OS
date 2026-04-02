@@ -28,6 +28,9 @@ yarn-error.log*
 .env*.local
 !.env.example
 
+# deployment config
+.deploy.env
+
 # secrets / terraform state
 infrastructure/terraform/terraform.tfvars
 infrastructure/terraform/.terraform/

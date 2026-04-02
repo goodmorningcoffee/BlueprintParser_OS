@@ -13,10 +13,13 @@ set -euo pipefail
 #   - Session Manager plugin installed
 # ─────────────────────────────────────────────────────────────────────────────
 
-AWS_REGION="us-east-1"
-ECS_CLUSTER="beaver-cluster"
-ECS_SERVICE="beaver-app"
-CONTAINER_NAME="beaver-app"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${SCRIPT_DIR}/.deploy.env" ] && source "${SCRIPT_DIR}/.deploy.env"
+
+: "${AWS_REGION:?ERROR: Set AWS_REGION in .deploy.env or environment}"
+: "${ECS_CLUSTER:?ERROR: Set ECS_CLUSTER in .deploy.env or environment}"
+: "${ECS_SERVICE:?ERROR: Set ECS_SERVICE in .deploy.env or environment}"
+CONTAINER_NAME="${ECS_SERVICE}"
 
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'

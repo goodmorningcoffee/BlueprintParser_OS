@@ -42,6 +42,8 @@ interface RateRule {
 const RATE_RULES: RateRule[] = [
   // Auth - tight limits per IP
   { pattern: "/api/register", method: "POST", limit: 3, windowMs: 15 * 60 * 1000, keyType: "ip" },
+  { pattern: "/api/auth/forgot-password", method: "POST", limit: 3, windowMs: 15 * 60 * 1000, keyType: "ip" },
+  { pattern: "/api/auth/reset-password", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "ip" },
   { pattern: "/api/auth", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "ip" },
 
   // Expensive operations - per user

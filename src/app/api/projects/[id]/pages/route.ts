@@ -46,9 +46,9 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Fetch all page data in a single query (migration safety no longer needed — all migrations have run)
-  const pageRows = await db
-    .select({
+  // Fetch page data and annotations in parallel (both need only project.id + page range)
+  const [pageRows, rangeAnnotations] = await Promise.all([
+    db.select({
       pageNumber: pages.pageNumber,
       name: pages.name,
       drawingNumber: pages.drawingNumber,
@@ -57,29 +57,27 @@ export async function GET(
       textAnnotations: pages.textAnnotations,
       pageIntelligence: pages.pageIntelligence,
     })
-    .from(pages)
-    .where(
-      and(
-        eq(pages.projectId, project.id),
-        gte(pages.pageNumber, from),
-        lte(pages.pageNumber, to)
+      .from(pages)
+      .where(
+        and(
+          eq(pages.projectId, project.id),
+          gte(pages.pageNumber, from),
+          lte(pages.pageNumber, to)
+        )
       )
-    )
-    .orderBy(pages.pageNumber);
+      .orderBy(pages.pageNumber),
+    db.select()
+      .from(annotations)
+      .where(
+        and(
+          eq(annotations.projectId, project.id),
+          gte(annotations.pageNumber, from),
+          lte(annotations.pageNumber, to)
+        )
+      ),
+  ]);
 
-  // Fetch annotations for pages in range
-  const rangeAnnotations = await db
-    .select()
-    .from(annotations)
-    .where(
-      and(
-        eq(annotations.projectId, project.id),
-        gte(annotations.pageNumber, from),
-        lte(annotations.pageNumber, to)
-      )
-    );
-
-  return NextResponse.json({
+  const response = NextResponse.json({
     from,
     to,
     pages: pageRows.map((p) => ({
@@ -101,4 +99,6 @@ export async function GET(
       data: a.data ?? null,
     })),
   });
+  response.headers.set("Cache-Control", "private, max-age=300, stale-while-revalidate=600");
+  return response;
 }

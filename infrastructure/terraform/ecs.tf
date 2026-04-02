@@ -67,12 +67,12 @@ resource "aws_ecs_task_definition" "beaver_app" {
         { name = "PORT", value = "3000" },
         { name = "S3_BUCKET", value = aws_s3_bucket.beaver_data.id },
         { name = "AWS_REGION", value = var.aws_region },
-        { name = "CLOUDFRONT_DOMAIN", value = "assets.blueprintparser.com" },
-        { name = "NEXTAUTH_URL", value = "https://app.blueprintparser.com" },
+        { name = "CLOUDFRONT_DOMAIN", value = "assets.${var.domain_name}" },
+        { name = "NEXTAUTH_URL", value = "https://app.${var.domain_name}" },
         { name = "STEP_FUNCTION_ARN", value = aws_sfn_state_machine.beaver_process_blueprint.arn },
-        { name = "LABEL_STUDIO_URL", value = "https://labelstudio.blueprintparser.com" },
+        { name = "LABEL_STUDIO_URL", value = "https://labelstudio.${var.domain_name}" },
         { name = "AWS_ACCOUNT", value = data.aws_caller_identity.current.account_id },
-        { name = "ROOT_ADMIN_EMAIL", value = "admin@blueprintparser.com" },
+        { name = "ROOT_ADMIN_EMAIL", value = var.label_studio_admin_email },
       ]
 
       secrets = [
@@ -377,7 +377,7 @@ resource "aws_ecs_task_definition" "beaver_cpu_pipeline" {
         { name = "NODE_ENV", value = "production" },
         { name = "AWS_REGION", value = var.aws_region },
         { name = "S3_BUCKET", value = aws_s3_bucket.beaver_data.id },
-        { name = "CLOUDFRONT_DOMAIN", value = "assets.blueprintparser.com" },
+        { name = "CLOUDFRONT_DOMAIN", value = "assets.${var.domain_name}" },
       ]
 
       secrets = [
@@ -546,8 +546,8 @@ resource "aws_ecs_task_definition" "beaver_label_studio" {
       environment = [
         { name = "LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK", value = "true" },
         { name = "LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN", value = "true" },
-        { name = "LABEL_STUDIO_HOST", value = "https://labelstudio.blueprintparser.com" },
-        { name = "CSRF_TRUSTED_ORIGINS", value = "https://labelstudio.blueprintparser.com,https://app.blueprintparser.com" },
+        { name = "LABEL_STUDIO_HOST", value = "https://labelstudio.${var.domain_name}" },
+        { name = "CSRF_TRUSTED_ORIGINS", value = "https://labelstudio.${var.domain_name},https://app.${var.domain_name}" },
         { name = "USE_X_FORWARDED_HOST", value = "True" },
         { name = "SECURE_PROXY_SSL_HEADER", value = "HTTP_X_FORWARDED_PROTO,https" },
         { name = "SESSION_COOKIE_SECURE", value = "1" },
@@ -619,7 +619,7 @@ resource "aws_lb_listener_rule" "label_studio" {
 
   condition {
     host_header {
-      values = ["labelstudio.blueprintparser.com"]
+      values = ["labelstudio.${var.domain_name}"]
     }
   }
 
