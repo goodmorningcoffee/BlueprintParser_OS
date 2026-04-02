@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, memo } from "react";
 import { useKeynoteParse } from "@/stores/viewerStore";
 
 interface GuidedParseOverlayProps {
@@ -25,7 +25,7 @@ type DragTarget =
  * OCR word clustering proposes row/col boundaries, and this overlay
  * lets the user drag them to adjust (or double-click to add new ones).
  */
-export default function GuidedParseOverlay({
+export default memo(function GuidedParseOverlay({
   width,
   height,
   cssScale,
@@ -322,4 +322,4 @@ export default function GuidedParseOverlay({
       }}
     />
   );
-}
+})

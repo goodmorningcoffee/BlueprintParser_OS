@@ -8,8 +8,8 @@ export default function LandingPage() {
           BlueprintParser
         </h1>
         <p className="text-[var(--muted)] text-lg max-w-md">
-          AI-powered construction blueprint analysis. Upload, search, annotate,
-          and chat with your blueprints.
+          AI-powered blueprint analysis. Export tables as CSV, auto-QTO,
+          and chat with your blueprints: self hostable and opensource.
         </p>
       </div>
       <div className="flex gap-4">

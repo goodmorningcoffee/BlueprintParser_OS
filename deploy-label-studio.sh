@@ -7,9 +7,12 @@ set -euo pipefail
 # Uses the official Docker Hub image (no build step needed).
 # ─────────────────────────────────────────────────────────────────────────────
 
-AWS_REGION="us-east-1"
-ECS_CLUSTER="beaver-cluster"
-ECS_SERVICE="beaver-label-studio"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${SCRIPT_DIR}/.deploy.env" ] && source "${SCRIPT_DIR}/.deploy.env"
+
+: "${AWS_REGION:?ERROR: Set AWS_REGION in .deploy.env or environment}"
+: "${ECS_CLUSTER:?ERROR: Set ECS_CLUSTER in .deploy.env or environment}"
+ECS_SERVICE="${ECS_LABEL_STUDIO_SERVICE:-beaver-label-studio}"
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -40,7 +43,7 @@ echo -e "  Watch progress:"
 echo -e "  ${CYAN}aws ecs describe-services --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE} --region ${AWS_REGION} --query 'services[0].{running:runningCount,desired:desiredCount,pending:pendingCount}'${NC}"
 echo ""
 echo -e "  View logs:"
-echo -e "  ${CYAN}aws logs tail /ecs/beaver-label-studio --since 5m --region ${AWS_REGION} --follow${NC}"
+echo -e "  ${CYAN}aws logs tail /ecs/${ECS_SERVICE} --since 5m --region ${AWS_REGION} --follow${NC}"
 echo ""
-echo -e "  Access: ${BOLD}https://labelstudio.blueprintparser.com${NC}"
+echo -e "  Access: ${BOLD}https://labelstudio.${DOMAIN:-yourdomain.com}${NC}"
 echo ""

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { pages } from "@/lib/db/schema";
+import { pages, projects } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { CsiCode } from "@/types";
 import { computeProjectSummaries } from "@/lib/project-analysis";
@@ -27,6 +27,12 @@ export async function PATCH(req: Request) {
 
     if (!projectId || !pageNumber || !intelligence) {
       return NextResponse.json({ error: "Missing projectId, pageNumber, or intelligence" }, { status: 400 });
+    }
+
+    // Block writes to demo projects
+    const [proj] = await db.select({ isDemo: projects.isDemo }).from(projects).where(eq(projects.id, projectId)).limit(1);
+    if (proj?.isDemo) {
+      return NextResponse.json({ error: "Demo projects are read-only" }, { status: 403 });
     }
 
     // Read current page data
@@ -80,13 +86,16 @@ export async function PATCH(req: Request) {
       .where(eq(pages.id, pageRow.id));
 
     // Recompute summaries if parsedRegions changed (new table/keynote parsed)
+    let summaries = null;
     if (intelligence.parsedRegions) {
-      computeProjectSummaries(projectId).catch((e) =>
-        logger.error("[pages/intelligence] Summary recompute failed:", e)
-      );
+      try {
+        summaries = await computeProjectSummaries(projectId);
+      } catch (e) {
+        logger.error("[pages/intelligence] Summary recompute failed:", e);
+      }
     }
 
-    return NextResponse.json({ ok: true, csiCodeCount: newCsi.length });
+    return NextResponse.json({ ok: true, csiCodeCount: newCsi.length, summaries });
   } catch (err) {
     logger.error("[pages/intelligence] Failed:", err);
     return NextResponse.json(

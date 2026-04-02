@@ -7,9 +7,14 @@ set -euo pipefail
 # Run after: terraform apply && ./deploy-label-studio.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
-AWS_REGION="us-east-1"
-ECS_CLUSTER="beaver-cluster"
-LS_URL="https://labelstudio.blueprintparser.com"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${SCRIPT_DIR}/../.deploy.env" ] && source "${SCRIPT_DIR}/../.deploy.env"
+
+AWS_REGION="${AWS_REGION:-us-east-1}"
+ECS_CLUSTER="${ECS_CLUSTER:?ERROR: Set ECS_CLUSTER in .deploy.env or environment}"
+DOMAIN="${DOMAIN:?ERROR: Set DOMAIN in .deploy.env or environment}"
+LS_URL="https://labelstudio.${DOMAIN}"
+SECRETS_PREFIX="${SECRETS_PREFIX:-beaver}"
 
 # Colors
 R='\033[0m'       # Reset
@@ -67,21 +72,21 @@ echo ""
 echo -e "  Querying ECS..."
 LS_RUNNING=$(aws ecs describe-services \
     --cluster "${ECS_CLUSTER}" \
-    --services beaver-label-studio \
+    --services ${ECS_LABEL_STUDIO_SERVICE:-beaver-label-studio} \
     --region "${AWS_REGION}" \
     --query 'services[0].runningCount' \
     --output text 2>/dev/null || echo "0")
 
 LS_DESIRED=$(aws ecs describe-services \
     --cluster "${ECS_CLUSTER}" \
-    --services beaver-label-studio \
+    --services ${ECS_LABEL_STUDIO_SERVICE:-beaver-label-studio} \
     --region "${AWS_REGION}" \
     --query 'services[0].desiredCount' \
     --output text 2>/dev/null || echo "0")
 
 echo ""
 echo -e "  ┌──────────────────────────────────────┐"
-echo -e "  │  Service: ${B}beaver-label-studio${R}        │"
+echo -e "  │  Service: ${B}${ECS_LABEL_STUDIO_SERVICE:-beaver-label-studio}${R}        │"
 echo -e "  │  Running: ${G}${LS_RUNNING}${R}  Desired: ${LS_DESIRED}              │"
 echo -e "  │  URL: ${B}${LS_URL}${R}  │"
 echo -e "  └──────────────────────────────────────┘"
@@ -94,7 +99,7 @@ if [ "$LS_RUNNING" = "0" ] || [ "$LS_RUNNING" = "None" ]; then
     echo -e "  ${D}1. Run: cd infrastructure/terraform && terraform apply${R}"
     echo -e "  ${D}2. Wait 2 minutes for the container to start${R}"
     echo -e "  ${D}3. Check logs:${R}"
-    echo -e "     ${D}aws logs tail /ecs/beaver-label-studio --since 5m --region ${AWS_REGION}${R}"
+    echo -e "     ${D}aws logs tail /ecs/${ECS_LABEL_STUDIO_SERVICE:-beaver-label-studio} --since 5m --region ${AWS_REGION}${R}"
     echo ""
     echo -e "  Run this script again once Label Studio is running."
     exit 1
@@ -186,11 +191,11 @@ echo -e "  ${B}Step 4/5${R}  ${C}Storing Token in AWS${R}"
 draw_line
 echo ""
 
-echo -e "  Updating ${B}beaver/LABEL_STUDIO_API_KEY${R} in Secrets Manager..."
+echo -e "  Updating ${B}${SECRETS_PREFIX}/LABEL_STUDIO_API_KEY${R} in Secrets Manager..."
 echo ""
 
 aws secretsmanager put-secret-value \
-    --secret-id beaver/LABEL_STUDIO_API_KEY \
+    --secret-id ${SECRETS_PREFIX}/LABEL_STUDIO_API_KEY \
     --secret-string "${PAT_TOKEN}" \
     --region "${AWS_REGION}" > /dev/null 2>&1
 
@@ -199,7 +204,7 @@ echo ""
 
 # Verify it was stored
 STORED=$(aws secretsmanager get-secret-value \
-    --secret-id beaver/LABEL_STUDIO_API_KEY \
+    --secret-id ${SECRETS_PREFIX}/LABEL_STUDIO_API_KEY \
     --region "${AWS_REGION}" \
     --query 'SecretString' \
     --output text 2>/dev/null | head -c 8)
@@ -224,7 +229,7 @@ echo ""
 
 aws ecs update-service \
     --cluster "${ECS_CLUSTER}" \
-    --service beaver-app \
+    --service ${ECS_SERVICE} \
     --force-new-deployment \
     --region "${AWS_REGION}" \
     --output text \
@@ -238,13 +243,13 @@ echo -e "  ${D}Waiting for new task to start...${R}"
 for i in $(seq 1 30); do
     RUNNING=$(aws ecs describe-services \
         --cluster "${ECS_CLUSTER}" \
-        --services beaver-app \
+        --services ${ECS_SERVICE} \
         --region "${AWS_REGION}" \
         --query 'services[0].runningCount' \
         --output text 2>/dev/null || echo "0")
     PENDING=$(aws ecs describe-services \
         --cluster "${ECS_CLUSTER}" \
-        --services beaver-app \
+        --services ${ECS_SERVICE} \
         --region "${AWS_REGION}" \
         --query 'services[0].pendingCount' \
         --output text 2>/dev/null || echo "0")
@@ -285,6 +290,6 @@ echo -e "  │  ${C}Label Studio${R}                          │"
 echo -e "  │  ${B}${LS_URL}${R}  │"
 echo -e "  │                                      │"
 echo -e "  │  ${C}BlueprintParser${R}                       │"
-echo -e "  │  ${B}https://app.blueprintparser.com${R}       │"
+echo -e "  │  ${B}https://app.${DOMAIN}${R}       │"
 echo -e "  └──────────────────────────────────────┘"
 echo ""

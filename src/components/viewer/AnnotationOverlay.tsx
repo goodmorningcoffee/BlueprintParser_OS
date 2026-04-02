@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useYoloTags, useSymbolSearch } from "@/stores/viewerStore";
+import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
+import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useYoloTags, useSymbolSearch, useAnnotationFilters } from "@/stores/viewerStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
 import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
@@ -92,7 +92,7 @@ function drawCountMarker(
   ctx.restore();
 }
 
-export default function AnnotationOverlay({
+export default memo(function AnnotationOverlay({
   width,
   height,
   cssScale,
@@ -126,11 +126,8 @@ export default function AnnotationOverlay({
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
 
   // Drawing state lives in Zustand store — AnnotationOverlay does NOT subscribe.
-  // Use getState() for reads in event handlers. DrawingPreviewLayer subscribes independently.
-  const setDrawing = useViewerStore((s) => s._setDrawing);
-  const setDrawStart = useViewerStore((s) => s._setDrawStart);
-  const setDrawEnd = useViewerStore((s) => s._setDrawEnd);
-  const setMousePos = useViewerStore((s) => s._setMousePos);
+  // Use getState() for reads AND writes in event handlers. DrawingPreviewLayer subscribes independently.
+  const { _setDrawing: setDrawing, _setDrawStart: setDrawStart, _setDrawEnd: setDrawEnd, _setMousePos: setMousePos } = useViewerStore.getState();
   const rafRef = useRef<number>(0);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -142,24 +139,18 @@ export default function AnnotationOverlay({
   const [markupNote, setMarkupNote] = useState("");
   const [editingAnnotationId, setEditingAnnotationId] = useState<number | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const showDetections = useViewerStore((s) => s.showDetections);
-  const confidenceThreshold = useViewerStore((s) => s.confidenceThreshold);
-  const activeModels = useViewerStore((s) => s.activeModels);
-  const hiddenClasses = useViewerStore((s) => s.hiddenClasses);
-  const confidenceThresholds = useViewerStore((s) => s.confidenceThresholds);
-  const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
-  const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
+  const {
+    showDetections, confidenceThreshold, activeModels, hiddenClasses,
+    confidenceThresholds, activeAnnotationFilter, activeCsiFilter, hiddenAnnotationIds,
+  } = useAnnotationFilters();
   const setAnnotationFilter = useViewerStore((s) => s.setAnnotationFilter);
   const setTakeoffFilter = useViewerStore((s) => s.setTakeoffFilter);
-  const textractData = useViewerStore((s) => s.textractData);
   const setSearch = useViewerStore((s) => s.setSearch);
-  const searchQuery = useViewerStore((s) => s.searchQuery);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   const calibrationMode = useViewerStore((s) => s.calibrationMode);
   const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
-  const calibrationPoints = useViewerStore((s) => s.calibrationPoints);
   const setCalibrationPoint = useViewerStore((s) => s.setCalibrationPoint);
   const resetCalibration = useViewerStore((s) => s.resetCalibration);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
@@ -171,14 +162,10 @@ export default function AnnotationOverlay({
   const undoLastVertex = useViewerStore((s) => s.undoLastVertex);
   const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
   const addYoloTag = useViewerStore((s) => s.addYoloTag);
-  const showTableParsePanel = useViewerStore((s) => s.showTableParsePanel);
-  const showKeynoteParsePanel = useViewerStore((s) => s.showKeynoteParsePanel);
 
   // During keynote Step 2 with Column A drawn: only show YOLO fully inside Column A
   const isKeynoteYoloPicking = keynoteParseStep === "define-column" && keynoteColumnBBs.length >= 1;
   const keynoteColA = keynoteColumnBBs.length >= 1 ? keynoteColumnBBs[0] : null;
-
-  const hiddenAnnotationIds = useViewerStore((s) => s.hiddenAnnotationIds);
 
   const pageAnnotations = useMemo(() => annotations.filter((a) => {
     if (a.pageNumber !== pageNumber) return false;
@@ -229,6 +216,23 @@ export default function AnnotationOverlay({
 
   const pageKeynotes = keynotes[pageNumber] || [];
 
+  // Pre-indexed tag lookups: O(1) instead of yoloTags.find() in nested loops
+  const tagTextIndex = useMemo(() => {
+    const map = new Map<string, typeof yoloTags[0]>();
+    for (const tag of yoloTags) map.set(`${tag.tagText}:${tag.source}`, tag);
+    return map;
+  }, [yoloTags]);
+
+  // Pre-filtered tag instances by page: avoids inner-loop pageNumber check
+  const pageTagInstances = useMemo(() => {
+    const map = new Map<string, Array<{ bbox: [number, number, number, number]; annotationId: number }>>();
+    for (const tag of yoloTags) {
+      const filtered = tag.instances.filter((i) => i.pageNumber === pageNumber);
+      if (filtered.length) map.set(tag.id, filtered);
+    }
+    return map;
+  }, [yoloTags, pageNumber]);
+
   // Draw annotations
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -244,12 +248,20 @@ export default function AnnotationOverlay({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
+    // Early exit: nothing to draw on this page
+    if (pageAnnotations.length === 0 && !activeYoloTagId && pageTagInstances.size === 0
+        && Object.keys(activeTableTagViews).length === 0
+        && !symbolSearchResults && !llmHighlight) {
+      return;
+    }
+
     // ─── YOLO Tag highlighting: compute which annotations are tag instances on this page ───
     const activeTag = activeYoloTagId ? yoloTags.find((t) => t.id === activeYoloTagId) : null;
     const activeTagAnnIds = new Set<number>();
     if (activeTag) {
-      for (const inst of activeTag.instances) {
-        if (inst.pageNumber === pageNumber) activeTagAnnIds.add(inst.annotationId);
+      const activeTagPageInsts = pageTagInstances.get(activeTag.id) || [];
+      for (const inst of activeTagPageInsts) {
+        activeTagAnnIds.add(inst.annotationId);
       }
     }
     // Visible tags: collect all visible tag instances on this page (only if explicitly toggled on)
@@ -257,10 +269,9 @@ export default function AnnotationOverlay({
     for (const tag of yoloTags) {
       if (tag.id === activeYoloTagId) continue; // active tag drawn separately
       if (yoloTagVisibility[tag.id] === false) continue; // hidden if explicitly toggled off
-      for (const inst of tag.instances) {
-        if (inst.pageNumber === pageNumber) {
-          visibleTagInstances.push({ bbox: inst.bbox, color: tag.color || "#22d3ee", name: tag.tagText });
-        }
+      const tagPageInsts = pageTagInstances.get(tag.id) || [];
+      for (const inst of tagPageInsts) {
+        visibleTagInstances.push({ bbox: inst.bbox, color: tag.color || "#22d3ee", name: tag.tagText });
       }
     }
 
@@ -269,7 +280,8 @@ export default function AnnotationOverlay({
       // Count markers: draw shape instead of rectangle
       if (ann.source === "takeoff" && (ann.data as any)?.type === "count-marker") {
         const itemId = (ann.data as any)?.takeoffItemId;
-        const item = takeoffItems.find((t) => t.id === itemId || String(t.id) === String(itemId));
+        const items = useViewerStore.getState().takeoffItems;
+        const item = items.find((t) => t.id === itemId || String(t.id) === String(itemId));
         drawCountMarker(ctx, ann, width, height, ann.id === selectedId, item?.size);
         continue;
       }
@@ -356,8 +368,9 @@ export default function AnnotationOverlay({
 
     // ─── Draw free-floating active tag instances (annotationId = -1, not in annotation loop) ───
     if (activeTag) {
-      for (const inst of activeTag.instances) {
-        if (inst.pageNumber !== pageNumber || inst.annotationId !== -1) continue;
+      const activeTagPageInsts = pageTagInstances.get(activeTag.id) || [];
+      for (const inst of activeTagPageInsts) {
+        if (inst.annotationId !== -1) continue;
         const [bMinX, bMinY, bMaxX, bMaxY] = inst.bbox;
         const fx = bMinX * width;
         const fy = bMinY * height;
@@ -449,8 +462,9 @@ export default function AnnotationOverlay({
     }
 
     // ─── Table/Keynote tag views (eye icon toggle) ───
-    const tableTagViews = activeTableTagViews;
-    for (const view of Object.values(tableTagViews)) {
+    if (Object.keys(activeTableTagViews).length > 0) {
+      const tableTagViews = activeTableTagViews;
+      for (const view of Object.values(tableTagViews)) {
       // 1. Blue translucent highlight over the table/keynote region (on the region's page)
       if (view.pageNum === pageNumber) {
         const [bMinX, bMinY, bMaxX, bMaxY] = view.bbox;
@@ -465,10 +479,10 @@ export default function AnnotationOverlay({
       // 2. Magenta padded highlights for each mapped tag instance on this page
       const pad = 3; // padding in canvas pixels
       for (const tagText of view.tagTexts) {
-        const matchingTag = yoloTags.find((t) => t.tagText === tagText && t.source === view.source);
+        const matchingTag = tagTextIndex.get(`${tagText}:${view.source}`);
         if (!matchingTag) continue;
-        for (const inst of matchingTag.instances) {
-          if (inst.pageNumber !== pageNumber) continue;
+        const tagPageInsts = pageTagInstances.get(matchingTag.id) || [];
+        for (const inst of tagPageInsts) {
           const [iMinX, iMinY, iMaxX, iMaxY] = inst.bbox;
           const ix = iMinX * width - pad, iy = iMinY * height - pad;
           const iw = (iMaxX - iMinX) * width + pad * 2, ih = (iMaxY - iMinY) * height + pad * 2;
@@ -488,6 +502,7 @@ export default function AnnotationOverlay({
         }
       }
     }
+    } // end activeTableTagViews guard
 
     // Draw completed area polygons
     for (const ann of pageAnnotations) {
@@ -587,7 +602,7 @@ export default function AnnotationOverlay({
     }
 
     // Calibration + polygon preview — rendered by DrawingPreviewLayer
-  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight]);
+  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight]);
 
   const getPos = useCallback(
     (e: React.MouseEvent) => {
@@ -1037,7 +1052,8 @@ export default function AnnotationOverlay({
             e.stopPropagation();
 
             const store = useViewerStore.getState();
-            const isToggleOff = searchQuery.toLowerCase() === ann.name.toLowerCase();
+            const currentSearch = store.searchQuery;
+            const isToggleOff = currentSearch.toLowerCase() === ann.name.toLowerCase();
 
             if (ann.source === "user") {
               // User markup: filter + open TextPanel → Markups tab
@@ -1055,7 +1071,7 @@ export default function AnnotationOverlay({
               const itemId = (ann.data as any)?.takeoffItemId;
               const item = takeoffItems.find((t) => t.id === itemId);
               const itemName = item?.name || ann.name;
-              if (isToggleOff || searchQuery.toLowerCase() === itemName.toLowerCase()) {
+              if (isToggleOff || currentSearch.toLowerCase() === itemName.toLowerCase()) {
                 setSearch(""); setTakeoffFilter(null);
               } else {
                 setSearch(itemName); setTakeoffFilter(itemId);
@@ -1071,25 +1087,26 @@ export default function AnnotationOverlay({
             return;
           }
           // No annotation hit — try OCR word fallback
-          const pageWords = textractData[pageNumber]?.words;
+          const pageWords = useViewerStore.getState().textractData[pageNumber]?.words;
           if (pageWords) {
             const normX = pos.x / width;
             const normY = pos.y / height;
             for (const word of pageWords) {
               const [left, top, w, h] = word.bbox;
               if (normX >= left && normX <= left + w && normY >= top && normY <= top + h) {
-                if (e.shiftKey && searchQuery) {
+                const sq = useViewerStore.getState().searchQuery;
+                if (e.shiftKey && sq) {
                   // Shift+double-click: append word to search (multi-word selection)
-                  const existing = searchQuery.toLowerCase().split(/\s+/);
+                  const existing = sq.toLowerCase().split(/\s+/);
                   const newWord = word.text.toLowerCase();
                   if (existing.includes(newWord)) {
                     // Remove word if already in search
                     const filtered = existing.filter((w) => w !== newWord);
                     setSearch(filtered.join(" "));
                   } else {
-                    setSearch(searchQuery + " " + word.text);
+                    setSearch(sq + " " + word.text);
                   }
-                } else if (searchQuery.toLowerCase() === word.text.toLowerCase()) {
+                } else if (sq.toLowerCase() === word.text.toLowerCase()) {
                   setSearch("");
                 } else {
                   setSearch(word.text);
@@ -1295,7 +1312,7 @@ export default function AnnotationOverlay({
       setDrawStart(pos);
       setDrawEnd(pos);
     },
-    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, textractData, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep]
+    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep]
   );
 
   const handleMouseMove = useCallback(
@@ -1711,4 +1728,4 @@ export default function AnnotationOverlay({
       )}
     </>
   );
-}
+})

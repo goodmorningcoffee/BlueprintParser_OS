@@ -17,6 +17,19 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      // Tag browse: Left/Right arrows cycle instances when browsing
+      if (store.tagBrowseId && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        store.tagBrowseNavigate(store.tagBrowseId, store.tagBrowseIndex + (e.key === "ArrowLeft" ? -1 : 1));
+        return;
+      }
+      if (store.tagBrowseId && e.key === "Escape") {
+        e.preventDefault();
+        store.setLlmHighlight(null);
+        useViewerStore.setState({ tagBrowseId: null, tagBrowseIndex: 0 });
+        return;
+      }
+
       switch (e.key) {
         case "ArrowLeft":
         case "PageUp":

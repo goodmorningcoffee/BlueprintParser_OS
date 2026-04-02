@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { mapYoloToOcrText, scanClassForTexts } from "@/lib/yolo-tag-engine";
 import type { ClientAnnotation, TextractPageData, YoloTagInstance } from "@/types";
 
@@ -95,11 +95,18 @@ export async function POST(
     data: a.data ?? null,
   }));
 
-  // Load all textract data ONCE
+  // Load textract data (filtered to selectedPages when available to avoid loading ~80KB/page for unused pages)
+  const pageFilter = !isScan && selectedPages && selectedPages.length > 0
+    ? new Set(selectedPages)
+    : null;
   const pageRows = await db
     .select({ pageNumber: pages.pageNumber, textractData: pages.textractData })
     .from(pages)
-    .where(eq(pages.projectId, project.id));
+    .where(
+      pageFilter
+        ? and(eq(pages.projectId, project.id), inArray(pages.pageNumber, selectedPages!))
+        : eq(pages.projectId, project.id)
+    );
 
   const textractMap: Record<number, TextractPageData> = {};
   for (const row of pageRows) {
@@ -115,10 +122,6 @@ export async function POST(
   }
 
   // ─── map mode (default): map specific tag texts to instances ───
-  const pageFilter = selectedPages && selectedPages.length > 0
-    ? new Set(selectedPages)
-    : null;
-
   const results: Record<string, YoloTagInstance[]> = {};
 
   for (const tag of tags!) {

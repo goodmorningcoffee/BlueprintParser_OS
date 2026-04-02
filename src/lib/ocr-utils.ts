@@ -15,47 +15,18 @@ import type {
 } from "@/types";
 
 // ═══════════════════════════════════════════════════════════════════
-// Bbox conversion helpers
+// Bbox primitives — re-exported from canonical source (bbox-utils.ts)
 // ═══════════════════════════════════════════════════════════════════
 
-/** Convert Textract [left, top, width, height] to [minX, minY, maxX, maxY]. */
-export function ltwh2minmax(bbox: BboxLTWH): BboxMinMax {
-  return [bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]];
-}
-
-/** Convert [minX, minY, maxX, maxY] to [left, top, width, height]. */
-export function minmax2ltwh(bbox: BboxMinMax): BboxLTWH {
-  return [bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]];
-}
-
-/** Center point of a LTWH bbox. */
-export function bboxCenterLTWH(bbox: BboxLTWH): { x: number; y: number } {
-  return { x: bbox[0] + bbox[2] / 2, y: bbox[1] + bbox[3] / 2 };
-}
-
-/** Center point of a MinMax bbox. */
-export function bboxCenterMinMax(bbox: BboxMinMax): { x: number; y: number } {
-  return { x: (bbox[0] + bbox[2]) / 2, y: (bbox[1] + bbox[3]) / 2 };
-}
-
-/** Check if a point falls inside a MinMax bbox. */
-export function bboxContainsPoint(
-  bbox: BboxMinMax,
-  point: { x: number; y: number }
-): boolean {
-  return point.x >= bbox[0] && point.x <= bbox[2]
-      && point.y >= bbox[1] && point.y <= bbox[3];
-}
-
-/** Area of a MinMax bbox. */
-export function bboxAreaMinMax(bbox: BboxMinMax): number {
-  return (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]);
-}
-
-/** Area of a LTWH bbox. */
-export function bboxAreaLTWH(bbox: BboxLTWH): number {
-  return bbox[2] * bbox[3];
-}
+export {
+  ltwh2minmax,
+  minmax2ltwh,
+  bboxCenterLTWH,
+  bboxCenterMinMax,
+  bboxContainsPoint,
+  bboxAreaMinMax,
+  bboxAreaLTWH,
+} from "@/lib/bbox-utils";
 
 // ═══════════════════════════════════════════════════════════════════
 // Word proximity helpers

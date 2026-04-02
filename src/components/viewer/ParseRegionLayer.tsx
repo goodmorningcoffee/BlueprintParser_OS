@@ -32,6 +32,8 @@ export default memo(function ParseRegionLayer({
   const keynoteParseRegion = useViewerStore((s) => s.keynoteParseRegion);
   const keynoteColumnBBs = useViewerStore((s) => s.keynoteColumnBBs);
   const keynoteRowBBs = useViewerStore((s) => s.keynoteRowBBs);
+  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -138,13 +140,48 @@ export default memo(function ParseRegionLayer({
       ctx.fillStyle = "rgba(192,38,211,0.85)";
       ctx.fillText(String(ri + 1), rMinX * width - 12, rMinY * height + 12);
     }
+    // ── Saved parsed regions (tables + keynotes) with stored color/opacity ─
+    const intel = pageIntelligence[pageNumber] as any;
+    if (intel?.parsedRegions) {
+      for (const region of intel.parsedRegions) {
+        if (!region.bbox) continue;
+        const color = region.data?.color || (region.type === "keynote" ? "#f59e0b" : "#e879a0");
+        const opacityPct = region.data?.opacity ?? 20;
+        const [minX, minY, maxX, maxY] = region.bbox;
+        const x = minX * width, y = minY * height;
+        const w = (maxX - minX) * width, h = (maxY - minY) * height;
+
+        // Fill with stored opacity
+        const alphaHex = Math.round((opacityPct / 100) * 255).toString(16).padStart(2, "0");
+        ctx.fillStyle = color + alphaHex;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
+
+        // Label
+        const label = region.data?.tableName || region.category || region.type;
+        if (label) {
+          ctx.font = "bold 10px sans-serif";
+          const tw = ctx.measureText(label).width;
+          ctx.fillStyle = color + "cc";
+          ctx.fillRect(x, y - 14, tw + 8, 14);
+          ctx.fillStyle = "#fff";
+          ctx.fillText(label, x + 4, y - 3);
+        }
+      }
+    }
   }, [width, height, showParsedRegions,
     showTableParsePanel, tableParseRegion, tableParseColumnBBs, tableParseRowBBs,
-    showKeynoteParsePanel, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs]);
+    showKeynoteParsePanel, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs,
+    pageNumber, pageIntelligence]);
 
+  const intel = pageIntelligence[pageNumber] as any;
+  const hasSavedRegions = intel?.parsedRegions?.length > 0;
   const hasContent = showParsedRegions && (
     (showTableParsePanel && (tableParseRegion || tableParseColumnBBs.length > 0 || tableParseRowBBs.length > 0))
     || (showKeynoteParsePanel && (keynoteParseRegion || keynoteColumnBBs.length > 0 || keynoteRowBBs.length > 0))
+    || hasSavedRegions
   );
 
   if (!hasContent) return null;

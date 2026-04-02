@@ -344,6 +344,19 @@ export default function KeynoteItem({
                     <span className="text-cyan-400/70 text-[9px] ml-1">({tagInstances(k.key)})</span>
                   )}
                 </button>
+                {tagInstances(k.key) > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const tag = yoloTags.find((t) => t.tagText === k.key && t.source === "keynote");
+                      if (tag) useViewerStore.getState().tagBrowseNavigate(tag.id, 0);
+                    }}
+                    className="text-[9px] text-cyan-400/40 hover:text-cyan-300 shrink-0 px-0.5"
+                    title="Browse all instances"
+                  >
+                    &#8594;
+                  </button>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

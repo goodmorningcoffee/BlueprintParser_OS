@@ -257,7 +257,7 @@ export default memo(function DrawingPreviewLayer({
       ctx.restore();
     }
   }, [drawing, drawStart, drawEnd, mousePos, width, height,
-    symbolSearchActive, tableParseStep, keynoteParseStep, showParsedRegions,
+    symbolSearchActive, tableParseStep, keynoteParseStep,
     calibrationMode, calibrationPoints,
     polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems]);
 

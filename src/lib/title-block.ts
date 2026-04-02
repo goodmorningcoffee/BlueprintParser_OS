@@ -1,4 +1,5 @@
 import type { TextractPageData, TextractWord } from "@/types";
+import { DEFAULT_TITLE_BLOCK_REGION } from "@/lib/spatial-constants";
 
 /**
  * Drawing number pattern — matches common architectural/engineering formats:
@@ -15,12 +16,7 @@ const DRAWING_NUMBER_RE =
  * in the bottom-right corner, roughly the last 25% vertically
  * and right 50% horizontally.
  */
-const DEFAULT_TITLE_BLOCK = {
-  minX: 0.45,
-  minY: 0.7,
-  maxX: 1.0,
-  maxY: 1.0,
-};
+const DEFAULT_TITLE_BLOCK = DEFAULT_TITLE_BLOCK_REGION;
 
 /** Known discipline prefixes from architectural/engineering drawings. */
 const KNOWN_PREFIXES: Set<string> = new Set([

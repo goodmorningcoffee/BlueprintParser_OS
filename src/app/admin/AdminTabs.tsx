@@ -2,7 +2,7 @@
 
 export type AdminTab = "overview" | "projects" | "ai-models" | "pipeline" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "companies" | "users" | "settings";
 
-const TABS: { id: AdminTab; label: string; rootOnly?: boolean }[] = [
+const TABS: { id: AdminTab; label: string; rootOnly?: boolean; hideForRoot?: boolean }[] = [
   { id: "overview", label: "Overview" },
   { id: "projects", label: "Demo Projects" },
   { id: "ai-models", label: "AI Models" },
@@ -13,7 +13,7 @@ const TABS: { id: AdminTab; label: string; rootOnly?: boolean }[] = [
   { id: "heuristics", label: "Heuristics" },
   { id: "page-intelligence", label: "Page Intelligence" },
   { id: "companies", label: "Companies / Users", rootOnly: true },
-  { id: "users", label: "Users" },
+  { id: "users", label: "Users", hideForRoot: true },
   { id: "settings", label: "Settings" },
 ];
 
@@ -27,7 +27,7 @@ interface AdminTabsProps {
 export default function AdminTabs({ active, onChange, badges, isRootAdmin }: AdminTabsProps) {
   return (
     <div className="flex gap-1 border-b border-[var(--border)] mb-6 overflow-x-auto">
-      {TABS.filter((tab) => !tab.rootOnly || isRootAdmin).map((tab) => (
+      {TABS.filter((tab) => (!tab.rootOnly || isRootAdmin) && (!tab.hideForRoot || !isRootAdmin)).map((tab) => (
         <button
           key={tab.id}
           onClick={() => onChange(tab.id)}

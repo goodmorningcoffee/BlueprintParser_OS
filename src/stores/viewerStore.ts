@@ -313,6 +313,10 @@ interface ViewerState {
   // LLM tool use highlight (auto-clears after timeout)
   llmHighlight: { pageNumber: number; bbox: [number, number, number, number]; label?: string } | null;
   setLlmHighlight: (h: { pageNumber: number; bbox: [number, number, number, number]; label?: string } | null) => void;
+  // Tag instance browser ("Find All" for tags)
+  tagBrowseId: string | null;
+  tagBrowseIndex: number;
+  tagBrowseNavigate: (tagId: string, index: number) => void;
 
   // ─── Parsed Region Visibility ──────────────────────────
   showParsedRegions: boolean;
@@ -770,6 +774,25 @@ export const useViewerStore = create<ViewerState>((set) => ({
   }),
   llmHighlight: null,
   setLlmHighlight: (llmHighlight) => set({ llmHighlight }),
+  tagBrowseId: null,
+  tagBrowseIndex: 0,
+  tagBrowseNavigate: (tagId, index) => set((s) => {
+    const tag = s.yoloTags.find((t) => t.id === tagId);
+    if (!tag || tag.instances.length === 0) return s;
+    const idx = ((index % tag.instances.length) + tag.instances.length) % tag.instances.length;
+    const inst = tag.instances[idx];
+    return {
+      tagBrowseId: tagId,
+      tagBrowseIndex: idx,
+      activeYoloTagId: tagId,
+      pageNumber: inst.pageNumber,
+      llmHighlight: {
+        pageNumber: inst.pageNumber,
+        bbox: inst.bbox,
+        label: `${tag.tagText} — ${idx + 1} of ${tag.instances.length}`,
+      },
+    };
+  }),
 
   showParsedRegions: true,
   toggleParsedRegions: () => set((s) => ({ showParsedRegions: !s.showParsedRegions })),
@@ -968,11 +991,9 @@ export const useNavigation = () =>
   useViewerStore(useShallow((s) => ({
     pageNumber: s.pageNumber,
     numPages: s.numPages,
-    scale: s.scale,
     mode: s.mode,
     setPage: s.setPage,
     setNumPages: s.setNumPages,
-    setScale: s.setScale,
     setMode: s.setMode,
   })));
 
@@ -1196,6 +1217,19 @@ export const useTextAnnotationDisplay = () =>
     setTextAnnotationColor: s.setTextAnnotationColor,
     activeTextAnnotationFilter: s.activeTextAnnotationFilter,
     setTextAnnotationFilter: s.setTextAnnotationFilter,
+  })));
+
+/** Annotation visibility filter state (used by AnnotationOverlay pageAnnotations useMemo) */
+export const useAnnotationFilters = () =>
+  useViewerStore(useShallow((s) => ({
+    showDetections: s.showDetections,
+    confidenceThreshold: s.confidenceThreshold,
+    activeModels: s.activeModels,
+    hiddenClasses: s.hiddenClasses,
+    confidenceThresholds: s.confidenceThresholds,
+    activeAnnotationFilter: s.activeAnnotationFilter,
+    activeCsiFilter: s.activeCsiFilter,
+    hiddenAnnotationIds: s.hiddenAnnotationIds,
   })));
 
 /** Auto-QTO workflow state */

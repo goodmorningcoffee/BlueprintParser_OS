@@ -9,6 +9,7 @@ Usage:
   python3 scripts/update_secret.py GROQ_API_KEY gsk_x --no-restart # skip ECS redeploy
 """
 
+import os
 import sys
 import getpass
 import re
@@ -23,10 +24,21 @@ ENV_FILE = Path(__file__).resolve().parent.parent / ".env.local"
 ENV_EXAMPLE = Path(__file__).resolve().parent.parent / ".env.example"
 TFVARS_FILE = Path(__file__).resolve().parent.parent / "infrastructure" / "terraform" / "terraform.tfvars"
 
-AWS_REGION = "us-east-1"
-SECRETS_PREFIX = "beaver"
-ECS_CLUSTER = "beaver-cluster"
-ECS_SERVICE = "beaver-app"
+DEPLOY_ENV = Path(__file__).resolve().parent.parent / ".deploy.env"
+
+# Read from .deploy.env if it exists
+_deploy_config: dict[str, str] = {}
+if DEPLOY_ENV.exists():
+    for line in DEPLOY_ENV.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            _deploy_config[k.strip()] = v.strip()
+
+AWS_REGION = os.environ.get("AWS_REGION", _deploy_config.get("AWS_REGION", "us-east-1"))
+SECRETS_PREFIX = os.environ.get("SECRETS_PREFIX", _deploy_config.get("SECRETS_PREFIX", "beaver"))
+ECS_CLUSTER = os.environ.get("ECS_CLUSTER", _deploy_config.get("ECS_CLUSTER", "beaver-cluster"))
+ECS_SERVICE = os.environ.get("ECS_SERVICE", _deploy_config.get("ECS_SERVICE", "beaver-app"))
 
 # Known key validators
 VALIDATORS = {

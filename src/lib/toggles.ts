@@ -11,7 +11,7 @@ const s3Client = new S3Client({
   }),
 });
 
-const S3_BUCKET = process.env.S3_BUCKET || "beaver-public";
+const S3_BUCKET = process.env.S3_BUCKET ?? "";
 const TOGGLES_KEY = "config/toggles.json";
 const CACHE_TTL = 60_000;
 

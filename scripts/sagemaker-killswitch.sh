@@ -8,9 +8,12 @@
 #   ./scripts/sagemaker-killswitch.sh on     # Restore SageMaker access
 #   ./scripts/sagemaker-killswitch.sh status # Check current state
 
-ROLE_NAME="beaver-ecs-task-role"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${SCRIPT_DIR}/../.deploy.env" ] && source "${SCRIPT_DIR}/../.deploy.env"
+
+ROLE_NAME="${ECS_TASK_ROLE:-beaver-ecs-task-role}"
 POLICY_NAME="sagemaker-kill-switch"
-REGION="us-east-1"
+REGION="${AWS_REGION:-us-east-1}"
 
 case "$1" in
   off|disable|kill)

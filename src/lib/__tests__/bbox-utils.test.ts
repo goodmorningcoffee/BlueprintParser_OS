@@ -45,17 +45,17 @@ describe("minmax2ltwh", () => {
 
 describe("bboxCenterLTWH", () => {
   it("computes center of LTWH bbox", () => {
-    const { cx, cy } = bboxCenterLTWH([0.2, 0.3, 0.4, 0.2]);
-    expect(cx).toBeCloseTo(0.4); // 0.2 + 0.4/2
-    expect(cy).toBeCloseTo(0.4); // 0.3 + 0.2/2
+    const { x, y } = bboxCenterLTWH([0.2, 0.3, 0.4, 0.2]);
+    expect(x).toBeCloseTo(0.4); // 0.2 + 0.4/2
+    expect(y).toBeCloseTo(0.4); // 0.3 + 0.2/2
   });
 });
 
 describe("bboxCenterMinMax", () => {
   it("computes center of MinMax bbox", () => {
-    const { cx, cy } = bboxCenterMinMax([0.2, 0.3, 0.6, 0.5]);
-    expect(cx).toBeCloseTo(0.4); // (0.2+0.6)/2
-    expect(cy).toBeCloseTo(0.4); // (0.3+0.5)/2
+    const { x, y } = bboxCenterMinMax([0.2, 0.3, 0.6, 0.5]);
+    expect(x).toBeCloseTo(0.4); // (0.2+0.6)/2
+    expect(y).toBeCloseTo(0.4); // (0.3+0.5)/2
   });
 
   it("matches LTWH center after conversion", () => {
@@ -63,8 +63,8 @@ describe("bboxCenterMinMax", () => {
     const minmax = ltwh2minmax(ltwh);
     const c1 = bboxCenterLTWH(ltwh);
     const c2 = bboxCenterMinMax(minmax);
-    expect(c1.cx).toBeCloseTo(c2.cx);
-    expect(c1.cy).toBeCloseTo(c2.cy);
+    expect(c1.x).toBeCloseTo(c2.x);
+    expect(c1.y).toBeCloseTo(c2.y);
   });
 });
 

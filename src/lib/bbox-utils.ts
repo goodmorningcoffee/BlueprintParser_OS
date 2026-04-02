@@ -31,13 +31,13 @@ export function minmax2ltwh(bbox: BboxMinMax): BboxLTWH {
 // ═══════════════════════════════════════════════════════════════════
 
 /** Get center point of an LTWH bbox */
-export function bboxCenterLTWH(bbox: BboxLTWH): { cx: number; cy: number } {
-  return { cx: bbox[0] + bbox[2] / 2, cy: bbox[1] + bbox[3] / 2 };
+export function bboxCenterLTWH(bbox: BboxLTWH): { x: number; y: number } {
+  return { x: bbox[0] + bbox[2] / 2, y: bbox[1] + bbox[3] / 2 };
 }
 
 /** Get center point of a MinMax bbox */
-export function bboxCenterMinMax(bbox: BboxMinMax): { cx: number; cy: number } {
-  return { cx: (bbox[0] + bbox[2]) / 2, cy: (bbox[1] + bbox[3]) / 2 };
+export function bboxCenterMinMax(bbox: BboxMinMax): { x: number; y: number } {
+  return { x: (bbox[0] + bbox[2]) / 2, y: (bbox[1] + bbox[3]) / 2 };
 }
 
 // ═══════════════════════════════════════════════════════════════════

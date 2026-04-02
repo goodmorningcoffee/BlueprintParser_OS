@@ -9,12 +9,13 @@
  */
 
 import type { TextractWord } from "@/types";
+import { ROW_Y_TOLERANCE } from "@/lib/spatial-constants";
 
 // ═══════════════════════════════════════════════════════════════════
 // Constants
 // ═══════════════════════════════════════════════════════════════════
 
-const ROW_Y_TOL = 0.006;
+const ROW_Y_TOL = ROW_Y_TOLERANCE;
 const MIN_COL_GAP = 0.015;
 
 // ═══════════════════════════════════════════════════════════════════

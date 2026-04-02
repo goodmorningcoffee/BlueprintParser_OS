@@ -90,10 +90,14 @@ export const users = pgTable(
     publicId: uuid("public_id").defaultRandom().unique().notNull(),
     username: varchar("username", { length: 255 }).notNull(),
     email: varchar("email", { length: 255 }).unique().notNull(),
-    passwordHash: varchar("password_hash", { length: 255 }).notNull(),
+    passwordHash: varchar("password_hash", { length: 255 }),
     role: varchar("role", { length: 50 }).default("member").notNull(),
     canRunModels: boolean("can_run_models").default(false).notNull(),
     isRootAdmin: boolean("is_root_admin").default(false).notNull(),
+    oauthProvider: varchar("oauth_provider", { length: 50 }),
+    oauthProviderId: varchar("oauth_provider_id", { length: 255 }),
+    passwordResetToken: varchar("password_reset_token", { length: 255 }),
+    passwordResetExpires: timestamp("password_reset_expires", { withTimezone: true }),
     companyId: integer("company_id")
       .notNull()
       .references(() => companies.id),

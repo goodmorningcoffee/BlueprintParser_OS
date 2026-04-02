@@ -168,7 +168,7 @@ export function extractRawText(data: TextractPageData): string {
 
 /**
  * Downscale a PNG buffer using Ghostscript.
- * Renders the PNG at a lower resolution to reduce file size.
+ * Reads actual dimensions from the PNG header and scales to target pixel size.
  */
 async function downscalePng(pngBuffer: Buffer, scaleFactor: number): Promise<Buffer> {
   const tempDir = await mkdtemp(join(tmpdir(), "bp2-downscale-"));
@@ -177,15 +177,18 @@ async function downscalePng(pngBuffer: Buffer, scaleFactor: number): Promise<Buf
     const outputPath = join(tempDir, "output.png");
     await writeFile(inputPath, pngBuffer);
 
-    // Use Ghostscript to resize: scale dimensions by factor
-    const dpi = Math.round(72 * scaleFactor); // 72 is base DPI for images
+    // Read actual dimensions from PNG header (bytes 16-19 = width, 20-23 = height)
+    const srcWidth = pngBuffer.readUInt32BE(16);
+    const srcHeight = pngBuffer.readUInt32BE(20);
+    const targetWidth = Math.round(srcWidth * scaleFactor);
+    const targetHeight = Math.round(srcHeight * scaleFactor);
+
+    // Ghostscript: -g sets output pixel dimensions for the device
     await execFileAsync("gs", [
       "-dNOPAUSE", "-dBATCH", "-dSAFER",
       "-sDEVICE=png16m",
-      `-r${dpi}`,
-      "-dFIXEDMEDIA",
-      `-dDEVICEWIDTHPOINTS=${Math.round(72 * scaleFactor)}`,
-      `-dDEVICEHEIGHTPOINTS=${Math.round(72 * scaleFactor)}`,
+      `-g${targetWidth}x${targetHeight}`,
+      "-dPDFFitPage",
       `-sOutputFile=${outputPath}`,
       inputPath,
     ]);

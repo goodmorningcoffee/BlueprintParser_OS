@@ -29,7 +29,6 @@
 - **Legend/symbols**: G-series sheets or available space on plan sheets
 - **Drawing area**: Central region, outside of the titleblock, will return drawings class in YOLO_medium model
 - **Scale**: Below drawing title. Format: 1/4" = 1'-0"
-
 ### Cross-Reference Patterns
 - "SEE DETAIL 3/A-501" = detail 3 on sheet A-501
 - "SIM" / "TYP" = similar/typical condition

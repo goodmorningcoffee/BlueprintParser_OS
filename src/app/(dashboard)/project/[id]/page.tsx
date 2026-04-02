@@ -67,10 +67,6 @@ export default function ProjectPage() {
   // Search hook — reacts to searchQuery changes in the store
   useSearch();
 
-  const setProjectId = useViewerStore((s) => s.setProjectId);
-  const setPublicId = useViewerStore((s) => s.setPublicId);
-  const setDataUrl = useViewerStore((s) => s.setDataUrl);
-  const setNumPages = useViewerStore((s) => s.setNumPages);
   const initDetectionModels = useViewerStore((s) => s.initDetectionModels);
   const setPageNames = useViewerStore((s) => s.setPageNames);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
@@ -100,11 +96,13 @@ export default function ProjectPage() {
       const data: ProjectResponse = await res.json();
       setProject(data);
 
-      // Hydrate core project state
-      setProjectId(data.dbId);
-      setPublicId(data.id);
-      setDataUrl(data.dataUrl);
-      setNumPages(data.numPages || 0);
+      // Hydrate core project state (batched to avoid 4 separate re-renders)
+      useViewerStore.setState({
+        projectId: data.dbId,
+        publicId: data.id,
+        dataUrl: data.dataUrl,
+        numPages: data.numPages || 0,
+      });
 
       // Hydrate project intelligence (CSI graph, classCsiOverrides, etc.)
       if (data.projectIntelligence) {
@@ -221,10 +219,6 @@ export default function ProjectPage() {
     }
   }, [
     id,
-    setProjectId,
-    setPublicId,
-    setDataUrl,
-    setNumPages,
     initDetectionModels,
     setPageNames,
     setAllTrades,

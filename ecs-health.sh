@@ -6,11 +6,14 @@ set -uo pipefail
 #  Run: ./ecs-health.sh
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-REGION="us-east-1"
-CLUSTER="beaver-cluster"
-SERVICE="beaver-app"
-LOG_GROUP="/ecs/beaver-app"
-ALB_NAME="beaver-alb"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${SCRIPT_DIR}/.deploy.env" ] && source "${SCRIPT_DIR}/.deploy.env"
+
+REGION="${AWS_REGION:-us-east-1}"
+CLUSTER="${ECS_CLUSTER:?ERROR: Set ECS_CLUSTER in .deploy.env or environment}"
+SERVICE="${ECS_SERVICE:?ERROR: Set ECS_SERVICE in .deploy.env or environment}"
+LOG_GROUP="${LOG_GROUP:-/ecs/${SERVICE}}"
+ALB_NAME="${ALB_NAME:?ERROR: Set ALB_NAME in .deploy.env or environment}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -199,7 +202,7 @@ check_rds() {
   header "RDS Database"
 
   local result
-  result=$(aws rds describe-db-instances --db-instance-identifier beaver-db --region "$REGION" \
+  result=$(aws rds describe-db-instances --db-instance-identifier ${RDS_ID:-beaver-db} --region "$REGION" \
     --query 'DBInstances[0].{status:DBInstanceStatus,cpu:PerformanceInsightsEnabled,storage:AllocatedStorage,multiAz:MultiAZ}' \
     --output json 2>/dev/null || echo '{}')
 
@@ -376,7 +379,7 @@ while true; do
 
       echo ""
       echo "--- RDS STATUS ---"
-      aws rds describe-db-instances --db-instance-identifier beaver-db --region "$REGION" \
+      aws rds describe-db-instances --db-instance-identifier ${RDS_ID:-beaver-db} --region "$REGION" \
         --query 'DBInstances[0].{status:DBInstanceStatus,class:DBInstanceClass,storage:AllocatedStorage,multiAz:MultiAZ,engine:EngineVersion}' \
         --output json 2>/dev/null || echo "{}"
 

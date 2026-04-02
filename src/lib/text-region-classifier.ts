@@ -18,13 +18,14 @@ import type {
   BboxLTWH,
 } from "@/types";
 import { mergeBbox, wordsToText, bboxCenterLTWH } from "@/lib/ocr-utils";
+import { ROW_Y_TOLERANCE, COL_X_TOLERANCE } from "@/lib/spatial-constants";
 
 // ═══════════════════════════════════════════════════════════════════
 // Constants
 // ═══════════════════════════════════════════════════════════════════
 
-const COL_TOLERANCE = 0.02;    // X-coordinate tolerance for column detection (normalized)
-const ROW_TOLERANCE = 0.006;   // Y-coordinate tolerance for row detection (normalized)
+const COL_TOLERANCE = COL_X_TOLERANCE;
+const ROW_TOLERANCE = ROW_Y_TOLERANCE;
 const MIN_COLS = 3;            // Minimum columns for table-like classification
 const MIN_ROWS = 3;            // Minimum rows for table-like classification
 const NARROW_COL_MAX = 0.35;   // Max X-range for spec-text classification

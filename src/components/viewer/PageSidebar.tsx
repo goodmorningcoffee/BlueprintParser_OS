@@ -96,25 +96,39 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
 
   // Try pre-generated S3 thumbnails first, fall back to pdf.js rendering
   const dataUrl = useViewerStore((s) => s.dataUrl);
+  const s3ThumbsAvailableRef = useRef<boolean | null>(null); // null = unknown, true/false = probed
   useEffect(() => {
     if (!dataUrl || !pdfDoc) return;
-    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "beaver-app-uploads";
+    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";
     const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
+    if (!s3Bucket && !cf) return; // No S3 configured, skip entirely
     const baseUrl = cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
 
-    // Try to load all thumbnails from S3 (parallel, fire-and-forget)
-    const allPages = Array.from({ length: pdfDoc.numPages }, (_, i) => i + 1);
-    for (const pg of allPages) {
-      if (renderedPagesRef.current.has(pg)) continue;
-      const key = String(pg).padStart(4, "0");
-      const img = new Image();
-      img.onload = () => {
-        renderedPagesRef.current.add(pg);
-        setThumbnails((prev) => ({ ...prev, [pg]: img.src }));
-      };
-      img.onerror = () => {};
-      img.src = `${baseUrl}/thumbnails/page_${key}.png`;
-    }
+    // Probe page 1 thumbnail first — if it 404s, skip all S3 attempts (no thumbnails for this project)
+    const probe = new Image();
+    probe.onload = () => {
+      s3ThumbsAvailableRef.current = true;
+      renderedPagesRef.current.add(1);
+      setThumbnails((prev) => ({ ...prev, [1]: probe.src }));
+
+      // Page 1 exists, try the rest
+      const allPages = Array.from({ length: pdfDoc.numPages }, (_, i) => i + 1);
+      for (const pg of allPages) {
+        if (renderedPagesRef.current.has(pg)) continue;
+        const key = String(pg).padStart(4, "0");
+        const img = new Image();
+        img.onload = () => {
+          renderedPagesRef.current.add(pg);
+          setThumbnails((prev) => ({ ...prev, [pg]: img.src }));
+        };
+        img.onerror = () => {}; // Individual misses are fine, pdf.js will fill gaps
+        img.src = `${baseUrl}/thumbnails/page_${key}.png`;
+      }
+    };
+    probe.onerror = () => {
+      s3ThumbsAvailableRef.current = false; // No S3 thumbnails — pdf.js will handle all pages
+    };
+    probe.src = `${baseUrl}/thumbnails/page_0001.png`;
   }, [dataUrl, pdfDoc]);
 
   // Generate thumbnails via pdf.js for pages that don't have S3 thumbnails
@@ -213,55 +227,61 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   const isSearchFiltered = searchQuery.length > 0 && searchResults.length > 0;
 
   // Compute keynote-filtered pages (use summary index when available)
-  const keynoteFilteredPages = activeKeynoteFilter
-    ? (summaries?.keynotePageIndex?.[`${activeKeynoteFilter.shape}:${activeKeynoteFilter.text}`] ||
-       // Fallback: iterate loaded keynotes (for old projects without summaries)
-       Object.entries(keynotes)
-         .filter(([, pageKeynotes]) =>
-           pageKeynotes.some(
-             (k) => k.shape === activeKeynoteFilter.shape && k.text === activeKeynoteFilter.text
-           )
-         )
-         .map(([pageNum]) => Number(pageNum)))
-    : [];
+  const keynoteFilteredPages = useMemo(() => {
+    if (!activeKeynoteFilter) return [];
+    return summaries?.keynotePageIndex?.[`${activeKeynoteFilter.shape}:${activeKeynoteFilter.text}`] ||
+      // Fallback: iterate loaded keynotes (for old projects without summaries)
+      Object.entries(keynotes)
+        .filter(([, pageKeynotes]) =>
+          pageKeynotes.some(
+            (k) => k.shape === activeKeynoteFilter.shape && k.text === activeKeynoteFilter.text
+          )
+        )
+        .map(([pageNum]) => Number(pageNum));
+  }, [activeKeynoteFilter, summaries, keynotes]);
   const isKeynoteFiltered = activeKeynoteFilter !== null && keynoteFilteredPages.length > 0;
 
   // Compute annotation-filtered pages + per-page counts (use summary when available)
-  const annotationFilteredPages = activeAnnotationFilter
-    ? (summaries?.annotationSummary?.categoryCounts?.[activeAnnotationFilter]?.pages ||
-       [...new Set(annotations.filter((a) => a.name === activeAnnotationFilter).map((a) => a.pageNumber))])
-    : [];
+  const annotationFilteredPages = useMemo(() => {
+    if (!activeAnnotationFilter) return [];
+    return summaries?.annotationSummary?.categoryCounts?.[activeAnnotationFilter]?.pages ||
+      [...new Set(annotations.filter((a) => a.name === activeAnnotationFilter).map((a) => a.pageNumber))];
+  }, [activeAnnotationFilter, summaries, annotations]);
   const isAnnotationFiltered = activeAnnotationFilter !== null && annotationFilteredPages.length > 0;
-  const annotationPageCounts: Record<number, number> = {};
-  if (activeAnnotationFilter && summaries?.annotationSummary?.pageAnnotationCounts) {
-    // Use summary counts — not exact per-label-per-page, but sufficient for badges
-    for (const pn of annotationFilteredPages) {
-      annotationPageCounts[pn] = 1; // Summary knows pages, not exact per-label counts
-    }
-  } else if (activeAnnotationFilter) {
-    for (const a of annotations) {
-      if (a.name === activeAnnotationFilter) {
-        annotationPageCounts[a.pageNumber] = (annotationPageCounts[a.pageNumber] || 0) + 1;
+  const annotationPageCounts = useMemo(() => {
+    const counts: Record<number, number> = {};
+    if (activeAnnotationFilter && summaries?.annotationSummary?.pageAnnotationCounts) {
+      for (const pn of annotationFilteredPages) {
+        counts[pn] = 1;
+      }
+    } else if (activeAnnotationFilter) {
+      for (const a of annotations) {
+        if (a.name === activeAnnotationFilter) {
+          counts[a.pageNumber] = (counts[a.pageNumber] || 0) + 1;
+        }
       }
     }
-  }
+    return counts;
+  }, [activeAnnotationFilter, annotationFilteredPages, summaries, annotations]);
 
   // Compute trade-filtered pages (use summary index when available)
-  const tradeFilteredPages = activeTradeFilter
-    ? (summaries?.tradePageIndex?.[activeTradeFilter] ||
-       Object.entries(csiCodes)
-         .filter(([, codes]) => codes.some((c) => c.trade === activeTradeFilter))
-         .map(([pageNum]) => Number(pageNum)))
-    : [];
+  const tradeFilteredPages = useMemo(() => {
+    if (!activeTradeFilter) return [];
+    return summaries?.tradePageIndex?.[activeTradeFilter] ||
+      Object.entries(csiCodes)
+        .filter(([, codes]) => codes.some((c) => c.trade === activeTradeFilter))
+        .map(([pageNum]) => Number(pageNum));
+  }, [activeTradeFilter, summaries, csiCodes]);
   const isTradeFiltered = activeTradeFilter !== null && tradeFilteredPages.length > 0;
 
   // Compute CSI code-filtered pages (use summary index when available)
-  const csiFilteredPages = activeCsiFilter
-    ? (summaries?.csiPageIndex?.[activeCsiFilter] ||
-       Object.entries(csiCodes)
-         .filter(([, codes]) => codes.some((c) => c.code === activeCsiFilter))
-         .map(([pageNum]) => Number(pageNum)))
-    : [];
+  const csiFilteredPages = useMemo(() => {
+    if (!activeCsiFilter) return [];
+    return summaries?.csiPageIndex?.[activeCsiFilter] ||
+      Object.entries(csiCodes)
+        .filter(([, codes]) => codes.some((c) => c.code === activeCsiFilter))
+        .map(([pageNum]) => Number(pageNum));
+  }, [activeCsiFilter, summaries, csiCodes]);
   const isCsiFiltered = activeCsiFilter !== null && csiFilteredPages.length > 0;
 
   // Compute per-page word match counts for trade/CSI filters
@@ -303,14 +323,15 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   }, [activeCsiFilter, csiFilteredPages, csiCodes, textractData]);
 
   // Compute text annotation-filtered pages (use summary index when available)
-  const textAnnotationFilteredPages = activeTextAnnotationFilter
-    ? (summaries?.textAnnotationPageIndex?.[`${activeTextAnnotationFilter.type}:${activeTextAnnotationFilter.text}`] ||
-       Object.entries(textAnnotations)
-         .filter(([, anns]) =>
-           anns.some((a) => a.type === activeTextAnnotationFilter!.type && a.text === activeTextAnnotationFilter!.text)
-         )
-         .map(([pageNum]) => Number(pageNum)))
-    : [];
+  const textAnnotationFilteredPages = useMemo(() => {
+    if (!activeTextAnnotationFilter) return [];
+    return summaries?.textAnnotationPageIndex?.[`${activeTextAnnotationFilter.type}:${activeTextAnnotationFilter.text}`] ||
+      Object.entries(textAnnotations)
+        .filter(([, anns]) =>
+          anns.some((a) => a.type === activeTextAnnotationFilter!.type && a.text === activeTextAnnotationFilter!.text)
+        )
+        .map(([pageNum]) => Number(pageNum));
+  }, [activeTextAnnotationFilter, summaries, textAnnotations]);
   const isTextAnnotationFiltered = activeTextAnnotationFilter !== null && textAnnotationFilteredPages.length > 0;
 
   const textAnnotationCounts = useMemo(() => {

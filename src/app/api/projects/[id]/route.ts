@@ -29,33 +29,26 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Fetch lightweight page list (names only — detail data comes via /pages?from=N&to=M)
-  const projectPages = await db
-    .select({
+  // Fetch page list, takeoff items, and chat history in parallel (all independent, need only project.id)
+  const [projectPages, projectTakeoffItems, projectChats] = await Promise.all([
+    db.select({
       pageNumber: pages.pageNumber,
       name: pages.name,
       drawingNumber: pages.drawingNumber,
     })
-    .from(pages)
-    .where(eq(pages.projectId, project.id))
-    .orderBy(pages.pageNumber);
-
-  // Fetch takeoff items (table may not exist if migration hasn't run)
-  let projectTakeoffItems: any[] = [];
-  try {
-    projectTakeoffItems = await db
-      .select()
+      .from(pages)
+      .where(eq(pages.projectId, project.id))
+      .orderBy(pages.pageNumber),
+    db.select()
       .from(takeoffItems)
       .where(eq(takeoffItems.projectId, project.id))
-      .orderBy(takeoffItems.sortOrder);
-  } catch { /* table may not exist yet */ }
-
-  // Fetch chat history
-  const projectChats = await db
-    .select()
-    .from(chatMessages)
-    .where(eq(chatMessages.projectId, project.id))
-    .orderBy(chatMessages.createdAt);
+      .orderBy(takeoffItems.sortOrder)
+      .catch(() => [] as any[]),
+    db.select()
+      .from(chatMessages)
+      .where(eq(chatMessages.projectId, project.id))
+      .orderBy(chatMessages.createdAt),
+  ]);
 
   // Build PDF URL server-side (has access to CLOUDFRONT_DOMAIN / S3_BUCKET env vars)
   const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
@@ -65,7 +58,7 @@ export async function GET(
   const summaries = (pi?.summaries as Record<string, unknown>) || null;
   const projectIntelligence = pi || null;
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     id: project.publicId,
     dbId: project.id,
     name: project.name,
@@ -95,6 +88,8 @@ export async function GET(
       model: c.model,
     })),
   });
+  response.headers.set("Cache-Control", "private, max-age=60");
+  return response;
 }
 
 export async function PUT(
@@ -161,6 +156,19 @@ export async function DELETE(
   }
 
   try {
+    // Stop any running Step Functions execution for this project
+    if (project.jobId && process.env.STEP_FUNCTION_ARN) {
+      try {
+        const { SFNClient, StopExecutionCommand } = await import("@aws-sdk/client-sfn");
+        const sfn = new SFNClient({ region: process.env.AWS_REGION || "us-east-1" });
+        const executionArn = `${process.env.STEP_FUNCTION_ARN.replace(":stateMachine:", ":execution:")}:${project.jobId}`;
+        await sfn.send(new StopExecutionCommand({ executionArn, cause: "Project deleted by user" }));
+        logger.info(`[project-delete] Stopped Step Functions execution: ${project.jobId}`);
+      } catch (err) {
+        logger.warn("[project-delete] Could not stop Step Functions execution:", err);
+      }
+    }
+
     // Delete S3 files (PDF, thumbnail, etc.)
     try {
       await deleteProjectFiles(project.dataUrl);
