@@ -9,6 +9,7 @@ import { writeFile, readFile, mkdtemp, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { TextractPageData, TextractWord, TextractLine, TextractTable, TextractCell, BboxLTWH } from "@/types";
+import { logger } from "@/lib/logger";
 
 const execFileAsync = promisify(execFile);
 
@@ -296,7 +297,7 @@ async function retryWithBackoff<T>(
       if (!isThrottled || attempt === maxRetries) throw err;
 
       const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 500;
-      console.warn(`[textract] Throttled, retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})`);
+      logger.warn(`[textract] Throttled, retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})`);
       await new Promise((r) => setTimeout(r, delay));
     }
   }
@@ -316,7 +317,7 @@ export async function analyzePageImageWithFallback(
     return await retryWithBackoff(() => analyzePageImage(pngBuffer));
   } catch (err: any) {
     const errName = err?.name || err?.__type || "";
-    console.warn(`[textract] Full-res failed (${errName}), trying half resolution...`);
+    logger.warn(`[textract] Full-res failed (${errName}), trying half resolution...`);
   }
 
   // Strategy B: Textract at half resolution (cuts size by ~75%)
@@ -325,14 +326,14 @@ export async function analyzePageImageWithFallback(
     return await retryWithBackoff(() => analyzePageImage(halfBuffer), 2);
   } catch (err: any) {
     const errName = err?.name || err?.__type || "";
-    console.warn(`[textract] Half-res failed (${errName}), falling back to Tesseract...`);
+    logger.warn(`[textract] Half-res failed (${errName}), falling back to Tesseract...`);
   }
 
   // Strategy C: Tesseract (local, no AWS dependency)
   try {
     return await analyzeWithTesseract(pngBuffer);
   } catch (err) {
-    console.error("Tesseract fallback also failed:", err);
+    logger.error("Tesseract fallback also failed:", err);
     // Return empty data rather than killing the whole project
     return { lines: [], words: [] };
   }

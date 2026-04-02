@@ -380,7 +380,7 @@ async function execGetProjectOverview(ctx: ToolContext) {
 
   if (!project) return { error: "Project not found" };
 
-  const intel = project.projectIntelligence as Record<string, unknown> | null;
+  const intel = project.projectIntelligence;
   return {
     name: project.name,
     numPages: project.numPages,
@@ -409,7 +409,7 @@ async function execGetPageDetails(pageNumber: number, ctx: ToolContext) {
 
   if (!page) return { error: `Page ${pageNumber} not found` };
 
-  const intel = page.pageIntelligence as Record<string, unknown> | null;
+  const intel = page.pageIntelligence;
   // Return structured data, omit raw bboxes to save tokens
   return {
     pageNumber: page.pageNumber,
@@ -419,16 +419,16 @@ async function execGetPageDetails(pageNumber: number, ctx: ToolContext) {
     crossRefs: intel?.crossRefs,
     noteBlocks: intel?.noteBlocks,
     heuristicInferences: intel?.heuristicInferences,
-    classifiedTables: (intel?.classifiedTables as any[])?.map((t: any) => ({
+    classifiedTables: intel?.classifiedTables?.map((t) => ({
       category: t.category, confidence: t.confidence, evidence: t.evidence, headerText: t.headerText,
     })),
-    parsedRegions: (intel?.parsedRegions as any[])?.map((r: any) => ({
+    parsedRegions: intel?.parsedRegions?.map((r) => ({
       type: r.type, category: r.category, confidence: r.confidence,
-      data: r.data ? { headers: r.data.headers, rowCount: r.data.rows?.length || r.data.keynotes?.length || 0, tagColumn: r.data.tagColumn } : null,
+      data: r.data ? { headers: (r.data as any).headers, rowCount: (r.data as any).rows?.length || (r.data as any).keynotes?.length || 0, tagColumn: (r.data as any).tagColumn } : null,
     })),
-    csiSpatialSummary: (intel?.csiSpatialMap as any)?.summary,
+    csiSpatialSummary: intel?.csiSpatialMap?.summary,
     csiCodes: page.csiCodes,
-    textAnnotationSummary: (page.textAnnotations as any)?.summary,
+    textAnnotationSummary: page.textAnnotations?.summary,
     keynoteCount: Array.isArray(page.keynotes) ? page.keynotes.length : 0,
   };
 }
@@ -440,7 +440,7 @@ async function execLookupPagesByIndex(index: string, key: string, ctx: ToolConte
     .where(eq(projects.id, ctx.projectId))
     .limit(1);
 
-  const summaries = (project?.projectIntelligence as any)?.summaries;
+  const summaries = project?.projectIntelligence?.summaries;
   if (!summaries) return { error: "Project summaries not computed yet" };
 
   const indexMap: Record<string, Record<string, number[]>> = {
@@ -523,7 +523,7 @@ async function execGetParsedSchedule(pageNumber: number, category: string | unde
     .where(and(eq(pages.projectId, ctx.projectId), eq(pages.pageNumber, pageNumber)))
     .limit(1);
 
-  const regions = (page?.pageIntelligence as any)?.parsedRegions as any[] || [];
+  const regions = page?.pageIntelligence?.parsedRegions || [];
   let matched = regions.filter((r: any) => r.data?.headers);
   if (category) matched = matched.filter((r: any) => r.category === category);
   if (matched.length === 0) return { error: `No parsed schedules on page ${pageNumber}${category ? ` with category ${category}` : ""}` };
@@ -547,7 +547,7 @@ async function execGetCsiSpatialMap(pageNumber: number, ctx: ToolContext) {
     .where(and(eq(pages.projectId, ctx.projectId), eq(pages.pageNumber, pageNumber)))
     .limit(1);
 
-  return (page?.pageIntelligence as any)?.csiSpatialMap || { error: "No spatial map for this page" };
+  return page?.pageIntelligence?.csiSpatialMap || { error: "No spatial map for this page" };
 }
 
 async function execGetCrossReferences(pageNumber: number | undefined, ctx: ToolContext) {
@@ -557,7 +557,7 @@ async function execGetCrossReferences(pageNumber: number | undefined, ctx: ToolC
       .from(pages)
       .where(and(eq(pages.projectId, ctx.projectId), eq(pages.pageNumber, pageNumber)))
       .limit(1);
-    return { pageNumber, crossRefs: (page?.pageIntelligence as any)?.crossRefs || [] };
+    return { pageNumber, crossRefs: page?.pageIntelligence?.crossRefs || [] };
   }
 
   // Full project graph
@@ -566,9 +566,8 @@ async function execGetCrossReferences(pageNumber: number | undefined, ctx: ToolC
     .from(projects)
     .where(eq(projects.id, ctx.projectId))
     .limit(1);
-  const intel = project?.projectIntelligence as any;
   return {
-    refGraph: intel?.refGraph || { edges: [], hubs: [], leaves: [] },
+    refGraph: project?.projectIntelligence?.refGraph || { edges: [], hubs: [], leaves: [] },
   };
 }
 
@@ -636,7 +635,7 @@ async function execScanYoloClassTexts(yoloClass: string, yoloModel: string | und
   const clientAnns: ClientAnnotation[] = filteredAnns.map((a) => ({
     id: a.id, pageNumber: a.pageNumber, name: a.name,
     bbox: [a.minX, a.minY, a.maxX, a.maxY] as [number, number, number, number],
-    note: a.note, source: a.source, data: a.data as Record<string, unknown> | null,
+    note: a.note, source: a.source as ClientAnnotation["source"], data: a.data ?? null,
   }));
 
   // Only load textract for pages that have matching annotations
@@ -671,7 +670,7 @@ async function execMapTagsToPages(tagsStr: string, yoloClass: string | undefined
   const clientAnns: ClientAnnotation[] = filteredAnns.map((a) => ({
     id: a.id, pageNumber: a.pageNumber, name: a.name,
     bbox: [a.minX, a.minY, a.maxX, a.maxY] as [number, number, number, number],
-    note: a.note, source: a.source, data: a.data as Record<string, unknown> | null,
+    note: a.note, source: a.source as ClientAnnotation["source"], data: a.data ?? null,
   }));
 
   // Only load textract for relevant pages

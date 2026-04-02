@@ -19,6 +19,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { templateMatch } from "@/lib/template-match";
 import type { TemplateMatchProgress, SymbolSearchMatch } from "@/types";
+import { logger } from "@/lib/logger";
 
 export async function POST(req: Request) {
   const { session, error } = await requireAuth();
@@ -156,7 +157,7 @@ cv2.imwrite(cfg["dst"], crop)
             try {
               pngBuffer = await rasterizePage(pdfBuffer, pageNum, 200);
             } catch (err) {
-              console.error(`[SYMBOL_SEARCH] Failed to load page ${pageNum}:`, err);
+              logger.error(`[SYMBOL_SEARCH] Failed to load page ${pageNum}:`, err);
               continue;
             }
           }
@@ -257,7 +258,7 @@ cv2.imwrite(cfg["dst"], crop)
     });
   } catch (err) {
     await rm(tempDir, { recursive: true, force: true }).catch(() => {});
-    console.error("[SYMBOL_SEARCH] Failed:", err);
+    logger.error("[SYMBOL_SEARCH] Failed:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Symbol search failed" },
       { status: 500 }

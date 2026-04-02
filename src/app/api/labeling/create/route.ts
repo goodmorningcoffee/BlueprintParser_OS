@@ -5,6 +5,7 @@ import { projects, labelingSessions } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { getS3Url, downloadFromS3, uploadToS3 } from "@/lib/s3";
 import { createProject, importTasks } from "@/lib/label-studio";
+import { logger } from "@/lib/logger";
 
 const DEFAULT_LABEL_CONFIG = `<View>
   <Image name="image" value="$image" zoomControl="true" rotateControl="true"/>
@@ -182,7 +183,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true, sessions });
   } catch (err: any) {
-    console.error("[LABELING] Failed to create:", err);
+    logger.error("[LABELING] Failed to create:", err);
     return NextResponse.json(
       { error: `Failed to create Label Studio project: ${err.message}` },
       { status: 500 }

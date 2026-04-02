@@ -1,14 +1,24 @@
 "use client";
 
 import { useMemo, useState, useCallback } from "react";
-import { useViewerStore, useSummaries } from "@/stores/viewerStore";
+import { useViewerStore, useSummaries, useProject } from "@/stores/viewerStore";
 import HelpTooltip from "./HelpTooltip";
 import KeynoteItem from "./KeynoteItem";
+import CompareEditTab from "./CompareEditTab";
 import { mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import ExportCsvModal from "./ExportCsvModal";
 // CSI detection runs server-side (csi-detect.ts uses fs); client components can't import it directly
+
+/** Convert keynote parsedRegion data to grid format for TableCompareModal */
+function keynoteDataToGrid(data: any): { headers: string[]; rows: Record<string, string>[]; tagColumn: string; tableName?: string } {
+  if (data.headers && data.rows) return { headers: data.headers, rows: data.rows, tagColumn: data.tagColumn || data.headers[0], tableName: data.tableName };
+  // Shape A: { keynotes: [{key, description}] } → grid
+  const headers = ["Key", "Description"];
+  const rows = (data.keynotes || []).map((k: any) => ({ Key: k.key || "", Description: k.description || "" }));
+  return { headers, rows, tagColumn: "Key", tableName: data.tableName };
+}
 
 /**
  * KeynotePanel — Keynote parsing and management tool.
@@ -48,6 +58,11 @@ export default function KeynotePanel() {
   const projectId = useViewerStore((s) => s.projectId);
   const addYoloTag = useViewerStore((s) => s.addYoloTag);
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
+  const toggleTableCompareModal = useViewerStore((s) => s.toggleTableCompareModal);
+  const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
+  const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
+  const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
+  const { publicId } = useProject();
 
   // Guided parse state
   const guidedParseActive = useViewerStore((s) => s.guidedParseActive);
@@ -110,6 +125,49 @@ export default function KeynotePanel() {
     }
     return results.sort((a, b) => a.pageNum - b.pageNum);
   }, [summaries, pageIntelligence]);
+
+  // ─── Project-wide parsed keynotes (for All Keynotes + Compare tab) ───
+  const allParsedKeynotes = useMemo(() => {
+    const tables: { pageNum: number; region: any; name: string; category: string; rowCount: number; colCount: number; csiTags: any[] }[] = [];
+    for (const [pn, intelEntry] of Object.entries(pageIntelligence)) {
+      const pi = intelEntry as any;
+      if (pi?.parsedRegions) {
+        for (const pr of pi.parsedRegions) {
+          if (pr.type === "keynote") {
+            const grid = keynoteDataToGrid(pr.data || {});
+            tables.push({
+              pageNum: Number(pn),
+              region: pr,
+              name: pr.data?.tableName || pr.category || "Keynotes",
+              category: pr.category || "keynote-table",
+              rowCount: grid.rows.length,
+              colCount: grid.headers.length,
+              csiTags: pr.csiTags || [],
+            });
+          }
+        }
+      }
+    }
+    return tables.sort((a, b) => {
+      if (a.pageNum === pageNumber && b.pageNum !== pageNumber) return -1;
+      if (b.pageNum === pageNumber && a.pageNum !== pageNumber) return 1;
+      return a.pageNum - b.pageNum;
+    });
+  }, [pageIntelligence, pageNumber]);
+
+  // ─── Load existing keynote into Compare modal ───────────
+  const loadExistingKeynote = useCallback((parsed: any) => {
+    const grid = keynoteDataToGrid(parsed.data || {});
+    setTableParseRegion(parsed.bbox ? [parsed.bbox[0], parsed.bbox[1], parsed.bbox[2], parsed.bbox[3]] : null);
+    setTableParsedGrid({
+      headers: grid.headers,
+      rows: grid.rows,
+      tagColumn: grid.tagColumn,
+      tableName: grid.tableName,
+    });
+    useViewerStore.getState().setTableParseStep("review");
+    useViewerStore.getState().setMode("move");
+  }, [setTableParseRegion, setTableParsedGrid]);
 
   // ─── YOLO annotations inside Column A (tag column) ──────
   // YOLO annotations FULLY contained within Column A (tag column)
@@ -453,10 +511,10 @@ export default function KeynotePanel() {
         <div className="flex items-center gap-1">
           <button
             onClick={() => useViewerStore.getState().toggleParsedRegions()}
-            className={`text-sm px-1 ${useViewerStore.getState().showParsedRegions ? "text-amber-300" : "text-[var(--muted)]/30"}`}
+            className={`text-sm px-1 ${showParsedRegions ? "text-amber-300" : "text-[var(--muted)]/30"}`}
             title="Toggle region outlines on canvas"
           >
-            {useViewerStore.getState().showParsedRegions ? "\u25CF" : "\u25CB"}
+            {showParsedRegions ? "\u25CF" : "\u25CB"}
           </button>
           <button onClick={toggleKeynoteParsePanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
         </div>
@@ -464,7 +522,7 @@ export default function KeynotePanel() {
 
       {/* Tab bar */}
       <div className="flex border-b border-[var(--border)]">
-        {(["all", "guided", "manual"] as const).map((tab) => (
+        {(["all", "auto", "guided", "manual", "compare"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => {
@@ -476,13 +534,13 @@ export default function KeynotePanel() {
               }
               setKeynoteParseTab(tab);
             }}
-            className={`flex-1 px-2 py-1.5 text-[10px] font-medium ${
+            className={`flex-1 px-1.5 py-1.5 text-[9px] font-medium ${
               keynoteParseTab === tab
                 ? "text-amber-300 border-b-2 border-amber-400"
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
             }`}
           >
-            {tab === "all" ? "All Keynotes" : tab === "guided" ? "Guided Parse" : "Manual Parse"}
+            {tab === "all" ? "All Keynotes" : tab === "auto" ? "Auto Parse" : tab === "guided" ? "Guided" : tab === "manual" ? "Manual" : "Compare/Edit"}
           </button>
         ))}
       </div>
@@ -522,29 +580,38 @@ export default function KeynotePanel() {
                 {/* Sort current page first */}
                 {[...parsedKeynoteData]
                   .sort((a, b) => (a.pageNumber === pageNumber ? -1 : b.pageNumber === pageNumber ? 1 : a.pageNumber - b.pageNumber))
-                  .map((kn, i) => (
-                    <KeynoteItem
-                      key={i}
-                      keynote={kn}
-                      keynoteIndex={i}
-                      pageNames={pageNames}
-                      isCurrentPage={kn.pageNumber === pageNumber}
-                      onNavigate={() => setPage(kn.pageNumber)}
-                      activeHighlight={activeKeynoteHighlight}
-                      onHighlight={(key) => setActiveKeynoteHighlight(
-                        activeKeynoteHighlight?.key === key && activeKeynoteHighlight?.pageNumber === kn.pageNumber
-                          ? null
-                          : { pageNumber: kn.pageNumber, key }
-                      )}
-                      onDelete={() => {
-                        const store = useViewerStore.getState();
-                        const all = store.parsedKeynoteData;
-                        if (all) {
-                          store.setParsedKeynoteData(all.filter((_, idx) => idx !== i) as any);
-                        }
-                      }}
-                    />
-                  ))}
+                  .map((kn, i) => {
+                    // Find matching parsedRegion for this keynote
+                    const matchingRegion = allParsedKeynotes.find(
+                      (pk) => pk.pageNum === kn.pageNumber && (pk.name === kn.tableName || pk.name === "Keynotes")
+                    )?.region || null;
+                    return (
+                      <KeynoteItem
+                        key={`${kn.pageNumber}-${kn.tableName || i}`}
+                        keynote={kn}
+                        pageNames={pageNames}
+                        isCurrentPage={kn.pageNumber === pageNumber}
+                        onNavigate={() => setPage(kn.pageNumber)}
+                        activeHighlight={activeKeynoteHighlight}
+                        onHighlight={(key) => setActiveKeynoteHighlight(
+                          activeKeynoteHighlight?.key === key && activeKeynoteHighlight?.pageNumber === kn.pageNumber
+                            ? null
+                            : { pageNumber: kn.pageNumber, key }
+                        )}
+                        onDelete={() => {
+                          const store = useViewerStore.getState();
+                          const all = store.parsedKeynoteData;
+                          if (all) {
+                            store.setParsedKeynoteData(all.filter((entry) =>
+                              !(entry.pageNumber === kn.pageNumber && entry.tableName === kn.tableName)
+                            ) as any);
+                          }
+                        }}
+                        region={matchingRegion}
+                        publicId={publicId}
+                      />
+                    );
+                  })}
               </>
             )}
           </div>
@@ -898,6 +965,101 @@ export default function KeynotePanel() {
               Reset All
             </button>
           </div>
+        )}
+
+        {/* ════════ TAB: Auto Parse ════════ */}
+        {keynoteParseTab === "auto" && (
+          <div className="space-y-2">
+            {keynoteParseStep === "review" ? (
+              <div className="space-y-1.5">
+                <div className="text-[11px] text-green-400 px-2 py-2 border border-green-500/20 rounded bg-green-500/5">
+                  Keynotes parsed — see All Keynotes tab.
+                </div>
+                <button
+                  onClick={() => {
+                    setKeynoteParseRegion(null);
+                    resetKeynoteParse();
+                  }}
+                  className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                >
+                  Parse Another
+                </button>
+              </div>
+            ) : keynoteParseRegion ? (
+              <div className="space-y-2">
+                <div className="text-[11px] text-[var(--muted)] px-1">
+                  <span className="text-amber-300">Region selected.</span> Click "Auto Parse" to detect rows and columns automatically.
+                </div>
+                <button
+                  onClick={() => autoParseKeynote(keynoteParseRegion as [number, number, number, number])}
+                  disabled={autoParsing}
+                  className="w-full text-xs px-3 py-2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 font-medium disabled:opacity-50"
+                >
+                  {autoParsing ? "Parsing..." : "Auto Parse Keynotes"}
+                </button>
+                <button
+                  onClick={() => { setKeynoteParseRegion(null); resetKeynoteParse(); }}
+                  className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                >
+                  Clear Region
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-[11px] text-[var(--muted)] px-1">
+                  Draw a bounding box around the keynote table, then click "Auto Parse".
+                  <br /><span className="text-[9px]">Exclude any title text above the table.</span>
+                </div>
+                <button
+                  onClick={() => {
+                    const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
+                    setKeynoteParseStep(next);
+                    useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                  }}
+                  className={`w-full text-xs px-3 py-2 rounded border ${
+                    keynoteParseStep === "select-region"
+                      ? "border-amber-500 bg-amber-500/10 text-amber-300"
+                      : "border-[var(--border)] text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+                  }`}
+                >
+                  {keynoteParseStep === "select-region" ? "Cancel Drawing" : "Draw Keynote Region"}
+                </button>
+              </div>
+            )}
+            {autoParsing && (
+              <div className="text-[11px] text-amber-300 text-center py-2 animate-pulse">Auto-parsing keynotes...</div>
+            )}
+            {classifiedKeynotes.length > 0 && (
+              <div className="space-y-1">
+                <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1">
+                  Detected Keynote Tables
+                </div>
+                {classifiedKeynotes.map((ck, i) => (
+                  <div
+                    key={i}
+                    onDoubleClick={() => setPage(ck.pageNum)}
+                    className={`text-[11px] px-2 py-1.5 rounded border cursor-pointer ${
+                      ck.pageNum === pageNumber ? "border-amber-400/30 bg-amber-500/5" : "border-[var(--border)]/50"
+                    }`}
+                    title="Double-click to navigate"
+                  >
+                    <span className="font-medium text-[var(--fg)]">keynote-table</span>
+                    <span className="text-[var(--muted)]"> — {pageNames[ck.pageNum] || `p.${ck.pageNum}`}</span>
+                    <span className="text-[var(--muted)]"> ({Math.round(ck.table.confidence * 100)}%)</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ════════ TAB: Compare/Edit Cells ════════ */}
+        {keynoteParseTab === "compare" && (
+          <CompareEditTab
+            allParsedTables={allParsedKeynotes}
+            loadExistingParsed={loadExistingKeynote}
+            toggleTableCompareModal={toggleTableCompareModal}
+          />
         )}
       </div>
     </div>

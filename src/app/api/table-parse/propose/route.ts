@@ -5,6 +5,7 @@ import { projects, pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { detectRowsAndColumns, type GridDetectOptions } from "@/lib/ocr-grid-detect";
 import type { TextractPageData } from "@/types";
+import { logger } from "@/lib/logger";
 
 /**
  * POST /api/table-parse/propose
@@ -82,7 +83,7 @@ export async function POST(req: Request) {
       confidence: proposal.confidence,
     });
   } catch (err) {
-    console.error("[table-parse/propose] Failed:", err);
+    logger.error("[table-parse/propose] Failed:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Grid proposal failed" },
       { status: 500 },

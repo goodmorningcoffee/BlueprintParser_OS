@@ -109,9 +109,9 @@ export async function POST(req: Request) {
       .where(and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber)))
       .limit(1);
 
-    if (page?.csiCodes && Array.isArray(page.csiCodes) && (page.csiCodes as any[]).length > 0) {
+    if (page?.csiCodes && Array.isArray(page.csiCodes) && page.csiCodes.length > 0) {
       let csiText = "";
-      for (const c of page.csiCodes as any[]) {
+      for (const c of page.csiCodes) {
         csiText += `${c.code} — ${c.description} (${c.trade})\n`;
       }
       sections.push({ id: "csi-codes", header: "CSI CODES", content: csiText, priority: 4 });
@@ -136,13 +136,13 @@ export async function POST(req: Request) {
         }
       }
 
-      const parsedText = buildParsedTablesSection((page.pageIntelligence as any)?.parsedRegions);
+      const parsedText = buildParsedTablesSection(page.pageIntelligence?.parsedRegions);
       if (parsedText) sections.push({ id: "parsed-tables", header: `PARSED TABLES — Page ${pageNumber}`, content: parsedText, priority: 5.8 });
 
-      const parsedCsi = buildParsedDataCsiSection((page.pageIntelligence as any)?.parsedRegions);
+      const parsedCsi = buildParsedDataCsiSection(page.pageIntelligence?.parsedRegions);
       if (parsedCsi) sections.push({ id: "csi-parsed", header: `CSI FROM PARSED DATA`, content: parsedCsi, priority: 6.2 });
 
-      const spatial = buildCsiSpatialSection((page.pageIntelligence as any)?.csiSpatialMap);
+      const spatial = buildCsiSpatialSection(page.pageIntelligence?.csiSpatialMap);
       if (spatial) sections.push({ id: "csi-spatial", header: `CSI SPATIAL DISTRIBUTION — Page ${pageNumber}`, content: spatial, priority: 7 });
     }
 

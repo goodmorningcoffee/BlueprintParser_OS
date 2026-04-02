@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { projects, takeoffItems } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { TAKEOFF_SHAPES, TWENTY_COLORS } from "@/types";
+import { logger } from "@/lib/logger";
 
 export async function GET(req: Request) {
   const { session, error } = await requireAuth();
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
     );
   }
 
-  if (shape !== "polygon" && !TAKEOFF_SHAPES.includes(shape)) {
+  if (shape !== "polygon" && shape !== "linear" && !TAKEOFF_SHAPES.includes(shape)) {
     return NextResponse.json({ error: "Invalid shape" }, { status: 400 });
   }
 
@@ -110,7 +111,7 @@ export async function POST(req: Request) {
       sortOrder: item.sortOrder,
     });
   } catch (err) {
-    console.error("Failed to create takeoff item:", err);
+    logger.error("Failed to create takeoff item:", err);
     const message = err instanceof Error ? err.message : "Database error";
     return NextResponse.json(
       { error: `Failed to create item: ${message}` },

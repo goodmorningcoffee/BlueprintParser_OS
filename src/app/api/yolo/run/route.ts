@@ -4,11 +4,12 @@ import { db } from "@/lib/db";
 import { projects, models, processingJobs } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { startYoloJob } from "@/lib/yolo";
-import { s3Client, S3_BUCKET } from "@/lib/s3";
+import { s3Client, S3_BUCKET, uploadToS3 } from "@/lib/s3";
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { checkYoloQuota } from "@/lib/quotas";
 import { audit } from "@/lib/audit";
 import { getToggles } from "@/lib/toggles";
+import { logger } from "@/lib/logger";
 
 export async function POST(req: Request) {
   const { session, error } = await requireAuth();
@@ -67,6 +68,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Model not found" }, { status: 404 });
   }
 
+  // Regenerate config.yaml from DB config before running — ensures admin changes take effect
+  const modelConfig = (model.config as Record<string, unknown>) || {};
+  const conf = Number(modelConfig.confidence) || 0.25;
+  const iouVal = Number(modelConfig.iou) || 0.45;
+  const imgSize = Number(modelConfig.imageSize) || 1280;
+  const classList = (modelConfig.classes as string[]) || [];
+
+  const configYaml = `model_file: model.pt
+confidence_threshold: ${conf}
+iou_threshold: ${iouVal}
+image_size: ${imgSize}
+device: auto
+half_precision: true
+max_detections: 1000
+save_annotated: false
+classes:
+${classList.map((c: string) => `  - ${c}`).join("\n")}
+`;
+  await uploadToS3(`${model.s3Path}/config.yaml`, Buffer.from(configYaml), "text/yaml");
+
   try {
     // Verify page PNGs exist from processing (stored at {dataUrl}/pages/)
     // SageMaker reads from this path directly — no rasterization needed
@@ -114,7 +135,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ jobName, status: "running" });
   } catch (err) {
-    console.error("YOLO job start failed:", err);
+    logger.error("YOLO job start failed:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to start YOLO" },
       { status: 500 }

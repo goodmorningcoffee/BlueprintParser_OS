@@ -16,6 +16,7 @@ import type {
   TemplateMatchHit,
   BboxLTWH,
 } from "@/types";
+import { logger } from "@/lib/logger";
 
 // ─── Core engine function ─────────────────────────────────────
 
@@ -98,7 +99,7 @@ export async function templateMatch(
               })),
             };
           } else if (msg.type === "error") {
-            console.error(`[TEMPLATE_MATCH] Engine error: ${msg.message}`);
+            logger.error(`[TEMPLATE_MATCH] Engine error: ${msg.message}`);
           }
         } catch {
           // Ignore malformed lines
@@ -113,7 +114,7 @@ export async function templateMatch(
     proc.on("close", (code) => {
       clearTimeout(killTimer);
       if (stderr?.trim()) {
-        console.log(`[TEMPLATE_MATCH] ${stderr.trim()}`);
+        logger.info(`[TEMPLATE_MATCH] ${stderr.trim()}`);
       }
 
       // Process any remaining stdout

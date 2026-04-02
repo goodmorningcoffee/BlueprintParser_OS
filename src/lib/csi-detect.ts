@@ -12,6 +12,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import type { CsiCode } from "@/types";
+import { logger } from "@/lib/logger";
 
 // ═══════════════════════════════════════════════════════════════
 // Database types
@@ -90,7 +91,7 @@ function loadCsiDatabase(): CsiEntry[] {
   }
 
   if (!content) {
-    console.error("CSI database not found");
+    logger.error("CSI database not found");
     csiDatabase = [];
     return csiDatabase;
   }

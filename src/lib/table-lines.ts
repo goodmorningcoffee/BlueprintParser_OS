@@ -10,6 +10,7 @@ import { promisify } from "util";
 import { writeFile, rm, mkdtemp } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
+import { logger } from "@/lib/logger";
 
 const execFileAsync = promisify(execFile);
 
@@ -45,13 +46,13 @@ export async function detectTableLines(
     );
 
     if (stderr?.trim()) {
-      console.log(`[TABLE_LINES] ${stderr.trim()}`);
+      logger.info(`[TABLE_LINES] ${stderr.trim()}`);
     }
 
     const result = JSON.parse(stdout.trim() || "{}");
 
     if (result.error) {
-      console.error(`[TABLE_LINES] Error: ${result.error}`);
+      logger.error(`[TABLE_LINES] Error: ${result.error}`);
       return { rows: [], cols: [], rowCount: 0, colCount: 0, confidence: 0 };
     }
 
@@ -63,7 +64,7 @@ export async function detectTableLines(
       confidence: result.confidence || 0,
     };
   } catch (err) {
-    console.error("[TABLE_LINES] Script failed:", err);
+    logger.error("[TABLE_LINES] Script failed:", err);
     return { rows: [], cols: [], rowCount: 0, colCount: 0, confidence: 0 };
   } finally {
     await rm(tempDir, { recursive: true, force: true });

@@ -1,4 +1,5 @@
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { logger } from "@/lib/logger";
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || "us-east-1",
@@ -30,7 +31,7 @@ async function readFromS3(): Promise<ToggleState> {
     const body = await res.Body?.transformToString();
     if (body) return { ...DEFAULTS, ...JSON.parse(body) };
   } catch (err: any) {
-    if (err?.name !== "NoSuchKey") console.warn("Failed to read toggles:", err?.message);
+    if (err?.name !== "NoSuchKey") logger.warn("Failed to read toggles:", err?.message);
   }
   return { ...DEFAULTS };
 }

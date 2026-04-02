@@ -18,6 +18,7 @@ import type {
   BboxLTWH,
 } from "@/types";
 import { mergeBbox, isSameLine, wordsToText } from "@/lib/ocr-utils";
+import { logger } from "@/lib/logger";
 
 // ═══════════════════════════════════════════════════════════════════
 // Page Classification
@@ -286,7 +287,7 @@ export function analyzePageIntelligence(
     const classification = classifyPage(drawingNumber, csiCodes);
     if (classification) result.classification = classification;
   } catch (err) {
-    console.error("[page-analysis] classifyPage failed:", err);
+    logger.error("[page-analysis] classifyPage failed:", err);
   }
 
   // Cross-page references
@@ -296,7 +297,7 @@ export function analyzePageIntelligence(
       if (crossRefs.length > 0) result.crossRefs = crossRefs;
     }
   } catch (err) {
-    console.error("[page-analysis] detectCrossRefs failed:", err);
+    logger.error("[page-analysis] detectCrossRefs failed:", err);
   }
 
   // Note blocks
@@ -306,7 +307,7 @@ export function analyzePageIntelligence(
       if (noteBlocks.length > 0) result.noteBlocks = noteBlocks;
     }
   } catch (err) {
-    console.error("[page-analysis] detectNoteBlocks failed:", err);
+    logger.error("[page-analysis] detectNoteBlocks failed:", err);
   }
 
   return result;

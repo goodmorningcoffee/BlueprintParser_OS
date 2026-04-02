@@ -46,25 +46,56 @@ export type BboxMinMax = [minX: number, minY: number, maxX: number, maxY: number
 
 // ─── Client-side types ───────────────────────────────────────
 
+export type AnnotationData = Record<string, unknown> & {
+  // YOLO fields
+  modelId?: number;
+  modelName?: string;
+  classId?: number;
+  confidence?: number;
+  csiCodes?: string[];
+  keywords?: string[];
+  // Takeoff fields
+  type?: string;
+  takeoffItemId?: number;
+  shape?: string;
+  color?: string;
+  size?: number;
+  vertices?: { x: number; y: number }[];
+  areaSqUnits?: number;
+  unit?: string;
+};
+
 export interface ClientAnnotation {
   id: number;
   pageNumber: number;
   name: string;
   bbox: [number, number, number, number]; // [minX, minY, maxX, maxY] normalized 0-1
   note: string | null;
-  source: string;
-  data?: Record<string, unknown> | null;
+  source: "user" | "yolo" | "takeoff" | "takeoff-scale";
+  data?: AnnotationData | null;
 }
+
+// TextractPageData is defined below (line ~215) with full TextractWord/TextractLine types
 
 // ─── Takeoff types ──────────────────────────────────────────
 
 export const TAKEOFF_SHAPES = ["circle", "square", "diamond", "triangle", "cross"] as const;
 export type TakeoffShape = (typeof TAKEOFF_SHAPES)[number];
-export type TakeoffItemShape = TakeoffShape | "polygon";
+export type TakeoffItemShape = TakeoffShape | "polygon" | "linear";
 
-export type TakeoffTab = "count" | "area" | "auto-qto";
+export type TakeoffTab = "all" | "count" | "area" | "linear" | "auto-qto";
 
 export type AreaUnit = "ft" | "in" | "m" | "cm";
+
+export interface LinearPolylineData {
+  type: "linear-polyline";
+  takeoffItemId: number;
+  color: string;
+  vertices: { x: number; y: number }[];
+  totalLength: number;
+  unit: string;
+  segmentLengths: number[];
+}
 
 // ─── Auto-QTO Types ──────────────────────────────────────────
 
@@ -198,7 +229,8 @@ export interface SearchWordMatch {
   bbox: [number, number, number, number]; // [left, top, width, height] normalized 0-1
 }
 
-export interface KeynoteData {
+/** Detected keynote shapes on the canvas (circles, diamonds with text) */
+export interface KeynoteShapeData {
   shape: string;
   text: string;
   bbox: [number, number, number, number]; // [left, top, right, bottom] normalized 0-1
@@ -365,23 +397,7 @@ export interface PageIntelligence {
   csiSpatialMap?: { pageNumber: number; zones: Array<{ zone: string; divisions: Array<{ division: string; name: string; count: number; codes: string[] }>; totalInstances: number; dominantDivision?: string }>; summary: string } | null;
 }
 
-/** Typed data field for annotations (YOLO + user markups) */
-export interface AnnotationData {
-  modelId?: number;
-  modelName?: string;
-  classId?: number;
-  confidence?: number;
-  csiCodes?: string[];
-  keywords?: string[];
-  type?: "count-marker" | "area-polygon" | "takeoff-scale";
-  shape?: TakeoffShape;
-  color?: string;
-  takeoffItemId?: number;
-  vertices?: Array<{ x: number; y: number }>;
-  areaSqUnits?: number;
-  unit?: string;
-  [key: string]: unknown;
-}
+// AnnotationData is defined above (near ClientAnnotation)
 
 // ─── Parsed Region types (System 4: structured data extraction) ──
 

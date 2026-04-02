@@ -188,6 +188,7 @@ export default function TableParsePanel() {
         headers: d.headers || [],
         rows: d.rows || [],
         tagColumn: d.tagColumn,
+        tableName: d.tableName,
       });
       setTableParseStep("review");
       useViewerStore.getState().setMode("move");

@@ -429,7 +429,7 @@ export function buildCsiGraphSection(csiGraph: any): string | null {
  * Tells the LLM what parsed tables/keynotes exist and their structure.
  * Includes a sample of rows so LLM can understand the data format.
  */
-export function buildParsedTablesSection(parsedRegions: any[]): string | null {
+export function buildParsedTablesSection(parsedRegions: any[] | undefined): string | null {
   if (!parsedRegions?.length) return null;
 
   let text = "";
@@ -472,7 +472,7 @@ export function buildParsedTablesSection(parsedRegions: any[]): string | null {
  * Build CSI from Parsed Data section (priority 6.2).
  * Shows CSI codes from user-parsed tables/keynotes.
  */
-export function buildParsedDataCsiSection(parsedRegions: any[]): string | null {
+export function buildParsedDataCsiSection(parsedRegions: any[] | undefined): string | null {
   if (!parsedRegions?.length) return null;
 
   const regionsWithCsi = parsedRegions.filter(

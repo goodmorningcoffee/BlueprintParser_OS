@@ -91,8 +91,8 @@ export async function POST(
     name: a.name,
     bbox: [a.minX, a.minY, a.maxX, a.maxY] as [number, number, number, number],
     note: a.note,
-    source: a.source,
-    data: a.data as Record<string, unknown> | null,
+    source: a.source as ClientAnnotation["source"],
+    data: a.data ?? null,
   }));
 
   // Load all textract data ONCE

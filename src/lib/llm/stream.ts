@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { chatMessages } from "@/lib/db/schema";
 import { createLLMClient, LLMError } from "./index";
 import type { ResolvedLLMConfig, ChatMessage } from "./types";
+import { logger } from "@/lib/logger";
 
 /**
  * Create an SSE-encoded ReadableStream from an LLM provider.
@@ -50,7 +51,7 @@ export function streamChatResponse(
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
       } catch (err) {
-        console.error("LLM stream error:", err);
+        logger.error("LLM stream error:", err);
 
         // Send error to client before closing
         const message =

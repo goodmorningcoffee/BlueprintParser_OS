@@ -13,6 +13,10 @@ import {
   doublePrecision,
   index,
 } from "drizzle-orm/pg-core";
+import type {
+  ProjectIntelligence, PageIntelligence, TextractPageData, KeynoteShapeData,
+  TextAnnotationResult, AnnotationData, QtoParsedSchedule, QtoLineItem, QtoUserEdits,
+} from "@/types";
 
 // Enums
 export const projectStatusEnum = pgEnum("project_status", [
@@ -79,21 +83,25 @@ export const companies = pgTable("companies", {
 });
 
 // ─── Users ───────────────────────────────────────────────────
-export const users = pgTable("users", {
-  id: serial("id").primaryKey(),
-  publicId: uuid("public_id").defaultRandom().unique().notNull(),
-  username: varchar("username", { length: 255 }).notNull(),
-  email: varchar("email", { length: 255 }).unique().notNull(),
-  passwordHash: varchar("password_hash", { length: 255 }).notNull(),
-  role: varchar("role", { length: 50 }).default("member").notNull(),
-  canRunModels: boolean("can_run_models").default(false).notNull(),
-  isRootAdmin: boolean("is_root_admin").default(false).notNull(),
-  companyId: integer("company_id")
-    .notNull()
-    .references(() => companies.id),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").defaultRandom().unique().notNull(),
+    username: varchar("username", { length: 255 }).notNull(),
+    email: varchar("email", { length: 255 }).unique().notNull(),
+    passwordHash: varchar("password_hash", { length: 255 }).notNull(),
+    role: varchar("role", { length: 50 }).default("member").notNull(),
+    canRunModels: boolean("can_run_models").default(false).notNull(),
+    isRootAdmin: boolean("is_root_admin").default(false).notNull(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [index("idx_users_company").on(table.companyId)]
+);
 
 // ─── User API Keys (BYOK for LLM providers) ─────────────────
 export const userApiKeys = pgTable(
@@ -112,31 +120,35 @@ export const userApiKeys = pgTable(
 );
 
 // ─── Projects ────────────────────────────────────────────────
-export const projects = pgTable("projects", {
-  id: serial("id").primaryKey(),
-  publicId: uuid("public_id").defaultRandom().unique().notNull(),
-  name: varchar("name", { length: 255 }).notNull(),
-  dataUrl: varchar("data_url", { length: 255 }).unique().notNull(),
-  numPages: integer("num_pages"),
-  status: projectStatusEnum("status").default("uploading").notNull(),
-  processingError: text("processing_error"),
-  processingTime: integer("processing_time"),
-  jobId: varchar("job_id", { length: 255 }),
-  address: text("address"),
-  latitude: doublePrecision("latitude"),
-  longitude: doublePrecision("longitude"),
-  authorId: integer("author_id")
-    .notNull()
-    .references(() => users.id),
-  companyId: integer("company_id")
-    .notNull()
-    .references(() => companies.id),
-  isDemo: boolean("is_demo").default(false).notNull(),
-  projectIntelligence: jsonb("project_intelligence"),
-  projectSummary: text("project_summary"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-});
+export const projects = pgTable(
+  "projects",
+  {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").defaultRandom().unique().notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    dataUrl: varchar("data_url", { length: 255 }).unique().notNull(),
+    numPages: integer("num_pages"),
+    status: projectStatusEnum("status").default("uploading").notNull(),
+    processingError: text("processing_error"),
+    processingTime: integer("processing_time"),
+    jobId: varchar("job_id", { length: 255 }),
+    address: text("address"),
+    latitude: doublePrecision("latitude"),
+    longitude: doublePrecision("longitude"),
+    authorId: integer("author_id")
+      .notNull()
+      .references(() => users.id),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id),
+    isDemo: boolean("is_demo").default(false).notNull(),
+    projectIntelligence: jsonb("project_intelligence").$type<ProjectIntelligence>(),
+    projectSummary: text("project_summary"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [index("idx_projects_company").on(table.companyId)]
+);
 
 // ─── Pages ───────────────────────────────────────────────────
 // NOTE: A `search_vector tsvector` column + GIN index exists on this table
@@ -150,11 +162,11 @@ export const pages = pgTable(
     name: varchar("name", { length: 255 }).notNull(),
     drawingNumber: varchar("drawing_number", { length: 100 }),
     rawText: text("raw_text"),
-    textractData: jsonb("textract_data"), // Textract word-level bounding boxes
-    keynotes: jsonb("keynotes"), // [{shape, text, bbox, contour}]
-    csiCodes: jsonb("csi_codes"), // [{code, description, trade, division}]
-    textAnnotations: jsonb("text_annotations"), // TextAnnotationResult
-    pageIntelligence: jsonb("page_intelligence"), // PageIntelligence
+    textractData: jsonb("textract_data").$type<TextractPageData>(),
+    keynotes: jsonb("keynotes").$type<KeynoteShapeData[]>(),
+    csiCodes: jsonb("csi_codes").$type<{ code: string; description: string; trade: string; division: string }[]>(),
+    textAnnotations: jsonb("text_annotations").$type<TextAnnotationResult>(),
+    pageIntelligence: jsonb("page_intelligence").$type<PageIntelligence>(),
     error: text("error"),
     projectId: integer("project_id")
       .notNull()
@@ -176,9 +188,9 @@ export const annotations = pgTable(
     maxY: real("max_y").notNull(),
     pageNumber: integer("page_number").notNull(),
     threshold: real("threshold"),
-    data: jsonb("data"),
+    data: jsonb("data").$type<AnnotationData>(),
     note: text("note"),
-    source: varchar("source", { length: 50 }).default("user").notNull(), // 'user' | 'yolo'
+    source: varchar("source", { length: 50 }).default("user").notNull(), // 'user' | 'yolo' | 'takeoff'
     creatorId: integer("creator_id").references(() => users.id),
     projectId: integer("project_id")
       .notNull()
@@ -251,7 +263,7 @@ export const processingJobs = pgTable(
     stepFunctionArn: text("step_function_arn"),
     executionId: text("execution_id"),
     status: jobStatusEnum("status").default("running").notNull(),
-    modelConfig: jsonb("model_config"),
+    modelConfig: jsonb("model_config").$type<Record<string, unknown>>(),
     startedAt: timestamp("started_at", { withTimezone: true }).defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     error: text("error"),
@@ -265,7 +277,7 @@ export const models = pgTable("models", {
   name: varchar("name", { length: 255 }).notNull(),
   type: varchar("type", { length: 50 }).notNull(),
   s3Path: text("s3_path").notNull(),
-  config: jsonb("config"),
+  config: jsonb("config").$type<Record<string, unknown>>(),
   isDefault: boolean("is_default").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
@@ -278,7 +290,7 @@ export const auditLog = pgTable(
     action: varchar("action", { length: 100 }).notNull(),
     userId: integer("user_id"),
     companyId: integer("company_id"),
-    details: jsonb("details"),
+    details: jsonb("details").$type<Record<string, unknown>>(),
     ip: varchar("ip", { length: 45 }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
@@ -333,7 +345,7 @@ export const labelingSessions = pgTable(
     labelStudioProjectId: integer("label_studio_project_id").notNull(),
     labelStudioUrl: varchar("label_studio_url", { length: 500 }),
     taskType: varchar("task_type", { length: 50 }).default("generic"),
-    labels: jsonb("labels"),
+    labels: jsonb("labels").$type<string[]>(),
     pageRange: varchar("page_range", { length: 100 }),
     tilingEnabled: boolean("tiling_enabled").default(false),
     tileGrid: integer("tile_grid"),
@@ -359,9 +371,9 @@ export const qtoWorkflows = pgTable(
     yoloModelFilter: text("yolo_model_filter"),
     yoloClassFilter: text("yolo_class_filter"),
     tagPattern: text("tag_pattern"),
-    parsedSchedule: jsonb("parsed_schedule"),
-    lineItems: jsonb("line_items"),
-    userEdits: jsonb("user_edits"),
+    parsedSchedule: jsonb("parsed_schedule").$type<QtoParsedSchedule>(),
+    lineItems: jsonb("line_items").$type<QtoLineItem[]>(),
+    userEdits: jsonb("user_edits").$type<QtoUserEdits>(),
     exportedAt: timestamp("exported_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),

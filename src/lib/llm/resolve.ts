@@ -100,6 +100,13 @@ export async function resolveLLMConfig(
     // Table may not exist yet — fall through to env vars
   }
 
+  // 2b. Demo fallback: prefer cheapest provider to control costs
+  if (isDemo) {
+    if (process.env.GROQ_API_KEY) {
+      return { provider: "groq", model: "llama-3.3-70b-versatile", apiKey: process.env.GROQ_API_KEY };
+    }
+  }
+
   // 3. Check explicit env var overrides (LLM_PROVIDER + LLM_MODEL)
   if (process.env.LLM_PROVIDER) {
     const apiKey = getEnvKey(process.env.LLM_PROVIDER);

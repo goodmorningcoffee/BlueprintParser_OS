@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
-import type { KeynoteData, CsiCode, ClientAnnotation, ScaleCalibrationData } from "@/types";
+import type { KeynoteShapeData, CsiCode, ClientAnnotation, ScaleCalibrationData } from "@/types";
 
 const CHUNK_RADIUS = 7; // current page ± 7 = 15-page window (covers 11-13 visible thumbnails + buffer)
 const EVICTION_BUFFER = 5; // keep extra pages beyond chunk before evicting
@@ -11,10 +11,10 @@ interface ChunkResponse {
   to: number;
   pages: Array<{
     pageNumber: number;
-    keynotes: KeynoteData[] | null;
+    keynotes: KeynoteShapeData[] | null;
     csiCodes: CsiCode[] | null;
-    textAnnotations: unknown | null;
-    pageIntelligence: unknown | null;
+    textAnnotations: { annotations?: any[]; summary?: any } | null;
+    pageIntelligence: Record<string, any> | null;
   }>;
   annotations: ClientAnnotation[];
 }
@@ -93,13 +93,13 @@ export function useChunkLoader() {
           return res.json() as Promise<ChunkResponse>;
         })
         .then((chunk) => {
-          const keynoteMap: Record<number, KeynoteData[]> = {};
+          const keynoteMap: Record<number, KeynoteShapeData[]> = {};
           const csiMap: Record<number, CsiCode[]> = {};
           const textAnnMap: Record<number, any[]> = {};
           const intelMap: Record<number, any> = {};
 
           for (const page of chunk.pages) {
-            if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes as KeynoteData[];
+            if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes as KeynoteShapeData[];
             if (page.csiCodes) csiMap[page.pageNumber] = page.csiCodes as CsiCode[];
             if (page.textAnnotations) {
               const result = page.textAnnotations as any;

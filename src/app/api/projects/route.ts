@@ -7,6 +7,7 @@ import { processProject } from "@/lib/processing";
 import { getS3Url } from "@/lib/s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 import { checkUploadQuota } from "@/lib/quotas";
+import { logger } from "@/lib/logger";
 
 export async function POST(req: Request) {
   const { session, error } = await requireAuth();
@@ -73,7 +74,7 @@ export async function POST(req: Request) {
         .set({ status: "processing", jobId: executionName })
         .where(eq(projects.id, project.id));
     } catch (err) {
-      console.error("Step Functions start failed:", err);
+      logger.error("Step Functions start failed:", err);
       await db
         .update(projects)
         .set({
@@ -88,7 +89,7 @@ export async function POST(req: Request) {
   ) {
     // Dev mode: call processing logic directly (fire-and-forget)
     processProject(project.id).catch((err) =>
-      console.error("Processing failed:", err)
+      logger.error("Processing failed:", err)
     );
   }
 

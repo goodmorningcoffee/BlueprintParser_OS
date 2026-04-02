@@ -18,6 +18,7 @@ import type {
 } from "@/types";
 import type { DetectorContext } from "./types";
 import { ALL_DETECTORS } from "./registry";
+import { logger } from "@/lib/logger";
 
 // ═══════════════════════════════════════════════════════════════════
 // Pipeline input
@@ -268,7 +269,7 @@ export function runTextAnnotationPipeline(input: PipelineInput): TextAnnotationR
   // Build context once, pass to all detectors
   const ctx: DetectorContext = {
     words,
-    lines: lines || [],
+    lines: (lines || []) as any,
     csiCodes: csiCodes || [],
     yoloDetections,
   };
@@ -285,7 +286,7 @@ export function runTextAnnotationPipeline(input: PipelineInput): TextAnnotationR
       const result = detector.detect(ctx);
       raw.push(...result);
     } catch (err) {
-      console.error(`[orchestrator] detector "${detector.meta.id}" failed:`, err);
+      logger.error(`[orchestrator] detector "${detector.meta.id}" failed:`, err);
     }
   }
 

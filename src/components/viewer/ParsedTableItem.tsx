@@ -46,8 +46,10 @@ export default function ParsedTableItem({
   const [mapping, setMapping] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
 
-  // Reactive selector for render-path highlight (not getState)
+  // Reactive selectors for render-path (not getState)
   const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
+  const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
+  const isTagViewActive = table.region?.id ? !!activeTableTagViews[table.region.id] : false;
 
   const rows = table.region?.data?.rows || [];
   const headers = table.region?.data?.headers || [];
@@ -84,12 +86,35 @@ export default function ParsedTableItem({
   const saveName = () => {
     const trimmed = nameValue.trim();
     if (trimmed && trimmed !== table.name) {
-      const intel = useViewerStore.getState().pageIntelligence[table.pageNum] || {};
+      const store = useViewerStore.getState();
+      const intel = store.pageIntelligence[table.pageNum] || {};
       const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
         if (r.id !== table.region.id) return r;
         return { ...r, data: { ...r.data, tableName: trimmed }, category: trimmed };
       });
-      useViewerStore.getState().setPageIntelligence(table.pageNum, { ...intel, parsedRegions: regions });
+      const updatedIntel = { ...intel, parsedRegions: regions };
+      store.setPageIntelligence(table.pageNum, updatedIntel);
+
+      // Persist to DB (fire-and-forget)
+      const { projectId, isDemo } = store;
+      if (projectId && !isDemo) {
+        fetch("/api/pages/intelligence", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId, pageNumber: table.pageNum, intelligence: updatedIntel }),
+        }).catch(() => {});
+      }
+
+      // Optimistic update of client-side summaries
+      const summaries = store.summaries;
+      if (summaries?.parsedTables) {
+        const updatedTables = summaries.parsedTables.map((pt: any) =>
+          pt.pageNum === table.pageNum && (pt.name === table.name || pt.category === table.category)
+            ? { ...pt, name: trimmed, category: trimmed }
+            : pt
+        );
+        store.setSummaries({ ...summaries, parsedTables: updatedTables });
+      }
     }
     setEditingName(false);
   };
@@ -170,6 +195,31 @@ export default function ParsedTableItem({
             {pageNames[table.pageNum] || `p.${table.pageNum}`} &middot; {rowTags.length} rows
           </span>
         </div>
+        {/* Eye icon — toggle mapped tag visibility */}
+        {table.region && rowTags.some((rt: { tag: string }) => yoloTags.some((t: any) => t.tagText === rt.tag && t.source === "schedule")) && (
+          <button
+            onClick={() => {
+              const store = useViewerStore.getState();
+              const regionId = table.region.id;
+              if (store.activeTableTagViews[regionId]) {
+                store.setTableTagView(regionId, null);
+              } else {
+                const tagTexts = rowTags.map((rt: { tag: string }) => rt.tag).filter(Boolean);
+                store.setTableTagView(regionId, {
+                  regionId,
+                  pageNum: table.pageNum,
+                  bbox: table.region.bbox || [0, 0, 1, 1],
+                  tagTexts,
+                  source: "schedule",
+                });
+              }
+            }}
+            className={`text-[10px] shrink-0 ${isTagViewActive ? "text-cyan-300" : "text-[var(--muted)] hover:text-cyan-300"}`}
+            title="Toggle mapped tag visibility"
+          >
+            {isTagViewActive ? "\u{1F441}" : "\u25CB"}
+          </button>
+        )}
         <button
           onClick={() => setShowSettings(!showSettings)}
           className={`text-[10px] shrink-0 ${showSettings ? "text-pink-300" : "text-[var(--muted)] hover:text-pink-300"}`}

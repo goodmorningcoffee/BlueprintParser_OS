@@ -59,6 +59,25 @@ export function polygonCentroid(vertices: { x: number; y: number }[]): { x: numb
   return { x: cx / n, y: cy / n };
 }
 
+/**
+ * Compute polyline length from normalized vertices + calibration.
+ * Returns total length and per-segment lengths in real-world units.
+ */
+export function computePolylineLength(
+  vertices: { x: number; y: number }[],
+  pageWidth: number,
+  pageHeight: number,
+  pixelsPerUnit: number
+): { total: number; segments: number[] } {
+  const segments: number[] = [];
+  for (let i = 0; i < vertices.length - 1; i++) {
+    const dx = (vertices[i + 1].x - vertices[i].x) * pageWidth;
+    const dy = (vertices[i + 1].y - vertices[i].y) * pageHeight;
+    segments.push(Math.sqrt(dx * dx + dy * dy) / pixelsPerUnit);
+  }
+  return { total: segments.reduce((a, b) => a + b, 0), segments };
+}
+
 /** Point-in-polygon test using ray casting. */
 export function pointInPolygon(
   point: { x: number; y: number },

@@ -1,12 +1,24 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { AREA_UNIT_MAP } from "@/types";
-import type { AreaPolygonData, AreaUnitSq } from "@/types";
+import type { AreaPolygonData, AreaUnitSq, TakeoffTab } from "@/types";
 import { computeRealArea } from "@/lib/areaCalc";
 import CountTab from "./CountTab";
 import AreaTab from "./AreaTab";
+import LinearTab from "./LinearTab";
 import AutoQtoTab from "./AutoQtoTab";
+import { ColorDot } from "./TakeoffShared";
+import CalibrationInput from "./CalibrationInput";
+
+const TAB_LABELS: Record<TakeoffTab, string> = {
+  all: "All",
+  count: "Count",
+  area: "Area",
+  linear: "Linear",
+  "auto-qto": "Auto-QTO",
+};
 
 export default function TakeoffPanel() {
   const takeoffTab = useViewerStore((s) => s.takeoffTab);
@@ -16,12 +28,62 @@ export default function TakeoffPanel() {
   const pageDimensions = useViewerStore((s) => s.pageDimensions);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
+  const takeoffUndoStack = useViewerStore((s) => s.takeoffUndoStack);
+  const takeoffRedoStack = useViewerStore((s) => s.takeoffRedoStack);
+  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const calibrationMode = useViewerStore((s) => s.calibrationMode);
+  const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
+  const resetCalibration = useViewerStore((s) => s.resetCalibration);
 
+  const activeItem = activeTakeoffItemId ? takeoffItems.find((t) => t.id === activeTakeoffItemId) : null;
+  const hasScale = !!scaleCalibrations[pageNumber];
+
+  // ─── All-Takeoffs grouped data ────────────────────────────
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const toggleGroup = (group: string) => setCollapsedGroups((s) => ({ ...s, [group]: !s[group] }));
+
+  const allSummary = useMemo(() => {
+    const counts: Record<number, { count: number; pages: Set<number> }> = {};
+    const areas: Record<number, { totalArea: number; polyCount: number; pages: Set<number> }> = {};
+    const linears: Record<number, { totalLength: number; lineCount: number; pages: Set<number> }> = {};
+
+    for (const ann of annotations) {
+      if (ann.source !== "takeoff" || !ann.data) continue;
+      const data = ann.data as any;
+      const itemId = data.takeoffItemId as number;
+      if (!itemId) continue;
+
+      if (data.type === "count-marker") {
+        if (!counts[itemId]) counts[itemId] = { count: 0, pages: new Set() };
+        counts[itemId].count++;
+        counts[itemId].pages.add(ann.pageNumber);
+      } else if (data.type === "area-polygon") {
+        if (!areas[itemId]) areas[itemId] = { totalArea: 0, polyCount: 0, pages: new Set() };
+        areas[itemId].polyCount++;
+        areas[itemId].pages.add(ann.pageNumber);
+        const vertices = (data as AreaPolygonData).vertices;
+        const dim = pageDimensions[ann.pageNumber];
+        const cal = scaleCalibrations[ann.pageNumber];
+        if (vertices && dim && cal) areas[itemId].totalArea += computeRealArea(vertices, dim.width, dim.height, cal);
+      } else if (data.type === "linear-polyline") {
+        if (!linears[itemId]) linears[itemId] = { totalLength: 0, lineCount: 0, pages: new Set() };
+        linears[itemId].lineCount++;
+        linears[itemId].pages.add(ann.pageNumber);
+        if (typeof data.totalLength === "number") linears[itemId].totalLength += data.totalLength;
+      }
+    }
+    return { counts, areas, linears };
+  }, [annotations, pageDimensions, scaleCalibrations]);
+
+  const countItems = takeoffItems.filter((i) => i.shape !== "polygon" && i.shape !== "linear");
+  const areaItems = takeoffItems.filter((i) => i.shape === "polygon");
+  const linearItems = takeoffItems.filter((i) => i.shape === "linear");
+
+  // ─── CSV Export ───────────────────────────────────────────
   function exportCSV() {
     const rows: string[] = [];
     for (const item of takeoffItems) {
-      const isArea = item.shape === "polygon";
-      if (isArea) {
+      if (item.shape === "polygon") {
         let totalArea = 0;
         const pages = new Set<number>();
         let hasCal = true;
@@ -39,6 +101,19 @@ export default function TakeoffPanel() {
         const cals = Object.values(scaleCalibrations);
         const unitSq: AreaUnitSq = cals.length > 0 ? AREA_UNIT_MAP[cals[0].unit] : "SF";
         rows.push(`"${item.name.replace(/"/g, '""')}",area,polygon,${item.color},${hasCal ? totalArea.toFixed(1) : ""},${unitSq},"${Array.from(pages).sort((a, b) => a - b).join("; ")}"`);
+      } else if (item.shape === "linear") {
+        let totalLength = 0;
+        const pages = new Set<number>();
+        for (const ann of annotations) {
+          if (ann.source !== "takeoff" || !ann.data) continue;
+          const data = ann.data as any;
+          if (data.type !== "linear-polyline" || data.takeoffItemId !== item.id) continue;
+          pages.add(ann.pageNumber);
+          if (typeof data.totalLength === "number") totalLength += data.totalLength;
+        }
+        const cals = Object.values(scaleCalibrations);
+        const unit = cals.length > 0 ? cals[0].unit : "ft";
+        rows.push(`"${item.name.replace(/"/g, '""')}",linear,linear,${item.color},${totalLength.toFixed(1)},${unit},"${Array.from(pages).sort((a, b) => a - b).join("; ")}"`);
       } else {
         let count = 0;
         const pages = new Set<number>();
@@ -46,7 +121,7 @@ export default function TakeoffPanel() {
           if (ann.source !== "takeoff" || !ann.data) continue;
           const data = ann.data as any;
           if (data.takeoffItemId !== item.id) continue;
-          if (data.type === "area-polygon") continue;
+          if (data.type === "area-polygon" || data.type === "linear-polyline") continue;
           count++;
           pages.add(ann.pageNumber);
         }
@@ -65,35 +140,153 @@ export default function TakeoffPanel() {
 
   return (
     <div className="w-80 shrink-0 border border-[var(--border)] bg-[var(--surface)] flex flex-col shadow-lg">
+      {/* Header with calibrate button */}
       <div className="p-3 border-b border-[var(--border)] flex items-center justify-between">
         <span className="text-sm font-medium">Quantity Takeoff</span>
-        <button onClick={exportCSV} className="text-xs px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]" title="Export CSV">CSV</button>
-      </div>
-      <div className="flex border-b border-[var(--border)]">
-        {(["count", "area", "auto-qto"] as const).map((tab) => (
-          <button key={tab} onClick={() => setTakeoffTab(tab)}
-            className={`flex-1 text-xs py-2 text-center transition-colors ${takeoffTab === tab ? "text-[var(--fg)] border-b-2 border-[var(--accent)]" : "text-[var(--muted)] hover:text-[var(--fg)]"}`}>
-            {tab === "count" ? "Count" : tab === "area" ? "Area" : "Auto-QTO"}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              if (calibrationMode !== "idle") { resetCalibration(); }
+              else { setCalibrationMode("point1"); }
+            }}
+            className={`text-xs px-1.5 py-0.5 rounded border ${hasScale ? "border-green-500/30 text-green-400" : "border-amber-500/30 text-amber-400"} hover:border-[var(--accent)]`}
+            title={hasScale ? `Scale set for page ${pageNumber}. Click to recalibrate.` : "Set scale for this page (required for Area and Linear)"}
+          >
+            {calibrationMode !== "idle" ? "..." : hasScale ? "&#10003;" : "\u{1F4CF}"}
           </button>
-        ))}
+          <button onClick={exportCSV} className="text-xs px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]" title="Export CSV">CSV</button>
+        </div>
       </div>
-      {takeoffTab === "count" && <CountTab />}
-      {takeoffTab === "area" && <AreaTab />}
-      {takeoffTab === "auto-qto" && <AutoQtoTab />}
-      {activeTakeoffItemId !== null && (
-        <div className="p-3 border-t border-[var(--border)] flex justify-end">
+
+      {/* Calibration input (shows when in calibration mode from header button) */}
+      {calibrationMode === "input" && takeoffTab !== "area" && takeoffTab !== "linear" && (
+        <div className="px-2 py-2 border-b border-[var(--border)]">
+          <div className="text-xs text-amber-400 mb-1">Enter the real-world distance:</div>
+          <CalibrationInput />
+        </div>
+      )}
+
+      {/* Active item status bar */}
+      {activeItem && (
+        <div className="px-3 py-2 border-b border-[var(--border)] flex items-center gap-2" style={{ backgroundColor: activeItem.color + "10" }}>
+          <ColorDot color={activeItem.color} />
+          <span className="text-xs font-medium flex-1 truncate">{activeItem.name}</span>
+          <button
+            onClick={() => useViewerStore.getState().takeoffUndo()}
+            disabled={takeoffUndoStack.length === 0}
+            className="text-xs px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-30"
+            title="Undo last placement (Z)"
+          >
+            &#8630;
+          </button>
+          <button
+            onClick={() => useViewerStore.getState().takeoffRedo()}
+            disabled={takeoffRedoStack.length === 0}
+            className="text-xs px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-30"
+            title="Redo (W)"
+          >
+            &#8631;
+          </button>
           <button
             onClick={() => {
               useViewerStore.getState().setActiveTakeoffItemId(null);
               useViewerStore.getState().resetPolygonDrawing();
               useViewerStore.getState().setMode("move");
             }}
-            className="px-3 py-1.5 text-xs rounded border border-red-400/30 text-red-400/60 bg-red-400/5 hover:border-red-400/50 hover:text-red-400 transition-colors"
+            className="text-xs px-2 py-0.5 rounded border border-red-400/30 text-red-400/60 hover:text-red-400"
           >
-            Stop Takeoff
+            Stop
           </button>
         </div>
       )}
+
+      {/* Tab bar */}
+      <div className="flex border-b border-[var(--border)]">
+        {(["all", "count", "area", "linear", "auto-qto"] as const).map((tab) => (
+          <button key={tab} onClick={() => setTakeoffTab(tab)}
+            className={`flex-1 text-[10px] py-2 text-center transition-colors ${takeoffTab === tab ? "text-[var(--fg)] border-b-2 border-[var(--accent)]" : "text-[var(--muted)] hover:text-[var(--fg)]"}`}>
+            {TAB_LABELS[tab]}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {takeoffTab === "all" && (
+        <div className="flex-1 overflow-y-auto p-2 space-y-2">
+          {takeoffItems.length === 0 ? (
+            <div className="text-xs text-[var(--muted)] text-center py-8">No takeoff items yet.<br />Use Count, Area, or Linear tabs to create items.</div>
+          ) : (
+            <>
+              {/* Counts group */}
+              {countItems.length > 0 && (
+                <div>
+                  <button onClick={() => toggleGroup("count")} className="w-full flex items-center justify-between text-xs text-[var(--muted)] hover:text-[var(--fg)] py-1">
+                    <span>{collapsedGroups.count ? "\u25B6" : "\u25BC"} Counts ({countItems.length} items, {countItems.reduce((s, i) => s + (allSummary.counts[i.id]?.count || 0), 0)} total)</span>
+                  </button>
+                  {!collapsedGroups.count && countItems.map((item) => {
+                    const s = allSummary.counts[item.id];
+                    return (
+                      <div key={item.id} onClick={() => { useViewerStore.getState().setActiveTakeoffItemId(item.id); setTakeoffTab("count"); }}
+                        className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-[var(--surface-hover)] text-xs">
+                        <ColorDot color={item.color} />
+                        <span className="flex-1 truncate">{item.name}</span>
+                        <span className="text-[var(--muted)]">{s?.count || 0} EA</span>
+                        {s && <span className="text-[10px] text-[var(--muted)]">{s.pages.size}pg</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Areas group */}
+              {areaItems.length > 0 && (
+                <div>
+                  <button onClick={() => toggleGroup("area")} className="w-full flex items-center justify-between text-xs text-[var(--muted)] hover:text-[var(--fg)] py-1">
+                    <span>{collapsedGroups.area ? "\u25B6" : "\u25BC"} Areas ({areaItems.length} items)</span>
+                  </button>
+                  {!collapsedGroups.area && areaItems.map((item) => {
+                    const s = allSummary.areas[item.id];
+                    return (
+                      <div key={item.id} onClick={() => { useViewerStore.getState().setActiveTakeoffItemId(item.id); setTakeoffTab("area"); }}
+                        className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-[var(--surface-hover)] text-xs">
+                        <ColorDot color={item.color} />
+                        <span className="flex-1 truncate">{item.name}</span>
+                        <span className="text-[var(--muted)]">{s ? `${s.totalArea.toFixed(1)}` : "0"}</span>
+                        {s && <span className="text-[10px] text-[var(--muted)]">{s.pages.size}pg</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Linear group */}
+              {linearItems.length > 0 && (
+                <div>
+                  <button onClick={() => toggleGroup("linear")} className="w-full flex items-center justify-between text-xs text-[var(--muted)] hover:text-[var(--fg)] py-1">
+                    <span>{collapsedGroups.linear ? "\u25B6" : "\u25BC"} Linear ({linearItems.length} items)</span>
+                  </button>
+                  {!collapsedGroups.linear && linearItems.map((item) => {
+                    const s = allSummary.linears[item.id];
+                    return (
+                      <div key={item.id} onClick={() => { useViewerStore.getState().setActiveTakeoffItemId(item.id); setTakeoffTab("linear"); }}
+                        className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-[var(--surface-hover)] text-xs">
+                        <ColorDot color={item.color} />
+                        <span className="flex-1 truncate">{item.name}</span>
+                        <span className="text-[var(--muted)]">{s ? `${s.totalLength.toFixed(1)}` : "0"}</span>
+                        {s && <span className="text-[10px] text-[var(--muted)]">{s.pages.size}pg</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {takeoffTab === "count" && <CountTab />}
+      {takeoffTab === "area" && <AreaTab />}
+      {takeoffTab === "linear" && <LinearTab />}
+      {takeoffTab === "auto-qto" && <AutoQtoTab />}
     </div>
   );
 }
