@@ -14,6 +14,7 @@ import type {
   BboxLTWH,
 } from "@/types";
 import { detectCsiFromGrid } from "@/lib/csi-detect";
+import { logger } from "@/lib/logger";
 
 // ─── Method 1: OCR Word Positions ─────────────────────────
 
@@ -348,7 +349,7 @@ async function methodOpenCvLines(
       confidence: lineGrid.confidence,
     };
   } catch (err) {
-    console.error("[table-parse] OpenCV method failed:", err);
+    logger.error("[table-parse] OpenCV method failed:", err);
     return { method: "opencv-lines", headers: [], rows: [], confidence: 0 };
   }
 }
@@ -438,7 +439,7 @@ export async function POST(req: Request) {
 
     const results = await Promise.all(methodPromises);
 
-    console.log(
+    logger.info(
       `[table-parse] Page ${pageNumber}: ` +
       results.map((r) => `${r.method}=${r.confidence.toFixed(2)} (${r.rows.length}r×${r.headers.length}c)`).join(", ")
     );
@@ -454,7 +455,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(merged);
   } catch (err) {
-    console.error("[table-parse] Failed:", err);
+    logger.error("[table-parse] Failed:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Table parsing failed" },
       { status: 500 }

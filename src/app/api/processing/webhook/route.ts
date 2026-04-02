@@ -6,6 +6,7 @@ import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { parseTextractResponse, extractRawText } from "@/lib/textract";
 import type { Block } from "@aws-sdk/client-textract";
+import { logger } from "@/lib/logger";
 
 interface WebhookPageData {
   pageNumber: number;
@@ -131,7 +132,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("Webhook processing error:", err);
+    logger.error("Webhook processing error:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Webhook failed" },
       { status: 500 }

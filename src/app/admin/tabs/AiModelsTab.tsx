@@ -197,68 +197,75 @@ export default function AiModelsTab({
               </div>
 
               {/* Inference config — always visible */}
-              <div className="px-3 pb-2 flex items-center gap-3 text-[10px]">
-                <div className="flex items-center gap-1">
-                  <span className="text-[var(--muted)]">Conf:</span>
-                  <input
-                    type="number"
-                    step="0.05"
-                    min="0.01"
-                    max="0.95"
-                    defaultValue={(m.config as any)?.confidence || 0.25}
-                    onBlur={(e) => {
-                      const val = parseFloat(e.target.value);
-                      if (isNaN(val) || val < 0.01 || val > 0.95) return;
-                      fetch("/api/admin/models", {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: m.id, confidence: val }),
-                      });
-                    }}
-                    className="w-14 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
-                  />
+              <div className="px-3 pb-2 space-y-1.5">
+                <div className="flex items-center gap-3 text-[10px]">
+                  <div className="flex items-center gap-1" title="Minimum confidence to count as a detection. Lower = more results (may include false positives). Higher = fewer but more accurate.">
+                    <span className="text-[var(--muted)]">Conf:</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0.01"
+                      max="0.95"
+                      defaultValue={(m.config as any)?.confidence || 0.25}
+                      onBlur={(e) => {
+                        const val = parseFloat(e.target.value);
+                        if (isNaN(val) || val < 0.01 || val > 0.95) return;
+                        fetch("/api/admin/models", {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ id: m.id, confidence: val }),
+                        });
+                      }}
+                      className="w-14 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1" title="Overlap removal (NMS). When two detections overlap more than this %, the weaker one is removed. Lower = more aggressive deduplication.">
+                    <span className="text-[var(--muted)]">IOU:</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0.1"
+                      max="0.9"
+                      defaultValue={(m.config as any)?.iou || 0.45}
+                      onBlur={(e) => {
+                        const val = parseFloat(e.target.value);
+                        if (isNaN(val) || val < 0.1 || val > 0.9) return;
+                        fetch("/api/admin/models", {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ id: m.id, iou: val }),
+                        });
+                      }}
+                      className="w-14 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1" title="Image resolution YOLO processes at. 640 = fastest, 1280 = recommended, 1920+ = best for small objects but slower. Must be multiple of 32.">
+                    <span className="text-[var(--muted)]">ImgSize:</span>
+                    <input
+                      type="number"
+                      step="32"
+                      min="640"
+                      max="2560"
+                      defaultValue={(m.config as any)?.imageSize || 1280}
+                      onBlur={(e) => {
+                        const val = parseInt(e.target.value);
+                        if (isNaN(val) || val < 640 || val > 2560) return;
+                        fetch("/api/admin/models", {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ id: m.id, imageSize: val }),
+                        });
+                      }}
+                      className="w-16 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[var(--muted)]">IOU:</span>
-                  <input
-                    type="number"
-                    step="0.05"
-                    min="0.1"
-                    max="0.9"
-                    defaultValue={(m.config as any)?.iou || 0.45}
-                    onBlur={(e) => {
-                      const val = parseFloat(e.target.value);
-                      if (isNaN(val) || val < 0.1 || val > 0.9) return;
-                      fetch("/api/admin/models", {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: m.id, iou: val }),
-                      });
-                    }}
-                    className="w-14 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
-                  />
+                <div className="text-[9px] text-[var(--muted)] px-0.5 leading-relaxed">
+                  <strong>Conf</strong>: detection threshold (0.10 = more results, 0.70+ = fewer/accurate) &middot;
+                  <strong> IOU</strong>: overlap removal (lower = removes more duplicates) &middot;
+                  <strong> ImgSize</strong>: processing resolution (1280 recommended, higher for small objects).
+                  <em> Re-run model to apply changes.</em>
                 </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[var(--muted)]">ImgSize:</span>
-                  <input
-                    type="number"
-                    step="32"
-                    min="320"
-                    max="1280"
-                    defaultValue={(m.config as any)?.imageSize || 640}
-                    onBlur={(e) => {
-                      const val = parseInt(e.target.value);
-                      if (isNaN(val) || val < 320 || val > 1280) return;
-                      fetch("/api/admin/models", {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: m.id, imageSize: val }),
-                      });
-                    }}
-                    className="w-16 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
-                  />
-                </div>
-                <span className="text-[var(--muted)] italic">Edit + re-run model to apply</span>
               </div>
 
               {/* Class type editor */}

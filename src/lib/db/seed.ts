@@ -4,12 +4,13 @@ import { Pool } from "pg";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { companies, users, projects, pages } from "./schema";
+import { logger } from "@/lib/logger";
 
 async function seed() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const db = drizzle(pool);
 
-  console.log("Seeding database...");
+  logger.info("Seeding database...");
 
   // Create test company
   const accessKey = crypto.randomBytes(16).toString("hex");
@@ -25,8 +26,8 @@ async function seed() {
     })
     .returning();
 
-  console.log(`Company created: "${company.name}"`);
-  console.log(`Access Key: ${accessKey}`);
+  logger.info(`Company created: "${company.name}"`);
+  logger.info(`Access Key: ${accessKey}`);
 
   // Create test user
   const passwordHash = await bcrypt.hash("password123", 12);
@@ -41,7 +42,7 @@ async function seed() {
     })
     .returning();
 
-  console.log(`User created: ${user.email} / password123`);
+  logger.info(`User created: ${user.email} / password123`);
 
   // Create a sample project (no real PDF, just for UI testing)
   const [project] = await db
@@ -81,13 +82,13 @@ async function seed() {
     },
   ]);
 
-  console.log(`Project created: "${project.name}" (${project.publicId})`);
-  console.log("\n--- Login credentials ---");
-  console.log(`Email: demo@demo.com`);
-  console.log(`Password: password123`);
-  console.log(`Access Key (for registration): ${accessKey}`);
+  logger.info(`Project created: "${project.name}" (${project.publicId})`);
+  logger.info("\n--- Login credentials ---");
+  logger.info(`Email: demo@demo.com`);
+  logger.info(`Password: password123`);
+  logger.info(`Access Key (for registration): ${accessKey}`);
 
   await pool.end();
 }
 
-seed().catch(console.error);
+seed().catch(logger.error);

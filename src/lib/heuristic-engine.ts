@@ -21,6 +21,7 @@ import type {
   BboxLTWH,
 } from "@/types";
 import { bboxCenterLTWH, bboxContainsPoint, bboxAreaLTWH, wordsToText } from "@/lib/ocr-utils";
+import { logger } from "@/lib/logger";
 
 // ═══════════════════════════════════════════════════════════════════
 // Rule Types
@@ -512,7 +513,7 @@ export function runHeuristicEngine(
         });
       }
     } catch (err) {
-      console.error(`[heuristic-engine] rule "${rule.id}" failed:`, err);
+      logger.error(`[heuristic-engine] rule "${rule.id}" failed:`, err);
     }
   }
 

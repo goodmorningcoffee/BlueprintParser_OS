@@ -9,7 +9,7 @@ import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
   ClientTakeoffItem,
-  KeynoteData,
+  KeynoteShapeData,
   CsiCode,
   TextractPageData,
   ProjectSummaries,
@@ -46,10 +46,10 @@ interface ChunkResponse {
     pageNumber: number;
     name: string;
     drawingNumber: string | null;
-    keynotes: KeynoteData[] | null;
+    keynotes: KeynoteShapeData[] | null;
     csiCodes: CsiCode[] | null;
-    textAnnotations: unknown | null;
-    pageIntelligence: unknown | null;
+    textAnnotations: { annotations?: any[]; summary?: any } | null;
+    pageIntelligence: Record<string, any> | null;
   }>;
   annotations: ClientAnnotation[];
 }
@@ -156,17 +156,16 @@ export default function ProjectPage() {
         const chunk: ChunkResponse = await chunkRes.json();
 
         // Batch page data into maps
-        const keynoteMap: Record<number, KeynoteData[]> = {};
+        const keynoteMap: Record<number, KeynoteShapeData[]> = {};
         const csiMap: Record<number, CsiCode[]> = {};
         const textAnnMap: Record<number, any[]> = {};
         const intelMap: Record<number, any> = {};
 
         for (const page of chunk.pages) {
-          if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes as KeynoteData[];
+          if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes as KeynoteShapeData[];
           if (page.csiCodes) csiMap[page.pageNumber] = page.csiCodes as CsiCode[];
           if (page.textAnnotations) {
-            const result = page.textAnnotations as any;
-            textAnnMap[page.pageNumber] = result.annotations || [];
+            textAnnMap[page.pageNumber] = page.textAnnotations.annotations || [];
           }
           if (page.pageIntelligence) intelMap[page.pageNumber] = page.pageIntelligence;
         }

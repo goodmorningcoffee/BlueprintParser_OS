@@ -16,6 +16,8 @@ import type {
   ParsedTableSummaryEntry,
   AnnotationSummary,
   TakeoffItemTotal,
+  TextAnnotationResult,
+  KeynoteShapeData,
 } from "@/types";
 import { buildCsiGraph } from "@/lib/csi-graph";
 import { db } from "@/lib/db";
@@ -282,10 +284,10 @@ export function analyzeProject(pageSummaries: PageSummary[]): {
 interface PageRow {
   pageNumber: number;
   name: string | null;
-  keynotes: any;
-  csiCodes: any;
-  textAnnotations: any;
-  pageIntelligence: any;
+  keynotes: KeynoteShapeData[] | null | undefined;
+  csiCodes: { code: string; description: string; trade: string; division: string }[] | null | undefined;
+  textAnnotations: TextAnnotationResult | null | undefined;
+  pageIntelligence: PageIntelligence | null | undefined;
 }
 
 interface AnnotationRow {
@@ -346,7 +348,7 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
     const pn = page.pageNumber;
 
     // classifiedTables → schedule catalog + keynote table catalog
-    const pi = page.pageIntelligence as any;
+    const pi = page.pageIntelligence;
     if (pi?.classifiedTables) {
       for (const t of pi.classifiedTables) {
         schedules.push({
@@ -367,10 +369,10 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
         if (pr.type === "schedule" || pr.type === "keynote") {
           parsedTables.push({
             pageNum: pn,
-            name: pr.data?.tableName || pr.category || "Unnamed Table",
+            name: (pr.data as any)?.tableName || pr.category || "Unnamed Table",
             category: pr.category,
-            rowCount: pr.data?.rowCount || pr.data?.rows?.length || 0,
-            colCount: pr.data?.columnCount || pr.data?.headers?.length || 0,
+            rowCount: (pr.data as any)?.rowCount || (pr.data as any)?.rows?.length || 0,
+            colCount: (pr.data as any)?.columnCount || (pr.data as any)?.headers?.length || 0,
           });
         }
       }
@@ -385,7 +387,7 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
     }
 
     // csiCodes → csiPageIndex + tradePageIndex + allTrades + allCsiCodes
-    const codes = page.csiCodes as CsiCode[] | null;
+    const codes = page.csiCodes;
     if (codes && Array.isArray(codes)) {
       for (const c of codes) {
         // CSI page index
@@ -405,7 +407,7 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
     }
 
     // keynotes → keynotePageIndex
-    const kn = page.keynotes as any[] | null;
+    const kn = page.keynotes;
     if (kn && Array.isArray(kn)) {
       for (const k of kn) {
         const key = `${k.shape || ""}:${k.text || ""}`;
@@ -415,7 +417,7 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
     }
 
     // textAnnotations → textAnnotationPageIndex
-    const ta = page.textAnnotations as any;
+    const ta = page.textAnnotations;
     if (ta?.annotations && Array.isArray(ta.annotations)) {
       for (const a of ta.annotations) {
         const key = `${a.type}:${a.text}`;
@@ -500,7 +502,7 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
     .from(projects)
     .where(eq(projects.id, projectId));
 
-  const existingPi = (currentProject?.pi as Record<string, unknown>) || {};
+  const existingPi = currentProject?.pi || {};
   await db
     .update(projects)
     .set({
@@ -526,8 +528,8 @@ export async function patchProjectSummaries(
     .from(projects)
     .where(eq(projects.id, projectId));
 
-  const existingPi = (currentProject?.pi as Record<string, unknown>) || {};
-  const existingSummaries = (existingPi.summaries as ProjectSummaries) || null;
+  const existingPi = currentProject?.pi || {};
+  const existingSummaries = existingPi.summaries || null;
 
   if (!existingSummaries) {
     // No summaries yet — do a full computation instead

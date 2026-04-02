@@ -2,9 +2,10 @@ import { create } from "zustand";
 import type {
   ClientAnnotation,
   ClientTakeoffItem,
-  KeynoteData,
+  KeynoteShapeData,
   CsiCode,
   TextractPageData,
+  PageIntelligence,
   SearchWordMatch,
   ChatMsg,
   TakeoffTab,
@@ -101,8 +102,8 @@ interface ViewerState {
   setTextractData: (pageNum: number, data: TextractPageData) => void;
 
   // ─── Keynotes per page ───────────────────────────────────
-  keynotes: Record<number, KeynoteData[]>;
-  setKeynotes: (pageNum: number, data: KeynoteData[]) => void;
+  keynotes: Record<number, KeynoteShapeData[]>;
+  setKeynotes: (pageNum: number, data: KeynoteShapeData[]) => void;
 
   // ─── CSI codes per page ──────────────────────────────────
   csiCodes: Record<number, CsiCode[]>;
@@ -199,8 +200,8 @@ interface ViewerState {
   // ─── Page Intelligence ─────────────────────────────────
   showPageIntelPanel: boolean;
   togglePageIntelPanel: () => void;
-  pageIntelligence: Record<number, any>;
-  setPageIntelligence: (pageNum: number, data: any) => void;
+  pageIntelligence: Record<number, PageIntelligence>;
+  setPageIntelligence: (pageNum: number, data: PageIntelligence) => void;
 
   // ─── Takeoff ────────────────────────────────────────────
   showTakeoffPanel: boolean;
@@ -231,6 +232,11 @@ interface ViewerState {
   addPolygonVertex: (v: { x: number; y: number }) => void;
   undoLastVertex: () => void;
   resetPolygonDrawing: () => void;
+  // Takeoff undo/redo
+  takeoffUndoStack: ClientAnnotation[];
+  takeoffRedoStack: ClientAnnotation[];
+  takeoffUndo: () => void;
+  takeoffRedo: () => void;
 
   // ─── Auto-QTO ────────────────────────────────────────────
   activeQtoWorkflow: QtoWorkflow | null;
@@ -262,8 +268,8 @@ interface ViewerState {
   // ─── Keynote Parse ────────────────────────────────────
   showKeynoteParsePanel: boolean;
   toggleKeynoteParsePanel: () => void;
-  keynoteParseTab: "all" | "guided" | "manual";
-  setKeynoteParseTab: (tab: "all" | "guided" | "manual") => void;
+  keynoteParseTab: "all" | "auto" | "guided" | "manual" | "compare";
+  setKeynoteParseTab: (tab: "all" | "auto" | "guided" | "manual" | "compare") => void;
   keynoteParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
   setKeynoteParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
   keynoteParseRegion: [number, number, number, number] | null;
@@ -301,6 +307,9 @@ interface ViewerState {
   // Add-instance mode: draw BB to add to a specific tag
   tagAddingMode: string | null; // tagId when active
   setTagAddingMode: (tagId: string | null) => void;
+  // Per-table/keynote tag view — eye icon toggle shows mapped tags + blue region highlight
+  activeTableTagViews: Record<string, { regionId: string; pageNum: number; bbox: [number, number, number, number]; tagTexts: string[]; source: "schedule" | "keynote" }>;
+  setTableTagView: (regionId: string, view: { regionId: string; pageNum: number; bbox: [number, number, number, number]; tagTexts: string[]; source: "schedule" | "keynote" } | null) => void;
   // LLM tool use highlight (auto-clears after timeout)
   llmHighlight: { pageNumber: number; bbox: [number, number, number, number]; label?: string } | null;
   setLlmHighlight: (h: { pageNumber: number; bbox: [number, number, number, number]; label?: string } | null) => void;
@@ -584,7 +593,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       ),
     })),
   activeTakeoffItemId: null,
-  setActiveTakeoffItemId: (activeTakeoffItemId) => set({ activeTakeoffItemId }),
+  setActiveTakeoffItemId: (activeTakeoffItemId) => set({ activeTakeoffItemId, takeoffUndoStack: [], takeoffRedoStack: [] }),
 
   takeoffTab: "count",
   setTakeoffTab: (takeoffTab) => set({ takeoffTab }),
@@ -610,6 +619,35 @@ export const useViewerStore = create<ViewerState>((set) => ({
     set((s) => ({ polygonVertices: s.polygonVertices.slice(0, -1) })),
   resetPolygonDrawing: () =>
     set({ polygonDrawingMode: "idle", polygonVertices: [] }),
+  // Takeoff undo/redo (per active item, current page)
+  takeoffUndoStack: [],
+  takeoffRedoStack: [],
+  takeoffUndo: () => set((s) => {
+    const activeId = s.activeTakeoffItemId;
+    if (!activeId) return s;
+    // Find last annotation for this item on current page
+    const pageNum = s.pageNumber;
+    const idx = [...s.annotations].reverse().findIndex(
+      (a) => a.source === "takeoff" && (a.data as any)?.takeoffItemId === activeId && a.pageNumber === pageNum
+    );
+    if (idx === -1) return s;
+    const realIdx = s.annotations.length - 1 - idx;
+    const removed = s.annotations[realIdx];
+    return {
+      annotations: s.annotations.filter((_, i) => i !== realIdx),
+      takeoffUndoStack: [...s.takeoffUndoStack, removed],
+      takeoffRedoStack: [],
+    };
+  }),
+  takeoffRedo: () => set((s) => {
+    if (s.takeoffUndoStack.length === 0) return s;
+    const restored = s.takeoffUndoStack[s.takeoffUndoStack.length - 1];
+    return {
+      annotations: [...s.annotations, restored],
+      takeoffUndoStack: s.takeoffUndoStack.slice(0, -1),
+      takeoffRedoStack: [...s.takeoffRedoStack, restored],
+    };
+  }),
 
   // ─── Auto-QTO ────────────────────────────────────────────
   activeQtoWorkflow: null,
@@ -724,6 +762,12 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setTagScanResults: (tagScanResults) => set({ tagScanResults }),
   tagAddingMode: null,
   setTagAddingMode: (tagAddingMode) => set({ tagAddingMode }),
+  activeTableTagViews: {},
+  setTableTagView: (regionId, view) => set((s) => {
+    const updated = { ...s.activeTableTagViews };
+    if (view) { updated[regionId] = view; } else { delete updated[regionId]; }
+    return { activeTableTagViews: updated };
+  }),
   llmHighlight: null,
   setLlmHighlight: (llmHighlight) => set({ llmHighlight }),
 

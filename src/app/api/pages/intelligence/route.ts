@@ -5,6 +5,7 @@ import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { CsiCode } from "@/types";
 import { computeProjectSummaries } from "@/lib/project-analysis";
+import { logger } from "@/lib/logger";
 
 /**
  * PATCH /api/pages/intelligence
@@ -81,13 +82,13 @@ export async function PATCH(req: Request) {
     // Recompute summaries if parsedRegions changed (new table/keynote parsed)
     if (intelligence.parsedRegions) {
       computeProjectSummaries(projectId).catch((e) =>
-        console.error("[pages/intelligence] Summary recompute failed:", e)
+        logger.error("[pages/intelligence] Summary recompute failed:", e)
       );
     }
 
     return NextResponse.json({ ok: true, csiCodeCount: newCsi.length });
   } catch (err) {
-    console.error("[pages/intelligence] Failed:", err);
+    logger.error("[pages/intelligence] Failed:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Intelligence update failed" },
       { status: 500 },

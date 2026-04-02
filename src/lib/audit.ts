@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { auditLog } from "@/lib/db/schema";
+import { logger } from "@/lib/logger";
 
 /**
  * Log an auditable event. Fire-and-forget — never blocks the request.
@@ -21,5 +22,5 @@ export function audit(
       details: opts.details || null,
       ip: opts.ip || null,
     })
-    .catch((err) => console.error("Audit log failed:", err));
+    .catch((err) => logger.error("Audit log failed:", err));
 }

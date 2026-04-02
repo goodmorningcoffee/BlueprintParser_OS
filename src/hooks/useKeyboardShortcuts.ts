@@ -38,6 +38,20 @@ export function useKeyboardShortcuts() {
           break;
       }
 
+      // Takeoff undo/redo (Z/W keys, only when placing)
+      if (store.activeTakeoffItemId !== null && !e.ctrlKey && !e.metaKey) {
+        if (e.key === "z" || e.key === "Z") {
+          e.preventDefault();
+          store.takeoffUndo();
+          return;
+        }
+        if (e.key === "w" || e.key === "W") {
+          e.preventDefault();
+          store.takeoffRedo();
+          return;
+        }
+      }
+
       if (e.ctrlKey || e.metaKey) {
         if (e.key === "=" || e.key === "+") {
           e.preventDefault();

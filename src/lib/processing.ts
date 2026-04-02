@@ -3,6 +3,7 @@ import { projects, pages, companies } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { getS3Url, uploadToS3, warmCloudFrontCache } from "@/lib/s3";
+import { logger } from "@/lib/logger";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
@@ -97,7 +98,7 @@ export async function processProject(projectId: number): Promise<{
         "public, max-age=31536000, immutable",
       );
     } catch (err) {
-      console.warn("Thumbnail generation failed:", err);
+      logger.warn("Thumbnail generation failed:", err);
     }
 
     // Fetch company config for this project (heuristics + pipeline settings)
@@ -116,7 +117,7 @@ export async function processProject(projectId: number): Promise<{
       csiSpatialGrid = pipelineConfig?.pipeline?.csiSpatialGrid;
     } catch { /* ignore — use built-in defaults */ }
 
-    console.log(`[processing] Processing ${numPages} pages with concurrency ${pageConcurrency}`);
+    logger.info(`[processing] Processing ${numPages} pages with concurrency ${pageConcurrency}`);
 
     // Process pages in parallel with concurrency limit
     const pageNums = Array.from({ length: numPages }, (_, i) => i + 1);
@@ -151,7 +152,7 @@ export async function processProject(projectId: number): Promise<{
           const thumbBuffer = await rasterizePage(pdfBuffer, pageNum, 72);
           await uploadToS3(`${project.dataUrl}/thumbnails/page_${pageKey}.png`, thumbBuffer, "image/png", "public, max-age=31536000, immutable");
         } catch (err) {
-          console.warn(`[processing] Page ${pageNum} image upload failed:`, err);
+          logger.warn(`[processing] Page ${pageNum} image upload failed:`, err);
         }
 
         // Run Textract OCR
@@ -163,7 +164,7 @@ export async function processProject(projectId: number): Promise<{
         try {
           drawingNumber = extractDrawingNumber(textractData);
         } catch (err) {
-          console.error(`[processing] Drawing number extraction FAILED for page ${pageNum}:`, err);
+          logger.error(`[processing] Drawing number extraction FAILED for page ${pageNum}:`, err);
         }
 
         // Detect CSI codes from OCR text
@@ -171,7 +172,7 @@ export async function processProject(projectId: number): Promise<{
         try {
           csiCodes = detectCsiCodes(rawText);
         } catch (err) {
-          console.error(`[processing] CSI detection FAILED for page ${pageNum}:`, err);
+          logger.error(`[processing] CSI detection FAILED for page ${pageNum}:`, err);
         }
 
         // Detect text annotations (phone, address, equipment tags, abbreviations, etc.)
@@ -179,10 +180,10 @@ export async function processProject(projectId: number): Promise<{
         try {
           textAnnotationResult = detectTextAnnotations(textractData, csiCodes);
           if (textAnnotationResult.annotations.length > 0) {
-            console.log(`[processing] Page ${pageNum}: found ${textAnnotationResult.annotations.length} text annotations`);
+            logger.info(`[processing] Page ${pageNum}: found ${textAnnotationResult.annotations.length} text annotations`);
           }
         } catch (err) {
-          console.error(`[processing] Text annotation detection FAILED for page ${pageNum}:`, err);
+          logger.error(`[processing] Text annotation detection FAILED for page ${pageNum}:`, err);
         }
 
         // NOTE: Keynote extraction (OpenCV + Tesseract) is now user-initiated via the Keynotes panel.
@@ -197,7 +198,7 @@ export async function processProject(projectId: number): Promise<{
             pageIntelligence = { ...intel };
           }
         } catch (err) {
-          console.error(`[processing] Page intelligence FAILED for page ${pageNum}:`, err);
+          logger.error(`[processing] Page intelligence FAILED for page ${pageNum}:`, err);
         }
 
         // Classify text regions (OCR-based table/notes/spec detection)
@@ -208,7 +209,7 @@ export async function processProject(projectId: number): Promise<{
             pageIntelligence.textRegions = textRegions;
           }
         } catch (err) {
-          console.error(`[processing] Text region classification FAILED for page ${pageNum}:`, err);
+          logger.error(`[processing] Text region classification FAILED for page ${pageNum}:`, err);
         }
 
         // Run heuristic engine (text-only mode — no YOLO data during initial processing)
@@ -225,7 +226,7 @@ export async function processProject(projectId: number): Promise<{
             pageIntelligence.heuristicInferences = inferences;
           }
         } catch (err) {
-          console.error(`[processing] Heuristic engine FAILED for page ${pageNum}:`, err);
+          logger.error(`[processing] Heuristic engine FAILED for page ${pageNum}:`, err);
         }
 
         // Classify tables/schedules/keynotes (combines text regions + heuristic inferences)
@@ -244,7 +245,7 @@ export async function processProject(projectId: number): Promise<{
             }
           }
         } catch (err) {
-          console.error(`[processing] Table classification FAILED for page ${pageNum}:`, err);
+          logger.error(`[processing] Table classification FAILED for page ${pageNum}:`, err);
         }
 
         // NOTE: Schedule parsing (System 4) is user-initiated only — not run at upload.
@@ -268,7 +269,7 @@ export async function processProject(projectId: number): Promise<{
             (pageIntelligence as any).csiSpatialMap = spatialMap;
           }
         } catch (err) {
-          console.error(`[processing] CSI spatial map FAILED for page ${pageNum}:`, err);
+          logger.error(`[processing] CSI spatial map FAILED for page ${pageNum}:`, err);
         }
 
         // Build page data
@@ -311,7 +312,7 @@ export async function processProject(projectId: number): Promise<{
 
         pagesProcessed++;
       } catch (err) {
-        console.error(`Error processing page ${pageNum}:`, err);
+        logger.error(`Error processing page ${pageNum}:`, err);
         pageErrors++;
 
         // Insert page row with error if it doesn't exist
@@ -354,8 +355,8 @@ export async function processProject(projectId: number): Promise<{
         allProcessedPages.map(p => ({
           pageNumber: p.pageNumber,
           drawingNumber: p.drawingNumber,
-          pageIntelligence: p.pageIntelligence as any,
-          csiCodes: p.csiCodes as any,
+          pageIntelligence: p.pageIntelligence ?? null,
+          csiCodes: p.csiCodes,
         }))
       );
 
@@ -374,17 +375,17 @@ export async function processProject(projectId: number): Promise<{
         })
         .where(eq(projects.id, project.id));
 
-      console.log(`[processing] Project analysis complete: ${summary.split("\n")[0]}`);
+      logger.info(`[processing] Project analysis complete: ${summary.split("\n")[0]}`);
     } catch (err) {
-      console.error("[processing] Project analysis failed:", err);
+      logger.error("[processing] Project analysis failed:", err);
     }
 
     // Compute project summaries (chunking indexes for sidebar/panels)
     try {
       await computeProjectSummaries(project.id);
-      console.log(`[processing] Project summaries computed for ${numPages} pages`);
+      logger.info(`[processing] Project summaries computed for ${numPages} pages`);
     } catch (err) {
-      console.error("[processing] Project summary computation failed:", err);
+      logger.error("[processing] Project summary computation failed:", err);
     }
 
     // Update project status
@@ -407,7 +408,7 @@ export async function processProject(projectId: number): Promise<{
 
     return { pagesProcessed, pageErrors, processingTime };
   } catch (err) {
-    console.error("Processing pipeline error:", err);
+    logger.error("Processing pipeline error:", err);
 
     await db
       .update(projects)

@@ -141,7 +141,7 @@ function findFreeFloatingMatches(
       // Single-word tag: scan each word
       for (const w of words) {
         const wText = w.text.toUpperCase().trim();
-        if (wText === normalizedTag || editDistance(wText, normalizedTag) <= 1) {
+        if (wText === normalizedTag || (normalizedTag.length >= 3 && wText.length >= 3 && editDistance(wText, normalizedTag) <= 1)) {
           const mm = ltwh2minmax(w.bbox);
           instances.push({
             pageNumber: pn,
@@ -156,7 +156,7 @@ function findFreeFloatingMatches(
       for (let i = 0; i <= words.length - tagWords.length; i++) {
         const window = words.slice(i, i + tagWords.length);
         const windowText = window.map((w) => w.text).join(" ").toUpperCase().trim();
-        if (windowText === normalizedTag || editDistance(windowText, normalizedTag) <= 1) {
+        if (windowText === normalizedTag || (normalizedTag.length >= 3 && windowText.length >= 3 && editDistance(windowText, normalizedTag) <= 1)) {
           // Merge bboxes of all words in the match
           const minX = Math.min(...window.map((w) => w.bbox[0]));
           const minY = Math.min(...window.map((w) => w.bbox[1]));

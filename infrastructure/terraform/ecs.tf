@@ -72,6 +72,7 @@ resource "aws_ecs_task_definition" "beaver_app" {
         { name = "STEP_FUNCTION_ARN", value = aws_sfn_state_machine.beaver_process_blueprint.arn },
         { name = "LABEL_STUDIO_URL", value = "https://labelstudio.blueprintparser.com" },
         { name = "AWS_ACCOUNT", value = data.aws_caller_identity.current.account_id },
+        { name = "ROOT_ADMIN_EMAIL", value = "admin@blueprintparser.com" },
       ]
 
       secrets = [
@@ -270,8 +271,9 @@ resource "aws_ecs_service" "beaver_app" {
   name            = "beaver-app"
   cluster         = aws_ecs_cluster.beaver.id
   task_definition = aws_ecs_task_definition.beaver_app.arn
-  desired_count   = var.ecs_desired_count
-  launch_type     = "FARGATE"
+  desired_count          = var.ecs_desired_count
+  launch_type            = "FARGATE"
+  enable_execute_command = true
 
   network_configuration {
     subnets          = aws_subnet.private[*].id

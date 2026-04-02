@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-utils";
 import { getYoloJobStatus } from "@/lib/yolo";
+import { logger } from "@/lib/logger";
 
 export async function GET(req: Request) {
   const { session, error } = await requireAuth();
@@ -17,7 +18,7 @@ export async function GET(req: Request) {
     const status = await getYoloJobStatus(jobName);
     return NextResponse.json(status);
   } catch (err) {
-    console.error("YOLO status check failed:", err);
+    logger.error("YOLO status check failed:", err);
     return NextResponse.json(
       { error: "Failed to check status" },
       { status: 500 }

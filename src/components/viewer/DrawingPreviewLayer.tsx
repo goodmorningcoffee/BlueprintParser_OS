@@ -135,80 +135,124 @@ export default memo(function DrawingPreviewLayer({
       ctx.restore();
     }
 
-    // ── Polygon drawing preview ──────────────────────────────
+    // ── Polygon / Linear drawing preview ──────────────────────
     if (polygonDrawingMode === "drawing" && polygonVertices.length > 0) {
       const activeItem = takeoffItems.find((t) => t.id === activeTakeoffItemId);
       const polyColor = activeItem?.color || "#00ff88";
+      const isLinear = activeItem?.shape === "linear";
       ctx.save();
 
       const verts = polygonVertices;
       const mp = mousePos;
 
-      // Preview fill
-      if (verts.length >= 2 && mp) {
-        ctx.fillStyle = polyColor + "20";
+      if (isLinear) {
+        // ── Linear polyline preview (open path, no fill) ──
+        // Lines between vertices + cursor
+        ctx.strokeStyle = polyColor;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
         ctx.beginPath();
         ctx.moveTo(verts[0].x * width, verts[0].y * height);
         for (let i = 1; i < verts.length; i++) {
           ctx.lineTo(verts[i].x * width, verts[i].y * height);
         }
-        ctx.lineTo(mp.x, mp.y);
-        ctx.closePath();
-        ctx.fill();
-      }
+        if (mp) ctx.lineTo(mp.x, mp.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
 
-      // Lines between vertices
-      ctx.strokeStyle = polyColor;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath();
-      ctx.moveTo(verts[0].x * width, verts[0].y * height);
-      for (let i = 1; i < verts.length; i++) {
-        ctx.lineTo(verts[i].x * width, verts[i].y * height);
-      }
-      if (mp) ctx.lineTo(mp.x, mp.y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Snap-to-first detection
-      let nearFirst = false;
-      if (mp && verts.length >= 3) {
-        const firstX = verts[0].x * width;
-        const firstY = verts[0].y * height;
-        const dist = Math.sqrt((mp.x - firstX) ** 2 + (mp.y - firstY) ** 2);
-        nearFirst = dist < 15;
-      }
-
-      // Vertex dots
-      for (let i = 0; i < verts.length; i++) {
-        const vx = verts[i].x * width;
-        const vy = verts[i].y * height;
-        if (i === 0) {
-          ctx.fillStyle = nearFirst ? "#ffffff" : polyColor;
-          ctx.beginPath();
-          ctx.arc(vx, vy, nearFirst ? 8 : 7, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = "#ffffff";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(vx, vy, nearFirst ? 10 : 8, 0, Math.PI * 2);
-          ctx.stroke();
-        } else {
+        // Vertex dots (no snap-to-first indicator)
+        for (let i = 0; i < verts.length; i++) {
+          const vx = verts[i].x * width;
+          const vy = verts[i].y * height;
           ctx.fillStyle = polyColor;
           ctx.beginPath();
-          ctx.arc(vx, vy, 4, 0, Math.PI * 2);
+          ctx.arc(vx, vy, i === 0 ? 5 : 4, 0, Math.PI * 2);
+          ctx.fill();
+          if (i === 0) {
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(vx, vy, 6, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+
+        // Instruction text
+        ctx.font = "12px sans-serif";
+        const msg = verts.length < 2 ? "Click to add points" : "Double-click or Enter to finish";
+        const tw = ctx.measureText(msg).width;
+        ctx.fillStyle = "rgba(0,0,0,0.7)";
+        ctx.fillRect(8, 8, tw + 12, 22);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(msg, 14, 23);
+      } else {
+        // ── Polygon preview (closed path with fill) ──
+        // Preview fill
+        if (verts.length >= 2 && mp) {
+          ctx.fillStyle = polyColor + "20";
+          ctx.beginPath();
+          ctx.moveTo(verts[0].x * width, verts[0].y * height);
+          for (let i = 1; i < verts.length; i++) {
+            ctx.lineTo(verts[i].x * width, verts[i].y * height);
+          }
+          ctx.lineTo(mp.x, mp.y);
+          ctx.closePath();
           ctx.fill();
         }
-      }
 
-      // Instruction text
-      ctx.font = "12px sans-serif";
-      const msg = verts.length < 3 ? "Click to add points" : "Click first point or Enter to close";
-      const tw = ctx.measureText(msg).width;
-      ctx.fillStyle = "rgba(0,0,0,0.7)";
-      ctx.fillRect(8, 8, tw + 12, 22);
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(msg, 14, 23);
+        // Lines between vertices
+        ctx.strokeStyle = polyColor;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(verts[0].x * width, verts[0].y * height);
+        for (let i = 1; i < verts.length; i++) {
+          ctx.lineTo(verts[i].x * width, verts[i].y * height);
+        }
+        if (mp) ctx.lineTo(mp.x, mp.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Snap-to-first detection
+        let nearFirst = false;
+        if (mp && verts.length >= 3) {
+          const firstX = verts[0].x * width;
+          const firstY = verts[0].y * height;
+          const dist = Math.sqrt((mp.x - firstX) ** 2 + (mp.y - firstY) ** 2);
+          nearFirst = dist < 15;
+        }
+
+        // Vertex dots
+        for (let i = 0; i < verts.length; i++) {
+          const vx = verts[i].x * width;
+          const vy = verts[i].y * height;
+          if (i === 0) {
+            ctx.fillStyle = nearFirst ? "#ffffff" : polyColor;
+            ctx.beginPath();
+            ctx.arc(vx, vy, nearFirst ? 8 : 7, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(vx, vy, nearFirst ? 10 : 8, 0, Math.PI * 2);
+            ctx.stroke();
+          } else {
+            ctx.fillStyle = polyColor;
+            ctx.beginPath();
+            ctx.arc(vx, vy, 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        // Instruction text
+        ctx.font = "12px sans-serif";
+        const msg = verts.length < 3 ? "Click to add points" : "Click first point or Enter to close";
+        const tw = ctx.measureText(msg).width;
+        ctx.fillStyle = "rgba(0,0,0,0.7)";
+        ctx.fillRect(8, 8, tw + 12, 22);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(msg, 14, 23);
+      }
 
       ctx.restore();
     }

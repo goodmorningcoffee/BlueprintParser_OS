@@ -7,7 +7,7 @@ import { useSearch } from "@/hooks/useSearch";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
-  KeynoteData,
+  KeynoteShapeData,
   CsiCode,
   ProjectSummaries,
 } from "@/types";
@@ -37,10 +37,10 @@ interface ChunkResponse {
     pageNumber: number;
     name: string;
     drawingNumber: string | null;
-    keynotes: KeynoteData[] | null;
+    keynotes: KeynoteShapeData[] | null;
     csiCodes: CsiCode[] | null;
-    textAnnotations: unknown | null;
-    pageIntelligence: unknown | null;
+    textAnnotations: { annotations?: any[]; summary?: any } | null;
+    pageIntelligence: Record<string, any> | null;
   }>;
   annotations: ClientAnnotation[];
 }
@@ -138,8 +138,7 @@ export default function DemoProjectPage() {
           if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes;
           if (page.csiCodes) csiMap[page.pageNumber] = page.csiCodes;
           if (page.textAnnotations) {
-            const result = page.textAnnotations as any;
-            textAnnMap[page.pageNumber] = result.annotations || [];
+            textAnnMap[page.pageNumber] = page.textAnnotations.annotations || [];
           }
           if (page.pageIntelligence) intelMap[page.pageNumber] = page.pageIntelligence;
         }

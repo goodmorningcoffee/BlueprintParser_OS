@@ -5,6 +5,7 @@ import { projects, pages, annotations, chatMessages, processingJobs, takeoffItem
 import { eq, and } from "drizzle-orm";
 import { getS3Url, deleteProjectFiles } from "@/lib/s3";
 import { audit } from "@/lib/audit";
+import { logger } from "@/lib/logger";
 
 export async function GET(
   _req: Request,
@@ -164,7 +165,7 @@ export async function DELETE(
     try {
       await deleteProjectFiles(project.dataUrl);
     } catch (err) {
-      console.error("[project-delete] Failed to delete S3 files:", err);
+      logger.error("[project-delete] Failed to delete S3 files:", err);
     }
 
     // Delete DB records in dependency order (all tables with FK to projects.id)
@@ -184,7 +185,7 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("[project-delete] Failed to delete project:", id, err);
+    logger.error("[project-delete] Failed to delete project", { id, err });
     return NextResponse.json({ error: err instanceof Error ? err.message : "Delete failed" }, { status: 500 });
   }
 }

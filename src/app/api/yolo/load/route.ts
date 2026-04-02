@@ -8,6 +8,7 @@ import { classifyTables } from "@/lib/table-classifier";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { S3_BUCKET } from "@/lib/s3";
+import { logger } from "@/lib/logger";
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || "us-east-1",
@@ -126,7 +127,7 @@ export async function POST(req: Request) {
         });
       }
     } catch (err) {
-      console.error(`Failed to parse ${obj.Key}:`, err);
+      logger.error(`Failed to parse ${obj.Key}:`, err);
     }
   }
 
@@ -161,7 +162,7 @@ export async function POST(req: Request) {
       );
       deletedPrevious = delResult.rowCount || 0;
     } catch (delErr: any) {
-      console.warn("[YOLO-LOAD] Delete previous failed (non-fatal):", delErr?.message);
+      logger.warn("[YOLO-LOAD] Delete previous failed (non-fatal):", delErr?.message);
     }
     try {
       for (const v of allValues) {
@@ -177,7 +178,7 @@ export async function POST(req: Request) {
     }
   } catch (err: any) {
     firstError = `pg error: ${err?.message || err} (code: ${err?.code || "?"}, detail: ${err?.detail || "none"})`;
-    console.error("[YOLO-LOAD] Raw pg error:", err);
+    logger.error("[YOLO-LOAD] Raw pg error:", err);
   } finally {
     await pool.end();
   }
@@ -273,18 +274,18 @@ export async function POST(req: Request) {
           }
         }
       }
-      console.log(`[YOLO-LOAD] Post-YOLO heuristic engine ran on ${projectPages.length} pages`);
+      logger.info(`[YOLO-LOAD] Post-YOLO heuristic engine ran on ${projectPages.length} pages`);
     } catch (err) {
-      console.error("[YOLO-LOAD] Post-YOLO heuristic engine failed:", err);
+      logger.error("[YOLO-LOAD] Post-YOLO heuristic engine failed:", err);
     }
   }
 
   // Recompute project summaries (annotation counts changed after YOLO load)
   try {
     await computeProjectSummaries(project.id);
-    console.log(`[YOLO-LOAD] Project summaries recomputed`);
+    logger.info(`[YOLO-LOAD] Project summaries recomputed`);
   } catch (err) {
-    console.error("[YOLO-LOAD] Summary recomputation failed:", err);
+    logger.error("[YOLO-LOAD] Summary recomputation failed:", err);
   }
 
   return NextResponse.json({

@@ -3,7 +3,8 @@ import { promisify } from "util";
 import { writeFile, rm, mkdtemp } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import type { KeynoteData } from "@/types";
+import type { KeynoteShapeData } from "@/types";
+import { logger } from "@/lib/logger";
 
 const execFileAsync = promisify(execFile);
 
@@ -16,7 +17,7 @@ const execFileAsync = promisify(execFile);
  */
 export async function extractKeynotes(
   pngBuffer: Buffer
-): Promise<KeynoteData[]> {
+): Promise<KeynoteShapeData[]> {
   const tempDir = await mkdtemp(join(tmpdir(), "bp2-keynote-"));
 
   try {
@@ -33,7 +34,7 @@ export async function extractKeynotes(
 
     // Log all stderr output for diagnostics (keynote counts, image size, etc.)
     if (stderr?.trim()) {
-      console.log(`[KEYNOTE] ${stderr.trim()}`);
+      logger.info(`[KEYNOTE] ${stderr.trim()}`);
     }
 
     const results = JSON.parse(stdout.trim() || "[]");
@@ -48,7 +49,7 @@ export async function extractKeynotes(
     // Log the full error including stderr so we can diagnose container issues
     const stderr = err?.stderr || "";
     const message = err?.message || String(err);
-    console.error(
+    logger.error(
       `[KEYNOTE] Extraction failed:\n  Error: ${message}\n  Stderr: ${stderr}\n  Exit code: ${err?.code || "unknown"}`
     );
     return [];

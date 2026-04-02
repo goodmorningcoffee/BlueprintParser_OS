@@ -14,6 +14,7 @@ import { classifyTables } from "@/lib/table-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
 import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
 import type { TextractPageData, TextAnnotation, TextAnnotationResult, CsiCode } from "@/types";
+import { logger } from "@/lib/logger";
 
 /**
  * POST /api/admin/reprocess
@@ -204,7 +205,7 @@ export async function POST(req: Request) {
                 skippedPages++;
               }
             } catch (err) {
-              console.error(`[reprocess-page-names] Page ${page.pageNumber} failed:`, err);
+              logger.error(`[reprocess-page-names] Page ${page.pageNumber} failed:`, err);
             }
 
             if ((updatedPages + skippedPages) % 10 === 0) {
@@ -243,8 +244,8 @@ export async function POST(req: Request) {
             totalPages++;
             if (!page.textractData) { skippedPages++; continue; }
             const textractData = page.textractData as TextractPageData;
-            const csiCodes = (page.csiCodes || []) as CsiCode[];
-            const textAnns = ((page.textAnnotations as any)?.annotations || []) as any[];
+            const csiCodes: CsiCode[] = page.csiCodes || [];
+            const textAnns = page.textAnnotations?.annotations || [];
 
             try {
               // Page intelligence: classification, cross-refs, note blocks
@@ -274,13 +275,13 @@ export async function POST(req: Request) {
               }
 
               // CSI spatial map
-              const spatialMap = computeCsiSpatialMap(page.pageNumber, textAnns, undefined, (pageIntelligence as any).classifiedTables);
+              const spatialMap = computeCsiSpatialMap(page.pageNumber, textAnns, undefined, pageIntelligence.classifiedTables as any);
               if (spatialMap) pageIntelligence.csiSpatialMap = spatialMap;
 
               await db.update(pages).set({ pageIntelligence }).where(eq(pages.id, page.id));
               updatedPages++;
             } catch (err) {
-              console.error(`[reprocess-intel] Page ${page.pageNumber} failed:`, err);
+              logger.error(`[reprocess-intel] Page ${page.pageNumber} failed:`, err);
             }
 
             if (updatedPages % 5 === 0) send({ type: "progress", updated: updatedPages, total: totalPages, project: project.name });
@@ -294,7 +295,7 @@ export async function POST(req: Request) {
 
             const { intelligence, summary } = analyzeProject(allProcessedPages.map(p => ({
               pageNumber: p.pageNumber, drawingNumber: p.drawingNumber,
-              pageIntelligence: p.pageIntelligence as any, csiCodes: p.csiCodes as any,
+              pageIntelligence: p.pageIntelligence ?? null, csiCodes: p.csiCodes,
             })));
 
             // Preserve user config (classCsiOverrides) when regenerating
@@ -305,7 +306,7 @@ export async function POST(req: Request) {
             await db.update(projects).set({ projectIntelligence: mergedIntel, projectSummary: summary }).where(eq(projects.id, project.id));
             send({ type: "project-analysis", project: project.name });
           } catch (err) {
-            console.error(`[reprocess-intel] Project analysis failed for ${project.name}:`, err);
+            logger.error(`[reprocess-intel] Project analysis failed for ${project.name}:`, err);
           }
 
           // Recompute project summaries (chunking indexes)
@@ -313,7 +314,7 @@ export async function POST(req: Request) {
             await computeProjectSummaries(project.id);
             send({ type: "project-summaries", project: project.name });
           } catch (err) {
-            console.error(`[reprocess-intel] Summary computation failed for ${project.name}:`, err);
+            logger.error(`[reprocess-intel] Summary computation failed for ${project.name}:`, err);
           }
         }
 
@@ -406,7 +407,7 @@ export async function POST(req: Request) {
           await computeProjectSummaries(project.id);
           send({ type: "project-summaries", project: project.name });
         } catch (err) {
-          console.error(`[reprocess] Summary computation failed for ${project.name}:`, err);
+          logger.error(`[reprocess] Summary computation failed for ${project.name}:`, err);
         }
       }
 

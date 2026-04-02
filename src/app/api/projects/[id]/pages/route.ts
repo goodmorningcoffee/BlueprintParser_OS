@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
 import { eq, and, gte, lte } from "drizzle-orm";
+import type { ClientAnnotation } from "@/types";
 
 /**
  * GET /api/projects/[id]/pages?from=1&to=9
@@ -96,8 +97,8 @@ export async function GET(
       name: a.name,
       bbox: [a.minX, a.minY, a.maxX, a.maxY],
       note: a.note,
-      source: a.source,
-      data: a.data,
+      source: a.source as ClientAnnotation["source"],
+      data: a.data ?? null,
     })),
   });
 }

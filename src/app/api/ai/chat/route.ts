@@ -241,20 +241,20 @@ export async function POST(req: Request) {
       .limit(1);
 
     // CSI codes (priority 4 — structured)
-    if (page?.csiCodes && Array.isArray(page.csiCodes) && (page.csiCodes as any[]).length > 0) {
+    if (page?.csiCodes && Array.isArray(page.csiCodes) && page.csiCodes.length > 0) {
       let csiText = "";
-      for (const c of page.csiCodes as any[]) {
+      for (const c of page.csiCodes) {
         csiText += `${c.code} — ${c.description} (${c.trade})\n`;
       }
       sections.push({ header: "CSI CODES", content: csiText, priority: 4 });
-      dataSummary.push(`${(page.csiCodes as any[]).length} CSI construction specification code(s)`);
+      dataSummary.push(`${page.csiCodes.length} CSI construction specification code(s)`);
     }
 
     // Text annotations (priority 5 — semi-structured)
     if (page?.textAnnotations) {
       const textAnnsText = buildTextAnnotationsSection(page.textAnnotations);
       if (textAnnsText) {
-        const annCount = ((page.textAnnotations as any)?.annotations || page.textAnnotations as any[])?.length || 0;
+        const annCount = page.textAnnotations?.annotations?.length || 0;
         sections.push({ header: "AUTO-DETECTED TEXT PATTERNS", content: textAnnsText, priority: 5 });
         dataSummary.push(`${annCount} auto-detected text pattern(s) (phone, dimensions, equipment, etc.)`);
       }
@@ -269,7 +269,7 @@ export async function POST(req: Request) {
       }
 
       // Parsed table/keynote contents (priority 5.8 — after notes, before detected regions)
-      const parsedTablesText = buildParsedTablesSection((page.pageIntelligence as any)?.parsedRegions);
+      const parsedTablesText = buildParsedTablesSection(page.pageIntelligence?.parsedRegions);
       if (parsedTablesText) {
         sections.push({
           header: `PARSED TABLES/KEYNOTES — Page ${pageNumber}`,
@@ -280,7 +280,7 @@ export async function POST(req: Request) {
       }
 
       // CSI from Parsed Data (priority 6.2 — after detected regions, before spatial map)
-      const parsedCsiText = buildParsedDataCsiSection((page.pageIntelligence as any)?.parsedRegions);
+      const parsedCsiText = buildParsedDataCsiSection(page.pageIntelligence?.parsedRegions);
       if (parsedCsiText) {
         sections.push({
           header: `CSI FROM PARSED DATA — Page ${pageNumber}`,
@@ -291,7 +291,7 @@ export async function POST(req: Request) {
       }
 
       // CSI Spatial Distribution (priority 7 — after detected regions, before spatial OCR)
-      const csiSpatialText = buildCsiSpatialSection((page.pageIntelligence as any)?.csiSpatialMap);
+      const csiSpatialText = buildCsiSpatialSection(page.pageIntelligence?.csiSpatialMap);
       if (csiSpatialText) {
         const pageLabel = page.drawingNumber || page.name;
         sections.push({
@@ -409,7 +409,7 @@ export async function POST(req: Request) {
     const allCsiSet = new Map<string, { description: string; trade: string; pages: number[] }>();
     for (const page of allPages) {
       if (page.csiCodes && Array.isArray(page.csiCodes)) {
-        for (const c of page.csiCodes as any[]) {
+        for (const c of page.csiCodes) {
           const existing = allCsiSet.get(c.code);
           if (existing) {
             existing.pages.push(page.pageNumber);

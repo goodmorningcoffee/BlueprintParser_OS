@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useYoloTags, useSymbolSearch } from "@/stores/viewerStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
-import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData } from "@/types";
-import { polygonCentroid, pointInPolygon, computeRealArea } from "@/lib/areaCalc";
+import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
+import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
@@ -116,6 +116,8 @@ export default function AnnotationOverlay({
     symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches,
   } = useSymbolSearch();
 
+  const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
+  const llmHighlight = useViewerStore((s) => s.llmHighlight);
   const annotations = useViewerStore((s) => s.annotations);
   const addAnnotation = useViewerStore((s) => s.addAnnotation);
   const removeAnnotation = useViewerStore((s) => s.removeAnnotation);
@@ -425,7 +427,6 @@ export default function AnnotationOverlay({
     }
 
     // Draw LLM tool use highlight (pulsing dashed cyan rectangle)
-    const llmHighlight = useViewerStore.getState().llmHighlight;
     if (llmHighlight && llmHighlight.pageNumber === pageNumber) {
       const [hMinX, hMinY, hMaxX, hMaxY] = llmHighlight.bbox;
       const hx = hMinX * width, hy = hMinY * height;
@@ -447,8 +448,46 @@ export default function AnnotationOverlay({
       }
     }
 
-    // Draw table parse region overlay (only when panel is open)
-    // Parse region overlays (table/keynote BBs) — rendered by ParseRegionLayer
+    // ─── Table/Keynote tag views (eye icon toggle) ───
+    const tableTagViews = activeTableTagViews;
+    for (const view of Object.values(tableTagViews)) {
+      // 1. Blue translucent highlight over the table/keynote region (on the region's page)
+      if (view.pageNum === pageNumber) {
+        const [bMinX, bMinY, bMaxX, bMaxY] = view.bbox;
+        const bx = bMinX * width, by = bMinY * height;
+        const bw = (bMaxX - bMinX) * width, bh = (bMaxY - bMinY) * height;
+        ctx.fillStyle = "rgba(59, 130, 246, 0.08)";
+        ctx.strokeStyle = "rgba(59, 130, 246, 0.3)";
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.strokeRect(bx, by, bw, bh);
+      }
+      // 2. Magenta padded highlights for each mapped tag instance on this page
+      const pad = 3; // padding in canvas pixels
+      for (const tagText of view.tagTexts) {
+        const matchingTag = yoloTags.find((t) => t.tagText === tagText && t.source === view.source);
+        if (!matchingTag) continue;
+        for (const inst of matchingTag.instances) {
+          if (inst.pageNumber !== pageNumber) continue;
+          const [iMinX, iMinY, iMaxX, iMaxY] = inst.bbox;
+          const ix = iMinX * width - pad, iy = iMinY * height - pad;
+          const iw = (iMaxX - iMinX) * width + pad * 2, ih = (iMaxY - iMinY) * height + pad * 2;
+          ctx.fillStyle = "#ff00ff25";
+          ctx.strokeStyle = "#ff00ff";
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(ix, iy, iw, ih);
+          ctx.strokeRect(ix, iy, iw, ih);
+          // Tag text label below the instance
+          ctx.font = "bold 9px sans-serif";
+          const label = tagText;
+          const tw = ctx.measureText(label).width;
+          ctx.fillStyle = "#ff00ffcc";
+          ctx.fillRect(ix, iy + ih + 1, tw + 6, 12);
+          ctx.fillStyle = "#fff";
+          ctx.fillText(label, ix + 3, iy + ih + 10);
+        }
+      }
+    }
 
     // Draw completed area polygons
     for (const ann of pageAnnotations) {
@@ -501,8 +540,54 @@ export default function AnnotationOverlay({
       ctx.restore();
     }
 
+    // Draw completed linear polylines
+    for (const ann of pageAnnotations) {
+      if (ann.source !== "takeoff" || (ann.data as any)?.type !== "linear-polyline") continue;
+      const data = ann.data as unknown as LinearPolylineData;
+      if (!data.vertices || data.vertices.length < 2) continue;
+
+      ctx.save();
+      // Stroke connected line segments (no fill, no closePath)
+      ctx.strokeStyle = data.color;
+      ctx.lineWidth = ann.id === selectedId ? 3 : 2;
+      ctx.beginPath();
+      ctx.moveTo(data.vertices[0].x * width, data.vertices[0].y * height);
+      for (let i = 1; i < data.vertices.length; i++) {
+        ctx.lineTo(data.vertices[i].x * width, data.vertices[i].y * height);
+      }
+      ctx.stroke();
+
+      // Vertices when selected
+      if (ann.id === selectedId) {
+        for (const v of data.vertices) {
+          ctx.fillStyle = data.color;
+          ctx.beginPath();
+          ctx.arc(v.x * width, v.y * height, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
+
+      // Total length label at last vertex
+      const lastV = data.vertices[data.vertices.length - 1];
+      const lx = lastV.x * width;
+      const ly = lastV.y * height;
+      const labelText = data.totalLength > 0
+        ? `${data.totalLength.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${data.unit}`
+        : `-- ${data.unit}`;
+      ctx.font = "bold 11px sans-serif";
+      const tw = ctx.measureText(labelText).width;
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.fillRect(lx + 6, ly - 7, tw + 8, 16);
+      ctx.fillStyle = data.color;
+      ctx.fillText(labelText, lx + 10, ly + 5);
+      ctx.restore();
+    }
+
     // Calibration + polygon preview — rendered by DrawingPreviewLayer
-  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches]);
+  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight]);
 
   const getPos = useCallback(
     (e: React.MouseEvent) => {
@@ -590,6 +675,79 @@ export default function AnnotationOverlay({
     setMousePos(null);
   }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, resetPolygonDrawing, isDemo]);
 
+  /** Save the current in-progress polyline as a linear-polyline annotation */
+  const saveLinearPolyline = useCallback(() => {
+    const verts = useViewerStore.getState().polygonVertices;
+    const items = useViewerStore.getState().takeoffItems;
+    const activeId = useViewerStore.getState().activeTakeoffItemId;
+    if (verts.length < 2) return;
+
+    const activeItem = items.find((t) => t.id === activeId);
+    if (!activeItem) return;
+
+    // Compute bounding box from vertices
+    const xs = verts.map((v) => v.x);
+    const ys = verts.map((v) => v.y);
+    const bbox: [number, number, number, number] = [
+      Math.min(...xs), Math.min(...ys),
+      Math.max(...xs), Math.max(...ys),
+    ];
+
+    // Compute length if calibrated
+    const cal = scaleCalibrations[pageNumber];
+    let length = { total: 0, segments: [] as number[] };
+    if (cal) {
+      const ppu = computePixelsPerUnit(cal.point1, cal.point2, width, height, cal.realDistance);
+      length = computePolylineLength(verts, width, height, ppu);
+    }
+
+    const polylineData: LinearPolylineData = {
+      type: "linear-polyline",
+      takeoffItemId: activeItem.id,
+      color: activeItem.color,
+      vertices: [...verts],
+      totalLength: length.total,
+      unit: cal?.unit || "ft",
+      segmentLengths: length.segments,
+    };
+
+    // Optimistic add
+    const tempId = -Date.now();
+    addAnnotation({
+      id: tempId,
+      pageNumber,
+      name: activeItem.name,
+      bbox,
+      note: null,
+      source: "takeoff",
+      data: polylineData as unknown as Record<string, unknown>,
+    });
+
+    // Persist
+    if (!isDemo) {
+      fetch("/api/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: publicId,
+          pageNumber,
+          name: activeItem.name,
+          bbox,
+          source: "takeoff",
+          data: polylineData,
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((saved) => {
+          if (saved) updateAnnotation(tempId, { id: saved.id });
+        })
+        .catch(() => {});
+    }
+
+    resetPolygonDrawing();
+    setMousePos(null);
+  }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, resetPolygonDrawing, isDemo]);
+
   // Track which corner is being resized: null or "tl"|"tr"|"bl"|"br"
   const [resizeCorner, setResizeCorner] = useState<string | null>(null);
 
@@ -664,6 +822,35 @@ export default function AnnotationOverlay({
               const dist = Math.sqrt((pos.x - firstX) ** 2 + (pos.y - firstY) ** 2);
               if (dist < 15) {
                 savePolygon();
+                return;
+              }
+            }
+            // Add vertex (skip on double-click second click)
+            if (e.detail < 2) {
+              addPolygonVertex({ x: normX, y: normY });
+            }
+          }
+          return;
+        }
+
+        // Linear polyline drawing mode
+        if (activeItem.shape === "linear") {
+          const normX = pos.x / width;
+          const normY = pos.y / height;
+
+          if (polygonDrawingMode === "idle") {
+            // Start new polyline
+            setPolygonDrawingMode("drawing");
+            addPolygonVertex({ x: normX, y: normY });
+          } else if (polygonDrawingMode === "drawing") {
+            // Finish line: click within 10px of last vertex
+            if (polygonVertices.length >= 2) {
+              const lastV = polygonVertices[polygonVertices.length - 1];
+              const lastX = lastV.x * width;
+              const lastY = lastV.y * height;
+              const dist = Math.sqrt((pos.x - lastX) ** 2 + (pos.y - lastY) ** 2);
+              if (dist < 10) {
+                saveLinearPolyline();
                 return;
               }
             }
@@ -825,11 +1012,22 @@ export default function AnnotationOverlay({
         // Double-click: universal annotation filter — filter pages + search + highlights
         if (e.detail === 2) {
           for (const ann of pageAnnotations) {
-            // Hit test — check area polygons with point-in-polygon, others with bbox
+            // Hit test — check area polygons with point-in-polygon, linear polylines with point-near-line, others with bbox
             let hit = false;
             if (ann.source === "takeoff" && (ann.data as any)?.type === "area-polygon") {
               const data = ann.data as unknown as AreaPolygonData;
               hit = pointInPolygon({ x: pos.x / width, y: pos.y / height }, data.vertices);
+            } else if (ann.source === "takeoff" && (ann.data as any)?.type === "linear-polyline") {
+              const data = ann.data as unknown as LinearPolylineData;
+              for (let i = 0; i < data.vertices.length - 1; i++) {
+                const ax2 = data.vertices[i].x * width, ay2 = data.vertices[i].y * height;
+                const bx2 = data.vertices[i + 1].x * width, by2 = data.vertices[i + 1].y * height;
+                const dx2 = bx2 - ax2, dy2 = by2 - ay2;
+                const lenSq2 = dx2 * dx2 + dy2 * dy2;
+                const t2 = lenSq2 === 0 ? 0 : Math.max(0, Math.min(1, ((pos.x - ax2) * dx2 + (pos.y - ay2) * dy2) / lenSq2));
+                const dist2 = Math.sqrt((pos.x - (ax2 + t2 * dx2)) ** 2 + (pos.y - (ay2 + t2 * dy2)) ** 2);
+                if (dist2 < 8) { hit = true; break; }
+              }
             } else {
               const [minX, minY, maxX, maxY] = ann.bbox;
               const ax = minX * width, ay = minY * height;
@@ -971,6 +1169,31 @@ export default function AnnotationOverlay({
             return;
           }
         }
+        // Check linear polylines (point-near-line test)
+        for (const ann of pageAnnotations) {
+          if (ann.source !== "takeoff" || (ann.data as any)?.type !== "linear-polyline") continue;
+          const data = ann.data as unknown as LinearPolylineData;
+          const threshold = 8; // pixels
+          let hit = false;
+          for (let i = 0; i < data.vertices.length - 1; i++) {
+            const ax = data.vertices[i].x * width;
+            const ay = data.vertices[i].y * height;
+            const bx = data.vertices[i + 1].x * width;
+            const by = data.vertices[i + 1].y * height;
+            // Point-to-segment distance
+            const dx = bx - ax, dy = by - ay;
+            const lenSq = dx * dx + dy * dy;
+            let t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((pos.x - ax) * dx + (pos.y - ay) * dy) / lenSq));
+            const projX = ax + t * dx, projY = ay + t * dy;
+            const dist = Math.sqrt((pos.x - projX) ** 2 + (pos.y - projY) ** 2);
+            if (dist < threshold) { hit = true; break; }
+          }
+          if (hit) {
+            e.stopPropagation();
+            setSelectedId(ann.id);
+            return;
+          }
+        }
         // Check annotations (bbox-based) — select and start drag
         for (const ann of pageAnnotations) {
           const [minX, minY, maxX, maxY] = ann.bbox;
@@ -1072,7 +1295,7 @@ export default function AnnotationOverlay({
       setDrawStart(pos);
       setDrawEnd(pos);
     },
-    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, isDemo, yoloTagPickingMode, textractData, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep]
+    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, textractData, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep]
   );
 
   const handleMouseMove = useCallback(
@@ -1222,7 +1445,7 @@ export default function AnnotationOverlay({
   }, [dragging, selectedId, saveDragPosition, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setTableParseRegion, setDrawing]);
 
   const handleDoubleClick = useCallback(() => {
-    // Close polygon on double-click
+    // Close polygon or linear polyline on double-click
     if (polygonDrawingMode === "drawing") {
       const verts = useViewerStore.getState().polygonVertices;
       // Remove duplicate vertex from the first mousedown of the double-click
@@ -1233,10 +1456,21 @@ export default function AnnotationOverlay({
           undoLastVertex();
         }
       }
-      // Check we still have enough vertices
-      const finalVerts = useViewerStore.getState().polygonVertices;
-      if (finalVerts.length >= 3) {
-        savePolygon();
+
+      // Determine whether active item is linear or polygon
+      const store = useViewerStore.getState();
+      const activeItem = store.takeoffItems.find((t) => t.id === store.activeTakeoffItemId);
+      const isLinear = activeItem?.shape === "linear";
+
+      const finalVerts = store.polygonVertices;
+      if (isLinear) {
+        if (finalVerts.length >= 2) {
+          saveLinearPolyline();
+        }
+      } else {
+        if (finalVerts.length >= 3) {
+          savePolygon();
+        }
       }
       return;
     }
@@ -1247,7 +1481,7 @@ export default function AnnotationOverlay({
       setResizeCorner(null);
       saveDragPosition();
     }
-  }, [polygonDrawingMode, savePolygon, undoLastVertex, dragging, selectedId, saveDragPosition]);
+  }, [polygonDrawingMode, savePolygon, saveLinearPolyline, undoLastVertex, dragging, selectedId, saveDragPosition]);
 
   // Escape key: cancel polygon/calibration/deactivate takeoff
   useEffect(() => {
@@ -1262,12 +1496,16 @@ export default function AnnotationOverlay({
           setActiveTakeoffItemId(null);
         }
       }
-      // Enter: close polygon
+      // Enter: close polygon or finish linear polyline
       if (e.key === "Enter" && polygonDrawingMode === "drawing") {
         e.preventDefault();
-        const verts = useViewerStore.getState().polygonVertices;
-        if (verts.length >= 3) {
-          savePolygon();
+        const store = useViewerStore.getState();
+        const verts = store.polygonVertices;
+        const activeItem = store.takeoffItems.find((t) => t.id === store.activeTakeoffItemId);
+        if (activeItem?.shape === "linear") {
+          if (verts.length >= 2) saveLinearPolyline();
+        } else {
+          if (verts.length >= 3) savePolygon();
         }
       }
       // Ctrl+Z: undo last polygon vertex
@@ -1278,7 +1516,7 @@ export default function AnnotationOverlay({
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [activeTakeoffItemId, setActiveTakeoffItemId, polygonDrawingMode, resetPolygonDrawing, calibrationMode, resetCalibration, undoLastVertex, savePolygon]);
+  }, [activeTakeoffItemId, setActiveTakeoffItemId, polygonDrawingMode, resetPolygonDrawing, calibrationMode, resetCalibration, undoLastVertex, savePolygon, saveLinearPolyline]);
 
   // Keyboard: Delete/Backspace to delete, Enter to place dragged annotation
   useEffect(() => {

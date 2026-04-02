@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, qtoWorkflows } from "@/lib/db/schema";
 import { eq, and, desc } from "drizzle-orm";
+import { logger } from "@/lib/logger";
 
 /** GET /api/qto-workflows?projectId=<publicId> — list workflows for a project */
 export async function GET(req: Request) {
@@ -67,7 +68,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(workflow);
   } catch (err) {
-    console.error("[qto-workflows] Create failed:", err);
+    logger.error("[qto-workflows] Create failed:", err);
     return NextResponse.json({ error: "Failed to create workflow" }, { status: 500 });
   }
 }

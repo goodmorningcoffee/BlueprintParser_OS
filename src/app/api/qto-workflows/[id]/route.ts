@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, qtoWorkflows } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { logger } from "@/lib/logger";
 
 /** GET /api/qto-workflows/[id] — get a workflow */
 export async function GET(
@@ -91,7 +92,7 @@ export async function PUT(
 
     return NextResponse.json(updated);
   } catch (err) {
-    console.error("[qto-workflows] Update failed:", err);
+    logger.error("[qto-workflows] Update failed:", err);
     return NextResponse.json({ error: "Update failed" }, { status: 500 });
   }
 }

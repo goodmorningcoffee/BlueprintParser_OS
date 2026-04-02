@@ -499,7 +499,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
                 const store = useViewerStore.getState();
                 const intel = store.pageIntelligence[pageNumber] || {};
                 const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
-                  if (r.type !== "schedule") return r;
+                  if (r.type !== "schedule" && r.type !== "keynote") return r;
                   // Match by comparing headers — update the first matching table on this page
                   if (JSON.stringify(r.data?.headers) === JSON.stringify(tableParsedGrid.headers) ||
                       r.data?.rows?.length === tableParsedGrid.rows.length) {
@@ -518,7 +518,45 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
                   }
                   return r;
                 });
-                store.setPageIntelligence(pageNumber, { ...intel, parsedRegions: regions });
+                const updatedIntel = { ...intel, parsedRegions: regions };
+                store.setPageIntelligence(pageNumber, updatedIntel);
+
+                // Sync back to parsedKeynoteData if this was a keynote edit
+                const knData = store.parsedKeynoteData;
+                if (knData && tableParsedGrid.tableName) {
+                  const tagCol = tableParsedGrid.tagColumn || tableParsedGrid.headers[0];
+                  const descCols = tableParsedGrid.headers.filter((h: string) => h !== tagCol);
+                  const updated = knData.map((kn: any) => {
+                    if (kn.pageNumber !== pageNumber) return kn;
+                    if (kn.tableName !== tableParsedGrid.tableName) return kn;
+                    return {
+                      ...kn,
+                      keys: tableParsedGrid.rows.map((row: Record<string, string>, ri: number) => {
+                        const newKey = row[tagCol] || "";
+                        const newDesc = descCols.map((h: string) => row[h] || "").join(" ").trim();
+                        // Preserve existing metadata (csiCodes, note) if key matches
+                        const existing = kn.keys?.find((k: any, ki: number) => ki === ri || k.key === newKey);
+                        return {
+                          key: newKey,
+                          description: newDesc,
+                          ...(existing?.csiCodes ? { csiCodes: existing.csiCodes } : {}),
+                          ...(existing?.note ? { note: existing.note } : {}),
+                        };
+                      }),
+                    };
+                  });
+                  store.setParsedKeynoteData(updated);
+                }
+
+                // Persist to DB (fire-and-forget)
+                const { projectId, isDemo } = store;
+                if (projectId && !isDemo) {
+                  fetch("/api/pages/intelligence", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ projectId, pageNumber, intelligence: updatedIntel }),
+                  }).catch(() => {});
+                }
               }
               toggleModal();
             }}

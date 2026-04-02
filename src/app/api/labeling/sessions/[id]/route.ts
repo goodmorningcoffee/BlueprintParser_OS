@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { labelingSessions } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { deleteProject } from "@/lib/label-studio";
+import { logger } from "@/lib/logger";
 
 export async function DELETE(
   _req: Request,
@@ -33,7 +34,7 @@ export async function DELETE(
   try {
     await deleteProject(record.labelStudioProjectId);
   } catch (err) {
-    console.error("[LABELING] Failed to delete LS project:", err);
+    logger.error("[LABELING] Failed to delete LS project:", err);
     // Continue with DB cleanup even if LS API fails
   }
 
