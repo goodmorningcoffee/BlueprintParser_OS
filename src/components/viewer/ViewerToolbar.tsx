@@ -371,7 +371,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           <select
             value={activeTradeFilter || ""}
             onChange={(e) => setTradeFilter(e.target.value || null)}
-            className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-40"
+            className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] max-w-32"
           >
             <option value="">All Trades</option>
             {allTrades.map((trade) => (
@@ -389,10 +389,10 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           <div className="relative" ref={csiDropdownRef}>
             <button
               onClick={() => setCsiDropdownOpen(o => !o)}
-              className={`px-2 py-1 text-xs rounded border ${
+              className={`px-2 py-1 text-xs rounded border max-w-32 truncate ${
                 activeCsiFilter
                   ? "border-orange-400/60 text-orange-400 bg-orange-400/10"
-                  : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                  : "bg-[var(--bg)] border-[var(--border)] text-[var(--fg)]"
               }`}
             >
               {activeCsiFilter ? `CSI: ${activeCsiFilter}` : `CSI Codes (${allCsiCodes.length})`}

@@ -14,6 +14,8 @@ import type {
   BboxLTWH,
 } from "@/types";
 import { detectCsiFromGrid } from "@/lib/csi-detect";
+import { extractWithImg2Table } from "@/lib/img2table-extract";
+import { extractWithCamelotPdfplumber } from "@/lib/camelot-extract";
 import { logger } from "@/lib/logger";
 
 // ─── Method 1: OCR Word Positions ─────────────────────────
@@ -486,28 +488,48 @@ export async function POST(req: Request) {
     const textractData = pageRow.textractData as TextractPageData;
 
     // Run methods in parallel
-    // Method 3 (OpenCV) needs the PDF for rasterization
+    // Methods 3-7 need the PDF and/or rasterized image
     let pdfBuffer: Buffer | null = null;
+    let pagePngBuffer: Buffer | null = null;
     try {
       const pdfUrl = getS3Url(project.dataUrl!, "original.pdf");
       const pdfResp = await fetch(pdfUrl);
       if (pdfResp.ok) pdfBuffer = Buffer.from(await pdfResp.arrayBuffer());
-    } catch { /* PDF fetch failed — skip OpenCV method */ }
+    } catch { /* PDF fetch failed — skip image/PDF-dependent methods */ }
 
-    const methodPromises: Promise<MethodResult>[] = [
-      // Method 1: OCR positions (sync, wrap in promise)
+    // Rasterize page once and share between OpenCV + img2table
+    if (pdfBuffer) {
+      try {
+        pagePngBuffer = await rasterizePage(pdfBuffer, pageNumber, 150);
+      } catch { /* rasterization failed */ }
+    }
+
+    const methodPromises: Promise<MethodResult | MethodResult[]>[] = [
+      // Method 1: OCR positions (sync)
       Promise.resolve(methodOcrPositions(textractData.words, regionBbox, { rowTolerance, minColGap, colHitRatio, headerMode })),
 
-      // Method 2: Textract TABLES (sync, wrap in promise)
+      // Method 2: Textract TABLES (sync)
       Promise.resolve(methodTextractTables(textractData.tables, regionBbox)),
 
-      // Method 3: OpenCV lines (async, needs PDF)
-      pdfBuffer
-        ? methodOpenCvLines(pdfBuffer, pageNumber, regionBbox, textractData.words, { minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance })
+      // Method 3: OpenCV lines (needs rasterized PNG)
+      pagePngBuffer
+        ? methodOpenCvLines(pdfBuffer!, pageNumber, regionBbox, textractData.words, { minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance })
         : Promise.resolve({ method: "opencv-lines", headers: [], rows: [], confidence: 0 } as MethodResult),
+
+      // Method 4: img2table — Hough lines + merged cells + skew correction (needs rasterized PNG)
+      pagePngBuffer
+        ? extractWithImg2Table(pagePngBuffer, regionBbox)
+        : Promise.resolve({ method: "img2table", headers: [], rows: [], confidence: 0 } as MethodResult),
+
+      // Methods 5-7: Camelot lattice, Camelot stream, pdfplumber (need native PDF)
+      pdfBuffer
+        ? extractWithCamelotPdfplumber(pdfBuffer, pageNumber, regionBbox)
+        : Promise.resolve([] as MethodResult[]),
     ];
 
-    const results = await Promise.all(methodPromises);
+    const rawResults = await Promise.all(methodPromises);
+    // Flatten: extractWithCamelotPdfplumber returns an array, others return single results
+    const results: MethodResult[] = rawResults.flat() as MethodResult[];
 
     logger.info(
       `[table-parse] Page ${pageNumber}: ` +

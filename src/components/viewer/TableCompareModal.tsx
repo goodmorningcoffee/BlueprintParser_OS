@@ -499,11 +499,6 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
             <div className="text-[10px] text-[var(--muted)]">
               {mode === "side-by-side" ? "Click cell to edit. Double-click column header to rename." : "Blue overlay shows parsed text positions on original image."}
             </div>
-            {mode === "side-by-side" && headers.some((h) => h.startsWith("Column ")) && (
-              <span className="text-[9px] px-2 py-1 rounded border border-amber-500/40 text-amber-300 whitespace-nowrap">
-                Double-click headers to rename
-              </span>
-            )}
           </div>
           <button
             onClick={() => {

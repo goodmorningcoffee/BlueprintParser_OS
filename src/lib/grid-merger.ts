@@ -18,6 +18,8 @@ export interface MethodResult {
   colBoundaries?: number[];
   /** M+1 normalized Y coords for M visible rows (header + data) */
   rowBoundaries?: number[];
+  /** Error message if method failed */
+  error?: string;
 }
 
 export interface MergedGrid {
@@ -25,7 +27,7 @@ export interface MergedGrid {
   rows: Record<string, string>[];
   tagColumn?: string;
   confidence: number;
-  methods: { name: string; confidence: number; gridShape: [number, number] }[];
+  methods: { name: string; confidence: number; gridShape: [number, number]; error?: string }[];
   disagreements: { row: number; col: string; values: { method: string; value: string }[] }[];
   /** N+1 normalized X coords for column edges */
   colBoundaries?: number[];
@@ -162,7 +164,8 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
     methods: results.map((r) => ({
       name: r.method,
       confidence: r.confidence,
-      gridShape: [r.rows.length, r.headers.length],
+      gridShape: [r.rows.length, r.headers.length] as [number, number],
+      ...(r.error ? { error: r.error } : {}),
     })),
     disagreements,
     colBoundaries,
