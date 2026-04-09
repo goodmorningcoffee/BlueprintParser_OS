@@ -469,7 +469,9 @@ export default function KeynotePanel() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, pageNumber, intelligence: updatedIntel }),
-      }).catch(() => {});
+      }).then((r) => {
+        if (!r.ok) r.json().then((d) => console.error("[save-keynote-intel] Failed:", r.status, d)).catch(() => {});
+      }).catch((e) => console.error("[save-keynote-intel] Network error:", e));
     }
 
     // Reset guided state

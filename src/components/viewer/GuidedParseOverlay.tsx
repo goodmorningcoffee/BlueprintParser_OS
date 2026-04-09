@@ -318,6 +318,7 @@ export default memo(function GuidedParseOverlay({
         pointerEvents: "auto",
         transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
         transformOrigin: "top left",
+        willChange: "transform",
         zIndex: 30,
       }}
     />

@@ -83,25 +83,35 @@ export async function uploadToS3(
  */
 export async function deleteProjectFiles(projectPath: string): Promise<void> {
   const prefix = `${projectPath}/`;
+  let continuationToken: string | undefined;
 
-  const listed = await s3Client.send(
-    new ListObjectsV2Command({
-      Bucket: S3_BUCKET,
-      Prefix: prefix,
-    })
-  );
+  do {
+    const listed = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket: S3_BUCKET,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      })
+    );
 
-  if (!listed.Contents || listed.Contents.length === 0) return;
+    if (!listed.Contents || listed.Contents.length === 0) break;
 
-  await s3Client.send(
-    new DeleteObjectsCommand({
-      Bucket: S3_BUCKET,
-      Delete: {
-        Objects: listed.Contents.map((obj) => ({ Key: obj.Key! })),
-        Quiet: true,
-      },
-    })
-  );
+    // DeleteObjectsCommand accepts max 1000 keys per call
+    for (let i = 0; i < listed.Contents.length; i += 1000) {
+      const batch = listed.Contents.slice(i, i + 1000);
+      await s3Client.send(
+        new DeleteObjectsCommand({
+          Bucket: S3_BUCKET,
+          Delete: {
+            Objects: batch.map((obj) => ({ Key: obj.Key! })),
+            Quiet: true,
+          },
+        })
+      );
+    }
+
+    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (continuationToken);
 }
 
 /**

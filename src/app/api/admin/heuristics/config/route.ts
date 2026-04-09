@@ -10,7 +10,14 @@ import { BUILT_IN_RULES } from "@/lib/heuristic-engine";
  */
 export async function GET() {
   const { session, error } = await requireAdmin();
-  if (error) return error;
+  if (error) {
+    // For demo/unauthenticated users, return built-in rules only (read-only safe)
+    return NextResponse.json({
+      builtInRules: BUILT_IN_RULES.map((r) => ({ ...r, source: "built-in" as const })),
+      companyOverrides: [],
+      pageNaming: { enabled: false, yoloSources: [] },
+    });
+  }
 
   const [company] = await db
     .select({ pipelineConfig: companies.pipelineConfig })

@@ -43,6 +43,7 @@ export default function AutoParseTab({
     tableParsedGrid, setTableParsedGrid,
     resetTableParse, tableParseTab, setTableParseTab,
     toggleTableCompareModal,
+    tableParseOptions, setTableParseOptions,
   } = useTableParse();
 
   const [autoParsing, setAutoParsing] = useState(false);
@@ -83,13 +84,15 @@ export default function AutoParseTab({
         let mergedRows: Record<string, string>[] = [];
         let lastMethodInfo: any[] | null = null;
         let tagColumn: string | undefined;
+        let firstColBoundaries: number[] | undefined;
+        let firstRowBoundaries: number[] | undefined;
 
         for (let i = 0; i < proposedRegions.length; i++) {
           const bbox = proposedRegions[i];
           const resp = await fetch("/api/table-parse", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projectId, pageNumber, regionBbox: bbox }),
+            body: JSON.stringify({ projectId, pageNumber, regionBbox: bbox, ...tableParseOptions }),
           });
 
           if (!resp.ok) {
@@ -101,9 +104,11 @@ export default function AutoParseTab({
           lastMethodInfo = result.methods || null;
 
           if (i === 0) {
-            // First region: use its headers as canonical
+            // First region: use its headers and boundaries as canonical
             mergedHeaders = result.headers || [];
             tagColumn = result.tagColumn;
+            firstColBoundaries = result.colBoundaries;
+            firstRowBoundaries = result.rowBoundaries;
           } else if (mergedHeaders.length > 0 && result.headers?.length > 0) {
             // Validate subsequent regions have compatible headers
             const h1 = JSON.stringify(mergedHeaders);
@@ -123,6 +128,9 @@ export default function AutoParseTab({
           tagColumn,
           csiTags: [],
           tableName: proposedRegions.length > 1 ? `Merged (${proposedRegions.length} regions)` : undefined,
+          // Only include boundaries for single-region parse (multi-region merges invalidate positions)
+          ...(proposedRegions.length === 1 && firstColBoundaries ? { colBoundaries: firstColBoundaries } : {}),
+          ...(proposedRegions.length === 1 && firstRowBoundaries ? { rowBoundaries: firstRowBoundaries } : {}),
         };
         setTableParsedGrid(grid);
         detectCsiAndPersist(grid);
@@ -153,6 +161,8 @@ export default function AutoParseTab({
   const exportCsv = () => {
     if (tableParsedGrid) exportTableCsv(tableParsedGrid, pageNumber);
   };
+
+  const [reparseLoading, setReparseLoading] = useState(false);
 
   return (
     <>
@@ -256,6 +266,9 @@ export default function AutoParseTab({
               No auto-detected tables on this page. Draw a BB around a table region to parse it manually.
             </div>
           )}
+
+          {/* ─── Parsing Options (always visible) ─────────────── */}
+          <ParseOptionsPanel options={tableParseOptions} onChange={setTableParseOptions} />
         </>
       )}
 
@@ -321,14 +334,129 @@ export default function AutoParseTab({
               Compare/Edit Cells
             </button>
           </div>
+          {/* Reparse with adjusted options */}
+          <ParseOptionsPanel options={tableParseOptions} onChange={setTableParseOptions} />
           <button
-            onClick={() => { resetTableParse(); setTableParseStep("idle"); setTagMappingDone(false); setTagYoloClass(null); }}
-            className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+            onClick={() => {
+              // Go back to idle with the existing region so user can reparse
+              if (tableParseRegion) {
+                setProposedRegions([tableParseRegion]);
+              }
+              setTableParsedGrid(null);
+              setAutoParseMethodInfo(null);
+              setAutoParseError(null);
+              setTableParseStep("idle");
+            }}
+            className="w-full text-xs px-3 py-1.5 rounded border border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
           >
-            Parse Another
+            Reparse Table
           </button>
+          <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                if (tableParsedGrid) await detectCsiAndPersist(tableParsedGrid);
+                resetTableParse(); setTableParseStep("idle"); setTagMappingDone(false); setTagYoloClass(null);
+              }}
+              className="flex-1 text-xs px-3 py-1.5 rounded bg-green-600 text-white hover:bg-green-500"
+            >
+              Save
+            </button>
+            <button
+              onClick={() => { resetTableParse(); setTableParseStep("idle"); setTagMappingDone(false); setTagYoloClass(null); }}
+              className="flex-1 text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
     </>
+  );
+}
+
+// ─── Parsing Options Panel ───────────────────────────────────
+const DEFAULTS = {
+  rowTolerance: 0.006, minColGap: 0.015, colHitRatio: 0.3, headerMode: "auto" as const,
+  minHLineLengthRatio: 0.15, minVLineLengthRatio: 0.10, clusteringTolerance: 15,
+  mergerEditDistance: 2,
+};
+
+type ParseOptions = {
+  rowTolerance: number; minColGap: number; colHitRatio: number; headerMode: "auto" | "first" | "none";
+  minHLineLengthRatio: number; minVLineLengthRatio: number; clusteringTolerance: number;
+  mergerEditDistance: number;
+};
+
+function ParseOptionsPanel({
+  options,
+  onChange,
+}: {
+  options: ParseOptions;
+  onChange: (patch: Partial<ParseOptions>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const slider = (
+    label: string, key: keyof ParseOptions, min: number, max: number, step: number, fmt?: (v: number) => string
+  ) => {
+    const val = options[key] as number;
+    return (
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-[var(--muted)] w-24 shrink-0">{label}</span>
+        <input type="range" min={min} max={max} step={step} value={val}
+          onChange={(e) => onChange({ [key]: parseFloat(e.target.value) })}
+          className="flex-1 h-1 bg-[var(--border)] rounded appearance-none cursor-pointer accent-pink-400" />
+        <span className="text-[10px] text-pink-400 font-mono w-10 text-right">{fmt ? fmt(val) : val}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="border-t border-[var(--border)] pt-2 mt-2">
+      <button onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 text-[10px] text-[var(--muted)] hover:text-[var(--fg)] w-full">
+        <span className={`transition-transform ${open ? "rotate-90" : ""}`}>&#9654;</span>
+        Parsing Options
+        {JSON.stringify(options) !== JSON.stringify(DEFAULTS) && (
+          <span className="text-amber-400 ml-1">(modified)</span>
+        )}
+      </button>
+      {open && (
+        <div className="space-y-2 mt-2">
+          <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide">OCR Settings</div>
+          {slider("Row tolerance", "rowTolerance", 0.002, 0.02, 0.001, (v) => v.toFixed(3))}
+          {slider("Column gap", "minColGap", 0.005, 0.05, 0.001, (v) => v.toFixed(3))}
+          {slider("Col consistency", "colHitRatio", 0.1, 0.6, 0.05, (v) => `${Math.round(v * 100)}%`)}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-[var(--muted)] w-24 shrink-0">Header row</span>
+            <div className="flex gap-1">
+              {(["auto", "first", "none"] as const).map((m) => (
+                <button key={m} onClick={() => onChange({ headerMode: m })}
+                  className={`px-2 py-0.5 text-[9px] rounded border ${
+                    options.headerMode === m
+                      ? "bg-pink-500/20 border-pink-500/40 text-pink-300"
+                      : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                  }`}>
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide mt-2">Line Detection</div>
+          {slider("H-line min", "minHLineLengthRatio", 0.05, 0.5, 0.01, (v) => `${Math.round(v * 100)}%`)}
+          {slider("V-line min", "minVLineLengthRatio", 0.05, 0.5, 0.01, (v) => `${Math.round(v * 100)}%`)}
+          {slider("Clustering", "clusteringTolerance", 5, 50, 1, (v) => `${v}px`)}
+
+          <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide mt-2">Merger</div>
+          {slider("Edit distance", "mergerEditDistance", 0, 5, 1, (v) => String(v))}
+
+          <button onClick={() => onChange(DEFAULTS)}
+            className="text-[9px] text-[var(--muted)] hover:text-[var(--fg)] underline">
+            Reset all to defaults
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

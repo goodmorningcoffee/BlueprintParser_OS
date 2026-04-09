@@ -145,6 +145,7 @@ export default memo(function KeynoteOverlay({
         pointerEvents: "auto",
         transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
         transformOrigin: "top left",
+        willChange: "transform",
         cursor: "pointer",
       }}
     />

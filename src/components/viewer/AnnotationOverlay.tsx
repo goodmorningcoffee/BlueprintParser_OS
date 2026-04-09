@@ -30,7 +30,8 @@ function drawCountMarker(
   width: number,
   height: number,
   isSelected: boolean,
-  markerSize?: number
+  markerSize?: number,
+  cssScale?: number
 ) {
   const data = ann.data as unknown as CountMarkerData;
   if (!data?.color || !data?.shape) return;
@@ -38,7 +39,8 @@ function drawCountMarker(
   const [minX, minY, maxX, maxY] = ann.bbox;
   const cx = ((minX + maxX) / 2) * width;
   const cy = ((minY + maxY) / 2) * height;
-  const r = markerSize || 10;
+  // Divide by cssScale so markers stay constant screen-size regardless of zoom
+  const r = (markerSize || 10) / (cssScale || 1);
 
   ctx.save();
   ctx.fillStyle = data.color + "cc";
@@ -86,7 +88,7 @@ function drawCountMarker(
     ctx.strokeStyle = "#ffffff";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(cx, cy, r + 4, 0, Math.PI * 2);
+    ctx.arc(cx, cy, r + 4 / (cssScale || 1), 0, Math.PI * 2);
     ctx.stroke();
   }
   ctx.restore();
@@ -132,6 +134,7 @@ export default memo(function AnnotationOverlay({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const dragBboxRef = useRef<[number, number, number, number] | null>(null);
 
   // Markup name+notes modal state
   const [pendingMarkup, setPendingMarkup] = useState<[number, number, number, number] | null>(null);
@@ -148,6 +151,7 @@ export default memo(function AnnotationOverlay({
   const setSearch = useViewerStore((s) => s.setSearch);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
+  const hiddenTakeoffItemIds = useViewerStore((s) => s.hiddenTakeoffItemIds);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   const calibrationMode = useViewerStore((s) => s.calibrationMode);
   const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
@@ -167,52 +171,63 @@ export default memo(function AnnotationOverlay({
   const isKeynoteYoloPicking = keynoteParseStep === "define-column" && keynoteColumnBBs.length >= 1;
   const keynoteColA = keynoteColumnBBs.length >= 1 ? keynoteColumnBBs[0] : null;
 
-  const pageAnnotations = useMemo(() => annotations.filter((a) => {
-    if (a.pageNumber !== pageNumber) return false;
-    // Individual annotation visibility toggle
-    if (hiddenAnnotationIds.has(a.id)) return false;
-    // Filter YOLO annotations by toggle, per-model active state, and per-model confidence
-    if (a.source === "yolo") {
-      // During keynote YOLO picking: ONLY show annotations fully inside Column A
-      if (isKeynoteYoloPicking && keynoteColA) {
-        const [aMinX, aMinY, aMaxX, aMaxY] = a.bbox;
-        const fullyInside = aMinX >= keynoteColA[0] && aMaxX <= keynoteColA[2]
-          && aMinY >= keynoteColA[1] && aMaxY <= keynoteColA[3];
-        if (!fullyInside) return false;
-        return true; // skip other YOLO filters during picking mode
+  const pageAnnotationsRef = useRef<ClientAnnotation[]>([]);
+  const pageAnnotations = useMemo(() => {
+    const filtered = annotations.filter((a) => {
+      if (a.pageNumber !== pageNumber) return false;
+      // Individual annotation visibility toggle
+      if (hiddenAnnotationIds.has(a.id)) return false;
+      // Filter YOLO annotations by toggle, per-model active state, and per-model confidence
+      if (a.source === "yolo") {
+        // During keynote YOLO picking: ONLY show annotations fully inside Column A
+        if (isKeynoteYoloPicking && keynoteColA) {
+          const [aMinX, aMinY, aMaxX, aMaxY] = a.bbox;
+          const fullyInside = aMinX >= keynoteColA[0] && aMaxX <= keynoteColA[2]
+            && aMinY >= keynoteColA[1] && aMaxY <= keynoteColA[3];
+          if (!fullyInside) return false;
+          return true; // skip other YOLO filters during picking mode
+        }
+        if (!showDetections) return false;
+        const modelName = (a as any).data?.modelName as string | undefined;
+        if (modelName && activeModels[modelName] === false) return false;
+        // Per-class visibility
+        if (modelName && hiddenClasses[`${modelName}:${a.name}`] === false) return false;
+        const conf = (a as any).threshold || (a as any).data?.confidence || 0;
+        const threshold = (modelName && confidenceThresholds[modelName] != null)
+          ? confidenceThresholds[modelName]
+          : confidenceThreshold;
+        if (conf < threshold) return false;
+        // Filter by CSI code when CSI filter is active — only show YOLO annotations matching the division
+        if (activeCsiFilter) {
+          const annCsi = ((a as any).data?.csiCodes as string[] | undefined) || [];
+          const filterDiv = activeCsiFilter.substring(0, 2).replace(/\s/g, "");
+          const matches = annCsi.some(c => c.substring(0, 2).replace(/\s/g, "") === filterDiv);
+          if (!matches) return false;
+        }
       }
-      if (!showDetections) return false;
-      const modelName = (a as any).data?.modelName as string | undefined;
-      if (modelName && activeModels[modelName] === false) return false;
-      // Per-class visibility
-      if (modelName && hiddenClasses[`${modelName}:${a.name}`] === false) return false;
-      const conf = (a as any).threshold || (a as any).data?.confidence || 0;
-      const threshold = (modelName && confidenceThresholds[modelName] != null)
-        ? confidenceThresholds[modelName]
-        : confidenceThreshold;
-      if (conf < threshold) return false;
-      // Filter by CSI code when CSI filter is active — only show YOLO annotations matching the division
-      if (activeCsiFilter) {
+      // Takeoff markers are always visible
+      if (a.source === "takeoff") return true;
+      if (a.source === "takeoff-scale") return false;
+      // When CSI filter active, only show user markups that have matching CSI tags
+      if (activeCsiFilter && a.source === "user") {
         const annCsi = ((a as any).data?.csiCodes as string[] | undefined) || [];
+        if (annCsi.length === 0) return false;
         const filterDiv = activeCsiFilter.substring(0, 2).replace(/\s/g, "");
-        const matches = annCsi.some(c => c.substring(0, 2).replace(/\s/g, "") === filterDiv);
-        if (!matches) return false;
+        if (!annCsi.some(c => c.substring(0, 2).replace(/\s/g, "") === filterDiv)) return false;
       }
+      // Filter by active annotation label
+      if (activeAnnotationFilter && a.name !== activeAnnotationFilter) return false;
+      return true;
+    });
+    // Return same reference if filtered content unchanged — prevents canvas redraw
+    // when annotations change on OTHER pages
+    const prev = pageAnnotationsRef.current;
+    if (filtered.length === prev.length && filtered.every((a, i) => a === prev[i])) {
+      return prev;
     }
-    // Takeoff markers are always visible
-    if (a.source === "takeoff") return true;
-    if (a.source === "takeoff-scale") return false;
-    // When CSI filter active, only show user markups that have matching CSI tags
-    if (activeCsiFilter && a.source === "user") {
-      const annCsi = ((a as any).data?.csiCodes as string[] | undefined) || [];
-      if (annCsi.length === 0) return false;
-      const filterDiv = activeCsiFilter.substring(0, 2).replace(/\s/g, "");
-      if (!annCsi.some(c => c.substring(0, 2).replace(/\s/g, "") === filterDiv)) return false;
-    }
-    // Filter by active annotation label
-    if (activeAnnotationFilter && a.name !== activeAnnotationFilter) return false;
-    return true;
-  }), [annotations, pageNumber, showDetections, activeModels, hiddenClasses, confidenceThresholds, confidenceThreshold, activeCsiFilter, activeAnnotationFilter, isKeynoteYoloPicking, keynoteColA, hiddenAnnotationIds]);
+    pageAnnotationsRef.current = filtered;
+    return filtered;
+  }, [annotations, pageNumber, showDetections, activeModels, hiddenClasses, confidenceThresholds, confidenceThreshold, activeCsiFilter, activeAnnotationFilter, isKeynoteYoloPicking, keynoteColA, hiddenAnnotationIds]);
 
   const pageKeynotes = keynotes[pageNumber] || [];
 
@@ -265,13 +280,16 @@ export default memo(function AnnotationOverlay({
       }
     }
     // Visible tags: collect all visible tag instances on this page (only if explicitly toggled on)
+    // When an active tag is selected, hide all other tags' dots so the selected tag is easy to spot
     const visibleTagInstances: { bbox: [number, number, number, number]; color: string; name: string }[] = [];
-    for (const tag of yoloTags) {
-      if (tag.id === activeYoloTagId) continue; // active tag drawn separately
-      if (yoloTagVisibility[tag.id] === false) continue; // hidden if explicitly toggled off
-      const tagPageInsts = pageTagInstances.get(tag.id) || [];
-      for (const inst of tagPageInsts) {
-        visibleTagInstances.push({ bbox: inst.bbox, color: tag.color || "#22d3ee", name: tag.tagText });
+    if (!activeTag) {
+      for (const tag of yoloTags) {
+        if (tag.id === activeYoloTagId) continue; // active tag drawn separately
+        if (yoloTagVisibility[tag.id] === false) continue; // hidden if explicitly toggled off
+        const tagPageInsts = pageTagInstances.get(tag.id) || [];
+        for (const inst of tagPageInsts) {
+          visibleTagInstances.push({ bbox: inst.bbox, color: tag.color || "#22d3ee", name: tag.tagText });
+        }
       }
     }
 
@@ -280,9 +298,10 @@ export default memo(function AnnotationOverlay({
       // Count markers: draw shape instead of rectangle
       if (ann.source === "takeoff" && (ann.data as any)?.type === "count-marker") {
         const itemId = (ann.data as any)?.takeoffItemId;
+        if (hiddenTakeoffItemIds.has(itemId)) continue;
         const items = useViewerStore.getState().takeoffItems;
         const item = items.find((t) => t.id === itemId || String(t.id) === String(itemId));
-        drawCountMarker(ctx, ann, width, height, ann.id === selectedId, item?.size);
+        drawCountMarker(ctx, ann, width, height, ann.id === selectedId, item?.size, cssScale);
         continue;
       }
 
@@ -293,9 +312,10 @@ export default memo(function AnnotationOverlay({
       const w = (maxX - minX) * width;
       const h = (maxY - minY) * height;
 
-      // If an active tag is set, dim non-matching annotations
-      // Also dim all annotations when symbol search results are showing
+      // If an active tag is set, hide non-matching YOLO annotations entirely
+      // so the selected tag is easy to spot. Non-YOLO annotations just dim.
       const isTagMatch = activeTag && activeTagAnnIds.has(ann.id);
+      if (activeTag && ann.source === "yolo" && !isTagMatch) continue;
       const dimmed = (activeTag && !isTagMatch) || (symbolSearchResults !== null);
 
       if (isTagMatch) {
@@ -508,6 +528,7 @@ export default memo(function AnnotationOverlay({
     for (const ann of pageAnnotations) {
       if (ann.source !== "takeoff" || (ann.data as any)?.type !== "area-polygon") continue;
       const data = ann.data as unknown as AreaPolygonData;
+      if (hiddenTakeoffItemIds.has(data.takeoffItemId)) continue;
       if (!data.vertices || data.vertices.length < 3) continue;
 
       ctx.save();
@@ -559,6 +580,7 @@ export default memo(function AnnotationOverlay({
     for (const ann of pageAnnotations) {
       if (ann.source !== "takeoff" || (ann.data as any)?.type !== "linear-polyline") continue;
       const data = ann.data as unknown as LinearPolylineData;
+      if (hiddenTakeoffItemIds.has(data.takeoffItemId)) continue;
       if (!data.vertices || data.vertices.length < 2) continue;
 
       ctx.save();
@@ -602,7 +624,7 @@ export default memo(function AnnotationOverlay({
     }
 
     // Calibration + polygon preview — rendered by DrawingPreviewLayer
-  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight]);
+  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight, hiddenTakeoffItemIds]);
 
   const getPos = useCallback(
     (e: React.MouseEvent) => {
@@ -1086,7 +1108,26 @@ export default memo(function AnnotationOverlay({
             }
             return;
           }
-          // No annotation hit — try OCR word fallback
+          // No annotation hit — try parsed table region hit-test
+          const pIntel = useViewerStore.getState().pageIntelligence[pageNumber] as any;
+          if (pIntel?.parsedRegions) {
+            const nrmX = pos.x / width;
+            const nrmY = pos.y / height;
+            for (const region of pIntel.parsedRegions) {
+              if (!region.bbox || region.type !== "schedule") continue;
+              const [rMinX, rMinY, rMaxX, rMaxY] = region.bbox;
+              if (nrmX >= rMinX && nrmX <= rMaxX && nrmY >= rMinY && nrmY <= rMaxY) {
+                e.stopPropagation();
+                const st = useViewerStore.getState();
+                if (!st.showTableParsePanel) st.toggleTableParsePanel();
+                st.setTableParseTab("all");
+                st.setFocusedParsedRegionId(region.id);
+                return;
+              }
+            }
+          }
+
+          // No parsed region hit — try OCR word fallback
           const pageWords = useViewerStore.getState().textractData[pageNumber]?.words;
           if (pageWords) {
             const normX = pos.x / width;
@@ -1334,39 +1375,42 @@ export default memo(function AnnotationOverlay({
         if (!ann) return;
         const [minX, minY, maxX, maxY] = ann.bbox;
 
+        let newBbox: [number, number, number, number];
         if (resizeCorner) {
           // Resize from corner
           const px = pos.x / width;
           const py = pos.y / height;
-          let newBbox: [number, number, number, number] = [minX, minY, maxX, maxY];
+          newBbox = [minX, minY, maxX, maxY];
           if (resizeCorner === "tl") newBbox = [px, py, maxX, maxY];
           if (resizeCorner === "tr") newBbox = [minX, py, px, maxY];
           if (resizeCorner === "bl") newBbox = [px, minY, maxX, py];
           if (resizeCorner === "br") newBbox = [minX, minY, px, py];
-          // Ensure min < max
-          updateAnnotation(selectedId, {
-            bbox: [
-              Math.max(0, Math.min(newBbox[0], newBbox[2] - 0.01)),
-              Math.max(0, Math.min(newBbox[1], newBbox[3] - 0.01)),
-              Math.min(1, Math.max(newBbox[2], newBbox[0] + 0.01)),
-              Math.min(1, Math.max(newBbox[3], newBbox[1] + 0.01)),
-            ],
-          });
+          newBbox = [
+            Math.max(0, Math.min(newBbox[0], newBbox[2] - 0.01)),
+            Math.max(0, Math.min(newBbox[1], newBbox[3] - 0.01)),
+            Math.min(1, Math.max(newBbox[2], newBbox[0] + 0.01)),
+            Math.min(1, Math.max(newBbox[3], newBbox[1] + 0.01)),
+          ];
         } else {
           // Move entire annotation
           const w = maxX - minX;
           const h = maxY - minY;
           const newMinX = (pos.x - dragOffset.x) / width;
           const newMinY = (pos.y - dragOffset.y) / height;
-          updateAnnotation(selectedId, {
-            bbox: [
-              Math.max(0, Math.min(newMinX, 1 - w)),
-              Math.max(0, Math.min(newMinY, 1 - h)),
-              Math.max(0, Math.min(newMinX + w, 1)),
-              Math.max(0, Math.min(newMinY + h, 1)),
-            ],
-          });
+          newBbox = [
+            Math.max(0, Math.min(newMinX, 1 - w)),
+            Math.max(0, Math.min(newMinY, 1 - h)),
+            Math.max(0, Math.min(newMinX + w, 1)),
+            Math.max(0, Math.min(newMinY + h, 1)),
+          ];
         }
+        // Throttle store updates to screen refresh rate via rAF
+        dragBboxRef.current = newBbox;
+        cancelAnimationFrame(rafRef.current);
+        const id = selectedId;
+        rafRef.current = requestAnimationFrame(() => {
+          if (dragBboxRef.current) updateAnnotation(id, { bbox: dragBboxRef.current });
+        });
       }
     },
     [dragging, selectedId, dragOffset, resizeCorner, pageAnnotations, width, height, getPos, updateAnnotation, polygonDrawingMode, setDrawEnd, setMousePos]
@@ -1407,7 +1451,7 @@ export default memo(function AnnotationOverlay({
     if (tableParseStep === "select-region") {
       setTableParseRegion([minX, minY, maxX, maxY]);
       useViewerStore.getState().setTableParseStep("idle");
-      // Auto-parse is triggered by the panel watching tableParseRegion
+      useViewerStore.getState().setMode("move");
       return;
     }
     if (tableParseStep === "define-column") {
@@ -1423,6 +1467,7 @@ export default memo(function AnnotationOverlay({
     if (keynoteParseStep === "select-region") {
       useViewerStore.getState().setKeynoteParseRegion([minX, minY, maxX, maxY]);
       useViewerStore.getState().setKeynoteParseStep("idle");
+      useViewerStore.getState().setMode("move");
       return;
     }
     if (keynoteParseStep === "define-column") {
@@ -1504,7 +1549,14 @@ export default memo(function AnnotationOverlay({
   useEffect(() => {
     function handleEscape(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        if (polygonDrawingMode === "drawing") {
+        const store = useViewerStore.getState();
+        if (store.tableParseStep !== "idle") {
+          store.setTableParseStep("idle");
+          store.setMode("move");
+        } else if (store.keynoteParseStep !== "idle") {
+          store.setKeynoteParseStep("idle");
+          store.setMode("move");
+        } else if (polygonDrawingMode === "drawing") {
           resetPolygonDrawing();
           setMousePos(null);
         } else if (calibrationMode !== "idle") {
@@ -1703,6 +1755,7 @@ export default memo(function AnnotationOverlay({
           pointerEvents: activeTakeoffItemId !== null || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" || tableParseStep !== "idle" || keynoteParseStep !== "idle" || symbolSearchActive ? "auto" : "none",
           transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
           transformOrigin: "top left",
+          willChange: "transform",
           cursor: symbolSearchActive ? "crosshair" : calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : isKeynoteYoloPicking ? "pointer" : yoloTagPickingMode ? "pointer" : (tableParseStep !== "idle" || keynoteParseStep !== "idle") ? "crosshair" : mode === "pointer" ? "default" : "default",
         }}
       />

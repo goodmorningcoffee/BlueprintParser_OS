@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { AREA_UNIT_MAP } from "@/types";
 import type { AreaPolygonData, AreaUnitSq, TakeoffTab } from "@/types";
@@ -11,6 +11,7 @@ import LinearTab from "./LinearTab";
 import AutoQtoTab from "./AutoQtoTab";
 import { ColorDot } from "./TakeoffShared";
 import CalibrationInput from "./CalibrationInput";
+import TakeoffCsvModal from "./TakeoffCsvModal";
 
 const TAB_LABELS: Record<TakeoffTab, string> = {
   all: "All",
@@ -25,6 +26,7 @@ export default function TakeoffPanel() {
   const setTakeoffTab = useViewerStore((s) => s.setTakeoffTab);
   const annotations = useViewerStore((s) => s.annotations);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
+  const updateTakeoffItem = useViewerStore((s) => s.updateTakeoffItem);
   const pageDimensions = useViewerStore((s) => s.pageDimensions);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
@@ -34,6 +36,10 @@ export default function TakeoffPanel() {
   const calibrationMode = useViewerStore((s) => s.calibrationMode);
   const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
   const resetCalibration = useViewerStore((s) => s.resetCalibration);
+  const isDemo = useViewerStore((s) => s.isDemo);
+
+  const [csvModalOpen, setCsvModalOpen] = useState(false);
+  const saveTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
   const activeItem = activeTakeoffItemId ? takeoffItems.find((t) => t.id === activeTakeoffItemId) : null;
   const hasScale = !!scaleCalibrations[pageNumber];
@@ -79,6 +85,73 @@ export default function TakeoffPanel() {
   const areaItems = takeoffItems.filter((i) => i.shape === "polygon");
   const linearItems = takeoffItems.filter((i) => i.shape === "linear");
 
+  // ─── CSV Modal data (editable view) ──────────────────────
+  const csvData = useMemo(() => {
+    const cals = Object.values(scaleCalibrations);
+    const areaUnit: AreaUnitSq = cals.length > 0 ? AREA_UNIT_MAP[cals[0].unit] : "SF";
+    const linearUnit = cals.length > 0 ? cals[0].unit : "ft";
+
+    const modalRows = takeoffItems.map((item) => {
+      let type: string, qty: string, unit: string, pages: Set<number>;
+      if (item.shape === "polygon") {
+        type = "area";
+        const s = allSummary.areas[item.id];
+        qty = s ? s.totalArea.toFixed(1) : "0";
+        unit = areaUnit;
+        pages = s?.pages ?? new Set();
+      } else if (item.shape === "linear") {
+        type = "linear";
+        const s = allSummary.linears[item.id];
+        qty = s ? s.totalLength.toFixed(1) : "0";
+        unit = linearUnit;
+        pages = s?.pages ?? new Set();
+      } else {
+        type = "count";
+        const s = allSummary.counts[item.id];
+        qty = String(s?.count ?? 0);
+        unit = "EA";
+        pages = s?.pages ?? new Set();
+      }
+      return {
+        "Item Name": item.name,
+        Type: type,
+        Shape: item.shape,
+        Color: item.color,
+        Quantity: qty,
+        Unit: unit,
+        Pages: Array.from(pages).sort((a, b) => a - b).join(", "),
+        Notes: item.notes ?? "",
+        __itemId: String(item.id),
+      } as Record<string, string>;
+    });
+    return modalRows;
+  }, [takeoffItems, allSummary, scaleCalibrations]);
+
+  const csvHeaders = ["Item Name", "Type", "Shape", "Quantity", "Unit", "Pages", "Notes", "Color"];
+  const csvReadOnly = new Set(["Type", "Shape", "Quantity", "Unit", "Pages"]);
+
+  const handleCsvCellChange = (rowIndex: number, column: string, value: string) => {
+    const itemId = Number(csvData[rowIndex]?.__itemId);
+    if (!itemId) return;
+    const updates: Partial<{ name: string; color: string; notes: string }> = {};
+    if (column === "Item Name") updates.name = value;
+    else if (column === "Color") updates.color = value;
+    else if (column === "Notes") updates.notes = value;
+    else return;
+    updateTakeoffItem(itemId, updates);
+    // Debounced PUT to server (500ms)
+    if (!isDemo) {
+      clearTimeout(saveTimers.current[itemId]);
+      saveTimers.current[itemId] = setTimeout(() => {
+        fetch(`/api/takeoff-items/${itemId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        }).catch((err) => console.error("[takeoff-csv] save failed:", err));
+      }, 500);
+    }
+  };
+
   // ─── CSV Export ───────────────────────────────────────────
   function exportCSV() {
     const rows: string[] = [];
@@ -100,7 +173,7 @@ export default function TakeoffPanel() {
         }
         const cals = Object.values(scaleCalibrations);
         const unitSq: AreaUnitSq = cals.length > 0 ? AREA_UNIT_MAP[cals[0].unit] : "SF";
-        rows.push(`"${item.name.replace(/"/g, '""')}",area,polygon,${item.color},${hasCal ? totalArea.toFixed(1) : ""},${unitSq},"${Array.from(pages).sort((a, b) => a - b).join("; ")}"`);
+        rows.push(`"${item.name.replace(/"/g, '""')}",area,polygon,${hasCal ? totalArea.toFixed(1) : ""},${unitSq},"${Array.from(pages).sort((a, b) => a - b).join("; ")}",${item.color}`);
       } else if (item.shape === "linear") {
         let totalLength = 0;
         const pages = new Set<number>();
@@ -113,7 +186,7 @@ export default function TakeoffPanel() {
         }
         const cals = Object.values(scaleCalibrations);
         const unit = cals.length > 0 ? cals[0].unit : "ft";
-        rows.push(`"${item.name.replace(/"/g, '""')}",linear,linear,${item.color},${totalLength.toFixed(1)},${unit},"${Array.from(pages).sort((a, b) => a - b).join("; ")}"`);
+        rows.push(`"${item.name.replace(/"/g, '""')}",linear,linear,${totalLength.toFixed(1)},${unit},"${Array.from(pages).sort((a, b) => a - b).join("; ")}",${item.color}`);
       } else {
         let count = 0;
         const pages = new Set<number>();
@@ -125,10 +198,10 @@ export default function TakeoffPanel() {
           count++;
           pages.add(ann.pageNumber);
         }
-        rows.push(`"${item.name.replace(/"/g, '""')}",count,${item.shape},${item.color},${count},EA,"${Array.from(pages).sort((a, b) => a - b).join("; ")}"`);
+        rows.push(`"${item.name.replace(/"/g, '""')}",count,${item.shape},${count},EA,"${Array.from(pages).sort((a, b) => a - b).join("; ")}",${item.color}`);
       }
     }
-    const csv = ["Item Name,Type,Shape,Color,Quantity,Unit,Pages", ...rows].join("\n");
+    const csv = ["Item Name,Type,Shape,Quantity,Unit,Pages,Color", ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -139,7 +212,7 @@ export default function TakeoffPanel() {
   }
 
   return (
-    <div className="w-80 shrink-0 border border-[var(--border)] bg-[var(--surface)] flex flex-col shadow-lg">
+    <div className="viewer-scalable w-80 shrink-0 border border-[var(--border)] bg-[var(--surface)] flex flex-col shadow-lg">
       {/* Header with calibrate button */}
       <div className="p-3 border-b border-[var(--border)] flex items-center justify-between">
         <span className="text-sm font-medium">Quantity Takeoff</span>
@@ -154,9 +227,20 @@ export default function TakeoffPanel() {
           >
             {calibrationMode !== "idle" ? "..." : hasScale ? "&#10003;" : "\u{1F4CF}"}
           </button>
+          <button onClick={() => setCsvModalOpen(true)} className="text-xs px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]" title="View as editable CSV">View</button>
           <button onClick={exportCSV} className="text-xs px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]" title="Export CSV">CSV</button>
         </div>
       </div>
+      <TakeoffCsvModal
+        open={csvModalOpen}
+        onClose={() => setCsvModalOpen(false)}
+        title="Takeoff Items"
+        headers={csvHeaders}
+        rows={csvData}
+        readOnlyColumns={csvReadOnly}
+        onCellChange={handleCsvCellChange}
+        onExport={exportCSV}
+      />
 
       {/* Calibration input (shows when in calibration mode from header button) */}
       {calibrationMode === "input" && takeoffTab !== "area" && takeoffTab !== "linear" && (

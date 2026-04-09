@@ -23,7 +23,6 @@ import { logger } from "@/lib/logger";
 
 export async function POST(req: Request) {
   const { session, error } = await requireAuth();
-  if (error) return error;
 
   const body = await req.json();
   const {
@@ -34,6 +33,10 @@ export async function POST(req: Request) {
     searchPages,
     multiScale = true,
     useSiftFallback = true,
+    scaleMin = 0.8,
+    scaleMax = 1.5,
+    nmsThreshold = 0.3,
+    maxMatchesPerPage = 50,
   } = body as {
     projectId: number;
     sourcePageNumber: number;
@@ -42,7 +45,22 @@ export async function POST(req: Request) {
     searchPages?: number[];
     multiScale?: boolean;
     useSiftFallback?: boolean;
+    scaleMin?: number;
+    scaleMax?: number;
+    nmsThreshold?: number;
+    maxMatchesPerPage?: number;
   };
+
+  // Allow demo projects without auth; require auth for everything else
+  if (error) {
+    if (!projectId) return error;
+    const [proj] = await db
+      .select({ isDemo: projects.isDemo })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!proj?.isDemo) return error;
+  }
 
   if (!projectId || !sourcePageNumber || !templateBbox) {
     return NextResponse.json(
@@ -68,7 +86,7 @@ export async function POST(req: Request) {
       .limit(1);
 
     // Company authorization: non-demo projects must belong to user's company
-    if (project && !project.isDemo && session.user.companyId !== project.companyId) {
+    if (project && !project.isDemo && session?.user.companyId !== project.companyId) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
@@ -188,6 +206,13 @@ cv2.imwrite(cfg["dst"], crop)
     const stream = new ReadableStream({
       async start(controller) {
         try {
+          // Build scale list from min/max range
+          const scales: number[] = [];
+          for (let s = scaleMin; s <= scaleMax + 0.001; s += 0.05) {
+            scales.push(Math.round(s * 100) / 100);
+          }
+          if (scales.length === 0) scales.push(1.0);
+
           const result = await templateMatch(
             {
               mode: "search",
@@ -196,6 +221,9 @@ cv2.imwrite(cfg["dst"], crop)
               confidenceThreshold,
               multiScale,
               useSiftFallback,
+              scales,
+              nmsIouThreshold: nmsThreshold,
+              maxMatchesPerPage,
             },
             {
               onProgress: (progress: TemplateMatchProgress) => {

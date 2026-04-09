@@ -70,15 +70,38 @@ export async function PUT(
   const body = await req.json();
   const updates: Record<string, unknown> = {};
 
-  if (body.step !== undefined) updates.step = body.step;
-  if (body.schedulePageNumber !== undefined) updates.schedulePageNumber = body.schedulePageNumber;
-  if (body.parsedSchedule !== undefined) updates.parsedSchedule = body.parsedSchedule;
-  if (body.lineItems !== undefined) updates.lineItems = body.lineItems;
-  if (body.userEdits !== undefined) updates.userEdits = body.userEdits;
-  if (body.yoloModelFilter !== undefined) updates.yoloModelFilter = body.yoloModelFilter;
-  if (body.yoloClassFilter !== undefined) updates.yoloClassFilter = body.yoloClassFilter;
-  if (body.tagPattern !== undefined) updates.tagPattern = body.tagPattern;
-  if (body.materialLabel !== undefined) updates.materialLabel = body.materialLabel;
+  const VALID_STEPS = ["pick", "select-schedule", "confirm-tags", "map-tags", "review", "done"];
+  const MAX_JSONB_BYTES = 1_048_576; // 1 MB
+  const MAX_STRING_LEN = 1024;
+
+  if (body.step !== undefined) {
+    if (typeof body.step !== "string" || !VALID_STEPS.includes(body.step)) {
+      return NextResponse.json({ error: "invalid step" }, { status: 400 });
+    }
+    updates.step = body.step;
+  }
+  if (body.schedulePageNumber !== undefined) {
+    if (body.schedulePageNumber !== null && (!Number.isInteger(body.schedulePageNumber) || body.schedulePageNumber < 1)) {
+      return NextResponse.json({ error: "invalid schedulePageNumber" }, { status: 400 });
+    }
+    updates.schedulePageNumber = body.schedulePageNumber;
+  }
+  for (const key of ["parsedSchedule", "lineItems", "userEdits"] as const) {
+    if (body[key] !== undefined) {
+      if (body[key] !== null && JSON.stringify(body[key]).length > MAX_JSONB_BYTES) {
+        return NextResponse.json({ error: `${key} exceeds 1MB limit` }, { status: 400 });
+      }
+      updates[key] = body[key];
+    }
+  }
+  for (const key of ["yoloModelFilter", "yoloClassFilter", "tagPattern", "materialLabel"] as const) {
+    if (body[key] !== undefined) {
+      if (body[key] !== null && (typeof body[key] !== "string" || body[key].length > MAX_STRING_LEN)) {
+        return NextResponse.json({ error: `invalid ${key}` }, { status: 400 });
+      }
+      updates[key] = body[key];
+    }
+  }
   if (body.exportedAt !== undefined) updates.exportedAt = body.exportedAt;
 
   updates.updatedAt = new Date();

@@ -75,7 +75,7 @@ export default function DemoProjectPage() {
       resetProjectData();
       setIsDemo(true);
       useViewerStore.getState().setConfidenceThreshold(0);
-      useViewerStore.setState({ helpMode: false });
+      useViewerStore.setState({ helpMode: false, showTips: false });
 
       // ─── Fetch metadata + initial chunk in parallel ───
       const [res, chunkRes] = await Promise.all([
@@ -92,9 +92,12 @@ export default function DemoProjectPage() {
       setDataUrl(data.dataUrl);
       setNumPages(data.numPages || 0);
 
-      // Hydrate project intelligence (CSI graph)
+      // Hydrate project intelligence (CSI graph + YOLO tags)
       if (data.projectIntelligence) {
         useViewerStore.getState().setProjectIntelligenceData(data.projectIntelligence);
+        if ((data.projectIntelligence as any).yoloTags) {
+          useViewerStore.getState().setYoloTags((data.projectIntelligence as any).yoloTags);
+        }
       }
 
       // Hydrate demo feature config
@@ -152,7 +155,6 @@ export default function DemoProjectPage() {
           loadedPageRange: { from: 1, to: chunk.pages.length > 0 ? Math.max(...chunk.pages.map((p: any) => p.pageNumber)) : Math.min(data.numPages || 1, 15) },
         }));
 
-        // Fallback if no summaries (old demo project)
         if (!data.summaries) {
           const allTradeSet = new Set<string>();
           const allCsiMap = new Map<string, string>();

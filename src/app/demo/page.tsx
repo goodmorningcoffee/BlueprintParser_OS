@@ -30,6 +30,21 @@ export default function DemoPage() {
   const [chatStreaming, setChatStreaming] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  const [headerLinks, setHeaderLinks] = useState({
+    home: "https://blueprintparser.com",
+    hded: "https://hded.blueprintparser.com",
+    modelExchange: "https://models.blueprintparser.com",
+    planExchange: "https://planexchange.blueprintparser.com",
+    labelFleet: "https://labelfleet.xyz",
+  });
+
+  useEffect(() => {
+    fetch("/api/demo/config")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data?.headerLinks) setHeaderLinks(data.headerLinks); })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     fetch("/api/demo/projects")
       .then((r) => r.json())
@@ -147,17 +162,38 @@ export default function DemoPage() {
       {/* Header */}
       <div className="h-14 border-b border-[var(--border)] bg-[var(--surface)] flex items-center justify-between px-6">
         <div className="flex items-center gap-3">
-          <span className="text-lg font-bold">BlueprintParser</span>
-          <span className="text-xs px-2 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)]">
+          <a href="https://app.blueprintparser.com" className="text-lg font-bold hover:text-[var(--accent)] transition-colors">BlueprintParser</a>
+          <a
+            href="https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&start_radio=1&pp=ygUJcmljayByb2xsoAcB"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs px-2 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)]/30 transition-colors"
+          >
             Demo
-          </span>
+          </a>
+          <nav className="hidden md:flex items-center gap-4 ml-3 text-xs text-[var(--muted)]">
+            <a href={headerLinks.home} target="_blank" rel="noopener noreferrer" className="hover:text-[var(--accent)] transition-colors">Home</a>
+            <a href={headerLinks.hded} target="_blank" rel="noopener noreferrer" className="hover:text-[var(--accent)] transition-colors">HDED</a>
+            <a href={headerLinks.modelExchange} target="_blank" rel="noopener noreferrer" className="hover:text-[var(--accent)] transition-colors">Model Exchange</a>
+            <a href={headerLinks.planExchange} target="_blank" rel="noopener noreferrer" className="hover:text-[var(--accent)] transition-colors">Plan Exchange</a>
+            <a href={headerLinks.labelFleet} target="_blank" rel="noopener noreferrer" className="hover:text-[var(--accent)] transition-colors">LabelFleet</a>
+            <a href="https://github.com/goodmorningcoffee" target="_blank" rel="noopener noreferrer" className="hover:text-[var(--accent)] transition-colors">GitHub</a>
+          </nav>
         </div>
-        <Link
-          href="/login"
-          className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] transition-colors"
-        >
-          Sign In
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/demo/admin"
+            className="px-4 py-1.5 text-sm border border-[var(--border)] text-[var(--fg)] rounded hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+          >
+            Admin
+          </Link>
+          <Link
+            href="/login"
+            className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] transition-colors"
+          >
+            Sign In
+          </Link>
+        </div>
       </div>
 
       {/* Hero */}
@@ -165,7 +201,7 @@ export default function DemoPage() {
         <h1 className="text-3xl font-bold mb-3">
           AI-Powered Blueprint Analysis
         </h1>
-        <p className="text-[var(--muted)] max-w-2xl mx-auto">
+        <p className="text-[var(--muted)] max-w-5xl mx-auto">
           Upload construction blueprints and instantly search text across all
           pages, detect CSI codes, and chat with AI about your
           drawings via self-hosted LLMs or your own subscription. 

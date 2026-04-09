@@ -99,30 +99,39 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         // Check brute force lockout
         const lockMsg = checkBruteForce(email);
-        if (lockMsg) return null;
+        if (lockMsg) { console.error(`[AUTH FAIL] lockout: ${email}`); return null; }
 
         // Select only core columns — avoids failure if new columns (e.g. can_run_models)
         // haven't been migrated yet
-        const [user] = await db
-          .select({
-            id: users.id,
-            email: users.email,
-            username: users.username,
-            passwordHash: users.passwordHash,
-            companyId: users.companyId,
-            role: users.role,
-          })
-          .from(users)
-          .where(eq(users.email, email))
-          .limit(1);
+        let user;
+        try {
+          const [found] = await db
+            .select({
+              id: users.id,
+              email: users.email,
+              username: users.username,
+              passwordHash: users.passwordHash,
+              companyId: users.companyId,
+              role: users.role,
+            })
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1);
+          user = found;
+        } catch (dbErr) {
+          console.error(`[AUTH FAIL] DB query error for ${email}:`, dbErr);
+          return null;
+        }
 
         if (!user) {
+          console.error(`[AUTH FAIL] user not found: ${email}`);
           recordFailedLogin(email);
           audit("login_failed", { details: { email, reason: "user_not_found" } });
           return null;
         }
 
         if (!user.passwordHash) {
+          console.error(`[AUTH FAIL] null passwordHash: ${email} (id=${user.id})`);
           recordFailedLogin(email);
           audit("login_failed", { userId: user.id, companyId: user.companyId, details: { email, reason: "no_password" } });
           return null;
@@ -130,10 +139,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const passwordMatch = await bcrypt.compare(password, user.passwordHash);
         if (!passwordMatch) {
+          console.error(`[AUTH FAIL] wrong password: ${email} (id=${user.id}, hash starts: ${user.passwordHash.substring(0, 7)})`);
           recordFailedLogin(email);
           audit("login_failed", { userId: user.id, companyId: user.companyId, details: { email } });
           return null;
         }
+        console.log(`[AUTH OK] ${email} (id=${user.id})`);
 
         // Fetch canRunModels + isRootAdmin separately — columns may not exist if migration pending
         let canRunModels = user.role === "admin"; // default: admins can run

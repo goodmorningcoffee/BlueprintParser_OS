@@ -9,7 +9,7 @@ export default function LandingPage() {
         </h1>
         <p className="text-[var(--muted)] text-lg max-w-md">
           AI-powered blueprint analysis. Export tables as CSV, auto-QTO,
-          and chat with your blueprints: self hostable and opensource.
+          and chat with your blueprints: self hostable and open source.
         </p>
       </div>
       <div className="flex gap-4">

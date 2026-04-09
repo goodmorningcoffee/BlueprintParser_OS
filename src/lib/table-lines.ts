@@ -22,14 +22,22 @@ export interface TableLineGrid {
   confidence: number;
 }
 
+export interface TableLineOptions {
+  minHLineLengthRatio?: number;
+  minVLineLengthRatio?: number;
+  clusteringTolerance?: number;
+}
+
 /**
  * Detect table grid lines in a cropped region image using OpenCV.
  *
  * @param pngBuffer - PNG image of the cropped table region
+ * @param options - Tunable parameters for line detection
  * @returns Detected grid structure with row/column positions
  */
 export async function detectTableLines(
-  pngBuffer: Buffer
+  pngBuffer: Buffer,
+  options?: TableLineOptions,
 ): Promise<TableLineGrid> {
   const tempDir = await mkdtemp(join(tmpdir(), "bp2-tablelines-"));
 
@@ -39,9 +47,15 @@ export async function detectTableLines(
 
     const scriptPath = join(process.cwd(), "scripts/detect_table_lines.py");
 
+    // Pass tuning params as CLI args: --min-h-length 0.15 --min-v-length 0.10 --tolerance 15
+    const args = [scriptPath, imgPath];
+    if (options?.minHLineLengthRatio != null) args.push("--min-h-length", String(options.minHLineLengthRatio));
+    if (options?.minVLineLengthRatio != null) args.push("--min-v-length", String(options.minVLineLengthRatio));
+    if (options?.clusteringTolerance != null) args.push("--tolerance", String(options.clusteringTolerance));
+
     const { stdout, stderr } = await execFileAsync(
       "python3",
-      [scriptPath, imgPath],
+      args,
       { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
     );
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, pages, annotations, chatMessages, processingJobs, takeoffItems, labelingSessions } from "@/lib/db/schema";
+import { projects, pages, annotations, chatMessages, processingJobs, takeoffItems, takeoffGroups, labelingSessions } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getS3Url, deleteProjectFiles } from "@/lib/s3";
 import { audit } from "@/lib/audit";
@@ -29,8 +29,8 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Fetch page list, takeoff items, and chat history in parallel (all independent, need only project.id)
-  const [projectPages, projectTakeoffItems, projectChats] = await Promise.all([
+  // Fetch page list, takeoff items, takeoff groups, and chat history in parallel (all independent, need only project.id)
+  const [projectPages, projectTakeoffItems, projectTakeoffGroups, projectChats] = await Promise.all([
     db.select({
       pageNumber: pages.pageNumber,
       name: pages.name,
@@ -43,6 +43,11 @@ export async function GET(
       .from(takeoffItems)
       .where(eq(takeoffItems.projectId, project.id))
       .orderBy(takeoffItems.sortOrder)
+      .catch(() => [] as any[]),
+    db.select()
+      .from(takeoffGroups)
+      .where(eq(takeoffGroups.projectId, project.id))
+      .orderBy(takeoffGroups.sortOrder)
       .catch(() => [] as any[]),
     db.select()
       .from(chatMessages)
@@ -79,7 +84,18 @@ export async function GET(
       name: t.name,
       shape: t.shape,
       color: t.color,
+      size: t.size,
+      notes: t.notes,
       sortOrder: t.sortOrder,
+      groupId: t.groupId,
+    })),
+    takeoffGroups: projectTakeoffGroups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      kind: g.kind,
+      color: g.color,
+      csiCode: g.csiCode,
+      sortOrder: g.sortOrder,
     })),
     chatMessages: projectChats.map((c) => ({
       id: c.id,
@@ -120,10 +136,13 @@ export async function PUT(
   if (body.name !== undefined) updates.name = body.name;
   if (body.address !== undefined) updates.address = body.address;
 
-  // Merge classCsiOverrides into projectIntelligence (preserving existing data)
-  if (body.classCsiOverrides !== undefined) {
+  // Merge into projectIntelligence (preserving existing data)
+  if (body.classCsiOverrides !== undefined || body.yoloTags !== undefined) {
     const existingPi = (project.projectIntelligence as Record<string, unknown>) || {};
-    updates.projectIntelligence = { ...existingPi, classCsiOverrides: body.classCsiOverrides };
+    const merged = { ...existingPi };
+    if (body.classCsiOverrides !== undefined) merged.classCsiOverrides = body.classCsiOverrides;
+    if (body.yoloTags !== undefined) merged.yoloTags = body.yoloTags;
+    updates.projectIntelligence = merged;
   }
 
   updates.updatedAt = new Date();
@@ -180,6 +199,7 @@ export async function DELETE(
     await db.delete(chatMessages).where(eq(chatMessages.projectId, project.id));
     await db.delete(annotations).where(eq(annotations.projectId, project.id));
     try { await db.delete(takeoffItems).where(eq(takeoffItems.projectId, project.id)); } catch { /* table may not exist yet */ }
+    try { await db.delete(takeoffGroups).where(eq(takeoffGroups.projectId, project.id)); } catch { /* table may not exist yet */ }
     try { await db.delete(labelingSessions).where(eq(labelingSessions.projectId, project.id)); } catch { /* table may not exist yet */ }
     await db.delete(processingJobs).where(eq(processingJobs.projectId, project.id));
     await db.delete(pages).where(eq(pages.projectId, project.id));

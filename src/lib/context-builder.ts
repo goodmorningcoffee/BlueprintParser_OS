@@ -22,7 +22,7 @@ export function getContextBudget(provider?: string, model?: string): number {
   if (provider === "anthropic") {
     if (m.includes("opus")) return 200000;     // Opus: 1M context, use ~200K chars
     if (m.includes("sonnet")) return 80000;    // Sonnet: 200K context
-    if (m.includes("haiku")) return 40000;     // Haiku: 200K context but keep lean
+    if (m.includes("haiku")) return 30000;     // Haiku: 200K token limit, keep lean to leave room for system prompt + history
   }
 
   // OpenAI models
@@ -51,25 +51,35 @@ export interface ContextSection {
 /** Stable section IDs for config references (headers are dynamic, IDs are stable) */
 export const SECTION_REGISTRY: Record<string, { label: string; defaultPriority: number; description: string }> = {
   "project-report": { label: "Project Intelligence Report", defaultPriority: 0.5, description: "Auto-generated project summary with discipline breakdown" },
-  "yolo-counts": { label: "YOLO Detection Counts", defaultPriority: 5.0, description: "Object counts by class per page with confidence" },
-  "yolo-detail": { label: "YOLO Annotation Detail", defaultPriority: 5.2, description: "Per-annotation bbox locations + class descriptions + CSI tags" },
+  "yolo-counts": { label: "YOLO Detection Counts", defaultPriority: 3.0, description: "Object counts by class per page with confidence" },
+  "yolo-detail": { label: "YOLO Annotation Detail", defaultPriority: 3.2, description: "Per-annotation bbox locations + class descriptions + CSI tags" },
   "csi-graph": { label: "CSI Network Graph", defaultPriority: 1.0, description: "Project-wide division relationships and clusters" },
   "page-classification": { label: "Page Classification", defaultPriority: 1.5, description: "Discipline, drawing type, series" },
   "user-annotations": { label: "User Annotations", defaultPriority: 2.0, description: "User-drawn markups with notes" },
   "takeoff-notes": { label: "Takeoff Notes", defaultPriority: 3.0, description: "Quantity takeoff items with estimator notes" },
   "cross-refs": { label: "Cross-References", defaultPriority: 3.5, description: "Sheet-to-sheet reference links" },
-  "csi-codes": { label: "CSI Codes", defaultPriority: 4.0, description: "CSI MasterFormat codes detected on page" },
+  "csi-codes": { label: "CSI Codes", defaultPriority: 1.0, description: "CSI MasterFormat codes detected on page" },
   "text-annotations": { label: "Text Annotations", defaultPriority: 5.0, description: "Phone, email, equipment tags, dimensions, abbreviations (37 types)" },
   "note-blocks": { label: "Note Blocks", defaultPriority: 5.5, description: "General notes extracted from drawings" },
-  "parsed-tables": { label: "Parsed Tables/Keynotes", defaultPriority: 5.8, description: "Structured schedule data with headers + sample rows" },
+  "parsed-tables": { label: "Parsed Tables/Keynotes", defaultPriority: 1.8, description: "Structured schedule data with headers + sample rows" },
   "detected-regions": { label: "Detected Regions", defaultPriority: 6.0, description: "Classified table/schedule regions from heuristics" },
   "csi-parsed": { label: "CSI from Parsed Data", defaultPriority: 1.2, description: "CSI codes extracted from parsed schedules" },
   "heuristic-inferences": { label: "Heuristic Inferences", defaultPriority: 1.5, description: "Rule-based detections with evidence chains" },
-  "csi-spatial": { label: "CSI Spatial Distribution", defaultPriority: 7.0, description: "Zone-based heatmap of CSI divisions on page" },
+  "csi-spatial": { label: "CSI Spatial Distribution", defaultPriority: 1.0, description: "Zone-based heatmap of CSI divisions on page" },
   "spatial-context": { label: "Spatial OCR→YOLO Context", defaultPriority: 2.0, description: "OCR text mapped into YOLO spatial regions" },
-  "tag-patterns": { label: "Tag Patterns", defaultPriority: 8.5, description: "Repeating YOLO+OCR groups (e.g., circles with T-## text)" },
+  "tag-patterns": { label: "Tag Patterns", defaultPriority: 5.5, description: "Repeating YOLO+OCR groups (e.g., circles with T-## text)" },
   "qto-results": { label: "QTO Workflow Results", defaultPriority: 9.0, description: "Auto-QTO tag counts and page locations" },
   "raw-ocr": { label: "Raw OCR Text", defaultPriority: 10.0, description: "Full OCR text (fallback, often truncated)" },
+};
+
+/** Global (cross-project) section IDs — used by dashboard chat scope="global" */
+export const GLOBAL_SECTION_REGISTRY: Record<string, { label: string; defaultPriority: number; description: string }> = {
+  "global-catalog": { label: "Project Catalog", defaultPriority: 0.5, description: "All project names, page counts, and auto-generated summaries" },
+  "global-disciplines": { label: "Discipline Breakdown", defaultPriority: 1.0, description: "Per-project discipline analysis (Architectural, Mechanical, etc.)" },
+  "global-csi-summary": { label: "CSI Code Summary", defaultPriority: 1.5, description: "Aggregated CSI divisions across all projects" },
+  "global-annotation-counts": { label: "Detection Counts", defaultPriority: 2.0, description: "YOLO detection and annotation counts per project" },
+  "global-search-results": { label: "Search Results", defaultPriority: 3.0, description: "Full-text search matches with structured data (CSI codes, text annotations)" },
+  "global-search-ocr": { label: "Search OCR Text", defaultPriority: 8.0, description: "Raw OCR text from search-matched pages (fallback)" },
 };
 
 /** Section config from admin LLM/Context panel */

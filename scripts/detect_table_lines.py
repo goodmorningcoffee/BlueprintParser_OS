@@ -83,7 +83,7 @@ def find_line_positions(mask, is_horizontal, tolerance=15):
     return [int(np.median(c)) for c in clusters]
 
 
-def detect_grid(image_path):
+def detect_grid(image_path, min_h_length=0.15, min_v_length=0.10, tolerance=15):
     """Main detection: find horizontal/vertical lines and compute grid."""
     image = cv2.imread(image_path)
     if image is None:
@@ -96,12 +96,12 @@ def detect_grid(image_path):
     h_mask, v_mask = find_line_masks(image)
 
     # Filter short lines
-    h_filtered = filter_lines(h_mask, is_horizontal=True, min_length_ratio=0.15)
-    v_filtered = filter_lines(v_mask, is_horizontal=False, min_length_ratio=0.10)
+    h_filtered = filter_lines(h_mask, is_horizontal=True, min_length_ratio=min_h_length)
+    v_filtered = filter_lines(v_mask, is_horizontal=False, min_length_ratio=min_v_length)
 
     # Get line positions
-    row_ys = find_line_positions(h_filtered, is_horizontal=True)
-    col_xs = find_line_positions(v_filtered, is_horizontal=False)
+    row_ys = find_line_positions(h_filtered, is_horizontal=True, tolerance=tolerance)
+    col_xs = find_line_positions(v_filtered, is_horizontal=False, tolerance=tolerance)
 
     print(f"Detected {len(row_ys)} horizontal lines, {len(col_xs)} vertical lines", file=sys.stderr)
 
@@ -150,9 +150,18 @@ def detect_grid(image_path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(json.dumps({"error": "Usage: detect_table_lines.py <image_path>"}))
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser(description="Detect table grid lines in an image")
+    parser.add_argument("image_path", help="Path to the input image")
+    parser.add_argument("--min-h-length", type=float, default=0.15, help="Min horizontal line length ratio (0-1)")
+    parser.add_argument("--min-v-length", type=float, default=0.10, help="Min vertical line length ratio (0-1)")
+    parser.add_argument("--tolerance", type=int, default=15, help="Line clustering tolerance in pixels")
+    args = parser.parse_args()
 
-    result = detect_grid(sys.argv[1])
+    result = detect_grid(
+        args.image_path,
+        min_h_length=args.min_h_length,
+        min_v_length=args.min_v_length,
+        tolerance=args.tolerance,
+    )
     print(json.dumps(result))

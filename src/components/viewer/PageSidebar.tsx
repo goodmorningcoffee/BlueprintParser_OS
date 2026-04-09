@@ -7,15 +7,11 @@ import { findPhraseMatches } from "./SearchHighlightOverlay";
 import { extractDisciplinePrefix, disciplineOrder } from "@/lib/page-utils";
 
 interface PageSidebarProps {
-  pdfDoc: PDFDocumentProxy;
+  pdfDoc: PDFDocumentProxy | null;
 }
 
-interface ThumbnailCache {
-  [pageNum: number]: string; // data URL
-}
-
-const BATCH_SIZE = 5;
-const THUMB_WIDTH = 150;
+const ITEM_HEIGHT = 164; // Thumbnail (aspect-[4/3] ~123px) + name row (~20px) + padding/margin (~21px)
+const VIRTUAL_BUFFER = 5; // Extra items above/below viewport
 
 export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   // Slice selectors (only re-render when relevant slice changes)
@@ -40,11 +36,29 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   const setTakeoffFilter = useViewerStore((s) => s.setTakeoffFilter);
   const activeYoloTagFilter = useViewerStore((s) => s.activeYoloTagFilter);
 
-  const [thumbnails, setThumbnails] = useState<ThumbnailCache>({});
-  const renderedPagesRef = useRef<Set<number>>(new Set());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
+  const visiblePagesRef = useRef<Set<number>>(visiblePages);
+  visiblePagesRef.current = visiblePages;
+  const pageNumRef = useRef(pageNumber);
+  pageNumRef.current = pageNumber;
+
+  // Virtual scroll state — only render ~20 buttons regardless of numPages
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(600);
+  const scrollRafRef = useRef(0);
+  const sidebarClickRef = useRef(false); // Prevents auto-scroll on sidebar clicks
+
+  // Thumbnail base URL (CloudFront or S3 direct)
+  const dataUrl = useViewerStore((s) => s.dataUrl);
+  const thumbBaseUrl = useMemo(() => {
+    if (!dataUrl) return null;
+    const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
+    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";
+    if (!cf && !s3Bucket) return null;
+    return cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
+  }, [dataUrl]);
 
   // Group-by-sheet state
   const [groupBySheet, setGroupBySheet] = useState(false);
@@ -58,170 +72,6 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
       return next;
     });
   }
-
-  // Track which sidebar entries are visible for lazy thumbnail generation
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        setVisiblePages((prev) => {
-          const next = new Set(prev);
-          for (const entry of entries) {
-            const pageNum = Number(
-              (entry.target as HTMLElement).dataset.pageNum
-            );
-            if (entry.isIntersecting) {
-              next.add(pageNum);
-            }
-          }
-          return next;
-        });
-      },
-      { root: container, rootMargin: "200px" }
-    );
-
-    const buttons = container.querySelectorAll("[data-page-num]");
-    buttons.forEach((btn) => observer.observe(btn));
-
-    return () => observer.disconnect();
-  }, [numPages, groupBySheet, expandedGroups]);
-
-  // Reset rendered tracking when PDF changes
-  useEffect(() => {
-    renderedPagesRef.current = new Set();
-    setThumbnails({});
-  }, [pdfDoc]);
-
-  // Try pre-generated S3 thumbnails first, fall back to pdf.js rendering
-  const dataUrl = useViewerStore((s) => s.dataUrl);
-  const s3ThumbsAvailableRef = useRef<boolean | null>(null); // null = unknown, true/false = probed
-  useEffect(() => {
-    if (!dataUrl || !pdfDoc) return;
-    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";
-    const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
-    if (!s3Bucket && !cf) return; // No S3 configured, skip entirely
-    const baseUrl = cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
-
-    // Probe page 1 thumbnail first — if it 404s, skip all S3 attempts (no thumbnails for this project)
-    const probe = new Image();
-    probe.onload = () => {
-      s3ThumbsAvailableRef.current = true;
-      renderedPagesRef.current.add(1);
-      setThumbnails((prev) => ({ ...prev, [1]: probe.src }));
-
-      // Page 1 exists, try the rest
-      const allPages = Array.from({ length: pdfDoc.numPages }, (_, i) => i + 1);
-      for (const pg of allPages) {
-        if (renderedPagesRef.current.has(pg)) continue;
-        const key = String(pg).padStart(4, "0");
-        const img = new Image();
-        img.onload = () => {
-          renderedPagesRef.current.add(pg);
-          setThumbnails((prev) => ({ ...prev, [pg]: img.src }));
-        };
-        img.onerror = () => {}; // Individual misses are fine, pdf.js will fill gaps
-        img.src = `${baseUrl}/thumbnails/page_${key}.png`;
-      }
-    };
-    probe.onerror = () => {
-      s3ThumbsAvailableRef.current = false; // No S3 thumbnails — pdf.js will handle all pages
-    };
-    probe.src = `${baseUrl}/thumbnails/page_0001.png`;
-  }, [dataUrl, pdfDoc]);
-
-  // Generate thumbnails via pdf.js for pages that don't have S3 thumbnails
-  useEffect(() => {
-    if (!pdfDoc) return;
-
-    let cancelled = false;
-
-    async function renderThumbnail(
-      pageNum: number,
-      canvas: HTMLCanvasElement,
-      ctx: CanvasRenderingContext2D
-    ) {
-      if (cancelled) return;
-      try {
-        const page = await pdfDoc.getPage(pageNum);
-        const viewport = page.getViewport({ scale: 1 });
-        const thumbScale = THUMB_WIDTH / viewport.width;
-        const thumbViewport = page.getViewport({ scale: thumbScale });
-
-        canvas.width = thumbViewport.width;
-        canvas.height = thumbViewport.height;
-
-        await page.render({
-          canvasContext: ctx,
-          viewport: thumbViewport,
-        }).promise;
-
-        if (!cancelled) {
-          renderedPagesRef.current.add(pageNum);
-          const dataUrl = canvas.toDataURL("image/png");
-          setThumbnails((prev) => ({ ...prev, [pageNum]: dataUrl }));
-        }
-      } catch (err) {
-        console.error(`Thumbnail error page ${pageNum}:`, err);
-        renderedPagesRef.current.add(pageNum); // Don't retry failed pages
-      }
-    }
-
-    async function generateAll() {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      // Build priority queue: current page first, then visible, then rest
-      const allPages = Array.from({ length: pdfDoc.numPages }, (_, i) => i + 1);
-      const prioritized: number[] = [];
-
-      // Current page first
-      prioritized.push(pageNumber);
-
-      // Nearby pages (for quick navigation)
-      for (
-        let i = Math.max(1, pageNumber - 2);
-        i <= Math.min(pdfDoc.numPages, pageNumber + 2);
-        i++
-      ) {
-        if (!prioritized.includes(i)) prioritized.push(i);
-      }
-
-      // Visible pages
-      for (const p of visiblePages) {
-        if (!prioritized.includes(p)) prioritized.push(p);
-      }
-
-      // Remaining pages
-      for (const p of allPages) {
-        if (!prioritized.includes(p)) prioritized.push(p);
-      }
-
-      // Render in batches with yielding
-      for (let i = 0; i < prioritized.length; i++) {
-        if (cancelled) break;
-
-        const pg = prioritized[i];
-        // Skip if already rendered (use ref to avoid re-triggering effect)
-        if (renderedPagesRef.current.has(pg)) continue;
-
-        await renderThumbnail(pg, canvas, ctx);
-
-        // Yield to main thread every BATCH_SIZE pages
-        if ((i + 1) % BATCH_SIZE === 0) {
-          await new Promise((r) => setTimeout(r, 0));
-        }
-      }
-    }
-
-    generateAll();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfDoc, pageNumber, visiblePages]);
 
   // Filter pages based on search or keynote filter
   const isSearchFiltered = searchQuery.length > 0 && searchResults.length > 0;
@@ -441,6 +291,72 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     );
   }
 
+  // Measure container height for virtual scroll
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setContainerHeight(entry.contentRect.height);
+    });
+    ro.observe(container);
+    setContainerHeight(container.clientHeight);
+    return () => ro.disconnect();
+  }, []);
+
+  // Flat list of displayable page numbers (filter-aware, computed once)
+  const displayPages = useMemo(() => {
+    const pages: number[] = [];
+    for (let n = 1; n <= numPages; n++) {
+      if (!isPageHidden(n)) pages.push(n);
+    }
+    return pages;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [numPages, isSearchFiltered, searchResults, isKeynoteFiltered, keynoteFilteredPages,
+      isAnnotationFiltered, annotationFilteredPages, isTradeFiltered, tradeFilteredPages,
+      isTextAnnotationFiltered, textAnnotationFilteredPages, isTakeoffFiltered, takeoffFilteredPages,
+      isCsiFiltered, csiFilteredPages, isYoloTagFiltered, yoloTagFilteredPages,
+      isSymbolSearchFiltered, symbolSearchFilteredPages]);
+
+  // Virtual scroll: compute which page buttons to render (~20 instead of all)
+  const visibleStartIdx = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - VIRTUAL_BUFFER);
+  const visibleEndIdx = Math.min(displayPages.length, Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + VIRTUAL_BUFFER);
+  const visibleSlice = displayPages.slice(visibleStartIdx, visibleEndIdx);
+
+  // Update visiblePages for thumbnail loading (derived from virtual scroll range)
+  useEffect(() => {
+    const newVisible = new Set(visibleSlice);
+    setVisiblePages((prev) => {
+      // Merge new visible pages into existing set (accumulate for thumbnail caching)
+      let changed = false;
+      for (const pg of newVisible) {
+        if (!prev.has(pg)) changed = true;
+      }
+      if (!changed) return prev;
+      const merged = new Set(prev);
+      for (const pg of newVisible) merged.add(pg);
+      return merged;
+    });
+  }, [visibleSlice.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-scroll sidebar to active page (keyboard/viewer navigation only, not sidebar clicks)
+  useEffect(() => {
+    if (sidebarClickRef.current) {
+      sidebarClickRef.current = false;
+      return;
+    }
+    const idx = displayPages.indexOf(pageNumber);
+    if (idx < 0) return;
+    const targetTop = idx * ITEM_HEIGHT;
+    const container = containerRef.current;
+    if (!container) return;
+    const currentScroll = container.scrollTop;
+    const viewHeight = container.clientHeight;
+    // Only scroll if active page is outside visible area
+    if (targetTop < currentScroll || targetTop > currentScroll + viewHeight - ITEM_HEIGHT) {
+      container.scrollTop = Math.max(0, targetTop - viewHeight / 3);
+    }
+  }, [pageNumber, displayPages]);
+
   // Group pages by discipline prefix
   const sheetGroups = useMemo(() => {
     if (!groupBySheet) return null;
@@ -493,7 +409,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
       <button
         key={n}
         data-page-num={n}
-        onClick={() => setPage(n)}
+        onClick={() => { sidebarClickRef.current = true; setPage(n); }}
         className={`w-full text-left p-1.5 rounded mb-1 transition-colors ${
           isActive
             ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40"
@@ -501,18 +417,19 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
         }`}
       >
         {/* Thumbnail */}
-        <div className="aspect-[4/3] bg-[var(--bg)] rounded overflow-hidden mb-1">
-          {thumbnails[n] ? (
+        <div className="aspect-[4/3] bg-[var(--bg)] rounded overflow-hidden mb-1 relative">
+          {thumbBaseUrl ? (
             <img
-              src={thumbnails[n]}
+              src={`${thumbBaseUrl}/thumbnails/page_${String(n).padStart(4, "0")}.png`}
               alt={`Page ${n}`}
-              className="w-full h-full object-contain"
+              className="w-full h-full object-contain relative z-[1]"
+              loading="lazy"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-[var(--muted)] text-xs">
-              {n}
-            </div>
-          )}
+          ) : null}
+          <div className="w-full h-full flex items-center justify-center text-[var(--muted)] text-xs absolute inset-0">
+            {n}
+          </div>
         </div>
 
         {/* Page name + match count */}
@@ -582,6 +499,11 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
     <div
       ref={containerRef}
       className="viewer-scalable w-48 border-r border-[var(--border)] bg-[var(--surface)] overflow-y-auto shrink-0"
+      onScroll={(e) => {
+        const st = e.currentTarget.scrollTop;
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = requestAnimationFrame(() => setScrollTop(st));
+      }}
     >
       <div className="p-2">
         {/* Group by sheet type toggle */}
@@ -738,18 +660,19 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
                   <span className="text-[10px] text-[var(--muted)] w-3 shrink-0">
                     {isExpanded ? "\u25BC" : "\u25B6"}
                   </span>
-                  <div className="w-10 h-7 bg-[var(--bg)] rounded overflow-hidden shrink-0">
-                    {thumbnails[firstPage] ? (
+                  <div className="w-10 h-7 bg-[var(--bg)] rounded overflow-hidden shrink-0 relative">
+                    {thumbBaseUrl ? (
                       <img
-                        src={thumbnails[firstPage]}
+                        src={`${thumbBaseUrl}/thumbnails/page_${String(firstPage).padStart(4, "0")}.png`}
                         alt={prefix}
-                        className="w-full h-full object-contain"
+                        className="w-full h-full object-contain relative z-[1]"
+                        loading="lazy"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                       />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-[var(--muted)] text-[8px]">
-                        {firstPage}
-                      </div>
-                    )}
+                    ) : null}
+                    <div className="w-full h-full flex items-center justify-center text-[var(--muted)] text-[8px] absolute inset-0">
+                      {firstPage}
+                    </div>
                   </div>
                   <span className="text-xs font-medium flex-1 text-left">{prefix}</span>
                   <span className="text-[10px] text-[var(--muted)] shrink-0">
@@ -767,11 +690,17 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
             );
           })
         ) : (
-          // ─── Flat view ──────────────────────────────────────
-          Array.from({ length: numPages }, (_, i) => i + 1).map((n) => {
-            if (isPageHidden(n)) return null;
-            return renderPageButton(n);
-          })
+          // ─── Flat view (virtualized — only ~20 buttons in DOM) ──────────
+          <div style={{ height: displayPages.length * ITEM_HEIGHT, position: "relative" }}>
+            {visibleSlice.map((n, i) => (
+              <div
+                key={n}
+                style={{ position: "absolute", top: (visibleStartIdx + i) * ITEM_HEIGHT, left: 0, right: 0 }}
+              >
+                {renderPageButton(n)}
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>

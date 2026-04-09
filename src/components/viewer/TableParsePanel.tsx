@@ -36,6 +36,9 @@ export default function TableParsePanel() {
   const yoloTags = useViewerStore((s) => s.yoloTags);
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
   const toggleParsedRegions = useViewerStore((s) => s.toggleParsedRegions);
+  const parsedRegionColorMode = useViewerStore((s) => s.parsedRegionColorMode);
+  const setParsedRegionColorMode = useViewerStore((s) => s.setParsedRegionColorMode);
+  const focusedParsedRegionId = useViewerStore((s) => s.focusedParsedRegionId);
   const { publicId } = useProject();
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
 
@@ -49,7 +52,7 @@ export default function TableParsePanel() {
   const intel = pageIntelligence[pageNumber] as any;
 
   // ─── Save parsed grid to pageIntelligence ─────────────────
-  const saveParsedToIntelligence = useCallback((grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[] }) => {
+  const saveParsedToIntelligence = useCallback((grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] }) => {
     const currentRegion = useViewerStore.getState().tableParseRegion;
     const currentIntel = useViewerStore.getState().pageIntelligence[pageNumber] || {};
     const existingRegions = (currentIntel as any)?.parsedRegions || [];
@@ -67,6 +70,8 @@ export default function TableParsePanel() {
         tableName: grid.tableName,
         rowCount: grid.rows.length,
         columnCount: grid.headers.length,
+        ...(grid.colBoundaries ? { colBoundaries: grid.colBoundaries } : {}),
+        ...(grid.rowBoundaries ? { rowBoundaries: grid.rowBoundaries } : {}),
       },
     };
     setPageIntelligence(pageNumber, {
@@ -76,7 +81,7 @@ export default function TableParsePanel() {
   }, [pageNumber, setPageIntelligence]);
 
   // ─── CSI detect + persist to DB ───────────────────────────
-  const detectCsiAndPersist = useCallback(async (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[] }) => {
+  const detectCsiAndPersist = useCallback(async (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] }) => {
     if (!grid.csiTags || grid.csiTags.length === 0) {
       try {
         const resp = await fetch("/api/csi/detect", {
@@ -95,11 +100,14 @@ export default function TableParsePanel() {
     const { projectId: pid, isDemo } = useViewerStore.getState();
     if (pid && !isDemo) {
       const currentIntel = useViewerStore.getState().pageIntelligence[pageNumber];
+      console.log("[save-intelligence] Saving:", { projectId: pid, pageNumber, hasIntel: !!currentIntel, parsedRegions: (currentIntel as any)?.parsedRegions?.length || 0 });
       fetch("/api/pages/intelligence", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId: pid, pageNumber, intelligence: currentIntel }),
-      }).catch(() => {});
+      }).then((r) => {
+        if (!r.ok) r.json().then((d) => console.error("[save-intelligence] Failed:", r.status, d)).catch(() => {});
+      }).catch((e) => console.error("[save-intelligence] Network error:", e));
     }
   }, [pageNumber, saveParsedToIntelligence]);
 
@@ -269,6 +277,24 @@ export default function TableParsePanel() {
           >
             {showParsedRegions ? "\u25CF" : "\u25CB"}
           </button>
+          {showParsedRegions && (
+            <div className="flex items-center border border-[var(--border)] rounded">
+              {(["none", "striped", "checkerboard"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setParsedRegionColorMode(mode)}
+                  className={`px-1.5 py-0.5 text-[9px] ${
+                    parsedRegionColorMode === mode
+                      ? "bg-[var(--accent)] text-white"
+                      : "text-[var(--muted)] hover:text-[var(--fg)]"
+                  } ${mode === "none" ? "rounded-l" : mode === "checkerboard" ? "rounded-r" : ""}`}
+                  title={mode === "none" ? "No cell shading" : mode === "striped" ? "Alternating row colors" : "Checkerboard cells"}
+                >
+                  {mode === "none" ? "Off" : mode === "striped" ? "Rows" : "Grid"}
+                </button>
+              ))}
+            </div>
+          )}
           <button onClick={toggleTableParsePanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">
             &times;
           </button>
@@ -341,6 +367,7 @@ export default function TableParsePanel() {
                     yoloTags={yoloTags}
                     pageNumber={pageNumber}
                     publicId={publicId}
+                    focusedParsedRegionId={focusedParsedRegionId}
                     onDelete={() => {
                       const pi = useViewerStore.getState().pageIntelligence[t.pageNum] || {};
                       const regions = ((pi as any)?.parsedRegions || []).filter((r: any) => r.id !== t.region.id);

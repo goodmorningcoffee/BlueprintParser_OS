@@ -115,6 +115,7 @@ show_menu() {
   echo -e "  ${GREEN}7${NC}  Run custom SQL"
   echo -e "  ${GREEN}8${NC}  Quick: promote first user to root admin"
   echo -e "  ${GREEN}9${NC}  Ensure is_root_admin column exists"
+  echo -e "  ${GREEN}10${NC} Reset user password (by email)"
   echo -e "  ${GREEN}q${NC}  Quit"
   echo ""
 }
@@ -206,11 +207,38 @@ ensure_column() {
   echo -e "${GREEN}Column ready.${NC}"
 }
 
+reset_password() {
+  read -rp "Enter email: " email
+  if [ -z "$email" ]; then echo -e "${RED}No email provided.${NC}"; return; fi
+  read -rsp "Enter new password: " newpw; echo
+  if [ -z "$newpw" ]; then echo -e "${RED}No password provided.${NC}"; return; fi
+  echo -e "${YELLOW}Resetting password for ${email}...${NC}"
+  get_task_arn
+  aws ecs execute-command \
+    --cluster "$ECS_CLUSTER" \
+    --task "$TASK_ARN" \
+    --container "$CONTAINER_NAME" \
+    --interactive \
+    --command "node -e \"
+const bcrypt=require('bcrypt');
+const{Pool}=require('pg');
+async function run(){
+  const hash=await bcrypt.hash('${newpw}',12);
+  const p=new Pool({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false}});
+  const r=await p.query('UPDATE users SET password_hash=\\\$1 WHERE email=\\\$2',[hash,'${email}']);
+  console.log('Password updated for '+r.rowCount+' user(s).');
+  p.end();
+}
+run().catch(e=>{console.error(e.message);process.exit(1);});
+\"" \
+    --region "$AWS_REGION"
+}
+
 # ─── Main Loop ───────────────────────────────────────────────────────────────
 main() {
   while true; do
     show_menu
-    read -rp "Choose [1-9, q]: " choice
+    read -rp "Choose [1-10, q]: " choice
     case "$choice" in
       1) list_users ;;
       2) promote_user ;;
@@ -221,6 +249,7 @@ main() {
       7) run_custom_sql ;;
       8) promote_first_user ;;
       9) ensure_column ;;
+      10) reset_password ;;
       q|Q) echo -e "\n${GREEN}Bye.${NC}\n"; exit 0 ;;
       *) echo -e "${RED}Invalid choice.${NC}" ;;
     esac

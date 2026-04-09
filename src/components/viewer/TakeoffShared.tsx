@@ -92,7 +92,7 @@ export function TakeoffEditPanel({
           {TAKEOFF_SHAPES.map((s) => (
             <button
               key={s}
-              onClick={() => setShape(s)}
+              onClick={() => { setShape(s); onLiveUpdate?.({ shape: s }); }}
               className={`px-2 py-0.5 text-[10px] rounded border ${
                 shape === s ? "border-[var(--accent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)]"
               }`}
@@ -107,7 +107,7 @@ export function TakeoffEditPanel({
         <span className="text-[10px] text-[var(--muted)] w-6">Size</span>
         <input
           type="range"
-          min="4"
+          min="2"
           max="30"
           step="1"
           value={size}

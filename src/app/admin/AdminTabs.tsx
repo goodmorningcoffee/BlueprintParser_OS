@@ -1,11 +1,12 @@
 "use client";
 
-export type AdminTab = "overview" | "projects" | "ai-models" | "pipeline" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "companies" | "users" | "settings";
+export type AdminTab = "overview" | "projects" | "ai-models" | "ai-rbac" | "pipeline" | "llm-context" | "text-annotations" | "csi" | "heuristics" | "page-intelligence" | "companies" | "users" | "settings";
 
 const TABS: { id: AdminTab; label: string; rootOnly?: boolean; hideForRoot?: boolean }[] = [
   { id: "overview", label: "Overview" },
   { id: "projects", label: "Demo Projects" },
   { id: "ai-models", label: "AI Models" },
+  { id: "ai-rbac", label: "AI RBAC", rootOnly: true },
   { id: "pipeline", label: "Pipeline" },
   { id: "llm-context", label: "LLM / Context" },
   { id: "text-annotations", label: "Text Annotations" },

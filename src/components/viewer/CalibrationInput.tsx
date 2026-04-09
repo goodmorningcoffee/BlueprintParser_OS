@@ -20,19 +20,36 @@ export default function CalibrationInput() {
   const [distance, setDistance] = useState("");
   const [unit, setUnit] = useState<AreaUnit>("ft");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleOk() {
     const dist = parseFloat(distance);
     if (!dist || dist <= 0 || !calibrationPoints.p1 || !calibrationPoints.p2) return;
 
     setSaving(true);
+    setError(null);
+    const p1 = calibrationPoints.p1!;
+    const p2 = calibrationPoints.p2!;
     const cal: ScaleCalibrationData = {
       type: "scale-calibration",
-      point1: calibrationPoints.p1,
-      point2: calibrationPoints.p2,
+      point1: p1,
+      point2: p2,
       realDistance: dist,
       unit,
     };
+
+    // Derive bbox from the two calibration points (API rejects [0,0,0,0])
+    const EPS = 0.001;
+    const bMinX = Math.min(p1.x, p2.x);
+    const bMaxX = Math.max(p1.x, p2.x);
+    const bMinY = Math.min(p1.y, p2.y);
+    const bMaxY = Math.max(p1.y, p2.y);
+    const calBbox: [number, number, number, number] = [
+      bMinX,
+      bMinY,
+      bMaxX - bMinX < EPS ? bMinX + EPS : bMaxX,
+      bMaxY - bMinY < EPS ? bMinY + EPS : bMaxY,
+    ];
 
     if (isDemo) {
       setScaleCalibration(pageNumber, cal);
@@ -52,6 +69,7 @@ export default function CalibrationInput() {
         tempAnn,
       ]);
       resetCalibration();
+      setDistance("");
       setSaving(false);
       return;
     }
@@ -70,7 +88,7 @@ export default function CalibrationInput() {
           projectId: publicId,
           pageNumber,
           name: `Scale (pg ${pageNumber})`,
-          bbox: [0, 0, 0, 0],
+          bbox: calBbox,
           note: null,
           source: "takeoff-scale",
           data: cal,
@@ -86,11 +104,13 @@ export default function CalibrationInput() {
         ]);
         setScaleCalibration(pageNumber, cal);
         resetCalibration();
+        setDistance("");
       } else {
-        console.error("Failed to save scale calibration:", res.status);
+        const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setError(errData.error || `Failed (${res.status})`);
       }
     } catch (err) {
-      console.error("Failed to save scale calibration:", err);
+      setError("Network error — could not save calibration");
     } finally {
       setSaving(false);
     }
@@ -123,7 +143,7 @@ export default function CalibrationInput() {
       </select>
       <button
         onClick={handleOk}
-        disabled={!distance || parseFloat(distance) <= 0 || saving}
+        disabled={!distance || parseFloat(distance) <= 0 || saving || !calibrationPoints.p1 || !calibrationPoints.p2}
         className="text-xs px-2 py-0.5 rounded bg-emerald-600 text-white disabled:opacity-40 hover:bg-emerald-500"
       >
         {saving ? "..." : "OK"}
@@ -134,6 +154,7 @@ export default function CalibrationInput() {
       >
         Cancel
       </button>
+      {error && <span className="text-[10px] text-red-400 ml-1">{error}</span>}
     </div>
   );
 }

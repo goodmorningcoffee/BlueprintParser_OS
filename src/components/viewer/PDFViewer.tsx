@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePanels, useProject, useSymbolSearch } from "@/stores/viewerStore";
+import { useShallow } from "zustand/react/shallow";
 import PDFPage from "./PDFPage";
 import ViewerToolbar from "./ViewerToolbar";
 import PageSidebar from "./PageSidebar";
@@ -35,53 +36,68 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   const [containerWidth, setContainerWidth] = useState(1200);
 
-  const pageNumber = useViewerStore((s) => s.pageNumber);
-  const numPages = useViewerStore((s) => s.numPages);
-  const setNumPages = useViewerStore((s) => s.setNumPages);
-  const scale = useViewerStore((s) => s.scale);
-  const setScale = useViewerStore((s) => s.setScale);
+  // Slice selectors — grouped subscriptions prevent cascading re-renders
+  const { pageNumber, numPages, setNumPages, mode, setMode } = useNavigation();
+  const { scale, setScale } = useViewerStore(useShallow((s) => ({ scale: s.scale, setScale: s.setScale })));
+  const { projectId, dataUrl } = useProject();
+  const {
+    symbolSearchActive, symbolSearchResults, symbolSearchLoading,
+    symbolSearchTemplateBbox, symbolSearchError,
+  } = useSymbolSearch();
 
   // Chunk loader: fetches page data when navigating beyond loaded range
   useChunkLoader();
-  const showTextPanel = useViewerStore((s) => s.showTextPanel);
-  const showChatPanel = useViewerStore((s) => s.showChatPanel);
-  const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
-  const showDetectionPanel = useViewerStore((s) => s.showDetectionPanel);
-  const showCsiPanel = useViewerStore((s) => s.showCsiPanel);
-  const showPageIntelPanel = useViewerStore((s) => s.showPageIntelPanel);
-  const showTableParsePanel = useViewerStore((s) => s.showTableParsePanel);
-  const showTableCompareModal = useViewerStore((s) => s.showTableCompareModal);
-  const showKeynoteParsePanel = useViewerStore((s) => s.showKeynoteParsePanel);
-  const symbolSearchActive = useViewerStore((s) => s.symbolSearchActive);
-  const symbolSearchResults = useViewerStore((s) => s.symbolSearchResults);
-  const symbolSearchLoading = useViewerStore((s) => s.symbolSearchLoading);
-  const symbolSearchTemplateBbox = useViewerStore((s) => s.symbolSearchTemplateBbox);
-  const symbolSearchError = useViewerStore((s) => s.symbolSearchError);
-  const setMode = useViewerStore((s) => s.setMode);
-  const projectId = useViewerStore((s) => s.projectId);
 
-  // Lazy-load textractData per page (not loaded in initial project response)
-  // Also prefetch textractData for adjacent pages
+  // Lazy-load textractData per page (debounced to batch rapid navigation)
+  const textractTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textractAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     if (!projectId) return;
-    const pagesToLoad = [pageNumber, pageNumber + 1, pageNumber - 1].filter((p) => p >= 1 && p <= numPages);
 
-    for (const p of pagesToLoad) {
-      const store = useViewerStore.getState();
-      if (store.textractData[p]) continue;
-      fetch(`/api/pages/textract?projectId=${projectId}&pageNumber=${p}`)
-        .then((r) => r.ok ? r.json() : null)
-        .then((data) => {
-          if (data?.textractData) {
-            useViewerStore.getState().setTextractData(p, data.textractData);
-          }
-        })
-        .catch(() => {});
-    }
+    if (textractTimerRef.current) clearTimeout(textractTimerRef.current);
+    if (textractAbortRef.current) textractAbortRef.current.abort();
+
+    textractTimerRef.current = setTimeout(() => {
+      const controller = new AbortController();
+      textractAbortRef.current = controller;
+      const pagesToLoad = [pageNumber, pageNumber + 1, pageNumber - 1].filter((p) => p >= 1 && p <= numPages);
+
+      for (const p of pagesToLoad) {
+        const store = useViewerStore.getState();
+        if (store.textractData[p]) continue;
+        fetch(`/api/pages/textract?projectId=${projectId}&pageNumber=${p}`, { signal: controller.signal })
+          .then((r) => r.ok ? r.json() : null)
+          .then((data) => {
+            if (data?.textractData) {
+              useViewerStore.getState().setTextractData(p, data.textractData);
+            }
+          })
+          .catch(() => {});
+      }
+    }, 200);
+
+    return () => {
+      if (textractTimerRef.current) clearTimeout(textractTimerRef.current);
+      if (textractAbortRef.current) textractAbortRef.current.abort();
+    };
   }, [pageNumber, projectId, numPages]);
 
+  // Preload current page PNG via <link> — starts fetch before React commits the img element
+  useEffect(() => {
+    if (!dataUrl) return;
+    const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
+    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";
+    const base = cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
+    const key = String(pageNumber).padStart(4, "0");
+    const link = document.createElement("link");
+    link.rel = "preload";
+    link.as = "image";
+    link.href = `${base}/pages/page_${key}.png`;
+    document.head.appendChild(link);
+    return () => { document.head.removeChild(link); };
+  }, [pageNumber, dataUrl]);
+
   // Prefetch adjacent page PNGs into browser cache for instant navigation
-  const dataUrl = useViewerStore((s) => s.dataUrl);
   useEffect(() => {
     if (!dataUrl) return;
     const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
@@ -94,8 +110,10 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   }, [pageNumber, numPages, dataUrl]);
 
   // Scroll to highlighted region (tag browse + LLM highlights)
-  const llmHighlight = useViewerStore((s) => s.llmHighlight);
-  const pageDimensions = useViewerStore((s) => s.pageDimensions);
+  const { llmHighlight, pageDimensions } = useViewerStore(useShallow((s) => ({
+    llmHighlight: s.llmHighlight,
+    pageDimensions: s.pageDimensions,
+  })));
   useEffect(() => {
     if (!llmHighlight || !containerRef.current) return;
     const dim = pageDimensions[llmHighlight.pageNumber];
@@ -162,6 +180,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
           url: pdfUrl,
           cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/",
           cMapPacked: true,
+          disableAutoFetch: true,   // Only fetch pages user navigates to (range loading)
+          rangeChunkSize: 65536,    // 64KB chunks for range requests
         }).promise;
 
         if (cancelled) return;
@@ -199,8 +219,10 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   }, [pdfDoc]);
 
   // Center when zoomFit is triggered (via store flag)
-  const pendingCenter = useViewerStore((s) => s.pendingCenter);
-  const clearPendingCenter = useViewerStore((s) => s.clearPendingCenter);
+  const { pendingCenter, clearPendingCenter } = useViewerStore(useShallow((s) => ({
+    pendingCenter: s.pendingCenter,
+    clearPendingCenter: s.clearPendingCenter,
+  })));
   useEffect(() => {
     if (!pendingCenter) return;
     clearPendingCenter();
@@ -223,9 +245,6 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     container.scrollLeft = targetLeft;
     container.scrollTop = targetTop;
   }, [pendingCenter, clearPendingCenter]);
-
-  // Mode ref for use in native event listeners
-  const mode = useViewerStore((s) => s.mode);
 
   // Zoom via wheel — document-level capture phase listener
   // Guarantees we intercept events before browser native scroll or child elements
@@ -330,30 +349,19 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   }, [mode]);
 
   // Hooks must be before early returns (Rules of Hooks)
-  const isDemo = useViewerStore((s) => s.isDemo);
-  const sidebarCollapsed = useViewerStore((s) => s.sidebarCollapsed);
-  const toggleSidebar = useViewerStore((s) => s.toggleSidebar);
-  const annotationPanelCollapsed = useViewerStore((s) => s.annotationPanelCollapsed);
-  const toggleAnnotationPanel = useViewerStore((s) => s.toggleAnnotationPanel);
-  const showTips = useViewerStore((s) => s.showTips);
-  const toggleTips = useViewerStore((s) => s.toggleTips);
-  const helpMode = useViewerStore((s) => s.helpMode);
-  const toggleHelpMode = useViewerStore((s) => s.toggleHelpMode);
+  const { isDemo } = useProject();
+  const { sidebarCollapsed, toggleSidebar } = usePanels();
+  const { annotationPanelCollapsed, toggleAnnotationPanel, showTips, toggleTips, helpMode, toggleHelpMode, showTableCompareModal } = useViewerStore(useShallow((s) => ({
+    annotationPanelCollapsed: s.annotationPanelCollapsed,
+    toggleAnnotationPanel: s.toggleAnnotationPanel,
+    showTips: s.showTips,
+    toggleTips: s.toggleTips,
+    helpMode: s.helpMode,
+    toggleHelpMode: s.toggleHelpMode,
+    showTableCompareModal: s.showTableCompareModal,
+  })));
 
-  // Auto-enable help mode in demo so new users see tooltips
-  useEffect(() => {
-    if (isDemo && !helpMode) {
-      useViewerStore.getState().toggleHelpMode();
-    }
-  }, [isDemo]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (loading) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-[var(--muted)]">
-        Loading PDF...
-      </div>
-    );
-  }
+  // Demo page sets helpMode: false, showTips: false directly — no auto-override needed
 
   if (error) {
     return (
@@ -407,7 +415,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       )}
 
       <div className="flex flex-1 min-h-0">
-        {!sidebarCollapsed && <PageSidebar pdfDoc={pdfDoc!} />}
+        {!sidebarCollapsed && <PageSidebar pdfDoc={pdfDoc} />}
 
         <div className="flex-1 flex flex-col min-w-0 relative">
           {/* Sidebar collapse toggle — outside scroll container so it doesn't scroll away */}
@@ -440,14 +448,12 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
               style={{ width: "fit-content", paddingTop: "50vh", paddingBottom: "50vh", paddingLeft: "25vw", paddingRight: "25vw" }}
             >
               <div style={{ width: "fit-content", margin: "0 auto" }}>
-                {pdfDoc && (
-                  <PDFPage
-                    pdfDoc={pdfDoc}
-                    pageNumber={pageNumber}
-                    scale={scale}
-                    containerWidth={containerWidth}
-                  />
-                )}
+                <PDFPage
+                  pdfDoc={pdfDoc}
+                  pageNumber={pageNumber}
+                  scale={scale}
+                  containerWidth={containerWidth}
+                />
               </div>
             </div>
           </div>
@@ -476,17 +482,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
         </div>
 
-        {/* Right-side panels — wrapped for UI scale */}
-        <div className="viewer-scalable flex shrink-0">
-          {showTextPanel && <TextPanel />}
-          {showChatPanel && <ChatPanel />}
-          {showTakeoffPanel && <TakeoffPanel />}
-          {showDetectionPanel && <DetectionPanel />}
-          {showCsiPanel && <CsiPanel />}
-          {showPageIntelPanel && <PageIntelligencePanel />}
-          {showTableParsePanel && <TableParsePanel />}
-          {showKeynoteParsePanel && <KeynotePanel />}
-        </div>
+        {/* Right-side panels — subscribes independently to avoid re-rendering PDF area */}
+        <ViewerPanels />
       </div>
 
       {/* Fullscreen modal overlays */}
@@ -494,6 +491,27 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
       {/* Tag instance browser bar */}
       <TagBrowseBar />
+    </div>
+  );
+}
+
+/** Panels subscribe to their own visibility — toggles don't re-render PDFPage/overlays */
+function ViewerPanels() {
+  const {
+    showTextPanel, showChatPanel, showTakeoffPanel, showDetectionPanel,
+    showCsiPanel, showPageIntelPanel, showTableParsePanel, showKeynoteParsePanel,
+  } = usePanels();
+
+  return (
+    <div className="viewer-scalable flex shrink-0">
+      {showTextPanel && <TextPanel />}
+      {showChatPanel && <ChatPanel />}
+      {showTakeoffPanel && <TakeoffPanel />}
+      {showDetectionPanel && <DetectionPanel />}
+      {showCsiPanel && <CsiPanel />}
+      {showPageIntelPanel && <PageIntelligencePanel />}
+      {showTableParsePanel && <TableParsePanel />}
+      {showKeynoteParsePanel && <KeynotePanel />}
     </div>
   );
 }

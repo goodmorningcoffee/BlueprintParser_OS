@@ -450,6 +450,7 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
 
                 {/* Expand / Delete */}
                 <button
+                  data-demo-nav
                   onClick={() => setExpandedRule(isExpanded ? null : rule.id)}
                   className="text-[10px] text-[var(--muted)] hover:text-[var(--fg)] px-2"
                 >

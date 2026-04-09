@@ -263,17 +263,18 @@ export default function ChatPanel() {
           </div>
         )}
 
-        {loading && !streamingContent && (
+        {loading && !streamingContent && !activeToolCall && (
           <div className="mr-4 bg-[var(--bg)] rounded-lg p-2 text-sm">
             <div className="text-[10px] text-[var(--muted)] mb-1">AI</div>
-            {activeToolCall ? (
-              <div className="text-cyan-400 text-[10px] animate-pulse flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-                {activeToolCall.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()).replace(/\bCsi\b/g, "CSI").replace(/\bOcr\b/g, "OCR").replace(/\bYolo\b/g, "YOLO")}...
-              </div>
-            ) : (
-              <div className="text-[var(--muted)] animate-pulse">Thinking...</div>
-            )}
+            <div className="text-[var(--muted)] animate-pulse">Thinking...</div>
+          </div>
+        )}
+        {loading && activeToolCall && (
+          <div className="mr-4 bg-[var(--bg)]/50 rounded-lg px-2 py-1">
+            <div className="text-cyan-400 text-[10px] animate-pulse flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+              {activeToolCall.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()).replace(/\bCsi\b/g, "CSI").replace(/\bOcr\b/g, "OCR").replace(/\bYolo\b/g, "YOLO")}...
+            </div>
           </div>
         )}
 

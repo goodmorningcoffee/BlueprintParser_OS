@@ -46,6 +46,12 @@ export async function PUT(
   if (body.color !== undefined) updates.color = body.color;
   if (body.size !== undefined) updates.size = body.size;
   if (body.notes !== undefined) updates.notes = body.notes;
+  if (body.groupId !== undefined) {
+    if (body.groupId !== null && !Number.isInteger(body.groupId)) {
+      return NextResponse.json({ error: "invalid groupId" }, { status: 400 });
+    }
+    updates.groupId = body.groupId;
+  }
   updates.updatedAt = new Date();
 
   await db.update(takeoffItems).set(updates).where(eq(takeoffItems.id, itemId));

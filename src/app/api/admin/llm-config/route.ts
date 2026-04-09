@@ -9,9 +9,16 @@ import { encryptApiKey, maskApiKey, decryptApiKey } from "@/lib/crypto";
  * GET /api/admin/llm-config
  * Returns LLM configs for the admin's company (keys masked) + which env vars are set.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const { session, error } = await requireAdmin();
   if (error) return error;
+
+  const url = new URL(req.url);
+  const includeUsers = url.searchParams.get("includeUsers") === "true";
+  // Root admin can query any company's configs
+  const queryCompanyId = session.user.isRootAdmin && url.searchParams.get("companyId")
+    ? Number(url.searchParams.get("companyId"))
+    : session.user.companyId;
 
   let configs: any[] = [];
   try {
@@ -19,23 +26,33 @@ export async function GET() {
       .select()
       .from(llmConfigs)
       .where(
-        and(
-          eq(llmConfigs.companyId, session.user.companyId),
-          isNull(llmConfigs.userId) // company-wide only for now
-        )
+        includeUsers
+          ? eq(llmConfigs.companyId, queryCompanyId)
+          : and(
+              eq(llmConfigs.companyId, queryCompanyId),
+              isNull(llmConfigs.userId)
+            )
       );
 
-    configs = rows.map((r) => ({
-      id: r.id,
-      provider: r.provider,
-      model: r.model,
-      maskedKey: r.encryptedApiKey ? maskApiKey(decryptApiKey(r.encryptedApiKey)) : null,
-      hasKey: !!r.encryptedApiKey,
-      baseUrl: r.baseUrl,
-      isDemo: r.isDemo,
-      isDefault: r.isDefault,
-      config: r.config,
-    }));
+    configs = rows.map((r) => {
+      let maskedKey: string | null = null;
+      if (r.encryptedApiKey) {
+        try { maskedKey = maskApiKey(decryptApiKey(r.encryptedApiKey)); }
+        catch { maskedKey = "***decrypt-error***"; }
+      }
+      return {
+        id: r.id,
+        userId: r.userId,
+        provider: r.provider,
+        model: r.model,
+        maskedKey,
+        hasKey: !!r.encryptedApiKey,
+        baseUrl: r.baseUrl,
+        isDemo: r.isDemo,
+        isDefault: r.isDefault,
+        config: r.config,
+      };
+    });
   } catch {
     // Table may not exist yet
   }
@@ -67,23 +84,24 @@ export async function POST(req: Request) {
   const { session, error } = await requireAdmin();
   if (error) return error;
 
-  const { provider, model, apiKey, baseUrl, isDemo, config } = await req.json();
+  const { provider, model, apiKey, baseUrl, isDemo, config, userId, targetCompanyId } = await req.json();
 
   if (!provider || !model) {
     return NextResponse.json({ error: "provider and model required" }, { status: 400 });
   }
 
-  const companyId = session.user.companyId;
+  // Root admin can set configs for any company/user
+  const companyId = (targetCompanyId && session.user.isRootAdmin) ? targetCompanyId : session.user.companyId;
   const encrypted = apiKey ? encryptApiKey(apiKey) : null;
 
-  // Check if config already exists for this scope
+  // Check if config already exists for this scope (company-wide or per-user)
   const [existing] = await db
     .select()
     .from(llmConfigs)
     .where(
       and(
         eq(llmConfigs.companyId, companyId),
-        isNull(llmConfigs.userId),
+        userId ? eq(llmConfigs.userId, userId) : isNull(llmConfigs.userId),
         eq(llmConfigs.isDemo, isDemo || false)
       )
     )
@@ -127,6 +145,7 @@ export async function POST(req: Request) {
     .insert(llmConfigs)
     .values({
       companyId,
+      userId: userId || null,
       provider,
       model,
       encryptedApiKey: encrypted,
@@ -163,12 +182,14 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
-  // Verify ownership
+  // Verify ownership (root admin can delete any config)
   const [config] = await db
     .select()
     .from(llmConfigs)
     .where(
-      and(eq(llmConfigs.id, id), eq(llmConfigs.companyId, session.user.companyId))
+      session.user.isRootAdmin
+        ? eq(llmConfigs.id, id)
+        : and(eq(llmConfigs.id, id), eq(llmConfigs.companyId, session.user.companyId))
     )
     .limit(1);
 

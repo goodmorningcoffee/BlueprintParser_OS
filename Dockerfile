@@ -12,6 +12,11 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Next.js inlines NEXT_PUBLIC_* vars at build time — required for client-side
+# S3/CloudFront features (thumbnails, PNG fallback, page prefetching)
+ARG NEXT_PUBLIC_CLOUDFRONT_DOMAIN=assets.blueprintparser.com
+ENV NEXT_PUBLIC_CLOUDFRONT_DOMAIN=$NEXT_PUBLIC_CLOUDFRONT_DOMAIN
+
 RUN npm run build
 
 # Bundle standalone processing worker for Step Functions / ECS tasks

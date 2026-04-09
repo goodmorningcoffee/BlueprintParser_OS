@@ -38,7 +38,7 @@ export async function rasterizePage(
       `-r${dpi}`,
       `-sOutputFile=${outputPath}`,
       pdfPath,
-    ]);
+    ], { timeout: 120000 });
 
     return await readFile(outputPath);
   } finally {
@@ -65,7 +65,7 @@ export async function getPdfPageCount(pdfBuffer: Buffer): Promise<number> {
       "-dBATCH",
       "-c",
       `(${pdfPath}) (r) file runpdfbegin pdfpagecount = quit`,
-    ]);
+    ], { timeout: 120000 });
 
     const count = parseInt(stdout.trim(), 10);
     if (!isNaN(count) && count > 0) {

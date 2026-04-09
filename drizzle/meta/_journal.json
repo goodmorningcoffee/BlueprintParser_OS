@@ -113,6 +113,55 @@
       "when": 1774780000000,
       "tag": "0015_add_qto_workflows",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1774840000000,
+      "tag": "0016_add_root_admin",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1774900000000,
+      "tag": "0017_add_oauth_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1774960000000,
+      "tag": "0018_add_password_reset",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1775200000000,
+      "tag": "0019_add_composite_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1775340000000,
+      "tag": "0020_add_model_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1775400000000,
+      "tag": "0021_add_app_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1775460000000,
+      "tag": "0022_set_root_admin",
+      "breakpoints": true
     }
   ]
 }

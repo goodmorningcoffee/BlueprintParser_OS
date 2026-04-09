@@ -10,6 +10,7 @@
 
 import type { TextractWord, BboxLTWH, BboxMinMax } from "@/types";
 import { ltwh2minmax, bboxCenterLTWH, bboxContainsPoint } from "@/lib/ocr-utils";
+import { isFuzzyCandidate } from "@/lib/yolo-tag-engine";
 
 export interface KeynoteTagMapping {
   annotationId: number;
@@ -80,9 +81,10 @@ export function mapKeynotesToDetections(
       continue;
     }
 
-    // Fuzzy match: edit distance ≤ 1 (handles common OCR errors like O→0, l→1)
+    // Fuzzy match: only OCR-plausible errors (A-Ol ↔ A-01), NOT A-01 ↔ A-02.
+    // Uses shared isFuzzyCandidate (same treatment as yolo-tag-engine).
     for (const [key, desc] of keyMap) {
-      if (editDistance(candidateText, key) <= 1) {
+      if (isFuzzyCandidate(candidateText, key)) {
         mappings.push({
           annotationId: ann.id,
           keynoteKey: key,
@@ -96,26 +98,4 @@ export function mapKeynotesToDetections(
   }
 
   return mappings;
-}
-
-/** Simple Levenshtein edit distance. */
-function editDistance(a: string, b: string): number {
-  if (a === b) return 0;
-  const la = a.length, lb = b.length;
-  if (la === 0) return lb;
-  if (lb === 0) return la;
-
-  let prev = Array.from({ length: lb + 1 }, (_, i) => i);
-  for (let i = 1; i <= la; i++) {
-    const curr = [i];
-    for (let j = 1; j <= lb; j++) {
-      curr[j] = Math.min(
-        curr[j - 1] + 1,
-        prev[j] + 1,
-        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
-      );
-    }
-    prev = curr;
-  }
-  return prev[lb];
 }

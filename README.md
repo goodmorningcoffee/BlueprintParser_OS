@@ -6,16 +6,48 @@ Open-source AI-powered construction blueprint analysis platform. Upload PDF blue
 
 ---
 
-> **WARNING: DO NOT run `deploy.sh`, `deploy-yolo.sh`, or `terraform apply`.**
->
-> These scripts deploy to a LIVE production environment on a shared AWS account. Running them will overwrite the running application, database, and infrastructure. If you want to test locally, use `docker compose up -d && npm run dev` (see Local Development below). Talk to the team before touching anything in `infrastructure/` or running any deploy commands.
->
-> **This repo contains live credentials.** Keep it private. Files with secrets:
-> - `infrastructure/terraform/terraform.tfvars` — DB password, API keys, NextAuth secret, webhook secret
-> - `.env.local` — API keys, S3 bucket name
-> - `deploy.sh` / `deploy-yolo.sh` — Hardcoded AWS account ID, ECR repo names, ECS cluster/service names
->
-> These will be cleaned up before open-source release. For now, do not fork publicly or share outside the team.
+## Quick Start
+
+```bash
+git clone https://github.com/deliciousnoodles/BlueprintParser.git
+cd BlueprintParser/blueprintparser_2
+cp .env.example .env.local       # Edit DATABASE_URL, NEXTAUTH_SECRET at minimum
+docker compose up -d              # PostgreSQL on port 5433
+npm install
+npx drizzle-kit migrate           # Create database tables
+npm run dev                       # http://localhost:3000
+```
+
+Works without AWS credentials — PDF viewing, annotations, table parsing, QTO, and search are all functional locally. For the full pipeline, add: `GROQ_API_KEY` (free-tier LLM chat), AWS credentials (Textract OCR, S3 storage, SageMaker YOLO inference).
+
+## Configuration
+
+| File | Purpose |
+|------|---------|
+| `.env.example` | All environment variables with descriptions. Copy to `.env.local` and fill in your values. |
+| `.deploy.env.example` | AWS deployment variables (ECS, ECR, S3 bucket names). Copy to `.deploy.env` for production deploy. |
+| `infrastructure/terraform/` | Full AWS infrastructure as code. Update `main.tf` backend config and `terraform.tfvars` before running. |
+
+### Deployment Tiers
+
+| Tier | What You Get | Estimated Cost |
+|------|-------------|----------------|
+| **Local only** (Docker Compose) | PDF viewer, annotations, table parsing, QTO, search, LLM chat (Groq free tier) | $0 |
+| **Minimal AWS** (S3 only) | + Cloud storage for PDFs and thumbnails | ~$5/month |
+| **Full AWS** (ECS + RDS + SageMaker) | + Textract OCR, YOLO inference, Step Functions orchestration, multi-tenant | ~$150-300/month |
+| **SageMaker GPU** (on-demand) | YOLO model inference jobs (ml.g4dn.xlarge) | ~$0.75/hour per run |
+
+## Model Weights
+
+Three pre-trained YOLOv8 models are included via Git LFS in the `models/` directory:
+
+| Model | Size | Classes | Use |
+|-------|------|---------|-----|
+| `yolo_medium.pt` | 136 MB | 7 (doors, tables, drawings, text boxes, title blocks, symbol legends) | General layout analysis |
+| `yolo_precise.pt` | 137 MB | 2 (door_single, door_double) | Precise door detection |
+| `yolo_primitive.pt` | 137 MB | 16 shapes (circles, rectangles, triangles, hexagons, etc.) | Keynote symbol detection |
+
+After cloning, run `git lfs pull` if model files show as LFS pointers instead of actual weights.
 
 ---
 

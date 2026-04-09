@@ -1,7 +1,12 @@
 {
-  "name": "blueprintparser-2",
-  "version": "0.1.0",
-  "private": true,
+  "name": "blueprintparser",
+  "version": "1.0.0",
+  "description": "Open-source AI-powered construction blueprint analysis platform",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deliciousnoodles/BlueprintParser.git"
+  },
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",

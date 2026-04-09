@@ -329,6 +329,12 @@ export default function HomePage() {
                   <div className="whitespace-pre-wrap break-words leading-relaxed text-xs">{msg.content}</div>
                 </div>
               ))}
+              {chatLoading && !chatStreaming && (
+                <div className="text-sm rounded-lg p-2 mr-4 bg-[var(--bg)]">
+                  <div className="text-[10px] text-[var(--muted)] mb-1">AI</div>
+                  <div className="text-[var(--muted)] text-xs animate-pulse">Searching projects & building context...</div>
+                </div>
+              )}
               {chatStreaming && (
                 <div className="text-sm rounded-lg p-2 mr-4 bg-[var(--bg)]">
                   <div className="text-[10px] text-[var(--muted)] mb-1">AI</div>

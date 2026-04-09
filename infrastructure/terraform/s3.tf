@@ -122,6 +122,32 @@ resource "aws_cloudfront_origin_access_control" "beaver" {
 }
 
 ###############################################################################
+# CloudFront Origin Request Policy — forward Range + CORS headers
+###############################################################################
+# Enables pdf.js range loading (HTTP 206 Partial Content) so the browser
+# fetches individual pages instead of the entire PDF binary.
+
+resource "aws_cloudfront_origin_request_policy" "beaver_range" {
+  name    = "beaver-range-cors-policy"
+  comment = "Forward Range + CORS headers for PDF range loading and S3 CORS"
+
+  headers_config {
+    header_behavior = "whitelist"
+    headers {
+      items = ["Origin", "Range", "Access-Control-Request-Headers", "Access-Control-Request-Method"]
+    }
+  }
+
+  query_strings_config {
+    query_string_behavior = "none"
+  }
+
+  cookies_config {
+    cookie_behavior = "none"
+  }
+}
+
+###############################################################################
 # CloudFront Distribution
 ###############################################################################
 
@@ -147,7 +173,7 @@ resource "aws_cloudfront_distribution" "beaver" {
     compress               = true
 
     cache_policy_id            = "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized
-    origin_request_policy_id   = "88a5eaf4-2fd4-4709-b370-b4c650ea3fcf" # CORS-S3Origin
+    origin_request_policy_id   = aws_cloudfront_origin_request_policy.beaver_range.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.beaver_cors.id
   }
 

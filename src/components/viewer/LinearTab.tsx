@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { TWENTY_COLORS } from "@/types";
-import type { ClientTakeoffItem, LinearPolylineData } from "@/types";
-import { computePixelsPerUnit } from "@/lib/areaCalc";
+import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { ColorDot, TakeoffEditPanel } from "./TakeoffShared";
 import CalibrationInput from "./CalibrationInput";
+import TakeoffGroupSection from "./TakeoffGroupSection";
 
 // ─── Scale status bar (reuse pattern from AreaTab) ──────────
 function ScaleStatus() {
@@ -71,9 +71,14 @@ export default function LinearTab() {
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   const setAnnotations = useViewerStore((s) => s.setAnnotations);
   const publicId = useViewerStore((s) => s.publicId);
-  const pageDimensions = useViewerStore((s) => s.pageDimensions);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const isDemo = useViewerStore((s) => s.isDemo);
+  const takeoffGroups = useViewerStore((s) => s.takeoffGroups);
+  const addTakeoffGroup = useViewerStore((s) => s.addTakeoffGroup);
+  const removeTakeoffGroup = useViewerStore((s) => s.removeTakeoffGroup);
+  const updateTakeoffGroup = useViewerStore((s) => s.updateTakeoffGroup);
+  const hiddenTakeoffItemIds = useViewerStore((s) => s.hiddenTakeoffItemIds);
+  const toggleTakeoffItemVisibility = useViewerStore((s) => s.toggleTakeoffItemVisibility);
 
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");
@@ -83,8 +88,12 @@ export default function LinearTab() {
   const [formError, setFormError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editPanelId, setEditPanelId] = useState<number | null>(null);
+  const [showGroupForm, setShowGroupForm] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   const linearItems = useMemo(() => takeoffItems.filter((i) => i.shape === "linear"), [takeoffItems]);
+  const linearGroups = useMemo(() => takeoffGroups.filter((g) => g.kind === "linear"), [takeoffGroups]);
 
   const linearSummaries = useMemo(() => {
     const map: Record<number, { totalLength: number; lineCount: number; pages: Set<number>; hasCalibration: boolean }> = {};
@@ -174,57 +183,179 @@ export default function LinearTab() {
     setEditingId(null);
   }
 
+  async function handleCreateGroup() {
+    const name = newGroupName.trim();
+    if (!name) return;
+    if (isDemo) {
+      const g: TakeoffGroup = { id: -Date.now(), name, kind: "linear", color: null, csiCode: null, sortOrder: linearGroups.length };
+      addTakeoffGroup(g);
+      setNewGroupName(""); setShowGroupForm(false);
+      return;
+    }
+    try {
+      const res = await fetch("/api/takeoff-groups", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: publicId, name, kind: "linear" }),
+      });
+      if (res.ok) {
+        const g = await res.json();
+        addTakeoffGroup(g);
+        setNewGroupName(""); setShowGroupForm(false);
+      }
+    } catch (err) { console.error("Failed to create group:", err); }
+  }
+
+  async function handleRenameGroup(id: number, name: string) {
+    updateTakeoffGroup(id, { name });
+    if (isDemo) return;
+    try {
+      await fetch(`/api/takeoff-groups/${id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+    } catch (err) { console.error("Failed to rename group:", err); }
+  }
+
+  async function handleDeleteGroup(id: number) {
+    removeTakeoffGroup(id);
+    if (isDemo) return;
+    try {
+      await fetch(`/api/takeoff-groups/${id}`, { method: "DELETE" });
+    } catch (err) { console.error("Failed to delete group:", err); }
+  }
+
+  const handleMoveItem = useCallback(async (itemId: number, targetGroupId: number | null) => {
+    updateTakeoffItem(itemId, { groupId: targetGroupId });
+    if (isDemo) return;
+    try {
+      await fetch(`/api/takeoff-items/${itemId}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupId: targetGroupId }),
+      });
+    } catch (err) { console.error("Failed to move item:", err); }
+  }, [isDemo, updateTakeoffItem]);
+
+  const toggleCollapsed = (key: string) => setCollapsedGroups((s) => ({ ...s, [key]: !s[key] }));
+
+  const byGroup: Record<number, ClientTakeoffItem[]> = {};
+  for (const g of linearGroups) byGroup[g.id] = [];
+  const ungrouped: ClientTakeoffItem[] = [];
+  for (const item of linearItems) {
+    if (item.groupId != null && byGroup[item.groupId]) byGroup[item.groupId].push(item);
+    else ungrouped.push(item);
+  }
+
   function formatLength(val: number | undefined, hasCal: boolean): string {
     if (!hasCal || val === undefined) return `-- ${displayUnit}`;
     return `${val.toFixed(1)} ${displayUnit}`;
   }
 
+  const renderLinearItem = (item: ClientTakeoffItem, moveDropdown: React.ReactNode) => {
+    const s = linearSummaries[item.id];
+    const isActive = activeTakeoffItemId === item.id;
+    const isHidden = hiddenTakeoffItemIds.has(item.id);
+    return (
+      <div>
+        <div
+          onClick={() => {
+            setActiveTakeoffItemId(isActive ? null : item.id);
+            const store = useViewerStore.getState();
+            if (isActive) { store.setTakeoffFilter(null); } else { store.setTakeoffFilter(item.id); }
+          }}
+          className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors ${isActive ? "ring-1 ring-[var(--accent)]" : "hover:bg-[var(--surface-hover)]"} ${isHidden ? "opacity-40" : ""}`}
+          style={isActive ? { backgroundColor: item.color + "20" } : undefined}
+        >
+          <ColorDot color={item.color} />
+          <button
+            onClick={(e) => { e.stopPropagation(); toggleTakeoffItemVisibility(item.id); }}
+            className="text-[10px] leading-none text-[var(--muted)] hover:text-[var(--fg)]"
+            title={isHidden ? "Show on canvas" : "Hide from canvas"}
+          >{isHidden ? "\u25CB" : "\u25CF"}</button>
+          {editingId === item.id ? (
+            <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
+              onBlur={() => handleRename(item, editName)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleRename(item, editName); if (e.key === "Escape") setEditingId(null); }}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 bg-transparent border-b border-[var(--accent)] text-xs outline-none px-0.5" />
+          ) : (
+            <span className="flex-1 text-xs truncate" onDoubleClick={(e) => { e.stopPropagation(); setEditingId(item.id); setEditName(item.name); }}>
+              {item.name}
+            </span>
+          )}
+          <span className="text-xs font-medium tabular-nums" style={{ color: item.color }}>{formatLength(s?.totalLength, s?.hasCalibration !== false)}</span>
+          {s && s.lineCount > 0 && <span className="text-[10px] text-[var(--muted)]">{s.lineCount}L {s.pages.size}pg</span>}
+          {moveDropdown}
+          <button onClick={(e) => { e.stopPropagation(); setEditPanelId(editPanelId === item.id ? null : item.id); }}
+            className="text-[10px] text-[var(--fg)]/40 opacity-50 group-hover:opacity-100 hover:text-[var(--accent)]" title="Edit item">&#9998;</button>
+          <button onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
+            className="text-[10px] text-red-400/40 opacity-50 group-hover:opacity-100 hover:text-red-400" title="Delete item and all lines">x</button>
+        </div>
+        {editPanelId === item.id && (
+          <TakeoffEditPanel item={item}
+            onSave={async (updates) => { updateTakeoffItem(item.id, updates); if (!isDemo) { await fetch(`/api/takeoff-items/${item.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) }); } }}
+            onLiveUpdate={(updates) => updateTakeoffItem(item.id, updates)}
+            onClose={() => setEditPanelId(null)} />
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       <ScaleStatus />
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {linearItems.map((item) => {
-          const s = linearSummaries[item.id];
-          const isActive = activeTakeoffItemId === item.id;
-          return (
-            <div key={item.id}>
-              <div
-                onClick={() => {
-                  setActiveTakeoffItemId(isActive ? null : item.id);
-                  const store = useViewerStore.getState();
-                  if (isActive) { store.setTakeoffFilter(null); } else { store.setTakeoffFilter(item.id); }
-                }}
-                className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors ${isActive ? "ring-1 ring-[var(--accent)]" : "hover:bg-[var(--surface-hover)]"}`}
-                style={isActive ? { backgroundColor: item.color + "20" } : undefined}
-              >
-                <ColorDot color={item.color} />
-                {editingId === item.id ? (
-                  <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
-                    onBlur={() => handleRename(item, editName)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleRename(item, editName); if (e.key === "Escape") setEditingId(null); }}
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex-1 bg-transparent border-b border-[var(--accent)] text-xs outline-none px-0.5" />
-                ) : (
-                  <span className="flex-1 text-xs truncate" onDoubleClick={(e) => { e.stopPropagation(); setEditingId(item.id); setEditName(item.name); }}>
-                    {item.name}
-                  </span>
-                )}
-                <span className="text-xs font-medium tabular-nums" style={{ color: item.color }}>{formatLength(s?.totalLength, s?.hasCalibration !== false)}</span>
-                {s && s.lineCount > 0 && <span className="text-[10px] text-[var(--muted)]">{s.lineCount}L {s.pages.size}pg</span>}
-                <button onClick={(e) => { e.stopPropagation(); setEditPanelId(editPanelId === item.id ? null : item.id); }}
-                  className="text-[10px] text-[var(--fg)]/40 opacity-50 group-hover:opacity-100 hover:text-[var(--accent)]" title="Edit item">&#9998;</button>
-                <button onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
-                  className="text-[10px] text-red-400/40 opacity-50 group-hover:opacity-100 hover:text-red-400" title="Delete item and all lines">x</button>
-              </div>
-              {editPanelId === item.id && (
-                <TakeoffEditPanel item={item}
-                  onSave={async (updates) => { updateTakeoffItem(item.id, updates); if (!isDemo) { await fetch(`/api/takeoff-items/${item.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) }); } }}
-                  onLiveUpdate={(updates) => updateTakeoffItem(item.id, updates)}
-                  onClose={() => setEditPanelId(null)} />
-              )}
+      <div className="flex-1 overflow-y-auto">
+        {/* New Group button */}
+        <div className="px-2 py-1.5 border-b border-[var(--border)]">
+          {showGroupForm ? (
+            <div className="flex gap-1">
+              <input
+                autoFocus
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleCreateGroup(); if (e.key === "Escape") { setShowGroupForm(false); setNewGroupName(""); } }}
+                placeholder="Group name (e.g. Division 03)"
+                className="flex-1 px-2 py-0.5 text-[11px] bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]"
+              />
+              <button onClick={handleCreateGroup} disabled={!newGroupName.trim()}
+                className="text-[10px] px-2 py-0.5 rounded bg-blue-600 text-white disabled:opacity-40">Add</button>
+              <button onClick={() => { setShowGroupForm(false); setNewGroupName(""); }}
+                className="text-[10px] px-1 text-[var(--muted)] hover:text-[var(--fg)]">&times;</button>
             </div>
-          );
-        })}
+          ) : (
+            <button onClick={() => setShowGroupForm(true)}
+              className="w-full text-left text-[10px] text-[var(--muted)] hover:text-[var(--fg)] py-0.5">
+              + New Group
+            </button>
+          )}
+        </div>
+
+        {/* Groups + items */}
+        {linearGroups.map((g) => (
+          <TakeoffGroupSection
+            key={g.id}
+            group={g}
+            kind="linear"
+            items={byGroup[g.id] || []}
+            collapsed={collapsedGroups[String(g.id)] ?? false}
+            onToggleCollapsed={() => toggleCollapsed(String(g.id))}
+            onRename={(name) => handleRenameGroup(g.id, name)}
+            onDelete={() => handleDeleteGroup(g.id)}
+            onMoveItem={handleMoveItem}
+            renderItem={renderLinearItem}
+            availableGroups={linearGroups}
+          />
+        ))}
+        <TakeoffGroupSection
+          group={null}
+          kind="linear"
+          items={ungrouped}
+          collapsed={collapsedGroups.ungrouped ?? false}
+          onToggleCollapsed={() => toggleCollapsed("ungrouped")}
+          onMoveItem={handleMoveItem}
+          renderItem={renderLinearItem}
+          availableGroups={linearGroups}
+        />
+
         {linearItems.length === 0 && !showForm && (
           <div className="text-xs text-[var(--muted)] text-center py-4">No linear items yet.<br />Set scale, then add an item below.</div>
         )}

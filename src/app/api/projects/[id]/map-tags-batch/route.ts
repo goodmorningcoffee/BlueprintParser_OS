@@ -40,9 +40,20 @@ export async function POST(
     if (tags.length > 500) {
       return NextResponse.json({ error: "Max 500 tags per batch" }, { status: 400 });
     }
+    if (!tags.every((t) => typeof t === "string")) {
+      return NextResponse.json({ error: "tags must be strings" }, { status: 400 });
+    }
   }
-  if (isScan && !yoloClass) {
+  if (isScan && (!yoloClass || typeof yoloClass !== "string")) {
     return NextResponse.json({ error: "yoloClass required for scanClass" }, { status: 400 });
+  }
+  if (selectedPages !== undefined && selectedPages !== null) {
+    if (!Array.isArray(selectedPages) || !selectedPages.every((p) => Number.isInteger(p) && p >= 1)) {
+      return NextResponse.json({ error: "selectedPages must be positive integers" }, { status: 400 });
+    }
+    if (selectedPages.length > 2000) {
+      return NextResponse.json({ error: "Max 2000 pages per batch" }, { status: 400 });
+    }
   }
 
   // Auth: check session for real projects, allow demo projects without auth

@@ -98,9 +98,13 @@ export default function DetectionPanel() {
     if (activeYoloTagId === tag.id) {
       setActiveYoloTagId(null);
       setYoloTagFilter(null);
+      setSearch("");
     } else {
       setActiveYoloTagId(tag.id);
       setYoloTagFilter(tag.id);
+      // Populate search with class:text so OCR context is visible (e.g., "oval:4")
+      const searchText = tag.yoloClass ? `${tag.yoloClass}:${tag.tagText}` : tag.tagText;
+      setSearch(searchText);
     }
   }
 

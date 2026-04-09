@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   ClientAnnotation,
   ClientTakeoffItem,
+  TakeoffGroup,
   KeynoteShapeData,
   CsiCode,
   TextractPageData,
@@ -213,6 +214,15 @@ interface ViewerState {
   updateTakeoffItem: (id: number, updates: Partial<ClientTakeoffItem>) => void;
   activeTakeoffItemId: number | null;
   setActiveTakeoffItemId: (id: number | null) => void;
+  takeoffGroups: TakeoffGroup[];
+  setTakeoffGroups: (groups: TakeoffGroup[]) => void;
+  addTakeoffGroup: (g: TakeoffGroup) => void;
+  removeTakeoffGroup: (id: number) => void;
+  updateTakeoffGroup: (id: number, updates: Partial<TakeoffGroup>) => void;
+
+  // ─── Takeoff item visibility ─────────────────────────────
+  hiddenTakeoffItemIds: Set<number>;
+  toggleTakeoffItemVisibility: (itemId: number) => void;
 
   // ─── Takeoff Area ──────────────────────────────────────
   takeoffTab: TakeoffTab;
@@ -262,6 +272,12 @@ interface ViewerState {
   resetTableParse: () => void;
   tableParseTab: "all" | "auto" | "guided" | "manual" | "compare";
   setTableParseTab: (tab: "all" | "auto" | "guided" | "manual" | "compare") => void;
+  tableParseOptions: {
+    rowTolerance: number; minColGap: number; colHitRatio: number; headerMode: "auto" | "first" | "none";
+    minHLineLengthRatio: number; minVLineLengthRatio: number; clusteringTolerance: number;
+    mergerEditDistance: number;
+  };
+  setTableParseOptions: (patch: Partial<ViewerState["tableParseOptions"]>) => void;
   showTableCompareModal: boolean;
   toggleTableCompareModal: () => void;
 
@@ -321,6 +337,12 @@ interface ViewerState {
   // ─── Parsed Region Visibility ──────────────────────────
   showParsedRegions: boolean;
   toggleParsedRegions: () => void;
+  parsedRegionColorMode: "none" | "striped" | "checkerboard";
+  setParsedRegionColorMode: (mode: "none" | "striped" | "checkerboard") => void;
+  hiddenParsedRegionIds: Set<string>;
+  toggleParsedRegionVisibility: (id: string) => void;
+  focusedParsedRegionId: string | null;
+  setFocusedParsedRegionId: (id: string | null) => void;
 
   // ─── Symbol Search ────────────────────────────────────
   symbolSearchActive: boolean;                    // draw mode active (crosshair cursor)
@@ -341,8 +363,8 @@ interface ViewerState {
   setSymbolSearchTemplateBbox: (bbox: [number, number, number, number] | null) => void;
   symbolSearchSourcePage: number | null;
   setSymbolSearchSourcePage: (page: number | null) => void;
-  symbolSearchConfig: { multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null };
-  setSymbolSearchConfig: (patch: Partial<{ multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null }>) => void;
+  symbolSearchConfig: { multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null; scaleMin: number; scaleMax: number; nmsThreshold: number; maxMatchesPerPage: number };
+  setSymbolSearchConfig: (patch: Partial<{ multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null; scaleMin: number; scaleMax: number; nmsThreshold: number; maxMatchesPerPage: number }>) => void;
   clearSymbolSearch: () => void;
 
   // ─── Drawing State (used by DrawingPreviewLayer, NOT subscribed by AnnotationOverlay) ──
@@ -370,6 +392,21 @@ interface ViewerState {
   resetProjectData: () => void;
 }
 
+// Debounced save for YOLO tags — persists to projectIntelligence.yoloTags via PUT
+let _yoloTagSaveTimer: ReturnType<typeof setTimeout> | null = null;
+function _debounceSaveYoloTags() {
+  if (_yoloTagSaveTimer) clearTimeout(_yoloTagSaveTimer);
+  _yoloTagSaveTimer = setTimeout(() => {
+    const { publicId, yoloTags, isDemo } = useViewerStore.getState();
+    if (!publicId || isDemo) return;
+    fetch(`/api/projects/${publicId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ yoloTags }),
+    }).catch((e) => console.error("[yoloTags] Save failed:", e));
+  }, 500);
+}
+
 export const useViewerStore = create<ViewerState>((set) => ({
   pageNumber: 1,
   numPages: 0,
@@ -386,7 +423,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setScale: (scale) => set({ scale }),
 
   mode: "move",
-  setMode: (mode) => set({ mode }),
+  setMode: (mode) => set({ mode, activeTakeoffItemId: null, polygonDrawingMode: "idle", polygonVertices: [] }),
 
   searchQuery: "",
   searchResults: [],
@@ -512,7 +549,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
   activeModels: {},
   setModelActive: (model, active) =>
     set((s) => ({ activeModels: { ...s.activeModels, [model]: active } })),
-  confidenceThreshold: 0.25,
+  confidenceThreshold: 0.10,
   setConfidenceThreshold: (confidenceThreshold) =>
     set({ confidenceThreshold }),
   confidenceThresholds: {},
@@ -524,7 +561,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       const confidenceThresholds: Record<string, number> = {};
       for (const name of modelNames) {
         activeModels[name] = s.activeModels[name] ?? true;
-        confidenceThresholds[name] = s.confidenceThresholds[name] ?? 0.25;
+        confidenceThresholds[name] = s.confidenceThresholds[name] ?? 0.10;
       }
       return { activeModels, confidenceThresholds };
     }),
@@ -543,7 +580,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       return { hiddenClasses: { ...s.hiddenClasses, [key]: !current } };
     }),
 
-  showTips: true,
+  showTips: false,
   toggleTips: () => set((s) => ({ showTips: !s.showTips })),
   helpMode: false,
   toggleHelpMode: () => set((s) => ({ helpMode: !s.helpMode })),
@@ -598,6 +635,28 @@ export const useViewerStore = create<ViewerState>((set) => ({
     })),
   activeTakeoffItemId: null,
   setActiveTakeoffItemId: (activeTakeoffItemId) => set({ activeTakeoffItemId, takeoffUndoStack: [], takeoffRedoStack: [] }),
+
+  takeoffGroups: [],
+  setTakeoffGroups: (takeoffGroups) => set({ takeoffGroups }),
+  addTakeoffGroup: (g) => set((s) => ({ takeoffGroups: [...s.takeoffGroups, g] })),
+  removeTakeoffGroup: (id) =>
+    set((s) => ({
+      takeoffGroups: s.takeoffGroups.filter((g) => g.id !== id),
+      // Mirror FK SET NULL: ungroup items that belonged to this group
+      takeoffItems: s.takeoffItems.map((t) => (t.groupId === id ? { ...t, groupId: null } : t)),
+    })),
+  updateTakeoffGroup: (id, updates) =>
+    set((s) => ({
+      takeoffGroups: s.takeoffGroups.map((g) => (g.id === id ? { ...g, ...updates } : g)),
+    })),
+
+  hiddenTakeoffItemIds: new Set<number>(),
+  toggleTakeoffItemVisibility: (itemId) =>
+    set((s) => {
+      const next = new Set(s.hiddenTakeoffItemIds);
+      if (next.has(itemId)) next.delete(itemId); else next.add(itemId);
+      return { hiddenTakeoffItemIds: next };
+    }),
 
   takeoffTab: "count",
   setTakeoffTab: (takeoffTab) => set({ takeoffTab }),
@@ -700,6 +759,13 @@ export const useViewerStore = create<ViewerState>((set) => ({
     }),
   tableParseTab: "all",
   setTableParseTab: (tableParseTab) => set({ tableParseTab }),
+  tableParseOptions: {
+    rowTolerance: 0.006, minColGap: 0.015, colHitRatio: 0.3, headerMode: "auto" as const,
+    minHLineLengthRatio: 0.15, minVLineLengthRatio: 0.10, clusteringTolerance: 15,
+    mergerEditDistance: 2,
+  },
+  setTableParseOptions: (patch) =>
+    set((s) => ({ tableParseOptions: { ...s.tableParseOptions, ...patch } })),
   showTableCompareModal: false,
   toggleTableCompareModal: () => set((s) => ({ showTableCompareModal: !s.showTableCompareModal })),
 
@@ -746,13 +812,21 @@ export const useViewerStore = create<ViewerState>((set) => ({
   }),
 
   yoloTags: [],
-  setYoloTags: (yoloTags) => set({ yoloTags }),
-  addYoloTag: (tag) => set((s) => ({ yoloTags: [...s.yoloTags, tag] })),
-  removeYoloTag: (id) => set((s) => ({ yoloTags: s.yoloTags.filter((t) => t.id !== id) })),
-  updateYoloTag: (id, updates) =>
+  setYoloTags: (yoloTags) => set({ yoloTags }), // hydration only — no DB save
+  addYoloTag: (tag) => {
+    set((s) => ({ yoloTags: [...s.yoloTags, tag] }));
+    _debounceSaveYoloTags();
+  },
+  removeYoloTag: (id) => {
+    set((s) => ({ yoloTags: s.yoloTags.filter((t) => t.id !== id) }));
+    _debounceSaveYoloTags();
+  },
+  updateYoloTag: (id, updates) => {
     set((s) => ({
       yoloTags: s.yoloTags.map((t) => (t.id === id ? { ...t, ...updates } : t)),
-    })),
+    }));
+    _debounceSaveYoloTags();
+  },
   activeYoloTagId: null,
   setActiveYoloTagId: (activeYoloTagId) => set({ activeYoloTagId }),
   yoloTagVisibility: {},
@@ -796,6 +870,16 @@ export const useViewerStore = create<ViewerState>((set) => ({
 
   showParsedRegions: true,
   toggleParsedRegions: () => set((s) => ({ showParsedRegions: !s.showParsedRegions })),
+  parsedRegionColorMode: "striped" as const,
+  setParsedRegionColorMode: (parsedRegionColorMode) => set({ parsedRegionColorMode }),
+  hiddenParsedRegionIds: new Set<string>(),
+  toggleParsedRegionVisibility: (id) => set((s) => {
+    const next = new Set(s.hiddenParsedRegionIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return { hiddenParsedRegionIds: next };
+  }),
+  focusedParsedRegionId: null,
+  setFocusedParsedRegionId: (focusedParsedRegionId) => set({ focusedParsedRegionId }),
 
   symbolSearchActive: false,
   setSymbolSearchActive: (symbolSearchActive) => set({ symbolSearchActive }),
@@ -824,8 +908,12 @@ export const useViewerStore = create<ViewerState>((set) => ({
     multiScale: true,
     useSiftFallback: true,
     searchPages: null as number[] | null,
+    scaleMin: 0.8,
+    scaleMax: 1.5,
+    nmsThreshold: 0.3,
+    maxMatchesPerPage: 50,
   },
-  setSymbolSearchConfig: (patch: Partial<{ multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null }>) =>
+  setSymbolSearchConfig: (patch: Partial<{ multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null; scaleMin: number; scaleMax: number; nmsThreshold: number; maxMatchesPerPage: number }>) =>
     set((s) => ({ symbolSearchConfig: { ...s.symbolSearchConfig, ...patch } })),
   clearSymbolSearch: () =>
     set({
@@ -838,7 +926,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       symbolSearchError: null,
       symbolSearchTemplateBbox: null,
       symbolSearchSourcePage: null,
-      symbolSearchConfig: { multiScale: true, useSiftFallback: true, searchPages: null },
+      symbolSearchConfig: { multiScale: true, useSiftFallback: true, searchPages: null, scaleMin: 0.8, scaleMax: 1.5, nmsThreshold: 0.3, maxMatchesPerPage: 50 },
     }),
 
   guidedParseActive: false,
@@ -911,12 +999,13 @@ export const useViewerStore = create<ViewerState>((set) => ({
       annotationPanelCollapsed: false,
       showDetections: false,
       showDetectionPanel: false,
-      confidenceThreshold: 0.25,
+      confidenceThreshold: 0.10,
       activeModels: {},
       confidenceThresholds: {},
       hiddenAnnotationIds: new Set<number>(),
       showTakeoffPanel: false,
       takeoffItems: [],
+      takeoffGroups: [],
       activeTakeoffItemId: null,
       takeoffTab: "count",
       activeQtoWorkflow: null,
@@ -928,6 +1017,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       polygonDrawingMode: "idle",
       polygonVertices: [],
       showTableParsePanel: false,
+      focusedParsedRegionId: null,
       tableParseTab: "all",
       tableParseStep: "idle",
       tableParseRegion: null,
@@ -962,7 +1052,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       symbolSearchError: null,
       symbolSearchTemplateBbox: null,
       symbolSearchSourcePage: null,
-      symbolSearchConfig: { multiScale: true, useSiftFallback: true, searchPages: null },
+      symbolSearchConfig: { multiScale: true, useSiftFallback: true, searchPages: null, scaleMin: 0.8, scaleMax: 1.5, nmsThreshold: 0.3, maxMatchesPerPage: 50 },
       guidedParseActive: false,
       guidedParseRegion: null,
       guidedParseRows: [],
@@ -1089,11 +1179,15 @@ export const useTableParse = () =>
     setTableParseColumnNames: s.setTableParseColumnNames,
     tableParseTab: s.tableParseTab,
     setTableParseTab: s.setTableParseTab,
+    tableParseOptions: s.tableParseOptions,
+    setTableParseOptions: s.setTableParseOptions,
     showTableCompareModal: s.showTableCompareModal,
     toggleTableCompareModal: s.toggleTableCompareModal,
     resetTableParse: s.resetTableParse,
     showParsedRegions: s.showParsedRegions,
     toggleParsedRegions: s.toggleParsedRegions,
+    parsedRegionColorMode: s.parsedRegionColorMode,
+    setParsedRegionColorMode: s.setParsedRegionColorMode,
   })));
 
 /** Keynote parse + guided parse state */

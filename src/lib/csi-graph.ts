@@ -42,6 +42,7 @@ export interface CsiNetworkGraph {
 
 interface PageSummary {
   pageNumber: number;
+  drawingNumber?: string | null;
   csiCodes: { code: string; description: string; trade: string; division: string }[];
   pageIntelligence?: PageIntelligence | null;
 }
@@ -198,6 +199,14 @@ function buildCrossRefEdges(
     if (divs.size > 0) pageDivisions.set(page.pageNumber, divs);
   }
 
+  // Build a lookup: drawingNumber → pageNumber for resolving cross-references
+  const drawingToPage = new Map<string, number>();
+  for (const page of pages) {
+    if (page.drawingNumber) {
+      drawingToPage.set(page.drawingNumber.toUpperCase(), page.pageNumber);
+    }
+  }
+
   const crossEdgeMap = new Map<string, { weight: number; pages: Set<number> }>();
 
   for (const page of pages) {
@@ -208,29 +217,25 @@ function buildCrossRefEdges(
     if (!sourceDivs) continue;
 
     for (const ref of refs) {
-      // Try to resolve the target page to find its divisions.
-      // We look for a page whose number matches the target drawing's page.
-      // This is approximate since we only have page numbers, not drawing numbers.
-      for (const targetPage of pages) {
-        if (targetPage.pageNumber === page.pageNumber) continue;
-        const targetDivs = pageDivisions.get(targetPage.pageNumber);
-        if (!targetDivs) continue;
+      // Resolve the target page by drawing number
+      const targetPageNum = drawingToPage.get(ref.targetDrawing.toUpperCase());
+      if (targetPageNum == null || targetPageNum === page.pageNumber) continue;
 
-        // Create edges between source divisions and target divisions
-        for (const sd of sourceDivs) {
-          for (const td of targetDivs) {
-            if (sd === td) continue;
-            const [lo, hi] = sd < td ? [sd, td] : [td, sd];
-            const key = `${lo}|${hi}`;
-            // Only create cross-ref edge if there is not already a
-            // co-occurrence edge between these divisions on this page pair.
-            if (!crossEdgeMap.has(key)) {
-              crossEdgeMap.set(key, { weight: 0, pages: new Set() });
-            }
-            const entry = crossEdgeMap.get(key)!;
-            entry.weight += 1;
-            entry.pages.add(page.pageNumber);
+      const targetDivs = pageDivisions.get(targetPageNum);
+      if (!targetDivs) continue;
+
+      // Create edges between source divisions and target page's divisions
+      for (const sd of sourceDivs) {
+        for (const td of targetDivs) {
+          if (sd === td) continue;
+          const [lo, hi] = sd < td ? [sd, td] : [td, sd];
+          const key = `${lo}|${hi}`;
+          if (!crossEdgeMap.has(key)) {
+            crossEdgeMap.set(key, { weight: 0, pages: new Set() });
           }
+          const entry = crossEdgeMap.get(key)!;
+          entry.pages.add(page.pageNumber);
+          entry.weight = entry.pages.size; // weight = unique page count
         }
       }
     }

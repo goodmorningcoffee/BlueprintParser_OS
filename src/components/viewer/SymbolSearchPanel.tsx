@@ -125,6 +125,10 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
           multiScale: store.symbolSearchConfig.multiScale,
           useSiftFallback: store.symbolSearchConfig.useSiftFallback,
           searchPages: store.symbolSearchConfig.searchPages,
+          scaleMin: store.symbolSearchConfig.scaleMin,
+          scaleMax: store.symbolSearchConfig.scaleMax,
+          nmsThreshold: store.symbolSearchConfig.nmsThreshold,
+          maxMatchesPerPage: store.symbolSearchConfig.maxMatchesPerPage,
         }),
       });
 
@@ -322,6 +326,100 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
             <span className="text-[10px] text-[var(--fg)]">SIFT fallback</span>
             <span className="text-[9px] text-[var(--muted)]">— rotation-invariant</span>
           </label>
+
+          {/* Advanced Options */}
+          <details className="group">
+            <summary className="text-[10px] text-[var(--muted)] cursor-pointer hover:text-[var(--fg)] select-none list-none flex items-center gap-1">
+              <svg className="w-3 h-3 transition-transform group-open:rotate-90" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4.5 2.5l3 3.5-3 3.5"/></svg>
+              Advanced Options
+            </summary>
+            <div className="mt-1.5 space-y-2 pl-1">
+              {/* Min scale */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-[var(--muted)]">Min scale</span>
+                  <span className="text-[10px] text-cyan-400 font-medium">
+                    {symbolSearchConfig.scaleMin.toFixed(2)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="30"
+                  max="100"
+                  step="5"
+                  value={symbolSearchConfig.scaleMin * 100}
+                  onChange={(e) => setSymbolSearchConfig({ scaleMin: Number(e.target.value) / 100 })}
+                  className="w-full h-1 bg-[var(--border)] rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                />
+              </div>
+
+              {/* Max scale */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-[var(--muted)]">Max scale</span>
+                  <span className="text-[10px] text-cyan-400 font-medium">
+                    {symbolSearchConfig.scaleMax.toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="30"
+                  step="1"
+                  value={symbolSearchConfig.scaleMax * 10}
+                  onChange={(e) => setSymbolSearchConfig({ scaleMax: Number(e.target.value) / 10 })}
+                  className="w-full h-1 bg-[var(--border)] rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                />
+              </div>
+
+              {/* NMS threshold */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-[var(--muted)]">NMS threshold</span>
+                  <span className="text-[10px] text-cyan-400 font-medium">
+                    {symbolSearchConfig.nmsThreshold.toFixed(2)}
+                  </span>
+                </div>
+                <div className="text-[9px] text-[var(--muted)]">duplicate suppression</div>
+                <input
+                  type="range"
+                  min="10"
+                  max="80"
+                  step="5"
+                  value={symbolSearchConfig.nmsThreshold * 100}
+                  onChange={(e) => setSymbolSearchConfig({ nmsThreshold: Number(e.target.value) / 100 })}
+                  className="w-full h-1 bg-[var(--border)] rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                />
+              </div>
+
+              {/* Max results/page */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-[var(--muted)]">Max results/page</span>
+                  <span className="text-[10px] text-cyan-400 font-medium">
+                    {symbolSearchConfig.maxMatchesPerPage}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="200"
+                  step="10"
+                  value={symbolSearchConfig.maxMatchesPerPage}
+                  onChange={(e) => setSymbolSearchConfig({ maxMatchesPerPage: Number(e.target.value) })}
+                  className="w-full h-1 bg-[var(--border)] rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                />
+              </div>
+
+              {/* Reset to defaults */}
+              <button
+                onClick={() => setSymbolSearchConfig({ scaleMin: 0.8, scaleMax: 1.5, nmsThreshold: 0.3, maxMatchesPerPage: 50 })}
+                className="text-[9px] text-cyan-400/70 hover:text-cyan-400 underline underline-offset-2"
+              >
+                Reset to defaults
+              </button>
+            </div>
+          </details>
 
           {/* Page scope */}
           <div className="space-y-1">

@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 interface UserItem {
   id: string;
   username: string;
@@ -13,7 +15,7 @@ interface UsersTabProps {
   currentEmail: string;
   newUser: { username: string; email: string; password: string; role: string };
   setNewUser: (u: { username: string; email: string; password: string; role: string }) => void;
-  onCreateUser: () => void;
+  onCreateUser: () => Promise<void> | void;
   onToggleCanRunModels: (userId: string, canRunModels: boolean) => void;
   onDeleteUser: (userId: string, username: string) => void;
 }
@@ -21,6 +23,32 @@ interface UsersTabProps {
 export default function UsersTab({
   users, currentEmail, newUser, setNewUser, onCreateUser, onToggleCanRunModels, onDeleteUser,
 }: UsersTabProps) {
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [formSuccess, setFormSuccess] = useState("");
+
+  const handleCreate = async () => {
+    setFormError("");
+    setFormSuccess("");
+    if (!newUser.username || !newUser.email || !newUser.password) {
+      setFormError("Username, email, and password are required");
+      return;
+    }
+    if (newUser.password.length < 8) {
+      setFormError("Password must be at least 8 characters");
+      return;
+    }
+    setCreatingUser(true);
+    try {
+      await onCreateUser();
+      setFormSuccess("User created");
+      setTimeout(() => setFormSuccess(""), 3000);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Failed to create user");
+    }
+    setCreatingUser(false);
+  };
+
   return (
     <div className="space-y-6">
       <section>
@@ -105,11 +133,14 @@ export default function UsersTab({
               <option value="admin">Admin</option>
             </select>
           </div>
+          {formError && <div className="text-xs text-red-400">{formError}</div>}
+          {formSuccess && <div className="text-xs text-green-400">{formSuccess}</div>}
           <button
-            onClick={onCreateUser}
-            className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)]"
+            onClick={handleCreate}
+            disabled={creatingUser}
+            className="px-4 py-1.5 text-sm bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] disabled:opacity-40"
           >
-            Create User
+            {creatingUser ? "Creating..." : "Create User"}
           </button>
         </div>
       </section>
