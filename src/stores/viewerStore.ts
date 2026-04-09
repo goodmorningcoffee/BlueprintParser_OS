@@ -263,6 +263,13 @@ interface ViewerState {
   setTableParseRegion: (bbox: [number, number, number, number] | null) => void;
   tableParsedGrid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[] } | null;
   setTableParsedGrid: (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[] } | null) => void;
+  tableCellStructure: {
+    cells: Array<{ bbox: [number, number, number, number]; row: number; col: number; rowSpan: number; colSpan: number; type: string; confidence: number; text: string; highlighted: boolean }>;
+    pageNumber: number;
+    regionBbox: [number, number, number, number];
+  } | null;
+  setTableCellStructure: (structure: ViewerState["tableCellStructure"]) => void;
+  toggleCellHighlight: (row: number, col: number) => void;
   tableParseColumnBBs: [number, number, number, number][]; // user-drawn column BBs
   addTableParseColumnBB: (bb: [number, number, number, number]) => void;
   tableParseColumnNames: string[]; // user-defined names for each column
@@ -740,6 +747,19 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setTableParseRegion: (tableParseRegion) => set({ tableParseRegion }),
   tableParsedGrid: null,
   setTableParsedGrid: (tableParsedGrid) => set({ tableParsedGrid }),
+  tableCellStructure: null,
+  setTableCellStructure: (tableCellStructure) => set({ tableCellStructure }),
+  toggleCellHighlight: (row, col) => set((s) => {
+    if (!s.tableCellStructure) return {};
+    return {
+      tableCellStructure: {
+        ...s.tableCellStructure,
+        cells: s.tableCellStructure.cells.map((c) =>
+          c.row === row && c.col === col ? { ...c, highlighted: !c.highlighted } : c
+        ),
+      },
+    };
+  }),
   tableParseColumnBBs: [],
   addTableParseColumnBB: (bb) =>
     set((s) => ({ tableParseColumnBBs: [...s.tableParseColumnBBs, bb] })),
