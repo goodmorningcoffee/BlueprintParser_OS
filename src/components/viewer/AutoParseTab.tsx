@@ -323,6 +323,9 @@ export default function AutoParseTab({
             onTagYoloClassChange={setTagYoloClass} onMapTags={handleMapTags} tagMappingDone={tagMappingDone}
             tagMappingCount={tagMappingCount} showUniqueCount />
 
+          {/* TATR Cell Structure Detection */}
+          <DetectCellStructureButton />
+
           <div className="flex gap-2 px-1">
             <button
               onClick={exportCsv}
@@ -374,6 +377,63 @@ export default function AutoParseTab({
         </div>
       )}
     </>
+  );
+}
+
+// ─── Detect Cell Structure Button (TATR) ─────────────────────
+function DetectCellStructureButton() {
+  const { projectId } = useProject();
+  const { pageNumber } = useNavigation();
+  const { tableParseRegion } = useTableParse();
+  const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
+  const setTableCellStructure = useViewerStore((s) => s.setTableCellStructure);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const hasStructure = tableCellStructure?.pageNumber === pageNumber;
+
+  async function handleDetect() {
+    if (!tableParseRegion || !projectId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await fetch("/api/table-structure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, pageNumber, regionBbox: tableParseRegion }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) {
+        setError(data.error || `HTTP ${resp.status}`);
+        return;
+      }
+      setTableCellStructure({
+        cells: (data.cells || []).map((c: any) => ({ ...c, text: c.text || "", highlighted: false })),
+        pageNumber,
+        regionBbox: tableParseRegion,
+      });
+    } catch (err: any) {
+      setError(err.message || "Failed to detect cell structure");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="px-1">
+      <button
+        onClick={hasStructure ? () => setTableCellStructure(null) : handleDetect}
+        disabled={loading || !tableParseRegion}
+        className={`w-full text-xs px-3 py-1.5 rounded border ${
+          hasStructure
+            ? "border-cyan-500/40 text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20"
+            : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-cyan-500/30"
+        } disabled:opacity-40`}
+      >
+        {loading ? "Detecting..." : hasStructure ? `Cell Structure (${tableCellStructure!.cells.length} cells) ✕` : "Detect Cell Structure"}
+      </button>
+      {error && <div className="text-[9px] text-red-400 mt-1 px-1">{error}</div>}
+    </div>
   );
 }
 

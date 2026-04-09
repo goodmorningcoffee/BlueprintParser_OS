@@ -120,6 +120,8 @@ export default memo(function AnnotationOverlay({
 
   const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
   const llmHighlight = useViewerStore((s) => s.llmHighlight);
+  const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
+  const toggleCellHighlight = useViewerStore((s) => s.toggleCellHighlight);
   const annotations = useViewerStore((s) => s.annotations);
   const addAnnotation = useViewerStore((s) => s.addAnnotation);
   const removeAnnotation = useViewerStore((s) => s.removeAnnotation);
