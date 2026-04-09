@@ -1,11 +1,11 @@
 # ── Stage 1: Install dependencies ──────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:20-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --ignore-scripts
 
 # ── Stage 2: Build the Next.js app ────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -27,28 +27,40 @@ RUN npx esbuild scripts/process-worker.ts \
     --external:pg-native
 
 # ── Stage 3: Production runner ─────────────────────────────────
-FROM node:20-alpine AS runner
+# Using Debian slim instead of Alpine for full glibc compatibility
+# (required by img2table/polars, camelot, and future TATR/PyTorch)
+FROM node:20-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+RUN groupadd --system --gid 1001 nodejs && \
+    useradd --system --uid 1001 --no-create-home --gid nodejs nextjs
 
-# Install Ghostscript for PDF rasterization (required by processing pipeline)
-# Install Python 3, Tesseract OCR, and dependencies for keynote extraction
-RUN apk add --no-cache \
+# Install Ghostscript, Python 3, Tesseract OCR, and system libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ghostscript \
     python3 \
-    py3-pip \
-    py3-numpy \
-    py3-opencv \
+    python3-pip \
     tesseract-ocr \
-    tesseract-ocr-data-eng \
+    tesseract-ocr-eng \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages --no-cache-dir \
-    pytesseract==0.3.13
+    numpy \
+    opencv-python-headless \
+    pytesseract==0.3.13 \
+    pdfplumber \
+    pdfminer.six \
+    tabulate \
+    openpyxl \
+    camelot-py[base] \
+    img2table
 
 # Copy standalone output
 COPY --from=builder /app/public ./public

@@ -206,9 +206,9 @@ cv2.imwrite(cfg["dst"], crop)
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          // Build scale list from min/max range
+          // Build scale list from min/max range (0.1 step to keep it fast)
           const scales: number[] = [];
-          for (let s = scaleMin; s <= scaleMax + 0.001; s += 0.05) {
+          for (let s = scaleMin; s <= scaleMax + 0.001; s += 0.1) {
             scales.push(Math.round(s * 100) / 100);
           }
           if (scales.length === 0) scales.push(1.0);

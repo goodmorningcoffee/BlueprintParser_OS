@@ -133,7 +133,6 @@ export default function AutoParseTab({
           ...(proposedRegions.length === 1 && firstRowBoundaries ? { rowBoundaries: firstRowBoundaries } : {}),
         };
         setTableParsedGrid(grid);
-        detectCsiAndPersist(grid);
         // Set tableParseRegion to merged bbox so TableCompareModal can crop the image
         const allRegions = proposedRegions;
         setTableParseRegion([
@@ -305,12 +304,16 @@ export default function AutoParseTab({
             <div className="px-1 space-y-0.5">
               <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide">Methods</div>
               {autoParseMethodInfo.map((m: any, i: number) => (
-                <div key={i} className="text-[10px] flex items-center justify-between">
+                <div key={i} className="text-[10px] flex items-center justify-between gap-2">
                   <span className={m.confidence > 0 ? "text-[var(--fg)]" : "text-[var(--muted)]/50"}>
                     {m.name}
                   </span>
-                  <span className={m.confidence > 0.5 ? "text-green-400" : m.confidence > 0 ? "text-yellow-400" : "text-[var(--muted)]/30"}>
-                    {m.confidence > 0 ? `${Math.round(m.confidence * 100)}% (${m.gridShape[0]}r×${m.gridShape[1]}c)` : "no result"}
+                  <span className={m.confidence > 0.5 ? "text-green-400" : m.confidence > 0 ? "text-yellow-400" : m.error ? "text-red-400/70" : "text-[var(--muted)]/30"}>
+                    {m.confidence > 0
+                      ? `${Math.round(m.confidence * 100)}% (${m.gridShape[0]}r×${m.gridShape[1]}c)`
+                      : m.error
+                      ? <span title={m.error}>error</span>
+                      : "no result"}
                   </span>
                 </div>
               ))}
