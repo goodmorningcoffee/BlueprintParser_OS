@@ -177,7 +177,10 @@ export const pages = pgTable(
       .references(() => projects.id),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_pages_project").on(table.projectId)]
+  (table) => [
+    index("idx_pages_project").on(table.projectId),
+    index("idx_pages_project_page").on(table.projectId, table.pageNumber),
+  ]
 );
 
 // ─── Annotations ─────────────────────────────────────────────
@@ -205,6 +208,29 @@ export const annotations = pgTable(
   (table) => [
     index("idx_annotations_project").on(table.projectId),
     index("idx_annotations_name").on(table.name),
+    index("idx_annotations_project_page").on(table.projectId, table.pageNumber),
+  ]
+);
+
+// ─── Takeoff Groups ─────────────────────────────────────────
+export const takeoffGroups = pgTable(
+  "takeoff_groups",
+  {
+    id: serial("id").primaryKey(),
+    projectId: integer("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    kind: varchar("kind", { length: 20 }).notNull(), // "count" | "area" | "linear"
+    color: varchar("color", { length: 20 }),
+    csiCode: varchar("csi_code", { length: 20 }),
+    sortOrder: integer("sort_order").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("idx_takeoff_groups_project").on(table.projectId),
+    index("idx_takeoff_groups_project_kind").on(table.projectId, table.kind),
   ]
 );
 
@@ -216,6 +242,7 @@ export const takeoffItems = pgTable(
     projectId: integer("project_id")
       .notNull()
       .references(() => projects.id),
+    groupId: integer("group_id").references(() => takeoffGroups.id, { onDelete: "set null" }),
     name: varchar("name", { length: 255 }).notNull(),
     shape: varchar("shape", { length: 50 }).notNull(),
     color: varchar("color", { length: 20 }).notNull(),
@@ -276,14 +303,50 @@ export const processingJobs = pgTable(
 );
 
 // ─── Model Registry ──────────────────────────────────────────
-export const models = pgTable("models", {
-  id: serial("id").primaryKey(),
-  name: varchar("name", { length: 255 }).notNull(),
-  type: varchar("type", { length: 50 }).notNull(),
-  s3Path: text("s3_path").notNull(),
-  config: jsonb("config").$type<Record<string, unknown>>(),
-  isDefault: boolean("is_default").default(false).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+export const models = pgTable(
+  "models",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id),
+    name: varchar("name", { length: 255 }).notNull(),
+    type: varchar("type", { length: 50 }).notNull(),
+    s3Path: text("s3_path").notNull(),
+    config: jsonb("config").$type<Record<string, unknown>>(),
+    isDefault: boolean("is_default").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [index("idx_models_company").on(table.companyId)]
+);
+
+// ─── Model Access (which companies can use which models) ────
+export const modelAccess = pgTable(
+  "model_access",
+  {
+    id: serial("id").primaryKey(),
+    modelId: integer("model_id")
+      .notNull()
+      .references(() => models.id, { onDelete: "cascade" }),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").default(true).notNull(),
+    grantedBy: integer("granted_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("idx_model_access_company").on(table.companyId),
+    index("idx_model_access_model").on(table.modelId),
+  ]
+);
+
+// ─── App Settings (global key-value, root admin configurable) ─
+export const appSettings = pgTable("app_settings", {
+  key: varchar("key", { length: 100 }).primaryKey(),
+  value: jsonb("value").$type<Record<string, unknown>>().notNull(),
+  updatedBy: integer("updated_by").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
 // ─── Audit Log ──────────────────────────────────────────────

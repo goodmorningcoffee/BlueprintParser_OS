@@ -39,7 +39,7 @@ export default function CsiPanel() {
   const [expandedDivisions, setExpandedDivisions] = useState<Record<string, boolean>>({});
   const [allExpanded, setAllExpanded] = useState(false);
   const [scope, setScope] = useState<"page" | "project">("page");
-  const [showGraph, setShowGraph] = useState(false);
+  const [showGraph, setShowGraph] = useState(true);
 
   const csiGraph = projectIntelligenceData?.csiGraph as any;
 
@@ -162,7 +162,7 @@ export default function CsiPanel() {
                   <div className="text-[9px] text-[var(--muted)] font-medium">Strongest connections:</div>
                   {[...csiGraph.edges].sort((a: any, b: any) => b.weight - a.weight).slice(0, 3).map((e: any, i: number) => (
                     <div key={i} className="text-[10px] text-[var(--fg)]">
-                      {e.source} ↔ {e.target} <span className="text-[var(--muted)]">({e.weight} pages)</span>
+                      {e.source} ↔ {e.target} <span className="text-[var(--muted)]">({e.pages?.length ?? e.weight} pages)</span>
                     </div>
                   ))}
                 </div>
@@ -177,7 +177,7 @@ export default function CsiPanel() {
               <HelpTooltip id="csi-network-graph">
                 <button
                   onClick={() => window.open(`/project/${publicId}/csi-graph`, "_blank")}
-                  className="text-[10px] text-cyan-400 hover:text-cyan-300 underline"
+                  className="text-[12px] text-sky-300 hover:text-sky-200 font-medium underline"
                 >
                   Open Full Graph →
                 </button>

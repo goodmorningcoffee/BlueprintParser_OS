@@ -14,6 +14,10 @@ export interface MethodResult {
   rows: Record<string, string>[];
   confidence: number;
   tagColumn?: string;
+  /** N+1 normalized X coords: [regionMinX, divider1, …, regionMaxX] for N columns */
+  colBoundaries?: number[];
+  /** M+1 normalized Y coords for M visible rows (header + data) */
+  rowBoundaries?: number[];
 }
 
 export interface MergedGrid {
@@ -23,6 +27,10 @@ export interface MergedGrid {
   confidence: number;
   methods: { name: string; confidence: number; gridShape: [number, number] }[];
   disagreements: { row: number; col: string; values: { method: string; value: string }[] }[];
+  /** N+1 normalized X coords for column edges */
+  colBoundaries?: number[];
+  /** M+1 normalized Y coords for row edges (header + data rows) */
+  rowBoundaries?: number[];
 }
 
 /**
@@ -37,7 +45,12 @@ export interface MergedGrid {
 const MAX_ROWS = 10000;
 const MAX_COLS = 500;
 
-export function mergeGrids(results: MethodResult[]): MergedGrid {
+export interface MergeOptions {
+  editDistanceThreshold?: number;
+}
+
+export function mergeGrids(results: MethodResult[], options?: MergeOptions): MergedGrid {
+  const editDistThreshold = options?.editDistanceThreshold ?? 2;
   // Filter out empty results and enforce size limits
   const valid = results
     .filter((r) => r.headers.length > 0 && r.rows.length > 0)
@@ -105,7 +118,7 @@ export function mergeGrids(results: MethodResult[]): MergedGrid {
       } else if (otherValues.length > 0) {
         // Check agreement
         const agrees = otherValues.every(
-          (v) => v.value === baseVal || editDistance(v.value, baseVal) <= 2
+          (v) => v.value === baseVal || editDistance(v.value, baseVal) <= editDistThreshold
         );
         if (agrees) {
           agreementCount++;
@@ -137,6 +150,10 @@ export function mergeGrids(results: MethodResult[]): MergedGrid {
   // Pick tag column: prefer base, else first method that found one
   const tagColumn = base.tagColumn || sorted.find((r) => r.tagColumn)?.tagColumn;
 
+  // Pick boundaries: prefer base, else first method that has them
+  const colBoundaries = base.colBoundaries || sorted.find((r) => r.colBoundaries)?.colBoundaries;
+  const rowBoundaries = base.rowBoundaries || sorted.find((r) => r.rowBoundaries)?.rowBoundaries;
+
   return {
     headers,
     rows,
@@ -148,6 +165,8 @@ export function mergeGrids(results: MethodResult[]): MergedGrid {
       gridShape: [r.rows.length, r.headers.length],
     })),
     disagreements,
+    colBoundaries,
+    rowBoundaries,
   };
 }
 

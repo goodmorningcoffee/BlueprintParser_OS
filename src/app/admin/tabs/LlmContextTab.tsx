@@ -150,6 +150,7 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
         ].map((tab) => (
           <button
             key={tab.id}
+            data-demo-nav
             onClick={() => setActivePanel(tab.id)}
             className={`px-4 py-2 text-xs font-medium transition-colors ${
               activePanel === tab.id

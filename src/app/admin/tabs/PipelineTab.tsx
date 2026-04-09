@@ -49,6 +49,7 @@ const REPROCESS_SCOPES = [
   { id: "full", label: "Full (CSI + Text Annotations)", description: "Re-detect CSI codes and text annotations on all pages" },
   { id: "intelligence", label: "Intelligence (Heuristics + Tables)", description: "Re-run page analysis, heuristics, table classification, summaries" },
   { id: "page-names", label: "Page Names", description: "Re-extract drawing numbers (optionally using YOLO title blocks)" },
+  { id: "thumbnails", label: "Regenerate Thumbnails", description: "Re-rasterize 72 DPI thumbnails for all pages and upload to S3/CloudFront" },
 ];
 
 export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, projects }: PipelineTabProps) {

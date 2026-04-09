@@ -34,6 +34,8 @@ export default memo(function ParseRegionLayer({
   const keynoteRowBBs = useViewerStore((s) => s.keynoteRowBBs);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
+  const hiddenParsedRegionIds = useViewerStore((s) => s.hiddenParsedRegionIds);
+  const parsedRegionColorMode = useViewerStore((s) => s.parsedRegionColorMode);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -145,6 +147,7 @@ export default memo(function ParseRegionLayer({
     if (intel?.parsedRegions) {
       for (const region of intel.parsedRegions) {
         if (!region.bbox) continue;
+        if (region.id && hiddenParsedRegionIds.has(region.id)) continue;
         const color = region.data?.color || (region.type === "keynote" ? "#f59e0b" : "#e879a0");
         const opacityPct = region.data?.opacity ?? 20;
         const [minX, minY, maxX, maxY] = region.bbox;
@@ -169,12 +172,79 @@ export default memo(function ParseRegionLayer({
           ctx.fillStyle = "#fff";
           ctx.fillText(label, x + 4, y - 3);
         }
+
+        // ── Cell grid overlay ─────────────────────────────────
+        const headers = region.data?.headers as string[] | undefined;
+        const dataRows = region.data?.rows as Record<string, string>[] | undefined;
+        if (headers && headers.length > 0 && dataRows && dataRows.length > 0) {
+          let colB = region.data?.colBoundaries as number[] | undefined;
+          let rowB = region.data?.rowBoundaries as number[] | undefined;
+
+          // Fallback: uniform grid if no stored boundaries
+          if (!colB || colB.length !== headers.length + 1) {
+            const step = (maxX - minX) / headers.length;
+            colB = Array.from({ length: headers.length + 1 }, (_, i) => minX + step * i);
+          }
+          const hasHeaderRow = rowB ? rowB.length - 1 > dataRows.length : true;
+          const totalRows = hasHeaderRow ? dataRows.length + 1 : dataRows.length;
+          if (!rowB || rowB.length !== totalRows + 1) {
+            const step = (maxY - minY) / (dataRows.length + 1);
+            rowB = Array.from({ length: dataRows.length + 2 }, (_, i) => minY + step * i);
+          }
+
+          // Draw cell fills based on color mode
+          if (parsedRegionColorMode !== "none") {
+            for (let ri = 0; ri < totalRows; ri++) {
+              for (let ci = 0; ci < headers.length; ci++) {
+                const cx = colB[ci] * width;
+                const cy = rowB[ri] * height;
+                const cw = (colB[ci + 1] - colB[ci]) * width;
+                const ch = (rowB[ri + 1] - rowB[ri]) * height;
+
+                if (ri === 0 && hasHeaderRow) {
+                  // Header row — subtle white tint
+                  ctx.fillStyle = "rgba(255,255,255,0.04)";
+                } else {
+                  const dataRi = hasHeaderRow ? ri - 1 : ri;
+                  const isEven = parsedRegionColorMode === "checkerboard"
+                    ? (dataRi + ci) % 2 === 0
+                    : dataRi % 2 === 0;
+                  ctx.fillStyle = isEven
+                    ? "rgba(245,158,11,0.06)"   // amber
+                    : "rgba(139,92,246,0.06)";   // violet
+                }
+                ctx.fillRect(cx, cy, cw, ch);
+              }
+            }
+          }
+
+          // Draw grid lines
+          ctx.strokeStyle = "rgba(255,255,255,0.12)";
+          ctx.lineWidth = 0.5;
+          ctx.setLineDash([]);
+          // Vertical column dividers
+          for (let ci = 1; ci < colB.length - 1; ci++) {
+            const lx = colB[ci] * width;
+            ctx.beginPath();
+            ctx.moveTo(lx, y);
+            ctx.lineTo(lx, y + h);
+            ctx.stroke();
+          }
+          // Horizontal row dividers
+          for (let ri = 1; ri < rowB.length - 1; ri++) {
+            const ly = rowB[ri] * height;
+            ctx.beginPath();
+            ctx.moveTo(x, ly);
+            ctx.lineTo(x + w, ly);
+            ctx.stroke();
+          }
+        }
       }
     }
   }, [width, height, showParsedRegions,
     showTableParsePanel, tableParseRegion, tableParseColumnBBs, tableParseRowBBs,
     showKeynoteParsePanel, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs,
-    pageNumber, pageIntelligence]);
+    pageNumber, pageIntelligence, hiddenParsedRegionIds, parsedRegionColorMode]);
 
   const intel = pageIntelligence[pageNumber] as any;
   const hasSavedRegions = intel?.parsedRegions?.length > 0;
@@ -198,6 +268,7 @@ export default memo(function ParseRegionLayer({
         pointerEvents: "none",
         transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
         transformOrigin: "top left",
+        willChange: "transform",
         zIndex: 14,
       }}
     />

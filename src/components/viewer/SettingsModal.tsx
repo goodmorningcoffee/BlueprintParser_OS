@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 
 type ThemeId = "midnight" | "slate" | "graphite";
-type UiScale = "compact" | "default" | "large";
+type UiScale = "compact" | "default" | "large" | "xlarge";
 
 const THEMES: { id: ThemeId; label: string; description: string }[] = [
   { id: "midnight", label: "Midnight", description: "Darkest — low light" },
@@ -15,6 +15,7 @@ const SCALES: { id: UiScale; label: string }[] = [
   { id: "compact", label: "Compact" },
   { id: "default", label: "Default" },
   { id: "large", label: "Large" },
+  { id: "xlarge", label: "X-Large" },
 ];
 
 function getStoredTheme(): ThemeId {

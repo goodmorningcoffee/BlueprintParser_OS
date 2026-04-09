@@ -280,6 +280,7 @@ export default memo(function DrawingPreviewLayer({
         pointerEvents: "none",
         transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
         transformOrigin: "top left",
+        willChange: "transform",
         zIndex: 15,
       }}
     />

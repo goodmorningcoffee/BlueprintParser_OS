@@ -103,10 +103,8 @@ function findYoloMatches(
       continue;
     }
 
-    // Fuzzy match: edit distance <= 1, but only for text >= 3 chars
-    // Short text (1-2 chars) like single digits must match exactly —
-    // otherwise "3" matches "8" (edit distance 1) which is wrong
-    if (normalizedTag.length >= 3 && candidateText.length >= 3 && editDistance(candidateText, normalizedTag) <= 1) {
+    // Fuzzy match: only OCR-plausible errors (D-Ol ↔ D-01), NOT D-01 ↔ D-02
+    if (isFuzzyCandidate(candidateText, normalizedTag)) {
       instances.push({
         pageNumber: ann.pageNumber,
         annotationId: ann.id,
@@ -141,7 +139,7 @@ function findFreeFloatingMatches(
       // Single-word tag: scan each word
       for (const w of words) {
         const wText = w.text.toUpperCase().trim();
-        if (wText === normalizedTag || (normalizedTag.length >= 3 && wText.length >= 3 && editDistance(wText, normalizedTag) <= 1)) {
+        if (wText === normalizedTag || isFuzzyCandidate(wText, normalizedTag)) {
           const mm = ltwh2minmax(w.bbox);
           instances.push({
             pageNumber: pn,
@@ -156,7 +154,7 @@ function findFreeFloatingMatches(
       for (let i = 0; i <= words.length - tagWords.length; i++) {
         const window = words.slice(i, i + tagWords.length);
         const windowText = window.map((w) => w.text).join(" ").toUpperCase().trim();
-        if (windowText === normalizedTag || (normalizedTag.length >= 3 && windowText.length >= 3 && editDistance(windowText, normalizedTag) <= 1)) {
+        if (windowText === normalizedTag || isFuzzyCandidate(windowText, normalizedTag)) {
           // Merge bboxes of all words in the match
           const minX = Math.min(...window.map((w) => w.bbox[0]));
           const minY = Math.min(...window.map((w) => w.bbox[1]));
@@ -298,4 +296,62 @@ function editDistance(a: string, b: string): number {
     prev = curr;
   }
   return prev[lb];
+}
+
+/**
+ * Characters that OCR commonly confuses. Keys map to confusable alternatives.
+ * Used to decide whether a single-char diff between two tags is a plausible
+ * OCR error (D-01 vs D-0l) vs. a different tag number (D-01 vs D-02).
+ */
+const OCR_CONFUSIONS: Record<string, string[]> = {
+  "0": ["O", "Q", "D"], "O": ["0", "Q", "D"], "Q": ["0", "O"], "D": ["0", "O"],
+  "1": ["l", "I", "|", "T"], "l": ["1", "I", "|"], "I": ["1", "l", "|"],
+  "5": ["S"], "S": ["5"],
+  "6": ["G"], "G": ["6"],
+  "8": ["B"], "B": ["8"],
+  "2": ["Z"], "Z": ["2"],
+  "9": ["g", "q"], "g": ["9", "q"], "q": ["9", "g"],
+};
+
+function isOcrConfusable(a: string, b: string): boolean {
+  return OCR_CONFUSIONS[a]?.includes(b) ?? false;
+}
+
+/**
+ * True if two tag strings differ by exactly one OCR-plausible error.
+ * Replaces blanket editDistance <= 1 fuzzy matching, which would match
+ * D-01 to D-02, D-03, etc. (every sequential tag in a schedule).
+ *
+ * Allows: 0↔O, 1↔l/I, 5↔S, etc. (same-length OCR substitution) + dropped hyphen.
+ * Rejects: digit↔digit substitution, letter-suffix differences, multiple diffs.
+ */
+export function isFuzzyCandidate(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (a.length < 3 || b.length < 3) return false;
+  const lenDiff = Math.abs(a.length - b.length);
+  if (lenDiff > 1) return false;
+
+  // Same length: find the one substitution position
+  if (a.length === b.length) {
+    let diffIdx = -1;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) {
+        if (diffIdx !== -1) return false; // > 1 diff
+        diffIdx = i;
+      }
+    }
+    if (diffIdx === -1) return true;
+    return isOcrConfusable(a[diffIdx], b[diffIdx]);
+  }
+
+  // Insertion/deletion of exactly one char
+  const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
+  let i = 0;
+  while (i < shorter.length && shorter[i] === longer[i]) i++;
+  // Verify the remainder matches after skipping the inserted char
+  for (let j = i; j < shorter.length; j++) {
+    if (shorter[j] !== longer[j + 1]) return false;
+  }
+  // Only allow dropped/added hyphens (D-01 ↔ D01)
+  return longer[i] === "-";
 }

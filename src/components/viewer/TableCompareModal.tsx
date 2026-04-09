@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore } from "@/stores/viewerStore";
+import EditableGrid from "./EditableGrid";
 
 interface TableCompareModalProps {
   pdfDoc: PDFDocumentProxy;
@@ -28,17 +29,71 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const [croppedImageUrl, setCroppedImageUrl] = useState<string | null>(null);
   const [cropDimensions, setCropDimensions] = useState<{ w: number; h: number } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [modalSize, setModalSize] = useState({ w: 0, h: 0 });
+  const [imageZoom, setImageZoom] = useState(1.0);
 
-  // Active cell for editing + highlighting
+  // Active cell — owned by EditableGrid, mirrored here for image highlight rendering
   const [activeCell, setActiveCell] = useState<{ row: number; col: number } | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const [editingHeader, setEditingHeader] = useState<number | null>(null);
-  const [headerEditValue, setHeaderEditValue] = useState("");
+
+  // Initialize modal size on open
+  useEffect(() => {
+    if (tableParsedGrid && tableParseRegion) {
+      setModalSize({ w: window.innerWidth - 64, h: window.innerHeight - 64 });
+    }
+  }, [!!tableParsedGrid, !!tableParseRegion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startW = modalSize.w;
+    const startH = modalSize.h;
+    function onMove(ev: MouseEvent) {
+      setModalSize({
+        w: Math.max(500, Math.min(window.innerWidth - 32, startW + ev.clientX - startX)),
+        h: Math.max(350, Math.min(window.innerHeight - 32, startH + ev.clientY - startY)),
+      });
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [modalSize]);
 
   // Refs
   const highlightCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
-  const editInputRef = useRef<HTMLInputElement>(null);
+  const imageScrollRef = useRef<HTMLDivElement>(null);
+
+  // ─── Zoom helpers ───────────────────────────────────────
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 3.0;
+  const ZOOM_STEP = 1.2;
+
+  const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+
+  const handleZoomIn = useCallback(() => {
+    setImageZoom((z) => clampZoom(z * ZOOM_STEP));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setImageZoom((z) => clampZoom(z / ZOOM_STEP));
+  }, []);
+
+  const handleZoomFit = useCallback(() => {
+    setImageZoom(1.0);
+  }, []);
+
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      setImageZoom((z) => clampZoom(z * factor));
+    }
+  }, []);
 
   // ─── Cell word bboxes (computed once on open) ────────────
   // Maps "r{row}c{col}" to [minX, minY, maxX, maxY] relative to the crop region
@@ -178,10 +233,13 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     const canvas = highlightCanvasRef.current;
     if (!canvas || !cropDimensions || mode !== "side-by-side") return;
 
-    canvas.width = cropDimensions.w;
-    canvas.height = cropDimensions.h;
+    // Canvas sized to the zoomed image so highlights stay aligned
+    const cw = cropDimensions.w * imageZoom;
+    const ch = cropDimensions.h * imageZoom;
+    canvas.width = cw;
+    canvas.height = ch;
     const ctx = canvas.getContext("2d")!;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, cw, ch);
 
     if (!activeCell) return;
     const key = `r${activeCell.row}c${activeCell.col}`;
@@ -189,10 +247,10 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     if (!bbox) return;
 
     const [bMinX, bMinY, bMaxX, bMaxY] = bbox;
-    const x = bMinX * canvas.width;
-    const y = bMinY * canvas.height;
-    const w = (bMaxX - bMinX) * canvas.width;
-    const h = (bMaxY - bMinY) * canvas.height;
+    const x = bMinX * cw;
+    const y = bMinY * ch;
+    const w = (bMaxX - bMinX) * cw;
+    const h = (bMaxY - bMinY) * ch;
 
     // Magenta highlight
     ctx.fillStyle = "rgba(232, 121, 160, 0.25)";
@@ -200,7 +258,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     ctx.strokeStyle = "#e879a0";
     ctx.lineWidth = 2;
     ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
-  }, [activeCell, cellBboxes, cropDimensions, mode]);
+  }, [activeCell, cellBboxes, cropDimensions, mode, imageZoom]);
 
   // ─── Draw overlay canvas (Mode B) ────────────────────────
   useEffect(() => {
@@ -249,72 +307,40 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     }
   }, [mode, tableParsedGrid, cellBboxes, cropDimensions, overlayOpacity]);
 
-  // ─── Cell editing ─────────────────────────────────────────
-  const startEdit = useCallback((row: number, col: number) => {
+  // Cell edit handlers — delegated to EditableGrid which owns its own edit state
+  const handleCellChange = (rowIndex: number, column: string, value: string) => {
     if (!tableParsedGrid) return;
-    const header = tableParsedGrid.headers[col];
-    setActiveCell({ row, col });
-    setEditValue(tableParsedGrid.rows[row][header] || "");
-    setTimeout(() => editInputRef.current?.focus(), 30);
-  }, [tableParsedGrid]);
-
-  const commitEdit = useCallback(() => {
-    if (!activeCell || !tableParsedGrid) return;
-    const header = tableParsedGrid.headers[activeCell.col];
     const newRows = [...tableParsedGrid.rows];
-    newRows[activeCell.row] = { ...newRows[activeCell.row], [header]: editValue };
+    newRows[rowIndex] = { ...newRows[rowIndex], [column]: value };
     setTableParsedGrid({ ...tableParsedGrid, rows: newRows });
-  }, [activeCell, editValue, tableParsedGrid, setTableParsedGrid]);
+  };
 
-  const moveCell = useCallback((dRow: number, dCol: number) => {
-    if (!activeCell || !tableParsedGrid) return;
-    commitEdit();
-    let { row, col } = activeCell;
-    col += dCol;
-    if (col >= tableParsedGrid.headers.length) { col = 0; row++; }
-    if (col < 0) { col = tableParsedGrid.headers.length - 1; row--; }
-    row += dRow;
-    if (row >= tableParsedGrid.rows.length) row = 0;
-    if (row < 0) row = tableParsedGrid.rows.length - 1;
-    startEdit(row, col);
-  }, [activeCell, tableParsedGrid, commitEdit, startEdit]);
-
-  const handleCellKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Tab") {
-      e.preventDefault();
-      moveCell(0, e.shiftKey ? -1 : 1);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      moveCell(1, 0);
-    } else if (e.key === "Escape") {
-      setActiveCell(null);
-    }
-  }, [moveCell]);
-
-  // Header editing
-  const commitHeaderEdit = useCallback(() => {
-    if (editingHeader === null || !tableParsedGrid) return;
-    const oldH = tableParsedGrid.headers[editingHeader];
-    const newH = headerEditValue.trim() || `Column ${editingHeader + 1}`;
+  const handleHeaderRename = (colIndex: number, newName: string) => {
+    if (!tableParsedGrid) return;
+    const oldH = tableParsedGrid.headers[colIndex];
     const newHeaders = [...tableParsedGrid.headers];
-    newHeaders[editingHeader] = newH;
+    newHeaders[colIndex] = newName;
     const newRows = tableParsedGrid.rows.map((row) => {
       const r: Record<string, string> = {};
-      for (const [k, v] of Object.entries(row)) r[k === oldH ? newH : k] = v;
+      for (const [k, v] of Object.entries(row)) r[k === oldH ? newName : k] = v;
       return r;
     });
-    setTableParsedGrid({ ...tableParsedGrid, headers: newHeaders, rows: newRows, tagColumn: tableParsedGrid.tagColumn === oldH ? newH : tableParsedGrid.tagColumn });
-    setEditingHeader(null);
-  }, [editingHeader, headerEditValue, tableParsedGrid, setTableParsedGrid]);
+    setTableParsedGrid({
+      ...tableParsedGrid,
+      headers: newHeaders,
+      rows: newRows,
+      tagColumn: tableParsedGrid.tagColumn === oldH ? newName : tableParsedGrid.tagColumn,
+    });
+  };
 
-  // Escape key closes modal
+  // Escape key closes modal when no cell is being edited
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !activeCell && editingHeader === null) toggleModal();
+      if (e.key === "Escape" && !activeCell) toggleModal();
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [toggleModal, activeCell, editingHeader]);
+  }, [toggleModal, activeCell]);
 
   if (!tableParsedGrid || !tableParseRegion) return null;
 
@@ -322,9 +348,10 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const rows = tableParsedGrid.rows;
 
   return (
-    <div className="fixed inset-0 bg-black/75 z-50 flex flex-col" onClick={() => { if (!activeCell && editingHeader === null) toggleModal(); }}>
+    <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center" onClick={() => { if (!activeCell) toggleModal(); }}>
       <div
-        className="flex-1 flex flex-col m-4 bg-[var(--bg)] border border-[var(--border)] rounded-xl overflow-hidden shadow-2xl"
+        className="relative flex flex-col bg-[var(--bg)] border border-[var(--border)] rounded-xl overflow-hidden shadow-2xl"
+        style={{ width: modalSize.w || "auto", height: modalSize.h || "auto" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header bar */}
@@ -375,18 +402,53 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
             </div>
           ) : mode === "side-by-side" ? (
             <>
-              {/* Left: Cropped original image */}
-              <div className="flex-1 overflow-auto bg-neutral-900 flex items-start justify-center p-4 relative">
-                {croppedImageUrl && (
-                  <div className="relative inline-block">
-                    <img src={croppedImageUrl} alt="Original table region" className="max-w-full max-h-full" />
-                    <canvas
-                      ref={highlightCanvasRef}
-                      className="absolute inset-0 pointer-events-none"
-                      style={{ width: "100%", height: "100%" }}
-                    />
-                  </div>
-                )}
+              {/* Left: Cropped original image with zoom controls */}
+              <div className="flex-1 flex flex-col overflow-hidden bg-neutral-900 relative">
+                {/* Zoom toolbar */}
+                <div className="flex items-center gap-1 px-3 py-1.5 border-b border-[var(--border)] bg-neutral-800/80">
+                  <button
+                    onClick={handleZoomOut}
+                    className="px-2 py-0.5 text-xs rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:bg-neutral-700"
+                    title="Zoom out"
+                  >
+                    &minus;
+                  </button>
+                  <span className="text-[10px] text-[var(--muted)] w-10 text-center select-none">
+                    {Math.round(imageZoom * 100)}%
+                  </span>
+                  <button
+                    onClick={handleZoomIn}
+                    className="px-2 py-0.5 text-xs rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:bg-neutral-700"
+                    title="Zoom in"
+                  >
+                    +
+                  </button>
+                  <button
+                    onClick={handleZoomFit}
+                    className="px-2 py-0.5 text-[10px] rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:bg-neutral-700 ml-1"
+                    title="Reset zoom to fit"
+                  >
+                    Fit
+                  </button>
+                </div>
+
+                {/* Scrollable + zoomable image container */}
+                <div
+                  ref={imageScrollRef}
+                  className="flex-1 overflow-auto p-4"
+                  onWheel={handleWheel}
+                >
+                  {croppedImageUrl && (
+                    <div className="relative inline-block" style={{ transformOrigin: "top left", transform: `scale(${imageZoom})` }}>
+                      <img src={croppedImageUrl} alt="Original table region" />
+                      <canvas
+                        ref={highlightCanvasRef}
+                        className="absolute top-0 left-0 pointer-events-none"
+                        style={{ width: "100%", height: "100%" }}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Divider */}
@@ -394,70 +456,24 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
 
               {/* Right: Editable grid */}
               <div className="flex-1 overflow-auto p-3">
-                <div className="overflow-x-auto">
-                  <table className="text-[11px] border-collapse w-full">
-                    <thead>
-                      <tr>
-                        <th className="border border-[var(--border)] px-2 py-1.5 bg-[var(--surface)] text-[var(--muted)] w-8 text-center">#</th>
-                        {headers.map((h, hi) => (
-                          <th
-                            key={hi}
-                            className={`border border-[var(--border)] px-2 py-1.5 text-left font-semibold bg-[var(--surface)] cursor-pointer hover:bg-[var(--surface-hover)] ${
-                              h === tableParsedGrid.tagColumn ? "text-green-400" : "text-[var(--fg)]"
-                            }`}
-                            onDoubleClick={() => { setEditingHeader(hi); setHeaderEditValue(h); }}
-                          >
-                            {editingHeader === hi ? (
-                              <input
-                                type="text"
-                                value={headerEditValue}
-                                onChange={(e) => setHeaderEditValue(e.target.value)}
-                                onBlur={commitHeaderEdit}
-                                onKeyDown={(e) => { if (e.key === "Enter") commitHeaderEdit(); if (e.key === "Escape") setEditingHeader(null); }}
-                                className="w-full bg-transparent border-b border-[var(--accent)] outline-none text-[11px]"
-                                autoFocus
-                              />
-                            ) : h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((row, ri) => (
-                        <tr key={ri} className={activeCell?.row === ri ? "bg-pink-500/5" : "hover:bg-[var(--surface-hover)]"}>
-                          <td className="border border-[var(--border)] px-2 py-1 text-[var(--muted)] text-center">{ri + 1}</td>
-                          {headers.map((h, ci) => {
-                            const isActive = activeCell?.row === ri && activeCell?.col === ci;
-                            return (
-                              <td
-                                key={ci}
-                                className={`border border-[var(--border)] px-2 py-1 cursor-pointer ${
-                                  isActive ? "bg-pink-500/10 outline outline-1 outline-pink-400" :
-                                  h === tableParsedGrid.tagColumn ? "text-green-300 font-mono" : "text-[var(--muted)]"
-                                }`}
-                                onClick={() => startEdit(ri, ci)}
-                              >
-                                {isActive ? (
-                                  <input
-                                    ref={editInputRef}
-                                    type="text"
-                                    value={editValue}
-                                    onChange={(e) => setEditValue(e.target.value)}
-                                    onBlur={commitEdit}
-                                    onKeyDown={handleCellKeyDown}
-                                    className="w-full bg-transparent outline-none text-[11px] text-[var(--fg)]"
-                                  />
-                                ) : (
-                                  <span className="truncate block max-w-[150px]" title={row[h] || ""}>{row[h] || ""}</span>
-                                )}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <EditableGrid
+                  headers={headers}
+                  rows={rows}
+                  tagColumn={tableParsedGrid.tagColumn}
+                  onCellChange={handleCellChange}
+                  onHeaderRename={handleHeaderRename}
+                  onActiveCellChange={setActiveCell}
+                  onCellDoubleClick={(_, __, header, value) => {
+                    if (!tableParsedGrid?.tagColumn || header !== tableParsedGrid.tagColumn) return;
+                    const store = useViewerStore.getState();
+                    const tag = store.yoloTags.find(
+                      (t) => t.tagText === value.trim() && t.source === "schedule"
+                    );
+                    if (tag && tag.instances.length > 0) {
+                      store.tagBrowseNavigate(tag.id, 0);
+                    }
+                  }}
+                />
               </div>
             </>
           ) : (
@@ -484,12 +500,9 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
               {mode === "side-by-side" ? "Click cell to edit. Double-click column header to rename." : "Blue overlay shows parsed text positions on original image."}
             </div>
             {mode === "side-by-side" && headers.some((h) => h.startsWith("Column ")) && (
-              <button
-                onClick={() => { setEditingHeader(0); setHeaderEditValue(headers[0]); }}
-                className="text-[9px] px-2 py-1 rounded border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 whitespace-nowrap"
-              >
-                Edit Column Names
-              </button>
+              <span className="text-[9px] px-2 py-1 rounded border border-amber-500/40 text-amber-300 whitespace-nowrap">
+                Double-click headers to rename
+              </span>
             )}
           </div>
           <button
@@ -564,6 +577,17 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
           >
             Done
           </button>
+        </div>
+
+        {/* Resize handle — bottom-right corner */}
+        <div
+          onMouseDown={onResizeStart}
+          className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize opacity-50 hover:opacity-100"
+          title="Drag to resize"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" className="text-[var(--muted)]">
+            <path d="M14 20L20 14M10 20L20 10M6 20L20 6" stroke="currentColor" strokeWidth="1.5" fill="none" />
+          </svg>
         </div>
       </div>
     </div>

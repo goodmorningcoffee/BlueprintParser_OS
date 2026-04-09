@@ -193,6 +193,7 @@ export default memo(function TextAnnotationOverlay({
         pointerEvents: mode === "pointer" ? "auto" : "none",
         transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
         transformOrigin: "top left",
+        willChange: "transform",
       }}
     />
   );

@@ -24,12 +24,12 @@ OUTPUT_DIR = "/opt/ml/processing/output"
 # Defaults if config.yaml is missing or incomplete
 DEFAULTS = {
     "model_file": "model.pt",
-    "confidence_threshold": 0.25,
-    "iou_threshold": 0.45,
+    "confidence_threshold": 0.10,
+    "iou_threshold": 0.60,
     "image_size": 1280,
     "device": "auto",
     "half_precision": True,
-    "max_detections": 1000,
+    "max_detections": 2000,
     "classes": [],
 }
 

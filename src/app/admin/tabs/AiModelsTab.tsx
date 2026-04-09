@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
 import LLMConfigSection from "../sections/LLMConfigSection";
 import S3Browser from "../sections/S3Browser";
@@ -12,6 +12,10 @@ interface ModelItem {
   type: string;
   config: any;
   isDefault: boolean;
+  companyId?: number;
+  companyName?: string;
+  enabled?: boolean;
+  shared?: boolean;
 }
 
 interface ProjectItem {
@@ -45,6 +49,7 @@ interface AiModelsTabProps {
   setCurrentTogglePass: (v: string) => void;
   onToggle: (toggle: "sagemaker" | "quota", enabled: boolean) => void;
   onSetTogglePassword: () => void;
+  isRootAdmin: boolean;
 }
 
 export default function AiModelsTab({
@@ -52,11 +57,94 @@ export default function AiModelsTab({
   uploading, uploadProgress, onUploadModel, onDeleteModel, onRunYolo, onLoadResults,
   toggles, togglePassword, setTogglePassword, toggleError, setToggleError,
   newTogglePass, setNewTogglePass, currentTogglePass, setCurrentTogglePass,
-  onToggle, onSetTogglePassword,
+  onToggle, onSetTogglePassword, isRootAdmin,
 }: AiModelsTabProps) {
+  // Model config edits (tracked locally until Save)
+  const [configEdits, setConfigEdits] = useState<Record<number, { confidence?: number; iou?: number; imageSize?: number }>>({});
+  const updateConfigEdit = (modelId: number, field: string, value: number) => {
+    setConfigEdits((prev) => ({ ...prev, [modelId]: { ...prev[modelId], [field]: value } }));
+  };
+  const saveModelConfig = async (modelId: number) => {
+    const edits = configEdits[modelId];
+    if (!edits) return;
+    await fetch("/api/admin/models", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: modelId, ...edits }),
+    });
+    setConfigEdits((prev) => { const next = { ...prev }; delete next[modelId]; return next; });
+  };
+
   // SageMaker job details state
   const [jobDetails, setJobDetails] = useState<Record<string, any>>({});
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
+
+  // Auto-fetch details for all running jobs (and refresh on each poll cycle)
+  useEffect(() => {
+    const runningJobNames = new Set<string>();
+    for (const projJobs of Object.values(yoloJobs)) {
+      for (const jobStr of Object.values(projJobs)) {
+        if (jobStr.startsWith("Running: ")) {
+          runningJobNames.add(jobStr.replace("Running: ", ""));
+        }
+      }
+    }
+    for (const jn of runningJobNames) {
+      fetch(`/api/admin/sagemaker-details?jobName=${encodeURIComponent(jn)}`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => { if (data) setJobDetails((prev) => ({ ...prev, [jn]: data })); })
+        .catch(() => {});
+    }
+  }, [yoloJobs]);
+
+  // Model access control state
+  const [companies, setCompanies] = useState<Array<{ id: number; name: string }>>([]);
+  const [sharingModelId, setSharingModelId] = useState<number | null>(null);
+  const [modelAccessMap, setModelAccessMap] = useState<Record<number, Array<{ companyId: number; companyName: string; enabled: boolean }>>>({});
+
+  // Fetch companies list for sharing dropdown (root admin only)
+  useEffect(() => {
+    if (!isRootAdmin) return;
+    fetch("/api/admin/companies")
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setCompanies(Array.isArray(data) ? data.map((c: any) => ({ id: c.id, name: c.name })) : []))
+      .catch(() => {});
+  }, [isRootAdmin]);
+
+  async function toggleModelAccess(modelId: number, companyId: number, enabled: boolean) {
+    const res = await fetch("/api/admin/models", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modelId, companyId, enabled }),
+    });
+    if (res.ok) {
+      // Update local access map
+      setModelAccessMap((prev) => {
+        const existing = prev[modelId] || [];
+        const idx = existing.findIndex((a) => a.companyId === companyId);
+        if (idx >= 0) {
+          const updated = [...existing];
+          updated[idx] = { ...updated[idx], enabled };
+          return { ...prev, [modelId]: updated };
+        }
+        const company = companies.find((c) => c.id === companyId);
+        return { ...prev, [modelId]: [...existing, { companyId, companyName: company?.name || "Unknown", enabled }] };
+      });
+    }
+  }
+
+  async function loadModelAccess(modelId: number) {
+    if (sharingModelId === modelId) { setSharingModelId(null); return; }
+    setSharingModelId(modelId);
+    if (modelAccessMap[modelId]) return; // already loaded
+    try {
+      const res = await fetch(`/api/admin/models?action=access&modelId=${modelId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setModelAccessMap((prev) => ({ ...prev, [modelId]: data }));
+      }
+    } catch { /* ignore */ }
+  }
 
   // Class config editor state
   const [editingModelId, setEditingModelId] = useState<number | null>(null);
@@ -140,14 +228,17 @@ export default function AiModelsTab({
     return m > 0 ? `${m}m ${s}s` : `${s}s`;
   };
 
+  // Models eligible for YOLO run (own + enabled shared)
+  const enabledModels = yoloModels.filter((m) => m.enabled !== false);
+
   return (
-    <div className="space-y-8">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* YOLO Models */}
       <section>
         <h2 className="text-lg font-semibold mb-3">YOLO Models</h2>
 
-        {/* Existing models */}
-        <div className="space-y-2 mb-4">
+        {/* Existing models — scrollable if >3 */}
+        <div className="space-y-2 mb-4 max-h-[600px] overflow-y-auto">
           {yoloModels.map((m) => {
             const classes: string[] = (m.config as any)?.classes || [];
             const classTypes: Record<string, ModelClassType> = (m.config as any)?.classTypes || {};
@@ -175,7 +266,34 @@ export default function AiModelsTab({
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {classes.length > 0 && (
+                  {/* Shared model: enable/disable toggle */}
+                  {m.shared && (
+                    <button
+                      onClick={() => toggleModelAccess(m.id, 0, !m.enabled)}
+                      className={`text-[10px] px-2 py-0.5 rounded border ${
+                        m.enabled !== false
+                          ? "border-green-400/30 text-green-300 bg-green-500/10"
+                          : "border-[var(--border)] text-[var(--muted)]"
+                      }`}
+                    >
+                      {m.enabled !== false ? "Enabled" : "Disabled"}
+                    </button>
+                  )}
+                  {/* Root admin: share button */}
+                  {isRootAdmin && (
+                    <button
+                      onClick={() => loadModelAccess(m.id)}
+                      className={`text-xs px-2 py-0.5 rounded border ${
+                        sharingModelId === m.id
+                          ? "border-cyan-400/40 text-cyan-300 bg-cyan-500/10"
+                          : "text-[var(--muted)] border-[var(--border)] hover:text-cyan-300 hover:border-cyan-400/30"
+                      }`}
+                    >
+                      Share
+                    </button>
+                  )}
+                  {/* Edit/delete only for own models */}
+                  {!m.shared && classes.length > 0 && (
                     <button
                       onClick={() => startEditingClassTypes(m)}
                       className={`text-xs px-2 py-0.5 rounded border ${
@@ -187,14 +305,60 @@ export default function AiModelsTab({
                       {editingModelId === m.id ? "Close" : "Edit Classes"}
                     </button>
                   )}
-                  <button
-                    onClick={() => onDeleteModel(m.id)}
-                    className="text-xs text-[var(--muted)] hover:text-red-400"
-                  >
-                    Delete
-                  </button>
+                  {!m.shared && (
+                    <button
+                      onClick={() => onDeleteModel(m.id)}
+                      className="text-xs text-[var(--muted)] hover:text-red-400"
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {/* Model owner + shared indicator */}
+              {(isRootAdmin || m.shared) && (
+                <div className="px-3 pb-1 flex items-center gap-2 text-[10px]">
+                  {isRootAdmin && m.companyName && (
+                    <span className="text-[var(--muted)]">Owner: <span className="text-[var(--fg)]">{m.companyName}</span></span>
+                  )}
+                  {m.shared && (
+                    <span className="text-cyan-400/70">Shared to you</span>
+                  )}
+                </div>
+              )}
+
+              {/* Sharing panel (root admin only) */}
+              {isRootAdmin && sharingModelId === m.id && (
+                <div className="px-3 pb-2 border-t border-[var(--border)] pt-2 mt-1">
+                  <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide mb-1">Share with companies</div>
+                  <div className="space-y-1">
+                    {companies.map((c) => {
+                      const access = (modelAccessMap[m.id] || []).find((a) => a.companyId === c.id);
+                      const isOwner = m.companyId === c.id;
+                      return (
+                        <div key={c.id} className="flex items-center justify-between text-xs">
+                          <span className={isOwner ? "text-[var(--fg)]" : "text-[var(--muted)]"}>
+                            {c.name} {isOwner && <span className="text-[10px] text-[var(--muted)]">(owner)</span>}
+                          </span>
+                          {!isOwner && (
+                            <button
+                              onClick={() => toggleModelAccess(m.id, c.id, !access?.enabled)}
+                              className={`text-[10px] px-2 py-0.5 rounded border ${
+                                access?.enabled
+                                  ? "border-green-400/30 text-green-300 bg-green-500/10"
+                                  : "border-[var(--border)] text-[var(--muted)] hover:border-cyan-400/30"
+                              }`}
+                            >
+                              {access?.enabled ? "Shared ✓" : "Grant Access"}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Inference config — always visible */}
               <div className="px-3 pb-2 space-y-1.5">
@@ -206,16 +370,8 @@ export default function AiModelsTab({
                       step="0.05"
                       min="0.01"
                       max="0.95"
-                      defaultValue={(m.config as any)?.confidence || 0.25}
-                      onBlur={(e) => {
-                        const val = parseFloat(e.target.value);
-                        if (isNaN(val) || val < 0.01 || val > 0.95) return;
-                        fetch("/api/admin/models", {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ id: m.id, confidence: val }),
-                        });
-                      }}
+                      value={configEdits[m.id]?.confidence ?? (m.config as any)?.confidence ?? 0.10}
+                      onChange={(e) => updateConfigEdit(m.id, "confidence", parseFloat(e.target.value))}
                       className="w-14 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
                     />
                   </div>
@@ -226,16 +382,8 @@ export default function AiModelsTab({
                       step="0.05"
                       min="0.1"
                       max="0.9"
-                      defaultValue={(m.config as any)?.iou || 0.45}
-                      onBlur={(e) => {
-                        const val = parseFloat(e.target.value);
-                        if (isNaN(val) || val < 0.1 || val > 0.9) return;
-                        fetch("/api/admin/models", {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ id: m.id, iou: val }),
-                        });
-                      }}
+                      value={configEdits[m.id]?.iou ?? (m.config as any)?.iou ?? 0.60}
+                      onChange={(e) => updateConfigEdit(m.id, "iou", parseFloat(e.target.value))}
                       className="w-14 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
                     />
                   </div>
@@ -246,19 +394,19 @@ export default function AiModelsTab({
                       step="32"
                       min="640"
                       max="2560"
-                      defaultValue={(m.config as any)?.imageSize || 1280}
-                      onBlur={(e) => {
-                        const val = parseInt(e.target.value);
-                        if (isNaN(val) || val < 640 || val > 2560) return;
-                        fetch("/api/admin/models", {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ id: m.id, imageSize: val }),
-                        });
-                      }}
+                      value={configEdits[m.id]?.imageSize ?? (m.config as any)?.imageSize ?? 1280}
+                      onChange={(e) => updateConfigEdit(m.id, "imageSize", parseInt(e.target.value))}
                       className="w-16 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
                     />
                   </div>
+                  {configEdits[m.id] && (
+                    <button
+                      onClick={() => saveModelConfig(m.id)}
+                      className="px-2 py-0.5 text-[10px] rounded bg-green-600 text-white hover:bg-green-500"
+                    >
+                      Save
+                    </button>
+                  )}
                 </div>
                 <div className="text-[9px] text-[var(--muted)] px-0.5 leading-relaxed">
                   <strong>Conf</strong>: detection threshold (0.10 = more results, 0.70+ = fewer/accurate) &middot;
@@ -408,7 +556,8 @@ export default function AiModelsTab({
         </form>
       </section>
 
-      {/* LLM Configuration — self-contained component */}
+      {/* Right column: LLM Config + Safety Toggles stacked */}
+      <div className="space-y-6">
       <LLMConfigSection />
 
       {/* Safety Toggles */}
@@ -453,6 +602,28 @@ export default function AiModelsTab({
                   {toggles.quotaEnabled ? "Bypass" : "Enforce"}
                 </button>
               </div>
+              <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]">
+                <div>
+                  <span className="font-medium">YOLO Detections</span>
+                  <span className="text-xs ml-2 text-[var(--muted)]">all projects</span>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!confirm("Purge ALL YOLO detections across all projects? This cannot be undone.")) return;
+                    try {
+                      const res = await fetch("/api/admin/yolo-purge", { method: "DELETE" });
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || "Failed");
+                      alert(`Purged ${data.deleted} detections`);
+                    } catch (err: any) {
+                      alert("Purge failed: " + (err.message || err));
+                    }
+                  }}
+                  className="px-3 py-1 text-xs rounded border border-red-400/30 text-red-400 hover:bg-red-400/10"
+                >
+                  Purge All
+                </button>
+              </div>
               <div className="flex items-center gap-2 pt-2 border-t border-[var(--border)]">
                 <input type="password" placeholder="Toggle password" value={togglePassword}
                   onChange={(e) => { setTogglePassword(e.target.value); setToggleError(""); }}
@@ -463,10 +634,11 @@ export default function AiModelsTab({
           )}
         </div>
       </section>
+      </div>
 
-      {/* Run YOLO */}
-      {yoloModels.length > 0 && (
-        <section>
+      {/* Run YOLO — full width */}
+      {enabledModels.length > 0 && (
+        <section className="lg:col-span-2">
           <h2 className="text-lg font-semibold mb-3">Run YOLO Inference</h2>
           <div className="space-y-2">
             {projects
@@ -484,8 +656,8 @@ export default function AiModelsTab({
                       </span>
                     )}
                   </div>
-                  <div className="flex gap-2">
-                    {yoloModels.map((m) => {
+                  <div className="flex gap-2 flex-wrap">
+                    {enabledModels.map((m) => {
                       const mk = String(m.id);
                       const mStatus = (yoloStatus[p.id] || {})[mk] || 0;
                       const mJob = (yoloJobs[p.id] || {})[mk] || "";
@@ -536,10 +708,10 @@ export default function AiModelsTab({
                           </>
                         )}
                       </div>
-                      {/* SageMaker job details panel */}
+                      {/* SageMaker job details panel — always visible for running jobs */}
                       {mJob.startsWith("Running:") && (() => {
                         const jn = mJob.replace("Running: ", "");
-                        return expandedJob === jn && jobDetails[jn] ? (
+                        return jobDetails[jn] ? (
                           <div className="mt-1 p-2 bg-[#0d0d0d] border border-[var(--border)] rounded font-mono text-[10px] text-[var(--muted)] leading-relaxed">
                             <div>Job: <span className="text-[var(--fg)]">{jobDetails[jn].jobName}</span></div>
                             <div>Status: <span className={jobDetails[jn].status === "InProgress" || jobDetails[jn].status === "Completed" ? "text-green-400" : jobDetails[jn].status === "Failed" ? "text-red-400" : "text-[var(--accent)]"}>{jobDetails[jn].status}</span></div>
@@ -567,8 +739,10 @@ export default function AiModelsTab({
         </section>
       )}
 
-      {/* S3 Storage Browser */}
-      <S3Browser />
+      {/* S3 Storage Browser — full width */}
+      <div className="lg:col-span-2">
+        <S3Browser />
+      </div>
     </div>
   );
 }

@@ -40,7 +40,8 @@ export async function GET(req: Request) {
     .where(and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber)))
     .limit(1);
 
-  return NextResponse.json({
-    textractData: pageRow?.textractData || null,
-  });
+  return NextResponse.json(
+    { textractData: pageRow?.textractData || null },
+    { headers: { "Cache-Control": "private, max-age=3600" } }
+  );
 }

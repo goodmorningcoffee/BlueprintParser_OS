@@ -31,8 +31,10 @@ export default function CompaniesUsersTab() {
   const [newCompanyName, setNewCompanyName] = useState("");
   const [creating, setCreating] = useState(false);
   const [addingUserTo, setAddingUserTo] = useState<number | null>(null);
+  const [addingUser, setAddingUser] = useState(false);
   const [newUser, setNewUser] = useState({ username: "", email: "", password: "", role: "member" });
   const [message, setMessage] = useState("");
+  const [formError, setFormError] = useState("");
   const [copiedKey, setCopiedKey] = useState<number | null>(null);
 
   const loadData = useCallback(async () => {
@@ -72,7 +74,16 @@ export default function CompaniesUsersTab() {
   };
 
   const addUser = async (companyId: number) => {
-    if (!newUser.username || !newUser.email || !newUser.password) return;
+    setFormError("");
+    if (!newUser.username || !newUser.email || !newUser.password) {
+      setFormError("Username, email, and password are required");
+      return;
+    }
+    if (newUser.password.length < 8) {
+      setFormError("Password must be at least 8 characters");
+      return;
+    }
+    setAddingUser(true);
     try {
       const res = await fetch("/api/admin/users", {
         method: "POST",
@@ -82,14 +93,16 @@ export default function CompaniesUsersTab() {
       if (res.ok) {
         setAddingUserTo(null);
         setNewUser({ username: "", email: "", password: "", role: "member" });
+        setFormError("");
         setMessage("User created");
         setTimeout(() => setMessage(""), 3000);
         loadData();
       } else {
         const err = await res.json();
-        setMessage(err.error || "Failed");
+        setFormError(err.error || "Failed to create user");
       }
-    } catch { setMessage("Failed"); }
+    } catch { setFormError("Failed to create user"); }
+    setAddingUser(false);
   };
 
   const deleteUser = async (userId: string) => {
@@ -236,16 +249,17 @@ export default function CompaniesUsersTab() {
                   {/* Add user form */}
                   {addingUserTo === company.id ? (
                     <div className="border border-[var(--border)] rounded p-2 space-y-1.5">
-                      <input value={newUser.username} onChange={(e) => setNewUser({ ...newUser, username: e.target.value })} placeholder="Username" className="w-full text-[10px] px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none" />
-                      <input value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} placeholder="Email" className="w-full text-[10px] px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none" />
-                      <input value={newUser.password} onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} placeholder="Password (8+ chars)" type="password" className="w-full text-[10px] px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none" />
+                      <input value={newUser.username} onChange={(e) => { setFormError(""); setNewUser({ ...newUser, username: e.target.value }); }} placeholder="Username" className="w-full text-[10px] px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none" />
+                      <input value={newUser.email} onChange={(e) => { setFormError(""); setNewUser({ ...newUser, email: e.target.value }); }} placeholder="Email" className="w-full text-[10px] px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none" />
+                      <input value={newUser.password} onChange={(e) => { setFormError(""); setNewUser({ ...newUser, password: e.target.value }); }} placeholder="Password (8+ chars)" type="password" className="w-full text-[10px] px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none" />
+                      {formError && <div className="text-[10px] text-red-400 px-1">{formError}</div>}
                       <div className="flex gap-1">
                         <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })} className="text-[10px] px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)]">
                           <option value="member">Member</option>
                           <option value="admin">Admin</option>
                         </select>
-                        <button onClick={() => addUser(company.id)} className="flex-1 text-[10px] px-2 py-1 rounded bg-[var(--accent)] text-white">Create</button>
-                        <button onClick={() => setAddingUserTo(null)} className="text-[10px] px-2 py-1 text-[var(--muted)]">Cancel</button>
+                        <button onClick={() => addUser(company.id)} disabled={addingUser} className="flex-1 text-[10px] px-2 py-1 rounded bg-[var(--accent)] text-white disabled:opacity-40">{addingUser ? "Creating..." : "Create"}</button>
+                        <button onClick={() => { setAddingUserTo(null); setFormError(""); }} className="text-[10px] px-2 py-1 text-[var(--muted)]">Cancel</button>
                       </div>
                     </div>
                   ) : (

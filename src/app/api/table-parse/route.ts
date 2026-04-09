@@ -18,8 +18,8 @@ import { logger } from "@/lib/logger";
 
 // ─── Method 1: OCR Word Positions ─────────────────────────
 
-const ROW_Y_TOL = 0.006;
-const MIN_COL_GAP = 0.015;
+const DEFAULT_ROW_Y_TOL = 0.006;
+const DEFAULT_MIN_COL_GAP = 0.015;
 const HEADER_KW = new Set([
   "NO", "NO.", "NUMBER", "TAG", "MARK", "TYPE", "SIZE", "WIDTH", "HEIGHT",
   "MATERIAL", "FINISH", "HARDWARE", "REMARKS", "DESCRIPTION", "LOCATION",
@@ -28,10 +28,22 @@ const HEADER_KW = new Set([
 ]);
 const RE_TAG = /^[A-Z]{0,3}-?\d{1,4}[A-Z]?$/i;
 
+interface OcrParseOptions {
+  rowTolerance?: number;
+  minColGap?: number;
+  colHitRatio?: number;
+  headerMode?: "auto" | "first" | "none";
+}
+
 function methodOcrPositions(
   words: TextractWord[],
   regionBbox: [number, number, number, number],
+  options?: OcrParseOptions,
 ): MethodResult {
+  const ROW_Y_TOL = options?.rowTolerance ?? DEFAULT_ROW_Y_TOL;
+  const MIN_COL_GAP = options?.minColGap ?? DEFAULT_MIN_COL_GAP;
+  const colHitRatio = options?.colHitRatio ?? 0.3;
+  const headerMode = options?.headerMode ?? "auto";
   const [rMinX, rMinY, rMaxX, rMaxY] = regionBbox;
 
   // Get words inside region
@@ -77,7 +89,7 @@ function methodOcrPositions(
     else clusters[clusters.length - 1].push(allLefts[i]);
   }
 
-  const minHits = Math.max(2, Math.floor(rowClusters.length * 0.3));
+  const minHits = Math.max(2, Math.floor(rowClusters.length * colHitRatio));
   let stableClusters = clusters.filter((c) => c.length >= minHits);
   if (stableClusters.length < 2) stableClusters = clusters.length >= 2 ? clusters : [];
   if (stableClusters.length < 2) {
@@ -107,14 +119,21 @@ function methodOcrPositions(
     return cells;
   });
 
-  // Header detection: only use a row as header if it contains known keywords
+  // Header detection: respect headerMode override
   let headerIdx = -1;
-  let bestScore = 0;
-  for (let r = 0; r < Math.min(3, grid.length); r++) {
-    const score = grid[r].filter((c: string) => HEADER_KW.has(c.toUpperCase().trim())).length;
-    if (score > bestScore) { bestScore = score; headerIdx = r; }
+  if (headerMode === "first") {
+    headerIdx = 0;
+  } else if (headerMode === "none") {
+    headerIdx = -1;
+  } else {
+    // auto: only use a row as header if it contains known keywords
+    let bestScore = 0;
+    for (let r = 0; r < Math.min(3, grid.length); r++) {
+      const score = grid[r].filter((c: string) => HEADER_KW.has(c.toUpperCase().trim())).length;
+      if (score > bestScore) { bestScore = score; headerIdx = r; }
+    }
+    if (bestScore === 0) headerIdx = -1;
   }
-  if (bestScore === 0) headerIdx = -1; // no keyword match → don't consume any row as header
 
   const headers = headerIdx >= 0
     ? grid[headerIdx].map((c: string, i: number) => c.trim() || `Column ${i + 1}`)
@@ -166,7 +185,31 @@ function methodOcrPositions(
   confidence += consistency * 0.15;
   confidence = Math.min(confidence, 0.90);
 
-  return { method: "ocr-positions", headers, rows: dataRows, confidence, tagColumn };
+  // ── Compute cell boundaries for grid overlay ──────────────
+  // Column boundaries: N+1 X coords from colBounds
+  const colBoundaries = [colBounds[0].left, ...colBounds.map((c) => c.right)];
+
+  // Row boundaries: Y midpoints between used row clusters
+  const usedClusterIndices: number[] = [];
+  if (headerIdx >= 0) usedClusterIndices.push(headerIdx);
+  for (let r = 0; r < grid.length; r++) {
+    if (r === headerIdx) continue;
+    if (grid[r].some((c: string) => c.trim())) usedClusterIndices.push(r);
+  }
+  usedClusterIndices.sort((a, b) => a - b);
+
+  const clusterYCenters = usedClusterIndices.map((idx) => {
+    const ws = rowClusters[idx].words;
+    return ws.reduce((s, w) => s + w.bbox[1] + w.bbox[3] / 2, 0) / ws.length;
+  });
+
+  const rowBoundaries: number[] = [rMinY];
+  for (let i = 1; i < clusterYCenters.length; i++) {
+    rowBoundaries.push((clusterYCenters[i - 1] + clusterYCenters[i]) / 2);
+  }
+  rowBoundaries.push(rMaxY);
+
+  return { method: "ocr-positions", headers, rows: dataRows, confidence, tagColumn, colBoundaries, rowBoundaries };
 }
 
 // ─── Method 2: Textract TABLES ────────────────────────────
@@ -261,11 +304,18 @@ function methodTextractTables(
 
 // ─── Method 3: OpenCV Line Detection ──────────────────────
 
+interface OpenCvOptions {
+  minHLineLengthRatio?: number;
+  minVLineLengthRatio?: number;
+  clusteringTolerance?: number;
+}
+
 async function methodOpenCvLines(
   pdfBuffer: Buffer,
   pageNumber: number,
   regionBbox: [number, number, number, number],
   allWords: TextractWord[],
+  options?: OpenCvOptions,
 ): Promise<MethodResult> {
   try {
     // Rasterize at 150 DPI for line detection (sufficient for grid lines, prevents OOM on large pages)
@@ -282,7 +332,11 @@ async function methodOpenCvLines(
 
     // Use Ghostscript or sharp to crop — for simplicity, pass full image
     // and interpret line positions relative to the region
-    const lineGrid = await detectTableLines(pngBuffer);
+    const lineGrid = await detectTableLines(pngBuffer, {
+      minHLineLengthRatio: options?.minHLineLengthRatio,
+      minVLineLengthRatio: options?.minVLineLengthRatio,
+      clusteringTolerance: options?.clusteringTolerance,
+    });
 
     if (lineGrid.confidence < 0.3 || lineGrid.rowCount < 1 || lineGrid.colCount < 1) {
       return { method: "opencv-lines", headers: [], rows: [], confidence: 0 };
@@ -364,10 +418,26 @@ async function methodOpenCvLines(
  */
 export async function POST(req: Request) {
   const body = await req.json();
-  const { projectId, pageNumber, regionBbox } = body as {
+  const {
+    projectId, pageNumber, regionBbox,
+    // OCR tuning
+    rowTolerance, minColGap, colHitRatio, headerMode,
+    // OpenCV tuning
+    minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance,
+    // Merger tuning
+    mergerEditDistance,
+  } = body as {
     projectId: number;
     pageNumber: number;
     regionBbox: [number, number, number, number];
+    rowTolerance?: number;
+    minColGap?: number;
+    colHitRatio?: number;
+    headerMode?: "auto" | "first" | "none";
+    minHLineLengthRatio?: number;
+    minVLineLengthRatio?: number;
+    clusteringTolerance?: number;
+    mergerEditDistance?: number;
   };
 
   if (!projectId || !pageNumber || !regionBbox || regionBbox.length !== 4) {
@@ -426,14 +496,14 @@ export async function POST(req: Request) {
 
     const methodPromises: Promise<MethodResult>[] = [
       // Method 1: OCR positions (sync, wrap in promise)
-      Promise.resolve(methodOcrPositions(textractData.words, regionBbox)),
+      Promise.resolve(methodOcrPositions(textractData.words, regionBbox, { rowTolerance, minColGap, colHitRatio, headerMode })),
 
       // Method 2: Textract TABLES (sync, wrap in promise)
       Promise.resolve(methodTextractTables(textractData.tables, regionBbox)),
 
       // Method 3: OpenCV lines (async, needs PDF)
       pdfBuffer
-        ? methodOpenCvLines(pdfBuffer, pageNumber, regionBbox, textractData.words)
+        ? methodOpenCvLines(pdfBuffer, pageNumber, regionBbox, textractData.words, { minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance })
         : Promise.resolve({ method: "opencv-lines", headers: [], rows: [], confidence: 0 } as MethodResult),
     ];
 
@@ -445,7 +515,7 @@ export async function POST(req: Request) {
     );
 
     // Merge results
-    const merged = mergeGrids(results);
+    const merged = mergeGrids(results, { editDistanceThreshold: mergerEditDistance });
 
     // Auto-detect CSI codes from parsed content (server-side, has fs access)
     try {

@@ -5,6 +5,7 @@ import { useViewerStore, useProject, useNavigation, useQtoWorkflow, useSummaries
 import type { QtoWorkflow, QtoLineItem, QtoFlag, YoloTagInstance } from "@/types";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
 import { escCsv } from "@/lib/table-parse-utils";
+import TakeoffCsvModal from "./TakeoffCsvModal";
 
 /** Step progression (used for progress bar + step labels) */
 const STEP_SEQUENCE = ["select-schedule", "confirm-tags", "map-tags", "review", "done"] as const;
@@ -18,6 +19,27 @@ const MATERIALS = [
   { type: "electrical", label: "Electrical", scheduleCategory: "electrical-schedule", icon: "Z" },
 ];
 
+/**
+ * Keywords (singular stems) for matching schedules to material types.
+ * Needed because materialType is plural ("doors") but schedule categories
+ * and names use singular ("door-schedule", "DOOR SCHEDULE").
+ */
+const MATERIAL_KEYWORDS: Record<string, string[]> = {
+  doors: ["door"],
+  finishes: ["finish"],
+  equipment: ["equipment", "material"],
+  plumbing: ["plumbing", "fixture"],
+  electrical: ["electrical", "lighting", "panel"],
+};
+
+function keywordsForMaterial(materialType: string): string[] {
+  const explicit = MATERIAL_KEYWORDS[materialType];
+  if (explicit) return explicit;
+  // Custom material: strip trailing "s" as a rough singularization
+  const stem = materialType.toLowerCase().replace(/s$/, "");
+  return [stem];
+}
+
 export default function AutoQtoTab() {
   const { publicId } = useProject();
   const { setPage } = useNavigation();
@@ -30,6 +52,8 @@ export default function AutoQtoTab() {
   const [creating, setCreating] = useState(false);
   const [customName, setCustomName] = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [loadingScheduleKey, setLoadingScheduleKey] = useState<string | null>(null);
 
   // Find pages with detected schedules for each material type
   // Uses summary catalog when available (works across all pages without loading them)
@@ -113,14 +137,18 @@ export default function AutoQtoTab() {
   }, [summaries, pageIntelligence]);
 
   // Load workflows from API on mount (skip for demo — no persisted workflows)
-  const [loaded, setLoaded] = useState(false);
-  if (!loaded && publicId && !isDemo) {
-    setLoaded(true);
-    fetch(`/api/qto-workflows?projectId=${publicId}`)
-      .then((r) => r.ok ? r.json() : [])
+  useEffect(() => {
+    if (!publicId || isDemo) return;
+    const controller = new AbortController();
+    fetch(`/api/qto-workflows?projectId=${publicId}`, { signal: controller.signal })
+      .then((r) => (r.ok ? r.json() : []))
       .then(setQtoWorkflows)
-      .catch(() => {});
-  }
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        console.error("[auto-qto] Failed to load workflows:", err);
+      });
+    return () => controller.abort();
+  }, [publicId, isDemo, setQtoWorkflows]);
 
   const startWorkflow = useCallback(async (materialType: string, materialLabel: string) => {
     if (!publicId) return;
@@ -275,16 +303,15 @@ export default function AutoQtoTab() {
             <div className="space-y-1">
               <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide">Parsed schedules</div>
               {(() => {
-                const materialKey = activeQtoWorkflow.materialType.toLowerCase();
+                const keywords = keywordsForMaterial(activeQtoWorkflow.materialType);
+                const matchesKeywords = (s: typeof parsedSchedules[0]) =>
+                  keywords.some((kw) =>
+                    s.name.toLowerCase().includes(kw) ||
+                    s.category.toLowerCase().includes(kw)
+                  );
                 // Show all parsed schedules, highlight matching ones
-                const matching = parsedSchedules.filter((s) =>
-                  s.name.toLowerCase().includes(materialKey) ||
-                  s.category.toLowerCase().includes(materialKey)
-                );
-                const other = parsedSchedules.filter((s) =>
-                  !s.name.toLowerCase().includes(materialKey) &&
-                  !s.category.toLowerCase().includes(materialKey)
-                );
+                const matching = parsedSchedules.filter(matchesKeywords);
+                const other = parsedSchedules.filter((s) => !matchesKeywords(s));
 
                 if (parsedSchedules.length === 0) {
                   return (
@@ -294,10 +321,14 @@ export default function AutoQtoTab() {
                   );
                 }
 
-                const renderScheduleButton = (s: typeof parsedSchedules[0], isMatch: boolean) => (
+                const renderScheduleButton = (s: typeof parsedSchedules[0], isMatch: boolean) => {
+                  const key = `${s.pageNum}-${s.name}`;
+                  return (
                   <button
-                    key={`${s.pageNum}-${s.name}`}
+                    key={key}
+                    disabled={loadingScheduleKey === key}
                     onClick={async () => {
+                      setScheduleError(null);
                       let headers: string[] = [];
                       let rows: Record<string, string>[] = [];
                       let tagColumn = "";
@@ -316,6 +347,7 @@ export default function AutoQtoTab() {
                           rows = localPr.data.rows || [];
                           tagColumn = localPr.data.tagColumn || headers[0] || "";
                         } else {
+                          setLoadingScheduleKey(key);
                           try {
                             const res = await fetch(`/api/projects/${publicId}/pages?from=${s.pageNum}&to=${s.pageNum}`);
                             if (res.ok) {
@@ -332,15 +364,20 @@ export default function AutoQtoTab() {
                               if (pageData?.pageIntelligence) {
                                 useViewerStore.getState().setPageIntelligence(s.pageNum, pageData.pageIntelligence);
                               }
+                            } else {
+                              setScheduleError(`Failed to load schedule data (HTTP ${res.status})`);
                             }
                           } catch (err) {
                             console.error("[AUTO_QTO] Failed to fetch schedule data:", err);
+                            setScheduleError("Network error while loading schedule. Check your connection.");
+                          } finally {
+                            setLoadingScheduleKey(null);
                           }
                         }
                       }
 
                       if (headers.length === 0) {
-                        alert("Could not load schedule data. Try parsing the schedule first.");
+                        setScheduleError("Could not load schedule data. Try parsing the schedule first.");
                         return;
                       }
 
@@ -366,17 +403,23 @@ export default function AutoQtoTab() {
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-medium text-[var(--fg)]">{s.name}</span>
                       <span className={`text-[9px] ${isMatch ? "text-green-400" : "text-[var(--muted)]"}`}>
-                        {isMatch ? "Use This" : "Use"}
+                        {loadingScheduleKey === key ? "Loading..." : isMatch ? "Use This" : "Use"}
                       </span>
                     </div>
                     <div className="text-[9px] text-[var(--muted)]">
                       {pageNames[s.pageNum] || `p.${s.pageNum}`} &middot; {s.rowCount} rows, {s.colCount} cols
                     </div>
                   </button>
-                );
+                  );
+                };
 
                 return (
                   <div className="space-y-1">
+                    {scheduleError && (
+                      <div className="text-[10px] text-red-400 px-2 py-1 rounded bg-red-500/5 border border-red-500/20">
+                        {scheduleError}
+                      </div>
+                    )}
                     {matching.map((s) => renderScheduleButton(s, true))}
                     {other.map((s) => renderScheduleButton(s, false))}
                   </div>
@@ -450,8 +493,11 @@ export default function AutoQtoTab() {
         {MATERIALS.map((mat) => {
           const cat = mat.scheduleCategory;
           const detected = scheduleDetections[cat];
+          const keywords = keywordsForMaterial(mat.type);
           const parsed = parsedSchedules.filter((s) =>
-            s.name.toLowerCase().includes(mat.type) || s.category.toLowerCase().includes(mat.type)
+            keywords.some((kw) =>
+              s.name.toLowerCase().includes(kw) || s.category.toLowerCase().includes(kw)
+            )
           );
 
           return (
@@ -622,7 +668,7 @@ function ConfigureStep({ workflow, updateWorkflowStep, pageNames, summaries }: {
     });
   };
 
-  const canProceed = tagColumn && selectedPages.size > 0;
+  const canProceed = !!tagColumn && selectedPages.size > 0 && uniqueTags.length > 0;
 
   const handleRun = async () => {
     await updateWorkflowStep(workflow, {
@@ -663,6 +709,11 @@ function ConfigureStep({ workflow, updateWorkflowStep, pageNames, summaries }: {
         {uniqueTags.length > 0 && (
           <div className="text-[9px] text-[var(--muted)] mt-1.5">
             {uniqueTags.length} tags: {uniqueTags.slice(0, 8).join(", ")}{uniqueTags.length > 8 ? "..." : ""}
+          </div>
+        )}
+        {tagColumn && uniqueTags.length === 0 && (
+          <div className="text-[9px] text-amber-400 mt-1.5">
+            No tags found in &quot;{tagColumn}&quot; column. Pick a different column.
           </div>
         )}
       </div>
@@ -775,8 +826,10 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
     setMapping(true);
     setError(null);
 
+    const controller = new AbortController();
     fetch(`/api/projects/${publicId}/map-tags-batch`, {
       method: "POST",
+      signal: controller.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         tags,
@@ -802,10 +855,10 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
           }
           const flags: QtoFlag[] = [];
           if (instances.length === 0) flags.push("not-found");
-          const avgConf = instances.length > 0
-            ? instances.reduce((s, i) => s + i.confidence, 0) / instances.length
-            : 0;
-          if (avgConf > 0 && avgConf < 0.5) flags.push("low-confidence");
+          // Engine emits confidence 1.0 (exact) or 0.9 (fuzzy OCR match).
+          // Flag any line item that has at least one fuzzy instance.
+          const fuzzyCount = instances.filter((i) => i.confidence < 1.0).length;
+          if (fuzzyCount > 0) flags.push("low-confidence");
 
           return {
             tag,
@@ -826,9 +879,12 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
         updateWorkflowStep(workflow, { step: "review", lineItems });
       })
       .catch((err) => {
+        if (err.name === "AbortError") return;
         setError(err.message || "Mapping failed");
         setMapping(false);
       });
+
+    return () => controller.abort();
   }, [tags, schedule, workflow, publicId, updateWorkflowStep, mapping, selectedPages]);
 
   return (
@@ -867,25 +923,134 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
 }) {
   const lineItems = workflow.lineItems || [];
   const schedule = workflow.parsedSchedule;
+  // Track which page index is currently visible per-tag for ◀/▶ cycling
+  const [pageIdxByTag, setPageIdxByTag] = useState<Record<string, number>>({});
+  const [csvModalOpen, setCsvModalOpen] = useState(false);
+
+  const activateTag = useCallback((li: QtoLineItem) => {
+    const store = useViewerStore.getState();
+    const existing = store.yoloTags.find((t) => t.tagText === li.tag && t.source === "schedule");
+    if (existing) {
+      store.setActiveYoloTagId(existing.id);
+      store.setYoloTagFilter(existing.id);
+    } else {
+      const newTag = {
+        id: `qto-${li.tag}-${Date.now()}`,
+        name: li.tag,
+        tagText: li.tag,
+        yoloClass: workflow.yoloClassFilter || "",
+        yoloModel: workflow.yoloModelFilter || "",
+        source: "schedule" as const,
+        scope: "project" as const,
+        instances: li.instances.map((inst) => ({
+          pageNumber: inst.pageNumber,
+          annotationId: -1,
+          bbox: inst.bbox,
+          confidence: inst.confidence,
+        })),
+      };
+      store.addYoloTag(newTag);
+      store.setActiveYoloTagId(newTag.id);
+      store.setYoloTagFilter(newTag.id);
+    }
+  }, [workflow.yoloClassFilter, workflow.yoloModelFilter]);
+
+  const cyclePage = useCallback((li: QtoLineItem, delta: number) => {
+    if (li.pages.length === 0) return;
+    const current = pageIdxByTag[li.tag] ?? 0;
+    const next = (current + delta + li.pages.length) % li.pages.length;
+    setPageIdxByTag((s) => ({ ...s, [li.tag]: next }));
+    setPage(li.pages[next]);
+    activateTag(li);
+  }, [pageIdxByTag, setPage, activateTag]);
 
   const totalInstances = lineItems.reduce((s, li) => s + li.autoQuantity, 0);
   const uniquePages = new Set(lineItems.flatMap((li) => li.pages)).size;
   const notFoundCount = lineItems.filter((li) => li.flags.includes("not-found")).length;
 
+  const specHeaders = useMemo(
+    () => schedule ? schedule.headers.filter((h: string) => h !== schedule.tagColumn) : [],
+    [schedule]
+  );
+
+  // Row data for the editable CSV modal. Includes tag + specs + QTY (with manual override) + Notes.
+  const csvModalHeaders = ["Tag", ...specHeaders, "QTY", "Pages", "Flags", "Notes"];
+  const csvModalReadOnly = useMemo(
+    () => new Set(["Tag", ...specHeaders, "Pages", "Flags"]),
+    [specHeaders]
+  );
+  const csvModalRows = useMemo(() => lineItems.map((li) => {
+    const override = workflow.userEdits?.quantityOverrides?.[li.tag];
+    const qty = override ?? li.autoQuantity;
+    const row: Record<string, string> = {
+      Tag: li.tag,
+      QTY: String(qty),
+      Pages: li.pages.join(", "),
+      Flags: li.flags.join(", "),
+      Notes: li.notes || "",
+    };
+    for (const h of specHeaders) row[h] = li.specs[h] || "";
+    return row;
+  }), [lineItems, specHeaders, workflow.userEdits?.quantityOverrides]);
+
+  const handleCsvCellChange = (rowIndex: number, column: string, value: string) => {
+    const li = lineItems[rowIndex];
+    if (!li) return;
+    const newLineItems = [...lineItems];
+    const currentEdits = workflow.userEdits || {
+      addedInstances: [],
+      removedInstances: [],
+      quantityOverrides: {},
+      addedRows: [],
+      deletedTags: [],
+      cellEdits: {},
+    };
+
+    if (column === "Notes") {
+      newLineItems[rowIndex] = { ...li, notes: value };
+      updateWorkflowStep(workflow, { lineItems: newLineItems });
+    } else if (column === "QTY") {
+      const num = parseInt(value, 10);
+      const overrides = { ...(currentEdits.quantityOverrides || {}) };
+      if (!isNaN(num) && num >= 0 && num !== li.autoQuantity) {
+        overrides[li.tag] = num;
+        newLineItems[rowIndex] = {
+          ...li,
+          manualQuantity: num,
+          flags: li.flags.includes("manual-override") ? li.flags : [...li.flags, "manual-override"],
+        };
+      } else {
+        // Clearing or matching auto — remove override
+        delete overrides[li.tag];
+        newLineItems[rowIndex] = {
+          ...li,
+          manualQuantity: undefined,
+          flags: li.flags.filter((f) => f !== "manual-override"),
+        };
+      }
+      updateWorkflowStep(workflow, {
+        lineItems: newLineItems,
+        userEdits: { ...currentEdits, quantityOverrides: overrides },
+      });
+    }
+  };
+
   const exportCsv = () => {
     if (!schedule) return;
-    const specHeaders = schedule.headers.filter((h: string) => h !== schedule.tagColumn);
-    const csvHeaders = ["Tag", ...specHeaders, "QTY", "Pages", "Flags"];
-    const csvRows = lineItems.map((li) =>
-      [
+    const headers = ["Tag", ...specHeaders, "QTY", "Pages", "Flags", "Notes"];
+    const rows = lineItems.map((li) => {
+      const override = workflow.userEdits?.quantityOverrides?.[li.tag];
+      const qty = override ?? li.autoQuantity;
+      return [
         escCsv(li.tag),
         ...specHeaders.map((h: string) => escCsv(li.specs[h] || "")),
-        String(li.autoQuantity),
+        String(qty),
         escCsv(li.pages.join(", ")),
         escCsv(li.flags.join(", ")),
-      ].join(",")
-    );
-    const csv = [csvHeaders.map(escCsv).join(","), ...csvRows].join("\n");
+        escCsv(li.notes || ""),
+      ].join(",");
+    });
+    const csv = [headers.map(escCsv).join(","), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -911,40 +1076,18 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
       <div className="flex-1 overflow-y-auto">
         {lineItems.map((li) => {
           const descParts = Object.values(li.specs).filter(Boolean).slice(0, 3);
+          const currentIdx = pageIdxByTag[li.tag] ?? 0;
+          const hasMultiPages = li.pages.length > 1;
           return (
-            <button
+            <div
               key={li.tag}
               onClick={() => {
                 if (li.instances.length === 0) return;
-                setPage(li.instances[0].pageNumber);
-                // Activate or create a YoloTag for canvas highlighting
-                const store = useViewerStore.getState();
-                const existing = store.yoloTags.find((t) => t.tagText === li.tag && t.source === "schedule");
-                if (existing) {
-                  store.setActiveYoloTagId(existing.id);
-                  store.setYoloTagFilter(existing.id);
-                } else {
-                  const newTag = {
-                    id: `qto-${li.tag}-${Date.now()}`,
-                    name: li.tag,
-                    tagText: li.tag,
-                    yoloClass: workflow.yoloClassFilter || "",
-                    yoloModel: workflow.yoloModelFilter || "",
-                    source: "schedule" as const,
-                    scope: "project" as const,
-                    instances: li.instances.map((inst: any) => ({
-                      pageNumber: inst.pageNumber,
-                      annotationId: -1,
-                      bbox: inst.bbox,
-                      confidence: inst.confidence,
-                    })),
-                  };
-                  store.addYoloTag(newTag);
-                  store.setActiveYoloTagId(newTag.id);
-                  store.setYoloTagFilter(newTag.id);
-                }
+                setPage(li.pages[0] ?? li.instances[0].pageNumber);
+                setPageIdxByTag((s) => ({ ...s, [li.tag]: 0 }));
+                activateTag(li);
               }}
-              className="w-full text-left px-3 py-1.5 border-b border-[var(--border)]/50 hover:bg-[var(--surface-hover)] transition-colors"
+              className="w-full text-left px-3 py-1.5 border-b border-[var(--border)]/50 hover:bg-[var(--surface-hover)] transition-colors cursor-pointer"
             >
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-mono font-medium text-[var(--fg)] w-12 shrink-0">{li.tag}</span>
@@ -958,32 +1101,66 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
                 </span>
               </div>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-[9px] text-[var(--muted)] w-12 shrink-0">
-                  {li.pages.length > 0 ? `${li.pages.length} pg` : ""}
-                </span>
+                {hasMultiPages ? (
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); cyclePage(li, -1); }}
+                      className="text-[10px] w-4 h-4 rounded hover:bg-[var(--surface-hover)] text-[var(--muted)] hover:text-[var(--fg)] flex items-center justify-center"
+                      title="Previous page"
+                    >&#9664;</button>
+                    <span className="text-[9px] text-[var(--muted)] tabular-nums w-10 text-center">
+                      {currentIdx + 1}/{li.pages.length}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); cyclePage(li, 1); }}
+                      className="text-[10px] w-4 h-4 rounded hover:bg-[var(--surface-hover)] text-[var(--muted)] hover:text-[var(--fg)] flex items-center justify-center"
+                      title="Next page"
+                    >&#9654;</button>
+                  </div>
+                ) : (
+                  <span className="text-[9px] text-[var(--muted)] w-12 shrink-0">
+                    {li.pages.length > 0 ? `${li.pages.length} pg` : ""}
+                  </span>
+                )}
                 <span className="text-[9px] text-[var(--muted)] truncate flex-1">
                   {li.pages.slice(0, 5).join(", ")}{li.pages.length > 5 ? "..." : ""}
                 </span>
                 {li.flags.includes("not-found") && (
                   <span className="text-[8px] px-1 py-0.5 rounded bg-red-500/10 text-red-400 shrink-0">Not Found</span>
                 )}
-                {li.flags.includes("low-confidence") && (
-                  <span className="text-[8px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 shrink-0">Low Conf</span>
-                )}
+                {li.flags.includes("low-confidence") && (() => {
+                  const fuzzy = li.instances.filter((i) => i.confidence < 1.0).length;
+                  return (
+                    <span
+                      className="text-[8px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 shrink-0"
+                      title={`${fuzzy} of ${li.instances.length} instances are OCR-fuzzy matches (not exact)`}
+                    >
+                      {fuzzy} fuzzy
+                    </span>
+                  );
+                })()}
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
 
       {/* Footer actions */}
       <div className="px-3 py-2 border-t border-[var(--border)] space-y-1.5">
-        <button
-          onClick={exportCsv}
-          className="w-full py-1.5 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-500"
-        >
-          Export CSV
-        </button>
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => setCsvModalOpen(true)}
+            className="flex-1 py-1.5 rounded border border-cyan-500/40 text-cyan-400 text-xs font-medium hover:bg-cyan-500/10"
+          >
+            View as CSV
+          </button>
+          <button
+            onClick={exportCsv}
+            className="flex-1 py-1.5 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-500"
+          >
+            Export CSV
+          </button>
+        </div>
         <div className="flex gap-1.5">
           <button
             onClick={() => updateWorkflowStep(workflow, { step: "confirm-tags" })}
@@ -999,6 +1176,21 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
           </button>
         </div>
       </div>
+      <TakeoffCsvModal
+        open={csvModalOpen}
+        onClose={() => setCsvModalOpen(false)}
+        title={`${workflow.materialLabel || workflow.materialType} — QTO Results`}
+        headers={csvModalHeaders}
+        rows={csvModalRows}
+        readOnlyColumns={csvModalReadOnly}
+        onCellChange={handleCsvCellChange}
+        onExport={exportCsv}
+        onRowClick={(rowIdx) => {
+          const li = lineItems[rowIdx];
+          if (!li || li.pages.length === 0) return;
+          setPage(li.pages[0]);
+        }}
+      />
     </div>
   );
 }

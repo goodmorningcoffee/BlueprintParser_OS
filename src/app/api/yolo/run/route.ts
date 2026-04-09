@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, models, processingJobs } from "@/lib/db/schema";
+import { projects, models, modelAccess, processingJobs } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { startYoloJob } from "@/lib/yolo";
 import { s3Client, S3_BUCKET, uploadToS3 } from "@/lib/s3";
@@ -68,10 +68,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Model not found" }, { status: 404 });
   }
 
+  // Verify model access: must be owned by company OR have an enabled model_access row
+  const companyId = (session.user as any).companyId;
+  if (model.companyId !== companyId) {
+    const [access] = await db
+      .select()
+      .from(modelAccess)
+      .where(and(eq(modelAccess.modelId, modelId), eq(modelAccess.companyId, companyId), eq(modelAccess.enabled, true)))
+      .limit(1);
+    if (!access) {
+      return NextResponse.json({ error: "Model not found" }, { status: 404 });
+    }
+  }
+
   // Regenerate config.yaml from DB config before running — ensures admin changes take effect
   const modelConfig = (model.config as Record<string, unknown>) || {};
-  const conf = Number(modelConfig.confidence) || 0.25;
-  const iouVal = Number(modelConfig.iou) || 0.45;
+  const conf = Number(modelConfig.confidence) || 0.10;
+  const iouVal = Number(modelConfig.iou) || 0.60;
   const imgSize = Number(modelConfig.imageSize) || 1280;
   const classList = (modelConfig.classes as string[]) || [];
 
@@ -81,7 +94,7 @@ iou_threshold: ${iouVal}
 image_size: ${imgSize}
 device: auto
 half_precision: true
-max_detections: 1000
+max_detections: ${Number(modelConfig.maxDetections) || 2000}
 save_annotated: false
 classes:
 ${classList.map((c: string) => `  - ${c}`).join("\n")}

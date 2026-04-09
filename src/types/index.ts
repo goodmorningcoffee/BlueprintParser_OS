@@ -162,6 +162,18 @@ export interface ClientTakeoffItem {
   size: number;
   notes?: string;
   sortOrder: number;
+  groupId?: number | null;
+}
+
+export type TakeoffGroupKind = "count" | "area" | "linear";
+
+export interface TakeoffGroup {
+  id: number;
+  name: string;
+  kind: TakeoffGroupKind;
+  color: string | null;
+  csiCode: string | null;
+  sortOrder: number;
 }
 
 export interface CountMarkerData {
@@ -419,6 +431,10 @@ export interface ScheduleData {
   tagColumn?: string;              // which column has the item tags
   rowCount: number;
   columnCount: number;
+  /** Normalized X coords of column edges — N+1 values for N columns */
+  colBoundaries?: number[];
+  /** Normalized Y coords of row edges — M+1 values for M visible rows (header + data) */
+  rowBoundaries?: number[];
 }
 
 export interface KeynoteData {
@@ -459,6 +475,7 @@ export interface ProjectIntelligence {
   csiGraph?: unknown; // CsiNetworkGraph — imported from csi-graph.ts at usage sites
   pageCount?: number;
   summaries?: ProjectSummaries;
+  yoloTags?: YoloTag[];
 }
 
 // ─── Project Summaries (chunking support) ────────────────────

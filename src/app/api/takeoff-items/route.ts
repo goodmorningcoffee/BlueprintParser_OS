@@ -54,7 +54,7 @@ export async function POST(req: Request) {
   const { session, error } = await requireAuth();
   if (error) return error;
 
-  const { projectId, name, shape, color, size } = await req.json();
+  const { projectId, name, shape, color, size, groupId } = await req.json();
 
   if (!projectId || !name || !shape || !color) {
     return NextResponse.json(
@@ -65,6 +65,10 @@ export async function POST(req: Request) {
 
   if (shape !== "polygon" && shape !== "linear" && !TAKEOFF_SHAPES.includes(shape)) {
     return NextResponse.json({ error: "Invalid shape" }, { status: 400 });
+  }
+
+  if (groupId !== undefined && groupId !== null && !Number.isInteger(groupId)) {
+    return NextResponse.json({ error: "invalid groupId" }, { status: 400 });
   }
 
   const [project] = await db
@@ -93,6 +97,7 @@ export async function POST(req: Request) {
       .insert(takeoffItems)
       .values({
         projectId: project.id,
+        groupId: groupId || null,
         name,
         shape,
         color,
@@ -109,6 +114,7 @@ export async function POST(req: Request) {
       size: item.size,
       notes: item.notes,
       sortOrder: item.sortOrder,
+      groupId: item.groupId,
     });
   } catch (err) {
     logger.error("Failed to create takeoff item:", err);

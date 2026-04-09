@@ -29,10 +29,21 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Missing projectId, pageNumber, or intelligence" }, { status: 400 });
     }
 
-    // Block writes to demo projects
-    const [proj] = await db.select({ isDemo: projects.isDemo }).from(projects).where(eq(projects.id, projectId)).limit(1);
-    if (proj?.isDemo) {
+    // Verify project exists and user has access
+    const [proj] = await db
+      .select({ isDemo: projects.isDemo, companyId: projects.companyId })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+
+    if (!proj) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    }
+    if (proj.isDemo) {
       return NextResponse.json({ error: "Demo projects are read-only" }, { status: 403 });
+    }
+    if (!session.user.isRootAdmin && proj.companyId !== session.user.companyId) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
     // Read current page data

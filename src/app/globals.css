@@ -46,12 +46,20 @@
 /* ─── UI Scale (applied to toolbar + side panels) ─── */
 [data-ui-scale="compact"] .viewer-scalable { zoom: 0.9; }
 [data-ui-scale="large"] .viewer-scalable { zoom: 1.1; }
+[data-ui-scale="xlarge"] .viewer-scalable { zoom: 1.25; }
 
 body {
   background: var(--bg);
   color: var(--fg);
   font-family: system-ui, -apple-system, sans-serif;
+  font-size: 15px;
 }
+
+/* Floor for tiny text — bump smallest sizes up for readability */
+.text-\[8px\],
+.text-\[9px\] { font-size: 11px !important; }
+.text-\[10px\] { font-size: 12px !important; }
+.text-\[11px\] { font-size: 13px !important; }
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {

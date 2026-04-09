@@ -10,9 +10,21 @@ import AnnotationOverlay from "./AnnotationOverlay";
 import GuidedParseOverlay from "./GuidedParseOverlay";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import ParseRegionLayer from "./ParseRegionLayer";
+import ParsedTableCellOverlay from "./ParsedTableCellOverlay";
+
+interface CacheEntry {
+  bitmap: ImageBitmap;
+  cssWidth: number;
+  cssHeight: number;
+  scale: number;
+  pxWidth: number;
+  pxHeight: number;
+}
+
+const MAX_CACHED_PAGES = 8;
 
 interface PDFPageProps {
-  pdfDoc: PDFDocumentProxy;
+  pdfDoc: PDFDocumentProxy | null;
   pageNumber: number;
   scale: number;
   containerWidth: number;
@@ -29,8 +41,27 @@ export default memo(function PDFPage({
   const [renderedScale, setRenderedScale] = useState(0);
   const [pageSize, setPageSize] = useState({ width: 0, height: 0 });
   const renderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialRenderDoneRef = useRef(false);
+  const pdfRenderedForPageRef = useRef(0); // tracks which page pdf.js has rendered
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
+
+  // LRU page render cache — stores last N rendered pages as ImageBitmaps
+  // Keyed by page number; each entry stores the scale it was rendered at
+  const pageCacheRef = useRef<Map<number, CacheEntry>>(new Map());
+  const preRenderTasksRef = useRef<Map<number, { cancel: () => void }>>(new Map());
+
+  // Clean up cached bitmaps on unmount
+  useEffect(() => {
+    const cache = pageCacheRef.current;
+    const tasks = preRenderTasksRef.current;
+    return () => {
+      for (const entry of cache.values()) entry.bitmap.close();
+      cache.clear();
+      for (const task of tasks.values()) task.cancel();
+      tasks.clear();
+    };
+  }, []);
 
   // Pre-rendered PNG fallback for instant page display while pdf.js renders
   const dataUrl = useViewerStore((s) => s.dataUrl);
@@ -46,16 +77,69 @@ export default memo(function PDFPage({
   const [canvasReady, setCanvasReady] = useState(false);
   const [fallbackError, setFallbackError] = useState(false);
 
-  // Reset states when page changes
-  useEffect(() => { setCanvasReady(false); setFallbackError(false); }, [pageNumber]);
+  // Reset states when page changes — don't hide canvas yet (old content stays visible
+  // until new PNG or canvas is ready, preventing white flash)
+  useEffect(() => { setFallbackError(false); initialRenderDoneRef.current = false; pdfRenderedForPageRef.current = 0; }, [pageNumber]);
 
   // Base width = container width minus padding, so page fills the viewport
   const baseWidth = Math.max(containerWidth - 32, 400);
+
+  // Store a rendered page in the LRU cache
+  const cacheRenderedPage = useCallback((page: number, tmpCanvas: HTMLCanvasElement, cssWidth: number, cssHeight: number, targetScale: number, pxW: number, pxH: number) => {
+    createImageBitmap(tmpCanvas).then((bitmap) => {
+      const cache = pageCacheRef.current;
+      // Close old bitmap for this page if exists
+      cache.get(page)?.bitmap.close();
+      cache.delete(page); // delete + re-insert = LRU move-to-end
+      cache.set(page, { bitmap, cssWidth, cssHeight, scale: targetScale, pxWidth: pxW, pxHeight: pxH });
+      // Evict oldest if over limit
+      if (cache.size > MAX_CACHED_PAGES) {
+        const oldestKey = cache.keys().next().value!;
+        cache.get(oldestKey)?.bitmap.close();
+        cache.delete(oldestKey);
+      }
+    }).catch(() => {}); // createImageBitmap may fail in some contexts
+  }, []);
+
+  // PNG loaded — derive dimensions and signal that new content is ready
+  const handleFallbackLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    // Set dimensions from PNG when pdf.js hasn't rendered THIS page yet
+    // (pdfRenderedForPageRef resets on page change, so PNG always sets dims for new pages)
+    if (img.naturalWidth > 0 && pdfRenderedForPageRef.current !== pageNumber) {
+      const fitScale = baseWidth / img.naturalWidth;
+      setPageSize({ width: baseWidth, height: img.naturalHeight * fitScale });
+    }
+    // PNG is ready — now safe to hide canvas (old page → new PNG, no white gap)
+    setCanvasReady(false);
+  }, [baseWidth, pageNumber]);
 
   const renderPage = useCallback(
     async (targetScale: number) => {
       const canvas = canvasRef.current;
       if (!canvas || !pdfDoc) return;
+
+      // Check LRU cache — instant draw if page was previously rendered at this scale
+      const cached = pageCacheRef.current.get(pageNumber);
+      if (cached && cached.scale === targetScale) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          canvas.width = cached.pxWidth;
+          canvas.height = cached.pxHeight;
+          canvas.style.width = `${cached.cssWidth}px`;
+          canvas.style.height = `${cached.cssHeight}px`;
+          ctx.drawImage(cached.bitmap, 0, 0);
+        }
+        setPageSize({ width: cached.cssWidth, height: cached.cssHeight });
+        setRenderedScale(targetScale);
+        setCanvasReady(true);
+        initialRenderDoneRef.current = true;
+        pdfRenderedForPageRef.current = pageNumber;
+        // LRU touch: move to end
+        pageCacheRef.current.delete(pageNumber);
+        pageCacheRef.current.set(pageNumber, cached);
+        return;
+      }
 
       try {
         if (renderTaskRef.current) {
@@ -75,21 +159,21 @@ export default memo(function PDFPage({
         // Render at device pixel ratio for crisp output, capped at 2 to prevent
         // excessive pixel volume on high-DPI displays (3x DPR = 9x pixels = freeze)
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        canvas.width = Math.floor(viewport.width * dpr);
-        canvas.height = Math.floor(viewport.height * dpr);
+        const pxWidth = Math.floor(viewport.width * dpr);
+        const pxHeight = Math.floor(viewport.height * dpr);
 
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
+        // Render to OFFSCREEN canvas — visible canvas keeps old content during render
+        // This eliminates the white flash that occurs when canvas.width clears the buffer
+        const tmpCanvas = document.createElement("canvas");
+        tmpCanvas.width = pxWidth;
+        tmpCanvas.height = pxHeight;
+        const tmpCtx = tmpCanvas.getContext("2d");
+        if (!tmpCtx) return;
 
-        setPageSize({ width: viewport.width, height: viewport.height });
-
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        tmpCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
         const renderTask = page.render({
-          canvasContext: ctx,
+          canvasContext: tmpCtx,
           viewport,
         });
 
@@ -97,15 +181,31 @@ export default memo(function PDFPage({
 
         await renderTask.promise;
         renderTaskRef.current = null;
+
+        // ATOMIC SWAP: clear + copy in same synchronous block = no visible flash
+        // Browser doesn't paint between synchronous DOM operations
+        canvas.width = pxWidth;
+        canvas.height = pxHeight;
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+        const ctx = canvas.getContext("2d");
+        if (ctx) ctx.drawImage(tmpCanvas, 0, 0);
+
+        // Store in LRU cache for instant revisit
+        cacheRenderedPage(pageNumber, tmpCanvas, viewport.width, viewport.height, targetScale, pxWidth, pxHeight);
+
+        setPageSize({ width: viewport.width, height: viewport.height });
         setRenderedScale(targetScale);
         setCanvasReady(true);
+        initialRenderDoneRef.current = true;
+        pdfRenderedForPageRef.current = pageNumber;
       } catch (err: any) {
         if (err?.name !== "RenderingCancelledException") {
           console.error("Render error:", err);
         }
       }
     },
-    [pdfDoc, pageNumber, baseWidth]
+    [pdfDoc, pageNumber, baseWidth, cacheRenderedPage]
   );
 
   // Render on page change or container resize (uses ref for scale to avoid re-triggering on zoom)
@@ -127,6 +227,70 @@ export default memo(function PDFPage({
       if (renderTimerRef.current !== null) clearTimeout(renderTimerRef.current);
     };
   }, [scale, renderPage, renderedScale]);
+
+  // Background pre-render adjacent pages during idle time
+  // After current page renders, pre-render N+1 and N-1 into the LRU cache
+  const numPages = useViewerStore((s) => s.numPages);
+  useEffect(() => {
+    if (!pdfDoc || renderedScale === 0) return;
+    const currentScale = scaleRef.current;
+    const pagesToPreRender = [pageNumber + 1, pageNumber - 1].filter(
+      (p) => p >= 1 && p <= numPages
+    );
+
+    const idleIds: number[] = [];
+    for (const p of pagesToPreRender) {
+      // Skip if already cached at this scale
+      const existing = pageCacheRef.current.get(p);
+      if (existing && existing.scale === currentScale) continue;
+
+      const id = (typeof requestIdleCallback !== "undefined" ? requestIdleCallback : setTimeout)(async () => {
+        // Cancel any existing pre-render for this page
+        preRenderTasksRef.current.get(p)?.cancel();
+
+        try {
+          const page = await pdfDoc.getPage(p);
+          const uv = page.getViewport({ scale: 1 });
+          const bScale = baseWidth / uv.width;
+          const fScale = bScale * currentScale;
+          const vp = page.getViewport({ scale: fScale });
+          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          const pw = Math.floor(vp.width * dpr);
+          const ph = Math.floor(vp.height * dpr);
+
+          const tmp = document.createElement("canvas");
+          tmp.width = pw;
+          tmp.height = ph;
+          const ctx = tmp.getContext("2d");
+          if (!ctx) return;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+          const task = page.render({ canvasContext: ctx, viewport: vp });
+          preRenderTasksRef.current.set(p, task);
+
+          await task.promise;
+          preRenderTasksRef.current.delete(p);
+
+          // Store in cache (no React state updates — purely background)
+          cacheRenderedPage(p, tmp, vp.width, vp.height, currentScale, pw, ph);
+        } catch (err: any) {
+          if (err?.name !== "RenderingCancelledException") {
+            // Pre-render failures are non-critical
+          }
+          preRenderTasksRef.current.delete(p);
+        }
+      }) as number;
+      idleIds.push(id);
+    }
+
+    return () => {
+      const cancelFn = typeof cancelIdleCallback !== "undefined" ? cancelIdleCallback : clearTimeout;
+      for (const id of idleIds) cancelFn(id);
+      // Cancel any in-flight pre-render tasks
+      for (const task of preRenderTasksRef.current.values()) task.cancel();
+      preRenderTasksRef.current.clear();
+    };
+  }, [pdfDoc, pageNumber, renderedScale, numPages, baseWidth, cacheRenderedPage]);
 
   // Push page dimensions to store for scale calibration math
   const setPageDimensions = useViewerStore((s) => s.setPageDimensions);
@@ -152,11 +316,14 @@ export default memo(function PDFPage({
         contain: "layout",
       }}
     >
-      {/* Pre-rendered PNG fallback — shows instantly while pdf.js canvas renders */}
-      {fallbackSrc && !canvasReady && !fallbackError && (
+      {/* PNG background — ALWAYS in DOM behind canvas. Shows through when canvas is hidden.
+           Old page stays visible until new PNG loads (no white flash on page switch). */}
+      {fallbackSrc && !fallbackError && (
         <img
           src={fallbackSrc}
           alt=""
+          decoding="async"
+          onLoad={handleFallbackLoad}
           onError={() => setFallbackError(true)}
           style={{
             position: "absolute",
@@ -176,7 +343,7 @@ export default memo(function PDFPage({
           transformOrigin: "top left",
           willChange: "transform",
           opacity: canvasReady ? 1 : 0,
-          transition: "opacity 150ms ease-in",
+          transition: !initialRenderDoneRef.current ? "opacity 150ms ease-in" : undefined,
         }}
       />
       <SearchHighlightOverlay
@@ -207,6 +374,11 @@ export default memo(function PDFPage({
         cssScale={cssScale}
       />
       <AnnotationOverlay
+        width={pageSize.width}
+        height={pageSize.height}
+        cssScale={cssScale}
+      />
+      <ParsedTableCellOverlay
         width={pageSize.width}
         height={pageSize.height}
         cssScale={cssScale}

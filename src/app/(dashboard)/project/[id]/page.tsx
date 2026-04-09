@@ -9,6 +9,7 @@ import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
   ClientTakeoffItem,
+  TakeoffGroup,
   KeynoteShapeData,
   CsiCode,
   TextractPageData,
@@ -31,6 +32,7 @@ interface ProjectResponse {
     drawingNumber: string | null;
   }>;
   takeoffItems?: ClientTakeoffItem[];
+  takeoffGroups?: TakeoffGroup[];
   chatMessages?: Array<{
     id: number;
     role: string;
@@ -73,6 +75,7 @@ export default function ProjectPage() {
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const setChatMessages = useViewerStore((s) => s.setChatMessages);
   const setTakeoffItems = useViewerStore((s) => s.setTakeoffItems);
+  const setTakeoffGroups = useViewerStore((s) => s.setTakeoffGroups);
   const setScaleCalibration = useViewerStore((s) => s.setScaleCalibration);
   const resetProjectData = useViewerStore((s) => s.resetProjectData);
   const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
@@ -107,15 +110,16 @@ export default function ProjectPage() {
       // Hydrate project intelligence (CSI graph, classCsiOverrides, etc.)
       if (data.projectIntelligence) {
         useViewerStore.getState().setProjectIntelligenceData(data.projectIntelligence);
+        if ((data.projectIntelligence as any).yoloTags) {
+          useViewerStore.getState().setYoloTags((data.projectIntelligence as any).yoloTags);
+        }
       }
 
       // Hydrate summaries (powers sidebar filters, panel lists, annotation counts)
       if (data.summaries) {
         useViewerStore.getState().setSummaries(data.summaries);
-        // Use summary-derived trades/CSI codes instead of iterating all pages
         setAllTrades(data.summaries.allTrades);
         setAllCsiCodes(data.summaries.allCsiCodes);
-        // Init detection models from summary instead of iterating annotations
         if (data.summaries.annotationSummary.modelNames.length > 0) {
           initDetectionModels(data.summaries.annotationSummary.modelNames);
         }
@@ -148,12 +152,14 @@ export default function ProjectPage() {
       if (data.takeoffItems) {
         setTakeoffItems(data.takeoffItems);
       }
+      if (data.takeoffGroups) {
+        setTakeoffGroups(data.takeoffGroups);
+      }
 
       // ─── Hydrate initial chunk (already fetched in parallel above) ───
       if (chunkRes.ok) {
         const chunk: ChunkResponse = await chunkRes.json();
 
-        // Batch page data into maps
         const keynoteMap: Record<number, KeynoteShapeData[]> = {};
         const csiMap: Record<number, CsiCode[]> = {};
         const textAnnMap: Record<number, any[]> = {};
@@ -168,7 +174,6 @@ export default function ProjectPage() {
           if (page.pageIntelligence) intelMap[page.pageNumber] = page.pageIntelligence;
         }
 
-        // Single batched store update for chunk data
         useViewerStore.setState(() => ({
           keynotes: keynoteMap,
           csiCodes: csiMap,
@@ -178,14 +183,12 @@ export default function ProjectPage() {
           loadedPageRange: { from: 1, to: chunk.pages.length > 0 ? Math.max(...chunk.pages.map((p: any) => p.pageNumber)) : Math.min(data.numPages || 1, 15) },
         }));
 
-        // Hydrate scale calibrations from chunk annotations
         for (const ann of chunk.annotations) {
           if (ann.source === "takeoff-scale" && (ann.data as any)?.type === "scale-calibration") {
             setScaleCalibration(ann.pageNumber, ann.data as any);
           }
         }
 
-        // If summaries were missing (old project), fall back to chunk data for trades/CSI
         if (!data.summaries) {
           const allTradeSet = new Set<string>();
           const allCsiMap = new Map<string, string>();
@@ -203,7 +206,6 @@ export default function ProjectPage() {
               .sort(([a], [b]) => a.localeCompare(b))
               .map(([code, description]) => ({ code, description }))
           );
-          // Init detection models from annotations
           const yoloModelNames = [...new Set(
             chunk.annotations
               .filter((a: any) => a.source === "yolo" && a.data?.modelName)
@@ -225,6 +227,7 @@ export default function ProjectPage() {
     setAllCsiCodes,
     setChatMessages,
     setTakeoffItems,
+    setTakeoffGroups,
     setScaleCalibration,
     resetProjectData,
     csiParam,

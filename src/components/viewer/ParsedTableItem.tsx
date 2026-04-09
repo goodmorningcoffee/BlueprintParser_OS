@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { YoloTagInstance } from "@/types";
 
@@ -13,6 +13,7 @@ interface ParsedTableItemProps {
   pageNumber: number;
   publicId: string;
   onDelete: () => void;
+  focusedParsedRegionId?: string | null;
 }
 
 /** Expandable parsed table item with tag sub-items */
@@ -25,7 +26,9 @@ export default function ParsedTableItem({
   pageNumber,
   publicId,
   onDelete,
+  focusedParsedRegionId,
 }: ParsedTableItemProps) {
+  const itemRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(table.name);
@@ -50,6 +53,21 @@ export default function ParsedTableItem({
   const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
   const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
   const isTagViewActive = table.region?.id ? !!activeTableTagViews[table.region.id] : false;
+  const hiddenParsedRegionIds = useViewerStore((s) => s.hiddenParsedRegionIds);
+  const isRegionHidden = table.region?.id ? hiddenParsedRegionIds.has(table.region.id) : false;
+  const isFocused = focusedParsedRegionId != null && focusedParsedRegionId === table.region?.id;
+
+  // Auto-expand and scroll into view when focused from double-click on canvas
+  useEffect(() => {
+    if (isFocused) {
+      setExpanded(true);
+      itemRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      const timer = setTimeout(() => {
+        useViewerStore.getState().setFocusedParsedRegionId(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [isFocused]);
 
   const rows = table.region?.data?.rows || [];
   const headers = table.region?.data?.headers || [];
@@ -168,7 +186,7 @@ export default function ParsedTableItem({
   };
 
   return (
-    <div className={`rounded border ${isCurrentPage ? "border-pink-400/30 bg-pink-500/5" : "border-[var(--border)]"}`}>
+    <div ref={itemRef} className={`rounded border ${isFocused ? "border-cyan-400/60 bg-cyan-500/10 ring-1 ring-cyan-400/30" : isCurrentPage ? "border-pink-400/30 bg-pink-500/5" : "border-[var(--border)]"}`}>
       {/* Parent header */}
       <div className="flex items-center gap-1 px-2 py-1.5">
         <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-[var(--muted)] shrink-0">
@@ -197,7 +215,21 @@ export default function ParsedTableItem({
             {pageNames[table.pageNum] || `p.${table.pageNum}`} &middot; {rowTags.length} rows
           </span>
         </div>
-        {/* Eye icon — toggle mapped tag visibility */}
+        {/* Eye icon — toggle table region visibility on canvas */}
+        {table.region?.id && (
+          <button
+            onClick={() => useViewerStore.getState().toggleParsedRegionVisibility(table.region.id)}
+            className={`text-[10px] shrink-0 ${
+              isRegionHidden
+                ? "text-[var(--muted)]/30 hover:text-[var(--muted)]"
+                : "text-pink-300 hover:text-pink-200"
+            }`}
+            title="Toggle table visibility on canvas"
+          >
+            {isRegionHidden ? "\u25CB" : "\u{1F441}"}
+          </button>
+        )}
+        {/* Tag view toggle (only when tags mapped) */}
         {table.region && rowTags.some((rt: { tag: string }) => yoloTags.some((t: any) => t.tagText === rt.tag && t.source === "schedule")) && (
           <button
             onClick={() => {
@@ -219,7 +251,7 @@ export default function ParsedTableItem({
             className={`text-[10px] shrink-0 ${isTagViewActive ? "text-cyan-300" : "text-[var(--muted)] hover:text-cyan-300"}`}
             title="Toggle mapped tag visibility"
           >
-            {isTagViewActive ? "\u{1F441}" : "\u25CB"}
+            {isTagViewActive ? "T" : "t"}
           </button>
         )}
         <button
@@ -507,9 +539,20 @@ export default function ParsedTableItem({
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => rt.tag && handleTagClick(rt.tag)}
-                  className={`flex-1 text-left text-[10px] px-1.5 py-0.5 rounded hover:bg-[var(--surface-hover)] text-[var(--muted)] ${
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    if (!rt.tag) return;
+                    const tag = yoloTags.find((t: any) => t.tagText === rt.tag && t.source === "schedule");
+                    if (tag && tag.instances?.length > 0) {
+                      useViewerStore.getState().tagBrowseNavigate(tag.id, 0);
+                    }
+                  }}
+                  className={`flex-1 text-left text-[10px] px-1.5 py-0.5 rounded text-[var(--muted)] ${
                     activeYoloTagId && yoloTags.find((t: any) => t.tagText === rt.tag && t.source === "schedule")?.id === activeYoloTagId
-                      ? "bg-pink-500/15 text-pink-300" : ""
+                      ? "bg-pink-500/15 text-pink-300"
+                      : tagInstances(rt.tag) > 0
+                      ? "hover:bg-cyan-500/10 cursor-pointer"
+                      : "opacity-60 hover:bg-[var(--surface-hover)]"
                   }`}
                 >
                   <span className="font-mono font-medium text-[var(--fg)]">{rt.tag || `Row ${ri + 1}`}</span>

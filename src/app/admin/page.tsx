@@ -14,6 +14,7 @@ import HeuristicsTab from "./tabs/HeuristicsTab";
 import PageIntelligenceTab from "./tabs/PageIntelligenceTab";
 import UsersTab from "./tabs/UsersTab";
 import CompaniesUsersTab from "./tabs/CompaniesUsersTab";
+import AiRbacTab from "./tabs/AiRbacTab";
 import SettingsTab from "./tabs/SettingsTab";
 import PipelineTab from "./tabs/PipelineTab";
 import LlmContextTab from "./tabs/LlmContextTab";
@@ -60,7 +61,7 @@ export default function AdminPage() {
   const [showInvites, setShowInvites] = useState(false);
   const [yoloStatus, setYoloStatus] = useState<Record<string, Record<string, number>>>({});
   const pollKey = (pid: string, mid: number) => `${pid}:${mid}`;
-  const [toggles, setToggles] = useState({ sagemakerEnabled: true, quotaEnabled: true, hasPassword: false });
+  const [toggles, setToggles] = useState({ sagemakerEnabled: true, quotaEnabled: true, hasPassword: true });
   const [togglePassword, setTogglePassword] = useState("");
   const [reprocessing, setReprocessing] = useState(false);
   const [reprocessLog, setReprocessLog] = useState<string[]>([]);
@@ -143,7 +144,11 @@ export default function AdminPage() {
         if (!statusRes.ok) return;
 
         const { status: jobStatus, failureReason } = await statusRes.json();
-        setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: jobStatus } }));
+
+        // Keep "Running: jobName" while job is active so Details panel stays visible
+        if (jobStatus !== "Completed" && jobStatus !== "Failed" && jobStatus !== "Stopped") {
+          setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Running: ${jobName}` } }));
+        }
 
         if (jobStatus === "Completed" || jobStatus === "Failed" || jobStatus === "Stopped") {
           clearInterval(interval);
@@ -384,7 +389,11 @@ export default function AdminPage() {
         if (!statusRes.ok) return;
 
         const { status: jobStatus, failureReason } = await statusRes.json();
-        setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: jobStatus } }));
+
+        // Keep "Running: jobName" while job is active so Details panel stays visible
+        if (jobStatus !== "Completed" && jobStatus !== "Failed" && jobStatus !== "Stopped") {
+          setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Running: ${jobName}` } }));
+        }
 
         if (jobStatus === "Completed" || jobStatus === "Failed" || jobStatus === "Stopped") {
           clearInterval(interval);
@@ -434,12 +443,11 @@ export default function AdminPage() {
       body: JSON.stringify(newUser),
     });
     if (res.ok) {
-      setMessage("User created");
       setNewUser({ username: "", email: "", password: "", role: "member" });
       loadData();
     } else {
       const err = await res.json();
-      setMessage(err.error || "Failed");
+      throw new Error(err.error || "Failed to create user");
     }
   }
 
@@ -519,7 +527,7 @@ export default function AdminPage() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get("tab") as AdminTab;
-      if (tab && ["overview", "projects", "ai-models", "text-annotations", "csi", "companies", "users", "settings"].includes(tab)) return tab;
+      if (tab && ["overview", "projects", "ai-models", "ai-rbac", "pipeline", "llm-context", "text-annotations", "csi", "heuristics", "page-intelligence", "companies", "users", "settings"].includes(tab)) return tab;
     }
     return "overview";
   });
@@ -579,7 +587,7 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
-      <main className="flex-1 p-6 max-w-4xl mx-auto w-full">
+      <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
         <h1 className="text-2xl font-bold mb-4">Admin Panel</h1>
 
         {message && (
@@ -601,6 +609,7 @@ export default function AdminPage() {
             unseenInvites={unseenInvites}
             showInvites={showInvites}
             onMarkSeen={markInvitesSeen}
+            isRootAdmin={(session?.user as any)?.isRootAdmin || false}
           />
         )}
 
@@ -639,6 +648,7 @@ export default function AdminPage() {
             setCurrentTogglePass={setCurrentTogglePass}
             onToggle={handleToggle}
             onSetTogglePassword={handleSetTogglePassword}
+            isRootAdmin={(session?.user as any)?.isRootAdmin || false}
           />
         )}
 
@@ -685,6 +695,10 @@ export default function AdminPage() {
             reprocessLog={reprocessLog}
             onReprocess={reprocessAll}
           />
+        )}
+
+        {activeTab === "ai-rbac" && (session?.user as any)?.isRootAdmin && (
+          <AiRbacTab />
         )}
 
         {activeTab === "companies" && (session?.user as any)?.isRootAdmin && (

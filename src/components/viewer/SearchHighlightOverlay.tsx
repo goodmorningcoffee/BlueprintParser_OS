@@ -213,6 +213,7 @@ export default memo(function SearchHighlightOverlay({
         pointerEvents: "none",
         transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
         transformOrigin: "top left",
+        willChange: "transform",
       }}
     />
   );

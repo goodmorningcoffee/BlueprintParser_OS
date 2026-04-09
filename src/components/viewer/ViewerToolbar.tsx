@@ -307,7 +307,20 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             >
               Settings
             </button>
+            <button
+              onClick={() => { setMenuOpen(false); togglePageIntelPanel(); }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
+            >
+              {showPageIntelPanel ? "✓ " : ""}Page Intelligence
+            </button>
             <div className="border-t border-[var(--border)]" />
+            <a
+              href={isDemo ? "/demo/admin" : "/admin"}
+              onClick={() => setMenuOpen(false)}
+              className="block w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
+            >
+              Admin
+            </a>
             <button
               onClick={() => { setMenuOpen(false); useViewerStore.getState().toggleTips(); }}
               className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
@@ -445,24 +458,6 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       {/* Spacer — pushes right buttons to edge */}
       <div className="flex-1" />
 
-      {/* Keynote visibility toggle */}
-      <HelpTooltip id="keynote-toggle">
-        <button
-          onClick={toggleKeynotes}
-          className={`px-2 py-1 text-xs rounded border ${
-            showKeynotes
-              ? "border-amber-400/60 text-amber-400 bg-amber-400/10"
-              : "border-amber-400/20 text-amber-400/50 hover:text-amber-300 hover:border-amber-400/40"
-          }`}
-        >
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="inline-block">
-          <ellipse cx="8" cy="8" rx="7" ry="4.5" />
-          <circle cx="8" cy="8" r="2" fill="currentColor" />
-          {!showKeynotes && <line x1="2" y1="14" x2="14" y2="2" strokeWidth="2" />}
-        </svg>
-      </button>
-      </HelpTooltip>
-
       {/* YOLO detections panel + per-model dropdown */}
       {hasYoloAnnotations && (
         <HelpTooltip id="yolo-toggle">
@@ -579,18 +574,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </button>
       </HelpTooltip>
 
-      {/* Intel — step 5 */}
-      <button
-        onClick={togglePageIntelPanel}
-        className={`px-2 py-1 text-xs rounded border ${
-          showPageIntelPanel
-            ? "border-green-400/60 text-green-300 bg-green-400/12"
-            : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
-        }`}
-        title="Page Intelligence"
-      >
-        Intel
-      </button>
+      {/* Intel moved to Menu dropdown */}
 
       {/* QTO */}
       <HelpTooltip id="qto-button">

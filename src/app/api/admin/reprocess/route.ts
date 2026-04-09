@@ -8,6 +8,8 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 import { extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
+import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
+import { downloadFromS3, uploadToS3 } from "@/lib/s3";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
@@ -50,7 +52,7 @@ export async function POST(req: Request) {
 
   // Get all completed projects for this company
   const allCompanyProjects = await db
-    .select({ id: projects.id, name: projects.name, publicId: projects.publicId })
+    .select({ id: projects.id, name: projects.name, publicId: projects.publicId, dataUrl: projects.dataUrl, numPages: projects.numPages })
     .from(projects)
     .where(eq(projects.companyId, session.user.companyId));
 
@@ -219,6 +221,64 @@ export async function POST(req: Request) {
         return;
       }
 
+      if (scope === "thumbnails") {
+        // Thumbnail + page PNG regeneration: download PDF, rasterize, upload to S3
+        for (const project of allProjects) {
+          try {
+            const pdfKey = `${project.dataUrl}/original.pdf`;
+            let pdfBuffer: Buffer;
+            try {
+              pdfBuffer = await downloadFromS3(pdfKey);
+            } catch {
+              send({ type: "error", project: project.name, error: "PDF not found in S3" });
+              continue;
+            }
+            const pageCount = project.numPages || await getPdfPageCount(pdfBuffer);
+            send({ type: "project", name: project.name, pages: pageCount });
+
+            for (let pg = 1; pg <= pageCount; pg++) {
+              const pageKey = String(pg).padStart(4, "0");
+              try {
+                // Thumbnail at 72 DPI
+                const thumbBuffer = await rasterizePage(pdfBuffer, pg, 72);
+                await uploadToS3(
+                  `${project.dataUrl}/thumbnails/page_${pageKey}.png`,
+                  thumbBuffer,
+                  "image/png",
+                  "public, max-age=31536000, immutable",
+                );
+                // Full page at 300 DPI (also regenerate if missing)
+                const pageBuffer = await rasterizePage(pdfBuffer, pg, 300);
+                await uploadToS3(
+                  `${project.dataUrl}/pages/page_${pageKey}.png`,
+                  pageBuffer,
+                  "image/png",
+                  "public, max-age=31536000, immutable",
+                );
+                updatedPages++;
+              } catch (err) {
+                logger.error(`[reprocess-thumbnails] Page ${pg} failed for ${project.name}:`, err);
+                skippedPages++;
+              }
+              totalPages++;
+              if (totalPages % 3 === 0) {
+                send({ type: "progress", updated: updatedPages, skipped: skippedPages, total: totalPages, project: project.name });
+              }
+            }
+            // Release PDF buffer between projects
+            // @ts-ignore
+            pdfBuffer = null;
+          } catch (err) {
+            logger.error(`[reprocess-thumbnails] Project ${project.name} failed:`, err);
+            send({ type: "error", project: project.name, error: err instanceof Error ? err.message : "Failed" });
+          }
+        }
+
+        send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
+        controller.close();
+        return;
+      }
+
       if (scope === "intelligence") {
         // Intelligence-only reprocess: re-run page analysis + project analysis on existing data
         for (const project of allProjects) {
@@ -349,53 +409,58 @@ export async function POST(req: Request) {
 
           const textractData = page.textractData as TextractPageData;
 
-          // Preserve user notes from existing text annotations
-          let existingNotes: Record<string, string> = {};
           try {
-            const [existing] = await db
-              .select({ textAnnotations: pages.textAnnotations })
-              .from(pages)
-              .where(eq(pages.id, page.id))
-              .limit(1);
-            if (existing?.textAnnotations) {
-              const prev = existing.textAnnotations as TextAnnotationResult;
-              for (const ann of prev.annotations || []) {
-                if (ann.note) existingNotes[`${ann.type}:${ann.text}`] = ann.note;
+            // Preserve user notes from existing text annotations
+            let existingNotes: Record<string, string> = {};
+            try {
+              const [existing] = await db
+                .select({ textAnnotations: pages.textAnnotations })
+                .from(pages)
+                .where(eq(pages.id, page.id))
+                .limit(1);
+              if (existing?.textAnnotations) {
+                const prev = existing.textAnnotations as TextAnnotationResult;
+                for (const ann of prev.annotations || []) {
+                  if (ann.note) existingNotes[`${ann.type}:${ann.text}`] = ann.note;
+                }
               }
+            } catch { /* textAnnotations column may not exist */ }
+
+            // Re-run CSI detection (before text annotations, since CSI feeds into them)
+            const rawText = page.rawText || extractRawText(textractData);
+            const csiCodes = detectCsiCodes(rawText);
+
+            // Re-run text annotation detectors (with CSI codes + pipeline config)
+            const textAnnotationResult = detectTextAnnotations(textractData, csiCodes, enabledDetectorIds);
+
+            // Merge back user notes from previous run
+            for (const ann of textAnnotationResult.annotations) {
+              const key = `${ann.type}:${ann.text}`;
+              if (existingNotes[key]) ann.note = existingNotes[key];
             }
-          } catch { /* textAnnotations column may not exist */ }
 
-          // Re-run CSI detection (before text annotations, since CSI feeds into them)
-          const rawText = page.rawText || extractRawText(textractData);
-          const csiCodes = detectCsiCodes(rawText);
+            // Update page — use try-catch for textAnnotations column
+            try {
+              await db
+                .update(pages)
+                .set({
+                  textAnnotations: textAnnotationResult.annotations.length > 0 ? textAnnotationResult : null,
+                  csiCodes: csiCodes.length > 0 ? csiCodes : null,
+                })
+                .where(eq(pages.id, page.id));
+            } catch {
+              // textAnnotations column may not exist — just update csiCodes
+              await db
+                .update(pages)
+                .set({ csiCodes: csiCodes.length > 0 ? csiCodes : null })
+                .where(eq(pages.id, page.id));
+            }
 
-          // Re-run text annotation detectors (with CSI codes + pipeline config)
-          const textAnnotationResult = detectTextAnnotations(textractData, csiCodes, enabledDetectorIds);
-
-          // Merge back user notes from previous run
-          for (const ann of textAnnotationResult.annotations) {
-            const key = `${ann.type}:${ann.text}`;
-            if (existingNotes[key]) ann.note = existingNotes[key];
+            updatedPages++;
+          } catch (err) {
+            logger.error(`[reprocess] Page ${page.pageNumber} failed:`, err);
+            skippedPages++;
           }
-
-          // Update page — use try-catch for textAnnotations column
-          try {
-            await db
-              .update(pages)
-              .set({
-                textAnnotations: textAnnotationResult.annotations.length > 0 ? textAnnotationResult : null,
-                csiCodes: csiCodes.length > 0 ? csiCodes : null,
-              })
-              .where(eq(pages.id, page.id));
-          } catch {
-            // textAnnotations column may not exist — just update csiCodes
-            await db
-              .update(pages)
-              .set({ csiCodes: csiCodes.length > 0 ? csiCodes : null })
-              .where(eq(pages.id, page.id));
-          }
-
-          updatedPages++;
 
           if (updatedPages % 5 === 0) {
             send({ type: "progress", updated: updatedPages, total: totalPages, project: project.name });

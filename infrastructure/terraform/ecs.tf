@@ -73,6 +73,8 @@ resource "aws_ecs_task_definition" "beaver_app" {
         { name = "LABEL_STUDIO_URL", value = "https://labelstudio.${var.domain_name}" },
         { name = "AWS_ACCOUNT", value = data.aws_caller_identity.current.account_id },
         { name = "ROOT_ADMIN_EMAIL", value = var.label_studio_admin_email },
+        { name = "YOLO_ECR_IMAGE", value = "${aws_ecr_repository.beaver_yolo_pipeline.repository_url}:latest" },
+        { name = "SAGEMAKER_ROLE_ARN", value = aws_iam_role.beaver_sagemaker_role.arn },
       ]
 
       secrets = [

@@ -332,7 +332,10 @@ export default function KeynoteItem({
                   onClick={() => handleKeyClick(k.key)}
                   className={`flex-1 text-left text-[10px] px-1.5 py-0.5 rounded ${
                     activeHighlight?.pageNumber === keynote.pageNumber && activeHighlight?.key === k.key
-                      ? "bg-amber-500/15 text-amber-300" : "hover:bg-[var(--surface-hover)] text-[var(--muted)]"
+                      ? "bg-amber-500/15 text-amber-300"
+                      : tagInstances(k.key) > 0
+                      ? "hover:bg-cyan-500/10 cursor-pointer text-[var(--muted)]"
+                      : "opacity-60 hover:bg-[var(--surface-hover)] text-[var(--muted)]"
                   }`}
                 >
                   <span className="font-mono font-medium text-[var(--fg)]">{k.key || "?"}</span>
