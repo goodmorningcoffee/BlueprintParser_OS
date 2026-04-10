@@ -51,7 +51,15 @@ export function methodOcrPositions(
   });
 
   if (regionWords.length < 6) {
-    return { method: "ocr-positions", headers: [], rows: [], confidence: 0 };
+    // Phase I.1.d: surface why this method bailed early
+    return {
+      method: "ocr-positions",
+      headers: [],
+      rows: [],
+      confidence: 0,
+      error: `too few words in region: ${regionWords.length} (need ≥6)`,
+      debug: { intermediate: { regionWordCount: regionWords.length } },
+    };
   }
 
   // Cluster rows by Y
@@ -75,7 +83,14 @@ export function methodOcrPositions(
   }
 
   if (rowClusters.length < 3) {
-    return { method: "ocr-positions", headers: [], rows: [], confidence: 0 };
+    return {
+      method: "ocr-positions",
+      headers: [],
+      rows: [],
+      confidence: 0,
+      error: `too few row clusters: ${rowClusters.length} (need ≥3)`,
+      debug: { intermediate: { regionWordCount: regionWords.length, rowClusterCount: rowClusters.length } },
+    };
   }
 
   // Detect columns from X-clusters
@@ -90,7 +105,22 @@ export function methodOcrPositions(
   let stableClusters = clusters.filter((c) => c.length >= minHits);
   if (stableClusters.length < 2) stableClusters = clusters.length >= 2 ? clusters : [];
   if (stableClusters.length < 2) {
-    return { method: "ocr-positions", headers: [], rows: [], confidence: 0.1 };
+    return {
+      method: "ocr-positions",
+      headers: [],
+      rows: [],
+      confidence: 0.1,
+      error: `no stable column clusters detected (need ≥2 with ≥${minHits} hits each)`,
+      debug: {
+        intermediate: {
+          regionWordCount: regionWords.length,
+          rowClusterCount: rowClusters.length,
+          rawColumnClusterCount: clusters.length,
+          stableColumnClusterCount: stableClusters.length,
+          minHits,
+        },
+      },
+    };
   }
 
   const colCenters = stableClusters.map((c) => c.reduce((s, x) => s + x, 0) / c.length).sort((a, b) => a - b);
@@ -148,7 +178,22 @@ export function methodOcrPositions(
   }
 
   if (dataRows.length < 2) {
-    return { method: "ocr-positions", headers: [], rows: [], confidence: 0.1 };
+    return {
+      method: "ocr-positions",
+      headers: [],
+      rows: [],
+      confidence: 0.1,
+      error: `too few data rows after parsing: ${dataRows.length} (need ≥2)`,
+      debug: {
+        intermediate: {
+          regionWordCount: regionWords.length,
+          rowClusterCount: rowClusters.length,
+          stableColumnClusterCount: stableClusters.length,
+          headerRowDetected: headerIdx >= 0,
+          dataRowCount: dataRows.length,
+        },
+      },
+    };
   }
 
   // Tag column
@@ -202,7 +247,30 @@ export function methodOcrPositions(
   }
   rowBoundaries.push(rMaxY);
 
-  return { method: "ocr-positions", headers, rows: dataRows, confidence, tagColumn, colBoundaries, rowBoundaries };
+  return {
+    method: "ocr-positions",
+    headers,
+    rows: dataRows,
+    confidence,
+    tagColumn,
+    colBoundaries,
+    rowBoundaries,
+    // Phase I.1.d: capture intermediate state on success too, so the debug UI
+    // can explain how the parser arrived at this grid.
+    debug: {
+      intermediate: {
+        regionWordCount: regionWords.length,
+        rowClusterCount: rowClusters.length,
+        stableColumnClusterCount: stableClusters.length,
+        headerRowDetected: headerIdx >= 0,
+        headerKeywordMatches: headerMatches,
+        dataRowCount: dataRows.length,
+        fillRate: Number(fillRate.toFixed(3)),
+        consistency: Number(consistency.toFixed(3)),
+        tagColumnDetected: !!tagColumn,
+      },
+    },
+  };
 }
 
 // ─── Method 2: Textract TABLES ────────────────────────────
@@ -212,7 +280,15 @@ export function methodTextractTables(
   regionBbox: [number, number, number, number],
 ): MethodResult {
   if (!tables || tables.length === 0) {
-    return { method: "textract-tables", headers: [], rows: [], confidence: 0 };
+    // Phase I.1.d: Textract didn't return any TABLE blocks for this page
+    return {
+      method: "textract-tables",
+      headers: [],
+      rows: [],
+      confidence: 0,
+      error: "Textract returned no TABLE blocks for this page",
+      debug: { intermediate: { textractTableCount: 0 } },
+    };
   }
 
   const [rMinX, rMinY, rMaxX, rMaxY] = regionBbox;
@@ -240,7 +316,19 @@ export function methodTextractTables(
   }
 
   if (!bestTable || bestOverlap < 0.3) {
-    return { method: "textract-tables", headers: [], rows: [], confidence: 0 };
+    return {
+      method: "textract-tables",
+      headers: [],
+      rows: [],
+      confidence: 0,
+      error: `no Textract TABLE overlapped the region (best overlap: ${bestOverlap.toFixed(2)}, need ≥0.30)`,
+      debug: {
+        intermediate: {
+          textractTableCount: tables.length,
+          bestOverlap: Number(bestOverlap.toFixed(3)),
+        },
+      },
+    };
   }
 
   const { cells: allCells, colCount } = bestTable;
@@ -255,7 +343,22 @@ export function methodTextractTables(
   const filteredRowCount = uniqueRows.length;
 
   if (filteredRowCount < 1 || colCount < 1) {
-    return { method: "textract-tables", headers: [], rows: [], confidence: 0 };
+    return {
+      method: "textract-tables",
+      headers: [],
+      rows: [],
+      confidence: 0,
+      error: `Textract table found but no cells overlap region (rows=${filteredRowCount}, cols=${colCount})`,
+      debug: {
+        intermediate: {
+          textractTableCount: tables.length,
+          bestOverlap: Number(bestOverlap.toFixed(3)),
+          regionCellCount: regionCells.length,
+          filteredRowCount,
+          colCount,
+        },
+      },
+    };
   }
 
   const grid: string[][] = Array.from({ length: filteredRowCount }, () => new Array(colCount).fill(""));
@@ -284,7 +387,23 @@ export function methodTextractTables(
   const avgCellConf = regionCells.length > 0 ? regionCells.reduce((s, c) => s + c.confidence, 0) / regionCells.length / 100 : 0;
   const confidence = Math.min(fillRate * 0.4 + avgCellConf * 0.3 + bestOverlap * 0.1 + 0.1, 0.90);
 
-  return { method: "textract-tables", headers, rows: dataRows, confidence };
+  return {
+    method: "textract-tables",
+    headers,
+    rows: dataRows,
+    confidence,
+    debug: {
+      intermediate: {
+        textractTableCount: tables.length,
+        bestOverlap: Number(bestOverlap.toFixed(3)),
+        regionCellCount: regionCells.length,
+        filteredRowCount,
+        colCount,
+        avgCellConfidence: Number(avgCellConf.toFixed(3)),
+        fillRate: Number(fillRate.toFixed(3)),
+      },
+    },
+  };
 }
 
 // ─── Method 3: OpenCV Line Detection ──────────────────────
@@ -313,7 +432,24 @@ export async function methodOpenCvLines(
     });
 
     if (lineGrid.confidence < 0.3 || lineGrid.rowCount < 1 || lineGrid.colCount < 1) {
-      return { method: "opencv-lines", headers: [], rows: [], confidence: 0 };
+      // Phase I.1.d: surface why opencv-lines bailed; propagate the line-detection
+      // subprocess stderr from lineGrid.debug for the admin debug UI.
+      return {
+        method: "opencv-lines",
+        headers: [],
+        rows: [],
+        confidence: 0,
+        error: `OpenCV line detection too weak: confidence=${lineGrid.confidence.toFixed(2)} (need ≥0.30), rows=${lineGrid.rowCount}, cols=${lineGrid.colCount}`,
+        debug: {
+          stderr: lineGrid.debug?.stderr,
+          exitCode: lineGrid.debug?.exitCode,
+          intermediate: {
+            lineGridConfidence: Number(lineGrid.confidence.toFixed(3)),
+            detectedRowCount: lineGrid.rowCount,
+            detectedColCount: lineGrid.colCount,
+          },
+        },
+      };
     }
 
     const rowYs = lineGrid.rows.map((r) => r.y);
@@ -322,7 +458,24 @@ export async function methodOpenCvLines(
     const regionColXs = colXs.filter((x) => x >= rMinX && x <= rMaxX);
 
     if (regionRowYs.length < 2 || regionColXs.length < 2) {
-      return { method: "opencv-lines", headers: [], rows: [], confidence: lineGrid.confidence * 0.3 };
+      return {
+        method: "opencv-lines",
+        headers: [],
+        rows: [],
+        confidence: lineGrid.confidence * 0.3,
+        error: `not enough lines inside region: rows=${regionRowYs.length}, cols=${regionColXs.length} (need ≥2 each)`,
+        debug: {
+          stderr: lineGrid.debug?.stderr,
+          exitCode: lineGrid.debug?.exitCode,
+          intermediate: {
+            lineGridConfidence: Number(lineGrid.confidence.toFixed(3)),
+            totalRowLines: rowYs.length,
+            totalColLines: colXs.length,
+            regionRowLines: regionRowYs.length,
+            regionColLines: regionColXs.length,
+          },
+        },
+      };
     }
 
     const numRows = regionRowYs.length - 1;
@@ -359,9 +512,34 @@ export async function methodOpenCvLines(
       if (hasContent) dataRows.push(row);
     }
 
-    return { method: "opencv-lines", headers, rows: dataRows, confidence: lineGrid.confidence };
+    return {
+      method: "opencv-lines",
+      headers,
+      rows: dataRows,
+      confidence: lineGrid.confidence,
+      debug: {
+        stderr: lineGrid.debug?.stderr,
+        exitCode: lineGrid.debug?.exitCode,
+        intermediate: {
+          lineGridConfidence: Number(lineGrid.confidence.toFixed(3)),
+          totalRowLines: lineGrid.rowCount,
+          totalColLines: lineGrid.colCount,
+          regionRowLines: regionRowYs.length,
+          regionColLines: regionColXs.length,
+          dataRowCount: dataRows.length,
+          colCount: numCols,
+        },
+      },
+    };
   } catch (err) {
     logger.error("[table-parse] OpenCV method failed:", err);
-    return { method: "opencv-lines", headers: [], rows: [], confidence: 0 };
+    return {
+      method: "opencv-lines",
+      headers: [],
+      rows: [],
+      confidence: 0,
+      error: err instanceof Error ? err.message : "OpenCV method failed",
+      debug: { intermediate: { exception: String(err) } },
+    };
   }
 }

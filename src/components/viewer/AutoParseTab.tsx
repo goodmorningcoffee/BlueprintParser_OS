@@ -8,6 +8,32 @@ import MapTagsSection from "./MapTagsSection";
 
 type ProposedRegion = [number, number, number, number]; // [minX, minY, maxX, maxY]
 
+/**
+ * Debug mode toggle for the table-parse pipeline. When ON, the API returns
+ * per-method results so the drill-down UI can compare each parser's output.
+ * When OFF (default), only the merged grid + infraErrors are returned —
+ * production users see a clean simple UX.
+ *
+ * Two ways to enable (either):
+ * 1. Build-time: set NEXT_PUBLIC_TABLE_PARSE_DEBUG=1 in .env.local or staging build
+ * 2. Runtime: in the browser console, run `localStorage.setItem('bp2_debug_table_parse', '1')`
+ *    Then refresh. Disable with `localStorage.removeItem('bp2_debug_table_parse')`.
+ *
+ * Future: an Admin Control "Table Parsing" tab will replace this with a
+ * persisted server-side appSettings flag.
+ */
+function isTableParseDebugMode(): boolean {
+  if (process.env.NEXT_PUBLIC_TABLE_PARSE_DEBUG === "1") return true;
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      return window.localStorage.getItem("bp2_debug_table_parse") === "1";
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 interface AutoParseTabProps {
   autoDetectedTables: any[];
   existingParsed: any[];
@@ -86,11 +112,15 @@ export default function AutoParseTab({
       setAutoParseInfraErrors([]);
       setAutoParseMethodResults(null);
 
+      const debugMode = isTableParseDebugMode();
+
       try {
         // Parse each region independently then merge
         let mergedHeaders: string[] = [];
         let mergedRows: Record<string, string>[] = [];
         let lastMethodInfo: any[] | null = null;
+        // Note: multi-region parses only show the LAST region's method drill-down
+        // (UI space constraint — by design). Same constraint as colBoundaries/rowBoundaries below.
         let lastMethodResults: any[] | null = null;
         const collectedInfraErrors: { stage: string; error: string }[] = [];
         let tagColumn: string | undefined;
@@ -102,7 +132,7 @@ export default function AutoParseTab({
           const resp = await fetch("/api/table-parse", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projectId, pageNumber, regionBbox: bbox, ...tableParseOptions }),
+            body: JSON.stringify({ projectId, pageNumber, regionBbox: bbox, ...tableParseOptions, debugMode }),
           });
 
           if (!resp.ok) {
@@ -374,12 +404,18 @@ export default function AutoParseTab({
                   key={`${mr.method}-${i}`}
                   result={mr}
                   onUseThis={(r) => {
+                    // FOLLOWUP-2: clear tagColumn/csiTags on override. They were detected
+                    // against the merged grid's headers and may not exist in the override's
+                    // headers — leaving them stale would break Map Tags downstream.
+                    // The next save flow will re-detect via detectCsiAndPersist.
                     setTableParsedGrid({
                       ...tableParsedGrid,
                       headers: r.headers,
                       rows: r.rows,
                       colBoundaries: r.colBoundaries,
                       rowBoundaries: r.rowBoundaries,
+                      tagColumn: undefined,
+                      csiTags: [],
                     });
                   }}
                 />
