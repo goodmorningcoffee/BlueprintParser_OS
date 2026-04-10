@@ -77,7 +77,7 @@ export async function POST(req: Request) {
 
     if (pdfBuffer) {
       try {
-        pagePngBuffer = await rasterizePage(pdfBuffer, pageNumber, 150);
+        pagePngBuffer = await rasterizePage(pdfBuffer, pageNumber, 200);
       } catch { /* rasterization failed */ }
     }
 
