@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { checkProjectAccess } from "@/lib/api-utils";
+import { checkProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { annotations, projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -11,14 +11,14 @@ async function verifyAnnotationAccess(annotationId: number) {
     .from(annotations)
     .where(eq(annotations.id, annotationId))
     .limit(1);
-  if (!annotation) return { annotation: null, error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
+  if (!annotation) return { annotation: null, error: apiError("Not found", 404) };
 
   const [project] = await db
     .select({ isDemo: projects.isDemo, companyId: projects.companyId })
     .from(projects)
     .where(eq(projects.id, annotation.projectId))
     .limit(1);
-  if (!project) return { annotation: null, error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
+  if (!project) return { annotation: null, error: apiError("Not found", 404) };
 
   const access = await checkProjectAccess(project);
   if (access.error) return { annotation: null, error: access.error };
@@ -34,7 +34,7 @@ export async function PUT(
 
   const { annotation, error } = await verifyAnnotationAccess(parseInt(id));
   if (error) return error;
-  if (!annotation) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!annotation) return apiError("Not found", 404);
 
   const body = await req.json();
   const updates: Record<string, unknown> = {};
@@ -80,7 +80,7 @@ export async function DELETE(
 
   const { annotation, error } = await verifyAnnotationAccess(parseInt(id));
   if (error) return error;
-  if (!annotation) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!annotation) return apiError("Not found", 404);
 
   await db.delete(annotations).where(eq(annotations.id, annotation.id));
 

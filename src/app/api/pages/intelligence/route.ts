@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveProjectAccess } from "@/lib/api-utils";
+import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages, projects } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -23,7 +23,7 @@ export async function PATCH(req: Request) {
     };
 
     if (!projectId || !pageNumber || !intelligence) {
-      return NextResponse.json({ error: "Missing projectId, pageNumber, or intelligence" }, { status: 400 });
+      return apiError("Missing projectId, pageNumber, or intelligence", 400);
     }
 
     const access = await resolveProjectAccess({ dbId: projectId });
@@ -31,7 +31,7 @@ export async function PATCH(req: Request) {
     const { project: proj } = access;
 
     if (proj.isDemo) {
-      return NextResponse.json({ error: "Demo projects are read-only" }, { status: 403 });
+      return apiError("Demo projects are read-only", 403);
     }
 
     // Read current page data
@@ -46,7 +46,7 @@ export async function PATCH(req: Request) {
       .limit(1);
 
     if (!pageRow) {
-      return NextResponse.json({ error: "Page not found" }, { status: 404 });
+      return apiError("Page not found", 404);
     }
 
     // Deep-merge intelligence (new fields override, existing fields preserved)
@@ -97,9 +97,6 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ ok: true, csiCodeCount: newCsi.length, summaries });
   } catch (err) {
     logger.error("[pages/intelligence] Failed:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Intelligence update failed" },
-      { status: 500 },
-    );
+    return apiError(err instanceof Error ? err.message : "Intelligence update failed", 500);
   }
 }

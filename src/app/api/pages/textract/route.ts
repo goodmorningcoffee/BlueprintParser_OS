@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveProjectAccess } from "@/lib/api-utils";
+import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -16,7 +16,7 @@ export async function GET(req: Request) {
   const pageNumber = Number(url.searchParams.get("pageNumber"));
 
   if (!projectId || !pageNumber) {
-    return NextResponse.json({ error: "Missing projectId or pageNumber" }, { status: 400 });
+    return apiError("Missing projectId or pageNumber", 400);
   }
 
   const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
