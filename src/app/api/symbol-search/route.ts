@@ -7,8 +7,7 @@
  * Flow: crop template from source page → rasterize target pages → run engine → stream results
  */
 
-import { NextResponse } from "next/server";
-import { resolveProjectAccess } from "@/lib/api-utils";
+import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -50,16 +49,13 @@ export async function POST(req: Request) {
   };
 
   if (!projectId || !sourcePageNumber || !templateBbox) {
-    return NextResponse.json(
-      { error: "Missing projectId, sourcePageNumber, or templateBbox" },
-      { status: 400 }
-    );
+    return apiError("Missing projectId, sourcePageNumber, or templateBbox", 400);
   }
 
   // Bbox validation
   const { x, y, w, h } = templateBbox;
   if (![x, y, w, h].every((v) => typeof v === "number" && isFinite(v) && v >= 0 && v <= 1) || w <= 0 || h <= 0) {
-    return NextResponse.json({ error: "Invalid templateBbox" }, { status: 400 });
+    return apiError("Invalid templateBbox", 400);
   }
 
   const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
@@ -67,7 +63,7 @@ export async function POST(req: Request) {
   const { project } = access;
 
   if (!project.dataUrl) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    return apiError("Project not found", 404);
   }
 
   const tempDir = await mkdtemp(join(tmpdir(), "bp2-symbol-search-"));
@@ -86,14 +82,14 @@ export async function POST(req: Request) {
       : allPages.map((p) => p.pageNumber);
 
     if (pageNumbers.length === 0) {
-      return NextResponse.json({ error: "No pages to search" }, { status: 400 });
+      return apiError("No pages to search", 400);
     }
 
     // ─── Download PDF and rasterize source page for template ──
     const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
     const pdfResp = await fetch(pdfUrl);
     if (!pdfResp.ok) {
-      return NextResponse.json({ error: "Failed to fetch PDF" }, { status: 500 });
+      return apiError("Failed to fetch PDF", 500);
     }
     const pdfBuffer = Buffer.from(await pdfResp.arrayBuffer());
 
@@ -177,7 +173,7 @@ cv2.imwrite(cfg["dst"], crop)
     }
 
     if (targetPaths.length === 0) {
-      return NextResponse.json({ error: "No page images available" }, { status: 500 });
+      return apiError("No page images available", 500);
     }
 
     // ─── Run template matching engine ────────────────────────
@@ -267,9 +263,6 @@ cv2.imwrite(cfg["dst"], crop)
   } catch (err) {
     await rm(tempDir, { recursive: true, force: true }).catch(() => {});
     logger.error("[SYMBOL_SEARCH] Failed:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Symbol search failed" },
-      { status: 500 }
-    );
+    return apiError(err instanceof Error ? err.message : "Symbol search failed", 500);
   }
 }

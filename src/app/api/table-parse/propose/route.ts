@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveProjectAccess } from "@/lib/api-utils";
+import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -25,13 +25,13 @@ export async function POST(req: Request) {
     };
 
     if (!projectId || !pageNumber || !regionBbox || regionBbox.length !== 4) {
-      return NextResponse.json({ error: "Missing projectId, pageNumber, or regionBbox" }, { status: 400 });
+      return apiError("Missing projectId, pageNumber, or regionBbox", 400);
     }
 
     // Bbox validation
     const [bx0, by0, bx1, by1] = regionBbox;
     if (![bx0, by0, bx1, by1].every((v) => typeof v === "number" && isFinite(v) && v >= 0 && v <= 1) || bx0 >= bx1 || by0 >= by1) {
-      return NextResponse.json({ error: "Invalid regionBbox" }, { status: 400 });
+      return apiError("Invalid regionBbox", 400);
     }
 
     const access = await resolveProjectAccess({ dbId: projectId });
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
       .limit(1);
 
     if (!pageRow?.textractData) {
-      return NextResponse.json({ error: "Page has no OCR data" }, { status: 404 });
+      return apiError("Page has no OCR data", 404);
     }
 
     const textractData = pageRow.textractData as TextractPageData;
@@ -75,9 +75,6 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     logger.error("[table-parse/propose] Failed:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Grid proposal failed" },
-      { status: 500 },
-    );
+    return apiError(err instanceof Error ? err.message : "Grid proposal failed", 500);
   }
 }

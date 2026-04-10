@@ -10,7 +10,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { resolveProjectAccess } from "@/lib/api-utils";
+import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -43,7 +43,7 @@ export async function POST(req: Request) {
   };
 
   if (!projectId || !pageNumber || !regionBbox || regionBbox.length !== 4) {
-    return NextResponse.json({ error: "Missing projectId, pageNumber, or regionBbox" }, { status: 400 });
+    return apiError("Missing projectId, pageNumber, or regionBbox", 400);
   }
 
   const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
@@ -57,7 +57,7 @@ export async function POST(req: Request) {
     const pdfUrl = getS3Url(project.dataUrl!, "original.pdf");
     const pdfResp = await fetch(pdfUrl);
     if (!pdfResp.ok) {
-      return NextResponse.json({ error: "Failed to fetch PDF" }, { status: 500 });
+      return apiError("Failed to fetch PDF", 500);
     }
     const pdfBuffer = Buffer.from(await pdfResp.arrayBuffer());
     const pagePng = await rasterizePage(pdfBuffer, pageNumber, 200);
@@ -146,10 +146,7 @@ cv2.imwrite(cfg["dst"], crop)
     });
   } catch (err) {
     logger.error("[table-structure] Failed:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Table structure detection failed" },
-      { status: 500 },
-    );
+    return apiError(err instanceof Error ? err.message : "Table structure detection failed", 500);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

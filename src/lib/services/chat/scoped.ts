@@ -7,7 +7,7 @@
  *
  * Extracted from ai/chat/route.ts to keep the route handler thin.
  */
-import { NextResponse } from "next/server";
+import { apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages, chatMessages, annotations, takeoffItems, models, companies } from "@/lib/db/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
@@ -79,10 +79,7 @@ export async function handleScopedChat(params: ScopedChatParams) {
   // ─── Resolve LLM config early (needed for context budget) ──
   const config = await resolveLLMConfig(project.companyId, session?.user?.dbId, isDemo);
   if (!config) {
-    return NextResponse.json(
-      { error: "No LLM configured. Set up a provider in Admin → AI Models." },
-      { status: 503 }
-    );
+    return apiError("No LLM configured. Set up a provider in Admin → AI Models.", 503);
   }
   const contextBudget = getContextBudget(config.provider, config.model);
 
@@ -438,7 +435,7 @@ ${domainKnowledge ? `\n--- DOMAIN KNOWLEDGE ---\n${domainKnowledge}` : ""}`;
   // Create LLM client
   const client = createLLMClient(config.provider, config.apiKey, config.baseUrl);
   if (!client.streamChatWithTools) {
-    return NextResponse.json({ error: "Provider does not support tool use" }, { status: 400 });
+    return apiError("Provider does not support tool use", 400);
   }
 
   // Stream tool use events as SSE

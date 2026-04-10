@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { resolveProjectAccess } from "@/lib/api-utils";
+import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { chatMessages } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
@@ -13,21 +13,21 @@ export async function POST(req: Request) {
   const { projectId, pageNumber, message, scope } = await req.json();
 
   if (!message) {
-    return NextResponse.json({ error: "message required" }, { status: 400 });
+    return apiError("message required", 400);
   }
 
   // ─── Global RAG scope — search across all user's projects ───
   if (scope === "global" && session?.user) {
     const quota = await checkChatQuota(session.user.companyId);
     if (!quota.allowed) {
-      return NextResponse.json({ error: quota.message }, { status: 429 });
+      return apiError(quota.message || "Rate limit exceeded", 429);
     }
     return handleGlobalChat({ user: session.user }, message);
   }
 
   // ─── Page/Project scope ─────────────────────────────────────
   if (!projectId) {
-    return NextResponse.json({ error: "projectId required" }, { status: 400 });
+    return apiError("projectId required", 400);
   }
 
   const access = await resolveProjectAccess({ publicId: projectId }, { allowDemo: true });
@@ -39,12 +39,12 @@ export async function POST(req: Request) {
   if (isDemo) {
     const quota = await checkDemoChatQuota();
     if (!quota.allowed) {
-      return NextResponse.json({ error: quota.message }, { status: 429 });
+      return apiError(quota.message || "Rate limit exceeded", 429);
     }
   } else {
     const quota = await checkChatQuota(access.session!.user.companyId);
     if (!quota.allowed) {
-      return NextResponse.json({ error: quota.message }, { status: 429 });
+      return apiError(quota.message || "Rate limit exceeded", 429);
     }
   }
 
@@ -68,7 +68,7 @@ export async function DELETE(req: Request) {
   const pageNum = url.searchParams.get("pageNumber");
 
   if (!projectId) {
-    return NextResponse.json({ error: "projectId required" }, { status: 400 });
+    return apiError("projectId required", 400);
   }
 
   const access = await resolveProjectAccess({ publicId: projectId });
