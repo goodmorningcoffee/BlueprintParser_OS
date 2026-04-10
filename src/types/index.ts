@@ -601,6 +601,7 @@ export interface ModelConfig {
   confidence: number;
   iou: number;
   imageSize: number;
+  maxDetections?: number;
   classTypes?: Record<string, ModelClassType>;
   classCsiCodes?: Record<string, string[]>;   // class name -> CSI codes
   classKeywords?: Record<string, string[]>;   // class name -> keywords

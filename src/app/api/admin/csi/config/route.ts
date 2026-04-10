@@ -20,7 +20,7 @@ export async function GET() {
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
 
-  const csiConfig = (company?.pipelineConfig as any)?.csi || {};
+  const csiConfig = company?.pipelineConfig?.csi || {};
 
   // Get CSI database stats
   let totalCodes = 0;
@@ -44,9 +44,9 @@ export async function GET() {
     }
   } catch { /* ignore */ }
 
-  const customDb = (csiConfig as any)?.customDatabaseName;
+  const customDb = csiConfig?.customDatabaseName;
   const source = customDb
-    ? `Custom: ${customDb} (${(csiConfig as any)?.customDatabaseCodes || "?"} codes)`
+    ? `Custom: ${customDb} (${csiConfig?.customDatabaseCodes || "?"} codes)`
     : "Built-in MasterFormat 2018+2016";
 
   return NextResponse.json({

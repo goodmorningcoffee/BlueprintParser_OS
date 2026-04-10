@@ -14,14 +14,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 REGION="${AWS_REGION:-us-east-1}"
 ACCOUNT_ID="${AWS_ACCOUNT}"
-CLUSTER="${ECS_CLUSTER:-beaver-cluster}"
-SERVICE="${ECS_SERVICE:-beaver-app}"
-ECR_REPO="${ECR_REPO:-beaver-app}"
-ALB_NAME="${ALB_NAME:-beaver-alb}"
-RDS_ID="${RDS_ID:-beaver-db}"
-S3_BUCKET="${S3_BUCKET:-beaver-data-${ACCOUNT_ID}}"
+CLUSTER="${ECS_CLUSTER:-blueprintparser-cluster}"
+SERVICE="${ECS_SERVICE:-blueprintparser-app}"
+ECR_REPO="${ECR_REPO:-blueprintparser-app}"
+ALB_NAME="${ALB_NAME:-blueprintparser-alb}"
+RDS_ID="${RDS_ID:-blueprintparser-db}"
+S3_BUCKET="${S3_BUCKET:-blueprintparser-data-${ACCOUNT_ID}}"
 LOG_BUCKET="${S3_BUCKET}"  # reuse data bucket for logs (separate prefix)
-SNS_TOPIC="${SNS_TOPIC:-beaver-alerts}"
+SNS_TOPIC="${SNS_TOPIC:-blueprintparser-alerts}"
 
 # ── CONFIGURE THIS ──────────────────────────────────────────────
 ALERT_EMAIL="${1:-}"
@@ -49,7 +49,7 @@ else
 fi
 
 # Also enable for pipeline repos
-for repo in beaver-cpu-pipeline beaver-yolo-pipeline; do
+for repo in blueprintparser-cpu-pipeline blueprintparser-yolo-pipeline; do
   aws ecr put-image-scanning-configuration \
     --repository-name "$repo" \
     --image-scanning-configuration scanOnPush=true \
@@ -87,14 +87,14 @@ ALB_ARN=$(aws elbv2 describe-load-balancers \
 if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" = "None" ]; then
   fail "Could not find ALB '${ALB_NAME}' — skipping ALB alarms"
 else
-  # Extract the ARN suffix (app/beaver-alb/abc123)
+  # Extract the ARN suffix (app/blueprintparser-alb/abc123)
   ALB_SUFFIX=$(echo "$ALB_ARN" | sed 's|.*loadbalancer/||')
   ok "ALB found: ${ALB_SUFFIX}"
 
   # Alarm: 5xx errors > 10 in 5 minutes
   step "Creating CloudWatch alarm: 5xx errors..."
   aws cloudwatch put-metric-alarm \
-    --alarm-name "beaver-5xx-errors" \
+    --alarm-name "blueprintparser-5xx-errors" \
     --alarm-description "BlueprintParser 5xx errors exceeded threshold" \
     --metric-name "HTTPCode_Target_5XX_Count" \
     --namespace "AWS/ApplicationELB" \
@@ -119,7 +119,7 @@ else
   if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
     TG_SUFFIX=$(echo "$TG_ARN" | sed 's|.*:targetgroup/||')
     aws cloudwatch put-metric-alarm \
-      --alarm-name "beaver-unhealthy-hosts" \
+      --alarm-name "blueprintparser-unhealthy-hosts" \
       --alarm-description "BlueprintParser has unhealthy ECS targets" \
       --metric-name "UnHealthyHostCount" \
       --namespace "AWS/ApplicationELB" \
@@ -138,7 +138,7 @@ else
   # Alarm: ECS CPU > 80% for 10 minutes
   step "Creating CloudWatch alarm: ECS high CPU..."
   aws cloudwatch put-metric-alarm \
-    --alarm-name "beaver-ecs-high-cpu" \
+    --alarm-name "blueprintparser-ecs-high-cpu" \
     --alarm-description "BlueprintParser ECS CPU above 80%" \
     --metric-name "CPUUtilization" \
     --namespace "AWS/ECS" \
@@ -156,7 +156,7 @@ else
   # Alarm: RDS CPU > 80% for 10 minutes
   step "Creating CloudWatch alarm: RDS high CPU..."
   aws cloudwatch put-metric-alarm \
-    --alarm-name "beaver-rds-high-cpu" \
+    --alarm-name "blueprintparser-rds-high-cpu" \
     --alarm-description "BlueprintParser RDS CPU above 80%" \
     --metric-name "CPUUtilization" \
     --namespace "AWS/RDS" \
@@ -218,7 +218,7 @@ fi
 # ════════════════════════════════════════════════════════════════
 step "Creating WAF Web ACL..."
 WAF_ARN=$(aws wafv2 create-web-acl \
-  --name "beaver-waf" \
+  --name "blueprintparser-waf" \
   --scope REGIONAL \
   --default-action '{"Allow":{}}' \
   --rules '[
@@ -235,7 +235,7 @@ WAF_ARN=$(aws wafv2 create-web-acl \
       "VisibilityConfig": {
         "SampledRequestsEnabled": true,
         "CloudWatchMetricsEnabled": true,
-        "MetricName": "beaver-rate-limit"
+        "MetricName": "blueprintparser-rate-limit"
       }
     },
     {
@@ -251,7 +251,7 @@ WAF_ARN=$(aws wafv2 create-web-acl \
       "VisibilityConfig": {
         "SampledRequestsEnabled": true,
         "CloudWatchMetricsEnabled": true,
-        "MetricName": "beaver-sqli"
+        "MetricName": "blueprintparser-sqli"
       }
     },
     {
@@ -267,7 +267,7 @@ WAF_ARN=$(aws wafv2 create-web-acl \
       "VisibilityConfig": {
         "SampledRequestsEnabled": true,
         "CloudWatchMetricsEnabled": true,
-        "MetricName": "beaver-bad-inputs"
+        "MetricName": "blueprintparser-bad-inputs"
       }
     },
     {
@@ -283,14 +283,14 @@ WAF_ARN=$(aws wafv2 create-web-acl \
       "VisibilityConfig": {
         "SampledRequestsEnabled": true,
         "CloudWatchMetricsEnabled": true,
-        "MetricName": "beaver-ip-reputation"
+        "MetricName": "blueprintparser-ip-reputation"
       }
     }
   ]' \
   --visibility-config '{
     "SampledRequestsEnabled": true,
     "CloudWatchMetricsEnabled": true,
-    "MetricName": "beaver-waf"
+    "MetricName": "blueprintparser-waf"
   }' \
   --region "$REGION" \
   --query 'Summary.ARN' --output text 2>/dev/null || echo "")
@@ -309,7 +309,7 @@ if [ -n "$WAF_ARN" ] && [ "$WAF_ARN" != "None" ]; then
 else
   # Check if already exists
   EXISTING_WAF=$(aws wafv2 list-web-acls --scope REGIONAL --region "$REGION" \
-    --query "WebACLs[?Name=='beaver-waf'].ARN" --output text 2>/dev/null || echo "")
+    --query "WebACLs[?Name=='blueprintparser-waf'].ARN" --output text 2>/dev/null || echo "")
   if [ -n "$EXISTING_WAF" ] && [ "$EXISTING_WAF" != "None" ]; then
     ok "WAF already exists: ${EXISTING_WAF}"
   else
@@ -351,14 +351,14 @@ aws s3api put-bucket-policy --bucket "$LOG_BUCKET" --policy "{
 }" --region "$REGION" > /dev/null 2>&1 && ok "S3 bucket policy updated for CloudTrail + ALB" || fail "S3 bucket policy update"
 
 aws cloudtrail create-trail \
-  --name "beaver-audit" \
+  --name "blueprintparser-audit" \
   --s3-bucket-name "$LOG_BUCKET" \
   --s3-key-prefix "cloudtrail" \
   --is-multi-region-trail \
   --enable-log-file-validation \
   --region "$REGION" > /dev/null 2>&1 && ok "CloudTrail created" || fail "CloudTrail (may already exist)"
 
-aws cloudtrail start-logging --name "beaver-audit" --region "$REGION" > /dev/null 2>&1 && ok "CloudTrail logging started" || fail "CloudTrail start"
+aws cloudtrail start-logging --name "blueprintparser-audit" --region "$REGION" > /dev/null 2>&1 && ok "CloudTrail logging started" || fail "CloudTrail start"
 
 # ════════════════════════════════════════════════════════════════
 # 8. Summary
@@ -378,11 +378,11 @@ echo ""
 echo "  ⚠  CONFIRM your email subscription (check inbox for SNS)"
 echo ""
 echo "  Monitoring commands:"
-echo "    Logs:      aws logs tail /ecs/beaver-app --since 30m --region ${REGION} --follow"
-echo "    Errors:    aws logs tail /ecs/beaver-app --since 1h --region ${REGION} --filter-pattern ERROR"
+echo "    Logs:      aws logs tail /ecs/blueprintparser-app --since 30m --region ${REGION} --follow"
+echo "    Errors:    aws logs tail /ecs/blueprintparser-app --since 1h --region ${REGION} --filter-pattern ERROR"
 echo "    Alarms:    aws cloudwatch describe-alarms --state-value ALARM --region ${REGION}"
 echo "    GuardDuty: aws guardduty list-findings --detector-id \$(aws guardduty list-detectors --region ${REGION} --query 'DetectorIds[0]' --output text) --region ${REGION}"
-echo "    WAF:       aws wafv2 get-sampled-requests --web-acl-arn \${WAF_ARN} --rule-metric-name beaver-rate-limit --scope REGIONAL --time-window StartTime=\$(date -u -v-1H +%s),EndTime=\$(date -u +%s) --max-items 10 --region ${REGION}"
+echo "    WAF:       aws wafv2 get-sampled-requests --web-acl-arn \${WAF_ARN} --rule-metric-name blueprintparser-rate-limit --scope REGIONAL --time-window StartTime=\$(date -u -v-1H +%s),EndTime=\$(date -u +%s) --max-items 10 --region ${REGION}"
 echo "    ECR scan:  aws ecr describe-image-scan-findings --repository-name ${ECR_REPO} --image-id imageTag=latest --region ${REGION}"
 echo ""
 echo "  Estimated monthly cost: ~\$10-25"

@@ -32,6 +32,7 @@ async function main() {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${webhookSecret}`,
+        "x-webhook-timestamp": `${Date.now()}`,
       },
       body: JSON.stringify({
         projectId,

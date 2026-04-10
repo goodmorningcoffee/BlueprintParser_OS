@@ -50,8 +50,8 @@ export async function resolveLLMConfig(
             model: userConfig.model,
             apiKey,
             baseUrl: userConfig.baseUrl || undefined,
-            temperature: (userConfig.config as any)?.temperature,
-            maxTokens: (userConfig.config as any)?.maxTokens,
+            temperature: userConfig.config?.temperature,
+            maxTokens: userConfig.config?.maxTokens,
           };
         }
       }
@@ -91,8 +91,8 @@ export async function resolveLLMConfig(
           model: companyConfig.model,
           apiKey: apiKey || "",
           baseUrl: companyConfig.baseUrl || undefined,
-          temperature: (companyConfig.config as any)?.temperature,
-          maxTokens: (companyConfig.config as any)?.maxTokens,
+          temperature: companyConfig.config?.temperature,
+          maxTokens: companyConfig.config?.maxTokens,
         };
       }
     }

@@ -10,9 +10,9 @@
  */
 
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, pages } from "@/lib/db/schema";
+import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getS3Url } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
@@ -28,7 +28,6 @@ import { promisify } from "util";
 const execFileAsync = promisify(execFile);
 
 export async function POST(req: Request) {
-  const session = await auth();
   const body = await req.json();
 
   const {
@@ -47,21 +46,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing projectId, pageNumber, or regionBbox" }, { status: 400 });
   }
 
-  // Auth: allow demo projects without session
-  const [project] = await db
-    .select({ id: projects.id, dataUrl: projects.dataUrl, isDemo: projects.isDemo, companyId: projects.companyId })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
-
-  if (!project.isDemo) {
-    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    if (session.user.companyId !== project.companyId) return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
+  if (access.error) return access.error;
+  const { project } = access;
 
   const tempDir = await mkdtemp(join(tmpdir(), "bp2-tatr-route-"));
 

@@ -48,7 +48,7 @@ export async function POST(req: Request) {
     .from(companies)
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
-  const enabledDetectorIds = (company?.pipelineConfig as any)?.textAnnotation?.enabledDetectors as string[] | undefined;
+  const enabledDetectorIds = company?.pipelineConfig?.textAnnotation?.enabledDetectors;
 
   // Get all completed projects for this company
   const allCompanyProjects = await db
@@ -72,15 +72,14 @@ export async function POST(req: Request) {
       let updatedPages = 0;
       let skippedPages = 0;
 
-      const companyHeuristics = (company?.pipelineConfig as any)?.heuristics;
+      const companyHeuristics = company?.pipelineConfig?.heuristics;
 
       send({ type: "start", projects: allProjects.length });
 
       if (scope === "page-names") {
         // Page-names reprocess: re-extract drawing numbers using improved strategies + YOLO title_block
         // Read pageNaming config to determine which YOLO model(s) + class(es) to use
-        const pageNamingConfig = (company?.pipelineConfig as any)?.pageNaming as
-          { enabled?: boolean; yoloSources?: { modelId: number; modelName: string; classes: string[] }[] } | undefined;
+        const pageNamingConfig = company?.pipelineConfig?.pageNaming;
 
         const yoloEnabled = pageNamingConfig?.enabled && (pageNamingConfig.yoloSources || []).length > 0;
         const yoloSources = yoloEnabled ? pageNamingConfig!.yoloSources! : [];

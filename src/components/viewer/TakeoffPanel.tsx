@@ -173,7 +173,7 @@ export default function TakeoffPanel() {
         }
         const cals = Object.values(scaleCalibrations);
         const unitSq: AreaUnitSq = cals.length > 0 ? AREA_UNIT_MAP[cals[0].unit] : "SF";
-        rows.push(`"${item.name.replace(/"/g, '""')}",area,polygon,${hasCal ? totalArea.toFixed(1) : ""},${unitSq},"${Array.from(pages).sort((a, b) => a - b).join("; ")}",${item.color}`);
+        rows.push(`"${item.name.replace(/"/g, '""')}",area,polygon,${hasCal ? totalArea.toFixed(1) : ""},${unitSq},"${Array.from(pages).sort((a, b) => a - b).join("; ")}","${(item.notes || "").replace(/"/g, '""')}",${item.color}`);
       } else if (item.shape === "linear") {
         let totalLength = 0;
         const pages = new Set<number>();
@@ -186,7 +186,7 @@ export default function TakeoffPanel() {
         }
         const cals = Object.values(scaleCalibrations);
         const unit = cals.length > 0 ? cals[0].unit : "ft";
-        rows.push(`"${item.name.replace(/"/g, '""')}",linear,linear,${totalLength.toFixed(1)},${unit},"${Array.from(pages).sort((a, b) => a - b).join("; ")}",${item.color}`);
+        rows.push(`"${item.name.replace(/"/g, '""')}",linear,linear,${totalLength.toFixed(1)},${unit},"${Array.from(pages).sort((a, b) => a - b).join("; ")}","${(item.notes || "").replace(/"/g, '""')}",${item.color}`);
       } else {
         let count = 0;
         const pages = new Set<number>();
@@ -198,10 +198,10 @@ export default function TakeoffPanel() {
           count++;
           pages.add(ann.pageNumber);
         }
-        rows.push(`"${item.name.replace(/"/g, '""')}",count,${item.shape},${count},EA,"${Array.from(pages).sort((a, b) => a - b).join("; ")}",${item.color}`);
+        rows.push(`"${item.name.replace(/"/g, '""')}",count,${item.shape},${count},EA,"${Array.from(pages).sort((a, b) => a - b).join("; ")}","${(item.notes || "").replace(/"/g, '""')}",${item.color}`);
       }
     }
-    const csv = ["Item Name,Type,Shape,Quantity,Unit,Pages,Color", ...rows].join("\n");
+    const csv = ["Item Name,Type,Shape,Quantity,Unit,Pages,Notes,Color", ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

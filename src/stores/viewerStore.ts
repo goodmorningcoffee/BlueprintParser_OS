@@ -773,6 +773,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       tableParseStep: "idle",
       tableParseRegion: null,
       tableParsedGrid: null,
+      tableCellStructure: null,
       tableParseColumnBBs: [],
       tableParseColumnNames: [],
       tableParseRowBBs: [],

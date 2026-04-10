@@ -7,16 +7,16 @@
 ###############################################################################
 
 resource "aws_cloudwatch_log_group" "beaver_sfn" {
-  name              = "/aws/states/beaver-process-blueprint"
+  name              = "/aws/states/blueprintparser-process-blueprint"
   retention_in_days = 30
 }
 
 ###############################################################################
-# State Machine - beaver-process-blueprint
+# State Machine - blueprintparser-process-blueprint
 ###############################################################################
 
 resource "aws_sfn_state_machine" "beaver_process_blueprint" {
-  name     = "beaver-process-blueprint"
+  name     = "blueprintparser-process-blueprint"
   role_arn = aws_iam_role.beaver_step_functions_role.arn
 
   logging_configuration {
@@ -49,7 +49,7 @@ resource "aws_sfn_state_machine" "beaver_process_blueprint" {
         Parameters = {
           LaunchType = "FARGATE"
           Cluster    = aws_ecs_cluster.beaver.arn
-          TaskDefinition = "beaver-cpu-pipeline"
+          TaskDefinition = "blueprintparser-cpu-pipeline"
           NetworkConfiguration = {
             AwsvpcConfiguration = {
               Subnets        = aws_subnet.private[*].id
@@ -60,7 +60,7 @@ resource "aws_sfn_state_machine" "beaver_process_blueprint" {
           Overrides = {
             ContainerOverrides = [
               {
-                Name = "beaver-cpu-pipeline"
+                Name = "blueprintparser-cpu-pipeline"
                 Environment = [
                   { Name = "PROJECT_ID", "Value.$" = "States.Format('{}', $.projectId)" },
                   { Name = "DATA_URL", "Value.$" = "$.dataUrl" },
@@ -104,6 +104,6 @@ resource "aws_sfn_state_machine" "beaver_process_blueprint" {
   })
 
   tags = {
-    Name = "beaver-process-blueprint"
+    Name = "blueprintparser-process-blueprint"
   }
 }

@@ -172,46 +172,6 @@ export default function OverviewTab({ invites, unseenInvites, showInvites, onMar
 
   return (
     <section className="space-y-6">
-      {/* Header Links Editor (root admin only) */}
-      {isRootAdmin && (
-        <div className="border border-[var(--border)] rounded-lg p-4 space-y-3 bg-[var(--surface)]">
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--fg)]">Demo Page Header Links</h3>
-            <p className="text-[10px] text-[var(--muted)] mt-1">
-              URLs for the nav buttons shown next to &ldquo;BlueprintParser Demo&rdquo; on the public demo page.
-            </p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {HEADER_LINK_FIELDS.map((field) => (
-              <div key={field.key}>
-                <label className="block text-[10px] text-[var(--muted)] uppercase tracking-wide mb-1">{field.label}</label>
-                <input
-                  type="url"
-                  value={headerLinks[field.key]}
-                  onChange={(e) => setHeaderLinks({ ...headerLinks, [field.key]: e.target.value })}
-                  placeholder="https://..."
-                  className="w-full px-2 py-1.5 text-xs bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]"
-                />
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={saveHeaderLinks}
-              disabled={linksSaving}
-              className="px-4 py-1.5 text-xs bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)] disabled:opacity-50"
-            >
-              {linksSaving ? "Saving..." : "Save Links"}
-            </button>
-            {linksMessage && (
-              <span className={`text-xs ${linksMessage === "Saved" ? "text-emerald-400" : "text-red-400"}`}>
-                {linksMessage}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Master Reprocess */}
       <div className="border border-[var(--border)] rounded-lg p-4 space-y-3 bg-[var(--surface)]">
         <div>

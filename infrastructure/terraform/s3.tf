@@ -7,10 +7,10 @@
 ###############################################################################
 
 resource "aws_s3_bucket" "beaver_data" {
-  bucket = "beaver-data-${data.aws_caller_identity.current.account_id}"
+  bucket = "blueprintparser-data-${data.aws_caller_identity.current.account_id}"
 
   tags = {
-    Name = "beaver-data"
+    Name = "blueprintparser-data"
   }
 }
 
@@ -81,7 +81,7 @@ resource "aws_s3_bucket_cors_configuration" "beaver_data" {
 # By adding CORS at the CloudFront layer, we bypass the S3 CORS caching issue.
 
 resource "aws_cloudfront_response_headers_policy" "beaver_cors" {
-  name    = "beaver-cors-policy"
+  name    = "blueprintparser-cors-policy"
   comment = "CORS headers for blueprint assets"
 
   cors_config {
@@ -114,7 +114,7 @@ resource "aws_cloudfront_response_headers_policy" "beaver_cors" {
 ###############################################################################
 
 resource "aws_cloudfront_origin_access_control" "beaver" {
-  name                              = "beaver-oac"
+  name                              = "blueprintparser-oac"
   description                       = "OAC for Beaver S3 bucket"
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
@@ -128,7 +128,7 @@ resource "aws_cloudfront_origin_access_control" "beaver" {
 # fetches individual pages instead of the entire PDF binary.
 
 resource "aws_cloudfront_origin_request_policy" "beaver_range" {
-  name    = "beaver-range-cors-policy"
+  name    = "blueprintparser-range-cors-policy"
   comment = "Forward Range + CORS headers for PDF range loading and S3 CORS"
 
   headers_config {
@@ -161,14 +161,14 @@ resource "aws_cloudfront_distribution" "beaver" {
 
   origin {
     domain_name              = aws_s3_bucket.beaver_data.bucket_regional_domain_name
-    origin_id                = "beaver-s3"
+    origin_id                = "blueprintparser-s3"
     origin_access_control_id = aws_cloudfront_origin_access_control.beaver.id
   }
 
   default_cache_behavior {
     allowed_methods        = ["GET", "HEAD", "OPTIONS"]
     cached_methods         = ["GET", "HEAD"]
-    target_origin_id       = "beaver-s3"
+    target_origin_id       = "blueprintparser-s3"
     viewer_protocol_policy = "redirect-to-https"
     compress               = true
 
@@ -190,7 +190,7 @@ resource "aws_cloudfront_distribution" "beaver" {
   }
 
   tags = {
-    Name = "beaver-cdn"
+    Name = "blueprintparser-cdn"
   }
 }
 

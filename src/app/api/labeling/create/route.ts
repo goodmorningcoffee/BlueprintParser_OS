@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     .select()
     .from(projects)
     .where(
-      (session.user as any).isRootAdmin
+      session.user.isRootAdmin
         ? eq(projects.publicId, projectId)
         : and(eq(projects.publicId, projectId), eq(projects.companyId, session.user.companyId))
     )

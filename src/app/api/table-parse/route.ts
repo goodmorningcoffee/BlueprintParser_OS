@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, pages } from "@/lib/db/schema";
+import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getS3Url } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
@@ -176,16 +176,16 @@ function methodOcrPositions(
     }
   }
 
-  // Confidence
-  let confidence = 0.45;
-  const headerMatches = headers.filter((h) => HEADER_KW.has(h.toUpperCase().trim())).length;
-  confidence += Math.min(headerMatches * 0.05, 0.15);
-  if (tagColumn) confidence += 0.1;
+  // Confidence — normalized scale: content(0-0.4) + structure(0-0.3) + features(0-0.2)
+  const totalCells = dataRows.length * headers.length;
+  const filledCells = dataRows.reduce((s, r) => s + Object.values(r).filter((v) => v).length, 0);
+  const fillRate = totalCells > 0 ? filledCells / totalCells : 0;
   const cellCounts = dataRows.map((r) => Object.values(r).filter((v) => v).length);
   const avgCells = cellCounts.reduce((s, c) => s + c, 0) / cellCounts.length;
   const consistency = cellCounts.filter((c) => Math.abs(c - avgCells) <= 1).length / cellCounts.length;
-  confidence += consistency * 0.15;
-  confidence = Math.min(confidence, 0.90);
+  const headerMatches = headers.filter((h) => HEADER_KW.has(h.toUpperCase().trim())).length;
+  let confidence = fillRate * 0.4 + consistency * 0.2 + Math.min(headerMatches * 0.05, 0.1) + (tagColumn ? 0.1 : 0);
+  confidence = Math.min(confidence, 0.85);
 
   // ── Compute cell boundaries for grid overlay ──────────────
   // Column boundaries: N+1 X coords from colBounds
@@ -294,12 +294,12 @@ function methodTextractTables(
     if (hasContent) dataRows.push(row);
   }
 
-  // Confidence based on cell fill rate + Textract cell confidence
+  // Confidence — normalized scale: content(0-0.4) + structure(0-0.3) + features(0-0.2)
   const totalCells = dataRows.length * headers.length;
   const filledCells = dataRows.reduce((s, r) => s + Object.values(r).filter((v) => v).length, 0);
   const fillRate = totalCells > 0 ? filledCells / totalCells : 0;
   const avgCellConf = regionCells.length > 0 ? regionCells.reduce((s, c) => s + c.confidence, 0) / regionCells.length / 100 : 0;
-  const confidence = Math.min(0.5 + fillRate * 0.2 + avgCellConf * 0.2 + bestOverlap * 0.1, 0.95);
+  const confidence = Math.min(fillRate * 0.4 + avgCellConf * 0.3 + bestOverlap * 0.1 + 0.1, 0.90);
 
   return { method: "textract-tables", headers, rows: dataRows, confidence };
 }
@@ -452,27 +452,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid regionBbox: values must be finite numbers in [0,1] with min < max" }, { status: 400 });
   }
 
-  // Auth: allow demo projects without session, require auth + company check for non-demo
-  const session = await auth();
-
-  const [project] = await db
-    .select({ id: projects.id, dataUrl: projects.dataUrl, isDemo: projects.isDemo, companyId: projects.companyId })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
-
-  if (!project.isDemo) {
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (session.user.companyId !== project.companyId) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    }
-  }
+  const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
+  if (access.error) return access.error;
+  const { project } = access;
 
   try {
     const [pageRow] = await db
@@ -511,9 +493,9 @@ export async function POST(req: Request) {
       // Method 2: Textract TABLES (sync)
       Promise.resolve(methodTextractTables(textractData.tables, regionBbox)),
 
-      // Method 3: OpenCV lines (needs rasterized PNG)
-      pagePngBuffer
-        ? methodOpenCvLines(pdfBuffer!, pageNumber, regionBbox, textractData.words, { minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance })
+      // Method 3: OpenCV lines (needs rasterized PNG + PDF buffer)
+      pagePngBuffer && pdfBuffer
+        ? methodOpenCvLines(pdfBuffer, pageNumber, regionBbox, textractData.words, { minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance })
         : Promise.resolve({ method: "opencv-lines", headers: [], rows: [], confidence: 0 } as MethodResult),
 
       // Method 4: img2table — Hough lines + merged cells + skew correction (needs rasterized PNG)

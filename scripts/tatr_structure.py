@@ -32,6 +32,9 @@ def detect_structure(image_path: str, model_path: str, confidence_threshold: flo
     except ImportError as e:
         return {"error": f"Missing dependency: {e}", "cells": [], "rows": [], "columns": [], "confidence": 0}
 
+    if not os.path.isdir(model_path):
+        return {"error": f"Model not found at {model_path}", "cells": [], "rows": [], "columns": [], "confidence": 0}
+
     try:
         # Load model and image processor
         print(f"Loading TATR model from {model_path}...", file=sys.stderr)

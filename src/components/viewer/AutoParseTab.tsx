@@ -273,7 +273,7 @@ export default function AutoParseTab({
 
       {autoParsing && (
         <div className="text-[11px] text-pink-300 px-2 py-3 text-center animate-pulse">
-          Running 3 parsing methods...
+          Parsing table...
         </div>
       )}
 

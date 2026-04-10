@@ -66,7 +66,8 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
       methods: results.map((r) => ({
         name: r.method,
         confidence: r.confidence,
-        gridShape: [r.rows.length, r.headers.length],
+        gridShape: [r.rows.length, r.headers.length] as [number, number],
+        ...(r.error ? { error: r.error } : {}),
       })),
       disagreements: [],
     };
@@ -77,6 +78,32 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
   const base = sorted[0];
   const others = sorted.slice(1);
 
+  // ── Fix 1: Grid shape guard ────────────────────────────────
+  // Only merge cells from methods with compatible grid shapes.
+  // Methods with wildly different column/row counts get excluded from
+  // cell-level merging to prevent garbled data from mismatched grids.
+  const compatible = others.filter((other) => {
+    if (base.headers.length === 0) return false;
+    const colRatio = other.headers.length / base.headers.length;
+    const rowRatio = other.rows.length / Math.max(base.rows.length, 1);
+    return colRatio >= 0.5 && colRatio <= 2.0 && rowRatio >= 0.5 && rowRatio <= 1.5;
+  });
+
+  // ── Fix 2: Row alignment check ────────────────────────────
+  // Verify that compatible methods' rows actually correspond by content.
+  // If a method split wrapped rows differently, row indices won't match.
+  const aligned = compatible.filter((other) => {
+    if (base.rows.length === 0 || other.rows.length === 0) return false;
+    // Check first row and a mid-point row for content similarity
+    const checkRows = [0, Math.floor(Math.min(base.rows.length, other.rows.length) / 2)];
+    let totalSim = 0;
+    for (const ri of checkRows) {
+      if (ri >= base.rows.length || ri >= other.rows.length) continue;
+      totalSim += rowSimilarity(base.rows[ri], other.rows[ri], base.headers, other.headers, editDistThreshold);
+    }
+    return totalSim / checkRows.length >= 0.25; // at least 25% of sampled cells match
+  });
+
   // Start with the base grid
   const headers = [...base.headers];
   const rows: Record<string, string>[] = base.rows.map((r) => ({ ...r }));
@@ -85,15 +112,15 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
   let agreementCount = 0;
   let totalCells = 0;
 
-  // For each cell in the base grid, check agreement with other methods
+  // For each cell in the base grid, check agreement with aligned methods only
   for (let ri = 0; ri < rows.length; ri++) {
     for (const header of headers) {
       const baseVal = (rows[ri][header] || "").trim();
       totalCells++;
 
-      // Collect values from other methods for this cell position
+      // Collect values from aligned methods for this cell position
       const otherValues: { method: string; value: string }[] = [];
-      for (const other of others) {
+      for (const other of aligned) {
         if (ri < other.rows.length) {
           // Try to match by header name first, then by column index
           let otherVal = "";
@@ -112,7 +139,7 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
       }
 
       if (baseVal === "") {
-        // Fill empty cells from the first non-empty other method
+        // Fill empty cells from the first non-empty aligned method
         const fill = otherValues.find((v) => v.value !== "");
         if (fill) {
           rows[ri][header] = fill.value;
@@ -135,15 +162,15 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
           });
         }
       } else {
-        // Only base has a value — count as soft agreement
-        agreementCount++;
+        // Only base has a value — count as partial agreement (Fix 4)
+        agreementCount += 0.5;
       }
     }
   }
 
-  // Compute final confidence
+  // Compute final confidence (Fix 5: scaled method bonus)
   const agreementRate = totalCells > 0 ? agreementCount / totalCells : 0;
-  const methodBonus = Math.min(valid.length * 0.05, 0.15); // bonus for multiple methods succeeding
+  const methodBonus = Math.min(valid.length * 0.02, 0.15);
   const confidence = Math.min(
     base.confidence * 0.6 + agreementRate * 0.3 + methodBonus,
     0.98
@@ -171,6 +198,29 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
     colBoundaries,
     rowBoundaries,
   };
+}
+
+/** Check if two rows from different methods contain similar content. */
+function rowSimilarity(
+  rowA: Record<string, string>,
+  rowB: Record<string, string>,
+  headersA: string[],
+  headersB: string[],
+  editDistThreshold: number,
+): number {
+  const maxCols = Math.min(headersA.length, headersB.length, 4);
+  let matches = 0;
+  let compared = 0;
+  for (let c = 0; c < maxCols; c++) {
+    const valA = (rowA[headersA[c]] || "").trim();
+    const valB = (rowB[headersB[c]] || "").trim();
+    if (!valA && !valB) continue;
+    compared++;
+    if (valA === valB || (valA && valB && editDistance(valA, valB) <= editDistThreshold)) {
+      matches++;
+    }
+  }
+  return compared > 0 ? matches / compared : 0;
 }
 
 /** Simple edit distance (Levenshtein) for comparing cell values. */

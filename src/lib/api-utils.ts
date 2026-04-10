@@ -12,7 +12,10 @@
 
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import type { BboxMinMax } from "@/types";
+import { db } from "@/lib/db";
+import { projects } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import type { BboxMinMax, Project } from "@/types";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -58,8 +61,7 @@ export async function requireAdmin(): Promise<
   if (!session?.user) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
-  const user = session.user as any;
-  if (user.role !== "admin" && !user.isRootAdmin) {
+  if (session.user.role !== "admin" && !session.user.isRootAdmin) {
     return { session: null, error: NextResponse.json({ error: "Admin only" }, { status: 403 }) };
   }
   return { session: session as unknown as AuthSession, error: null };
@@ -75,7 +77,7 @@ export async function requireRootAdmin(): Promise<
   if (!session?.user) {
     return { session: null, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
-  if (!(session.user as any).isRootAdmin) {
+  if (!session.user.isRootAdmin) {
     return { session: null, error: NextResponse.json({ error: "Root admin only" }, { status: 403 }) };
   }
   return { session: session as unknown as AuthSession, error: null };
@@ -98,6 +100,136 @@ export function requireCompanyAccess(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Centralized project access resolution
+// ═══════════════════════════════════════════════════════════════════
+
+export type ProjectAccessScope = "member" | "admin" | "root" | "demo";
+
+type ProjectLookup = { publicId: string } | { dbId: number };
+
+interface ProjectAccessSuccess {
+  project: Project;
+  session: AuthSession;
+  scope: ProjectAccessScope;
+  error: null;
+}
+
+interface ProjectAccessDemoSuccess {
+  project: Project;
+  session: AuthSession | null;
+  scope: "demo";
+  error: null;
+}
+
+interface ProjectAccessFailure {
+  project: null;
+  session: null;
+  scope: null;
+  error: NextResponse;
+}
+
+/**
+ * Resolve project access in one call: authenticate, look up project, check tenancy.
+ *
+ * Replaces the 4-8 line auth + project lookup + companyId check pattern
+ * that was duplicated across 16+ routes with inconsistent root-admin handling.
+ *
+ * @param lookup - Find project by `{ publicId }` (URL param) or `{ dbId }` (numeric DB id from body)
+ * @param options.allowDemo - If true, demo projects are accessible without authentication
+ */
+export async function resolveProjectAccess(
+  lookup: ProjectLookup,
+  options?: { allowDemo?: boolean }
+): Promise<ProjectAccessSuccess | ProjectAccessDemoSuccess | ProjectAccessFailure> {
+  const session = await auth();
+
+  // Look up project
+  const where = "publicId" in lookup
+    ? eq(projects.publicId, lookup.publicId)
+    : eq(projects.id, lookup.dbId);
+
+  const [project] = await db.select().from(projects).where(where).limit(1);
+
+  if (!project) {
+    return { project: null, session: null, scope: null, error: apiError("Not found", 404) };
+  }
+
+  // Demo projects: accessible without auth when allowDemo is set
+  if (project.isDemo && options?.allowDemo) {
+    return {
+      project,
+      session: session?.user ? (session as unknown as AuthSession) : null,
+      scope: "demo" as const,
+      error: null,
+    };
+  }
+
+  // Non-demo: require authentication
+  if (!session?.user) {
+    return { project: null, session: null, scope: null, error: apiError("Unauthorized", 401) };
+  }
+
+  const typedSession = session as unknown as AuthSession;
+
+  // Root admin: access any project
+  if (typedSession.user.isRootAdmin) {
+    return { project, session: typedSession, scope: "root", error: null };
+  }
+
+  // Company member/admin: must match company
+  if (typedSession.user.companyId !== project.companyId) {
+    return { project: null, session: null, scope: null, error: apiError("Not found", 404) };
+  }
+
+  const scope: ProjectAccessScope = typedSession.user.role === "admin" ? "admin" : "member";
+  return { project, session: typedSession, scope, error: null };
+}
+
+/**
+ * Check project access when you already have the project row (Pattern C: indirect lookup).
+ * Use when the route first fetches a child entity (annotation, takeoff item, etc.)
+ * and then needs to verify the user can access the parent project.
+ *
+ * @param project - Must include at least { isDemo, companyId }
+ * @param options.allowDemo - If true, demo projects are accessible without authentication
+ */
+export async function checkProjectAccess(
+  project: { isDemo: boolean; companyId: number },
+  options?: { allowDemo?: boolean }
+): Promise<
+  | { session: AuthSession; scope: ProjectAccessScope; error: null }
+  | { session: AuthSession | null; scope: "demo"; error: null }
+  | { session: null; scope: null; error: NextResponse }
+> {
+  const session = await auth();
+
+  if (project.isDemo && options?.allowDemo) {
+    return {
+      session: session?.user ? (session as unknown as AuthSession) : null,
+      scope: "demo" as const,
+      error: null,
+    };
+  }
+
+  if (!session?.user) {
+    return { session: null, scope: null, error: apiError("Unauthorized", 401) };
+  }
+
+  const typedSession = session as unknown as AuthSession;
+
+  if (typedSession.user.isRootAdmin) {
+    return { session: typedSession, scope: "root", error: null };
+  }
+
+  if (typedSession.user.companyId !== project.companyId) {
+    return { session: null, scope: null, error: apiError("Not found", 404) };
+  }
+
+  const scope: ProjectAccessScope = typedSession.user.role === "admin" ? "admin" : "member";
+  return { session: typedSession, scope, error: null };
 }
 
 // ═══════════════════════════════════════════════════════════════════

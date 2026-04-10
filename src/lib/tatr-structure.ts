@@ -49,8 +49,14 @@ export async function detectTableStructure(
     await writeFile(imgPath, croppedPngBuffer);
 
     const scriptPath = join(process.cwd(), "scripts/tatr_structure.py");
-    // Model path: check both project root /models/tatr and relative path
-    const modelPath = join(process.cwd(), "..", "models", "tatr");
+    // Model path: relative to project root (models/ is sibling of blueprintparser_2/)
+    // In Docker: cwd=/app, models at /app/../models/tatr OR bundled at /app/models/tatr
+    const candidates = [
+      join(process.cwd(), "models", "tatr"),
+      join(process.cwd(), "..", "models", "tatr"),
+    ];
+    const { existsSync } = await import("fs");
+    const modelPath = candidates.find((p) => existsSync(p)) || candidates[0];
 
     const config = JSON.stringify({
       image_path: imgPath,

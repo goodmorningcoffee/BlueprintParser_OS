@@ -18,7 +18,7 @@ export async function GET() {
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
 
-  const config = (company?.pipelineConfig as Record<string, unknown>) || {};
+  const config = company?.pipelineConfig || {};
 
   // Include default domain knowledge so admin editor can show it
   let defaultDomainKnowledge = "";
@@ -53,12 +53,12 @@ export async function PUT(req: Request) {
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
 
-  const existing = (company?.pipelineConfig as Record<string, unknown>) || {};
+  const existing = company?.pipelineConfig || {};
   const updated = { ...existing, llm };
 
   await db
     .update(companies)
-    .set({ pipelineConfig: updated as any })
+    .set({ pipelineConfig: updated })
     .where(eq(companies.id, session.user.companyId));
 
   return NextResponse.json({ success: true });

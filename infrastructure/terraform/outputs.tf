@@ -112,17 +112,17 @@ output "cloudfront_url" {
 ###############################################################################
 
 output "ecr_beaver_app_url" {
-  description = "ECR repository URL for beaver-app"
+  description = "ECR repository URL for blueprintparser-app"
   value       = aws_ecr_repository.beaver_app.repository_url
 }
 
 output "ecr_beaver_cpu_pipeline_url" {
-  description = "ECR repository URL for beaver-cpu-pipeline"
+  description = "ECR repository URL for blueprintparser-cpu-pipeline"
   value       = aws_ecr_repository.beaver_cpu_pipeline.repository_url
 }
 
 output "ecr_beaver_yolo_pipeline_url" {
-  description = "ECR repository URL for beaver-yolo-pipeline"
+  description = "ECR repository URL for blueprintparser-yolo-pipeline"
   value       = aws_ecr_repository.beaver_yolo_pipeline.repository_url
 }
 

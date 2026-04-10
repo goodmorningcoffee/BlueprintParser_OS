@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, takeoffGroups } from "@/lib/db/schema";
+import { takeoffGroups } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logger } from "@/lib/logger";
 
@@ -10,9 +10,6 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
   const groupId = parseInt(id, 10);
   if (!Number.isInteger(groupId)) {
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
@@ -28,15 +25,8 @@ export async function PUT(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const [project] = await db
-    .select({ companyId: projects.companyId })
-    .from(projects)
-    .where(eq(projects.id, group.projectId))
-    .limit(1);
-
-  if (!project || project.companyId !== session.user.companyId) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ dbId: group.projectId });
+  if (access.error) return access.error;
 
   const body = await req.json();
   const updates: Record<string, unknown> = {};
@@ -92,9 +82,6 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
   const groupId = parseInt(id, 10);
   if (!Number.isInteger(groupId)) {
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
@@ -110,15 +97,8 @@ export async function DELETE(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const [project] = await db
-    .select({ companyId: projects.companyId })
-    .from(projects)
-    .where(eq(projects.id, group.projectId))
-    .limit(1);
-
-  if (!project || project.companyId !== session.user.companyId) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ dbId: group.projectId });
+  if (access.error) return access.error;
 
   // FK ON DELETE SET NULL on takeoff_items.group_id orphans items automatically
   await db.delete(takeoffGroups).where(eq(takeoffGroups.id, groupId));

@@ -11,7 +11,7 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 [ -f "${SCRIPT_DIR}/../.deploy.env" ] && source "${SCRIPT_DIR}/../.deploy.env"
 
-ROLE_NAME="${ECS_TASK_ROLE:-beaver-ecs-task-role}"
+ROLE_NAME="${ECS_TASK_ROLE:-blueprintparser-ecs-task-role}"
 POLICY_NAME="sagemaker-kill-switch"
 REGION="${AWS_REGION:-us-east-1}"
 

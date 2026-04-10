@@ -1,11 +1,12 @@
 # ── Stage 1: Install dependencies ──────────────────────────────
-FROM node:20-slim AS deps
+# Build stages use Alpine (small, fast). Runner uses Debian for Python/ML deps.
+FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --ignore-scripts
 
 # ── Stage 2: Build the Next.js app ────────────────────────────
-FROM node:20-slim AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -14,7 +15,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 # Next.js inlines NEXT_PUBLIC_* vars at build time — required for client-side
 # S3/CloudFront features (thumbnails, PNG fallback, page prefetching)
-ARG NEXT_PUBLIC_CLOUDFRONT_DOMAIN=assets.blueprintparser.com
+ARG NEXT_PUBLIC_CLOUDFRONT_DOMAIN=""
 ENV NEXT_PUBLIC_CLOUDFRONT_DOMAIN=$NEXT_PUBLIC_CLOUDFRONT_DOMAIN
 
 RUN npm run build
@@ -60,7 +61,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tabulate \
     openpyxl \
     camelot-py[base] \
-    img2table
+    img2table \
+    && pip3 install --break-system-packages --no-cache-dir \
+    torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip3 install --break-system-packages --no-cache-dir \
+    "transformers>=4.40.0" \
+    "timm>=0.9.0"
 
 # Copy standalone output
 COPY --from=builder /app/public ./public

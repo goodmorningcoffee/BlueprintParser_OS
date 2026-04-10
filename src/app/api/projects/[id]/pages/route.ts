@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, pages, annotations } from "@/lib/db/schema";
-import { eq, and, gte, lte } from "drizzle-orm";
+import { pages, annotations } from "@/lib/db/schema";
+import { and, gte, lte, eq } from "drizzle-orm";
 import type { ClientAnnotation } from "@/types";
 
 /**
@@ -17,8 +17,6 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
 
   const url = new URL(req.url);
   const from = parseInt(url.searchParams.get("from") || "1", 10);
@@ -31,20 +29,9 @@ export async function GET(
     );
   }
 
-  const [project] = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(
-      and(
-        eq(projects.publicId, id),
-        eq(projects.companyId, session.user.companyId)
-      )
-    )
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ publicId: id });
+  if (access.error) return access.error;
+  const { project } = access;
 
   // Fetch page data and annotations in parallel (both need only project.id + page range)
   const [pageRows, rangeAnnotations] = await Promise.all([

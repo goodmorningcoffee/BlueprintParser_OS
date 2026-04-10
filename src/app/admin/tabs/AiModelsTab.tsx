@@ -159,10 +159,10 @@ export default function AiModelsTab({
       return;
     }
     setEditingModelId(model.id);
-    setClassTypeEdits((model.config as any)?.classTypes || {});
+    setClassTypeEdits(model.config?.classTypes || {});
     // Load CSI codes and keywords as comma-separated strings for editing
-    const csiMap = (model.config as any)?.classCsiCodes || {};
-    const kwMap = (model.config as any)?.classKeywords || {};
+    const csiMap = model.config?.classCsiCodes || {};
+    const kwMap = model.config?.classKeywords || {};
     const csiStrings: Record<string, string> = {};
     const kwStrings: Record<string, string> = {};
     for (const [cls, codes] of Object.entries(csiMap)) {
@@ -240,9 +240,9 @@ export default function AiModelsTab({
         {/* Existing models — scrollable if >3 */}
         <div className="space-y-2 mb-4 max-h-[600px] overflow-y-auto">
           {yoloModels.map((m) => {
-            const classes: string[] = (m.config as any)?.classes || [];
-            const classTypes: Record<string, ModelClassType> = (m.config as any)?.classTypes || {};
-            const classCsiCodes: Record<string, string[]> = (m.config as any)?.classCsiCodes || {};
+            const classes: string[] = m.config?.classes || [];
+            const classTypes: Record<string, ModelClassType> = m.config?.classTypes || {};
+            const classCsiCodes: Record<string, string[]> = m.config?.classCsiCodes || {};
             const taggedCount = Object.keys(classTypes).length;
             const csiTaggedCount = Object.keys(classCsiCodes).length;
             const spatialCount = Object.values(classTypes).filter((t) => t === "spatial" || t === "both").length;
@@ -370,7 +370,7 @@ export default function AiModelsTab({
                       step="0.05"
                       min="0.01"
                       max="0.95"
-                      value={configEdits[m.id]?.confidence ?? (m.config as any)?.confidence ?? 0.10}
+                      value={configEdits[m.id]?.confidence ?? m.config?.confidence ?? 0.10}
                       onChange={(e) => updateConfigEdit(m.id, "confidence", parseFloat(e.target.value))}
                       className="w-14 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
                     />
@@ -382,7 +382,7 @@ export default function AiModelsTab({
                       step="0.05"
                       min="0.1"
                       max="0.9"
-                      value={configEdits[m.id]?.iou ?? (m.config as any)?.iou ?? 0.60}
+                      value={configEdits[m.id]?.iou ?? m.config?.iou ?? 0.60}
                       onChange={(e) => updateConfigEdit(m.id, "iou", parseFloat(e.target.value))}
                       className="w-14 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
                     />
@@ -394,7 +394,7 @@ export default function AiModelsTab({
                       step="32"
                       min="640"
                       max="2560"
-                      value={configEdits[m.id]?.imageSize ?? (m.config as any)?.imageSize ?? 1280}
+                      value={configEdits[m.id]?.imageSize ?? m.config?.imageSize ?? 1280}
                       onChange={(e) => updateConfigEdit(m.id, "imageSize", parseInt(e.target.value))}
                       className="w-16 px-1 py-0.5 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] text-center"
                     />

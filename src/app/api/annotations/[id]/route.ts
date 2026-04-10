@@ -1,29 +1,29 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
+import { checkProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { annotations, projects } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { detectCsiCodes } from "@/lib/csi-detect";
 
-async function verifyAnnotationOwnership(annotationId: number, companyId: number) {
+async function verifyAnnotationAccess(annotationId: number) {
   const [annotation] = await db
     .select()
     .from(annotations)
     .where(eq(annotations.id, annotationId))
     .limit(1);
-
-  if (!annotation) return null;
+  if (!annotation) return { annotation: null, error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
 
   const [project] = await db
-    .select()
+    .select({ isDemo: projects.isDemo, companyId: projects.companyId })
     .from(projects)
-    .where(
-      and(eq(projects.id, annotation.projectId), eq(projects.companyId, companyId))
-    )
+    .where(eq(projects.id, annotation.projectId))
     .limit(1);
+  if (!project) return { annotation: null, error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
 
-  if (!project) return null;
-  return annotation;
+  const access = await checkProjectAccess(project);
+  if (access.error) return { annotation: null, error: access.error };
+
+  return { annotation, error: null };
 }
 
 export async function PUT(
@@ -31,16 +31,10 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
 
-  const annotation = await verifyAnnotationOwnership(
-    parseInt(id),
-    session.user.companyId
-  );
-  if (!annotation) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const { annotation, error } = await verifyAnnotationAccess(parseInt(id));
+  if (error) return error;
+  if (!annotation) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await req.json();
   const updates: Record<string, unknown> = {};
@@ -83,16 +77,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
 
-  const annotation = await verifyAnnotationOwnership(
-    parseInt(id),
-    session.user.companyId
-  );
-  if (!annotation) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const { annotation, error } = await verifyAnnotationAccess(parseInt(id));
+  if (error) return error;
+  if (!annotation) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   await db.delete(annotations).where(eq(annotations.id, annotation.id));
 
