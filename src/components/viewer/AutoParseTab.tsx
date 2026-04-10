@@ -49,6 +49,12 @@ export default function AutoParseTab({
   const [autoParsing, setAutoParsing] = useState(false);
   const [autoParseError, setAutoParseError] = useState<string | null>(null);
   const [autoParseMethodInfo, setAutoParseMethodInfo] = useState<any[] | null>(null);
+  // Phase A.4: pipeline-level errors (PDF fetch, rasterize, etc.) — distinct
+  // from per-method errors. These tell the user the parser never even ran.
+  const [autoParseInfraErrors, setAutoParseInfraErrors] = useState<{ stage: string; error: string }[]>([]);
+  // Phase D.1: full per-method grids for the drill-down UI. Live-only — not
+  // persisted (pageIntelligence stays clean for the LLM).
+  const [autoParseMethodResults, setAutoParseMethodResults] = useState<any[] | null>(null);
 
   // Multi-BB: accumulate proposed regions before processing
   const [proposedRegions, setProposedRegions] = useState<ProposedRegion[]>([]);
@@ -77,12 +83,16 @@ export default function AutoParseTab({
       setAutoParsing(true);
       setAutoParseError(null);
       setAutoParseMethodInfo(null);
+      setAutoParseInfraErrors([]);
+      setAutoParseMethodResults(null);
 
       try {
         // Parse each region independently then merge
         let mergedHeaders: string[] = [];
         let mergedRows: Record<string, string>[] = [];
         let lastMethodInfo: any[] | null = null;
+        let lastMethodResults: any[] | null = null;
+        const collectedInfraErrors: { stage: string; error: string }[] = [];
         let tagColumn: string | undefined;
         let firstColBoundaries: number[] | undefined;
         let firstRowBoundaries: number[] | undefined;
@@ -102,6 +112,14 @@ export default function AutoParseTab({
 
           const result = await resp.json();
           lastMethodInfo = result.methods || null;
+          lastMethodResults = result.methodResults || null;
+          if (Array.isArray(result.infraErrors) && result.infraErrors.length > 0) {
+            // Tag with region index when multi-region so users can pinpoint
+            const tagged = proposedRegions.length > 1
+              ? result.infraErrors.map((e: any) => ({ ...e, stage: `region ${i + 1}: ${e.stage}` }))
+              : result.infraErrors;
+            collectedInfraErrors.push(...tagged);
+          }
 
           if (i === 0) {
             // First region: use its headers and boundaries as canonical
@@ -122,6 +140,8 @@ export default function AutoParseTab({
         }
 
         setAutoParseMethodInfo(lastMethodInfo);
+        setAutoParseMethodResults(lastMethodResults);
+        setAutoParseInfraErrors(collectedInfraErrors);
         const grid = {
           headers: mergedHeaders,
           rows: mergedRows,
@@ -296,13 +316,34 @@ export default function AutoParseTab({
             />
           </div>
 
-          <div className="text-[11px] text-green-400 px-2 py-2 border border-green-500/20 rounded bg-green-500/5">
-            Parsed: {tableParsedGrid.headers.length} cols, {tableParsedGrid.rows.length} rows
-            {tableParsedGrid.tagColumn && <span className="ml-1">(tag: {tableParsedGrid.tagColumn})</span>}
-          </div>
+          {/* Phase A.4: pipeline-level errors (PDF fetch, rasterize) */}
+          {autoParseInfraErrors.length > 0 && (
+            <div className="text-[10px] text-red-300 px-2 py-2 border border-red-500/30 rounded bg-red-500/10 space-y-0.5">
+              <div className="font-semibold uppercase tracking-wide text-[9px] text-red-400">
+                Pipeline errors ({autoParseInfraErrors.length}) — methods below were skipped
+              </div>
+              {autoParseInfraErrors.map((e, i) => (
+                <div key={i} className="font-mono">
+                  <span className="text-red-400">{e.stage}:</span> {e.error}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Phase A.4: amber for empty results, green for non-empty */}
+          {tableParsedGrid.headers.length > 0 && tableParsedGrid.rows.length > 0 ? (
+            <div className="text-[11px] text-green-400 px-2 py-2 border border-green-500/20 rounded bg-green-500/5">
+              Parsed: {tableParsedGrid.headers.length} cols, {tableParsedGrid.rows.length} rows
+              {tableParsedGrid.tagColumn && <span className="ml-1">(tag: {tableParsedGrid.tagColumn})</span>}
+            </div>
+          ) : (
+            <div className="text-[11px] text-amber-400 px-2 py-2 border border-amber-500/30 rounded bg-amber-500/5">
+              No table detected — see method details below for what each parser returned
+            </div>
+          )}
           {autoParseMethodInfo && (
             <div className="px-1 space-y-0.5">
-              <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide">Methods</div>
+              <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide">Methods (summary)</div>
               {autoParseMethodInfo.map((m: any, i: number) => (
                 <div key={i} className="text-[10px] flex items-center justify-between gap-2">
                   <span className={m.confidence > 0 ? "text-[var(--fg)]" : "text-[var(--muted)]/50"}>
@@ -316,6 +357,32 @@ export default function AutoParseTab({
                       : "no result"}
                   </span>
                 </div>
+              ))}
+            </div>
+          )}
+
+          {/* Phase D.2: per-method drill-down with grid view + manual override.
+              Live-only — these results are not persisted (pageIntelligence is the
+              LLM context blob and stays single-merged-grid). Reparse to compare. */}
+          {autoParseMethodResults && autoParseMethodResults.length > 0 && (
+            <div className="px-1 space-y-1">
+              <div className="text-[9px] text-[var(--muted)] uppercase tracking-wide pt-1">
+                All Method Results — drill down to compare ({autoParseMethodResults.length})
+              </div>
+              {autoParseMethodResults.map((mr: any, i: number) => (
+                <MethodDrillDown
+                  key={`${mr.method}-${i}`}
+                  result={mr}
+                  onUseThis={(r) => {
+                    setTableParsedGrid({
+                      ...tableParsedGrid,
+                      headers: r.headers,
+                      rows: r.rows,
+                      colBoundaries: r.colBoundaries,
+                      rowBoundaries: r.rowBoundaries,
+                    });
+                  }}
+                />
               ))}
             </div>
           )}
@@ -350,7 +417,9 @@ export default function AutoParseTab({
               }
               setTableParsedGrid(null);
               setAutoParseMethodInfo(null);
+              setAutoParseMethodResults(null);
               setAutoParseError(null);
+              setAutoParseInfraErrors([]);
               setTableParseStep("idle");
             }}
             className="w-full text-xs px-3 py-1.5 rounded border border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
@@ -377,6 +446,95 @@ export default function AutoParseTab({
         </div>
       )}
     </>
+  );
+}
+
+// ─── Per-method drill-down (Phase D.2) ───────────────────────
+// Renders a single method's result as a collapsible row showing the method
+// name, confidence/shape badge, and (when expanded) a small grid table with
+// a "Use this result" override button.
+function MethodDrillDown({
+  result,
+  onUseThis,
+}: {
+  result: any;
+  onUseThis: (result: any) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const headers: string[] = result.headers || [];
+  const rows: Record<string, string>[] = result.rows || [];
+  const hasData = headers.length > 0 && rows.length > 0;
+
+  return (
+    <div className="border border-[var(--border)]/30 rounded">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between px-2 py-1 text-[10px] hover:bg-[var(--surface-hover)]"
+      >
+        <span className="flex items-center gap-1">
+          <span className={`transition-transform inline-block text-[8px] ${expanded ? "rotate-90" : ""}`}>&#9654;</span>
+          <span className={hasData ? "text-[var(--fg)] font-mono" : "text-[var(--muted)]/60 font-mono"}>
+            {result.method}
+          </span>
+        </span>
+        <span className={result.confidence > 0.5 ? "text-green-400" : result.confidence > 0 ? "text-yellow-400" : result.error ? "text-red-400/70" : "text-[var(--muted)]/30"}>
+          {hasData
+            ? `${Math.round(result.confidence * 100)}% — ${rows.length}r×${headers.length}c`
+            : result.error
+            ? <span title={result.error}>error</span>
+            : "no result"}
+        </span>
+      </button>
+      {expanded && (
+        <div className="px-2 py-2 border-t border-[var(--border)]/30 space-y-1">
+          {hasData ? (
+            <>
+              <div className="overflow-x-auto max-h-48 overflow-y-auto border border-[var(--border)]/20 rounded">
+                <table className="text-[9px] font-mono border-collapse w-full">
+                  <thead className="sticky top-0 bg-[var(--surface)]">
+                    <tr>
+                      {headers.map((h, hi) => (
+                        <th key={hi} className="border border-[var(--border)]/30 px-1 py-0.5 text-left whitespace-nowrap">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.slice(0, 30).map((row, ri) => (
+                      <tr key={ri} className="hover:bg-[var(--surface-hover)]/30">
+                        {headers.map((h, ci) => (
+                          <td key={ci} className="border border-[var(--border)]/20 px-1 py-0.5 align-top">
+                            <div className="max-w-[120px] truncate" title={(row[h] || "").replace(/\n/g, " · ")}>
+                              {((row[h] || "").substring(0, 60)).replace(/\n/g, " ")}
+                            </div>
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {rows.length > 30 && (
+                <div className="text-[9px] text-[var(--muted)]/60 italic">
+                  Showing first 30 of {rows.length} rows
+                </div>
+              )}
+              <button
+                onClick={() => onUseThis(result)}
+                className="w-full text-[9px] px-2 py-1 rounded border border-pink-500/40 text-pink-300 hover:bg-pink-500/10"
+              >
+                Use this result instead of merged
+              </button>
+            </>
+          ) : (
+            <div className="text-[10px] text-[var(--muted)] italic px-1">
+              {result.error || "Method returned no result"}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

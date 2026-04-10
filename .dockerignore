@@ -9,4 +9,6 @@ plan_march18.md
 infrastructure/terraform/.terraform
 infrastructure/terraform/*.tfstate*
 infrastructure/terraform/terraform.tfvars
-models/
+models/*
+!models/tatr/
+!models/tatr/**

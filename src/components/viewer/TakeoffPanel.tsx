@@ -225,7 +225,7 @@ export default function TakeoffPanel() {
             className={`text-xs px-1.5 py-0.5 rounded border ${hasScale ? "border-green-500/30 text-green-400" : "border-amber-500/30 text-amber-400"} hover:border-[var(--accent)]`}
             title={hasScale ? `Scale set for page ${pageNumber}. Click to recalibrate.` : "Set scale for this page (required for Area and Linear)"}
           >
-            {calibrationMode !== "idle" ? "..." : hasScale ? "&#10003;" : "\u{1F4CF}"}
+            {calibrationMode !== "idle" ? "..." : hasScale ? "\u2713" : "\u{1F4CF}"}
           </button>
           <button onClick={() => setCsvModalOpen(true)} className="text-xs px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]" title="View as editable CSV">View</button>
           <button onClick={exportCSV} className="text-xs px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]" title="Export CSV">CSV</button>

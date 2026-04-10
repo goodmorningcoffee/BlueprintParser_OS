@@ -162,6 +162,13 @@
       "when": 1775460000000,
       "tag": "0022_set_root_admin",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1775520000000,
+      "tag": "0023_add_takeoff_groups",
+      "breakpoints": true
     }
   ]
 }

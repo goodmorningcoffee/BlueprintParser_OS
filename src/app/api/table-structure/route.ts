@@ -14,7 +14,7 @@ import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { getS3Url } from "@/lib/s3";
+import { downloadFromS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
 import { detectTableStructure } from "@/lib/tatr-structure";
 import type { TextractPageData, TextractWord } from "@/types";
@@ -53,13 +53,14 @@ export async function POST(req: Request) {
   const tempDir = await mkdtemp(join(tmpdir(), "bp2-tatr-route-"));
 
   try {
-    // Fetch PDF and rasterize page
-    const pdfUrl = getS3Url(project.dataUrl!, "original.pdf");
-    const pdfResp = await fetch(pdfUrl);
-    if (!pdfResp.ok) {
-      return apiError("Failed to fetch PDF", 500);
+    // Download PDF via AWS SDK (uses credentials, works with private buckets)
+    let pdfBuffer: Buffer;
+    try {
+      pdfBuffer = await downloadFromS3(`${project.dataUrl}/original.pdf`);
+    } catch (err) {
+      logger.error("[TABLE_STRUCTURE] PDF download failed", { dataUrl: project.dataUrl, err });
+      return apiError(`Failed to fetch PDF: ${err instanceof Error ? err.message : "unknown"}`, 500);
     }
-    const pdfBuffer = Buffer.from(await pdfResp.arrayBuffer());
     const pagePng = await rasterizePage(pdfBuffer, pageNumber, 200);
 
     // Get image dimensions
