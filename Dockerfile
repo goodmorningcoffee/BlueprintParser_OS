@@ -85,6 +85,9 @@ COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/src/data ./src/data
 COPY --from=builder /app/dist/process-worker.js ./scripts/process-worker.js
 
+# Patch img2table for Polars API compatibility (img2table 0.0.12 uses deprecated Polars API)
+RUN python3 ./scripts/patch_img2table.py
+
 # Install drizzle-orm and pg for migrations (already in standalone but need migrator)
 RUN npm install drizzle-orm pg 2>/dev/null || true
 
