@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo, useState, useCallback } from "react";
-import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useYoloTags } from "@/stores/viewerStore";
-import { TWENTY_COLORS } from "@/types";
-import type { ClientAnnotation, YoloTag } from "@/types";
+import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useYoloTags, usePageData } from "@/stores/viewerStore";
+import { TWENTY_COLORS, SHAPE_COLORS } from "@/types";
+import type { ClientAnnotation, YoloTag, Shape } from "@/types";
 import ClassGroupHeader from "./ClassGroupHeader";
 import HelpTooltip from "./HelpTooltip";
 import AnnotationListItem from "./AnnotationListItem";
@@ -32,7 +32,54 @@ export default function DetectionPanel() {
     tagScanResults, setTagScanResults, tagAddingMode, setTagAddingMode,
   } = useYoloTags();
 
-  const [detectionTab, setDetectionTab] = useState<"models" | "tags">("models");
+  const [detectionTab, setDetectionTab] = useState<"models" | "tags" | "shape">("models");
+  const [shapeParseLoading, setShapeParseLoading] = useState(false);
+  const [shapeParseError, setShapeParseError] = useState<string | null>(null);
+  const { keynotes, setKeynotes } = usePageData();
+  const showKeynotes = useViewerStore((s) => s.showKeynotes);
+  const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
+  const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);
+  const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
+  const projectId = useViewerStore((s) => s.projectId);
+
+  const pageKeynotes = keynotes[pageNumber] || [];
+
+  // Group detected shapes by type for the summary list
+  const shapesByType = useMemo(() => {
+    const groups: Record<string, { count: number; items: typeof pageKeynotes }> = {};
+    for (const k of pageKeynotes) {
+      if (!groups[k.shape]) groups[k.shape] = { count: 0, items: [] };
+      groups[k.shape].count++;
+      groups[k.shape].items.push(k);
+    }
+    return Object.entries(groups).sort(([, a], [, b]) => b.count - a.count);
+  }, [pageKeynotes]);
+
+  async function runShapeParse() {
+    if (!projectId || shapeParseLoading) return;
+    setShapeParseLoading(true);
+    setShapeParseError(null);
+    try {
+      const res = await fetch("/api/shape-parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, pageNumber }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setShapeParseError(err.error || `Failed (${res.status})`);
+        return;
+      }
+      const data = await res.json();
+      setKeynotes(pageNumber, data.keynotes || []);
+      // Auto-show shapes on canvas after a successful parse
+      if (!showKeynotes) toggleKeynotes();
+    } catch (err) {
+      setShapeParseError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setShapeParseLoading(false);
+    }
+  }
   const [expandedModels, setExpandedModels] = useState<Record<string, boolean>>({});
   const [expandedClasses, setExpandedClasses] = useState<Record<string, boolean>>({});
   const [expandedTagModels, setExpandedTagModels] = useState<Record<string, boolean>>({});
@@ -122,14 +169,18 @@ export default function DetectionPanel() {
 
       {/* Tab bar */}
       <div className="flex border-b border-[var(--border)]">
-        {(["models", "tags"] as const).map((tab) => (
+        {(["models", "tags", "shape"] as const).map((tab) => (
           <button key={tab} onClick={() => setDetectionTab(tab)}
             className={`flex-1 px-3 py-1.5 text-[11px] font-medium capitalize ${
               detectionTab === tab
                 ? "text-[var(--accent)] border-b-2 border-[var(--accent)]"
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
             }`}>
-            {tab === "tags" ? `Tags${yoloTags.length > 0 ? ` (${yoloTags.length})` : ""}` : "Models"}
+            {tab === "tags"
+              ? `Tags${yoloTags.length > 0 ? ` (${yoloTags.length})` : ""}`
+              : tab === "shape"
+                ? `Shape${pageKeynotes.length > 0 ? ` (${pageKeynotes.length})` : ""}`
+                : "Models"}
           </button>
         ))}
       </div>
@@ -617,6 +668,109 @@ export default function DetectionPanel() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ═══ Shape Parse Tab ═══ */}
+      {detectionTab === "shape" && (
+        <div className="flex-1 overflow-y-auto flex flex-col">
+          {/* Run / Visibility controls */}
+          <div className="px-3 py-2 border-b border-[var(--border)] space-y-1.5">
+            <button
+              onClick={runShapeParse}
+              disabled={shapeParseLoading || !projectId}
+              className={`w-full px-2 py-1.5 text-[11px] rounded border transition-colors ${
+                shapeParseLoading
+                  ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
+                  : "border-cyan-500/40 text-cyan-300 bg-cyan-500/5 hover:bg-cyan-500/10"
+              } disabled:opacity-40`}
+            >
+              {shapeParseLoading ? "Detecting shapes..." : `Run Shape Parse (page ${pageNumber})`}
+            </button>
+            {shapeParseError && (
+              <div className="text-[10px] text-red-400 px-1">{shapeParseError}</div>
+            )}
+            {pageKeynotes.length > 0 && (
+              <button
+                onClick={toggleKeynotes}
+                className={`w-full px-2 py-1 text-[10px] rounded border ${
+                  showKeynotes
+                    ? "border-cyan-400/60 text-cyan-300 bg-cyan-500/10"
+                    : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                }`}
+              >
+                {showKeynotes ? "\u25C9 Showing on canvas" : "\u25CB Hidden — click to show"}
+              </button>
+            )}
+            <div className="text-[9px] text-[var(--muted)] leading-tight">
+              Detects circles, diamonds, hexagons etc. containing keynote text (A1, B-2…).
+              OpenCV + Tesseract, no ML model needed.
+            </div>
+          </div>
+
+          {/* Results summary */}
+          {pageKeynotes.length > 0 ? (
+            <div className="flex-1 overflow-y-auto">
+              <div className="px-3 py-1.5 text-[10px] text-[var(--muted)] border-b border-[var(--border)]">
+                {pageKeynotes.length} shape{pageKeynotes.length === 1 ? "" : "s"} detected
+                {activeKeynoteFilter && (
+                  <button
+                    onClick={() => setKeynoteFilter(null)}
+                    className="ml-2 text-[var(--accent)] hover:underline"
+                  >
+                    clear filter
+                  </button>
+                )}
+              </div>
+              {shapesByType.map(([shape, data]) => {
+                const color = SHAPE_COLORS[shape as Shape] || "#e6194b";
+                return (
+                  <div key={shape} className="border-b border-[var(--border)]/50">
+                    <div
+                      className="px-3 py-1 text-[10px] font-medium flex items-center gap-1.5"
+                      style={{ color }}
+                    >
+                      <span
+                        className="inline-block w-2 h-2 rounded-full"
+                        style={{ backgroundColor: color }}
+                      />
+                      <span className="capitalize">{shape}</span>
+                      <span className="text-[var(--muted)]">({data.count})</span>
+                    </div>
+                    <div className="px-3 pb-1 flex flex-wrap gap-1">
+                      {data.items.map((k, i) => {
+                        const isActive =
+                          activeKeynoteFilter?.shape === k.shape &&
+                          activeKeynoteFilter?.text === k.text;
+                        return (
+                          <button
+                            key={`${shape}-${i}`}
+                            onClick={() =>
+                              setKeynoteFilter(isActive ? null : { shape: k.shape, text: k.text })
+                            }
+                            className={`px-1.5 py-0.5 text-[10px] rounded border transition-colors ${
+                              isActive
+                                ? "bg-[var(--accent)]/20 border-[var(--accent)]/40 text-[var(--accent)]"
+                                : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+                            }`}
+                            title={`${k.shape}: "${k.text || "(no text)"}"`}
+                          >
+                            {k.text || "\u2014"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : !shapeParseLoading ? (
+            <div className="flex-1 flex items-center justify-center text-[10px] text-[var(--muted)] px-6 text-center">
+              No shapes parsed for page {pageNumber} yet.
+              <br />
+              Click &quot;Run Shape Parse&quot; above.
+            </div>
+          ) : null}
         </div>
       )}
     </div>

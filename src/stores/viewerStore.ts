@@ -276,8 +276,8 @@ interface ViewerState {
   setTableParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
   tableParseRegion: [number, number, number, number] | null; // [minX, minY, maxX, maxY] normalized
   setTableParseRegion: (bbox: [number, number, number, number] | null) => void;
-  tableParsedGrid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[] } | null;
-  setTableParsedGrid: (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[] } | null) => void;
+  tableParsedGrid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] } | null;
+  setTableParsedGrid: (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] } | null) => void;
   tableCellStructure: {
     cells: Array<{ bbox: [number, number, number, number]; row: number; col: number; rowSpan: number; colSpan: number; type: string; confidence: number; text: string; highlighted: boolean }>;
     pageNumber: number;

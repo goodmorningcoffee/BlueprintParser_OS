@@ -3,7 +3,7 @@ import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { getS3Url } from "@/lib/s3";
+import { downloadFromS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
 import { mergeGrids, type MethodResult } from "@/lib/grid-merger";
 import type { TextractPageData } from "@/types";
@@ -66,34 +66,63 @@ export async function POST(req: Request) {
 
     const textractData = pageRow.textractData as TextractPageData;
 
-    // Fetch PDF + rasterize for image-based methods
+    // Fetch PDF + rasterize for image-based methods.
+    // Phase A.1: capture infrastructure failures explicitly so the UI can
+    // distinguish "method ran and found nothing" from "method never ran".
+    const infraErrors: { stage: string; error: string }[] = [];
     let pdfBuffer: Buffer | null = null;
     let pagePngBuffer: Buffer | null = null;
+
+    // Phase B.4: use AWS SDK directly (matches /api/table-structure/route.ts).
+    // Previously used fetch(getS3Url(...)) which silently failed on private S3
+    // buckets when CloudFront isn't configured — that was the most likely
+    // production root cause for img2table appearing to "do nothing".
     try {
-      const pdfUrl = getS3Url(project.dataUrl!, "original.pdf");
-      const pdfResp = await fetch(pdfUrl);
-      if (pdfResp.ok) pdfBuffer = Buffer.from(await pdfResp.arrayBuffer());
-    } catch { /* PDF fetch failed — skip image/PDF-dependent methods */ }
+      pdfBuffer = await downloadFromS3(`${project.dataUrl}/original.pdf`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      infraErrors.push({ stage: "pdf-download", error: msg });
+      logger.error(`[table-parse] PDF download failed: ${msg}`, { projectId, pageNumber, dataUrl: project.dataUrl });
+    }
 
     if (pdfBuffer) {
       try {
         pagePngBuffer = await rasterizePage(pdfBuffer, pageNumber, 200);
-      } catch { /* rasterization failed */ }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        infraErrors.push({ stage: "rasterize", error: msg });
+        logger.error(`[table-parse] Rasterize failed: ${msg}`, { projectId, pageNumber, pdfBytes: pdfBuffer.length });
+      }
     }
 
-    // Run all 7 methods in parallel
+    // Run methods in parallel. Methods that need PDF/PNG that we don't have
+    // get an explicit "skipped" error so the UI can show why they're missing
+    // instead of silently displaying an empty result as success.
+    const skippedReason = (need: string) =>
+      infraErrors.length > 0
+        ? `skipped: ${need} unavailable (see infraErrors)`
+        : `skipped: ${need} unavailable`;
+
     const methodPromises: Promise<MethodResult | MethodResult[]>[] = [
       Promise.resolve(methodOcrPositions(textractData.words, regionBbox, { rowTolerance, minColGap, colHitRatio, headerMode })),
       Promise.resolve(methodTextractTables(textractData.tables, regionBbox)),
       pagePngBuffer && pdfBuffer
         ? methodOpenCvLines(pdfBuffer, pageNumber, regionBbox, textractData.words, { minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance })
-        : Promise.resolve({ method: "opencv-lines", headers: [], rows: [], confidence: 0 } as MethodResult),
-      pagePngBuffer
-        ? extractWithImg2Table(pagePngBuffer, regionBbox)
-        : Promise.resolve({ method: "img2table", headers: [], rows: [], confidence: 0 } as MethodResult),
+        : Promise.resolve({ method: "opencv-lines", headers: [], rows: [], confidence: 0, error: skippedReason("page image") } as MethodResult),
+      // Phase C.3: img2table now accepts both pdfBuffer (for native PDF mode)
+      // and pngBuffer (for image mode + auto-fallback). After Phase B.4 the
+      // pdfBuffer is reliably populated via downloadFromS3, so PDF mode runs
+      // by default. Image mode is the fallback if PDF mode finds nothing.
+      (pdfBuffer || pagePngBuffer)
+        ? extractWithImg2Table(pdfBuffer, pagePngBuffer, pageNumber, regionBbox)
+        : Promise.resolve({ method: "img2table", headers: [], rows: [], confidence: 0, error: skippedReason("PDF and page image") } as MethodResult),
       pdfBuffer
         ? extractWithCamelotPdfplumber(pdfBuffer, pageNumber, regionBbox)
-        : Promise.resolve([] as MethodResult[]),
+        : Promise.resolve([
+            { method: "camelot-lattice", headers: [], rows: [], confidence: 0, error: skippedReason("PDF") } as MethodResult,
+            { method: "camelot-stream", headers: [], rows: [], confidence: 0, error: skippedReason("PDF") } as MethodResult,
+            { method: "pdfplumber", headers: [], rows: [], confidence: 0, error: skippedReason("PDF") } as MethodResult,
+          ]),
     ];
 
     const rawResults = await Promise.all(methodPromises);
@@ -112,7 +141,12 @@ export async function POST(req: Request) {
       (merged as any).csiTags = csiCodes.map((c) => ({ code: c.code, description: c.description }));
     } catch { /* CSI detection is best-effort */ }
 
-    return NextResponse.json(merged);
+    // Phase D.1: include the full per-method results so the UI can show each
+    // method's individual grid, not just the shape summary in merged.methods.
+    // Filter to only methods that have data OR error — drop silent no-ops.
+    const methodResults = results.filter((r) => (r.headers.length > 0 && r.rows.length > 0) || r.error);
+
+    return NextResponse.json({ ...merged, methodResults, infraErrors });
   } catch (err) {
     logger.error("[table-parse] Failed:", err);
     return apiError(err instanceof Error ? err.message : "Table parsing failed", 500);

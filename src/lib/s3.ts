@@ -41,11 +41,15 @@ export async function createUploadPresignedPost(projectPath: string) {
 }
 
 export function getS3Url(projectPath: string, filename: string): string {
+  // encodeURI preserves path separators (/) but escapes spaces and special chars
+  // that would make fetch() throw "The string did not match the expected pattern"
+  const encodedPath = encodeURI(projectPath);
+  const encodedFile = encodeURI(filename);
   const cdnDomain = process.env.CLOUDFRONT_DOMAIN;
   if (cdnDomain) {
-    return `https://${cdnDomain}/${projectPath}/${filename}`;
+    return `https://${cdnDomain}/${encodedPath}/${encodedFile}`;
   }
-  return `https://${S3_BUCKET}.s3.amazonaws.com/${projectPath}/${filename}`;
+  return `https://${S3_BUCKET}.s3.amazonaws.com/${encodedPath}/${encodedFile}`;
 }
 
 /**

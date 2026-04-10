@@ -90,6 +90,7 @@ export default function AreaTab() {
   const [editPanelId, setEditPanelId] = useState<number | null>(null);
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
+  const [groupError, setGroupError] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   const areaItems = useMemo(() => takeoffItems.filter((i) => i.shape === "polygon"), [takeoffItems]);
@@ -190,6 +191,7 @@ export default function AreaTab() {
   async function handleCreateGroup() {
     const name = newGroupName.trim();
     if (!name) return;
+    setGroupError(null);
     if (isDemo) {
       const g: TakeoffGroup = { id: -Date.now(), name, kind: "area", color: null, csiCode: null, sortOrder: areaGroups.length };
       addTakeoffGroup(g);
@@ -205,8 +207,14 @@ export default function AreaTab() {
         const g = await res.json();
         addTakeoffGroup(g);
         setNewGroupName(""); setShowGroupForm(false);
+      } else {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setGroupError(err.error || `Failed (${res.status})`);
       }
-    } catch (err) { console.error("Failed to create group:", err); }
+    } catch (err) {
+      setGroupError("Network error");
+      console.error("Failed to create group:", err);
+    }
   }
 
   async function handleRenameGroup(id: number, name: string) {
@@ -308,18 +316,23 @@ export default function AreaTab() {
   return (
     <>
       <ScaleStatus />
-      {/* Bucket fill toolbar — only when an area polygon item is active */}
-      {activeTakeoffItemId !== null && areaItems.some((i) => i.id === activeTakeoffItemId) && (
+      {/* Bucket fill toolbar — shown whenever area items exist, disabled until one is selected */}
+      {areaItems.length > 0 && (() => {
+        const hasActiveAreaItem = activeTakeoffItemId !== null && areaItems.some((i) => i.id === activeTakeoffItemId);
+        return (
         <div className="px-2 py-1.5 border-b border-[var(--border)] space-y-1">
           <div className="flex items-center gap-1.5">
             <button
-              onClick={() => setBucketFillActive(!bucketFillActive)}
+              onClick={() => hasActiveAreaItem && setBucketFillActive(!bucketFillActive)}
+              disabled={!hasActiveAreaItem}
               className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded border transition-colors ${
-                bucketFillActive
+                !hasActiveAreaItem
+                  ? "border-[var(--border)] text-[var(--muted)]/40 cursor-not-allowed"
+                  : bucketFillActive
                   ? "border-cyan-400/60 text-cyan-300 bg-cyan-400/10"
                   : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]"
               }`}
-              title="Bucket Fill — click inside a room to auto-detect its boundary"
+              title={hasActiveAreaItem ? "Bucket Fill — click inside a room to auto-detect its boundary" : "Select an area item first"}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M16 2v5h5" /><path d="M21 6v6.5c0 .8-.7 1.5-1.5 1.5h-2l-3.5 4-3.5-4h-2C7.7 14 7 13.3 7 12.5V6c0-.8.7-1.5 1.5-1.5H19l2 1.5Z" />
@@ -327,7 +340,7 @@ export default function AreaTab() {
               </svg>
               Bucket Fill
             </button>
-            {bucketFillActive && (
+            {bucketFillActive && hasActiveAreaItem && (
               <>
                 <button
                   onClick={() => setBucketFillBarrierMode(!bucketFillBarrierMode)}
@@ -355,32 +368,41 @@ export default function AreaTab() {
               </>
             )}
           </div>
-          {bucketFillActive && (
+          {bucketFillActive && hasActiveAreaItem && (
             <div className="text-[10px] text-[var(--muted)] leading-tight">
               {bucketFillBarrierMode
                 ? "Click two points to draw a barrier line across a doorway"
                 : "Click inside a room to detect its boundary"}
             </div>
           )}
+          {!hasActiveAreaItem && (
+            <div className="text-[10px] text-[var(--muted)]/60 leading-tight">
+              Click an area item below to enable bucket fill
+            </div>
+          )}
         </div>
-      )}
+        );
+      })()}
       <div className="flex-1 overflow-y-auto">
         {/* New Group button */}
         <div className="px-2 py-1.5 border-b border-[var(--border)]">
           {showGroupForm ? (
-            <div className="flex gap-1">
-              <input
-                autoFocus
-                value={newGroupName}
-                onChange={(e) => setNewGroupName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleCreateGroup(); if (e.key === "Escape") { setShowGroupForm(false); setNewGroupName(""); } }}
-                placeholder="Group name (e.g. Division 09)"
-                className="flex-1 px-2 py-0.5 text-[11px] bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]"
-              />
-              <button onClick={handleCreateGroup} disabled={!newGroupName.trim()}
-                className="text-[10px] px-2 py-0.5 rounded bg-emerald-600 text-white disabled:opacity-40">Add</button>
-              <button onClick={() => { setShowGroupForm(false); setNewGroupName(""); }}
-                className="text-[10px] px-1 text-[var(--muted)] hover:text-[var(--fg)]">&times;</button>
+            <div>
+              <div className="flex gap-1">
+                <input
+                  autoFocus
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleCreateGroup(); if (e.key === "Escape") { setShowGroupForm(false); setNewGroupName(""); setGroupError(null); } }}
+                  placeholder="Group name (e.g. Division 09)"
+                  className="flex-1 px-2 py-0.5 text-[11px] bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]"
+                />
+                <button onClick={handleCreateGroup} disabled={!newGroupName.trim()}
+                  className="text-[10px] px-2 py-0.5 rounded bg-emerald-600 text-white disabled:opacity-40">Add</button>
+                <button onClick={() => { setShowGroupForm(false); setNewGroupName(""); setGroupError(null); }}
+                  className="text-[10px] px-1 text-[var(--muted)] hover:text-[var(--fg)]">&times;</button>
+              </div>
+              {groupError && <div className="text-[10px] text-red-400 px-1 mt-0.5">{groupError}</div>}
             </div>
           ) : (
             <button onClick={() => setShowGroupForm(true)}
