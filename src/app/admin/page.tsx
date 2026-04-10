@@ -12,6 +12,7 @@ import TextAnnotationsTab from "./tabs/TextAnnotationsTab";
 import CsiTab from "./tabs/CsiTab";
 import HeuristicsTab from "./tabs/HeuristicsTab";
 import PageIntelligenceTab from "./tabs/PageIntelligenceTab";
+import TableParseTab from "./tabs/TableParseTab";
 import UsersTab from "./tabs/UsersTab";
 import CompaniesUsersTab from "./tabs/CompaniesUsersTab";
 import AiRbacTab from "./tabs/AiRbacTab";
@@ -695,6 +696,10 @@ export default function AdminPage() {
             reprocessLog={reprocessLog}
             onReprocess={reprocessAll}
           />
+        )}
+
+        {activeTab === "table-parse" && (
+          <TableParseTab />
         )}
 
         {activeTab === "ai-rbac" && session?.user?.isRootAdmin && (

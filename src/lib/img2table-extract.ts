@@ -23,6 +23,23 @@ import type { MethodResult } from "@/lib/grid-merger";
 
 const EMPTY: MethodResult = { method: "img2table", headers: [], rows: [], confidence: 0 };
 
+/**
+ * Extract which img2table mode ran from the Python script's stderr markers.
+ * The script prints "[pdf-mode] ..." or "[image-mode] ..." or "[auto-mode] ..."
+ * for stage logging. We grep for the most specific marker.
+ */
+function extractPythonMode(stderr: string): string | undefined {
+  if (!stderr) return undefined;
+  const hasPdf = stderr.includes("[pdf-mode]");
+  const hasImage = stderr.includes("[image-mode]");
+  const hasAutoFallback = stderr.includes("[auto-mode]") && stderr.includes("falling back to image mode");
+  if (hasAutoFallback) return "auto-image-fallback";
+  if (hasPdf && hasImage) return "auto-pdf-then-image";
+  if (hasPdf) return "pdf";
+  if (hasImage) return "image";
+  return undefined;
+}
+
 export interface Img2TableOptions {
   /** "auto" tries PDF mode first then falls back to image; "pdf" forces PDF; "image" forces image */
   mode?: "auto" | "pdf" | "image";
@@ -89,7 +106,13 @@ export async function extractWithImg2Table(
 
       const timer = setTimeout(() => {
         proc.kill("SIGKILL");
-        resolve({ ...EMPTY, error: "img2table timed out after 30s" });
+        // Phase I.1.c: include any stderr captured before the timeout
+        const cappedStderr = stderr.length > 10_000 ? stderr.slice(-10_000) : stderr;
+        resolve({
+          ...EMPTY,
+          error: "img2table timed out after 30s",
+          debug: { stderr: cappedStderr || undefined, exitCode: -1, pythonMode: extractPythonMode(stderr) },
+        });
       }, 30_000);
 
       let stdout = "";
@@ -100,6 +123,16 @@ export async function extractWithImg2Table(
       proc.on("close", (code) => {
         clearTimeout(timer);
         if (stderr.trim()) logger.info(`[img2table] ${stderr.trim()}`);
+        // Phase I.1.c: capture full stderr (capped at 10KB) and exit code for
+        // the debug UI. Also extract which mode actually ran by grepping for
+        // [pdf-mode] / [image-mode] / [auto-mode] markers in stderr.
+        const cappedStderr = stderr.length > 10_000 ? stderr.slice(-10_000) : stderr;
+        const pythonMode = extractPythonMode(stderr);
+        const debug: { stderr?: string; exitCode?: number; pythonMode?: string } = {
+          stderr: cappedStderr || undefined,
+          exitCode: code ?? undefined,
+          pythonMode,
+        };
         try {
           const result = JSON.parse(stdout.trim() || "{}");
           // Phase A.3: trust result.error from Python — the script now guarantees
@@ -118,13 +151,14 @@ export async function extractWithImg2Table(
             colBoundaries: result.colBoundaries,
             rowBoundaries: result.rowBoundaries,
             ...(error ? { error } : {}),
+            debug,
           });
         } catch {
           // Script produced non-JSON output — likely a crash traceback. Log the
           // full stderr (not just the last line) so debugging is possible.
           logger.error(`[img2table] Failed to parse output (exit ${code}). stderr: ${stderr.trim() || "<empty>"}`);
           const errMsg = stderr.trim().split("\n").filter(Boolean).pop() || `img2table crashed (exit ${code}) with no stderr`;
-          resolve({ ...EMPTY, error: errMsg });
+          resolve({ ...EMPTY, error: errMsg, debug });
         }
       });
 
