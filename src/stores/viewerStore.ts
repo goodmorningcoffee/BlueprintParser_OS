@@ -242,6 +242,21 @@ interface ViewerState {
   addPolygonVertex: (v: { x: number; y: number }) => void;
   undoLastVertex: () => void;
   resetPolygonDrawing: () => void;
+  // Bucket fill
+  bucketFillActive: boolean;
+  setBucketFillActive: (active: boolean) => void;
+  bucketFillPreview: { vertices: { x: number; y: number }[]; method: string } | null;
+  setBucketFillPreview: (v: { vertices: { x: number; y: number }[]; method: string } | null) => void;
+  bucketFillLoading: boolean;
+  setBucketFillLoading: (v: boolean) => void;
+  bucketFillBarriers: { x1: number; y1: number; x2: number; y2: number }[];
+  addBucketFillBarrier: (line: { x1: number; y1: number; x2: number; y2: number }) => void;
+  undoLastBarrier: () => void;
+  clearBucketFillBarriers: () => void;
+  bucketFillBarrierMode: boolean;
+  setBucketFillBarrierMode: (v: boolean) => void;
+  barrierPendingPoint: { x: number; y: number } | null;
+  setBarrierPendingPoint: (v: { x: number; y: number } | null) => void;
   // Takeoff undo/redo
   takeoffUndoStack: ClientAnnotation[];
   takeoffRedoStack: ClientAnnotation[];
@@ -430,7 +445,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setScale: (scale) => set({ scale }),
 
   mode: "move",
-  setMode: (mode) => set({ mode, activeTakeoffItemId: null, polygonDrawingMode: "idle", polygonVertices: [] }),
+  setMode: (mode) => set({ mode, activeTakeoffItemId: null, polygonDrawingMode: "idle", polygonVertices: [], bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarriers: [], bucketFillBarrierMode: false }),
 
   searchQuery: "",
   searchResults: [],
@@ -689,6 +704,30 @@ export const useViewerStore = create<ViewerState>((set) => ({
     set((s) => ({ polygonVertices: s.polygonVertices.slice(0, -1) })),
   resetPolygonDrawing: () =>
     set({ polygonDrawingMode: "idle", polygonVertices: [] }),
+  // Bucket fill
+  bucketFillActive: false,
+  setBucketFillActive: (bucketFillActive) =>
+    set({
+      bucketFillActive,
+      bucketFillPreview: null,
+      bucketFillLoading: false,
+      bucketFillBarrierMode: false,
+      ...(!bucketFillActive ? { bucketFillBarriers: [] } : {}),
+    }),
+  bucketFillPreview: null,
+  setBucketFillPreview: (bucketFillPreview) => set({ bucketFillPreview }),
+  bucketFillLoading: false,
+  setBucketFillLoading: (bucketFillLoading) => set({ bucketFillLoading }),
+  bucketFillBarriers: [],
+  addBucketFillBarrier: (line) =>
+    set((s) => ({ bucketFillBarriers: [...s.bucketFillBarriers, line] })),
+  undoLastBarrier: () =>
+    set((s) => ({ bucketFillBarriers: s.bucketFillBarriers.slice(0, -1) })),
+  clearBucketFillBarriers: () => set({ bucketFillBarriers: [] }),
+  bucketFillBarrierMode: false,
+  setBucketFillBarrierMode: (bucketFillBarrierMode) => set({ bucketFillBarrierMode, barrierPendingPoint: null }),
+  barrierPendingPoint: null,
+  setBarrierPendingPoint: (barrierPendingPoint) => set({ barrierPendingPoint }),
   // Takeoff undo/redo (per active item, current page)
   takeoffUndoStack: [],
   takeoffRedoStack: [],

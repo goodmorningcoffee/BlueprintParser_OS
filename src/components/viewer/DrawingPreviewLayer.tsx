@@ -42,6 +42,11 @@ export default memo(function DrawingPreviewLayer({
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
+  const bucketFillPreview = useViewerStore((s) => s.bucketFillPreview);
+  const bucketFillLoading = useViewerStore((s) => s.bucketFillLoading);
+  const bucketFillBarriers = useViewerStore((s) => s.bucketFillBarriers);
+  const bucketFillBarrierMode = useViewerStore((s) => s.bucketFillBarrierMode);
+  const barrierPendingPoint = useViewerStore((s) => s.barrierPendingPoint);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -256,33 +261,194 @@ export default memo(function DrawingPreviewLayer({
 
       ctx.restore();
     }
+
+    // ── Bucket fill barrier lines ────────────────────────────
+    if (bucketFillBarriers.length > 0 || barrierPendingPoint) {
+      ctx.save();
+      // Draw completed barrier lines
+      for (const b of bucketFillBarriers) {
+        ctx.strokeStyle = "#ef4444";
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(b.x1 * width, b.y1 * height);
+        ctx.lineTo(b.x2 * width, b.y2 * height);
+        ctx.stroke();
+
+        // Endpoint dots
+        ctx.fillStyle = "#ef4444";
+        for (const [px, py] of [[b.x1, b.y1], [b.x2, b.y2]]) {
+          ctx.beginPath();
+          ctx.arc(px * width, py * height, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // In-progress barrier: pending point to cursor
+      if (barrierPendingPoint && mousePos) {
+        ctx.strokeStyle = "#ef4444";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(barrierPendingPoint.x * width, barrierPendingPoint.y * height);
+        ctx.lineTo(mousePos.x, mousePos.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Pending point dot
+        ctx.fillStyle = "#ef4444";
+        ctx.beginPath();
+        ctx.arc(barrierPendingPoint.x * width, barrierPendingPoint.y * height, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // ── Bucket fill preview polygon ──────────────────────────
+    if (bucketFillPreview) {
+      const activeItem = takeoffItems.find((t) => t.id === activeTakeoffItemId);
+      const fillColor = activeItem?.color || "#22d3ee";
+      const verts = bucketFillPreview.vertices;
+      ctx.save();
+
+      // Semi-transparent fill
+      ctx.fillStyle = fillColor + "33";
+      ctx.beginPath();
+      ctx.moveTo(verts[0].x * width, verts[0].y * height);
+      for (let i = 1; i < verts.length; i++) {
+        ctx.lineTo(verts[i].x * width, verts[i].y * height);
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      // Dashed outline
+      ctx.strokeStyle = fillColor;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Method label near centroid
+      const cx = verts.reduce((s, v) => s + v.x, 0) / verts.length * width;
+      const cy = verts.reduce((s, v) => s + v.y, 0) / verts.length * height;
+      ctx.font = "bold 11px sans-serif";
+      const label = bucketFillPreview.method === "vector" ? "Vector" : "Raster";
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(cx - tw / 2 - 4, cy - 16, tw + 8, 18);
+      ctx.fillStyle = fillColor;
+      ctx.fillText(label, cx - tw / 2, cy - 3);
+
+      ctx.restore();
+    }
+
+    // ── Bucket fill loading indicator ────────────────────────
+    if (bucketFillLoading) {
+      ctx.save();
+      ctx.font = "12px sans-serif";
+      const msg = "Detecting room...";
+      const tw = ctx.measureText(msg).width;
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(8, 8, tw + 12, 22);
+      ctx.fillStyle = "#22d3ee";
+      ctx.fillText(msg, 14, 23);
+      ctx.restore();
+    }
   }, [drawing, drawStart, drawEnd, mousePos, width, height,
     symbolSearchActive, tableParseStep, keynoteParseStep,
     calibrationMode, calibrationPoints,
-    polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems]);
+    polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems,
+    bucketFillPreview, bucketFillLoading, bucketFillBarriers, bucketFillBarrierMode, barrierPendingPoint]);
 
   // Don't render canvas at all when nothing to draw
   const hasContent = drawing
     || (calibrationMode !== "idle" && calibrationPoints.p1)
-    || (polygonDrawingMode === "drawing" && polygonVertices.length > 0);
+    || (polygonDrawingMode === "drawing" && polygonVertices.length > 0)
+    || bucketFillPreview
+    || bucketFillLoading
+    || bucketFillBarriers.length > 0
+    || barrierPendingPoint;
+
+  // Compute centroid for accept/cancel buttons
+  const previewCentroid = bucketFillPreview ? (() => {
+    const verts = bucketFillPreview.vertices;
+    const cx = verts.reduce((s, v) => s + v.x, 0) / verts.length * width;
+    const cy = verts.reduce((s, v) => s + v.y, 0) / verts.length * height;
+    return { x: cx, y: cy };
+  })() : null;
 
   if (!hasContent) return null;
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: `${width}px`,
-        height: `${height}px`,
-        pointerEvents: "none",
-        transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
-        transformOrigin: "top left",
-        willChange: "transform",
-        zIndex: 15,
-      }}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: `${width}px`,
+          height: `${height}px`,
+          pointerEvents: "none",
+          transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
+          transformOrigin: "top left",
+          willChange: "transform",
+          zIndex: 15,
+        }}
+      />
+      {/* Bucket fill accept / cancel buttons */}
+      {bucketFillPreview && previewCentroid && (
+        <div
+          style={{
+            position: "absolute",
+            left: `${previewCentroid.x - 52}px`,
+            top: `${previewCentroid.y + 14}px`,
+            display: "flex",
+            gap: "6px",
+            zIndex: 16,
+            transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
+            transformOrigin: "top left",
+          }}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              // Dispatch accept via keyboard event handler (Enter)
+              window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+            }}
+            style={{
+              padding: "4px 12px",
+              borderRadius: "4px",
+              border: "none",
+              background: "#22c55e",
+              color: "#fff",
+              fontSize: "12px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Accept
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              useViewerStore.getState().setBucketFillPreview(null);
+            }}
+            style={{
+              padding: "4px 12px",
+              borderRadius: "4px",
+              border: "none",
+              background: "#ef4444",
+              color: "#fff",
+              fontSize: "12px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+    </>
   );
 });

@@ -73,6 +73,14 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
     };
   }
 
+  // Penalize single-column results — almost always a parsing failure
+  // (merged columns, bad line detection, or text wrapping into one blob)
+  for (const r of valid) {
+    if (r.headers.length <= 1) {
+      r.confidence *= 0.3;
+    }
+  }
+
   // Sort by confidence descending
   const sorted = [...valid].sort((a, b) => b.confidence - a.confidence);
   const base = sorted[0];

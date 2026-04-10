@@ -50,15 +50,11 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   const scrollRafRef = useRef(0);
   const sidebarClickRef = useRef(false); // Prevents auto-scroll on sidebar clicks
 
-  // Thumbnail base URL (CloudFront or S3 direct)
-  const dataUrl = useViewerStore((s) => s.dataUrl);
-  const thumbBaseUrl = useMemo(() => {
-    if (!dataUrl) return null;
-    const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
-    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";
-    if (!cf && !s3Bucket) return null;
-    return cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
-  }, [dataUrl]);
+  // Thumbnail URL via server proxy (avoids requiring public S3 access from browser)
+  const thumbUrl = useCallback(
+    (page: number) => publicId ? `/api/projects/${publicId}/thumbnail/${page}` : null,
+    [publicId],
+  );
 
   // Group-by-sheet state
   const [groupBySheet, setGroupBySheet] = useState(false);
@@ -418,9 +414,9 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
       >
         {/* Thumbnail */}
         <div className="aspect-[4/3] bg-[var(--bg)] rounded overflow-hidden mb-1 relative">
-          {thumbBaseUrl ? (
+          {thumbUrl(n) ? (
             <img
-              src={`${thumbBaseUrl}/thumbnails/page_${String(n).padStart(4, "0")}.png`}
+              src={thumbUrl(n)!}
               alt={`Page ${n}`}
               className="w-full h-full object-contain relative z-[1]"
               loading="lazy"
@@ -661,9 +657,9 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
                     {isExpanded ? "\u25BC" : "\u25B6"}
                   </span>
                   <div className="w-10 h-7 bg-[var(--bg)] rounded overflow-hidden shrink-0 relative">
-                    {thumbBaseUrl ? (
+                    {thumbUrl(firstPage) ? (
                       <img
-                        src={`${thumbBaseUrl}/thumbnails/page_${String(firstPage).padStart(4, "0")}.png`}
+                        src={thumbUrl(firstPage)!}
                         alt={prefix}
                         className="w-full h-full object-contain relative z-[1]"
                         loading="lazy"
