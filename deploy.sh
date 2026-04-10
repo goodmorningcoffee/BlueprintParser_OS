@@ -37,7 +37,10 @@ echo -e "${GREEN}✔${NC} ECR login successful"
 
 # 2. Build
 echo -e "\n${GREEN}▶${NC} Building Docker image..."
-docker build -t "${ECR_REPO}:latest" "${PROJECT_DIR}"
+docker build \
+  --build-arg NEXT_PUBLIC_CLOUDFRONT_DOMAIN="${CLOUDFRONT_DOMAIN:-}" \
+  --build-arg NEXT_PUBLIC_S3_BUCKET="${S3_BUCKET:-}" \
+  -t "${ECR_REPO}:latest" "${PROJECT_DIR}"
 echo -e "${GREEN}✔${NC} Build complete"
 
 # 3. Tag & Push

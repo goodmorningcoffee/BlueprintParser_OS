@@ -32,7 +32,7 @@ export async function extractWithImg2Table(
     await writeFile(imgPath, pngBuffer);
 
     const scriptPath = join(process.cwd(), "scripts/img2table_extract.py");
-    const config = JSON.stringify({ image_path: imgPath, region_bbox: regionBbox });
+    const config = JSON.stringify({ image_path: imgPath, region_bbox: regionBbox, dpi: 150, detect_rotation: false });
 
     return await new Promise<MethodResult>((resolve) => {
       const proc = spawn("python3", [scriptPath], {

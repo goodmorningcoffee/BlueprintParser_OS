@@ -16,7 +16,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Next.js inlines NEXT_PUBLIC_* vars at build time — required for client-side
 # S3/CloudFront features (thumbnails, PNG fallback, page prefetching)
 ARG NEXT_PUBLIC_CLOUDFRONT_DOMAIN=""
+ARG NEXT_PUBLIC_S3_BUCKET=""
 ENV NEXT_PUBLIC_CLOUDFRONT_DOMAIN=$NEXT_PUBLIC_CLOUDFRONT_DOMAIN
+ENV NEXT_PUBLIC_S3_BUCKET=$NEXT_PUBLIC_S3_BUCKET
 
 RUN npm run build
 
