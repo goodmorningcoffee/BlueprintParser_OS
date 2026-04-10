@@ -20,6 +20,40 @@ export interface MethodResult {
   rowBoundaries?: number[];
   /** Error message if method failed */
   error?: string;
+  /** Phase I.1.a: per-method debug data — populated unconditionally, stripped
+   *  from public response when debugMode is false. Always captured in the parse
+   *  history ring buffer for admin retrospective debugging. */
+  debug?: MethodDebug;
+}
+
+export interface MethodDebug {
+  /** Wall-clock duration from method invocation to return, in ms */
+  durationMs?: number;
+  /** Full subprocess stderr (capped at 10KB), for Python-backed methods */
+  stderr?: string;
+  /** Subprocess exit code, for Python-backed methods */
+  exitCode?: number;
+  /** For img2table: which mode actually ran ("pdf" / "image" / "auto-pdf" / "auto-image-fallback") */
+  pythonMode?: string;
+  /** Method-specific intermediate state (cluster counts, overlap %, region word count, etc.) */
+  intermediate?: Record<string, unknown>;
+}
+
+export interface MergerNotes {
+  /** Which method became the merge base (highest confidence after filtering) */
+  baseMethod: string;
+  /** Methods that were filtered out, with reasons */
+  filteredMethods: Array<{
+    method: string;
+    reason: "shape_mismatch" | "row_alignment" | "single_column_penalty" | "empty_or_oversized";
+    detail?: string;
+  }>;
+  /** Final agreement rate across cells (0-1) */
+  agreementRate: number;
+  /** Method count bonus applied to confidence */
+  methodBonus: number;
+  /** Total cells compared in agreement scoring */
+  totalCells: number;
 }
 
 export interface MergedGrid {
@@ -33,6 +67,8 @@ export interface MergedGrid {
   colBoundaries?: number[];
   /** M+1 normalized Y coords for row edges (header + data rows) */
   rowBoundaries?: number[];
+  /** Phase I.1.e: structured merger filtering decisions for the debug UI */
+  mergerNotes?: MergerNotes;
 }
 
 /**
@@ -94,10 +130,21 @@ export interface MergeOptions {
 
 export function mergeGrids(results: MethodResult[], options?: MergeOptions): MergedGrid {
   const editDistThreshold = options?.editDistanceThreshold ?? 2;
+  // Phase I.1.e: structured filter notes for the debug UI
+  const filteredMethods: MergerNotes["filteredMethods"] = [];
   // Filter out empty results and enforce size limits
   const valid = results
-    .filter((r) => r.headers.length > 0 && r.rows.length > 0)
-    .filter((r) => r.headers.length <= MAX_COLS && r.rows.length <= MAX_ROWS);
+    .filter((r) => {
+      const ok = r.headers.length > 0 && r.rows.length > 0 && r.headers.length <= MAX_COLS && r.rows.length <= MAX_ROWS;
+      if (!ok) {
+        filteredMethods.push({
+          method: r.method,
+          reason: "empty_or_oversized",
+          detail: `${r.rows.length}r×${r.headers.length}c (limits: ${MAX_ROWS}r×${MAX_COLS}c)`,
+        });
+      }
+      return ok;
+    });
 
   if (valid.length === 0) {
     return {
@@ -111,6 +158,13 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
         ...(r.error ? { error: r.error } : {}),
       })),
       disagreements: [],
+      mergerNotes: {
+        baseMethod: "(none — all results were empty)",
+        filteredMethods,
+        agreementRate: 0,
+        methodBonus: 0,
+        totalCells: 0,
+      },
     };
   }
 
@@ -119,6 +173,11 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
   for (const r of valid) {
     if (r.headers.length <= 1) {
       r.confidence *= 0.3;
+      filteredMethods.push({
+        method: r.method,
+        reason: "single_column_penalty",
+        detail: `headers.length=${r.headers.length}, confidence ×0.3`,
+      });
     }
   }
 
@@ -135,7 +194,15 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
     if (base.headers.length === 0) return false;
     const colRatio = other.headers.length / base.headers.length;
     const rowRatio = other.rows.length / Math.max(base.rows.length, 1);
-    return colRatio >= 0.5 && colRatio <= 2.0 && rowRatio >= 0.5 && rowRatio <= 1.5;
+    const ok = colRatio >= 0.5 && colRatio <= 2.0 && rowRatio >= 0.5 && rowRatio <= 1.5;
+    if (!ok) {
+      filteredMethods.push({
+        method: other.method,
+        reason: "shape_mismatch",
+        detail: `colRatio=${colRatio.toFixed(2)} rowRatio=${rowRatio.toFixed(2)} vs base ${base.rows.length}r×${base.headers.length}c`,
+      });
+    }
+    return ok;
   });
 
   // ── Fix 2: Row alignment check ────────────────────────────
@@ -150,7 +217,16 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
       if (ri >= base.rows.length || ri >= other.rows.length) continue;
       totalSim += rowSimilarity(base.rows[ri], other.rows[ri], base.headers, other.headers, editDistThreshold);
     }
-    return totalSim / checkRows.length >= 0.25; // at least 25% of sampled cells match
+    const sim = totalSim / checkRows.length;
+    const ok = sim >= 0.25;
+    if (!ok) {
+      filteredMethods.push({
+        method: other.method,
+        reason: "row_alignment",
+        detail: `sampled row similarity=${sim.toFixed(2)} (threshold 0.25)`,
+      });
+    }
+    return ok;
   });
 
   // Start with the base grid
@@ -248,6 +324,13 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
     disagreements,
     colBoundaries,
     rowBoundaries,
+    mergerNotes: {
+      baseMethod: base.method,
+      filteredMethods,
+      agreementRate,
+      methodBonus,
+      totalCells,
+    },
   };
 }
 

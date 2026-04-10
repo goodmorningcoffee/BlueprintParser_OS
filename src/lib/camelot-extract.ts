@@ -51,7 +51,10 @@ export async function extractWithCamelotPdfplumber(
 
       const timer = setTimeout(() => {
         proc.kill("SIGKILL");
-        resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: "Script timed out (30s)" }]);
+        // Phase I.1.c: include any stderr captured before the timeout
+        const cappedStderr = stderr.length > 10_000 ? stderr.slice(-10_000) : stderr;
+        const debug = { stderr: cappedStderr || undefined, exitCode: -1 };
+        resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: "Script timed out (30s)", debug }]);
       }, 30_000);
 
       let stdout = "";
@@ -62,10 +65,18 @@ export async function extractWithCamelotPdfplumber(
       proc.on("close", (code) => {
         clearTimeout(timer);
         if (stderr.trim()) logger.info(`[camelot-pdfplumber] ${stderr.trim()}`);
+        // Phase I.1.c: capture full stderr (capped at 10KB) and exit code for
+        // the debug UI. Same debug info propagates to ALL three sub-method
+        // results so the user can see one consolidated view per call.
+        const cappedStderr = stderr.length > 10_000 ? stderr.slice(-10_000) : stderr;
+        const sharedDebug = {
+          stderr: cappedStderr || undefined,
+          exitCode: code ?? undefined,
+        };
         if (!stdout.trim()) {
           const errMsg = stderr.trim().split("\n").pop() || `Process exited with code ${code} (no output)`;
           logger.error(`[camelot-pdfplumber] No output: ${errMsg}`);
-          resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: errMsg }]);
+          resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: errMsg, debug: sharedDebug }]);
           return;
         }
         try {
@@ -79,18 +90,19 @@ export async function extractWithCamelotPdfplumber(
               colBoundaries: r.colBoundaries,
               rowBoundaries: r.rowBoundaries,
               ...(r.error ? { error: r.error } : {}),
+              debug: sharedDebug,
             }))
           );
         } catch {
           const errMsg = stderr.trim().split("\n").pop() || `Process exited with code ${code}`;
           logger.error(`[camelot-pdfplumber] Failed to parse output: ${errMsg}`);
-          resolve([{ method: "camelot-lattice", headers: [], rows: [], confidence: 0, error: errMsg }]);
+          resolve([{ method: "camelot-lattice", headers: [], rows: [], confidence: 0, error: errMsg, debug: sharedDebug }]);
         }
       });
 
       proc.on("error", (err) => {
         clearTimeout(timer);
-        resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: `spawn failed: ${err.message}` }]);
+        resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: `spawn failed: ${err.message}`, debug: { exitCode: -1 } }]);
       });
 
       proc.stdin.write(config);

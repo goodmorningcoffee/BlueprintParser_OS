@@ -20,6 +20,8 @@ export interface TableLineGrid {
   rowCount: number;
   colCount: number;
   confidence: number;
+  /** Phase I.1.c: subprocess debug info — capped stderr + exitCode */
+  debug?: { stderr?: string; exitCode?: number };
 }
 
 export interface TableLineOptions {
@@ -63,11 +65,15 @@ export async function detectTableLines(
       logger.info(`[TABLE_LINES] ${stderr.trim()}`);
     }
 
+    // Phase I.1.c: capture stderr (capped) for the debug UI
+    const cappedStderr = stderr && stderr.length > 10_000 ? stderr.slice(-10_000) : stderr;
+    const debug = cappedStderr ? { stderr: cappedStderr, exitCode: 0 } : undefined;
+
     const result = JSON.parse(stdout.trim() || "{}");
 
     if (result.error) {
       logger.error(`[TABLE_LINES] Error: ${result.error}`);
-      return { rows: [], cols: [], rowCount: 0, colCount: 0, confidence: 0 };
+      return { rows: [], cols: [], rowCount: 0, colCount: 0, confidence: 0, debug };
     }
 
     return {
@@ -76,10 +82,17 @@ export async function detectTableLines(
       rowCount: result.rowCount || 0,
       colCount: result.colCount || 0,
       confidence: result.confidence || 0,
+      debug,
     };
   } catch (err) {
     logger.error("[TABLE_LINES] Script failed:", err);
-    return { rows: [], cols: [], rowCount: 0, colCount: 0, confidence: 0 };
+    // Phase I.1.c: capture stderr from the error object if available (execFile errors include stderr)
+    const errStderr = (err as { stderr?: string })?.stderr;
+    const cappedErrStderr = errStderr && errStderr.length > 10_000 ? errStderr.slice(-10_000) : errStderr;
+    return {
+      rows: [], cols: [], rowCount: 0, colCount: 0, confidence: 0,
+      debug: { stderr: cappedErrStderr, exitCode: -1 },
+    };
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
