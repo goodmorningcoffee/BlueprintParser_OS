@@ -44,10 +44,8 @@ export default function DemoAdminPage() {
         setYoloModels(data.models || []);
         // Replace real user data with fake demo users for privacy
         const fakeUsers: UserItem[] = [
-          { id: "1", username: "root", email: "root@root.com", role: "admin", canRunModels: true },
-          { id: "2", username: "admin", email: "admin@blueprintparser.com", role: "admin", canRunModels: true },
+          { id: "1", username: "demo-admin", email: "admin@acme-construction.com", role: "admin", canRunModels: true },
           { id: "3", username: "jsmith", email: "jsmith@acme-construction.com", role: "member", canRunModels: true },
-          { id: "4", username: "koreya", email: "koreya@acme-construction.com", role: "member", canRunModels: true },
           { id: "5", username: "mrivera", email: "m.rivera@westside-builders.com", role: "admin", canRunModels: true },
           { id: "6", username: "tchen", email: "tchen@westside-builders.com", role: "member", canRunModels: false },
           { id: "7", username: "estimator1", email: "estimator1@summit-eng.com", role: "member", canRunModels: true },
@@ -183,7 +181,7 @@ export default function DemoAdminPage() {
           )}
 
           {activeTab === "llm-context" && (
-            <LlmContextTab projects={projects} />
+            <LlmContextTab projects={projects} demoMode />
           )}
 
           {activeTab === "text-annotations" && (
@@ -225,7 +223,7 @@ export default function DemoAdminPage() {
           {activeTab === "users" && (
             <UsersTab
               users={users}
-              currentEmail="root@root.com"
+              currentEmail="admin@acme-construction.com"
               newUser={{ username: "", email: "", password: "", role: "member" }}
               setNewUser={noop}
               onCreateUser={noopAsync}

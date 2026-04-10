@@ -5,6 +5,7 @@ import { SECTION_REGISTRY, SECTION_PRESETS, DEFAULT_SYSTEM_PROMPT } from "@/lib/
 
 interface LlmContextTabProps {
   projects: Array<{ id: string; name: string; numPages: number | null; status: string }>;
+  demoMode?: boolean;
 }
 
 interface LlmConfig {
@@ -41,7 +42,7 @@ const DEFAULT_BUDGETS: Record<string, { label: string; budget: number; window: s
   "custom:default": { label: "Custom / Ollama", budget: 30000, window: "varies" },
 };
 
-export default function LlmContextTab({ projects }: LlmContextTabProps) {
+export default function LlmContextTab({ projects, demoMode = false }: LlmContextTabProps) {
   const [config, setConfig] = useState<LlmConfig>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -57,6 +58,17 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
   const [previewing, setPreviewing] = useState(false);
 
   useEffect(() => {
+    if (demoMode) {
+      // In demo mode, load domain knowledge from static file (no DB/auth needed)
+      fetch("/api/demo/domain-knowledge")
+        .then((r) => r.ok ? r.text() : "")
+        .then((text) => {
+          setDefaultDomainKnowledge(text);
+          setLoading(false);
+        })
+        .catch(() => setLoading(false));
+      return;
+    }
     fetch("/api/admin/llm/config")
       .then((r) => r.ok ? r.json() : { llm: {}, defaultDomainKnowledge: "" })
       .then((data) => {
@@ -65,11 +77,12 @@ export default function LlmContextTab({ projects }: LlmContextTabProps) {
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, []);
+  }, [demoMode]);
 
   const save = async (updated: LlmConfig) => {
     const prev = config;
     setConfig(updated); // optimistic
+    if (demoMode) { setSaving(false); return; }
     setSaving(true);
     try {
       const res = await fetch("/api/admin/llm/config", {
