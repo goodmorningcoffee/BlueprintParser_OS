@@ -53,7 +53,7 @@ export async function POST(req: Request) {
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
 
-  const llmConfig = (company?.pipelineConfig as any)?.llm || {};
+  const llmConfig = company?.pipelineConfig?.llm || {};
   const sectionConfig: LlmSectionConfig = llmConfig.sectionConfig || {};
   const budget = getContextBudget("anthropic", "sonnet"); // default preview budget
 

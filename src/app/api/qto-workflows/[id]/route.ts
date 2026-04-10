@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, qtoWorkflows } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { qtoWorkflows } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { logger } from "@/lib/logger";
 
 /** GET /api/qto-workflows/[id] — get a workflow */
@@ -11,9 +11,6 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
   const [workflow] = await db
     .select()
     .from(qtoWorkflows)
@@ -24,16 +21,8 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Verify company access
-  const [project] = await db
-    .select({ companyId: projects.companyId })
-    .from(projects)
-    .where(eq(projects.id, workflow.projectId))
-    .limit(1);
-
-  if (!project || project.companyId !== session.user.companyId) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ dbId: workflow.projectId });
+  if (access.error) return access.error;
 
   return NextResponse.json(workflow);
 }
@@ -44,9 +33,6 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
   const [workflow] = await db
     .select()
     .from(qtoWorkflows)
@@ -57,15 +43,8 @@ export async function PUT(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const [project] = await db
-    .select({ companyId: projects.companyId })
-    .from(projects)
-    .where(eq(projects.id, workflow.projectId))
-    .limit(1);
-
-  if (!project || project.companyId !== session.user.companyId) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ dbId: workflow.projectId });
+  if (access.error) return access.error;
 
   const body = await req.json();
   const updates: Record<string, unknown> = {};
@@ -126,9 +105,6 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
   const [workflow] = await db
     .select()
     .from(qtoWorkflows)
@@ -139,15 +115,8 @@ export async function DELETE(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const [project] = await db
-    .select({ companyId: projects.companyId })
-    .from(projects)
-    .where(eq(projects.id, workflow.projectId))
-    .limit(1);
-
-  if (!project || project.companyId !== session.user.companyId) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ dbId: workflow.projectId });
+  if (access.error) return access.error;
 
   await db.delete(qtoWorkflows).where(eq(qtoWorkflows.id, Number(id)));
 

@@ -8,9 +8,9 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, pages } from "@/lib/db/schema";
+import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getS3Url, downloadFromS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
@@ -22,8 +22,6 @@ import type { TemplateMatchProgress, SymbolSearchMatch } from "@/types";
 import { logger } from "@/lib/logger";
 
 export async function POST(req: Request) {
-  const { session, error } = await requireAuth();
-
   const body = await req.json();
   const {
     projectId,
@@ -51,17 +49,6 @@ export async function POST(req: Request) {
     maxMatchesPerPage?: number;
   };
 
-  // Allow demo projects without auth; require auth for everything else
-  if (error) {
-    if (!projectId) return error;
-    const [proj] = await db
-      .select({ isDemo: projects.isDemo })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
-    if (!proj?.isDemo) return error;
-  }
-
   if (!projectId || !sourcePageNumber || !templateBbox) {
     return NextResponse.json(
       { error: "Missing projectId, sourcePageNumber, or templateBbox" },
@@ -75,24 +62,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid templateBbox" }, { status: 400 });
   }
 
+  const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
+  if (access.error) return access.error;
+  const { project } = access;
+
+  if (!project.dataUrl) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+
   const tempDir = await mkdtemp(join(tmpdir(), "bp2-symbol-search-"));
 
   try {
-    // ─── Fetch project (with company authorization) ─────────
-    const [project] = await db
-      .select({ id: projects.id, dataUrl: projects.dataUrl, isDemo: projects.isDemo, companyId: projects.companyId })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
-
-    // Company authorization: non-demo projects must belong to user's company
-    if (project && !project.isDemo && session?.user.companyId !== project.companyId) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    }
-
-    if (!project?.dataUrl) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    }
 
     // ─── Get all pages to search ─────────────────────────────
     const allPages = await db

@@ -139,7 +139,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const passwordMatch = await bcrypt.compare(password, user.passwordHash);
         if (!passwordMatch) {
-          console.error(`[AUTH FAIL] wrong password: ${email} (id=${user.id}, hash starts: ${user.passwordHash.substring(0, 7)})`);
+          console.error(`[AUTH FAIL] wrong password: ${email} (id=${user.id})`);
           recordFailedLogin(email);
           audit("login_failed", { userId: user.id, companyId: user.companyId, details: { email } });
           return null;

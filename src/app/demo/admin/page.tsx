@@ -42,7 +42,13 @@ export default function DemoAdminPage() {
       .then((data) => {
         setProjects((data.projects || []).map((p: any) => ({ ...p, isDemo: p.isDemo || false })));
         setYoloModels(data.models || []);
-        setUsers(data.users || []);
+        // Replace real user data with fake demo users for privacy
+        const fakeUsers: UserItem[] = [
+          { id: "1", username: "admin", email: "admin@demo-company.com", role: "admin", canRunModels: true },
+          { id: "2", username: "jsmith", email: "jsmith@demo-company.com", role: "member", canRunModels: true },
+          { id: "3", username: "estimator1", email: "estimator1@demo-company.com", role: "member", canRunModels: false },
+        ];
+        setUsers(fakeUsers);
         setYoloStatus(data.yoloStatus || {});
         if (data.toggles) setToggles(data.toggles);
       })
@@ -97,7 +103,6 @@ export default function DemoAdminPage() {
           <style>{`
             .read-only-wrapper button:not([data-demo-nav]),
             .read-only-wrapper input,
-            .read-only-wrapper textarea,
             .read-only-wrapper select,
             .read-only-wrapper [role="button"],
             .read-only-wrapper a[href^="/api"] {
@@ -223,11 +228,7 @@ export default function DemoAdminPage() {
           )}
 
           {activeTab === "settings" && (
-            <SettingsTab
-              passwordForm={{ currentPassword: "", newPassword: "" }}
-              setPasswordForm={noop}
-              onChangePassword={noopAsync}
-            />
+            <SettingsTab />
           )}
         </div>
       </main>

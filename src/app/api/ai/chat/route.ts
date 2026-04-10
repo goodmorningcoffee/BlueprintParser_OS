@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { requireAuth } from "@/lib/api-utils";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, pages, chatMessages, annotations, takeoffItems, models, companies } from "@/lib/db/schema";
 import { eq, and, desc, sql, isNull, inArray } from "drizzle-orm";
@@ -177,36 +177,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "projectId required" }, { status: 400 });
   }
 
-  let project;
-  let isDemo = false;
+  const access = await resolveProjectAccess({ publicId: projectId }, { allowDemo: true });
+  if (access.error) return access.error;
+  const { project } = access;
+  const isDemo = access.scope === "demo";
 
-  if (session?.user) {
-    const quota = await checkChatQuota(session.user.companyId);
-    if (!quota.allowed) {
-      return NextResponse.json({ error: quota.message }, { status: 429 });
-    }
-
-    [project] = await db
-      .select()
-      .from(projects)
-      .where(and(eq(projects.publicId, projectId), eq(projects.companyId, session.user.companyId)))
-      .limit(1);
-  } else {
+  // Quota check (after access resolution so we know demo vs authenticated)
+  if (isDemo) {
     const quota = await checkDemoChatQuota();
     if (!quota.allowed) {
       return NextResponse.json({ error: quota.message }, { status: 429 });
     }
-
-    [project] = await db
-      .select()
-      .from(projects)
-      .where(and(eq(projects.publicId, projectId), eq(projects.isDemo, true)))
-      .limit(1);
-    isDemo = true;
-  }
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  } else {
+    const quota = await checkChatQuota(access.session.user.companyId);
+    if (!quota.allowed) {
+      return NextResponse.json({ error: quota.message }, { status: 429 });
+    }
   }
 
   // ─── Parallel DB queries for context data ──────────────────
@@ -232,17 +218,17 @@ export async function POST(req: Request) {
   const contextBudget = getContextBudget(config.provider, config.model);
 
   // ─── Fetch company config once (reused for tool use check + context config) ───
-  let companyPipelineConfig: Record<string, unknown> = {};
+  let companyPipelineConfig: NonNullable<typeof companies.$inferSelect.pipelineConfig> = {};
   try {
     const [companyRow] = await db
       .select({ pipelineConfig: companies.pipelineConfig })
       .from(companies)
       .where(eq(companies.id, session?.user?.companyId || project.companyId))
       .limit(1);
-    companyPipelineConfig = (companyRow?.pipelineConfig as Record<string, unknown>) || {};
+    companyPipelineConfig = companyRow?.pipelineConfig || {};
   } catch { /* ignore */ }
 
-  const toolUseEnabled = !!(companyPipelineConfig as any)?.llm?.toolUse;
+  const toolUseEnabled = !!companyPipelineConfig?.llm?.toolUse;
 
   // Tool use only works with providers that support it (Anthropic, OpenAI)
   const providerSupportsTools = config.provider === "anthropic" || config.provider === "openai";
@@ -385,7 +371,7 @@ export async function POST(req: Request) {
         // Build set of spatial class names
         const spatialClasses = new Set<string>();
         for (const mc of modelConfigs) {
-          const ct = (mc.config as any)?.classTypes || {};
+          const ct = mc.config?.classTypes || {};
           for (const [cls, type] of Object.entries(ct)) {
             if (type === "spatial" || type === "both") spatialClasses.add(cls);
           }
@@ -598,7 +584,7 @@ async function handleToolUseChat(
       .from(companies)
       .where(eq(companies.id, session?.user?.companyId || project.companyId))
       .limit(1);
-    const customDk = (companyDk?.pipelineConfig as any)?.llm?.domainKnowledge;
+    const customDk = companyDk?.pipelineConfig?.llm?.domainKnowledge;
     if (customDk) {
       domainKnowledge = customDk;
     } else {
@@ -717,9 +703,6 @@ ${domainKnowledge ? `\n--- DOMAIN KNOWLEDGE ---\n${domainKnowledge}` : ""}`;
  * Query params: projectId, scope (page|project|all), pageNumber (for page scope)
  */
 export async function DELETE(req: Request) {
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
   const url = new URL(req.url);
   const projectId = url.searchParams.get("projectId");
   const scope = url.searchParams.get("scope") || "all";
@@ -729,17 +712,9 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "projectId required" }, { status: 400 });
   }
 
-  // Verify project ownership
-  const [project] = await db
-    .select()
-    .from(projects)
-    .where(
-      and(
-        eq(projects.publicId, projectId),
-        eq(projects.companyId, session.user.companyId)
-      )
-    )
-    .limit(1);
+  const access = await resolveProjectAccess({ publicId: projectId });
+  if (access.error) return access.error;
+  const { project } = access;
 
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });

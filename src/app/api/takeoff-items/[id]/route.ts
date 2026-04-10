@@ -1,16 +1,14 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, takeoffItems, annotations } from "@/lib/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { takeoffItems, annotations } from "@/lib/db/schema";
+import { eq, sql } from "drizzle-orm";
 
 export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
 
   const itemId = parseInt(id);
   const [item] = await db
@@ -23,21 +21,8 @@ export async function PUT(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Verify ownership
-  const [project] = await db
-    .select()
-    .from(projects)
-    .where(
-      and(
-        eq(projects.id, item.projectId),
-        eq(projects.companyId, session.user.companyId)
-      )
-    )
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ dbId: item.projectId });
+  if (access.error) return access.error;
 
   const body = await req.json();
   const updates: Record<string, unknown> = {};
@@ -71,8 +56,6 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
 
   const itemId = parseInt(id);
   const [item] = await db
@@ -85,21 +68,8 @@ export async function DELETE(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Verify ownership
-  const [project] = await db
-    .select()
-    .from(projects)
-    .where(
-      and(
-        eq(projects.id, item.projectId),
-        eq(projects.companyId, session.user.companyId)
-      )
-    )
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ dbId: item.projectId });
+  if (access.error) return access.error;
 
   // Delete all markers for this takeoff item
   await db.execute(

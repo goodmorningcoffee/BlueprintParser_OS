@@ -7,13 +7,13 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 [ -f "${SCRIPT_DIR}/../.deploy.env" ] && source "${SCRIPT_DIR}/../.deploy.env"
 
-ROLE_NAME="${ECS_TASK_ROLE:-beaver-ecs-task-role}"
-SFN_ROLE="${SFN_ROLE:-beaver-step-functions-role}"
+ROLE_NAME="${ECS_TASK_ROLE:-blueprintparser-ecs-task-role}"
+SFN_ROLE="${SFN_ROLE:-blueprintparser-step-functions-role}"
 SM_KILL_POLICY="sagemaker-kill-switch"
 SFN_KILL_POLICY="stepfunctions-kill-switch"
 REGION="${AWS_REGION:-us-east-1}"
-ECS_CLUSTER="${ECS_CLUSTER:-beaver-cluster}"
-ECS_SERVICE="${ECS_SERVICE:-beaver-app}"
+ECS_CLUSTER="${ECS_CLUSTER:-blueprintparser-cluster}"
+ECS_SERVICE="${ECS_SERVICE:-blueprintparser-app}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

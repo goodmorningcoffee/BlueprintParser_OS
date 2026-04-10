@@ -22,7 +22,7 @@ const s3Client = new S3Client({
 
 export async function POST(req: Request) {
   const session = await auth();
-  if (!session?.user || (session.user.role !== "admin" && !(session.user as any).isRootAdmin)) {
+  if (!session?.user || (session.user.role !== "admin" && !session.user.isRootAdmin)) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 
@@ -51,9 +51,8 @@ export async function POST(req: Request) {
     .limit(1);
 
   // Extract class-level CSI codes and keywords from model config
-  const modelConfig = (model?.config as Record<string, unknown>) || {};
-  const classCsiCodes = (modelConfig.classCsiCodes as Record<string, string[]>) || {};
-  const classKeywords = (modelConfig.classKeywords as Record<string, string[]>) || {};
+  const classCsiCodes = model?.config?.classCsiCodes || {};
+  const classKeywords = model?.config?.classKeywords || {};
 
   const outputPrefix = `${project.dataUrl}/yolo-output/${modelName}/`;
 
@@ -205,7 +204,7 @@ export async function POST(req: Request) {
           .from(companies)
           .where(eq(companies.id, project.companyId))
           .limit(1);
-        companyHeuristics = (company?.pipelineConfig as any)?.heuristics;
+        companyHeuristics = company?.pipelineConfig?.heuristics;
       } catch { /* use defaults */ }
 
       const rules = getEffectiveRules(companyHeuristics);

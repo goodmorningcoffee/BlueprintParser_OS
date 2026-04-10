@@ -36,6 +36,12 @@ export default function CompaniesUsersTab() {
   const [message, setMessage] = useState("");
   const [formError, setFormError] = useState("");
   const [copiedKey, setCopiedKey] = useState<number | null>(null);
+  // Password reset state
+  const [resettingUserId, setResettingUserId] = useState<string | null>(null);
+  const [resetNewPw, setResetNewPw] = useState("");
+  const [resetAdminPw, setResetAdminPw] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetMessage, setResetMessage] = useState("");
 
   const loadData = useCallback(async () => {
     try {
@@ -113,6 +119,28 @@ export default function CompaniesUsersTab() {
       body: JSON.stringify({ id: userId }),
     });
     if (res.ok) loadData();
+  };
+
+  const resetPassword = async (userId: string) => {
+    if (!resetNewPw || resetNewPw.length < 8) { setResetMessage("Password must be 8+ chars"); return; }
+    if (!resetAdminPw) { setResetMessage("Enter your admin password to confirm"); return; }
+    setResetBusy(true);
+    setResetMessage("");
+    const res = await fetch("/api/admin/users/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, newPassword: resetNewPw, adminPassword: resetAdminPw }),
+    });
+    if (res.ok) {
+      setResetMessage("Password reset");
+      setResetNewPw("");
+      setResetAdminPw("");
+      setTimeout(() => { setResettingUserId(null); setResetMessage(""); }, 2000);
+    } else {
+      const err = await res.json().catch(() => ({ error: "Failed" }));
+      setResetMessage(err.error || "Failed");
+    }
+    setResetBusy(false);
   };
 
   const toggleRole = async (userId: string, currentRole: string) => {
@@ -225,7 +253,8 @@ export default function CompaniesUsersTab() {
                   {companyUsers.length > 0 ? (
                     <div className="space-y-0.5">
                       {companyUsers.map((user) => (
-                        <div key={user.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--surface-hover)] text-[11px]">
+                        <div key={user.id}>
+                        <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[var(--surface-hover)] text-[11px]">
                           <span className="text-[var(--fg)] flex-1 truncate">{user.email}</span>
                           <span className="text-[var(--muted)]">{user.username}</span>
                           <button
@@ -236,9 +265,41 @@ export default function CompaniesUsersTab() {
                           >
                             {user.isRootAdmin ? "root" : user.role}
                           </button>
+                          <button
+                            onClick={() => { setResettingUserId(resettingUserId === user.id ? null : user.id); setResetNewPw(""); setResetAdminPw(""); setResetMessage(""); }}
+                            className="text-[9px] text-[var(--muted)] hover:text-amber-400 px-1"
+                            title="Reset password"
+                          >
+                            PW
+                          </button>
                           {!user.isRootAdmin && (
                             <button onClick={() => deleteUser(user.id)} className="text-red-400/60 hover:text-red-400 text-xs">&times;</button>
                           )}
+                        </div>
+                        {resettingUserId === user.id && (
+                          <div className="mx-2 mb-1 p-2 border border-amber-500/30 rounded bg-amber-500/5 space-y-1.5">
+                            <div className="text-[9px] text-amber-400 font-medium">Reset password for {user.email}</div>
+                            <input
+                              value={resetNewPw}
+                              onChange={(e) => { setResetMessage(""); setResetNewPw(e.target.value); }}
+                              placeholder="New password (8+ chars)"
+                              type="password"
+                              className="w-full text-[10px] px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none"
+                            />
+                            <input
+                              value={resetAdminPw}
+                              onChange={(e) => { setResetMessage(""); setResetAdminPw(e.target.value); }}
+                              placeholder="Your admin password (confirm identity)"
+                              type="password"
+                              className="w-full text-[10px] px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none"
+                            />
+                            {resetMessage && <div className={`text-[9px] ${resetMessage === "Password reset" ? "text-green-400" : "text-red-400"}`}>{resetMessage}</div>}
+                            <div className="flex gap-1">
+                              <button onClick={() => resetPassword(user.id)} disabled={resetBusy} className="flex-1 text-[10px] px-2 py-1 rounded bg-amber-600 text-white disabled:opacity-40">{resetBusy ? "Resetting..." : "Reset Password"}</button>
+                              <button onClick={() => setResettingUserId(null)} className="text-[10px] px-2 py-1 text-[var(--muted)]">Cancel</button>
+                            </div>
+                          </div>
+                        )}
                         </div>
                       ))}
                     </div>

@@ -50,7 +50,7 @@ export default function EditableGrid({
       : "striped")
   );
   const [wrapText, setWrapText] = useState(
-    () => (typeof window !== "undefined" ? localStorage.getItem("bp-grid-wrap-mode") === "true" : false)
+    () => (typeof window !== "undefined" ? localStorage.getItem("bp-grid-wrap-mode") !== "false" : true)
   );
   const editInputRef = useRef<HTMLInputElement>(null);
 

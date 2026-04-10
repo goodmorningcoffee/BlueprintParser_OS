@@ -184,7 +184,7 @@ export default function HomePage() {
 
   // Filter: CSI filter + name/content search
   const hasContentResults = Object.keys(contentMatches).length > 0;
-  const isRootAdmin = (session?.user as any)?.isRootAdmin;
+  const isRootAdmin = session?.user?.isRootAdmin;
   const companyNames = [...new Set(projects.map((p) => (p as any).companyName).filter(Boolean))] as string[];
 
   const activeCsi = activeCsiFilter ? csiCodes.find((c) => c.code === activeCsiFilter) : null;

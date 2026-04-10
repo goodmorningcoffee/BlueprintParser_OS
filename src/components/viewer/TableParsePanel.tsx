@@ -307,11 +307,8 @@ export default function TableParsePanel() {
           <button
             key={tab}
             onClick={() => {
-              if (tab !== tableParseTab) {
-                resetTableParse();
-                useViewerStore.getState().setMode("move");
-              }
               setTableParseTab(tab);
+              useViewerStore.getState().setMode("move");
             }}
             className={`flex-1 px-1.5 py-1.5 text-[9px] font-medium ${
               tableParseTab === tab

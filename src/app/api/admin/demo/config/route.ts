@@ -18,7 +18,7 @@ export async function GET() {
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
 
-  const config = (company?.pipelineConfig as Record<string, unknown>) || {};
+  const config = company?.pipelineConfig || {};
   return NextResponse.json({ demo: config.demo || {} });
 }
 
@@ -43,12 +43,12 @@ export async function PUT(req: Request) {
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
 
-  const existing = (company?.pipelineConfig as Record<string, unknown>) || {};
+  const existing = company?.pipelineConfig || {};
   const updated = { ...existing, demo };
 
   await db
     .update(companies)
-    .set({ pipelineConfig: updated as any })
+    .set({ pipelineConfig: updated })
     .where(eq(companies.id, session.user.companyId));
 
   return NextResponse.json({ success: true });

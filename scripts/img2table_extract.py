@@ -11,9 +11,9 @@ Output: JSON on stdout with MethodResult format
 
 import sys
 import json
-import numpy as np
 
 try:
+    import numpy as np
     from img2table.document import Image as Img2TableImage
     from img2table.ocr import TesseractOCR
 except ImportError:
@@ -22,8 +22,8 @@ except ImportError:
     sys.exit(0)
 
 
-def extract_table(image_path: str, region_bbox: list, dpi: int = 200,
-                  detect_rotation: bool = True, implicit_rows: bool = True,
+def extract_table(image_path: str, region_bbox: list, dpi: int = 150,
+                  detect_rotation: bool = False, implicit_rows: bool = True,
                   min_confidence: int = 50):
     """
     Extract tables from an image using img2table.
@@ -58,10 +58,11 @@ def extract_table(image_path: str, region_bbox: list, dpi: int = 200,
         crop_y1 = int(ry1 * img_h)
         cropped = img_array[crop_y0:crop_y1, crop_x0:crop_x1]
 
-        # Write cropped image to temp file for img2table
+        # Write cropped image to temp file for img2table (unique name to avoid collisions)
         import tempfile
         import os
-        tmp_path = os.path.join(tempfile.gettempdir(), "bp2_img2table_crop.png")
+        import uuid
+        tmp_path = os.path.join(tempfile.gettempdir(), f"bp2_img2table_{uuid.uuid4().hex[:8]}.png")
         cv2.imwrite(tmp_path, cropped)
 
         crop_h, crop_w = cropped.shape[:2]
@@ -77,11 +78,16 @@ def extract_table(image_path: str, region_bbox: list, dpi: int = 200,
         tables = doc.extract_tables(ocr=ocr, implicit_rows=implicit_rows,
                                      min_confidence=min_confidence)
 
-        os.unlink(tmp_path)
+        # Clean up temp file after extraction completes
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
         if not tables:
             print("No tables detected by img2table", file=sys.stderr)
-            return {"method": "img2table", "headers": [], "rows": [], "confidence": 0}
+            return {"method": "img2table", "headers": [], "rows": [], "confidence": 0,
+                    "error": "No tables detected in region"}
 
         # Take the largest table (most cells)
         best_table = max(tables, key=lambda t: t.nb_rows * t.nb_columns)
@@ -128,19 +134,18 @@ def extract_table(image_path: str, region_bbox: list, dpi: int = 200,
         col_boundaries = [rx0 + (x / crop_w) * (rx1 - rx0) for x in sorted_cols]
         row_boundaries = [ry0 + (y / crop_h) * (ry1 - ry0) for y in sorted_rows]
 
-        # Confidence based on table quality
-        confidence = 0.5
-        # Bonus for having content
+        # Confidence — normalized scale: content(0-0.4) + structure(0-0.3) + features(0-0.2)
         filled = sum(1 for r in rows for v in r.values() if v.strip())
         total = len(rows) * len(headers)
         fill_rate = filled / total if total > 0 else 0
-        confidence += fill_rate * 0.3
-
-        # Bonus for grid regularity
+        confidence = fill_rate * 0.4
+        # Structure: grid size bonus
         if best_table.nb_rows >= 3 and best_table.nb_columns >= 2:
-            confidence += 0.15
-
-        confidence = min(confidence, 0.95)
+            confidence += 0.2
+        # Feature: having detected merged cells or skew correction
+        if best_table.nb_rows >= 5:
+            confidence += 0.1
+        confidence = min(confidence, 0.85)
 
         return {
             "method": "img2table",

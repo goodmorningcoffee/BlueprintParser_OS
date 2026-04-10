@@ -25,7 +25,7 @@ export async function GET() {
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
 
-  const config = (company?.pipelineConfig as any) || {};
+  const config = company?.pipelineConfig || {};
   const companyHeuristics = config.heuristics || [];
   const pageNaming = config.pageNaming || { enabled: false, yoloSources: [] };
 
@@ -60,7 +60,7 @@ export async function PUT(req: Request) {
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
 
-  const existing = (company?.pipelineConfig as Record<string, unknown>) || {};
+  const existing = company?.pipelineConfig || {};
   const updated = { ...existing };
   if (Array.isArray(heuristics)) updated.heuristics = heuristics;
   if (pageNaming) updated.pageNaming = pageNaming;

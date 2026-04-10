@@ -72,21 +72,21 @@ echo ""
 echo -e "  Querying ECS..."
 LS_RUNNING=$(aws ecs describe-services \
     --cluster "${ECS_CLUSTER}" \
-    --services ${ECS_LABEL_STUDIO_SERVICE:-beaver-label-studio} \
+    --services ${ECS_LABEL_STUDIO_SERVICE:-blueprintparser-label-studio} \
     --region "${AWS_REGION}" \
     --query 'services[0].runningCount' \
     --output text 2>/dev/null || echo "0")
 
 LS_DESIRED=$(aws ecs describe-services \
     --cluster "${ECS_CLUSTER}" \
-    --services ${ECS_LABEL_STUDIO_SERVICE:-beaver-label-studio} \
+    --services ${ECS_LABEL_STUDIO_SERVICE:-blueprintparser-label-studio} \
     --region "${AWS_REGION}" \
     --query 'services[0].desiredCount' \
     --output text 2>/dev/null || echo "0")
 
 echo ""
 echo -e "  ┌──────────────────────────────────────┐"
-echo -e "  │  Service: ${B}${ECS_LABEL_STUDIO_SERVICE:-beaver-label-studio}${R}        │"
+echo -e "  │  Service: ${B}${ECS_LABEL_STUDIO_SERVICE:-blueprintparser-label-studio}${R}        │"
 echo -e "  │  Running: ${G}${LS_RUNNING}${R}  Desired: ${LS_DESIRED}              │"
 echo -e "  │  URL: ${B}${LS_URL}${R}  │"
 echo -e "  └──────────────────────────────────────┘"
@@ -99,7 +99,7 @@ if [ "$LS_RUNNING" = "0" ] || [ "$LS_RUNNING" = "None" ]; then
     echo -e "  ${D}1. Run: cd infrastructure/terraform && terraform apply${R}"
     echo -e "  ${D}2. Wait 2 minutes for the container to start${R}"
     echo -e "  ${D}3. Check logs:${R}"
-    echo -e "     ${D}aws logs tail /ecs/${ECS_LABEL_STUDIO_SERVICE:-beaver-label-studio} --since 5m --region ${AWS_REGION}${R}"
+    echo -e "     ${D}aws logs tail /ecs/${ECS_LABEL_STUDIO_SERVICE:-blueprintparser-label-studio} --since 5m --region ${AWS_REGION}${R}"
     echo ""
     echo -e "  Run this script again once Label Studio is running."
     exit 1
@@ -223,7 +223,7 @@ echo -e "  ${B}Step 5/5${R}  ${C}Redeploying BlueprintParser${R}"
 draw_line
 echo ""
 
-echo -e "  Triggering new deployment of ${B}beaver-app${R}..."
+echo -e "  Triggering new deployment of ${B}blueprintparser-app${R}..."
 echo -e "  ${D}(This picks up the new Label Studio token)${R}"
 echo ""
 

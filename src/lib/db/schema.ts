@@ -16,6 +16,7 @@ import {
 import type {
   ProjectIntelligence, PageIntelligence, TextractPageData, KeynoteShapeData,
   TextAnnotationResult, AnnotationData, QtoParsedSchedule, QtoLineItem, QtoUserEdits,
+  ModelConfig,
 } from "@/types";
 
 // Enums
@@ -71,6 +72,18 @@ export const companies = pgTable("companies", {
       outputCsiCode?: string;
       minConfidence: number;
     }>;
+    llm?: {
+      systemPrompt?: string;
+      sectionConfig?: Record<string, unknown>;
+      toolUse?: boolean;
+      domainKnowledge?: string;
+    };
+    pipeline?: Record<string, unknown>;
+    demo?: Record<string, boolean>;
+    pageNaming?: {
+      enabled?: boolean;
+      yoloSources?: Array<{ modelId: number; modelName: string; classes: string[] }>;
+    };
   }>(),
   features: jsonb("features").$type<{
     yolo: boolean;
@@ -313,7 +326,7 @@ export const models = pgTable(
     name: varchar("name", { length: 255 }).notNull(),
     type: varchar("type", { length: 50 }).notNull(),
     s3Path: text("s3_path").notNull(),
-    config: jsonb("config").$type<Record<string, unknown>>(),
+    config: jsonb("config").$type<ModelConfig>(),
     isDefault: boolean("is_default").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },

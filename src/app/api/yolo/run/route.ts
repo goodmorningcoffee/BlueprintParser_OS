@@ -82,11 +82,10 @@ export async function POST(req: Request) {
   }
 
   // Regenerate config.yaml from DB config before running — ensures admin changes take effect
-  const modelConfig = (model.config as Record<string, unknown>) || {};
-  const conf = Number(modelConfig.confidence) || 0.10;
-  const iouVal = Number(modelConfig.iou) || 0.60;
-  const imgSize = Number(modelConfig.imageSize) || 1280;
-  const classList = (modelConfig.classes as string[]) || [];
+  const conf = model.config?.confidence ?? 0.10;
+  const iouVal = model.config?.iou ?? 0.60;
+  const imgSize = model.config?.imageSize ?? 1280;
+  const classList = model.config?.classes ?? [];
 
   const configYaml = `model_file: model.pt
 confidence_threshold: ${conf}
@@ -94,7 +93,7 @@ iou_threshold: ${iouVal}
 image_size: ${imgSize}
 device: auto
 half_precision: true
-max_detections: ${Number(modelConfig.maxDetections) || 2000}
+max_detections: ${model.config?.maxDetections ?? 2000}
 save_annotated: false
 classes:
 ${classList.map((c: string) => `  - ${c}`).join("\n")}

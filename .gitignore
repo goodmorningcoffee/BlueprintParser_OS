@@ -40,6 +40,10 @@ infrastructure/terraform/.terraform.lock.hcl
 # YOLO models (large binary files)
 models/
 
+# internal planning docs
+plans/
+REFACTORED_MARCH29.md
+
 # vercel
 .vercel
 

@@ -7,7 +7,7 @@
 ###############################################################################
 
 resource "aws_ecs_cluster" "beaver" {
-  name = "beaver-cluster"
+  name = "blueprintparser-cluster"
 
   setting {
     name  = "containerInsights"
@@ -32,7 +32,7 @@ resource "aws_ecs_cluster_capacity_providers" "beaver" {
 ###############################################################################
 
 resource "aws_cloudwatch_log_group" "beaver_app" {
-  name              = "/ecs/beaver-app"
+  name              = "/ecs/blueprintparser-app"
   retention_in_days = 30
 }
 
@@ -41,7 +41,7 @@ resource "aws_cloudwatch_log_group" "beaver_app" {
 ###############################################################################
 
 resource "aws_ecs_task_definition" "beaver_app" {
-  family                   = "beaver-app"
+  family                   = "blueprintparser-app"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = 2048
@@ -51,7 +51,7 @@ resource "aws_ecs_task_definition" "beaver_app" {
 
   container_definitions = jsonencode([
     {
-      name      = "beaver-app"
+      name      = "blueprintparser-app"
       image     = "${aws_ecr_repository.beaver_app.repository_url}:latest"
       essential = true
 
@@ -137,7 +137,7 @@ resource "aws_ecs_task_definition" "beaver_app" {
 ###############################################################################
 
 resource "aws_security_group" "beaver_alb" {
-  name        = "beaver-alb-sg"
+  name        = "blueprintparser-alb-sg"
   description = "Security group for Beaver ALB"
   vpc_id      = aws_vpc.beaver.id
 
@@ -165,7 +165,7 @@ resource "aws_security_group" "beaver_alb" {
   }
 
   tags = {
-    Name = "beaver-alb-sg"
+    Name = "blueprintparser-alb-sg"
   }
 }
 
@@ -174,7 +174,7 @@ resource "aws_security_group" "beaver_alb" {
 ###############################################################################
 
 resource "aws_security_group" "beaver_ecs" {
-  name        = "beaver-ecs-sg"
+  name        = "blueprintparser-ecs-sg"
   description = "Security group for Beaver ECS tasks"
   vpc_id      = aws_vpc.beaver.id
 
@@ -194,7 +194,7 @@ resource "aws_security_group" "beaver_ecs" {
   }
 
   tags = {
-    Name = "beaver-ecs-sg"
+    Name = "blueprintparser-ecs-sg"
   }
 }
 
@@ -203,7 +203,7 @@ resource "aws_security_group" "beaver_ecs" {
 ###############################################################################
 
 resource "aws_lb" "beaver" {
-  name               = "beaver-alb"
+  name               = "blueprintparser-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.beaver_alb.id]
@@ -213,12 +213,12 @@ resource "aws_lb" "beaver" {
   enable_deletion_protection = true
 
   tags = {
-    Name = "beaver-alb"
+    Name = "blueprintparser-alb"
   }
 }
 
 resource "aws_lb_target_group" "beaver_app" {
-  name        = "beaver-app-tg"
+  name        = "blueprintparser-app-tg"
   port        = 3000
   protocol    = "HTTP"
   vpc_id      = aws_vpc.beaver.id
@@ -270,7 +270,7 @@ resource "aws_lb_listener" "beaver_https" {
 ###############################################################################
 
 resource "aws_ecs_service" "beaver_app" {
-  name            = "beaver-app"
+  name            = "blueprintparser-app"
   cluster         = aws_ecs_cluster.beaver.id
   task_definition = aws_ecs_task_definition.beaver_app.arn
   desired_count          = var.ecs_desired_count
@@ -285,7 +285,7 @@ resource "aws_ecs_service" "beaver_app" {
 
   load_balancer {
     target_group_arn = aws_lb_target_group.beaver_app.arn
-    container_name   = "beaver-app"
+    container_name   = "blueprintparser-app"
     container_port   = 3000
   }
 
@@ -313,7 +313,7 @@ resource "aws_appautoscaling_target" "beaver_ecs" {
 }
 
 resource "aws_appautoscaling_policy" "beaver_cpu" {
-  name               = "beaver-cpu-scaling"
+  name               = "blueprintparser-cpu-scaling"
   policy_type        = "TargetTrackingScaling"
   resource_id        = aws_appautoscaling_target.beaver_ecs.resource_id
   scalable_dimension = aws_appautoscaling_target.beaver_ecs.scalable_dimension
@@ -330,7 +330,7 @@ resource "aws_appautoscaling_policy" "beaver_cpu" {
 }
 
 resource "aws_appautoscaling_policy" "beaver_memory" {
-  name               = "beaver-memory-scaling"
+  name               = "blueprintparser-memory-scaling"
   policy_type        = "TargetTrackingScaling"
   resource_id        = aws_appautoscaling_target.beaver_ecs.resource_id
   scalable_dimension = aws_appautoscaling_target.beaver_ecs.scalable_dimension
@@ -351,7 +351,7 @@ resource "aws_appautoscaling_policy" "beaver_memory" {
 ###############################################################################
 
 resource "aws_cloudwatch_log_group" "beaver_cpu_pipeline" {
-  name              = "/ecs/beaver-cpu-pipeline"
+  name              = "/ecs/blueprintparser-cpu-pipeline"
   retention_in_days = 30
 }
 
@@ -360,7 +360,7 @@ resource "aws_cloudwatch_log_group" "beaver_cpu_pipeline" {
 ###############################################################################
 
 resource "aws_ecs_task_definition" "beaver_cpu_pipeline" {
-  family                   = "beaver-cpu-pipeline"
+  family                   = "blueprintparser-cpu-pipeline"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = 8192
@@ -370,7 +370,7 @@ resource "aws_ecs_task_definition" "beaver_cpu_pipeline" {
 
   container_definitions = jsonencode([
     {
-      name      = "beaver-cpu-pipeline"
+      name      = "blueprintparser-cpu-pipeline"
       image     = "${aws_ecr_repository.beaver_app.repository_url}:latest"
       essential = true
       command   = ["node", "scripts/process-worker.js"]
@@ -406,7 +406,7 @@ resource "aws_ecs_task_definition" "beaver_cpu_pipeline" {
 ###############################################################################
 
 resource "aws_security_group" "beaver_label_studio" {
-  name        = "beaver-label-studio-sg"
+  name        = "blueprintparser-label-studio-sg"
   description = "Security group for Label Studio ECS tasks"
   vpc_id      = aws_vpc.beaver.id
 
@@ -426,7 +426,7 @@ resource "aws_security_group" "beaver_label_studio" {
   }
 
   tags = {
-    Name = "beaver-label-studio-sg"
+    Name = "blueprintparser-label-studio-sg"
   }
 }
 
@@ -435,16 +435,16 @@ resource "aws_security_group" "beaver_label_studio" {
 ###############################################################################
 
 resource "aws_efs_file_system" "label_studio" {
-  creation_token = "beaver-label-studio"
+  creation_token = "blueprintparser-label-studio"
   encrypted      = true
 
   tags = {
-    Name = "beaver-label-studio-efs"
+    Name = "blueprintparser-label-studio-efs"
   }
 }
 
 resource "aws_security_group" "beaver_efs" {
-  name        = "beaver-efs-sg"
+  name        = "blueprintparser-efs-sg"
   description = "Security group for Label Studio EFS mount targets"
   vpc_id      = aws_vpc.beaver.id
 
@@ -457,7 +457,7 @@ resource "aws_security_group" "beaver_efs" {
   }
 
   tags = {
-    Name = "beaver-efs-sg"
+    Name = "blueprintparser-efs-sg"
   }
 }
 
@@ -487,7 +487,7 @@ resource "aws_efs_access_point" "label_studio" {
   }
 
   tags = {
-    Name = "beaver-label-studio-ap"
+    Name = "blueprintparser-label-studio-ap"
   }
 }
 
@@ -496,7 +496,7 @@ resource "aws_efs_access_point" "label_studio" {
 ###############################################################################
 
 resource "aws_cloudwatch_log_group" "beaver_label_studio" {
-  name              = "/ecs/beaver-label-studio"
+  name              = "/ecs/blueprintparser-label-studio"
   retention_in_days = 30
 }
 
@@ -505,7 +505,7 @@ resource "aws_cloudwatch_log_group" "beaver_label_studio" {
 ###############################################################################
 
 resource "aws_ecs_task_definition" "beaver_label_studio" {
-  family                   = "beaver-label-studio"
+  family                   = "blueprintparser-label-studio"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = 1024
@@ -596,7 +596,7 @@ resource "aws_ecs_task_definition" "beaver_label_studio" {
 ###############################################################################
 
 resource "aws_lb_target_group" "beaver_label_studio" {
-  name        = "beaver-ls-tg"
+  name        = "blueprintparser-ls-tg"
   port        = 8080
   protocol    = "HTTP"
   vpc_id      = aws_vpc.beaver.id
@@ -636,7 +636,7 @@ resource "aws_lb_listener_rule" "label_studio" {
 ###############################################################################
 
 resource "aws_ecs_service" "beaver_label_studio" {
-  name             = "beaver-label-studio"
+  name             = "blueprintparser-label-studio"
   cluster          = aws_ecs_cluster.beaver.id
   task_definition  = aws_ecs_task_definition.beaver_label_studio.arn
   desired_count    = 1

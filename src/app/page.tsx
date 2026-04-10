@@ -25,6 +25,12 @@ export default function LandingPage() {
         >
           Try Demo
         </Link>
+        <Link
+          href="/docs"
+          className="px-6 py-3 border border-[var(--border)] text-[var(--fg)] rounded-lg hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors font-medium"
+        >
+          Docs
+        </Link>
       </div>
     </div>
   );

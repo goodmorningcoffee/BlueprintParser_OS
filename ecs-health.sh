@@ -202,7 +202,7 @@ check_rds() {
   header "RDS Database"
 
   local result
-  result=$(aws rds describe-db-instances --db-instance-identifier ${RDS_ID:-beaver-db} --region "$REGION" \
+  result=$(aws rds describe-db-instances --db-instance-identifier ${RDS_ID:-blueprintparser-db} --region "$REGION" \
     --query 'DBInstances[0].{status:DBInstanceStatus,cpu:PerformanceInsightsEnabled,storage:AllocatedStorage,multiAz:MultiAZ}' \
     --output json 2>/dev/null || echo '{}')
 
@@ -379,7 +379,7 @@ while true; do
 
       echo ""
       echo "--- RDS STATUS ---"
-      aws rds describe-db-instances --db-instance-identifier ${RDS_ID:-beaver-db} --region "$REGION" \
+      aws rds describe-db-instances --db-instance-identifier ${RDS_ID:-blueprintparser-db} --region "$REGION" \
         --query 'DBInstances[0].{status:DBInstanceStatus,class:DBInstanceClass,storage:AllocatedStorage,multiAz:MultiAZ,engine:EngineVersion}' \
         --output json 2>/dev/null || echo "{}"
 

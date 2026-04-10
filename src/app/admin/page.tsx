@@ -600,7 +600,7 @@ export default function AdminPage() {
           active={activeTab}
           onChange={handleTabChange}
           badges={unseenInvites > 0 ? { overview: unseenInvites } : undefined}
-          isRootAdmin={(session?.user as any)?.isRootAdmin}
+          isRootAdmin={session?.user?.isRootAdmin}
         />
 
         {activeTab === "overview" && (
@@ -609,7 +609,7 @@ export default function AdminPage() {
             unseenInvites={unseenInvites}
             showInvites={showInvites}
             onMarkSeen={markInvitesSeen}
-            isRootAdmin={(session?.user as any)?.isRootAdmin || false}
+            isRootAdmin={session?.user?.isRootAdmin || false}
           />
         )}
 
@@ -648,7 +648,7 @@ export default function AdminPage() {
             setCurrentTogglePass={setCurrentTogglePass}
             onToggle={handleToggle}
             onSetTogglePassword={handleSetTogglePassword}
-            isRootAdmin={(session?.user as any)?.isRootAdmin || false}
+            isRootAdmin={session?.user?.isRootAdmin || false}
           />
         )}
 
@@ -697,11 +697,11 @@ export default function AdminPage() {
           />
         )}
 
-        {activeTab === "ai-rbac" && (session?.user as any)?.isRootAdmin && (
+        {activeTab === "ai-rbac" && session?.user?.isRootAdmin && (
           <AiRbacTab />
         )}
 
-        {activeTab === "companies" && (session?.user as any)?.isRootAdmin && (
+        {activeTab === "companies" && session?.user?.isRootAdmin && (
           <CompaniesUsersTab />
         )}
 
@@ -718,11 +718,7 @@ export default function AdminPage() {
         )}
 
         {activeTab === "settings" && (
-          <SettingsTab
-            passwordForm={passwordForm}
-            setPasswordForm={setPasswordForm}
-            onChangePassword={changePassword}
-          />
+          <SettingsTab />
         )}
       </main>
     </div>

@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { pages, projects } from "@/lib/db/schema";
+import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 
 export async function POST(req: Request) {
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
   const { projectId, pageNumber, name } = await req.json();
 
   if (!projectId || !pageNumber || !name) {
@@ -17,21 +14,9 @@ export async function POST(req: Request) {
     );
   }
 
-  // Verify project ownership
-  const [project] = await db
-    .select()
-    .from(projects)
-    .where(
-      and(
-        eq(projects.publicId, projectId),
-        eq(projects.companyId, session.user.companyId)
-      )
-    )
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ publicId: projectId });
+  if (access.error) return access.error;
+  const { project } = access;
 
   await db
     .update(pages)

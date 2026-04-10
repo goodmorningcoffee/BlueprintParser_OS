@@ -3,7 +3,7 @@
 ###############################################################################
 
 resource "aws_ecr_repository" "beaver_app" {
-  name                 = "beaver-app"
+  name                 = "blueprintparser-app"
   image_tag_mutability = "MUTABLE"
   force_delete         = false
 
@@ -16,12 +16,12 @@ resource "aws_ecr_repository" "beaver_app" {
   }
 
   tags = {
-    Name = "beaver-app"
+    Name = "blueprintparser-app"
   }
 }
 
 resource "aws_ecr_repository" "beaver_cpu_pipeline" {
-  name                 = "beaver-cpu-pipeline"
+  name                 = "blueprintparser-cpu-pipeline"
   image_tag_mutability = "MUTABLE"
   force_delete         = false
 
@@ -34,12 +34,12 @@ resource "aws_ecr_repository" "beaver_cpu_pipeline" {
   }
 
   tags = {
-    Name = "beaver-cpu-pipeline"
+    Name = "blueprintparser-cpu-pipeline"
   }
 }
 
 resource "aws_ecr_repository" "beaver_yolo_pipeline" {
-  name                 = "beaver-yolo-pipeline"
+  name                 = "blueprintparser-yolo-pipeline"
   image_tag_mutability = "MUTABLE"
   force_delete         = false
 
@@ -52,7 +52,7 @@ resource "aws_ecr_repository" "beaver_yolo_pipeline" {
   }
 
   tags = {
-    Name = "beaver-yolo-pipeline"
+    Name = "blueprintparser-yolo-pipeline"
   }
 }
 

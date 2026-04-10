@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireAuth, requireCompanyAccess } from "@/lib/api-utils";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { pages, projects } from "@/lib/db/schema";
+import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 
 /**
@@ -19,20 +19,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Missing projectId or pageNumber" }, { status: 400 });
   }
 
-  // Check project exists and handle auth (demo projects skip auth)
-  const [project] = await db
-    .select({ id: projects.id, isDemo: projects.isDemo, companyId: projects.companyId })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const { session } = await requireAuth();
-  const accessError = requireCompanyAccess(session, project);
-  if (accessError) return accessError;
+  const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
+  if (access.error) return access.error;
+  const { project } = access;
 
   const [pageRow] = await db
     .select({ textractData: pages.textractData })

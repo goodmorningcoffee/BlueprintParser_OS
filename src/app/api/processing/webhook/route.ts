@@ -37,13 +37,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Reject stale webhooks (> 5 min old)
+  // Reject stale or missing timestamps (anti-replay)
   const timestamp = req.headers.get("x-webhook-timestamp");
-  if (timestamp) {
-    const age = Date.now() - parseInt(timestamp);
-    if (age > 5 * 60 * 1000 || age < -60 * 1000) {
-      return NextResponse.json({ error: "Webhook expired" }, { status: 401 });
-    }
+  if (!timestamp) {
+    return NextResponse.json({ error: "Missing timestamp" }, { status: 401 });
+  }
+  const age = Date.now() - parseInt(timestamp);
+  if (age > 5 * 60 * 1000 || age < -60 * 1000) {
+    return NextResponse.json({ error: "Webhook expired" }, { status: 401 });
   }
 
   const payload: WebhookPayload = await req.json();

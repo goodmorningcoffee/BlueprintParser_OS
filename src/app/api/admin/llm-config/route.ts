@@ -62,7 +62,7 @@ export async function GET(req: Request) {
   try {
     const [company] = await db.select({ pipelineConfig: companies.pipelineConfig })
       .from(companies).where(eq(companies.id, session.user.companyId)).limit(1);
-    systemPrompt = (company?.pipelineConfig as any)?.llm?.systemPrompt;
+    systemPrompt = company?.pipelineConfig?.llm?.systemPrompt;
   } catch { /* ignore */ }
 
   return NextResponse.json({
@@ -218,8 +218,8 @@ export async function PUT(req: Request) {
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
 
-  const existing = (company?.pipelineConfig as Record<string, unknown>) || {};
-  const existingLlm = (existing.llm as Record<string, unknown>) || {};
+  const existing = company?.pipelineConfig || {};
+  const existingLlm = existing.llm || {};
   const updated = {
     ...existing,
     llm: { ...existingLlm, systemPrompt: systemPrompt || undefined },
@@ -227,7 +227,7 @@ export async function PUT(req: Request) {
 
   await db
     .update(companies)
-    .set({ pipelineConfig: updated as any, updatedAt: new Date() })
+    .set({ pipelineConfig: updated, updatedAt: new Date() })
     .where(eq(companies.id, session.user.companyId));
 
   return NextResponse.json({ success: true });

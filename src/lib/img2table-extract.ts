@@ -49,7 +49,7 @@ export async function extractWithImg2Table(
       proc.stdout.on("data", (d) => { stdout += d.toString(); });
       proc.stderr.on("data", (d) => { stderr += d.toString(); });
 
-      proc.on("close", () => {
+      proc.on("close", (code) => {
         clearTimeout(timer);
         if (stderr.trim()) logger.info(`[img2table] ${stderr.trim()}`);
         try {
@@ -61,17 +61,19 @@ export async function extractWithImg2Table(
             confidence: result.confidence || 0,
             colBoundaries: result.colBoundaries,
             rowBoundaries: result.rowBoundaries,
-            ...(result.error ? { error: result.error } : {}),
+            error: result.error || (result.headers?.length === 0 ? (stderr.trim().split("\n").pop() || "No tables detected") : undefined),
           });
         } catch {
-          logger.error("[img2table] Failed to parse output");
-          resolve(EMPTY);
+          // Script produced non-JSON output — probably a crash traceback
+          const errMsg = stderr.trim().split("\n").pop() || `Process exited with code ${code}`;
+          logger.error(`[img2table] Failed to parse output: ${errMsg}`);
+          resolve({ ...EMPTY, error: errMsg });
         }
       });
 
-      proc.on("error", () => {
+      proc.on("error", (err) => {
         clearTimeout(timer);
-        resolve(EMPTY);
+        resolve({ ...EMPTY, error: `spawn failed: ${err.message}` });
       });
 
       proc.stdin.write(config);

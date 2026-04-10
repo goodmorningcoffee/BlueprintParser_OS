@@ -51,7 +51,7 @@ export async function extractWithCamelotPdfplumber(
 
       const timer = setTimeout(() => {
         proc.kill("SIGKILL");
-        resolve(EMPTY);
+        resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: "Script timed out (30s)" }]);
       }, 30_000);
 
       let stdout = "";
@@ -59,9 +59,15 @@ export async function extractWithCamelotPdfplumber(
       proc.stdout.on("data", (d) => { stdout += d.toString(); });
       proc.stderr.on("data", (d) => { stderr += d.toString(); });
 
-      proc.on("close", () => {
+      proc.on("close", (code) => {
         clearTimeout(timer);
         if (stderr.trim()) logger.info(`[camelot-pdfplumber] ${stderr.trim()}`);
+        if (!stdout.trim()) {
+          const errMsg = stderr.trim().split("\n").pop() || `Process exited with code ${code} (no output)`;
+          logger.error(`[camelot-pdfplumber] No output: ${errMsg}`);
+          resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: errMsg }]);
+          return;
+        }
         try {
           const results: MethodResult[] = JSON.parse(stdout.trim() || "[]");
           resolve(
@@ -76,14 +82,15 @@ export async function extractWithCamelotPdfplumber(
             }))
           );
         } catch {
-          logger.error("[camelot-pdfplumber] Failed to parse output");
-          resolve(EMPTY);
+          const errMsg = stderr.trim().split("\n").pop() || `Process exited with code ${code}`;
+          logger.error(`[camelot-pdfplumber] Failed to parse output: ${errMsg}`);
+          resolve([{ method: "camelot-lattice", headers: [], rows: [], confidence: 0, error: errMsg }]);
         }
       });
 
-      proc.on("error", () => {
+      proc.on("error", (err) => {
         clearTimeout(timer);
-        resolve(EMPTY);
+        resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: `spawn failed: ${err.message}` }]);
       });
 
       proc.stdin.write(config);
@@ -91,7 +98,7 @@ export async function extractWithCamelotPdfplumber(
     });
   } catch (err) {
     logger.error("[camelot-pdfplumber] Wrapper failed:", err);
-    return EMPTY;
+    return [{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: err instanceof Error ? err.message : "Wrapper failed" }];
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

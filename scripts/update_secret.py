@@ -37,8 +37,8 @@ if DEPLOY_ENV.exists():
 
 AWS_REGION = os.environ.get("AWS_REGION", _deploy_config.get("AWS_REGION", "us-east-1"))
 SECRETS_PREFIX = os.environ.get("SECRETS_PREFIX", _deploy_config.get("SECRETS_PREFIX", "beaver"))
-ECS_CLUSTER = os.environ.get("ECS_CLUSTER", _deploy_config.get("ECS_CLUSTER", "beaver-cluster"))
-ECS_SERVICE = os.environ.get("ECS_SERVICE", _deploy_config.get("ECS_SERVICE", "beaver-app"))
+ECS_CLUSTER = os.environ.get("ECS_CLUSTER", _deploy_config.get("ECS_CLUSTER", "blueprintparser-cluster"))
+ECS_SERVICE = os.environ.get("ECS_SERVICE", _deploy_config.get("ECS_SERVICE", "blueprintparser-app"))
 
 # Known key validators
 VALIDATORS = {

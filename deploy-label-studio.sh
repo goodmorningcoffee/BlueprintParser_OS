@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 : "${AWS_REGION:?ERROR: Set AWS_REGION in .deploy.env or environment}"
 : "${ECS_CLUSTER:?ERROR: Set ECS_CLUSTER in .deploy.env or environment}"
-ECS_SERVICE="${ECS_LABEL_STUDIO_SERVICE:-beaver-label-studio}"
+ECS_SERVICE="${ECS_LABEL_STUDIO_SERVICE:-blueprintparser-label-studio}"
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'

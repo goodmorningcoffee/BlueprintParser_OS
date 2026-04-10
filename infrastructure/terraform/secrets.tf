@@ -8,7 +8,7 @@ resource "aws_secretsmanager_secret" "database_url" {
   recovery_window_in_days = 7
 
   tags = {
-    Name = "beaver-database-url"
+    Name = "blueprintparser-database-url"
   }
 }
 
@@ -23,7 +23,7 @@ resource "aws_secretsmanager_secret" "nextauth_secret" {
   recovery_window_in_days = 7
 
   tags = {
-    Name = "beaver-nextauth-secret"
+    Name = "blueprintparser-nextauth-secret"
   }
 }
 
@@ -38,7 +38,7 @@ resource "aws_secretsmanager_secret" "processing_webhook_secret" {
   recovery_window_in_days = 7
 
   tags = {
-    Name = "beaver-processing-webhook-secret"
+    Name = "blueprintparser-processing-webhook-secret"
   }
 }
 
@@ -53,7 +53,7 @@ resource "aws_secretsmanager_secret" "anthropic_api_key" {
   recovery_window_in_days = 7
 
   tags = {
-    Name = "beaver-anthropic-api-key"
+    Name = "blueprintparser-anthropic-api-key"
   }
 }
 
@@ -68,7 +68,7 @@ resource "aws_secretsmanager_secret" "groq_api_key" {
   recovery_window_in_days = 7
 
   tags = {
-    Name = "beaver-groq-api-key"
+    Name = "blueprintparser-groq-api-key"
   }
 }
 

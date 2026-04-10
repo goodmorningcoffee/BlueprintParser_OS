@@ -123,22 +123,25 @@ def detect_grid(image_path, min_h_length=0.15, min_v_length=0.10, tolerance=15):
         else:
             cols_normalized[i]["width"] = round(1.0 - cols_normalized[i]["x"], 6)
 
-    # Compute confidence based on grid regularity
+    # Confidence — normalized scale: content(0-0.4) + structure(0-0.3) + features(0-0.2)
+    # OpenCV doesn't know fill rate (no OCR), so structure weight is higher
     confidence = 0.0
     if len(row_ys) >= 2 and len(col_xs) >= 2:
-        confidence = 0.5
-        # Bonus for regular spacing
+        # Base: having a grid at all
+        grid_cells = max(0, len(row_ys) - 1) * max(0, len(col_xs) - 1)
+        confidence += min(grid_cells / 50, 0.3)  # content proxy: more cells = more content likely
+        # Structure: grid regularity
         if len(row_ys) >= 3:
             row_gaps = [row_ys[i + 1] - row_ys[i] for i in range(len(row_ys) - 1)]
             median_gap = np.median(row_gaps)
             regularity = sum(1 for g in row_gaps if abs(g - median_gap) < median_gap * 0.3) / len(row_gaps)
-            confidence += regularity * 0.2
+            confidence += regularity * 0.15
         if len(col_xs) >= 3:
             col_gaps = [col_xs[i + 1] - col_xs[i] for i in range(len(col_xs) - 1)]
             median_gap = np.median(col_gaps)
             regularity = sum(1 for g in col_gaps if abs(g - median_gap) < median_gap * 0.3) / len(col_gaps)
-            confidence += regularity * 0.2
-        confidence = min(confidence, 0.95)
+            confidence += regularity * 0.15
+        confidence = min(confidence, 0.85)
 
     return {
         "rows": rows_normalized,

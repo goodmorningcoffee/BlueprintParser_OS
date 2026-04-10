@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import type { TextractPageData } from "@/types";
 
@@ -27,9 +25,6 @@ interface SearchResult {
  * GET /api/search?projectId=<publicId>&q=<term>
  */
 export async function GET(req: Request) {
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
   const url = new URL(req.url);
   const projectPublicId = url.searchParams.get("projectId");
   const query = url.searchParams.get("q")?.trim();
@@ -41,21 +36,9 @@ export async function GET(req: Request) {
     );
   }
 
-  // Verify project ownership
-  const [project] = await db
-    .select()
-    .from(projects)
-    .where(
-      and(
-        eq(projects.publicId, projectPublicId),
-        eq(projects.companyId, session.user.companyId)
-      )
-    )
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const access = await resolveProjectAccess({ publicId: projectPublicId });
+  if (access.error) return access.error;
+  const { project } = access;
 
   // Detect exact phrase mode: user wraps query in double quotes
   // "door schedule" → exact phrase (phraseto_tsquery, consecutive highlight)

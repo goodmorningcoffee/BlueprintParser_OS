@@ -45,7 +45,7 @@ export async function GET(
       .from(companies)
       .where(eq(companies.id, project.companyId))
       .limit(1);
-    demoConfig = ((company?.pipelineConfig as any)?.demo as Record<string, boolean>) || {};
+    demoConfig = (company?.pipelineConfig?.demo as Record<string, boolean>) || {};
   } catch { /* ignore */ }
 
   return NextResponse.json({

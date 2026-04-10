@@ -92,9 +92,12 @@ def run_camelot(pdf_path: str, page_number: int, region_bbox: list, flavor: str)
         if not rows:
             return {"method": method_name, "headers": [], "rows": [], "confidence": 0}
 
-        # Use Camelot's built-in accuracy score
+        # Confidence — normalized: content(0-0.4) + structure(0-0.3) + features(0-0.2)
+        filled = sum(1 for r in rows for v in r.values() if v.strip())
+        total_cells = len(rows) * len(headers)
+        fill_rate = filled / total_cells if total_cells > 0 else 0
         accuracy = best_table.accuracy / 100.0 if hasattr(best_table, "accuracy") else 0.5
-        confidence = min(max(accuracy, 0.3), 0.95)
+        confidence = min(fill_rate * 0.4 + accuracy * 0.3 + 0.1, 0.90)
 
         return {
             "method": method_name,
@@ -182,14 +185,13 @@ def run_pdfplumber(pdf_path: str, page_number: int, region_bbox: list):
         if not rows:
             return {"method": method_name, "headers": [], "rows": [], "confidence": 0}
 
-        # Confidence: higher if we found actual vector lines (not just text-based)
+        # Confidence — normalized: content(0-0.4) + structure(0-0.3) + features(0-0.2)
         has_lines = len(lines) > 3 or len(rects) > 1
-        confidence = 0.7 if has_lines else 0.45
         filled = sum(1 for r in rows for v in r.values() if v)
-        total = len(rows) * len(headers)
-        fill_rate = filled / total if total > 0 else 0
-        confidence += fill_rate * 0.2
-        confidence = min(confidence, 0.95)
+        total_cells = len(rows) * len(headers)
+        fill_rate = filled / total_cells if total_cells > 0 else 0
+        confidence = fill_rate * 0.4 + (0.25 if has_lines else 0.1) + 0.1
+        confidence = min(confidence, 0.90)
 
         return {
             "method": method_name,

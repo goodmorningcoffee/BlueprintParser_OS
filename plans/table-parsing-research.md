@@ -164,17 +164,19 @@ Construction blueprint tables (door schedules, finish schedules, equipment lists
 - If there's a consistent text alignment gap at that X/Y position across rows, insert virtual boundary
 - This is unique to BlueprintParser — general tools don't have OCR data available during line detection
 
-### Step 6: Evaluate img2table Integration
-- Add as a 4th method alongside OCR positions, Textract, OpenCV
-- MIT licensed, pip-installable
-- Already supports Textract as OCR backend
-- Could replace our custom OpenCV code entirely, or complement it
+### Step 6: img2table Integration — DONE (2026-04-09)
+- Added as Method 4 in 7-method merge pipeline
+- `scripts/img2table_extract.py` + `src/lib/img2table-extract.ts`
+- Uses Hough Transform + morphological + skew correction + merged cell detection
+- Requires Debian slim Docker base (not Alpine) due to polars dependency
 
-### Step 7: Evaluate TATR (Table Transformer) Integration
-- Add as a 5th method for projects with GPU access (SageMaker)
-- Pre-trained model available on HuggingFace
-- Would detect table structure (rows, cols, cells, headers) as objects
-- Similar deployment pattern to existing YOLO models
+### Step 7: TATR (Table Transformer) Integration — DONE (2026-04-09)
+- Added as post-processing step (manual "Detect Cell Structure" button)
+- Model: `microsoft/table-transformer-structure-recognition-v1.1-all` (115MB) in `/models/tatr/`
+- Runs on CPU (1-3s per cropped table region), no SageMaker needed
+- `scripts/tatr_structure.py` + `src/lib/tatr-structure.ts` + `POST /api/table-structure`
+- Cell bboxes stored in separate `tableCellStructure` store field
+- Canvas: dashed cyan borders, click = search, double-click = toggle highlight
 
 ---
 

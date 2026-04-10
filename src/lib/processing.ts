@@ -111,10 +111,9 @@ export async function processProject(projectId: number): Promise<{
         .from(companies)
         .where(eq(companies.id, project.companyId))
         .limit(1);
-      const pipelineConfig = company?.pipelineConfig as any;
-      companyHeuristics = pipelineConfig?.heuristics;
-      pageConcurrency = pipelineConfig?.pipeline?.pageConcurrency || DEFAULT_PAGE_CONCURRENCY;
-      csiSpatialGrid = pipelineConfig?.pipeline?.csiSpatialGrid;
+      companyHeuristics = company?.pipelineConfig?.heuristics;
+      pageConcurrency = (company?.pipelineConfig?.pipeline as any)?.pageConcurrency || DEFAULT_PAGE_CONCURRENCY;
+      csiSpatialGrid = (company?.pipelineConfig?.pipeline as any)?.csiSpatialGrid;
     } catch { /* ignore — use built-in defaults */ }
 
     logger.info(`[processing] Processing ${numPages} pages with concurrency ${pageConcurrency}`);

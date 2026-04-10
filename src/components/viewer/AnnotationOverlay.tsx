@@ -461,6 +461,35 @@ export default memo(function AnnotationOverlay({
       }
     }
 
+    // Draw TATR cell structure overlays
+    if (tableCellStructure && tableCellStructure.pageNumber === pageNumber) {
+      ctx.setLineDash([4, 3]);
+      for (const cell of tableCellStructure.cells) {
+        const [cx0, cy0, cx1, cy1] = cell.bbox;
+        const cellX = cx0 * width;
+        const cellY = cy0 * height;
+        const cellW = (cx1 - cx0) * width;
+        const cellH = (cy1 - cy0) * height;
+
+        if (cell.highlighted) {
+          ctx.fillStyle = "rgba(34,211,238,0.2)";
+          ctx.fillRect(cellX, cellY, cellW, cellH);
+          ctx.strokeStyle = "#22d3ee";
+          ctx.lineWidth = 2;
+        } else if (cell.type === "column-header" || cell.type === "row-header") {
+          ctx.fillStyle = "rgba(168,85,247,0.08)";
+          ctx.fillRect(cellX, cellY, cellW, cellH);
+          ctx.strokeStyle = "rgba(168,85,247,0.4)";
+          ctx.lineWidth = 1;
+        } else {
+          ctx.strokeStyle = "rgba(34,211,238,0.3)";
+          ctx.lineWidth = 1;
+        }
+        ctx.strokeRect(cellX, cellY, cellW, cellH);
+      }
+      ctx.setLineDash([]);
+    }
+
     // Draw LLM tool use highlight (pulsing dashed cyan rectangle)
     if (llmHighlight && llmHighlight.pageNumber === pageNumber) {
       const [hMinX, hMinY, hMaxX, hMaxY] = llmHighlight.bbox;
@@ -626,7 +655,7 @@ export default memo(function AnnotationOverlay({
     }
 
     // Calibration + polygon preview — rendered by DrawingPreviewLayer
-  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight, hiddenTakeoffItemIds]);
+  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight, hiddenTakeoffItemIds, tableCellStructure]);
 
   const getPos = useCallback(
     (e: React.MouseEvent) => {
@@ -1048,6 +1077,22 @@ export default memo(function AnnotationOverlay({
 
       // Pointer mode: select, delete, move, resize annotations + click keynotes
       if (mode === "pointer") {
+        // TATR cell click: single click = search by text, double click = toggle highlight
+        if (tableCellStructure && tableCellStructure.pageNumber === pageNumber) {
+          const normX = pos.x / width;
+          const normY = pos.y / height;
+          for (const cell of tableCellStructure.cells) {
+            if (normX >= cell.bbox[0] && normX <= cell.bbox[2] && normY >= cell.bbox[1] && normY <= cell.bbox[3]) {
+              if (e.detail === 2) {
+                toggleCellHighlight(cell.row, cell.col);
+              } else if (cell.text) {
+                setSearch(cell.text);
+              }
+              return;
+            }
+          }
+        }
+
         // Double-click: universal annotation filter — filter pages + search + highlights
         if (e.detail === 2) {
           for (const ann of pageAnnotations) {
