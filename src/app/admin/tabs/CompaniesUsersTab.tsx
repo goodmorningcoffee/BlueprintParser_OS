@@ -25,16 +25,14 @@ interface UserItem {
 
 // Demo fake data — shown instead of real user/company data in demo mode
 const DEMO_COMPANIES: CompanyItem[] = [
-  { id: 1, publicId: "acme-001", name: "Acme Construction", accessKey: "demo-key-acme", dataKey: "acme-data", userCount: 3, projectCount: 4 },
+  { id: 1, publicId: "acme-001", name: "Acme Construction", accessKey: "demo-key-acme", dataKey: "acme-data", userCount: 2, projectCount: 4 },
   { id: 2, publicId: "west-002", name: "Westside Builders", accessKey: "demo-key-west", dataKey: "westside-data", userCount: 2, projectCount: 2 },
   { id: 3, publicId: "summ-003", name: "Summit Engineering", accessKey: "demo-key-summ", dataKey: "summit-data", userCount: 2, projectCount: 3 },
   { id: 4, publicId: "pacf-004", name: "Pacific Design Group", accessKey: "demo-key-pacf", dataKey: "pacific-data", userCount: 2, projectCount: 1 },
 ];
 const DEMO_USERS: UserItem[] = [
-  { id: "1", username: "root", email: "root@root.com", role: "admin", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: true },
-  { id: "2", username: "admin", email: "admin@blueprintparser.com", role: "admin", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: false },
+  { id: "1", username: "demo-admin", email: "admin@acme-construction.com", role: "admin", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: true },
   { id: "3", username: "jsmith", email: "jsmith@acme-construction.com", role: "member", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: false },
-  { id: "4", username: "koreya", email: "koreya@acme-construction.com", role: "member", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: false },
   { id: "5", username: "mrivera", email: "m.rivera@westside-builders.com", role: "admin", companyId: 2, companyName: "Westside Builders", canRunModels: true, isRootAdmin: false },
   { id: "6", username: "tchen", email: "tchen@westside-builders.com", role: "member", companyId: 2, companyName: "Westside Builders", canRunModels: false, isRootAdmin: false },
   { id: "7", username: "estimator1", email: "estimator1@summit-eng.com", role: "member", companyId: 3, companyName: "Summit Engineering", canRunModels: true, isRootAdmin: false },
