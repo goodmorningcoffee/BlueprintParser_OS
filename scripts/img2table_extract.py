@@ -90,8 +90,15 @@ def extract_table(image_path: str, region_bbox: list, dpi: int = 150,
                     "error": "No tables detected in region"}
 
         # Take the largest table (most cells)
-        best_table = max(tables, key=lambda t: t.nb_rows * t.nb_columns)
-        print(f"Best table: {best_table.nb_rows}r x {best_table.nb_columns}c", file=sys.stderr)
+        def table_size(t):
+            d = t.df
+            if d is None: return 0
+            return d.shape[0] * d.shape[1] if hasattr(d, 'shape') else 0
+        best_table = max(tables, key=table_size)
+        d = best_table.df
+        nr = d.shape[0] if d is not None and hasattr(d, 'shape') else 0
+        nc = d.shape[1] if d is not None and hasattr(d, 'shape') else 0
+        print(f"Best table: {nr}r x {nc}c", file=sys.stderr)
 
         # Convert to MethodResult format
         # Get the DataFrame representation
@@ -117,15 +124,15 @@ def extract_table(image_path: str, region_bbox: list, dpi: int = 150,
             return {"method": "img2table", "headers": [], "rows": [], "confidence": 0}
 
         # Compute column and row boundaries (normalized to region, then to page)
-        # img2table gives us cell bboxes in pixel coords of the cropped image
+        # img2table content is OrderedDict of row_idx → [TableCell] with .bbox (BBox x1,y1,x2,y2) in pixel coords
         col_xs = set()
         row_ys = set()
-        for table_row in best_table.items:
-            for cell in table_row:
-                col_xs.add(cell.x1)
-                col_xs.add(cell.x2)
-                row_ys.add(cell.y1)
-                row_ys.add(cell.y2)
+        for row_cells in best_table.content.values():
+            for cell in row_cells:
+                col_xs.add(cell.bbox.x1)
+                col_xs.add(cell.bbox.x2)
+                row_ys.add(cell.bbox.y1)
+                row_ys.add(cell.bbox.y2)
 
         sorted_cols = sorted(col_xs)
         sorted_rows = sorted(row_ys)
@@ -140,10 +147,10 @@ def extract_table(image_path: str, region_bbox: list, dpi: int = 150,
         fill_rate = filled / total if total > 0 else 0
         confidence = fill_rate * 0.4
         # Structure: grid size bonus
-        if best_table.nb_rows >= 3 and best_table.nb_columns >= 2:
+        if nr >= 3 and nc >= 2:
             confidence += 0.2
-        # Feature: having detected merged cells or skew correction
-        if best_table.nb_rows >= 5:
+        # Feature: having detected larger tables
+        if nr >= 5:
             confidence += 0.1
         confidence = min(confidence, 0.85)
 
