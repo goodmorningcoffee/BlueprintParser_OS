@@ -288,7 +288,13 @@ cp .env.example .env.local       # Edit DATABASE_URL, NEXTAUTH_SECRET at minimum
 docker compose up -d              # PostgreSQL on port 5433
 npm install
 npx drizzle-kit migrate           # Create database tables
+bash scripts/setup.sh             # Create root admin account (interactive)
 npm run dev                       # http://localhost:3000`}</Code>
+              <p>
+                For full AWS deployment (Textract, S3, SageMaker, ECS), run the interactive setup wizard:
+              </p>
+              <Code>{`bash install_setup.sh             # Configure all services interactively
+bash deploy.sh                    # Build + push to ECR + update ECS`}</Code>
               <p>
                 Works without AWS credentials &mdash; PDF viewing, annotations, table parsing, QTO, and search
                 are all functional locally. For the full pipeline, add: <InlineCode>GROQ_API_KEY</InlineCode> (free-tier LLM chat),

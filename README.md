@@ -6,19 +6,44 @@ Open-source AI-powered construction blueprint analysis platform. Upload PDF blue
 
 ---
 
-## Quick Start
+## Quick Start (Local Development)
 
 ```bash
-git clone https://github.com/deliciousnoodles/BlueprintParser.git
+git clone https://github.com/goodmorningcoffee/BlueprintParser.git
 cd BlueprintParser/blueprintparser_2
 cp .env.example .env.local       # Edit DATABASE_URL, NEXTAUTH_SECRET at minimum
 docker compose up -d              # PostgreSQL on port 5433
 npm install
 npx drizzle-kit migrate           # Create database tables
+bash scripts/setup.sh             # Create root admin account (interactive)
 npm run dev                       # http://localhost:3000
 ```
 
 Works without AWS credentials — PDF viewing, annotations, table parsing, QTO, and search are all functional locally. For the full pipeline, add: `GROQ_API_KEY` (free-tier LLM chat), AWS credentials (Textract OCR, S3 storage, SageMaker YOLO inference).
+
+## Setup Scripts
+
+| Script | Purpose | When to Use |
+|--------|---------|-------------|
+| `scripts/setup.sh` | First-time setup — runs migrations and creates root admin account | After cloning, once PostgreSQL is running |
+| `install_setup.sh` | Full interactive wizard — configures `.env.local`, AWS credentials, LLM providers, S3, SageMaker, Label Studio | First deploy to AWS, or when adding new services |
+| `deploy.sh` | Build Docker image, push to ECR, update ECS service | AWS production deployments |
+| `deploy-yolo.sh` | Build and push YOLO inference container to ECR | When updating YOLO models or inference code |
+| `hardening.sh` | AWS WAF rules, security headers, CloudWatch alarms | After initial AWS infrastructure setup |
+| `root_admin.sh` | Create/reset root admin account on a running instance | Emergency admin access recovery |
+| `scripts/cost-control.sh` | Check and stop idle SageMaker endpoints | Cost management for GPU resources |
+| `scripts/sagemaker-killswitch.sh` | Emergency stop all SageMaker resources | If costs spike unexpectedly |
+
+### Full Setup (with AWS)
+
+For AWS deployment with Textract, S3, SageMaker, and ECS:
+
+```bash
+bash install_setup.sh             # Interactive wizard — walks through all config
+bash deploy.sh                    # Build + push to ECR + update ECS
+```
+
+The setup wizard prompts for: database URL, auth secrets, LLM API keys (Groq/Anthropic/OpenAI), AWS credentials, S3 bucket, CloudFront, Step Functions, SageMaker, and Label Studio. Re-run anytime to update configuration.
 
 ## Configuration
 
