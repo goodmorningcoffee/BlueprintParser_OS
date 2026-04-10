@@ -303,7 +303,7 @@ export async function methodOpenCvLines(
   options?: OpenCvOptions,
 ): Promise<MethodResult> {
   try {
-    const pngBuffer = await rasterizePage(pdfBuffer, pageNumber, 150);
+    const pngBuffer = await rasterizePage(pdfBuffer, pageNumber, 200);
     const [rMinX, rMinY, rMaxX, rMaxY] = regionBbox;
 
     const lineGrid = await detectTableLines(pngBuffer, {

@@ -166,6 +166,14 @@ export default memo(function AnnotationOverlay({
   const addPolygonVertex = useViewerStore((s) => s.addPolygonVertex);
   const resetPolygonDrawing = useViewerStore((s) => s.resetPolygonDrawing);
   const undoLastVertex = useViewerStore((s) => s.undoLastVertex);
+  const bucketFillActive = useViewerStore((s) => s.bucketFillActive);
+  const bucketFillPreview = useViewerStore((s) => s.bucketFillPreview);
+  const bucketFillLoading = useViewerStore((s) => s.bucketFillLoading);
+  const setBucketFillPreview = useViewerStore((s) => s.setBucketFillPreview);
+  const setBucketFillLoading = useViewerStore((s) => s.setBucketFillLoading);
+  const bucketFillBarrierMode = useViewerStore((s) => s.bucketFillBarrierMode);
+  const addBucketFillBarrier = useViewerStore((s) => s.addBucketFillBarrier);
+  const setBucketFillActive = useViewerStore((s) => s.setBucketFillActive);
   const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
   const addYoloTag = useViewerStore((s) => s.addYoloTag);
 
@@ -743,6 +751,75 @@ export default memo(function AnnotationOverlay({
     setMousePos(null);
   }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, resetPolygonDrawing, isDemo]);
 
+  /** Accept bucket fill preview polygon and save as annotation */
+  const acceptBucketFillPolygon = useCallback(() => {
+    const preview = useViewerStore.getState().bucketFillPreview;
+    if (!preview || preview.vertices.length < 3) return;
+
+    const items = useViewerStore.getState().takeoffItems;
+    const activeId = useViewerStore.getState().activeTakeoffItemId;
+    const activeItem = items.find((t) => t.id === activeId);
+    if (!activeItem) return;
+
+    const verts = preview.vertices;
+    const xs = verts.map((v) => v.x);
+    const ys = verts.map((v) => v.y);
+    const bbox: [number, number, number, number] = [
+      Math.min(...xs), Math.min(...ys),
+      Math.max(...xs), Math.max(...ys),
+    ];
+
+    const calibration = scaleCalibrations[pageNumber];
+    let areaSqUnits = 0;
+    let unit: import("@/types").AreaUnitSq = "SF";
+    if (calibration) {
+      areaSqUnits = computeRealArea(verts, width, height, calibration);
+      unit = AREA_UNIT_MAP[calibration.unit] || "SF";
+    }
+
+    const polygonData: AreaPolygonData = {
+      type: "area-polygon",
+      takeoffItemId: activeItem.id,
+      color: activeItem.color,
+      vertices: [...verts],
+      areaSqUnits,
+      unit,
+    };
+
+    const tempId = -Date.now();
+    addAnnotation({
+      id: tempId,
+      pageNumber,
+      name: activeItem.name,
+      bbox,
+      note: null,
+      source: "takeoff",
+      data: polygonData as unknown as Record<string, unknown>,
+    });
+
+    if (!isDemo) {
+      fetch("/api/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: publicId,
+          pageNumber,
+          name: activeItem.name,
+          bbox,
+          source: "takeoff",
+          data: polygonData,
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((saved) => {
+          if (saved) updateAnnotation(tempId, { id: saved.id });
+        })
+        .catch(() => {});
+    }
+
+    setBucketFillPreview(null);
+  }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, setBucketFillPreview, isDemo]);
+
   /** Save the current in-progress polyline as a linear-polyline annotation */
   const saveLinearPolyline = useCallback(() => {
     const verts = useViewerStore.getState().polygonVertices;
@@ -871,6 +948,55 @@ export default memo(function AnnotationOverlay({
         const activeItem = takeoffItems.find((t) => t.id === activeTakeoffItemId);
         if (!activeItem) return;
         e.stopPropagation();
+
+        // Bucket fill mode: click to fill or draw barriers
+        if (activeItem.shape === "polygon" && bucketFillActive) {
+          const normX = pos.x / width;
+          const normY = pos.y / height;
+
+          // Barrier drawing sub-mode: click-click to draw line segments
+          if (bucketFillBarrierMode) {
+            const pending = useViewerStore.getState().barrierPendingPoint;
+            if (pending) {
+              addBucketFillBarrier({ x1: pending.x, y1: pending.y, x2: normX, y2: normY });
+              useViewerStore.getState().setBarrierPendingPoint(null);
+            } else {
+              useViewerStore.getState().setBarrierPendingPoint({ x: normX, y: normY });
+            }
+            return;
+          }
+
+          // Bucket fill click: send seed point to API
+          if (bucketFillLoading) return; // ignore clicks while loading
+          setBucketFillLoading(true);
+          setBucketFillPreview(null);
+
+          const barriers = useViewerStore.getState().bucketFillBarriers;
+          fetch("/api/bucket-fill", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId: publicId,
+              pageNumber,
+              seedPoint: { x: normX, y: normY },
+              tolerance: 30,
+              dilate: 3,
+              barriers,
+            }),
+          })
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+              setBucketFillLoading(false);
+              if (data?.type === "result" && data.vertices?.length >= 3) {
+                setBucketFillPreview({ vertices: data.vertices, method: data.method || "raster" });
+              }
+              // silently ignore errors — user just clicks again
+            })
+            .catch(() => {
+              setBucketFillLoading(false);
+            });
+          return;
+        }
 
         // Polygon drawing mode
         if (activeItem.shape === "polygon") {
@@ -1597,7 +1723,17 @@ export default memo(function AnnotationOverlay({
     function handleEscape(e: KeyboardEvent) {
       if (e.key === "Escape") {
         const store = useViewerStore.getState();
-        if (store.tableParseStep !== "idle") {
+        if (store.bucketFillPreview) {
+          // Cancel bucket fill preview
+          store.setBucketFillPreview(null);
+        } else if (store.bucketFillBarrierMode) {
+          // Exit barrier mode back to fill mode
+          store.setBucketFillBarrierMode(false);
+          store.setBarrierPendingPoint(null);
+        } else if (store.bucketFillActive) {
+          // Deactivate bucket fill entirely
+          store.setBucketFillActive(false);
+        } else if (store.tableParseStep !== "idle") {
           store.setTableParseStep("idle");
           store.setMode("move");
         } else if (store.keynoteParseStep !== "idle") {
@@ -1612,27 +1748,47 @@ export default memo(function AnnotationOverlay({
           setActiveTakeoffItemId(null);
         }
       }
-      // Enter: close polygon or finish linear polyline
-      if (e.key === "Enter" && polygonDrawingMode === "drawing") {
-        e.preventDefault();
+      // Enter: accept bucket fill preview OR close polygon/finish polyline
+      if (e.key === "Enter") {
         const store = useViewerStore.getState();
-        const verts = store.polygonVertices;
-        const activeItem = store.takeoffItems.find((t) => t.id === store.activeTakeoffItemId);
-        if (activeItem?.shape === "linear") {
-          if (verts.length >= 2) saveLinearPolyline();
-        } else {
-          if (verts.length >= 3) savePolygon();
+        if (store.bucketFillPreview) {
+          e.preventDefault();
+          acceptBucketFillPolygon();
+        } else if (polygonDrawingMode === "drawing") {
+          e.preventDefault();
+          const verts = store.polygonVertices;
+          const activeItem = store.takeoffItems.find((t) => t.id === store.activeTakeoffItemId);
+          if (activeItem?.shape === "linear") {
+            if (verts.length >= 2) saveLinearPolyline();
+          } else {
+            if (verts.length >= 3) savePolygon();
+          }
         }
       }
-      // Ctrl+Z: undo last polygon vertex
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && polygonDrawingMode === "drawing") {
-        e.preventDefault();
-        undoLastVertex();
+      // B: toggle barrier mode (when bucket fill is active)
+      if (e.key === "b" || e.key === "B") {
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+        const store = useViewerStore.getState();
+        if (store.bucketFillActive && !store.bucketFillPreview) {
+          e.preventDefault();
+          store.setBucketFillBarrierMode(!store.bucketFillBarrierMode);
+        }
+      }
+      // Ctrl+Z: undo last barrier (in barrier mode) or last polygon vertex
+      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        const store = useViewerStore.getState();
+        if (store.bucketFillActive && store.bucketFillBarriers.length > 0) {
+          e.preventDefault();
+          store.undoLastBarrier();
+        } else if (polygonDrawingMode === "drawing") {
+          e.preventDefault();
+          undoLastVertex();
+        }
       }
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [activeTakeoffItemId, setActiveTakeoffItemId, polygonDrawingMode, resetPolygonDrawing, calibrationMode, resetCalibration, undoLastVertex, savePolygon, saveLinearPolyline]);
+  }, [activeTakeoffItemId, setActiveTakeoffItemId, polygonDrawingMode, resetPolygonDrawing, calibrationMode, resetCalibration, undoLastVertex, savePolygon, saveLinearPolyline, acceptBucketFillPolygon]);
 
   // Keyboard: Delete/Backspace to delete, Enter to place dragged annotation
   useEffect(() => {
