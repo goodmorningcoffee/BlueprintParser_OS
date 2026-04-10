@@ -117,10 +117,12 @@ export async function POST(req: Request) {
       groupId: item.groupId,
     });
   } catch (err) {
-    logger.error("Failed to create takeoff item:", err);
-    const message = err instanceof Error ? err.message : "Database error";
+    const cause = (err as { cause?: { message?: string; detail?: string; code?: string } })?.cause;
+    const pgMessage = cause?.message || cause?.detail || (err instanceof Error ? err.message : "Database error");
+    const pgCode = cause?.code;
+    logger.error("Failed to create takeoff item:", { err, cause, pgCode, pgMessage });
     return NextResponse.json(
-      { error: `Failed to create item: ${message}` },
+      { error: `Failed to create item: ${pgMessage}${pgCode ? ` (${pgCode})` : ""}` },
       { status: 500 }
     );
   }

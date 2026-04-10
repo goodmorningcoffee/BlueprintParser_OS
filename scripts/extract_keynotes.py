@@ -14,9 +14,16 @@ import json
 import string
 import cv2
 import numpy as np
-import pytesseract
-# Explicit path for Alpine Linux containers where PATH may not include /usr/bin
-pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+
+# pytesseract is optional — if unavailable, shape detection still works, OCR returns empty
+try:
+    import pytesseract
+    # Explicit path for Alpine Linux containers where PATH may not include /usr/bin
+    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+    _HAVE_OCR = True
+except ImportError:
+    _HAVE_OCR = False
+    print("[keynote] pytesseract not available — shape detection only, no OCR", file=sys.stderr)
 
 kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype="uint8")
 
@@ -95,19 +102,26 @@ def filter_components(img, aspect_range, width_range, height_range, invert=False
 
 
 def valid_keynote_candidate(keynote_box, text_boxes):
+    """
+    Theta's proven parameters: text must be fully inside shape,
+    vertically centered within 20% of shape height, at least 20% of shape height tall.
+    """
     left, top, right, bottom = keynote_box
     for t_left, t_top, t_right, t_bottom in text_boxes:
         if not boxes_intersect(keynote_box, (t_left, t_top, t_right, t_bottom)):
             continue
+        # Text must be fully contained (strictly inside)
         if t_left <= left or t_top <= top or t_right >= right or t_bottom >= bottom:
             continue
         text_center = (t_bottom + t_top) / 2
         keynote_center = (bottom + top) / 2
         keynote_height = bottom - top
         text_height = t_bottom - t_top
-        if abs(text_center - keynote_center) > 0.45 * keynote_height:
+        # Text must be vertically centered within 20% of shape height (theta: 0.20)
+        if abs(text_center - keynote_center) > 0.20 * keynote_height:
             continue
-        if text_height < 0.08 * keynote_height:
+        # Text must be at least 20% of shape height (theta: 0.20)
+        if text_height < 0.20 * keynote_height:
             continue
         return True
     return False
@@ -201,6 +215,8 @@ def detect_shape(contour):
 
 
 def extract_text(img, psm=8):
+    if not _HAVE_OCR:
+        return ""
     img = cv2.blur(img, (3, 3))
     whitelist = string.ascii_letters + string.digits + "()$#-"
     txt = pytesseract.image_to_string(
@@ -217,9 +233,10 @@ def remove_single_line(img):
 
 
 def clean_img(img):
+    # Theta's proven preprocessing: threshold + distance transform + erode thin lines
     img = cv2.threshold(img, 50, 255, cv2.THRESH_BINARY)[1]
     dist_transform = cv2.distanceTransform(255 - img, cv2.DIST_L2, 3)
-    img = 255 - ((dist_transform > 0.7).astype("uint8") * 255)
+    img = 255 - ((dist_transform > 1.0).astype("uint8") * 255)
     return img
 
 
@@ -328,11 +345,14 @@ def extract_from_image(img, skip_ocr=False):
     h, w = img.shape
     img_cleaned = clean_img(img)
 
+    # Theta's proven candidate filters:
+    # - Text: loose aspect (0.1-2), any size
+    # - Keynotes: tight aspect (0.9-4), size 20-200px (matches real architectural symbols)
     candidate_text = filter_components(
         img_cleaned, (0.1, 2), (None, None), (None, None)
     )[1]
     candidate_keynotes = filter_components(
-        img_cleaned, (0.3, 8), (12, 600), (12, 600), invert=True
+        img_cleaned, (0.9, 4), (20, 200), (20, 200), invert=True
     )[1]
 
     selected_keynotes = filter_keynote_candidates(candidate_keynotes, candidate_text)
@@ -408,7 +428,8 @@ def main(img_path):
         print(f"[keynote] Returning {len(results)} keynotes", file=sys.stderr)
         return results
 
-    # Large images: tile and merge (skip OCR in tiled mode — too slow/crashy)
+    # Large images: tile and merge. Run OCR per-shape inside each tile —
+    # per-shape OCR is fast (shapes are 20-200px), only whole-image OCR is problematic.
     tiles = generate_tiles(h, w)
     num_tiles = len(tiles)
     print(f"[keynote] Tiling: {num_tiles} tiles ({TILE_SIZE}px, {TILE_OVERLAP}px overlap)", file=sys.stderr)
@@ -416,7 +437,7 @@ def main(img_path):
     all_results = []
     for ti, (ty, tx, th, tw) in enumerate(tiles):
         tile_img = img[ty : ty + th, tx : tx + tw].copy()  # copy to avoid holding ref to full image
-        tile_results = extract_from_image(tile_img, skip_ocr=True)
+        tile_results = extract_from_image(tile_img, skip_ocr=False)
         del tile_img
 
         if tile_results:

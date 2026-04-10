@@ -64,6 +64,23 @@ COMMON_REPLACEMENTS = [
     ("pl.from_dicts(dicts=", "pl.from_dicts("),
 ]
 
+# Fixes for ocr/data.py specifically — the generic .apply → .map_elements patch
+# converts syntactically but breaks semantically in Polars 1.x.
+# .map_elements() in new Polars operates on individual elements, not grouped lists,
+# so `lambda x: ' '.join(x)` operates on a single string at a time, producing
+# character-separated output ('hello' → 'h e l l o') and a list[str] column.
+# The correct modern Polars API for joining strings in an aggregation is .str.join().
+OCR_DATA_FIXES = [
+    (
+        ".map_elements(lambda x: ' '.join(x)).alias('value')",
+        ".str.join(' ').alias('value')",
+    ),
+    (
+        ".map_elements(lambda x: '\\n'.join(x).strip()).alias('text')",
+        ".str.join('\\n').str.strip_chars().alias('text')",
+    ),
+]
+
 
 def main():
     pkg_dir = find_img2table_dir()
@@ -91,7 +108,7 @@ def main():
 
     if patch_file(
         os.path.join(pkg_dir, "ocr/data.py"),
-        COMMON_REPLACEMENTS,
+        COMMON_REPLACEMENTS + OCR_DATA_FIXES,
     ):
         patched += 1
 

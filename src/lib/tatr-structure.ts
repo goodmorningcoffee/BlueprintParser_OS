@@ -50,13 +50,20 @@ export async function detectTableStructure(
 
     const scriptPath = join(process.cwd(), "scripts/tatr_structure.py");
     // Model path: relative to project root (models/ is sibling of blueprintparser_2/)
-    // In Docker: cwd=/app, models at /app/../models/tatr OR bundled at /app/models/tatr
+    // In Docker: cwd=/app, models bundled at /app/models/tatr (Phase B.2 of plan).
+    // Local dev: models at /app/../models/tatr.
     const candidates = [
       join(process.cwd(), "models", "tatr"),
       join(process.cwd(), "..", "models", "tatr"),
     ];
     const { existsSync } = await import("fs");
-    const modelPath = candidates.find((p) => existsSync(p)) || candidates[0];
+    const modelPath = candidates.find((p) => existsSync(p));
+    if (!modelPath) {
+      // Phase B.3: fail fast with a clear error instead of passing a bogus path
+      // through to Python and getting back a less helpful "Model not found at <fake path>".
+      logger.error(`[TATR] Model not found. Searched: ${candidates.join(", ")}`);
+      return { ...EMPTY, error: `TATR model not found in any candidate path: ${candidates.join(", ")}` };
+    }
 
     const config = JSON.stringify({
       image_path: imgPath,

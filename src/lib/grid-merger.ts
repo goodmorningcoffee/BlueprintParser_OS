@@ -47,6 +47,47 @@ export interface MergedGrid {
 const MAX_ROWS = 10000;
 const MAX_COLS = 500;
 
+const TAG_RE = /^[A-Z]{0,3}-?\d{1,4}[A-Z]?$/i;
+const TAG_HEADERS = ["TAG", "MARK", "NO", "NO.", "NUMBER", "NUM", "ITEM", "ID", "KEY"];
+
+/**
+ * Detect the tag column in a merged grid. Unlike per-method detection,
+ * this operates on the FINAL merged headers/rows so the returned name
+ * is guaranteed to exist in the grid's own column keys.
+ */
+function findTagColumnInMergedGrid(
+  headers: string[],
+  rows: Record<string, string>[],
+): string | undefined {
+  if (headers.length === 0 || rows.length === 0) return undefined;
+
+  // 1. Exact match on header keywords (TAG, MARK, NO., etc.)
+  for (const h of headers) {
+    if (TAG_HEADERS.some((kw) => h.toUpperCase().trim() === kw)) return h;
+  }
+
+  // 2. Fallback: column with >= 50% of values matching the tag regex
+  let bestRatio = 0;
+  let bestCol: string | undefined;
+  for (const h of headers) {
+    let tags = 0;
+    let nonEmpty = 0;
+    for (const row of rows) {
+      const v = (row[h] || "").trim();
+      if (v) {
+        nonEmpty++;
+        if (TAG_RE.test(v)) tags++;
+      }
+    }
+    const ratio = nonEmpty > 0 ? tags / nonEmpty : 0;
+    if (ratio > bestRatio && ratio >= 0.5) {
+      bestRatio = ratio;
+      bestCol = h;
+    }
+  }
+  return bestCol;
+}
+
 export interface MergeOptions {
   editDistanceThreshold?: number;
 }
@@ -184,8 +225,10 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
     0.98
   );
 
-  // Pick tag column: prefer base, else first method that found one
-  const tagColumn = base.tagColumn || sorted.find((r) => r.tagColumn)?.tagColumn;
+  // Re-detect tag column on the final MERGED grid. Previously this picked
+  // tagColumn from whichever method found one, but that name often didn't
+  // exist in the base method's column keys → Map Tags showed "0 unique tags".
+  const tagColumn = findTagColumnInMergedGrid(headers, rows);
 
   // Pick boundaries: prefer base, else first method that has them
   const colBoundaries = base.colBoundaries || sorted.find((r) => r.colBoundaries)?.colBoundaries;

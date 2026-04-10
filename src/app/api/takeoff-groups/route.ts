@@ -107,7 +107,12 @@ export async function POST(req: Request) {
       sortOrder: group.sortOrder,
     });
   } catch (err) {
-    logger.error("[takeoff-groups] Create failed:", err);
-    return NextResponse.json({ error: "Failed to create group" }, { status: 500 });
+    const cause = (err as { cause?: { message?: string; detail?: string; code?: string } })?.cause;
+    const pgMessage = cause?.message || cause?.detail || (err instanceof Error ? err.message : "Database error");
+    const pgCode = cause?.code;
+    logger.error("[takeoff-groups] Create failed:", { err, cause, pgCode, pgMessage });
+    return NextResponse.json({
+      error: `Failed to create group: ${pgMessage}${pgCode ? ` (${pgCode})` : ""}`,
+    }, { status: 500 });
   }
 }

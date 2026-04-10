@@ -65,10 +65,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     camelot-py[base] \
     img2table \
     && pip3 install --break-system-packages --no-cache-dir \
-    torch --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.5.1+cpu torchvision==0.20.1+cpu --index-url https://download.pytorch.org/whl/cpu \
     && pip3 install --break-system-packages --no-cache-dir \
-    "transformers>=4.40.0" \
-    "timm>=0.9.0"
+    "transformers>=4.40.0,<5.0.0" \
+    "timm>=0.9.0,<2.0.0"
 
 # Copy standalone output
 COPY --from=builder /app/public ./public
@@ -84,6 +84,11 @@ RUN chmod +x ./entrypoint.sh
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/src/data ./src/data
 COPY --from=builder /app/dist/process-worker.js ./scripts/process-worker.js
+
+# Copy TATR (Table Transformer) model files for table-structure detection.
+# ~115 MB. Required by scripts/tatr_structure.py via from_pretrained().
+# .dockerignore selectively allows models/tatr/ through while excluding YOLO weights.
+COPY --from=builder /app/models/tatr ./models/tatr
 
 # Patch img2table for Polars API compatibility (img2table 0.0.12 uses deprecated Polars API)
 RUN python3 ./scripts/patch_img2table.py
