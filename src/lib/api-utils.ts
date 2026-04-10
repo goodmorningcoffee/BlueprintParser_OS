@@ -15,7 +15,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import type { BboxMinMax, Project } from "@/types";
+import type { BboxMinMax } from "@/types";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -108,17 +108,29 @@ export function requireCompanyAccess(
 
 export type ProjectAccessScope = "member" | "admin" | "root" | "demo";
 
+/** Lightweight project row — excludes heavy JSONB fields (projectIntelligence, projectSummary) */
+export type ProjectAccessRow = {
+  id: number;
+  publicId: string;
+  companyId: number;
+  isDemo: boolean;
+  dataUrl: string | null;
+  name: string;
+  numPages: number | null;
+  status: string;
+};
+
 type ProjectLookup = { publicId: string } | { dbId: number };
 
 interface ProjectAccessSuccess {
-  project: Project;
+  project: ProjectAccessRow;
   session: AuthSession;
   scope: ProjectAccessScope;
   error: null;
 }
 
 interface ProjectAccessDemoSuccess {
-  project: Project;
+  project: ProjectAccessRow;
   session: AuthSession | null;
   scope: "demo";
   error: null;
@@ -151,7 +163,19 @@ export async function resolveProjectAccess(
     ? eq(projects.publicId, lookup.publicId)
     : eq(projects.id, lookup.dbId);
 
-  const [project] = await db.select().from(projects).where(where).limit(1);
+  // Select only lightweight fields — excludes projectIntelligence (50-200KB JSONB),
+  // projectSummary, and other heavy columns. Routes that need those fields (e.g. chat)
+  // should fetch them separately using project.id after access is verified.
+  const [project] = await db.select({
+    id: projects.id,
+    publicId: projects.publicId,
+    companyId: projects.companyId,
+    isDemo: projects.isDemo,
+    dataUrl: projects.dataUrl,
+    name: projects.name,
+    numPages: projects.numPages,
+    status: projects.status,
+  }).from(projects).where(where).limit(1);
 
   if (!project) {
     return { project: null, session: null, scope: null, error: apiError("Not found", 404) };

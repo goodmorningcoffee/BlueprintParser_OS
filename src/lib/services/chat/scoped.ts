@@ -9,7 +9,7 @@
  */
 import { apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { pages, chatMessages, annotations, takeoffItems, models, companies } from "@/lib/db/schema";
+import { projects, pages, chatMessages, annotations, takeoffItems, models, companies } from "@/lib/db/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { resolveLLMConfig } from "@/lib/llm/resolve";
 import { streamChatResponse } from "@/lib/llm/stream";
@@ -30,7 +30,8 @@ import {
   type LlmSectionConfig,
 } from "@/lib/context-builder";
 import type { ChatMessage } from "@/lib/llm/types";
-import type { TextractPageData, Project } from "@/types";
+import type { TextractPageData } from "@/types";
+import type { ProjectAccessRow } from "@/lib/api-utils";
 import { BP_TOOLS, executeToolCall, type ToolContext } from "@/lib/llm/tools";
 import { createLLMClient } from "@/lib/llm";
 
@@ -49,7 +50,7 @@ async function getCachedDomainKnowledge(): Promise<string> {
 }
 
 interface ScopedChatParams {
-  project: Project;
+  project: ProjectAccessRow;
   message: string;
   scope: string;
   pageNumber?: number;
@@ -178,7 +179,7 @@ export async function handleScopedChat(params: ScopedChatParams) {
 
 // ─── Page-scope context builder ──────────────────────────────────
 async function buildPageContext(
-  project: Project,
+  project: ProjectAccessRow,
   pageNumber: number,
   yoloAnnotations: any[],
   sections: ContextSection[],
@@ -290,7 +291,7 @@ async function buildPageContext(
 
 // ─── Project-scope context builder ───────────────────────────────
 async function buildProjectContext(
-  project: Project,
+  project: ProjectAccessRow,
   contextBudget: number,
   sections: ContextSection[],
   dataSummary: string[],
@@ -307,9 +308,16 @@ async function buildProjectContext(
     .where(eq(pages.projectId, project.id))
     .orderBy(pages.pageNumber);
 
+  // Fetch heavy project fields only when needed (not included in lightweight access query)
+  const [projectExtra] = await db
+    .select({ projectSummary: projects.projectSummary, projectIntelligence: projects.projectIntelligence })
+    .from(projects)
+    .where(eq(projects.id, project.id))
+    .limit(1);
+
   // Project Intelligence Report (priority 0.5)
   const projectSummarySection = buildProjectSummarySection(
-    (project as any).projectSummary || null
+    projectExtra?.projectSummary || null
   );
   if (projectSummarySection) {
     sections.push(projectSummarySection);
@@ -317,9 +325,10 @@ async function buildProjectContext(
   }
 
   // CSI Network Graph (priority 1)
-  const csiGraphText = buildCsiGraphSection((project as any).projectIntelligence?.csiGraph);
+  const pi = projectExtra?.projectIntelligence as Record<string, unknown> | null;
+  const csiGraphText = buildCsiGraphSection(pi?.csiGraph);
   if (csiGraphText) {
-    const graphData = (project as any).projectIntelligence?.csiGraph;
+    const graphData = pi?.csiGraph as any;
     sections.push({ header: "CSI NETWORK GRAPH — Project Division Relationships", content: csiGraphText, priority: 1 });
     dataSummary.push(`CSI network graph with ${graphData?.nodes?.length || 0} divisions and ${graphData?.clusters?.length || 0} cluster(s)`);
   }
@@ -372,7 +381,7 @@ async function buildProjectContext(
 // ─── Tool-use chat handler ───────────────────────────────────────
 async function handleToolUseChat(
   config: any,
-  project: Project,
+  project: ProjectAccessRow,
   message: string,
   scope: string,
   pageNumber: number | undefined,
