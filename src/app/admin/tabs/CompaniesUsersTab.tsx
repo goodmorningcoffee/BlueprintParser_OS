@@ -23,11 +23,31 @@ interface UserItem {
   isRootAdmin: boolean;
 }
 
-export default function CompaniesUsersTab() {
-  const [companies, setCompanies] = useState<CompanyItem[]>([]);
-  const [users, setUsers] = useState<UserItem[]>([]);
+// Demo fake data — shown instead of real user/company data in demo mode
+const DEMO_COMPANIES: CompanyItem[] = [
+  { id: 1, publicId: "acme-001", name: "Acme Construction", accessKey: "demo-key-acme", dataKey: "acme-data", userCount: 3, projectCount: 4 },
+  { id: 2, publicId: "west-002", name: "Westside Builders", accessKey: "demo-key-west", dataKey: "westside-data", userCount: 2, projectCount: 2 },
+  { id: 3, publicId: "summ-003", name: "Summit Engineering", accessKey: "demo-key-summ", dataKey: "summit-data", userCount: 2, projectCount: 3 },
+  { id: 4, publicId: "pacf-004", name: "Pacific Design Group", accessKey: "demo-key-pacf", dataKey: "pacific-data", userCount: 2, projectCount: 1 },
+];
+const DEMO_USERS: UserItem[] = [
+  { id: "1", username: "root", email: "root@root.com", role: "admin", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: true },
+  { id: "2", username: "admin", email: "admin@blueprintparser.com", role: "admin", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: false },
+  { id: "3", username: "jsmith", email: "jsmith@acme-construction.com", role: "member", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: false },
+  { id: "4", username: "koreya", email: "koreya@acme-construction.com", role: "member", companyId: 1, companyName: "Acme Construction", canRunModels: true, isRootAdmin: false },
+  { id: "5", username: "mrivera", email: "m.rivera@westside-builders.com", role: "admin", companyId: 2, companyName: "Westside Builders", canRunModels: true, isRootAdmin: false },
+  { id: "6", username: "tchen", email: "tchen@westside-builders.com", role: "member", companyId: 2, companyName: "Westside Builders", canRunModels: false, isRootAdmin: false },
+  { id: "7", username: "estimator1", email: "estimator1@summit-eng.com", role: "member", companyId: 3, companyName: "Summit Engineering", canRunModels: true, isRootAdmin: false },
+  { id: "8", username: "dpatel", email: "d.patel@summit-eng.com", role: "member", companyId: 3, companyName: "Summit Engineering", canRunModels: false, isRootAdmin: false },
+  { id: "9", username: "lnguyen", email: "l.nguyen@pacific-design.com", role: "admin", companyId: 4, companyName: "Pacific Design Group", canRunModels: true, isRootAdmin: false },
+  { id: "10", username: "bwilson", email: "b.wilson@pacific-design.com", role: "member", companyId: 4, companyName: "Pacific Design Group", canRunModels: false, isRootAdmin: false },
+];
+
+export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boolean } = {}) {
+  const [companies, setCompanies] = useState<CompanyItem[]>(demoMode ? DEMO_COMPANIES : []);
+  const [users, setUsers] = useState<UserItem[]>(demoMode ? DEMO_USERS : []);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!demoMode);
   const [newCompanyName, setNewCompanyName] = useState("");
   const [creating, setCreating] = useState(false);
   const [addingUserTo, setAddingUserTo] = useState<number | null>(null);
@@ -44,6 +64,7 @@ export default function CompaniesUsersTab() {
   const [resetMessage, setResetMessage] = useState("");
 
   const loadData = useCallback(async () => {
+    if (demoMode) { setLoading(false); return; }
     try {
       const [compRes, userRes] = await Promise.all([
         fetch("/api/admin/companies"),
@@ -53,12 +74,12 @@ export default function CompaniesUsersTab() {
       if (userRes.ok) setUsers(await userRes.json());
     } catch { /* ignore */ }
     setLoading(false);
-  }, []);
+  }, [demoMode]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
   const createCompany = async () => {
-    if (!newCompanyName.trim()) return;
+    if (demoMode || !newCompanyName.trim()) return;
     setCreating(true);
     try {
       const res = await fetch("/api/admin/companies", {
@@ -80,6 +101,7 @@ export default function CompaniesUsersTab() {
   };
 
   const addUser = async (companyId: number) => {
+    if (demoMode) return;
     setFormError("");
     if (!newUser.username || !newUser.email || !newUser.password) {
       setFormError("Username, email, and password are required");
@@ -112,7 +134,7 @@ export default function CompaniesUsersTab() {
   };
 
   const deleteUser = async (userId: string) => {
-    if (!confirm("Delete this user?")) return;
+    if (demoMode || !confirm("Delete this user?")) return;
     const res = await fetch("/api/admin/users", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
@@ -122,6 +144,7 @@ export default function CompaniesUsersTab() {
   };
 
   const resetPassword = async (userId: string) => {
+    if (demoMode) return;
     if (!resetNewPw || resetNewPw.length < 8) { setResetMessage("Password must be 8+ chars"); return; }
     if (!resetAdminPw) { setResetMessage("Enter your admin password to confirm"); return; }
     setResetBusy(true);
@@ -166,7 +189,7 @@ export default function CompaniesUsersTab() {
   };
 
   const deleteCompany = async (companyId: number) => {
-    if (!confirm("Delete this company? Must have 0 users and 0 projects.")) return;
+    if (demoMode || !confirm("Delete this company? Must have 0 users and 0 projects.")) return;
     const res = await fetch("/api/admin/companies", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },

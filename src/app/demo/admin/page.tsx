@@ -44,9 +44,16 @@ export default function DemoAdminPage() {
         setYoloModels(data.models || []);
         // Replace real user data with fake demo users for privacy
         const fakeUsers: UserItem[] = [
-          { id: "1", username: "admin", email: "admin@demo-company.com", role: "admin", canRunModels: true },
-          { id: "2", username: "jsmith", email: "jsmith@demo-company.com", role: "member", canRunModels: true },
-          { id: "3", username: "estimator1", email: "estimator1@demo-company.com", role: "member", canRunModels: false },
+          { id: "1", username: "root", email: "root@root.com", role: "admin", canRunModels: true },
+          { id: "2", username: "admin", email: "admin@blueprintparser.com", role: "admin", canRunModels: true },
+          { id: "3", username: "jsmith", email: "jsmith@acme-construction.com", role: "member", canRunModels: true },
+          { id: "4", username: "koreya", email: "koreya@acme-construction.com", role: "member", canRunModels: true },
+          { id: "5", username: "mrivera", email: "m.rivera@westside-builders.com", role: "admin", canRunModels: true },
+          { id: "6", username: "tchen", email: "tchen@westside-builders.com", role: "member", canRunModels: false },
+          { id: "7", username: "estimator1", email: "estimator1@summit-eng.com", role: "member", canRunModels: true },
+          { id: "8", username: "dpatel", email: "d.patel@summit-eng.com", role: "member", canRunModels: false },
+          { id: "9", username: "lnguyen", email: "l.nguyen@pacific-design.com", role: "admin", canRunModels: true },
+          { id: "10", username: "bwilson", email: "b.wilson@pacific-design.com", role: "member", canRunModels: false },
         ];
         setUsers(fakeUsers);
         setYoloStatus(data.yoloStatus || {});
@@ -213,12 +220,12 @@ export default function DemoAdminPage() {
 
           {activeTab === "ai-rbac" && <AiRbacTab />}
 
-          {activeTab === "companies" && <CompaniesUsersTab />}
+          {activeTab === "companies" && <CompaniesUsersTab demoMode />}
 
           {activeTab === "users" && (
             <UsersTab
               users={users}
-              currentEmail="demo@blueprintparser.com"
+              currentEmail="root@root.com"
               newUser={{ username: "", email: "", password: "", role: "member" }}
               setNewUser={noop}
               onCreateUser={noopAsync}
