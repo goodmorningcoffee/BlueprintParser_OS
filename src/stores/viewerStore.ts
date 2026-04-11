@@ -128,8 +128,8 @@ interface ViewerState {
   setTextAnnotationFilter: (filter: { type: string; text: string } | null) => void;
   activeTakeoffFilter: number | null; // takeoff item ID to filter sidebar by
   setTakeoffFilter: (id: number | null) => void;
-  textPanelTab: "ocr" | "annotations" | "graph" | "markups";
-  setTextPanelTab: (tab: "ocr" | "annotations" | "graph" | "markups") => void;
+  textPanelTab: "ocr" | "annotations" | "graph" | "markups" | "textract";
+  setTextPanelTab: (tab: "ocr" | "annotations" | "graph" | "markups" | "textract") => void;
   activeMarkupId: number | null;
   setActiveMarkupId: (id: number | null) => void;
 

@@ -34,13 +34,14 @@ export default function TextPanel() {
     annotations: `Annotations (${annotations.length})`,
     markups: `Markups (${userMarkups.length})`,
     graph: "Graph",
+    textract: "Textract",
   };
 
   return (
     <div className="w-80 border border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0 shadow-lg">
       {/* Tab bar */}
       <div className="flex border-b border-[var(--border)]">
-        {(["ocr", "annotations", "markups", "graph"] as const).map((t) => (
+        {(["ocr", "annotations", "markups", "graph", "textract"] as const).map((t) => (
           <HelpTooltip key={t} id={`text-tab-${t}`}>
             <button
               onClick={() => setTab(t)}
@@ -62,6 +63,7 @@ export default function TextPanel() {
         {tab === "annotations" && <AnnotationsTab annotations={annotations} pageNumber={pageNumber} />}
         {tab === "markups" && <MarkupsTab markups={userMarkups} />}
         {tab === "graph" && <GraphTab pageNumber={pageNumber} />}
+        {tab === "textract" && <TextractTab pageData={pageData} pageNumber={pageNumber} />}
       </div>
     </div>
   );
@@ -500,6 +502,121 @@ function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
           })}
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─── Textract Tab ────────────────────────────────────────────────
+
+function TextractTab({ pageData, pageNumber }: { pageData: any; pageNumber: number }) {
+  const { projectId: projectDbId } = useProject();
+  const setTextractData = useViewerStore((s) => s.setTextractData);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ durationMs: number; stats: { wordCount: number; lineCount: number; tableCount: number } } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const currentStats = {
+    words: pageData?.words?.length ?? 0,
+    lines: pageData?.lines?.length ?? 0,
+    tables: pageData?.tables?.length ?? 0,
+  };
+
+  const handleRerun = async () => {
+    if (loading || !projectDbId) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch("/api/pages/textract-rerun", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: projectDbId, pageNumber }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setResult({ durationMs: data.durationMs, stats: data.stats });
+      if (data.textractData) setTextractData(pageNumber, data.textractData);
+    } catch (e: any) {
+      setError(e?.message || "Re-run failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-3 space-y-3 text-xs">
+      <div>
+        <button
+          onClick={handleRerun}
+          disabled={loading || !projectDbId}
+          className={`w-full px-3 py-2 rounded border text-sm font-medium transition-colors ${
+            loading
+              ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
+              : !projectDbId
+              ? "border-[var(--border)] text-[var(--muted)]/50 cursor-not-allowed"
+              : "border-[var(--accent)]/60 text-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20"
+          }`}
+        >
+          {loading ? "Re-running Textract…" : "Re-run Textract"}
+        </button>
+        <p className="mt-1 text-[10px] text-[var(--muted)] leading-snug">
+          Clears the cached result for page {pageNumber} and calls AnalyzeDocument fresh
+          with LAYOUT + TABLES. Overwrites <code className="font-mono">pages.textractData</code>.
+          Downstream CSI/text-annotation derivations stay cached — re-run reprocess separately to refresh those.
+        </p>
+      </div>
+
+      <div className="border border-[var(--border)] rounded p-2 space-y-1">
+        <div className="text-[var(--muted)] font-medium mb-1 uppercase tracking-wide text-[10px]">
+          Current cached stats — page {pageNumber}
+        </div>
+        <StatRow label="Words" value={currentStats.words} />
+        <StatRow label="Lines" value={currentStats.lines} />
+        <StatRow
+          label="Tables"
+          value={currentStats.tables}
+          tone={currentStats.tables > 0 ? "good" : "bad"}
+          hint={currentStats.tables === 0 ? "Textract found no TABLE blocks" : undefined}
+        />
+      </div>
+
+      {error && (
+        <div className="border border-red-500/40 bg-red-500/10 rounded p-2 text-red-300 space-y-1">
+          <div className="font-medium">Re-run failed</div>
+          <div className="text-[11px] break-words">{error}</div>
+        </div>
+      )}
+
+      {result && (
+        <div className="border border-green-500/40 bg-green-500/10 rounded p-2 space-y-1">
+          <div className="text-green-300 font-medium uppercase tracking-wide text-[10px]">Re-run complete</div>
+          <StatRow label="Duration" value={`${(result.durationMs / 1000).toFixed(1)}s`} />
+          <StatRow label="New word count" value={result.stats.wordCount} />
+          <StatRow label="New line count" value={result.stats.lineCount} />
+          <StatRow
+            label="New table count"
+            value={result.stats.tableCount}
+            tone={result.stats.tableCount > 0 ? "good" : "bad"}
+            hint={result.stats.tableCount === 0 ? "Still zero — confirms AWS-side miss on this page" : "Textract found tables this time"}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatRow({ label, value, tone, hint }: { label: string; value: string | number; tone?: "good" | "bad"; hint?: string }) {
+  const toneClass = tone === "good" ? "text-green-400" : tone === "bad" ? "text-red-400" : "text-[var(--fg)]";
+  return (
+    <div>
+      <div className="flex justify-between">
+        <span className="text-[var(--muted)]">{label}</span>
+        <span className={`font-mono ${toneClass}`}>{value}</span>
+      </div>
+      {hint && <div className="text-[10px] text-[var(--muted)]/70 mt-0.5">{hint}</div>}
     </div>
   );
 }
