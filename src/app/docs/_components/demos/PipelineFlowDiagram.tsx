@@ -23,6 +23,7 @@ export function PipelineFlowDiagram() {
       <svg
         viewBox="0 0 960 600"
         className="w-full h-auto text-[var(--fg)]"
+        fill="currentColor"
         role="img"
         aria-label="Per-page pre-processing pipeline diagram"
       >

@@ -7,6 +7,7 @@ export function AgenticLoopDiagram() {
       <svg
         viewBox="0 0 900 360"
         className="w-full h-auto text-[var(--fg)]"
+        fill="currentColor"
         role="img"
         aria-label="LLM agentic tool-use loop diagram"
       >
