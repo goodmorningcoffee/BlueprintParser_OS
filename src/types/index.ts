@@ -398,6 +398,47 @@ export interface ClassifiedTable extends TextRegion {
   isPageSpecific: boolean;
 }
 
+// ─── Composite Region Classifier types (Layer 1 of QTO rebuild) ──
+//
+// Distinct from ClassifiedTable, which is OCR-keyword-based and produces
+// semantic categories (door-schedule, finish-schedule, ...). ClassifiedRegion
+// is YOLO + OCR signal fusion and produces three spatial kinds used for
+// takeoff exclusion/inclusion zones:
+//   - tables / title_blocks      → EXCLUSION zones (drop matches inside these)
+//   - drawings                   → INCLUSION zone  (keep matches inside these)
+//
+// Produced by `classifyPageRegions` in `src/lib/composite-classifier.ts`,
+// stored in `pageIntelligence.classifiedRegions`, consumed by
+// `applyExclusionFilter` in `src/lib/yolo-tag-engine.ts`.
+
+export type ClassifiedRegionKind = "table" | "title_block" | "drawings";
+
+export type ClassifiedRegionSource =
+  | "yolo:tables"          // yolo_medium tables class
+  | "yolo:title_block"     // yolo_medium title_block class
+  | "yolo:drawings"        // yolo_medium OR yolo_primitive drawings class
+  | "yolo:grid"            // yolo_primitive grid — confirmation only
+  | "yolo:vertical_area"   // yolo_primitive — confirmation only
+  | "yolo:horizontal_area" // yolo_primitive — confirmation only
+  | "ocr:header_keyword"   // SCHEDULE/LEGEND/NOTES header match
+  | "pageIntel:classifiedTables" // legacy OCR-based classifier agreement
+  | "parsedRegions";       // user-saved schedule region
+
+export interface ClassifiedRegion {
+  kind: ClassifiedRegionKind;
+  bbox: BboxMinMax;           // normalized [0,1] page coords
+  confidence: number;          // 0-1, max across merged sources
+  sources: ClassifiedRegionSource[];
+  headerText?: string;         // if sourced from OCR header keyword
+  pageNumber: number;
+}
+
+export interface ClassifiedPageRegions {
+  tables: ClassifiedRegion[];
+  titleBlocks: ClassifiedRegion[];
+  drawings: ClassifiedRegion[];
+}
+
 export interface PageIntelligence {
   classification?: PageClassification;
   crossRefs?: CrossRef[];
@@ -405,6 +446,10 @@ export interface PageIntelligence {
   textRegions?: TextRegion[];
   heuristicInferences?: HeuristicInference[];
   classifiedTables?: ClassifiedTable[];
+  /** QTO Layer 1: YOLO+OCR region classifier output, populated by the
+   *  post-YOLO reclassification hook in /api/yolo/load. Consumed by the
+   *  exclusion filter in map-tags-batch. Absent on pages before YOLO runs. */
+  classifiedRegions?: ClassifiedPageRegions;
   parsedRegions?: ParsedRegion[];
   csiSpatialMap?: { pageNumber: number; zones: Array<{ zone: string; divisions: Array<{ division: string; name: string; count: number; codes: string[] }>; totalInstances: number; dominantDivision?: string }>; summary: string } | null;
 }

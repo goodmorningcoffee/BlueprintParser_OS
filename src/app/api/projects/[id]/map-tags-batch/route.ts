@@ -4,7 +4,14 @@ import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { mapYoloToOcrText, scanClassForTexts } from "@/lib/yolo-tag-engine";
-import type { ClientAnnotation, TextractPageData, YoloTagInstance } from "@/types";
+import { applyExclusionFilter } from "@/lib/composite-classifier";
+import type {
+  ClientAnnotation,
+  TextractPageData,
+  YoloTagInstance,
+  ClassifiedPageRegions,
+  PageIntelligence,
+} from "@/types";
 
 /**
  * POST /api/projects/[id]/map-tags-batch
@@ -106,12 +113,21 @@ export async function POST(
     data: a.data ?? null,
   }));
 
-  // Load textract data (filtered to selectedPages when available to avoid loading ~80KB/page for unused pages)
+  // Load textract data + pageIntelligence (filtered to selectedPages when
+  // available to avoid loading ~80KB/page for unused pages).
+  //
+  // pageIntelligence.classifiedRegions is used by the exclusion filter to
+  // drop tag matches that sit inside tables/title_blocks or outside the
+  // drawings region. Populated by the post-YOLO hook in /api/yolo/load.
   const pageFilter = !isScan && selectedPages && selectedPages.length > 0
     ? new Set(selectedPages)
     : null;
   const pageRows = await db
-    .select({ pageNumber: pages.pageNumber, textractData: pages.textractData })
+    .select({
+      pageNumber: pages.pageNumber,
+      textractData: pages.textractData,
+      pageIntelligence: pages.pageIntelligence,
+    })
     .from(pages)
     .where(
       pageFilter
@@ -120,9 +136,14 @@ export async function POST(
     );
 
   const textractMap: Record<number, TextractPageData> = {};
+  const classifiedRegionsByPage: Record<number, ClassifiedPageRegions | undefined> = {};
   for (const row of pageRows) {
     if (row.textractData) {
       textractMap[row.pageNumber] = row.textractData as TextractPageData;
+    }
+    const pi = row.pageIntelligence as PageIntelligence | null;
+    if (pi?.classifiedRegions) {
+      classifiedRegionsByPage[row.pageNumber] = pi.classifiedRegions;
     }
   }
 
@@ -134,6 +155,10 @@ export async function POST(
 
   // ─── map mode (default): map specific tag texts to instances ───
   const results: Record<string, YoloTagInstance[]> = {};
+  // Aggregate drop counts for debugging — returned in the response body so
+  // callers can see WHY results are smaller than raw matches. Not used by
+  // the current UI but useful for the admin Table Parsing debug panel.
+  const dropCounts = { inside_table: 0, inside_title_block: 0, outside_drawings: 0 };
 
   for (const tag of tags!) {
     const trimmed = tag.trim();
@@ -152,8 +177,13 @@ export async function POST(
       instances = instances.filter((inst) => pageFilter.has(inst.pageNumber));
     }
 
-    results[trimmed] = instances;
+    // QTO SHIP 1: apply exclusion + inclusion rules using classifiedRegions.
+    // Pages without classifiedRegions (yolo never loaded, or classifier found
+    // nothing) pass through unchanged — Map Tags degrades gracefully.
+    const filtered = applyExclusionFilter(instances, classifiedRegionsByPage);
+    for (const d of filtered.dropped) dropCounts[d.reason]++;
+    results[trimmed] = filtered.kept;
   }
 
-  return NextResponse.json({ results });
+  return NextResponse.json({ results, dropCounts });
 }
