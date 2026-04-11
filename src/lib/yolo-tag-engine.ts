@@ -9,6 +9,13 @@
  *
  * Also supports free-floating tags (no YOLO shape) by searching OCR words
  * directly across pages.
+ *
+ * QTO-C (2026-04-11): when a yoloClass is specified, BOTH Type 3 (text
+ * inside the shape) AND Type 5 (text near the shape) matches run. Orphan
+ * floating text gets bound to the nearest target-class object on the same
+ * page — even if technically bound to the "wrong" door, every countable
+ * tagged door still gets counted. Orphans with no candidate object on the
+ * page are dropped (Phase 2 will surface them for QA review).
  */
 
 import type {
@@ -17,7 +24,12 @@ import type {
   BboxMinMax,
   YoloTagInstance,
 } from "@/types";
-import { bboxCenterLTWH, bboxContainsPoint, ltwh2minmax } from "@/lib/ocr-utils";
+import {
+  bboxCenterLTWH,
+  bboxCenterMinMax,
+  bboxContainsPoint,
+  ltwh2minmax,
+} from "@/lib/ocr-utils";
 
 export interface MapYoloToOcrOptions {
   tagText: string;
@@ -31,7 +43,16 @@ export interface MapYoloToOcrOptions {
 
 /**
  * Find all YOLO annotation instances where the OCR text inside matches `tagText`.
- * For free-floating mode (no yoloClass), searches OCR words directly.
+ *
+ * Behavior:
+ *   - If `yoloClass` is empty: Type 2 only (free-floating text anywhere)
+ *   - If `yoloClass` is set: Type 3 (text inside a shape of that class) UNION
+ *     Type 5 (floating text bound to its nearest shape of that class on the
+ *     same page). Dedupes against already-counted annotations so the same
+ *     object is never counted twice.
+ *
+ * Pre-QTO-C behavior was to early-return on Type 3 only, silently missing
+ * every tag whose text fell outside its parent object's bbox.
  */
 export function mapYoloToOcrText(opts: MapYoloToOcrOptions): YoloTagInstance[] {
   const { tagText, yoloClass, yoloModel, scope, pageNumber, annotations, textractData } = opts;
@@ -44,7 +65,138 @@ export function mapYoloToOcrText(opts: MapYoloToOcrOptions): YoloTagInstance[] {
     return findFreeFloatingMatches(normalizedTag, scope, pageNumber, textractData);
   }
 
-  return findYoloMatches(normalizedTag, yoloClass!, yoloModel, scope, pageNumber, annotations, textractData);
+  // yoloClass is set — run BOTH Type 3 and Type 2 flows, then merge.
+  const yoloHits = findYoloMatches(
+    normalizedTag, yoloClass!, yoloModel, scope, pageNumber, annotations, textractData,
+  );
+  const floatingHits = findFreeFloatingMatches(
+    normalizedTag, scope, pageNumber, textractData,
+  );
+
+  return mergeYoloAndFloatingHits(
+    yoloHits, floatingHits, yoloClass!, yoloModel, annotations,
+  );
+}
+
+/**
+ * QTO-C merge: take Type 3 canonical hits (text inside the shape) and fold
+ * in Type 5 hits (text outside the shape but near one of the target-class
+ * objects on the same page). The rule from the user:
+ *
+ *   "Default-map a tag/floating text to the closest target object regardless;
+ *    if it's literally orphan (no target on the page) drop it — Phase 2 will
+ *    surface orphans for QA review."
+ *
+ * Dedupe rules (both required to avoid double-counting):
+ *   1. If a floating text's center is inside any Type 3 hit bbox → skip
+ *      (it's already counted via Type 3)
+ *   2. If the nearest target object was already counted (Type 3 or an
+ *      earlier Type 5 binding on this call) → skip
+ */
+function mergeYoloAndFloatingHits(
+  yoloHits: YoloTagInstance[],
+  floatingHits: YoloTagInstance[],
+  yoloClass: string,
+  yoloModel: string | undefined,
+  annotations: ClientAnnotation[],
+): YoloTagInstance[] {
+  // Start with all Type 3 hits — these are canonical.
+  const merged: YoloTagInstance[] = [...yoloHits];
+
+  // Track which annotation IDs have been counted to prevent double-counts.
+  const usedAnnotationIds = new Set<number>();
+  for (const h of yoloHits) {
+    if (h.annotationId >= 0) usedAnnotationIds.add(h.annotationId);
+  }
+
+  // Build per-page index of target-class annotations for nearest-object lookup.
+  const targetsByPage = new Map<number, ClientAnnotation[]>();
+  for (const a of annotations) {
+    if (a.source !== "yolo") continue;
+    if (a.name !== yoloClass) continue;
+    if (yoloModel && (a.data as { modelName?: string } | null)?.modelName !== yoloModel) continue;
+    const list = targetsByPage.get(a.pageNumber);
+    if (list) list.push(a);
+    else targetsByPage.set(a.pageNumber, [a]);
+  }
+
+  // Pre-compute Type 3 hit bboxes grouped by page for fast containment checks.
+  const yoloHitBboxesByPage = new Map<number, BboxMinMax[]>();
+  for (const h of yoloHits) {
+    const list = yoloHitBboxesByPage.get(h.pageNumber);
+    const bbox: BboxMinMax = [h.bbox[0], h.bbox[1], h.bbox[2], h.bbox[3]];
+    if (list) list.push(bbox);
+    else yoloHitBboxesByPage.set(h.pageNumber, [bbox]);
+  }
+
+  for (const floating of floatingHits) {
+    const floatingCenter = bboxCenterMinMax([
+      floating.bbox[0], floating.bbox[1], floating.bbox[2], floating.bbox[3],
+    ]);
+
+    // Dedupe 1: text center already inside a Type 3 hit → skip
+    const samePageYoloBboxes = yoloHitBboxesByPage.get(floating.pageNumber);
+    if (samePageYoloBboxes && samePageYoloBboxes.some((b) => bboxContainsPoint(b, floatingCenter))) {
+      continue;
+    }
+
+    // Find nearest target-class object on the same page
+    const candidates = targetsByPage.get(floating.pageNumber);
+    if (!candidates || candidates.length === 0) {
+      // Orphan — no target object on this page. Drop for SHIP 1.
+      continue;
+    }
+    const nearest = findNearestAnnotation(floatingCenter, candidates);
+
+    // Dedupe 2: this object was already counted → skip
+    if (usedAnnotationIds.has(nearest.id)) continue;
+    usedAnnotationIds.add(nearest.id);
+
+    // Emit a Type 5 binding — count the OBJECT bbox, not the text bbox.
+    // Confidence reduced vs Type 3 to signal the indirection (text not
+    // actually inside the shape); halved further if the text match was fuzzy.
+    merged.push({
+      pageNumber: floating.pageNumber,
+      annotationId: nearest.id,
+      bbox: [nearest.bbox[0], nearest.bbox[1], nearest.bbox[2], nearest.bbox[3]],
+      confidence: floating.confidence < 1.0 ? 0.7 : 0.8,
+    });
+  }
+
+  return merged;
+}
+
+/**
+ * Return the annotation whose bbox center is closest (Euclidean, squared) to
+ * the given point. Assumes `candidates` is non-empty — callers must check.
+ * No proximity cap per user feedback: "map to the closest door regardless,
+ * the worst case is technically wrong door but still counted as a door."
+ */
+function findNearestAnnotation(
+  point: { x: number; y: number },
+  candidates: ClientAnnotation[],
+): ClientAnnotation {
+  let best = candidates[0];
+  let bestDistSq = distanceSquared(point, annotationCenter(best));
+  for (let i = 1; i < candidates.length; i++) {
+    const c = candidates[i];
+    const d = distanceSquared(point, annotationCenter(c));
+    if (d < bestDistSq) {
+      bestDistSq = d;
+      best = c;
+    }
+  }
+  return best;
+}
+
+function annotationCenter(a: ClientAnnotation): { x: number; y: number } {
+  return { x: (a.bbox[0] + a.bbox[2]) / 2, y: (a.bbox[1] + a.bbox[3]) / 2 };
+}
+
+function distanceSquared(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
 }
 
 /** Find matches inside YOLO annotation bboxes. */
