@@ -12,7 +12,7 @@ const STYLES: Record<CalloutVariant, { border: string; bg: string; fg: string; l
   note: {
     border: "border-[var(--border)]",
     bg: "bg-[var(--surface)]/60",
-    fg: "text-[var(--fg)]/85",
+    fg: "text-[var(--fg)]/95",
     label: "text-[var(--muted)]",
   },
   warn: {
@@ -55,7 +55,7 @@ export function Callout({ variant = "note", title, children }: CalloutProps) {
           <span>{title}</span>
         </div>
       )}
-      <div className={`text-sm ${s.fg} leading-relaxed`}>{children}</div>
+      <div className={`text-[15px] ${s.fg} leading-relaxed`}>{children}</div>
     </div>
   );
 }

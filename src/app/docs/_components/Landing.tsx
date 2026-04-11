@@ -91,13 +91,13 @@ export function Landing() {
     <div className="mb-16">
       {/* Hero */}
       <div className="mb-10">
-        <div className="text-[10px] tracking-[0.2em] uppercase text-[var(--muted)] mb-2">
+        <div className="text-[11px] tracking-[0.2em] uppercase text-[var(--muted)] mb-2">
           Documentation
         </div>
-        <h1 className="text-3xl md:text-4xl font-bold text-[var(--fg)] leading-tight mb-3">
+        <h1 className="text-4xl md:text-5xl font-bold text-[var(--fg)] leading-tight mb-4">
           BlueprintParser &mdash; Construction Blueprint Intelligence
         </h1>
-        <p className="text-[15px] text-[var(--fg)]/80 leading-relaxed max-w-3xl">
+        <p className="text-[17px] text-[var(--fg)]/95 leading-relaxed max-w-3xl">
           An open-source pipeline that turns construction PDFs into structured,
           LLM-queryable data &mdash; with a human-in-the-loop viewer, automated
           takeoff, and on-demand YOLO object detection on top.
@@ -144,10 +144,10 @@ export function Landing() {
                 {card.icon}
               </div>
               <div className="min-w-0">
-                <div className="text-[var(--fg)] font-semibold text-[14px] mb-1">
+                <div className="text-[var(--fg)] font-semibold text-[15px] mb-1">
                   {card.title}
                 </div>
-                <div className="text-[12px] text-[var(--fg)]/75 leading-snug">
+                <div className="text-[13px] text-[var(--fg)]/85 leading-snug">
                   {card.desc}
                 </div>
               </div>
