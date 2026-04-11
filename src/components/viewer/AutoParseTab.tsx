@@ -122,6 +122,7 @@ export default function AutoParseTab({
         // Note: multi-region parses only show the LAST region's method drill-down
         // (UI space constraint — by design). Same constraint as colBoundaries/rowBoundaries below.
         let lastMethodResults: any[] | null = null;
+        let lastMergerNotes: { baseMethod?: string } | null = null;
         const collectedInfraErrors: { stage: string; error: string }[] = [];
         let tagColumn: string | undefined;
         let firstColBoundaries: number[] | undefined;
@@ -143,6 +144,7 @@ export default function AutoParseTab({
           const result = await resp.json();
           lastMethodInfo = result.methods || null;
           lastMethodResults = result.methodResults || null;
+          lastMergerNotes = result.mergerNotes || null;
           if (Array.isArray(result.infraErrors) && result.infraErrors.length > 0) {
             // Tag with region index when multi-region so users can pinpoint
             const tagged = proposedRegions.length > 1
@@ -183,6 +185,24 @@ export default function AutoParseTab({
           ...(proposedRegions.length === 1 && firstRowBoundaries ? { rowBoundaries: firstRowBoundaries } : {}),
         };
         setTableParsedGrid(grid);
+        // Populate tableParseMeta for the Compare/Edit source picker. Only for
+        // single-region parses — multi-region merges combine rows across tables
+        // and per-method raw grids no longer align meaningfully.
+        if (proposedRegions.length === 1 && lastMethodResults && lastMergerNotes?.baseMethod) {
+          useViewerStore.getState().setTableParseMeta({
+            methodResults: lastMethodResults,
+            baseMethod: lastMergerNotes.baseMethod,
+            mergedSnapshot: {
+              headers: mergedHeaders,
+              rows: mergedRows,
+              tagColumn,
+              ...(firstColBoundaries ? { colBoundaries: firstColBoundaries } : {}),
+              ...(firstRowBoundaries ? { rowBoundaries: firstRowBoundaries } : {}),
+            },
+          });
+        } else {
+          useViewerStore.getState().setTableParseMeta(null);
+        }
         // Set tableParseRegion to merged bbox so TableCompareModal can crop the image
         const allRegions = proposedRegions;
         setTableParseRegion([

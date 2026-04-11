@@ -12,6 +12,7 @@ import {
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from "d3-force";
+import { DIVISION_COLORS, GROUP_COLORS, getDivColor } from "@/lib/csi-colors";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types (mirrors csi-graph.ts but client-safe)
@@ -64,40 +65,9 @@ interface SimLink extends SimulationLinkDatum<SimNode> {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Constants
+// Constants — colors / groups / getDivColor come from src/lib/csi-colors.ts
+// so the network graph, CsiPanel chips, and docs share one palette.
 // ═══════════════════════════════════════════════════════════════════
-
-const DIVISION_COLORS: Record<string, { color: string; group: string }> = {
-  "22": { color: "#3b82f6", group: "MEP" },
-  "23": { color: "#60a5fa", group: "MEP" },
-  "26": { color: "#2563eb", group: "MEP" },
-  "27": { color: "#818cf8", group: "MEP" },
-  "28": { color: "#6366f1", group: "MEP" },
-  "21": { color: "#38bdf8", group: "MEP" },
-  "08": { color: "#22c55e", group: "Architectural" },
-  "09": { color: "#4ade80", group: "Architectural" },
-  "12": { color: "#86efac", group: "Architectural" },
-  "10": { color: "#a7f3d0", group: "Architectural" },
-  "03": { color: "#f97316", group: "Structural" },
-  "05": { color: "#fb923c", group: "Structural" },
-  "04": { color: "#fdba74", group: "Structural" },
-  "06": { color: "#fbbf24", group: "Structural" },
-  "31": { color: "#a16207", group: "Site" },
-  "32": { color: "#ca8a04", group: "Site" },
-  "33": { color: "#d97706", group: "Site" },
-};
-
-const GROUP_COLORS: Record<string, string> = {
-  MEP: "#3b82f6",
-  Architectural: "#22c55e",
-  Structural: "#f97316",
-  Site: "#a16207",
-  Other: "#6b7280",
-};
-
-function getDivColor(div: string): { color: string; group: string } {
-  return DIVISION_COLORS[div] || { color: "#6b7280", group: "Other" };
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // Component
@@ -530,7 +500,8 @@ export default function CsiGraphPage() {
               const maxDist = Math.max(
                 ...clusterNodes.map((n) => Math.hypot((n.x || 0) - cx, (n.y || 0) - cy))
               );
-              const groupColor = GROUP_COLORS[cluster.name] || GROUP_COLORS.Other;
+              const groupColor =
+                (GROUP_COLORS as Record<string, string>)[cluster.name] || GROUP_COLORS.Other;
               return (
                 <g key={cluster.name}>
                   <circle

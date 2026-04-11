@@ -122,6 +122,9 @@ export default function ManualParseTab({
 
     const grid = { headers, rows, tagColumn };
     setTableParsedGrid(grid);
+    // Manual parse doesn't use the merger — clear source-picker meta so the
+    // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
+    useViewerStore.getState().setTableParseMeta(null);
     detectCsiAndPersist(grid);
     setTableParseStep("review");
     useViewerStore.getState().setMode("move");

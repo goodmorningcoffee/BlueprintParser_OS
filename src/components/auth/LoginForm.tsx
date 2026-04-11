@@ -99,6 +99,12 @@ export default function LoginForm() {
       </form>
 
       <InviteRequest />
+
+      <div className="text-center pt-2">
+        <Link href="/docs" className="text-xs text-[var(--muted)] hover:text-[var(--accent)]">
+          Read the docs →
+        </Link>
+      </div>
     </div>
   );
 }
