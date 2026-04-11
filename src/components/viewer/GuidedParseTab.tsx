@@ -123,6 +123,9 @@ export default function GuidedParseTab({
 
     // Set parsed grid for review/map tags
     setTableParsedGrid({ headers: result.headers, rows: result.rows });
+    // Guided parse doesn't use the merger — clear source-picker meta so the
+    // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
+    useViewerStore.getState().setTableParseMeta(null);
     setTableParseStep("review");
 
     // Save via shared detectCsiAndPersist

@@ -278,6 +278,25 @@ interface ViewerState {
   setTableParseRegion: (bbox: [number, number, number, number] | null) => void;
   tableParsedGrid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] } | null;
   setTableParsedGrid: (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] } | null) => void;
+  /** Per-method raw grids + snapshot of the auto-picked merged grid. Lets the
+   *  Compare/Edit modal show a "Source" dropdown for swapping between the
+   *  auto-merged result and any individual method. Live-only (not persisted)
+   *  and populated only when the server returned methodResults (debug mode). */
+  tableParseMeta: {
+    methodResults: Array<{
+      method: string;
+      headers: string[];
+      rows: Record<string, string>[];
+      confidence: number;
+      tagColumn?: string;
+      colBoundaries?: number[];
+      rowBoundaries?: number[];
+      error?: string;
+    }>;
+    baseMethod: string;
+    mergedSnapshot: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; colBoundaries?: number[]; rowBoundaries?: number[] };
+  } | null;
+  setTableParseMeta: (meta: ViewerState["tableParseMeta"]) => void;
   tableCellStructure: {
     cells: Array<{ bbox: [number, number, number, number]; row: number; col: number; rowSpan: number; colSpan: number; type: string; confidence: number; text: string; highlighted: boolean }>;
     pageNumber: number;
@@ -779,6 +798,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
         tableParseStep: "idle" as const,
         tableParseRegion: null,
         tableParsedGrid: null,
+        tableParseMeta: null,
         tableParseColumnBBs: [],
         tableParseColumnNames: [],
         tableParseRowBBs: [],
@@ -792,6 +812,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setTableParseRegion: (tableParseRegion) => set({ tableParseRegion }),
   tableParsedGrid: null,
   setTableParsedGrid: (tableParsedGrid) => set({ tableParsedGrid }),
+  tableParseMeta: null,
+  setTableParseMeta: (tableParseMeta) => set({ tableParseMeta }),
   tableCellStructure: null,
   // TATR-OVERLAY: when the user runs Detect Cell Structure, auto-show the
   // overlay so they can see what was found. Setter wired to a toggle button
@@ -824,6 +846,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       tableParseStep: "idle",
       tableParseRegion: null,
       tableParsedGrid: null,
+      tableParseMeta: null,
       tableCellStructure: null,
       tableParseColumnBBs: [],
       tableParseColumnNames: [],
@@ -1094,6 +1117,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       tableParseStep: "idle",
       tableParseRegion: null,
       tableParsedGrid: null,
+      tableParseMeta: null,
       tableParseColumnBBs: [],
       tableParseColumnNames: [],
       tableParseRowBBs: [],

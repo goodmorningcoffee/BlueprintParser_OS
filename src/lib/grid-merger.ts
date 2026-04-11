@@ -40,7 +40,7 @@ export interface MethodDebug {
 }
 
 export interface MergerNotes {
-  /** Which method became the merge base (highest confidence after filtering) */
+  /** Which method became the merge base (highest scoreForBase after filtering) */
   baseMethod: string;
   /** Methods that were filtered out, with reasons */
   filteredMethods: Array<{
@@ -75,8 +75,8 @@ export interface MergedGrid {
  * Merge multiple parsing method results into a single best grid.
  *
  * Algorithm:
- * 1. Sort by confidence (highest first)
- * 2. Use highest-confidence grid as base
+ * 1. Rank methods by scoreForBase (confidence + tag-column coherence bonus)
+ * 2. Use the highest-ranked grid as base
  * 3. For each cell: check agreement, fill empties, flag disagreements
  * 4. Compute final confidence boosted by agreement rate
  */
@@ -85,6 +85,39 @@ const MAX_COLS = 500;
 
 const TAG_RE = /^[A-Z]{0,3}-?\d{1,4}[A-Z]?$/i;
 const TAG_HEADERS = ["TAG", "MARK", "NO", "NO.", "NUMBER", "NUM", "ITEM", "ID", "KEY"];
+
+/**
+ * Tag-column completeness for a single method result: fraction of all rows
+ * whose **first** column value matches the tag regex. Used to boost base
+ * selection toward methods whose col-A is a coherent, fully-populated tag
+ * column (project convention: tag column defaults to A).
+ *
+ * Uses total row count as the denominator (not non-empty count), so a method
+ * that only populated half the rows doesn't look perfect at 100% purity.
+ */
+function tagColumnCompleteness(r: MethodResult): number {
+  if (r.headers.length === 0 || r.rows.length === 0) return 0;
+  const col = r.headers[0];
+  let tags = 0;
+  for (const row of r.rows) {
+    const v = (row[col] || "").trim();
+    if (v && TAG_RE.test(v)) tags++;
+  }
+  return tags / r.rows.length;
+}
+
+/**
+ * Score a method for base-selection ranking. Starts from the method's own
+ * confidence, plus a bonus when its first column is a fully-populated
+ * tag column (>= 90% of rows have a tag-like value). A coherent tag column
+ * is a strong signal that the method correctly found the real column
+ * boundaries — worth +0.25 over raw confidence.
+ */
+function scoreForBase(r: MethodResult): number {
+  const completeness = tagColumnCompleteness(r);
+  const bonus = completeness >= 0.9 ? 0.25 : 0;
+  return r.confidence + bonus;
+}
 
 /**
  * Detect the tag column in a merged grid. Unlike per-method detection,
@@ -181,8 +214,11 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
     }
   }
 
-  // Sort by confidence descending
-  const sorted = [...valid].sort((a, b) => b.confidence - a.confidence);
+  // Sort by scoreForBase (confidence + tag-column coherence bonus) descending.
+  // A method with a fully-populated tag column in col A beats a higher-confidence
+  // method that missed parts of the tag column, because a coherent tag column
+  // is the strongest signal that the method found the real column boundaries.
+  const sorted = [...valid].sort((a, b) => scoreForBase(b) - scoreForBase(a));
   const base = sorted[0];
   const others = sorted.slice(1);
 
@@ -194,7 +230,11 @@ export function mergeGrids(results: MethodResult[], options?: MergeOptions): Mer
     if (base.headers.length === 0) return false;
     const colRatio = other.headers.length / base.headers.length;
     const rowRatio = other.rows.length / Math.max(base.rows.length, 1);
-    const ok = colRatio >= 0.5 && colRatio <= 2.0 && rowRatio >= 0.5 && rowRatio <= 1.5;
+    // colRatio ceiling loosened from 2.0 → 3.0 so methods that capture extra
+    // legitimate columns (e.g. opencv-lines finding an 11-col tree schedule
+    // where img2table only found 5) aren't filtered out. The row-similarity
+    // check below is the real safety against garbled merging.
+    const ok = colRatio >= 0.5 && colRatio <= 3.0 && rowRatio >= 0.5 && rowRatio <= 1.5;
     if (!ok) {
       filteredMethods.push({
         method: other.method,
