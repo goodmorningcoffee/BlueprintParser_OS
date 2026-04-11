@@ -83,8 +83,44 @@ def find_line_positions(mask, is_horizontal, tolerance=15):
     return [int(np.median(c)) for c in clusters]
 
 
-def detect_grid(image_path, min_h_length=0.15, min_v_length=0.10, tolerance=15):
-    """Main detection: find horizontal/vertical lines and compute grid."""
+# OPENCV-FIX-1c: hard cap on detected columns. Architectural sheets routinely
+# fool the line detector into reporting 25-50 columns when the actual table
+# has 4-6. The downstream merger filters these out as shape_mismatch but they
+# still pollute the methodResults. Cap defensively here.
+MAX_REASONABLE_COLS = 20
+MAX_REASONABLE_ROWS = 50  # generous — schedules can have up to this many rows
+
+
+def cluster_close_lines(positions, min_separation):
+    """OPENCV-FIX-1b: merge any two lines closer than `min_separation` pixels.
+
+    The line detector + initial clustering can still produce duplicates from
+    anti-aliased edges or text-glyph outlines that survived the first cluster
+    pass. This second pass walks the sorted positions and merges anything
+    closer than `min_separation` (typically half the median gap). Returns the
+    cleaned positions sorted ascending.
+    """
+    if len(positions) < 2:
+        return positions
+    sorted_pos = sorted(positions)
+    merged = [sorted_pos[0]]
+    for p in sorted_pos[1:]:
+        if p - merged[-1] < min_separation:
+            # Merge: replace the last entry with the midpoint
+            merged[-1] = (merged[-1] + p) // 2
+        else:
+            merged.append(p)
+    return merged
+
+
+def detect_grid(image_path, min_h_length=0.15, min_v_length=0.20, tolerance=15):
+    """Main detection: find horizontal/vertical lines and compute grid.
+
+    OPENCV-FIX-1a: min_v_length default bumped from 0.10 → 0.20 to reject the
+    short vertical line segments that text glyphs and dimension marks create on
+    architectural drawings. The wrapper still passes through user overrides via
+    `--min-v-length` so the existing ParseOptionsPanel slider keeps working.
+    """
     image = cv2.imread(image_path)
     if image is None:
         return {"error": "Failed to load image", "rows": [], "cols": []}
@@ -103,7 +139,47 @@ def detect_grid(image_path, min_h_length=0.15, min_v_length=0.10, tolerance=15):
     row_ys = find_line_positions(h_filtered, is_horizontal=True, tolerance=tolerance)
     col_xs = find_line_positions(v_filtered, is_horizontal=False, tolerance=tolerance)
 
-    print(f"Detected {len(row_ys)} horizontal lines, {len(col_xs)} vertical lines", file=sys.stderr)
+    raw_row_count = len(row_ys)
+    raw_col_count = len(col_xs)
+    print(f"Detected {raw_row_count} horizontal lines, {raw_col_count} vertical lines (raw)", file=sys.stderr)
+
+    # OPENCV-FIX-1b: second-pass clustering to merge near-duplicate lines that
+    # survived the first cluster. Use half the median gap as the separation.
+    if len(col_xs) >= 3:
+        col_gaps = [col_xs[i + 1] - col_xs[i] for i in range(len(col_xs) - 1)]
+        median_col_gap = np.median(col_gaps)
+        col_xs = cluster_close_lines(col_xs, max(int(median_col_gap * 0.5), tolerance))
+    if len(row_ys) >= 3:
+        row_gaps = [row_ys[i + 1] - row_ys[i] for i in range(len(row_ys) - 1)]
+        median_row_gap = np.median(row_gaps)
+        row_ys = cluster_close_lines(row_ys, max(int(median_row_gap * 0.5), tolerance))
+
+    if len(col_xs) != raw_col_count or len(row_ys) != raw_row_count:
+        print(
+            f"After secondary clustering: {len(row_ys)} rows, {len(col_xs)} cols "
+            f"(merged {raw_row_count - len(row_ys)} rows, {raw_col_count - len(col_xs)} cols)",
+            file=sys.stderr,
+        )
+
+    # OPENCV-FIX-1c: hard cap. If detection STILL has > MAX_REASONABLE_COLS,
+    # this is almost certainly noise — log a warning and trim. Tables with
+    # truly that many columns are extreme outliers; trimming gives the merger
+    # SOMETHING usable instead of an unfilterable mess.
+    if len(col_xs) > MAX_REASONABLE_COLS:
+        print(
+            f"WARNING: detected {len(col_xs)} columns exceeds MAX_REASONABLE_COLS={MAX_REASONABLE_COLS}, "
+            f"trimming to first {MAX_REASONABLE_COLS}. Consider using user-tunable --min-v-length to "
+            f"reject more short lines.",
+            file=sys.stderr,
+        )
+        col_xs = col_xs[:MAX_REASONABLE_COLS]
+    if len(row_ys) > MAX_REASONABLE_ROWS:
+        print(
+            f"WARNING: detected {len(row_ys)} rows exceeds MAX_REASONABLE_ROWS={MAX_REASONABLE_ROWS}, "
+            f"trimming to first {MAX_REASONABLE_ROWS}.",
+            file=sys.stderr,
+        )
+        row_ys = row_ys[:MAX_REASONABLE_ROWS]
 
     # Convert to normalized 0-1 coordinates
     rows_normalized = [{"y": round(y / h, 6), "height": 0} for y in row_ys]
@@ -157,7 +233,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Detect table grid lines in an image")
     parser.add_argument("image_path", help="Path to the input image")
     parser.add_argument("--min-h-length", type=float, default=0.15, help="Min horizontal line length ratio (0-1)")
-    parser.add_argument("--min-v-length", type=float, default=0.10, help="Min vertical line length ratio (0-1)")
+    parser.add_argument("--min-v-length", type=float, default=0.20, help="Min vertical line length ratio (0-1) — bumped from 0.10 in OPENCV-FIX-1a to reject text-edge false positives")
     parser.add_argument("--tolerance", type=int, default=15, help="Line clustering tolerance in pixels")
     args = parser.parse_args()
 

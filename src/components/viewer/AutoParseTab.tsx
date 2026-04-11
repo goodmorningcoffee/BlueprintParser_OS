@@ -581,6 +581,9 @@ function DetectCellStructureButton() {
   const { tableParseRegion } = useTableParse();
   const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
   const setTableCellStructure = useViewerStore((s) => s.setTableCellStructure);
+  // TATR-OVERLAY: visibility toggle for the cell overlay on the canvas
+  const showTableCellStructure = useViewerStore((s) => s.showTableCellStructure);
+  const setShowTableCellStructure = useViewerStore((s) => s.setShowTableCellStructure);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -614,7 +617,7 @@ function DetectCellStructureButton() {
   }
 
   return (
-    <div className="px-1">
+    <div className="px-1 space-y-1">
       <button
         onClick={hasStructure ? () => setTableCellStructure(null) : handleDetect}
         disabled={loading || !tableParseRegion}
@@ -626,6 +629,31 @@ function DetectCellStructureButton() {
       >
         {loading ? "Detecting..." : hasStructure ? `Cell Structure (${tableCellStructure!.cells.length} cells) ✕` : "Detect Cell Structure"}
       </button>
+
+      {/* TATR-OVERLAY: visibility toggle + interaction hint, shown only when
+          a cell structure exists for the current page. The toggle gates the
+          on-canvas overlay AND the click-to-search/dblclick-to-highlight
+          interaction in AnnotationOverlay. */}
+      {hasStructure && (
+        <>
+          <button
+            onClick={() => setShowTableCellStructure(!showTableCellStructure)}
+            className={`w-full text-[10px] px-2 py-1 rounded border ${
+              showTableCellStructure
+                ? "border-cyan-500/30 text-cyan-300 bg-cyan-500/5 hover:bg-cyan-500/10"
+                : "border-[var(--border)]/60 text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}
+          >
+            {showTableCellStructure ? "🔵 Cells visible — click to hide" : "⚪ Cells hidden — click to show"}
+          </button>
+          {showTableCellStructure && (
+            <div className="text-[9px] text-[var(--muted)]/70 px-1 leading-relaxed">
+              Click a cell on the page to search its text · double-click to highlight
+            </div>
+          )}
+        </>
+      )}
+
       {error && <div className="text-[9px] text-red-400 mt-1 px-1">{error}</div>}
     </div>
   );
