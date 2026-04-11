@@ -21,8 +21,14 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const tableParsedGrid = useViewerStore((s) => s.tableParsedGrid);
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
+  const tableParseMeta = useViewerStore((s) => s.tableParseMeta);
   const textractData = useViewerStore((s) => s.textractData);
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
+
+  // Source picker — "merged" (default) or a method name from tableParseMeta.methodResults.
+  // Swapping rewrites tableParsedGrid's headers/rows so edits apply to the chosen source.
+  // Only visible when tableParseMeta is populated (server returned debug methodResults).
+  const [selectedSource, setSelectedSource] = useState<string>("merged");
 
   const [mode, setMode] = useState<"side-by-side" | "overlay">("side-by-side");
   const [overlayOpacity, setOverlayOpacity] = useState(0.55);
@@ -342,6 +348,36 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     return () => window.removeEventListener("keydown", handleKey);
   }, [toggleModal, activeCell]);
 
+  // Swap tableParsedGrid between the merged snapshot and any per-method raw grid.
+  // Does NOT touch tableParseMeta — the dropdown stays populated so the user can
+  // keep switching. Cell edits after a swap apply to the chosen source.
+  const handleSourceChange = useCallback((source: string) => {
+    if (!tableParsedGrid || !tableParseMeta) return;
+    setSelectedSource(source);
+    if (source === "merged") {
+      const snap = tableParseMeta.mergedSnapshot;
+      setTableParsedGrid({
+        ...tableParsedGrid,
+        headers: snap.headers,
+        rows: snap.rows,
+        tagColumn: snap.tagColumn,
+        colBoundaries: snap.colBoundaries,
+        rowBoundaries: snap.rowBoundaries,
+      });
+      return;
+    }
+    const method = tableParseMeta.methodResults.find((m) => m.method === source);
+    if (!method) return;
+    setTableParsedGrid({
+      ...tableParsedGrid,
+      headers: method.headers,
+      rows: method.rows,
+      tagColumn: method.tagColumn,
+      colBoundaries: method.colBoundaries,
+      rowBoundaries: method.rowBoundaries,
+    });
+  }, [tableParsedGrid, tableParseMeta, setTableParsedGrid]);
+
   if (!tableParsedGrid || !tableParseRegion) return null;
 
   const headers = tableParsedGrid.headers;
@@ -358,6 +394,28 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
         <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border)] bg-[var(--surface)]">
           <div className="flex items-center gap-4">
             <h2 className="text-sm font-semibold text-[var(--fg)]">Table Compare — Page {pageNumber}</h2>
+            {tableParseMeta && tableParseMeta.methodResults.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-[var(--muted)] uppercase tracking-wide">Source</span>
+                <select
+                  value={selectedSource}
+                  onChange={(e) => handleSourceChange(e.target.value)}
+                  className="text-xs px-2 py-1 rounded border border-[var(--border)] bg-[var(--bg)] text-[var(--fg)] hover:border-[var(--accent)]"
+                  title="Swap between the auto-merged grid and any individual method's raw grid. Cell edits apply to the chosen source."
+                >
+                  <option value="merged">
+                    Merged (base: {tableParseMeta.baseMethod})
+                  </option>
+                  {tableParseMeta.methodResults
+                    .filter((m) => m.headers.length > 0 && m.rows.length > 0)
+                    .map((m) => (
+                      <option key={m.method} value={m.method}>
+                        {m.method} — {m.rows.length}r × {m.headers.length}c · {Math.round(m.confidence * 100)}%
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
             <div className="flex items-center gap-1 border border-[var(--border)] rounded">
               <button
                 onClick={() => setMode("side-by-side")}

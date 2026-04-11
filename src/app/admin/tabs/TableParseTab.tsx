@@ -369,6 +369,48 @@ function ParseHistoryRow({
 }
 
 function ParseHistoryDetail({ entry }: { entry: ParseHistoryEntry }) {
+  const [remerge, setRemerge] = useState<{
+    baseMethod?: string;
+    headers: string[];
+    rowCount: number;
+    confidence: number;
+    filteredMethods: Array<{ method: string; reason: string; detail?: string }>;
+    agreementRate: number;
+  } | null>(null);
+  const [remergeLoading, setRemergeLoading] = useState(false);
+  const [remergeError, setRemergeError] = useState<string | null>(null);
+
+  const runRemerge = useCallback(async () => {
+    if (!entry.response.methodResults?.length) return;
+    setRemergeLoading(true);
+    setRemergeError(null);
+    setRemerge(null);
+    try {
+      const resp = await fetch("/api/admin/remerge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ results: entry.response.methodResults }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      const merged = await resp.json();
+      setRemerge({
+        baseMethod: merged.mergerNotes?.baseMethod,
+        headers: merged.headers || [],
+        rowCount: (merged.rows || []).length,
+        confidence: merged.confidence || 0,
+        filteredMethods: merged.mergerNotes?.filteredMethods || [],
+        agreementRate: merged.mergerNotes?.agreementRate || 0,
+      });
+    } catch (e) {
+      setRemergeError(e instanceof Error ? e.message : "Re-merge failed");
+    } finally {
+      setRemergeLoading(false);
+    }
+  }, [entry.response.methodResults]);
+
   return (
     <div className="border-t border-[var(--border)] p-4 space-y-4 text-xs bg-[var(--bg)]">
       {/* Request */}
@@ -476,6 +518,63 @@ function ParseHistoryDetail({ entry }: { entry: ParseHistoryEntry }) {
           </div>
         </div>
       )}
+
+      {/* Re-merge with current heuristics */}
+      <div className="pt-2 border-t border-[var(--border)]/50">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+            Re-merge (current heuristics)
+          </div>
+          <button
+            onClick={runRemerge}
+            disabled={remergeLoading || !entry.response.methodResults?.length}
+            className="text-[10px] px-2 py-1 rounded border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 disabled:opacity-40"
+            title="Re-run mergeGrids() on stored methodResults without re-parsing — lets you iterate on merger code against historical data"
+          >
+            {remergeLoading ? "Running…" : "Re-merge now"}
+          </button>
+        </div>
+        {remergeError && (
+          <div className="text-[11px] text-red-300 px-2 py-1 bg-red-500/10 border border-red-500/30 rounded">
+            {remergeError}
+          </div>
+        )}
+        {remerge && (
+          <div className="font-mono space-y-0.5 px-2 py-1.5 bg-cyan-500/5 border border-cyan-500/20 rounded text-[11px]">
+            <div>
+              baseMethod: <span className="text-cyan-300">{remerge.baseMethod || "—"}</span>
+              {entry.response.mergerNotes?.baseMethod && entry.response.mergerNotes.baseMethod !== remerge.baseMethod && (
+                <span className="text-amber-300 ml-2">(was: {entry.response.mergerNotes.baseMethod})</span>
+              )}
+            </div>
+            <div>
+              shape: {remerge.rowCount}r × {remerge.headers.length}c (conf {(remerge.confidence * 100).toFixed(0)}%)
+              {entry.response.rowCount !== remerge.rowCount || entry.response.headers.length !== remerge.headers.length ? (
+                <span className="text-amber-300 ml-2">
+                  (was: {entry.response.rowCount}r × {entry.response.headers.length}c)
+                </span>
+              ) : null}
+            </div>
+            <div>agreementRate: {(remerge.agreementRate * 100).toFixed(1)}%</div>
+            {remerge.filteredMethods.length > 0 && (
+              <div className="mt-1">
+                <div className="text-[var(--muted)]">filteredMethods:</div>
+                <ul className="space-y-0.5 ml-3">
+                  {remerge.filteredMethods.map((f, i) => (
+                    <li key={i}>
+                      <span className="text-amber-300">{f.method}</span> — {f.reason}
+                      {f.detail && <span className="text-[var(--muted)]"> ({f.detail})</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="text-[10px] text-[var(--muted)] mt-1">
+              headers: [{remerge.headers.map((h) => `"${h}"`).join(", ")}]
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -198,6 +198,9 @@ export default function TableParsePanel() {
         tagColumn: d.tagColumn,
         tableName: d.tableName,
       });
+      // Clear source-picker meta — this grid didn't come from the auto-parse
+      // merger, so the per-method results from a prior parse are stale.
+      useViewerStore.getState().setTableParseMeta(null);
       setTableParseStep("review");
       useViewerStore.getState().setMode("move");
     },

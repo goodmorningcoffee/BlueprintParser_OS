@@ -203,19 +203,23 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     };
   }, [pdfUrl, setNumPages]);
 
-  // Auto-center blueprint on load (free panning padding pushes content off-screen)
-  // Center content once on initial PDF load only (not on tab switch)
+  // Auto-center blueprint on load (inner div has 25vw horizontal / 50vh vertical
+  // free-panning padding so the page is reachable by panning; without centering,
+  // the browser starts scrolled to 0,0 which is the empty top-left padding zone).
+  //
+  // We can't rely on container.scrollWidth/scrollHeight during initial load —
+  // the first PDFPage hasn't rendered yet, so scrollWidth may still be ~clientWidth
+  // and the early-return kicks in. Instead, use the known padding values directly
+  // (same approach as the pendingCenter effect below) so we land on the page
+  // regardless of what pdf.js has done by the time this fires.
   const centeredRef = useRef(false);
   useEffect(() => {
     if (!pdfDoc || centeredRef.current) return;
     centeredRef.current = true;
-    const timer = setTimeout(() => {
-      const container = containerRef.current;
-      if (!container || container.scrollWidth <= container.clientWidth) return;
-      container.scrollLeft = (container.scrollWidth - container.clientWidth) / 2;
-      container.scrollTop = (container.scrollHeight - container.clientHeight) / 2;
-    }, 200);
-    return () => clearTimeout(timer);
+    const container = containerRef.current;
+    if (!container) return;
+    container.scrollLeft = window.innerWidth * 0.25;
+    container.scrollTop = window.innerHeight * 0.5;
   }, [pdfDoc]);
 
   // Center when zoomFit is triggered (via store flag)
