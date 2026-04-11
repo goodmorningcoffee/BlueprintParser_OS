@@ -11,7 +11,7 @@ export { TWENTY_COLORS } from "@/types";
 export { DIVISION_COLORS, GROUP_COLORS, DIVISION_NAMES, getDivColor } from "@/lib/csi-colors";
 export type { CsiDivisionMeta } from "@/lib/csi-colors";
 export { SECTION_REGISTRY, GLOBAL_SECTION_REGISTRY, SECTION_PRESETS, DEFAULT_CONTEXT_BUDGET, getContextBudget } from "@/lib/context-builder";
-export { BP_TOOLS } from "@/lib/llm/tools";
+export { BP_TOOLS } from "@/lib/llm/tools-defs";
 
 /** Docs-local tag for the subset of LLM tools that are *actions* (mutations / viewer commands) vs pure data retrieval. */
 export const ACTION_TOOL_NAMES = new Set([
