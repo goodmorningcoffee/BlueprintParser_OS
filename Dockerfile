@@ -64,7 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tabulate \
     openpyxl \
     camelot-py[base] \
-    img2table \
+    img2table==0.0.12 \
     && pip3 install --break-system-packages --no-cache-dir \
     torch==2.5.1+cpu torchvision==0.20.1+cpu --index-url https://download.pytorch.org/whl/cpu \
     && pip3 install --break-system-packages --no-cache-dir \

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useViewerStore, useProject, useNavigation, useQtoWorkflow, useSummaries, isDemoFeatureEnabled } from "@/stores/viewerStore";
-import type { QtoWorkflow, QtoLineItem, QtoFlag, YoloTagInstance } from "@/types";
+import type { QtoWorkflow, QtoLineItem, QtoFlag, YoloTagInstance, QtoItemType } from "@/types";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
 import { escCsv } from "@/lib/table-parse-utils";
 import TakeoffCsvModal from "./TakeoffCsvModal";
@@ -38,6 +38,53 @@ function keywordsForMaterial(materialType: string): string[] {
   // Custom material: strip trailing "s" as a rough singularization
   const stem = materialType.toLowerCase().replace(/s$/, "");
   return [stem];
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SHIP 2 preflight — duplicated inline instead of imported from
+// composite-classifier because AutoQtoTab is a client component and we
+// want zero runtime coupling to the server-side lib. These two arrays
+// mirror STRICT_EXCLUSION_CLASSES + RECOMMENDED_CLASSES in composite-classifier.ts
+// — keep in sync if you ever tweak the exclusion zone rules.
+// ═══════════════════════════════════════════════════════════════
+
+const QTO_STRICT_EXCLUSION_CLASSES = ["tables", "title_block", "drawings"] as const;
+const QTO_RECOMMENDED_CLASSES = ["grid", "vertical_area", "horizontal_area"] as const;
+
+/** List of YOLO primitive classes that count as "tag shapes" for Type 4.
+ *  Mirrors project_yolo_model_classes.md TAG_SHAPE_CLASSES — used to filter
+ *  the tag-shape picker in the ConfigureStep. */
+const QTO_TAG_SHAPE_CLASSES = [
+  "circle", "arch_sheet_circle", "dot_small_circle",
+  "hexagon", "hex_pill",
+  "diamond", "triangle",
+  "pill", "oval",
+  "rectangle", "square",
+] as const;
+
+interface QtoPreflightResult {
+  ok: boolean;
+  missingStrict: string[];
+  missingRecommended: string[];
+  hasTables: boolean;
+  hasTitleBlock: boolean;
+  hasDrawings: boolean;
+}
+
+function computeQtoPreflight(
+  categoryCounts: Record<string, { count: number }> | undefined,
+): QtoPreflightResult {
+  const cats = categoryCounts || {};
+  const missingStrict = QTO_STRICT_EXCLUSION_CLASSES.filter((c) => !cats[c] || cats[c].count === 0);
+  const missingRecommended = QTO_RECOMMENDED_CLASSES.filter((c) => !cats[c] || cats[c].count === 0);
+  return {
+    ok: missingStrict.length === 0,
+    missingStrict,
+    missingRecommended,
+    hasTables: (cats.tables?.count ?? 0) > 0,
+    hasTitleBlock: (cats.title_block?.count ?? 0) > 0,
+    hasDrawings: (cats.drawings?.count ?? 0) > 0,
+  };
 }
 
 export default function AutoQtoTab() {
@@ -136,6 +183,14 @@ export default function AutoQtoTab() {
     return schedules;
   }, [summaries, pageIntelligence]);
 
+  // SHIP 2: preflight validation — does this project have the YOLO classes
+  // required for Auto-QTO's exclusion/inclusion logic? Hard-blocks the
+  // material picker AND the Run Mapping button when strict classes missing.
+  const preflight = useMemo(
+    () => computeQtoPreflight(summaries?.annotationSummary?.categoryCounts),
+    [summaries],
+  );
+
   // Load workflows from API on mount (skip for demo — no persisted workflows)
   useEffect(() => {
     if (!publicId || isDemo) return;
@@ -162,9 +217,9 @@ export default function AutoQtoTab() {
         materialLabel,
         step: "select-schedule",
         schedulePageNumber: null,
-        yoloModelFilter: null,
         yoloClassFilter: null,
-        tagPattern: null,
+        itemType: "yolo-with-inner-text",
+        tagShapeClass: null,
         parsedSchedule: null,
         lineItems: null,
         userEdits: null,
@@ -489,6 +544,39 @@ export default function AutoQtoTab() {
         <div className="text-[9px] text-[var(--muted)]">Pick a material to take off</div>
       </div>
 
+      {/* SHIP 2 — Preflight hard block: if yolo_medium exclusion classes are
+          missing, Auto-QTO can't produce a defensible count. Show the error
+          + disable all start buttons until the user runs yolo_medium. */}
+      {!preflight.ok && (
+        <div className="mx-2 mt-2 px-3 py-3 rounded border border-amber-500/40 bg-amber-500/5 space-y-2">
+          <div className="text-[11px] font-medium text-amber-300">Can&apos;t run Auto-QTO yet</div>
+          <div className="text-[10px] text-[var(--muted)] leading-relaxed">
+            Auto-QTO needs YOLO exclusion zones (tables, title blocks, drawings) to
+            produce a defensible count. This project is missing:
+          </div>
+          <ul className="text-[10px] text-amber-200 pl-4 list-disc space-y-0.5">
+            {preflight.missingStrict.map((c) => (
+              <li key={c}><code className="text-amber-100">{c}</code></li>
+            ))}
+          </ul>
+          <div className="text-[10px] text-[var(--muted)] leading-relaxed">
+            Run <code className="text-[var(--fg)]">yolo_medium</code> on this project
+            (Admin → Models → Run), then reload this tab.
+          </div>
+        </div>
+      )}
+
+      {/* Soft warning: recommended classes missing but not a hard block */}
+      {preflight.ok && preflight.missingRecommended.length > 0 && (
+        <div className="mx-2 mt-2 px-3 py-2 rounded border border-yellow-500/20 bg-yellow-500/5">
+          <div className="text-[9px] text-yellow-200/80 leading-relaxed">
+            Tip: run <code className="text-yellow-100">yolo_primitive</code> for
+            higher classifier confidence. Missing:{" "}
+            {preflight.missingRecommended.join(", ")}
+          </div>
+        </div>
+      )}
+
       <div className="px-2 py-2 space-y-1">
         {MATERIALS.map((mat) => {
           const cat = mat.scheduleCategory;
@@ -503,9 +591,9 @@ export default function AutoQtoTab() {
           return (
             <button
               key={mat.type}
-              disabled={creating}
+              disabled={creating || !preflight.ok}
               onClick={() => startWorkflow(mat.type, mat.label)}
-              className="w-full text-left px-3 py-2.5 rounded border border-[var(--border)] hover:border-emerald-500/40 hover:bg-emerald-500/5 transition-colors"
+              className="w-full text-left px-3 py-2.5 rounded border border-[var(--border)] hover:border-emerald-500/40 hover:bg-emerald-500/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[var(--border)] disabled:hover:bg-transparent"
             >
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold flex items-center justify-center">
@@ -535,7 +623,7 @@ export default function AutoQtoTab() {
               value={customName}
               onChange={(e) => setCustomName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && customName.trim()) startWorkflow(customName.trim().toLowerCase(), customName.trim());
+                if (e.key === "Enter" && customName.trim() && preflight.ok) startWorkflow(customName.trim().toLowerCase(), customName.trim());
                 if (e.key === "Escape") { setShowCustom(false); setCustomName(""); }
               }}
               placeholder="Material name..."
@@ -547,16 +635,17 @@ export default function AutoQtoTab() {
                 className="text-[10px] text-[var(--muted)] hover:text-[var(--fg)]"
               >Cancel</button>
               <button
-                disabled={!customName.trim() || creating}
+                disabled={!customName.trim() || creating || !preflight.ok}
                 onClick={() => startWorkflow(customName.trim().toLowerCase(), customName.trim())}
-                className="text-[10px] px-2 py-0.5 rounded bg-emerald-600 text-white disabled:opacity-40"
+                className="text-[10px] px-2 py-0.5 rounded bg-emerald-600 text-white disabled:opacity-40 disabled:cursor-not-allowed"
               >Start</button>
             </div>
           </div>
         ) : (
           <button
+            disabled={!preflight.ok}
             onClick={() => setShowCustom(true)}
-            className="w-full text-left px-3 py-2 rounded border border-dashed border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-emerald-500/30 text-xs"
+            className="w-full text-left px-3 py-2 rounded border border-dashed border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-emerald-500/30 text-xs disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[var(--muted)] disabled:hover:border-[var(--border)]"
           >
             + Custom material...
           </button>
@@ -601,6 +690,24 @@ function ConfigureStep({ workflow, updateWorkflowStep, pageNames, summaries }: {
   const schedule = workflow.parsedSchedule;
   const numPages = useViewerStore((s) => s.numPages);
 
+  // SHIP 2: item-type drives which sub-controls are rendered + how the
+  // engine dispatches. Defaults to "yolo-with-inner-text" for backward compat.
+  const [itemType, setItemType] = useState<QtoItemType>(workflow.itemType || "yolo-with-inner-text");
+  const [tagShapeClass, setTagShapeClass] = useState(workflow.tagShapeClass || "");
+
+  // Derived flags per item type — controls which sub-pickers render.
+  const needsSchedule = itemType !== "yolo-only";       // Type 1 ignores tag column
+  const needsYoloClass = itemType !== "text-only";       // Type 2 is pure text
+  const needsTagShape = itemType === "yolo-object-with-tag-shape"; // Type 4 only
+
+  // SHIP 2: preflight — duplicate of the top-level preflight so the Run
+  // Mapping button gates even if user started the workflow before classes
+  // were ready, or if they got deleted since.
+  const preflight = useMemo(
+    () => computeQtoPreflight(summaries?.annotationSummary?.categoryCounts),
+    [summaries],
+  );
+
   // 3a: Tag column
   const [tagColumn, setTagColumn] = useState(schedule?.tagColumn || "");
 
@@ -639,6 +746,14 @@ function ConfigureStep({ workflow, updateWorkflowStep, pageNames, summaries }: {
       .sort((a, b) => b.count - a.count);
   }, [summaries]);
 
+  // Tag-shape class list for Type 4 — filtered to only primitive tag shapes
+  // (circle, hexagon, etc.) so users don't accidentally pick "door_single"
+  // as a tag shape.
+  const tagShapeOptions = useMemo(() => {
+    const validSet = new Set<string>(QTO_TAG_SHAPE_CLASSES);
+    return availableClasses.filter((c) => validSet.has(c.name));
+  }, [availableClasses]);
+
   // 3c: Page selection
   const allPageNums = useMemo(() =>
     Array.from({ length: numPages }, (_, i) => i + 1), [numPages]);
@@ -668,15 +783,33 @@ function ConfigureStep({ workflow, updateWorkflowStep, pageNames, summaries }: {
     });
   };
 
-  const canProceed = !!tagColumn && selectedPages.size > 0 && uniqueTags.length > 0;
+  // canProceed now depends on itemType — different types have different
+  // required inputs. Also gated on preflight.ok.
+  const canProceed = (() => {
+    if (!preflight.ok) return false;
+    if (selectedPages.size === 0) return false;
+    // Type 1 — only needs a yolo class
+    if (itemType === "yolo-only") return !!yoloClass;
+    // Type 4 — needs tag column, object class, and tag shape class
+    if (itemType === "yolo-object-with-tag-shape") {
+      return !!tagColumn && uniqueTags.length > 0 && !!yoloClass && !!tagShapeClass;
+    }
+    // Types 2, 3, 5 — need a tag column + at least one tag
+    if (!tagColumn || uniqueTags.length === 0) return false;
+    // Types 3, 5 — also need a yolo class. Type 2 — no yolo class needed.
+    if (needsYoloClass && !yoloClass) return false;
+    return true;
+  })();
 
   const handleRun = async () => {
     await updateWorkflowStep(workflow, {
       step: "map-tags",
       yoloClassFilter: yoloClass || null,
+      itemType,
+      tagShapeClass: itemType === "yolo-object-with-tag-shape" ? (tagShapeClass || null) : null,
       parsedSchedule: { ...schedule!, tagColumn },
       userEdits: {
-        ...(workflow.userEdits || { addedInstances: [], removedInstances: [], quantityOverrides: {}, addedRows: [], deletedTags: [], cellEdits: {} }),
+        ...(workflow.userEdits || { quantityOverrides: {} }),
         selectedPages: [...selectedPages],
       },
     });
@@ -688,68 +821,145 @@ function ConfigureStep({ workflow, updateWorkflowStep, pageNames, summaries }: {
         Schedule: {schedule?.tableName} ({schedule?.rows?.length || 0} rows)
       </div>
 
-      {/* 3a: Tag Column */}
+      {/* SHIP 2 — Preflight hard block inside the workflow: if the user
+          started this workflow before yolo_medium was run (or the classes
+          got deleted), show the block here. */}
+      {!preflight.ok && (
+        <div className="px-3 py-2.5 rounded border border-amber-500/40 bg-amber-500/5 space-y-1.5">
+          <div className="text-[10px] font-medium text-amber-300">Can&apos;t run mapping yet</div>
+          <div className="text-[9px] text-[var(--muted)] leading-relaxed">
+            Missing YOLO exclusion classes: {preflight.missingStrict.map((c) => <code key={c} className="text-amber-200 mx-0.5">{c}</code>)}.
+            Run <code className="text-[var(--fg)]">yolo_medium</code> on this project first.
+          </div>
+        </div>
+      )}
+
+      {/* 3-0: SHIP 2 item-type picker — drives which sub-controls render. */}
       <div>
-        <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide mb-1.5">Tag Column</div>
-        <div className="flex flex-wrap gap-1">
-          {(schedule?.headers || []).map((h: string) => (
+        <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide mb-1.5">Item Type</div>
+        <div className="space-y-1">
+          {([
+            { value: "yolo-with-inner-text", label: "Shape with inner text", hint: "Most schedules — tag text sits inside the object bbox (doors, rooms)" },
+            { value: "yolo-only", label: "Shape only (count all)", hint: "Every instance of a YOLO class counts, no text matching (outlets, diffusers)" },
+            { value: "yolo-object-with-tag-shape", label: "Object with tag shape", hint: "Main object tagged by a separate shape (door + circle containing 'D-101')" },
+            { value: "yolo-object-with-nearby-text", label: "Object with nearby text", hint: "Object label floats next to the object, no enclosing tag shape" },
+            { value: "text-only", label: "Free-floating text", hint: "Pure OCR text match, no object binding" },
+          ] as const).map((opt) => (
             <button
-              key={h}
-              onClick={() => setTagColumn(h)}
-              className={`px-2 py-1 rounded text-[10px] border transition-colors ${
-                tagColumn === h
-                  ? "border-green-500/50 bg-green-500/10 text-green-300"
+              key={opt.value}
+              onClick={() => setItemType(opt.value)}
+              className={`w-full text-left px-2 py-1.5 rounded border transition-colors ${
+                itemType === opt.value
+                  ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-200"
                   : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--muted)]/40"
               }`}
             >
-              {h}
+              <div className="text-[10px] font-medium">{opt.label}</div>
+              <div className="text-[9px] text-[var(--muted)] leading-snug">{opt.hint}</div>
             </button>
           ))}
         </div>
-        {uniqueTags.length > 0 && (
-          <div className="text-[9px] text-[var(--muted)] mt-1.5">
-            {uniqueTags.length} tags: {uniqueTags.slice(0, 8).join(", ")}{uniqueTags.length > 8 ? "..." : ""}
-          </div>
-        )}
-        {tagColumn && uniqueTags.length === 0 && (
-          <div className="text-[9px] text-amber-400 mt-1.5">
-            No tags found in &quot;{tagColumn}&quot; column. Pick a different column.
-          </div>
-        )}
       </div>
 
-      {/* 3b: YOLO Class */}
-      <div>
-        <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide mb-1.5">Detection Shape</div>
-        <div className="space-y-1">
-          <button
-            onClick={() => setYoloClass("")}
-            className={`w-full text-left px-2 py-1.5 rounded text-[10px] border transition-colors ${
-              !yoloClass
-                ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
-                : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--muted)]/40"
-            }`}
-          >
-            Free-floating (OCR only)
-          </button>
-          {availableClasses.map((cls) => (
-            <button
-              key={cls.name}
-              onClick={() => setYoloClass(cls.name)}
-              className={`w-full text-left px-2 py-1.5 rounded text-[10px] border transition-colors ${
-                yoloClass === cls.name
-                  ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
-                  : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--muted)]/40"
-              }`}
-            >
-              {cls.name} <span className="text-[var(--muted)]">({cls.count})</span>
-            </button>
-          ))}
-          {availableClasses.length === 0 && (
-            <div className="text-[9px] text-[var(--muted)] px-1">No YOLO detections in project. Using OCR only.</div>
+      {/* 3a: Tag Column — hidden for yolo-only (tags are ignored) */}
+      {needsSchedule && (
+        <div>
+          <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide mb-1.5">Tag Column</div>
+          <div className="flex flex-wrap gap-1">
+            {(schedule?.headers || []).map((h: string) => (
+              <button
+                key={h}
+                onClick={() => setTagColumn(h)}
+                className={`px-2 py-1 rounded text-[10px] border transition-colors ${
+                  tagColumn === h
+                    ? "border-green-500/50 bg-green-500/10 text-green-300"
+                    : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--muted)]/40"
+                }`}
+              >
+                {h}
+              </button>
+            ))}
+          </div>
+          {uniqueTags.length > 0 && (
+            <div className="text-[9px] text-[var(--muted)] mt-1.5">
+              {uniqueTags.length} tags: {uniqueTags.slice(0, 8).join(", ")}{uniqueTags.length > 8 ? "..." : ""}
+            </div>
+          )}
+          {tagColumn && uniqueTags.length === 0 && (
+            <div className="text-[9px] text-amber-400 mt-1.5">
+              No tags found in &quot;{tagColumn}&quot; column. Pick a different column.
+            </div>
           )}
         </div>
-      </div>
+      )}
+
+      {/* Type 1 hint — tag column is ignored */}
+      {!needsSchedule && (
+        <div className="text-[9px] text-[var(--muted)] italic leading-relaxed">
+          Shape-only mode counts every instance of the selected YOLO class on the
+          selected pages. Tag column and schedule rows are ignored.
+        </div>
+      )}
+
+      {/* 3b: YOLO Object Class — shown for all types except text-only */}
+      {needsYoloClass && (
+        <div>
+          <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide mb-1.5">
+            {needsTagShape ? "Object Class" : "Detection Shape"}
+          </div>
+          <div className="space-y-1">
+            {availableClasses.map((cls) => (
+              <button
+                key={cls.name}
+                onClick={() => setYoloClass(cls.name)}
+                className={`w-full text-left px-2 py-1.5 rounded text-[10px] border transition-colors ${
+                  yoloClass === cls.name
+                    ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
+                    : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--muted)]/40"
+                }`}
+              >
+                {cls.name} <span className="text-[var(--muted)]">({cls.count})</span>
+              </button>
+            ))}
+            {availableClasses.length === 0 && (
+              <div className="text-[9px] text-amber-400 px-1">
+                No YOLO detections in project. Run a YOLO model first.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 3b2: Tag Shape Class (Type 4 only) */}
+      {needsTagShape && (
+        <div>
+          <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide mb-1.5">Tag Shape Class</div>
+          <div className="text-[9px] text-[var(--muted)] leading-relaxed mb-1">
+            The primitive shape that contains the tag text (e.g. a circle
+            containing &quot;D-101&quot; next to a door).
+          </div>
+          <div className="space-y-1">
+            {tagShapeOptions.map((cls) => (
+              <button
+                key={cls.name}
+                onClick={() => setTagShapeClass(cls.name)}
+                className={`w-full text-left px-2 py-1.5 rounded text-[10px] border transition-colors ${
+                  tagShapeClass === cls.name
+                    ? "border-violet-500/50 bg-violet-500/10 text-violet-300"
+                    : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--muted)]/40"
+                }`}
+              >
+                {cls.name} <span className="text-[var(--muted)]">({cls.count})</span>
+              </button>
+            ))}
+            {tagShapeOptions.length === 0 && (
+              <div className="text-[9px] text-amber-400 px-1">
+                No tag-shape primitives in project. Run <code>yolo_primitive</code> first.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 3c: Page Selection */}
       <div>
@@ -791,7 +1001,9 @@ function ConfigureStep({ workflow, updateWorkflowStep, pageNames, summaries }: {
         onClick={handleRun}
         className="w-full py-2 rounded bg-emerald-600 text-white text-xs font-medium disabled:opacity-40 hover:bg-emerald-500 transition-colors"
       >
-        Run Mapping ({uniqueTags.length} tags, {selectedPages.size} pages)
+        {itemType === "yolo-only"
+          ? `Run Mapping (count all ${yoloClass || "shapes"}, ${selectedPages.size} pages)`
+          : `Run Mapping (${uniqueTags.length} tags, ${selectedPages.size} pages)`}
       </button>
     </div>
   );
@@ -820,8 +1032,18 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
 
   const selectedPages = workflow.userEdits?.selectedPages;
 
+  // SHIP 2: Type 1 bypasses tag matching — count all shapes of the yolo
+  // class. We send tags[yoloClass] so the route still has a key to respond
+  // with, but MappingStep later builds just ONE line item keyed by the
+  // yolo class name (not N duplicated line items).
+  const isYoloOnly = workflow.itemType === "yolo-only";
+  const effectiveTags = isYoloOnly
+    ? (workflow.yoloClassFilter ? [workflow.yoloClassFilter] : [])
+    : tags;
+
   useEffect(() => {
-    if (hasRun.current || mapping || !schedule || tags.length === 0) return;
+    if (hasRun.current || mapping || !schedule) return;
+    if (effectiveTags.length === 0) return;
     hasRun.current = true;
     setMapping(true);
     setError(null);
@@ -832,9 +1054,10 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
       signal: controller.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        tags,
+        tags: effectiveTags,
         yoloClass: workflow.yoloClassFilter || undefined,
-        yoloModel: workflow.yoloModelFilter || undefined,
+        itemType: workflow.itemType,
+        tagShapeClass: workflow.tagShapeClass || undefined,
         selectedPages,
       }),
     })
@@ -844,25 +1067,18 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
       })
       .then(({ results }: { results: Record<string, YoloTagInstance[]> }) => {
         // Build QtoLineItems
-        const lineItems: QtoLineItem[] = tags.map((tag) => {
-          const instances = results[tag] || [];
-          const scheduleRow = (schedule.rows as Record<string, string>[]).find(
-            (r) => r[schedule.tagColumn]?.trim() === tag
-          );
-          const specs: Record<string, string> = {};
-          for (const h of schedule.headers) {
-            if (h !== schedule.tagColumn) specs[h] = scheduleRow?.[h] || "";
-          }
+        let lineItems: QtoLineItem[];
+
+        if (isYoloOnly) {
+          // Type 1 — single line item keyed by yolo class, not per schedule row.
+          // Tag column and schedule rows are ignored; autoQuantity = total count.
+          const yoloKey = workflow.yoloClassFilter || "";
+          const instances = results[yoloKey] || [];
           const flags: QtoFlag[] = [];
           if (instances.length === 0) flags.push("not-found");
-          // Engine emits confidence 1.0 (exact) or 0.9 (fuzzy OCR match).
-          // Flag any line item that has at least one fuzzy instance.
-          const fuzzyCount = instances.filter((i) => i.confidence < 1.0).length;
-          if (fuzzyCount > 0) flags.push("low-confidence");
-
-          return {
-            tag,
-            specs,
+          lineItems = [{
+            tag: yoloKey,
+            specs: {},
             autoQuantity: instances.length,
             instances: instances.map((i) => ({
               pageNumber: i.pageNumber,
@@ -870,11 +1086,41 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
               confidence: i.confidence,
             })),
             pages: [...new Set(instances.map((i) => i.pageNumber))].sort((a, b) => a - b),
-            csiCodes: [],
             flags,
             notes: "",
-          };
-        });
+          }];
+        } else {
+          // Types 2, 3, 4, 5 — per-tag line items from the schedule rows
+          lineItems = tags.map((tag) => {
+            const instances = results[tag] || [];
+            const scheduleRow = (schedule.rows as Record<string, string>[]).find(
+              (r) => r[schedule.tagColumn]?.trim() === tag
+            );
+            const specs: Record<string, string> = {};
+            for (const h of schedule.headers) {
+              if (h !== schedule.tagColumn) specs[h] = scheduleRow?.[h] || "";
+            }
+            const flags: QtoFlag[] = [];
+            if (instances.length === 0) flags.push("not-found");
+            // Engine emits confidence 1.0 (exact) or 0.9 (fuzzy OCR match).
+            const fuzzyCount = instances.filter((i) => i.confidence < 1.0).length;
+            if (fuzzyCount > 0) flags.push("low-confidence");
+
+            return {
+              tag,
+              specs,
+              autoQuantity: instances.length,
+              instances: instances.map((i) => ({
+                pageNumber: i.pageNumber,
+                bbox: i.bbox,
+                confidence: i.confidence,
+              })),
+              pages: [...new Set(instances.map((i) => i.pageNumber))].sort((a, b) => a - b),
+              flags,
+              notes: "",
+            };
+          });
+        }
 
         updateWorkflowStep(workflow, { step: "review", lineItems });
       })
@@ -885,7 +1131,7 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
       });
 
     return () => controller.abort();
-  }, [tags, schedule, workflow, publicId, updateWorkflowStep, mapping, selectedPages]);
+  }, [tags, effectiveTags, isYoloOnly, schedule, workflow, publicId, updateWorkflowStep, mapping, selectedPages]);
 
   return (
     <div className="px-3 py-6 flex flex-col items-center gap-3">
@@ -939,7 +1185,7 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
         name: li.tag,
         tagText: li.tag,
         yoloClass: workflow.yoloClassFilter || "",
-        yoloModel: workflow.yoloModelFilter || "",
+        yoloModel: "",
         source: "schedule" as const,
         scope: "project" as const,
         instances: li.instances.map((inst) => ({
@@ -953,7 +1199,7 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
       store.setActiveYoloTagId(newTag.id);
       store.setYoloTagFilter(newTag.id);
     }
-  }, [workflow.yoloClassFilter, workflow.yoloModelFilter]);
+  }, [workflow.yoloClassFilter]);
 
   const cyclePage = useCallback((li: QtoLineItem, delta: number) => {
     if (li.pages.length === 0) return;
@@ -997,14 +1243,7 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
     const li = lineItems[rowIndex];
     if (!li) return;
     const newLineItems = [...lineItems];
-    const currentEdits = workflow.userEdits || {
-      addedInstances: [],
-      removedInstances: [],
-      quantityOverrides: {},
-      addedRows: [],
-      deletedTags: [],
-      cellEdits: {},
-    };
+    const currentEdits = workflow.userEdits || { quantityOverrides: {} };
 
     if (column === "Notes") {
       newLineItems[rowIndex] = { ...li, notes: value };

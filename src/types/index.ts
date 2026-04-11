@@ -101,6 +101,18 @@ export interface LinearPolylineData {
 
 export type QtoWorkflowStep = "pick" | "select-schedule" | "confirm-tags" | "map-tags" | "review" | "done";
 
+/**
+ * Discriminator for the 5 countable item types (SHIP 2). Determines which
+ * engine dispatch path findItemOccurrences takes. See
+ * memory/project_qto_taxonomy.md and src/lib/yolo-tag-engine.ts.
+ */
+export type QtoItemType =
+  | "yolo-only"                    // Type 1 — count all shapes of a class, no text
+  | "text-only"                    // Type 2 — pure free-floating text match
+  | "yolo-with-inner-text"         // Type 3 — text inside a shape (+ Type 5 fallback)
+  | "yolo-object-with-tag-shape"   // Type 4 — object tagged by a separate tag-shape
+  | "yolo-object-with-nearby-text"; // Type 5 — object + nearby floating text (standalone)
+
 export interface QtoWorkflow {
   id: number;
   projectId: number;
@@ -108,9 +120,13 @@ export interface QtoWorkflow {
   materialLabel: string | null;
   step: QtoWorkflowStep;
   schedulePageNumber: number | null;
-  yoloModelFilter: string | null;
   yoloClassFilter: string | null;
-  tagPattern: string | null;
+  /** SHIP 2: which of the 5 item types this workflow is counting. Defaults
+   *  to "yolo-with-inner-text" (backward compat — matches pre-SHIP-2 behavior). */
+  itemType: QtoItemType;
+  /** SHIP 2: for Type 4 (yolo-object-with-tag-shape), the class of the
+   *  separate tag shape (e.g. "circle"). Null for other item types. */
+  tagShapeClass: string | null;
   parsedSchedule: QtoParsedSchedule | null;
   lineItems: QtoLineItem[] | null;
   userEdits: QtoUserEdits | null;
@@ -133,21 +149,18 @@ export interface QtoLineItem {
   manualQuantity?: number;
   instances: { pageNumber: number; bbox: [number, number, number, number]; confidence: number }[];
   pages: number[];
-  csiCodes: string[];
   flags: QtoFlag[];
   notes: string;
 }
 
 export type QtoFlag = "not-found" | "extra" | "low-confidence" | "qty-mismatch" | "manual-override";
 
+/** SHIP 2: trimmed to only fields the UI actually populates. Previously had
+ *  5 structured-but-unused fields (addedInstances, removedInstances, addedRows,
+ *  deletedTags, cellEdits) — all removed. */
 export interface QtoUserEdits {
   selectedPages?: number[];
-  addedInstances: { tag: string; pageNumber: number; bbox: [number, number, number, number] }[];
-  removedInstances: { tag: string; pageNumber: number; bbox: [number, number, number, number] }[];
   quantityOverrides: Record<string, number>;
-  addedRows: Record<string, string>[];
-  deletedTags: string[];
-  cellEdits: Record<string, string>;
 }
 export type AreaUnitSq = "SF" | "SI" | "SM" | "SC";
 export const AREA_UNIT_MAP: Record<AreaUnit, AreaUnitSq> = {

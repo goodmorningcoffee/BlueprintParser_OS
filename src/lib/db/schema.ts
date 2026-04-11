@@ -16,6 +16,7 @@ import {
 import type {
   ProjectIntelligence, PageIntelligence, TextractPageData, KeynoteShapeData,
   TextAnnotationResult, AnnotationData, QtoParsedSchedule, QtoLineItem, QtoUserEdits,
+  QtoItemType,
   ModelConfig,
 } from "@/types";
 
@@ -437,6 +438,9 @@ export const labelingSessions = pgTable(
 );
 
 // ─── QTO Workflows (Auto-QTO feature) ──────────────────────
+// SHIP 2 (migration 0024): dropped yolo_model_filter + tag_pattern (dead
+// columns never wired to any UI), added item_type + tag_shape_class for
+// the 5-type item taxonomy.
 export const qtoWorkflows = pgTable(
   "qto_workflows",
   {
@@ -448,9 +452,9 @@ export const qtoWorkflows = pgTable(
     materialLabel: text("material_label"),
     step: text("step").notNull().default("pick"),
     schedulePageNumber: integer("schedule_page_number"),
-    yoloModelFilter: text("yolo_model_filter"),
     yoloClassFilter: text("yolo_class_filter"),
-    tagPattern: text("tag_pattern"),
+    itemType: text("item_type").notNull().default("yolo-with-inner-text").$type<QtoItemType>(),
+    tagShapeClass: text("tag_shape_class"),
     parsedSchedule: jsonb("parsed_schedule").$type<QtoParsedSchedule>(),
     lineItems: jsonb("line_items").$type<QtoLineItem[]>(),
     userEdits: jsonb("user_edits").$type<QtoUserEdits>(),

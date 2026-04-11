@@ -144,11 +144,13 @@ def detect_grid(image_path, min_h_length=0.15, min_v_length=0.20, tolerance=15):
     print(f"Detected {raw_row_count} horizontal lines, {raw_col_count} vertical lines (raw)", file=sys.stderr)
 
     # OPENCV-FIX-1b: second-pass clustering to merge near-duplicate lines that
-    # survived the first cluster. Use half the median gap as the separation.
+    # survived the first cluster. Cols use 0.8 × median gap (architectural
+    # drawings have dense text-stroke lines that need aggressive merging); rows
+    # use 0.5 × median gap (less noisy, over-merging would collapse real rows).
     if len(col_xs) >= 3:
         col_gaps = [col_xs[i + 1] - col_xs[i] for i in range(len(col_xs) - 1)]
         median_col_gap = np.median(col_gaps)
-        col_xs = cluster_close_lines(col_xs, max(int(median_col_gap * 0.5), tolerance))
+        col_xs = cluster_close_lines(col_xs, max(int(median_col_gap * 0.8), tolerance))
     if len(row_ys) >= 3:
         row_gaps = [row_ys[i + 1] - row_ys[i] for i in range(len(row_ys) - 1)]
         median_row_gap = np.median(row_gaps)

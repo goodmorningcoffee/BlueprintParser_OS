@@ -23,6 +23,7 @@ import type {
   TextractPageData,
   BboxMinMax,
   YoloTagInstance,
+  QtoItemType,
 } from "@/types";
 import {
   bboxCenterLTWH,
@@ -39,6 +40,30 @@ export interface MapYoloToOcrOptions {
   pageNumber?: number;       // required when scope === "page"
   annotations: ClientAnnotation[];
   textractData: Record<number, TextractPageData>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SHIP 2 — 5-type item taxonomy
+// ═══════════════════════════════════════════════════════════════════
+//
+// Every countable item in BlueprintParser is exactly one of five types.
+// findItemOccurrences() is the single dispatcher the Auto-QTO flow uses
+// going forward. The legacy mapYoloToOcrText() is kept as a backward-compat
+// entry point for manual Map Tags + keynote parser, and is called internally
+// for the "yolo-with-inner-text" branch.
+//
+// QtoItemType itself is exported from @/types so schema.ts + React components
+// can reference it without pulling in the engine. See memory/project_qto_taxonomy.md
+// for the full taxonomy rules.
+
+/** Parameters for a single countable item, consumed by findItemOccurrences. */
+export interface CountableItem {
+  itemType: QtoItemType;
+  label: string;                 // for error messages / UI
+  yoloClass?: string;            // primary class (Types 1, 3, 4, 5)
+  yoloModel?: string;            // optional model filter
+  tagShapeClass?: string;        // secondary class for Type 4 (the tag shape)
+  text?: string;                 // tag text (Types 2, 3, 4, 5)
 }
 
 /**
@@ -79,6 +104,182 @@ export function mapYoloToOcrText(opts: MapYoloToOcrOptions): YoloTagInstance[] {
 }
 
 /**
+ * SHIP 2 dispatcher — the canonical entry point for Auto-QTO. Takes a
+ * CountableItem of any of the 5 types and routes to the right engine
+ * function. All takeoff features (Auto-QTO batch, future map-tags rewrites)
+ * should go through this rather than calling the individual match functions
+ * directly.
+ *
+ * Backward compat: the existing `mapYoloToOcrText` stays usable. This
+ * dispatcher calls it internally for the "yolo-with-inner-text" branch so
+ * that Types 3 + 5 still go through the same merge logic shipped in SHIP 1.
+ */
+export function findItemOccurrences(
+  item: CountableItem,
+  scope: "page" | "project",
+  pageNumber: number | undefined,
+  annotations: ClientAnnotation[],
+  textractData: Record<number, TextractPageData>,
+): YoloTagInstance[] {
+  switch (item.itemType) {
+    case "yolo-only":
+      if (!item.yoloClass) return [];
+      return findYoloOnlyMatches(item.yoloClass, item.yoloModel, scope, pageNumber, annotations);
+
+    case "text-only":
+      if (!item.text?.trim()) return [];
+      return findFreeFloatingMatches(
+        item.text.toUpperCase().trim(),
+        scope, pageNumber, textractData,
+      );
+
+    case "yolo-with-inner-text":
+      if (!item.text?.trim() || !item.yoloClass) return [];
+      return mapYoloToOcrText({
+        tagText: item.text,
+        yoloClass: item.yoloClass,
+        yoloModel: item.yoloModel,
+        scope,
+        pageNumber,
+        annotations,
+        textractData,
+      });
+
+    case "yolo-object-with-tag-shape":
+      return findObjectWithTagShapeMatches(item, scope, pageNumber, annotations, textractData);
+
+    case "yolo-object-with-nearby-text":
+      return findObjectWithNearbyTextMatches(item, scope, pageNumber, annotations, textractData);
+  }
+}
+
+// ───────────────────────────────────────────────────────────────
+// Type 1 — YOLO-only (no text match)
+// ───────────────────────────────────────────────────────────────
+
+/**
+ * Count every YOLO annotation of the given class as one occurrence.
+ * No text matching, no dedupe beyond the class filter. Useful for items
+ * like duplex outlets, diffusers, fire extinguishers where each shape IS
+ * the count and tag text is irrelevant.
+ */
+function findYoloOnlyMatches(
+  yoloClass: string,
+  yoloModel: string | undefined,
+  scope: "page" | "project",
+  pageNumber: number | undefined,
+  annotations: ClientAnnotation[],
+): YoloTagInstance[] {
+  const out: YoloTagInstance[] = [];
+  for (const a of annotations) {
+    if (a.source !== "yolo") continue;
+    if (a.name !== yoloClass) continue;
+    if (yoloModel && (a.data as { modelName?: string } | null)?.modelName !== yoloModel) continue;
+    if (scope === "page" && pageNumber != null && a.pageNumber !== pageNumber) continue;
+    out.push({
+      pageNumber: a.pageNumber,
+      annotationId: a.id,
+      bbox: [a.bbox[0], a.bbox[1], a.bbox[2], a.bbox[3]],
+      confidence: 1.0,
+    });
+  }
+  return out;
+}
+
+// ───────────────────────────────────────────────────────────────
+// Type 4 — Object + tag-shape + text
+// ───────────────────────────────────────────────────────────────
+
+/**
+ * Two-step matcher:
+ *   Step 1: find tag-shape annotations (class = tagShapeClass) whose inner
+ *           OCR text matches the target tag text. Reuses findYoloMatches.
+ *   Step 2: for each hit, bind it to the nearest object annotation of class
+ *           = yoloClass on the same page. Return the OBJECT's bbox as the
+ *           occurrence — the tag shape is just a key, not counted itself.
+ *
+ * Example: door_single tagged by a `circle` containing "D-101". The circle
+ * has inner text "D-101" (findYoloMatches finds it), then the circle's
+ * center is used to find the nearest door_single on the same page, which
+ * becomes the counted occurrence.
+ *
+ * Orphan rule: if no object of yoloClass exists on the tag-shape's page,
+ * drop the hit (Phase 2 will surface these as "needs review").
+ */
+function findObjectWithTagShapeMatches(
+  item: CountableItem,
+  scope: "page" | "project",
+  pageNumber: number | undefined,
+  annotations: ClientAnnotation[],
+  textractData: Record<number, TextractPageData>,
+): YoloTagInstance[] {
+  if (!item.yoloClass || !item.tagShapeClass || !item.text?.trim()) return [];
+  const normalizedTag = item.text.toUpperCase().trim();
+
+  // Step 1: text-inside-tag-shape matches via existing Type 3 logic
+  const tagShapeHits = findYoloMatches(
+    normalizedTag, item.tagShapeClass, item.yoloModel,
+    scope, pageNumber, annotations, textractData,
+  );
+  if (tagShapeHits.length === 0) return [];
+
+  // Step 2: gather object candidates (the things we actually COUNT)
+  const objectTargets = annotations.filter((a) =>
+    a.source === "yolo" &&
+    a.name === item.yoloClass &&
+    (!item.yoloModel || (a.data as { modelName?: string } | null)?.modelName === item.yoloModel) &&
+    (scope !== "page" || pageNumber == null || a.pageNumber === pageNumber)
+  );
+
+  // Bind each tag-shape hit to nearest object. No seed — Type 4 has no
+  // "canonical already counted" base set. Higher confidence than Type 5
+  // because the tag was actually inside a purpose-built shape.
+  return bindToNearestTargets(
+    tagShapeHits, [], objectTargets, { exact: 0.9, fuzzy: 0.85 },
+  );
+}
+
+// ───────────────────────────────────────────────────────────────
+// Type 5 standalone — object + nearby floating text
+// ───────────────────────────────────────────────────────────────
+
+/**
+ * Standalone version of the Type 5 logic that SHIP 1's mergeYoloAndFloatingHits
+ * uses as a fallback. Finds free-floating text matches, binds each to the
+ * nearest object of yoloClass on the same page.
+ *
+ * Use this when the user knows their tags don't sit inside the object bbox
+ * (label placement convention for the project) and wants to skip Type 3
+ * entirely. Going through findItemOccurrences with "yolo-with-inner-text"
+ * would also find these matches via the fallback, but doing it standalone
+ * is cheaper when there's zero chance of inner-text hits.
+ */
+function findObjectWithNearbyTextMatches(
+  item: CountableItem,
+  scope: "page" | "project",
+  pageNumber: number | undefined,
+  annotations: ClientAnnotation[],
+  textractData: Record<number, TextractPageData>,
+): YoloTagInstance[] {
+  if (!item.yoloClass || !item.text?.trim()) return [];
+  const normalizedTag = item.text.toUpperCase().trim();
+
+  const floatingHits = findFreeFloatingMatches(normalizedTag, scope, pageNumber, textractData);
+  if (floatingHits.length === 0) return [];
+
+  const objectTargets = annotations.filter((a) =>
+    a.source === "yolo" &&
+    a.name === item.yoloClass &&
+    (!item.yoloModel || (a.data as { modelName?: string } | null)?.modelName === item.yoloModel) &&
+    (scope !== "page" || pageNumber == null || a.pageNumber === pageNumber)
+  );
+
+  return bindToNearestTargets(
+    floatingHits, [], objectTargets, { exact: 0.8, fuzzy: 0.7 },
+  );
+}
+
+/**
  * QTO-C merge: take Type 3 canonical hits (text inside the shape) and fold
  * in Type 5 hits (text outside the shape but near one of the target-class
  * objects on the same page). The rule from the user:
@@ -87,11 +288,8 @@ export function mapYoloToOcrText(opts: MapYoloToOcrOptions): YoloTagInstance[] {
  *    if it's literally orphan (no target on the page) drop it — Phase 2 will
  *    surface orphans for QA review."
  *
- * Dedupe rules (both required to avoid double-counting):
- *   1. If a floating text's center is inside any Type 3 hit bbox → skip
- *      (it's already counted via Type 3)
- *   2. If the nearest target object was already counted (Type 3 or an
- *      earlier Type 5 binding on this call) → skip
+ * SHIP 2: thin wrapper around the shared bindToNearestTargets helper so that
+ * Types 3, 4, and 5 all share the same dedupe + nearest-binding logic.
  */
 function mergeYoloAndFloatingHits(
   yoloHits: YoloTagInstance[],
@@ -100,66 +298,96 @@ function mergeYoloAndFloatingHits(
   yoloModel: string | undefined,
   annotations: ClientAnnotation[],
 ): YoloTagInstance[] {
-  // Start with all Type 3 hits — these are canonical.
-  const merged: YoloTagInstance[] = [...yoloHits];
+  const targets = annotations.filter((a) =>
+    a.source === "yolo" &&
+    a.name === yoloClass &&
+    (!yoloModel || (a.data as { modelName?: string } | null)?.modelName === yoloModel)
+  );
+  return bindToNearestTargets(
+    floatingHits, yoloHits, targets, { exact: 0.8, fuzzy: 0.7 },
+  );
+}
 
-  // Track which annotation IDs have been counted to prevent double-counts.
+/**
+ * Shared nearest-object binding core. Used by:
+ *   - mergeYoloAndFloatingHits (Type 3 seed + Type 2 sources, target = yoloClass)
+ *   - findObjectWithTagShapeMatches (empty seed, tag-shape sources, target = object class)
+ *   - findObjectWithNearbyTextMatches (empty seed, Type 2 sources, target = object class)
+ *
+ * Steps:
+ *   1. Start with `seedHits` as the canonical counted base set.
+ *   2. For each `sourceHit`, check if its center is already inside any seed
+ *      hit bbox on the same page → skip (already counted via seed).
+ *   3. Find the nearest `targetAnnotation` on the same page. If none → orphan,
+ *      drop.
+ *   4. If that target was already used (by seed or earlier binding) → skip
+ *      (don't double-count the same object).
+ *   5. Emit a new instance with the TARGET's bbox (not the source's) and
+ *      confidence from the `boundConfidence` config.
+ *
+ * Returns `[...seedHits, ...newlyBoundHits]`.
+ *
+ * `boundConfidence.exact` is used when `sourceHit.confidence === 1.0`;
+ * `boundConfidence.fuzzy` is used when source was a fuzzy OCR match.
+ */
+function bindToNearestTargets(
+  sourceHits: YoloTagInstance[],
+  seedHits: YoloTagInstance[],
+  targetAnnotations: ClientAnnotation[],
+  boundConfidence: { exact: number; fuzzy: number },
+): YoloTagInstance[] {
+  const merged: YoloTagInstance[] = [...seedHits];
+
+  // usedAnnotationIds prevents double-counting the same target across all
+  // binding attempts (both seed-contributed and newly-bound).
   const usedAnnotationIds = new Set<number>();
-  for (const h of yoloHits) {
+  for (const h of seedHits) {
     if (h.annotationId >= 0) usedAnnotationIds.add(h.annotationId);
   }
 
-  // Build per-page index of target-class annotations for nearest-object lookup.
+  // Per-page target index
   const targetsByPage = new Map<number, ClientAnnotation[]>();
-  for (const a of annotations) {
-    if (a.source !== "yolo") continue;
-    if (a.name !== yoloClass) continue;
-    if (yoloModel && (a.data as { modelName?: string } | null)?.modelName !== yoloModel) continue;
+  for (const a of targetAnnotations) {
     const list = targetsByPage.get(a.pageNumber);
     if (list) list.push(a);
     else targetsByPage.set(a.pageNumber, [a]);
   }
 
-  // Pre-compute Type 3 hit bboxes grouped by page for fast containment checks.
-  const yoloHitBboxesByPage = new Map<number, BboxMinMax[]>();
-  for (const h of yoloHits) {
-    const list = yoloHitBboxesByPage.get(h.pageNumber);
+  // Per-page seed-bbox index for the "already inside a seed hit" dedupe
+  const seedBboxesByPage = new Map<number, BboxMinMax[]>();
+  for (const h of seedHits) {
+    const list = seedBboxesByPage.get(h.pageNumber);
     const bbox: BboxMinMax = [h.bbox[0], h.bbox[1], h.bbox[2], h.bbox[3]];
     if (list) list.push(bbox);
-    else yoloHitBboxesByPage.set(h.pageNumber, [bbox]);
+    else seedBboxesByPage.set(h.pageNumber, [bbox]);
   }
 
-  for (const floating of floatingHits) {
-    const floatingCenter = bboxCenterMinMax([
-      floating.bbox[0], floating.bbox[1], floating.bbox[2], floating.bbox[3],
+  for (const source of sourceHits) {
+    const sourceCenter = bboxCenterMinMax([
+      source.bbox[0], source.bbox[1], source.bbox[2], source.bbox[3],
     ]);
 
-    // Dedupe 1: text center already inside a Type 3 hit → skip
-    const samePageYoloBboxes = yoloHitBboxesByPage.get(floating.pageNumber);
-    if (samePageYoloBboxes && samePageYoloBboxes.some((b) => bboxContainsPoint(b, floatingCenter))) {
+    // Dedupe 1: source's center lies inside an existing seed hit on the
+    // same page — already counted, skip.
+    const samePageSeeds = seedBboxesByPage.get(source.pageNumber);
+    if (samePageSeeds && samePageSeeds.some((b) => bboxContainsPoint(b, sourceCenter))) {
       continue;
     }
 
-    // Find nearest target-class object on the same page
-    const candidates = targetsByPage.get(floating.pageNumber);
-    if (!candidates || candidates.length === 0) {
-      // Orphan — no target object on this page. Drop for SHIP 1.
-      continue;
-    }
-    const nearest = findNearestAnnotation(floatingCenter, candidates);
+    // Nearest-target lookup on same page
+    const candidates = targetsByPage.get(source.pageNumber);
+    if (!candidates || candidates.length === 0) continue;  // orphan — drop
+    const nearest = findNearestAnnotation(sourceCenter, candidates);
 
-    // Dedupe 2: this object was already counted → skip
+    // Dedupe 2: target already counted
     if (usedAnnotationIds.has(nearest.id)) continue;
     usedAnnotationIds.add(nearest.id);
 
-    // Emit a Type 5 binding — count the OBJECT bbox, not the text bbox.
-    // Confidence reduced vs Type 3 to signal the indirection (text not
-    // actually inside the shape); halved further if the text match was fuzzy.
     merged.push({
-      pageNumber: floating.pageNumber,
+      pageNumber: source.pageNumber,
       annotationId: nearest.id,
       bbox: [nearest.bbox[0], nearest.bbox[1], nearest.bbox[2], nearest.bbox[3]],
-      confidence: floating.confidence < 1.0 ? 0.7 : 0.8,
+      confidence: source.confidence < 1.0 ? boundConfidence.fuzzy : boundConfidence.exact,
     });
   }
 
