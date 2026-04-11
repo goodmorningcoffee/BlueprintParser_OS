@@ -49,6 +49,11 @@ export default memo(function DrawingPreviewLayer({
   const bucketFillBarriers = useViewerStore((s) => s.bucketFillBarriers);
   const bucketFillBarrierMode = useViewerStore((s) => s.bucketFillBarrierMode);
   const barrierPendingPoint = useViewerStore((s) => s.barrierPendingPoint);
+  const splitAreaActive = useViewerStore((s) => s.splitAreaActive);
+  const splitLineA = useViewerStore((s) => s.splitLineA);
+  const splitLineB = useViewerStore((s) => s.splitLineB);
+  const splitPreview = useViewerStore((s) => s.splitPreview);
+  const splitError = useViewerStore((s) => s.splitError);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -344,6 +349,94 @@ export default memo(function DrawingPreviewLayer({
       ctx.restore();
     }
 
+    // ── Split area: in-progress line ─────────────────────────
+    if (splitAreaActive && !splitPreview) {
+      ctx.save();
+      ctx.strokeStyle = "#e879f9"; // fuchsia
+      ctx.lineWidth = 2;
+
+      if (splitLineA && !splitLineB && mousePos) {
+        // Stage: A set, awaiting B — dashed line to cursor
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(splitLineA.x * width, splitLineA.y * height);
+        ctx.lineTo(mousePos.x, mousePos.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (splitLineA && splitLineB) {
+        // Stage: line committed, awaiting target click — solid line
+        ctx.beginPath();
+        ctx.moveTo(splitLineA.x * width, splitLineA.y * height);
+        ctx.lineTo(splitLineB.x * width, splitLineB.y * height);
+        ctx.stroke();
+      }
+
+      // Endpoint dots
+      if (splitLineA) {
+        ctx.fillStyle = "#e879f9";
+        ctx.beginPath();
+        ctx.arc(splitLineA.x * width, splitLineA.y * height, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (splitLineB) {
+        ctx.fillStyle = "#e879f9";
+        ctx.beginPath();
+        ctx.arc(splitLineB.x * width, splitLineB.y * height, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Instruction text top-left
+      ctx.font = "12px sans-serif";
+      const msg = !splitLineA
+        ? "Click first point of split line"
+        : !splitLineB
+        ? "Click second point of split line"
+        : "Click inside the polygon to split";
+      const tw = ctx.measureText(msg).width;
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.fillRect(8, 8, tw + 12, 22);
+      ctx.fillStyle = "#e879f9";
+      ctx.fillText(msg, 14, 23);
+      ctx.restore();
+    }
+
+    // ── Split area: preview of both halves ───────────────────
+    if (splitPreview) {
+      ctx.save();
+
+      const drawHalf = (verts: { x: number; y: number }[], fill: string, stroke: string) => {
+        if (verts.length < 3) return;
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.moveTo(verts[0].x * width, verts[0].y * height);
+        for (let i = 1; i < verts.length; i++) {
+          ctx.lineTo(verts[i].x * width, verts[i].y * height);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      };
+
+      // Left half: original tint; Right half: fuchsia
+      drawHalf(splitPreview.left, "rgba(34, 211, 238, 0.20)", "#22d3ee");
+      drawHalf(splitPreview.right, "rgba(232, 121, 249, 0.20)", "#e879f9");
+
+      // Solid split line on top
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(splitPreview.lineA.x * width, splitPreview.lineA.y * height);
+      ctx.lineTo(splitPreview.lineB.x * width, splitPreview.lineB.y * height);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
     // ── Bucket fill loading indicator ────────────────────────
     if (bucketFillLoading) {
       ctx.save();
@@ -360,7 +453,8 @@ export default memo(function DrawingPreviewLayer({
     symbolSearchActive, tableParseStep, keynoteParseStep,
     calibrationMode, calibrationPoints,
     polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems,
-    bucketFillPreview, bucketFillLoading, bucketFillBarriers, bucketFillBarrierMode, barrierPendingPoint]);
+    bucketFillPreview, bucketFillLoading, bucketFillBarriers, bucketFillBarrierMode, barrierPendingPoint,
+    splitAreaActive, splitLineA, splitLineB, splitPreview]);
 
   // Compute centroid for accept/cancel buttons
   const previewCentroid = bucketFillPreview ? (() => {
@@ -441,6 +535,87 @@ export default memo(function DrawingPreviewLayer({
           >
             Cancel
           </button>
+        </div>
+      )}
+      {/* Split area Accept / Cancel buttons — at line midpoint */}
+      {splitPreview && (() => {
+        const midX = ((splitPreview.lineA.x + splitPreview.lineB.x) / 2) * width;
+        const midY = ((splitPreview.lineA.y + splitPreview.lineB.y) / 2) * height;
+        return (
+          <div
+            style={{
+              position: "absolute",
+              left: `${midX - 58}px`,
+              top: `${midY + 14}px`,
+              display: "flex",
+              gap: "6px",
+              zIndex: 16,
+              transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
+              transformOrigin: "top left",
+            }}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+              }}
+              style={{
+                padding: "4px 12px",
+                borderRadius: "4px",
+                border: "none",
+                background: "#22c55e",
+                color: "#fff",
+                fontSize: "12px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Split
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                useViewerStore.getState().setSplitPreview(null);
+              }}
+              style={{
+                padding: "4px 12px",
+                borderRadius: "4px",
+                border: "none",
+                background: "#ef4444",
+                color: "#fff",
+                fontSize: "12px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        );
+      })()}
+      {/* Split area error banner */}
+      {splitError && (
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "12px",
+            transform: `translateX(-50%)${cssScale !== 1 ? ` scale(${cssScale})` : ""}`,
+            transformOrigin: "top center",
+            padding: "8px 14px",
+            borderRadius: "6px",
+            background: "rgba(112, 26, 117, 0.92)",
+            border: "1px solid #e879f9",
+            color: "#fff",
+            fontSize: "12px",
+            fontWeight: 500,
+            zIndex: 17,
+            pointerEvents: "none",
+            maxWidth: "420px",
+            textAlign: "center",
+          }}
+        >
+          {splitError}
         </div>
       )}
       {/* Bucket fill error banner — takes priority over HUDs */}
