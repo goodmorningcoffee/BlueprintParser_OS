@@ -121,6 +121,7 @@ export default memo(function AnnotationOverlay({
   const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
   const llmHighlight = useViewerStore((s) => s.llmHighlight);
   const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
+  const showTableCellStructure = useViewerStore((s) => s.showTableCellStructure);
   const toggleCellHighlight = useViewerStore((s) => s.toggleCellHighlight);
   const annotations = useViewerStore((s) => s.annotations);
   const addAnnotation = useViewerStore((s) => s.addAnnotation);
@@ -470,8 +471,11 @@ export default memo(function AnnotationOverlay({
     }
 
     // Draw TATR cell structure overlays
-    if (tableCellStructure && tableCellStructure.pageNumber === pageNumber) {
-      ctx.setLineDash([4, 3]);
+    // TATR-OVERLAY: gated on showTableCellStructure (toggle in AutoParseTab),
+    // bumped visual style — solid 1px borders + 5% cyan tint on every cell so
+    // they're actually visible against a busy architectural drawing background.
+    // Previous styling (dashed 0.3-opacity cyan) was effectively invisible.
+    if (tableCellStructure && tableCellStructure.pageNumber === pageNumber && showTableCellStructure) {
       for (const cell of tableCellStructure.cells) {
         const [cx0, cy0, cx1, cy1] = cell.bbox;
         const cellX = cx0 * width;
@@ -480,22 +484,26 @@ export default memo(function AnnotationOverlay({
         const cellH = (cy1 - cy0) * height;
 
         if (cell.highlighted) {
-          ctx.fillStyle = "rgba(34,211,238,0.2)";
+          // Highlighted: thick cyan with bright fill (user clicked)
+          ctx.fillStyle = "rgba(34,211,238,0.25)";
           ctx.fillRect(cellX, cellY, cellW, cellH);
           ctx.strokeStyle = "#22d3ee";
-          ctx.lineWidth = 2;
+          ctx.lineWidth = 2.5;
         } else if (cell.type === "column-header" || cell.type === "row-header") {
-          ctx.fillStyle = "rgba(168,85,247,0.08)";
+          // Header cells: violet tint
+          ctx.fillStyle = "rgba(168,85,247,0.15)";
           ctx.fillRect(cellX, cellY, cellW, cellH);
-          ctx.strokeStyle = "rgba(168,85,247,0.4)";
-          ctx.lineWidth = 1;
+          ctx.strokeStyle = "rgba(168,85,247,0.7)";
+          ctx.lineWidth = 1.25;
         } else {
-          ctx.strokeStyle = "rgba(34,211,238,0.3)";
+          // Data cells: subtle cyan tint + visible solid border
+          ctx.fillStyle = "rgba(34,211,238,0.05)";
+          ctx.fillRect(cellX, cellY, cellW, cellH);
+          ctx.strokeStyle = "rgba(34,211,238,0.7)";
           ctx.lineWidth = 1;
         }
         ctx.strokeRect(cellX, cellY, cellW, cellH);
       }
-      ctx.setLineDash([]);
     }
 
     // Draw LLM tool use highlight (pulsing dashed cyan rectangle)
@@ -663,7 +671,7 @@ export default memo(function AnnotationOverlay({
     }
 
     // Calibration + polygon preview — rendered by DrawingPreviewLayer
-  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight, hiddenTakeoffItemIds, tableCellStructure]);
+  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight, hiddenTakeoffItemIds, tableCellStructure, showTableCellStructure]);
 
   const getPos = useCallback(
     (e: React.MouseEvent) => {
@@ -1203,8 +1211,10 @@ export default memo(function AnnotationOverlay({
 
       // Pointer mode: select, delete, move, resize annotations + click keynotes
       if (mode === "pointer") {
-        // TATR cell click: single click = search by text, double click = toggle highlight
-        if (tableCellStructure && tableCellStructure.pageNumber === pageNumber) {
+        // TATR cell click: single click = search by text, double click = toggle highlight.
+        // Gated on showTableCellStructure so the user can disable cell-level
+        // interaction without losing the underlying data.
+        if (tableCellStructure && tableCellStructure.pageNumber === pageNumber && showTableCellStructure) {
           const normX = pos.x / width;
           const normY = pos.y / height;
           for (const cell of tableCellStructure.cells) {
