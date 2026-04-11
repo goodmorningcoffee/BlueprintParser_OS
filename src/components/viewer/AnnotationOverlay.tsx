@@ -1001,12 +1001,18 @@ export default memo(function AnnotationOverlay({
               return res.json();
             })
             .then((data) => {
-              setBucketFillLoading(false);
               if (data?.type === "result" && data.vertices?.length >= 3) {
-                setBucketFillPreview({ vertices: data.vertices, method: data.method || "raster" });
+                // Atomic update — avoid split render where loading=false commits before preview=obj
+                useViewerStore.setState({
+                  bucketFillLoading: false,
+                  bucketFillPreview: { vertices: data.vertices, method: data.method || "raster" },
+                });
               } else if (data?.type === "error") {
+                setBucketFillLoading(false);
                 setBucketFillError(data.error || "Bucket fill failed");
                 setTimeout(() => setBucketFillError(null), 4000);
+              } else {
+                setBucketFillLoading(false);
               }
             })
             .catch((e) => {

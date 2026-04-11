@@ -362,17 +362,6 @@ export default memo(function DrawingPreviewLayer({
     polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems,
     bucketFillPreview, bucketFillLoading, bucketFillBarriers, bucketFillBarrierMode, barrierPendingPoint]);
 
-  // Don't render canvas at all when nothing to draw
-  const hasContent = drawing
-    || (calibrationMode !== "idle" && calibrationPoints.p1)
-    || (polygonDrawingMode === "drawing" && polygonVertices.length > 0)
-    || bucketFillPreview
-    || bucketFillLoading
-    || bucketFillBarriers.length > 0
-    || barrierPendingPoint
-    || bucketFillActive
-    || bucketFillError;
-
   // Compute centroid for accept/cancel buttons
   const previewCentroid = bucketFillPreview ? (() => {
     const verts = bucketFillPreview.vertices;
@@ -381,7 +370,8 @@ export default memo(function DrawingPreviewLayer({
     return { x: cx, y: cy };
   })() : null;
 
-  if (!hasContent) return null;
+  // Canvas always mounts — stable ref, stable useEffect timing. Empty canvas is cheap;
+  // conditional unmount caused bucket fill previews to render invisibly on first paint.
 
   return (
     <>
