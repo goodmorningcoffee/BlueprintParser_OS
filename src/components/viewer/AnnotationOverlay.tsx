@@ -101,7 +101,7 @@ export default memo(function AnnotationOverlay({
 }: AnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { pageNumber, mode } = useNavigation();
-  const { publicId, isDemo } = useProject();
+  const { projectId: projectDbId, publicId, isDemo } = useProject();
   const {
     tableParseStep, setTableParseStep, tableParseRegion, setTableParseRegion,
     tableParseColumnBBs, tableParseRowBBs, showParsedRegions,
@@ -172,6 +172,7 @@ export default memo(function AnnotationOverlay({
   const bucketFillLoading = useViewerStore((s) => s.bucketFillLoading);
   const setBucketFillPreview = useViewerStore((s) => s.setBucketFillPreview);
   const setBucketFillLoading = useViewerStore((s) => s.setBucketFillLoading);
+  const setBucketFillError = useViewerStore((s) => s.setBucketFillError);
   const bucketFillBarrierMode = useViewerStore((s) => s.bucketFillBarrierMode);
   const addBucketFillBarrier = useViewerStore((s) => s.addBucketFillBarrier);
   const setBucketFillActive = useViewerStore((s) => s.setBucketFillActive);
@@ -984,7 +985,7 @@ export default memo(function AnnotationOverlay({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              projectId: publicId,
+              projectId: projectDbId,
               pageNumber,
               seedPoint: { x: normX, y: normY },
               tolerance: 30,
@@ -992,16 +993,26 @@ export default memo(function AnnotationOverlay({
               barriers,
             }),
           })
-            .then((res) => (res.ok ? res.json() : null))
+            .then(async (res) => {
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err?.error || `HTTP ${res.status}`);
+              }
+              return res.json();
+            })
             .then((data) => {
               setBucketFillLoading(false);
               if (data?.type === "result" && data.vertices?.length >= 3) {
                 setBucketFillPreview({ vertices: data.vertices, method: data.method || "raster" });
+              } else if (data?.type === "error") {
+                setBucketFillError(data.error || "Bucket fill failed");
+                setTimeout(() => setBucketFillError(null), 4000);
               }
-              // silently ignore errors — user just clicks again
             })
-            .catch(() => {
+            .catch((e) => {
               setBucketFillLoading(false);
+              setBucketFillError(e?.message || "Bucket fill failed");
+              setTimeout(() => setBucketFillError(null), 4000);
             });
           return;
         }
@@ -1536,7 +1547,7 @@ export default memo(function AnnotationOverlay({
       setDrawStart(pos);
       setDrawEnd(pos);
     },
-    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep]
+    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, projectDbId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError]
   );
 
   const handleMouseMove = useCallback(
