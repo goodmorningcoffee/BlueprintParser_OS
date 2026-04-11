@@ -5,6 +5,8 @@ import { projects, pages, annotations, models, companies } from "@/lib/db/schema
 import { eq, and, sql } from "drizzle-orm";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
+import { classifyPageRegions } from "@/lib/composite-classifier";
+import type { ClassifiedTable } from "@/types";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { S3_BUCKET } from "@/lib/s3";
@@ -185,7 +187,10 @@ export async function POST(req: Request) {
   // ─── Post-YOLO: Run heuristic engine with YOLO data ───
   if (totalInserted > 0) {
     try {
-      // Fetch YOLO annotations + page data for heuristic re-evaluation
+      // Fetch YOLO annotations + page data for heuristic re-evaluation.
+      // `data` field is kept so we can extract modelName for the composite
+      // region classifier (used to detect yolo_medium ∩ yolo_primitive
+      // drawings agreement).
       const yoloAnns = await db
         .select({ name: annotations.name, minX: annotations.minX, minY: annotations.minY, maxX: annotations.maxX, maxY: annotations.maxY, pageNumber: annotations.pageNumber, data: annotations.data })
         .from(annotations)
@@ -209,48 +214,87 @@ export async function POST(req: Request) {
 
       const rules = getEffectiveRules(companyHeuristics);
 
-      // Group YOLO detections by page
-      const yoloByPage = new Map<number, Array<{ name: string; minX: number; minY: number; maxX: number; maxY: number; confidence: number }>>();
+      // Group YOLO detections by page. Include modelName so the composite
+      // region classifier can detect cross-model drawings agreement.
+      const yoloByPage = new Map<number, Array<{ name: string; minX: number; minY: number; maxX: number; maxY: number; confidence: number; modelName?: string }>>();
       for (const a of yoloAnns) {
         if (!yoloByPage.has(a.pageNumber)) yoloByPage.set(a.pageNumber, []);
+        const data = (a.data as { confidence?: number; modelName?: string } | null);
         yoloByPage.get(a.pageNumber)!.push({
           name: a.name,
           minX: a.minX,
           minY: a.minY,
           maxX: a.maxX,
           maxY: a.maxY,
-          confidence: (a.data as any)?.confidence || 0,
+          confidence: data?.confidence ?? 0,
+          modelName: data?.modelName,
         });
       }
 
-      // Run heuristics per page with YOLO data
+      // Run heuristics + composite classifier per page with YOLO data
       for (const page of projectPages) {
         const yoloDets = yoloByPage.get(page.pageNumber);
         if (!yoloDets?.length) continue;
 
-        const existing = (page.pageIntelligence || {}) as any;
+        const existing = (page.pageIntelligence || {}) as Record<string, unknown>;
+        const updated: Record<string, unknown> = { ...existing };
+        let pageChanged = false;
+
+        // Existing: re-run heuristic engine with YOLO data
         const inferences = runHeuristicEngine(rules, {
           rawText: page.rawText || "",
           yoloDetections: yoloDets,
-          textRegions: existing.textRegions,
-          csiCodes: existing.csiCodes,
+          textRegions: existing.textRegions as unknown,
+          csiCodes: existing.csiCodes as unknown,
           pageNumber: page.pageNumber,
-        });
+        } as Parameters<typeof runHeuristicEngine>[1]);
 
         if (inferences.length > 0) {
-          const updated = { ...existing, heuristicInferences: inferences };
+          updated.heuristicInferences = inferences;
+          pageChanged = true;
 
-          // Reclassify tables with YOLO-enriched heuristic data
-          if (updated.textRegions?.length > 0) {
+          // Reclassify tables (OCR-keyword classifier) with YOLO-enriched heuristics
+          const textRegions = (existing.textRegions as unknown[] | undefined) ?? [];
+          if (textRegions.length > 0) {
             const classified = classifyTables({
-              textRegions: updated.textRegions,
+              textRegions: textRegions as Parameters<typeof classifyTables>[0]["textRegions"],
               heuristicInferences: inferences,
-              csiCodes: existing.csiCodes,
+              csiCodes: existing.csiCodes as Parameters<typeof classifyTables>[0]["csiCodes"],
               pageNumber: page.pageNumber,
             });
             if (classified.length > 0) updated.classifiedTables = classified;
           }
+        }
 
+        // NEW (QTO SHIP 1): composite region classifier — Layer 1 of the QTO
+        // rebuild. Combines yolo class signals with OCR header keywords to
+        // produce exclusion (tables, title_block) and inclusion (drawings)
+        // zones. Runs regardless of heuristic inferences because a page can
+        // have a tables bbox without any heuristic rule firing.
+        try {
+          const regions = classifyPageRegions({
+            pageNumber: page.pageNumber,
+            yoloAnnotations: yoloDets.map((d) => ({
+              name: d.name,
+              bbox: [d.minX, d.minY, d.maxX, d.maxY],
+              modelName: d.modelName,
+            })),
+            textRegions: existing.textRegions as Parameters<typeof classifyPageRegions>[0]["textRegions"],
+            parsedRegions: existing.parsedRegions as Parameters<typeof classifyPageRegions>[0]["parsedRegions"],
+            legacyClassifiedTables: (updated.classifiedTables ?? existing.classifiedTables) as ClassifiedTable[] | undefined,
+          });
+          const hasRegions = regions.tables.length > 0
+            || regions.titleBlocks.length > 0
+            || regions.drawings.length > 0;
+          if (hasRegions) {
+            updated.classifiedRegions = regions;
+            pageChanged = true;
+          }
+        } catch (err) {
+          logger.error(`[YOLO-LOAD] classifyPageRegions failed for page ${page.pageNumber}:`, err);
+        }
+
+        if (pageChanged) {
           await db.update(pages).set({ pageIntelligence: updated }).where(eq(pages.id, page.id));
         }
 
