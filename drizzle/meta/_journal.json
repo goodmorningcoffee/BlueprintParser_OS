@@ -169,6 +169,13 @@
       "when": 1775520000000,
       "tag": "0023_add_takeoff_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1775580000000,
+      "tag": "0024_qto_itemtype_cleanup",
+      "breakpoints": true
     }
   ]
 }

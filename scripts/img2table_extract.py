@@ -166,8 +166,13 @@ def extract_table(image_path: str, region_bbox: list, dpi: int = 150,
         crop_h, crop_w = cropped.shape[:2]
         print(f"Cropped region: {crop_w}x{crop_h}", file=sys.stderr)
 
-        # Create img2table Image from cropped region
-        doc = Img2TableImage(src=tmp_path, dpi=dpi, detect_rotation=detect_rotation)
+        # Create img2table Image from cropped region.
+        # Do NOT pass dpi= here: the prod image's img2table rejects it with
+        # TypeError even though the same 0.0.12 version accepts it in other
+        # environments (stale/corrupted wheel suspected, unconfirmed). Class
+        # default is 200 DPI which matches our pipeline, so dropping the kwarg
+        # is a no-op functionally.
+        doc = Img2TableImage(src=tmp_path, detect_rotation=detect_rotation)
 
         # Use Tesseract for OCR (already installed in our Docker image)
         ocr = TesseractOCR(lang="eng")
@@ -284,7 +289,8 @@ def extract_from_pdf(pdf_path: str, page_number: int, region_bbox: list,
             f.write(cropped_pdf_bytes)
 
         try:
-            doc = Img2TablePDF(src=tmp_path, dpi=dpi)
+            # Do NOT pass dpi= here — see note above on Img2TableImage call.
+            doc = Img2TablePDF(src=tmp_path)
             ocr = TesseractOCR(lang="eng")
             tables_by_page = doc.extract_tables(ocr=ocr, implicit_rows=implicit_rows,
                                                  min_confidence=min_confidence)

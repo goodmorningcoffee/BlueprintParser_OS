@@ -18,11 +18,36 @@ import { logger } from "@/lib/logger";
 const DEFAULT_ROW_Y_TOL = 0.006;
 const DEFAULT_MIN_COL_GAP = 0.015;
 const HEADER_KW = new Set([
-  "NO", "NO.", "NUMBER", "TAG", "MARK", "TYPE", "SIZE", "WIDTH", "HEIGHT",
-  "MATERIAL", "FINISH", "HARDWARE", "REMARKS", "DESCRIPTION", "LOCATION",
-  "QTY", "QUANTITY", "RATING", "FRAME", "GLAZING", "NOTES", "ROOM",
-  "FLOOR", "CEILING", "WALL", "BASE", "MANUFACTURER", "MODEL", "COLOR",
+  // Core generic schedule headers
+  "NO", "NO.", "NUMBER", "NUM", "TAG", "MARK", "ITEM", "TYPE", "SIZE",
+  "WIDTH", "HEIGHT", "LENGTH", "DEPTH", "THICKNESS",
+  "MATERIAL", "FINISH", "COLOR", "REMARKS", "DESCRIPTION", "LOCATION",
+  "QTY", "QUANTITY", "RATING", "GLAZING", "NOTES", "SYMBOL", "SYM",
+  // Door & hardware schedules
+  "DOOR", "DOORS", "HARDWARE", "HDW", "HDWE", "HDWARE", "SET", "GROUP", "GRP",
+  "FRAME", "HEAD", "JAMB", "SILL", "LATCH", "LOCK", "HINGE", "CLOSER",
+  "KEY", "KEYING", "CYL", "CYLINDER",
+  // Manufacturer / vendor
+  "MANUFACTURER", "MFG", "MFR", "MANUF", "MODEL", "VENDOR", "SUPPLIER", "BRAND",
+  // Room / finish schedules
+  "ROOM", "FLOOR", "CEILING", "WALL", "BASE", "TRIM",
+  // Generic indexing / spec
+  "CODE", "CLASS", "CATEGORY", "CSI", "SPEC", "SPECIFICATION", "UNIT", "UNITS",
 ]);
+
+// Match a grid cell against HEADER_KW at the token level. Catches compound
+// headers like "HDW SET" (tokens: HDW, SET) and strips trailing punctuation.
+// Exact-cell match (the original behavior) is a special case of this since
+// single-word cells tokenize to a single token.
+function cellLooksLikeHeaderKeyword(cell: string): boolean {
+  const tokens = cell.toUpperCase().trim().split(/\s+/);
+  return tokens.some((t) => {
+    if (!t) return false;
+    const stripped = t.replace(/[.,:;]+$/, "");
+    return HEADER_KW.has(t) || HEADER_KW.has(stripped);
+  });
+}
+
 const RE_TAG = /^[A-Z]{0,3}-?\d{1,4}[A-Z]?$/i;
 
 export interface OcrParseOptions {
@@ -153,12 +178,37 @@ export function methodOcrPositions(
   } else if (headerMode === "none") {
     headerIdx = -1;
   } else {
+    // Pass 1: keyword match over the first 5 rows (was 3). Wider window because
+    // schedules occasionally have a title row above the header row.
     let bestScore = 0;
-    for (let r = 0; r < Math.min(3, grid.length); r++) {
-      const score = grid[r].filter((c: string) => HEADER_KW.has(c.toUpperCase().trim())).length;
+    const headerScanLimit = Math.min(5, grid.length);
+    for (let r = 0; r < headerScanLimit; r++) {
+      const score = grid[r].filter(cellLooksLikeHeaderKeyword).length;
       if (score > bestScore) { bestScore = score; headerIdx = r; }
     }
     if (bestScore === 0) headerIdx = -1;
+
+    // Pass 2 fallback: no keyword match anywhere in the scan window. Schedules
+    // still have a header row most of the time — it just uses unfamiliar
+    // terminology. Accept the first row where every non-empty cell is SHORT
+    // (≤16 chars) and all-uppercase, with NO digits. Schedule data rows usually
+    // have numbers (tag IDs, sizes), so "no digits" is a cheap data-row reject.
+    if (headerIdx < 0) {
+      for (let r = 0; r < headerScanLimit; r++) {
+        const nonEmpty = grid[r].filter((c: string) => c.trim());
+        if (nonEmpty.length < 2) continue;
+        const hasDigit = nonEmpty.some((c) => /\d/.test(c));
+        if (hasDigit) continue;
+        const allUpperShort = nonEmpty.every((c) => {
+          const t = c.trim();
+          return t.length <= 16 && t === t.toUpperCase();
+        });
+        if (allUpperShort) {
+          headerIdx = r;
+          break;
+        }
+      }
+    }
   }
 
   const headers = headerIdx >= 0
@@ -222,7 +272,7 @@ export function methodOcrPositions(
   const cellCounts = dataRows.map((r) => Object.values(r).filter((v) => v).length);
   const avgCells = cellCounts.reduce((s, c) => s + c, 0) / cellCounts.length;
   const consistency = cellCounts.filter((c) => Math.abs(c - avgCells) <= 1).length / cellCounts.length;
-  const headerMatches = headers.filter((h) => HEADER_KW.has(h.toUpperCase().trim())).length;
+  const headerMatches = headers.filter(cellLooksLikeHeaderKeyword).length;
   let confidence = fillRate * 0.4 + consistency * 0.2 + Math.min(headerMatches * 0.05, 0.1) + (tagColumn ? 0.1 : 0);
   confidence = Math.min(confidence, 0.85);
 
