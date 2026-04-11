@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
-import { eq, and, gte, lte } from "drizzle-orm";
+import { eq, and, gte, lte, isNull } from "drizzle-orm";
 import type { ClientAnnotation } from "@/types";
 
 /**
@@ -95,7 +95,8 @@ export async function GET(
       and(
         eq(annotations.projectId, project.id),
         gte(annotations.pageNumber, from),
-        lte(annotations.pageNumber, to)
+        lte(annotations.pageNumber, to),
+        isNull(annotations.creatorId),
       )
     );
 

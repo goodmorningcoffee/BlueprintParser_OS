@@ -31,7 +31,7 @@ export async function GET(
 
   const access = await resolveProjectAccess({ publicId: id });
   if (access.error) return access.error;
-  const { project } = access;
+  const { project, session } = access;
 
   // Fetch page data and annotations in parallel (both need only project.id + page range)
   const [pageRows, rangeAnnotations] = await Promise.all([
@@ -59,7 +59,8 @@ export async function GET(
         and(
           eq(annotations.projectId, project.id),
           gte(annotations.pageNumber, from),
-          lte(annotations.pageNumber, to)
+          lte(annotations.pageNumber, to),
+          eq(annotations.creatorId, session!.user.dbId),
         )
       ),
   ]);
