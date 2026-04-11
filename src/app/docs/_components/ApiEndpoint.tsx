@@ -76,13 +76,13 @@ export function ApiEndpoint({
               <div className="text-[10px] uppercase tracking-wider text-[var(--muted)] mb-1">
                 Params
               </div>
-              <ul className="space-y-1 text-xs">
+              <ul className="space-y-1 text-[13px]">
                 {params.map((p) => (
                   <li key={p.name} className="font-mono">
                     <span className="text-[var(--accent)]">{p.name}</span>
                     <span className="text-[var(--muted)]">: {p.type}</span>
                     {p.required && <span className="text-red-400/80"> *</span>}
-                    <span className="text-[var(--fg)]/75 font-sans"> — {p.desc}</span>
+                    <span className="text-[var(--fg)]/90 font-sans"> — {p.desc}</span>
                   </li>
                 ))}
               </ul>
@@ -93,7 +93,7 @@ export function ApiEndpoint({
               <div className="text-[10px] uppercase tracking-wider text-[var(--muted)] mb-1">
                 Example
               </div>
-              <pre className="text-[12px] font-mono bg-[var(--bg)] border border-[var(--border)] rounded p-2 overflow-x-auto text-[var(--fg)]/85">
+              <pre className="text-[13px] font-mono bg-[var(--bg)] border border-[var(--border)] rounded p-2 overflow-x-auto text-[var(--fg)]/95">
                 {example}
               </pre>
             </div>
