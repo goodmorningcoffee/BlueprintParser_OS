@@ -302,6 +302,37 @@ export default function LinearTab() {
 
   return (
     <>
+      <div className="p-2 border-b border-[var(--border)]">
+        {showForm ? (
+          <div className="space-y-2">
+            <input autoFocus value={formName} onChange={(e) => setFormName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setShowForm(false); }}
+              placeholder="Linear item name (e.g., Wall Framing)..." className="w-full px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]" />
+            <div className="flex items-center gap-0.5 flex-wrap">
+              <span className="text-[10px] text-[var(--muted)] w-10">Color</span>
+              {TWENTY_COLORS.map((c) => (
+                <button key={c} onClick={() => setFormColor(c)}
+                  className={`w-4 h-4 rounded-sm ${formColor === c ? "ring-1 ring-white ring-offset-1 ring-offset-[#1e1e22]" : ""}`}
+                  style={{ backgroundColor: c }} />
+              ))}
+            </div>
+            {formError && <div className="text-[10px] text-red-400 px-1">{formError}</div>}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5"><ColorDot color={formColor} /><span className="text-xs">{formName || "Preview"}</span></div>
+              <div className="flex gap-1">
+                <button onClick={() => { setShowForm(false); setFormError(null); }} className="text-xs px-2 py-0.5 text-[var(--muted)] hover:text-[var(--fg)]">Cancel</button>
+                <button onClick={handleCreate} disabled={!formName.trim() || creating}
+                  className="text-xs px-2 py-0.5 rounded bg-blue-600 text-white disabled:opacity-40 hover:bg-blue-500">{creating ? "..." : "Create"}</button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setShowForm(true)}
+            className={`w-full text-xs py-1.5 rounded border ${linearItems.length === 0 ? "border-blue-400/30 text-blue-400/70 bg-blue-400/5 hover:bg-blue-400/10" : "border-dashed border-blue-400/20 text-blue-400/50 hover:text-blue-300 hover:border-blue-400/40"}`}>
+            + Add Linear Item
+          </button>
+        )}
+      </div>
       <ScaleStatus />
       <div className="flex-1 overflow-y-auto">
         {/* New Group button */}
@@ -365,37 +396,6 @@ export default function LinearTab() {
           {`${totalLength.toFixed(1)} ${displayUnit} total across ${linearItems.length} items`}
         </div>
       )}
-      <div className="p-2 border-t border-[var(--border)]">
-        {showForm ? (
-          <div className="space-y-2">
-            <input autoFocus value={formName} onChange={(e) => setFormName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); if (e.key === "Escape") setShowForm(false); }}
-              placeholder="Linear item name (e.g., Wall Framing)..." className="w-full px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded focus:outline-none focus:border-[var(--accent)]" />
-            <div className="flex items-center gap-0.5 flex-wrap">
-              <span className="text-[10px] text-[var(--muted)] w-10">Color</span>
-              {TWENTY_COLORS.map((c) => (
-                <button key={c} onClick={() => setFormColor(c)}
-                  className={`w-4 h-4 rounded-sm ${formColor === c ? "ring-1 ring-white ring-offset-1 ring-offset-[#1e1e22]" : ""}`}
-                  style={{ backgroundColor: c }} />
-              ))}
-            </div>
-            {formError && <div className="text-[10px] text-red-400 px-1">{formError}</div>}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5"><ColorDot color={formColor} /><span className="text-xs">{formName || "Preview"}</span></div>
-              <div className="flex gap-1">
-                <button onClick={() => { setShowForm(false); setFormError(null); }} className="text-xs px-2 py-0.5 text-[var(--muted)] hover:text-[var(--fg)]">Cancel</button>
-                <button onClick={handleCreate} disabled={!formName.trim() || creating}
-                  className="text-xs px-2 py-0.5 rounded bg-blue-600 text-white disabled:opacity-40 hover:bg-blue-500">{creating ? "..." : "Create"}</button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <button onClick={() => setShowForm(true)}
-            className={`w-full text-xs py-1.5 rounded border ${linearItems.length === 0 ? "border-blue-400/30 text-blue-400/70 bg-blue-400/5 hover:bg-blue-400/10" : "border-dashed border-blue-400/20 text-blue-400/50 hover:text-blue-300 hover:border-blue-400/40"}`}>
-            + Add Linear Item
-          </button>
-        )}
-      </div>
     </>
   );
 }

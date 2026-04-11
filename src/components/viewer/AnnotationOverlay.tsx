@@ -5,6 +5,7 @@ import { useViewerStore, useNavigation, useProject, useTableParse, useKeynotePar
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
 import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
+import { splitPolygonByLine } from "@/lib/polygon-split";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
@@ -127,6 +128,7 @@ export default memo(function AnnotationOverlay({
   const addAnnotation = useViewerStore((s) => s.addAnnotation);
   const removeAnnotation = useViewerStore((s) => s.removeAnnotation);
   const updateAnnotation = useViewerStore((s) => s.updateAnnotation);
+  const addTakeoffItem = useViewerStore((s) => s.addTakeoffItem);
   const keynotes = useViewerStore((s) => s.keynotes);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
 
@@ -176,6 +178,14 @@ export default memo(function AnnotationOverlay({
   const bucketFillBarrierMode = useViewerStore((s) => s.bucketFillBarrierMode);
   const addBucketFillBarrier = useViewerStore((s) => s.addBucketFillBarrier);
   const setBucketFillActive = useViewerStore((s) => s.setBucketFillActive);
+  const splitAreaActive = useViewerStore((s) => s.splitAreaActive);
+  const setSplitAreaActive = useViewerStore((s) => s.setSplitAreaActive);
+  const splitLineA = useViewerStore((s) => s.splitLineA);
+  const splitLineB = useViewerStore((s) => s.splitLineB);
+  const setSplitLineEndpoint = useViewerStore((s) => s.setSplitLineEndpoint);
+  const splitPreview = useViewerStore((s) => s.splitPreview);
+  const setSplitPreview = useViewerStore((s) => s.setSplitPreview);
+  const setSplitError = useViewerStore((s) => s.setSplitError);
   const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
   const addYoloTag = useViewerStore((s) => s.addYoloTag);
 
@@ -829,6 +839,137 @@ export default memo(function AnnotationOverlay({
     setBucketFillPreview(null);
   }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, setBucketFillPreview, isDemo]);
 
+  /** Accept a pending Split Area preview: update original to left half, create new item + annotation for right half. */
+  const acceptSplit = useCallback(async () => {
+    const preview = useViewerStore.getState().splitPreview;
+    if (!preview) return;
+
+    const currentAnnotations = useViewerStore.getState().annotations;
+    const currentItems = useViewerStore.getState().takeoffItems;
+    const target = currentAnnotations.find((a) => a.id === preview.targetAnnotationId);
+    if (!target) {
+      useViewerStore.getState().setSplitAreaActive(false);
+      return;
+    }
+    const parentItem = currentItems.find((t) => t.id === (target.data as AreaPolygonData).takeoffItemId);
+    if (!parentItem) {
+      useViewerStore.getState().setSplitAreaActive(false);
+      return;
+    }
+
+    const calibration = scaleCalibrations[pageNumber];
+    const computeData = (verts: { x: number; y: number }[], itemId: number) => {
+      const xs = verts.map((v) => v.x);
+      const ys = verts.map((v) => v.y);
+      const bbox: [number, number, number, number] = [
+        Math.min(...xs), Math.min(...ys),
+        Math.max(...xs), Math.max(...ys),
+      ];
+      let areaSqUnits = 0;
+      let unit: import("@/types").AreaUnitSq = "SF";
+      if (calibration) {
+        areaSqUnits = computeRealArea(verts, width, height, calibration);
+        unit = AREA_UNIT_MAP[calibration.unit] || "SF";
+      }
+      const data: AreaPolygonData = {
+        type: "area-polygon",
+        takeoffItemId: itemId,
+        color: parentItem.color,
+        vertices: [...verts],
+        areaSqUnits,
+        unit,
+      };
+      return { data, bbox };
+    };
+
+    // 1. Update original annotation to left half
+    const leftResult = computeData(preview.left, parentItem.id);
+    updateAnnotation(target.id, {
+      bbox: leftResult.bbox,
+      data: leftResult.data as unknown as Record<string, unknown>,
+    });
+
+    if (!isDemo && target.id > 0) {
+      fetch(`/api/annotations/${target.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bbox: leftResult.bbox, data: leftResult.data }),
+      }).catch(() => {});
+    }
+
+    // 2. Create new takeoff item for the right half
+    const newItemName = `${parentItem.name} (2)`;
+    let newItemId: number;
+
+    if (isDemo) {
+      newItemId = -Date.now();
+      addTakeoffItem({
+        id: newItemId,
+        groupId: parentItem.groupId ?? null,
+        name: newItemName,
+        shape: "polygon",
+        color: parentItem.color,
+        size: parentItem.size ?? 24,
+        sortOrder: 0,
+      });
+    } else {
+      try {
+        const res = await fetch("/api/takeoff-items", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: projectDbId,
+            name: newItemName,
+            shape: "polygon",
+            color: parentItem.color,
+            groupId: parentItem.groupId ?? null,
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const newItem = await res.json();
+        addTakeoffItem(newItem);
+        newItemId = newItem.id;
+      } catch {
+        useViewerStore.getState().setSplitAreaActive(false);
+        return;
+      }
+    }
+
+    // 3. Create new annotation (right half) under the new item
+    const rightResult = computeData(preview.right, newItemId);
+    const tempAnnId = -Date.now() - 1;
+    addAnnotation({
+      id: tempAnnId,
+      pageNumber,
+      name: newItemName,
+      bbox: rightResult.bbox,
+      note: null,
+      source: "takeoff",
+      data: rightResult.data as unknown as Record<string, unknown>,
+    });
+
+    if (!isDemo) {
+      fetch("/api/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: publicId,
+          pageNumber,
+          name: newItemName,
+          bbox: rightResult.bbox,
+          source: "takeoff",
+          data: rightResult.data,
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((saved) => { if (saved) updateAnnotation(tempAnnId, { id: saved.id }); })
+        .catch(() => {});
+    }
+
+    // 4. Exit split mode (clears preview, line endpoints, etc via cascade setter)
+    useViewerStore.getState().setSplitAreaActive(false);
+  }, [scaleCalibrations, pageNumber, width, height, publicId, projectDbId, addAnnotation, updateAnnotation, addTakeoffItem, isDemo]);
+
   /** Save the current in-progress polyline as a linear-polyline annotation */
   const saveLinearPolyline = useCallback(() => {
     const verts = useViewerStore.getState().polygonVertices;
@@ -949,6 +1090,57 @@ export default memo(function AnnotationOverlay({
         const normY = pos.y / height;
         setCalibrationPoint("p2", { x: normX, y: normY });
         setCalibrationMode("input");
+        return;
+      }
+
+      // Split Area mode — 3-stage click (line A, line B, target polygon)
+      if (splitAreaActive) {
+        e.stopPropagation();
+        const normX = pos.x / width;
+        const normY = pos.y / height;
+
+        if (splitPreview) return; // preview showing — commit via Accept/Cancel buttons
+
+        if (!splitLineA) {
+          setSplitLineEndpoint("a", { x: normX, y: normY });
+          return;
+        }
+        if (!splitLineB) {
+          setSplitLineEndpoint("b", { x: normX, y: normY });
+          return;
+        }
+
+        // Both endpoints set — this click picks the target polygon
+        const polyAnnotations = pageAnnotations.filter(
+          (a) => a.source === "takeoff" && (a.data as AreaPolygonData)?.type === "area-polygon"
+        );
+        const hit = polyAnnotations.find((a) => {
+          const verts = (a.data as AreaPolygonData).vertices;
+          return pointInPolygon({ x: normX, y: normY }, verts);
+        });
+
+        if (!hit) {
+          setSplitError("Click inside an area polygon to split it");
+          setTimeout(() => setSplitError(null), 3500);
+          return;
+        }
+
+        const polygon = (hit.data as AreaPolygonData).vertices;
+        const result = splitPolygonByLine(polygon, splitLineA, splitLineB);
+        if (!result) {
+          setSplitError("Line must cross the polygon in exactly 2 places");
+          setTimeout(() => setSplitError(null), 3500);
+          return;
+        }
+
+        setSplitPreview({
+          targetAnnotationId: hit.id,
+          original: polygon,
+          left: result.left,
+          right: result.right,
+          lineA: splitLineA,
+          lineB: splitLineB,
+        });
         return;
       }
 
@@ -1553,7 +1745,7 @@ export default memo(function AnnotationOverlay({
       setDrawStart(pos);
       setDrawEnd(pos);
     },
-    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, projectDbId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError]
+    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, projectDbId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError, splitAreaActive, splitLineA, splitLineB, splitPreview, setSplitLineEndpoint, setSplitPreview, setSplitError]
   );
 
   const handleMouseMove = useCallback(
@@ -1750,7 +1942,13 @@ export default memo(function AnnotationOverlay({
     function handleEscape(e: KeyboardEvent) {
       if (e.key === "Escape") {
         const store = useViewerStore.getState();
-        if (store.bucketFillPreview) {
+        if (store.splitPreview) {
+          // Discard split preview, stay in split mode (line endpoints preserved)
+          store.setSplitPreview(null);
+        } else if (store.splitAreaActive) {
+          // Exit split area mode entirely
+          store.setSplitAreaActive(false);
+        } else if (store.bucketFillPreview) {
           // Cancel bucket fill preview
           store.setBucketFillPreview(null);
         } else if (store.bucketFillBarrierMode) {
@@ -1775,10 +1973,13 @@ export default memo(function AnnotationOverlay({
           setActiveTakeoffItemId(null);
         }
       }
-      // Enter: accept bucket fill preview OR close polygon/finish polyline
+      // Enter: accept bucket fill preview OR split preview OR close polygon/finish polyline
       if (e.key === "Enter") {
         const store = useViewerStore.getState();
-        if (store.bucketFillPreview) {
+        if (store.splitPreview) {
+          e.preventDefault();
+          acceptSplit();
+        } else if (store.bucketFillPreview) {
           e.preventDefault();
           acceptBucketFillPolygon();
         } else if (polygonDrawingMode === "drawing") {
@@ -1815,7 +2016,7 @@ export default memo(function AnnotationOverlay({
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [activeTakeoffItemId, setActiveTakeoffItemId, polygonDrawingMode, resetPolygonDrawing, calibrationMode, resetCalibration, undoLastVertex, savePolygon, saveLinearPolyline, acceptBucketFillPolygon]);
+  }, [activeTakeoffItemId, setActiveTakeoffItemId, polygonDrawingMode, resetPolygonDrawing, calibrationMode, resetCalibration, undoLastVertex, savePolygon, saveLinearPolyline, acceptBucketFillPolygon, acceptSplit]);
 
   // Keyboard: Delete/Backspace to delete, Enter to place dragged annotation
   useEffect(() => {
@@ -1982,11 +2183,11 @@ export default memo(function AnnotationOverlay({
           left: 0,
           width: `${width}px`,
           height: `${height}px`,
-          pointerEvents: activeTakeoffItemId !== null || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" || tableParseStep !== "idle" || keynoteParseStep !== "idle" || symbolSearchActive ? "auto" : "none",
+          pointerEvents: activeTakeoffItemId !== null || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" || tableParseStep !== "idle" || keynoteParseStep !== "idle" || symbolSearchActive || splitAreaActive ? "auto" : "none",
           transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
           transformOrigin: "top left",
           willChange: "transform",
-          cursor: bucketFillActive && bucketFillLoading ? "wait" : bucketFillActive && bucketFillBarrierMode ? "crosshair" : bucketFillActive ? "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24'><path d='M6 6 L18 6 L16 20 L8 20 Z' fill='%2322d3ee' stroke='%23ffffff' stroke-width='1.5' stroke-linejoin='round'/><path d='M6 6 Q12 1 18 6' fill='none' stroke='%2322d3ee' stroke-width='2' stroke-linecap='round'/><circle cx='12' cy='22' r='1' fill='%23ffffff'/></svg>\") 14 24, crosshair" : symbolSearchActive ? "crosshair" : calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : isKeynoteYoloPicking ? "pointer" : yoloTagPickingMode ? "pointer" : (tableParseStep !== "idle" || keynoteParseStep !== "idle") ? "crosshair" : mode === "pointer" ? "default" : "default",
+          cursor: splitAreaActive ? "crosshair" : bucketFillActive && bucketFillLoading ? "wait" : bucketFillActive && bucketFillBarrierMode ? "crosshair" : bucketFillActive ? "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24'><path d='M6 6 L18 6 L16 20 L8 20 Z' fill='%2322d3ee' stroke='%23ffffff' stroke-width='1.5' stroke-linejoin='round'/><path d='M6 6 Q12 1 18 6' fill='none' stroke='%2322d3ee' stroke-width='2' stroke-linecap='round'/><circle cx='12' cy='22' r='1' fill='%23ffffff'/></svg>\") 14 24, crosshair" : symbolSearchActive ? "crosshair" : calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : isKeynoteYoloPicking ? "pointer" : yoloTagPickingMode ? "pointer" : (tableParseStep !== "idle" || keynoteParseStep !== "idle") ? "crosshair" : mode === "pointer" ? "default" : "default",
         }}
       />
 
