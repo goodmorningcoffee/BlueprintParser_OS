@@ -251,6 +251,30 @@ interface ViewerState {
   setBucketFillLoading: (v: boolean) => void;
   bucketFillError: string | null;
   setBucketFillError: (msg: string | null) => void;
+  // ─── Split Area tool ────────────────────────────────────
+  splitAreaActive: boolean;
+  setSplitAreaActive: (v: boolean) => void;
+  splitLineA: { x: number; y: number } | null;
+  splitLineB: { x: number; y: number } | null;
+  setSplitLineEndpoint: (which: "a" | "b", pt: { x: number; y: number } | null) => void;
+  splitPreview: {
+    targetAnnotationId: number;
+    original: { x: number; y: number }[];
+    left: { x: number; y: number }[];
+    right: { x: number; y: number }[];
+    lineA: { x: number; y: number };
+    lineB: { x: number; y: number };
+  } | null;
+  setSplitPreview: (p: {
+    targetAnnotationId: number;
+    original: { x: number; y: number }[];
+    left: { x: number; y: number }[];
+    right: { x: number; y: number }[];
+    lineA: { x: number; y: number };
+    lineB: { x: number; y: number };
+  } | null) => void;
+  splitError: string | null;
+  setSplitError: (msg: string | null) => void;
   bucketFillBarriers: { x1: number; y1: number; x2: number; y2: number }[];
   addBucketFillBarrier: (line: { x1: number; y1: number; x2: number; y2: number }) => void;
   undoLastBarrier: () => void;
@@ -740,7 +764,9 @@ export const useViewerStore = create<ViewerState>((set) => ({
       bucketFillLoading: false,
       bucketFillError: null,
       bucketFillBarrierMode: false,
-      ...(!bucketFillActive ? { bucketFillBarriers: [] } : {}),
+      ...(bucketFillActive
+        ? { splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null }
+        : { bucketFillBarriers: [] }),
     }),
   bucketFillPreview: null,
   setBucketFillPreview: (bucketFillPreview) => set({ bucketFillPreview }),
@@ -748,6 +774,26 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setBucketFillLoading: (bucketFillLoading) => set({ bucketFillLoading }),
   bucketFillError: null,
   setBucketFillError: (bucketFillError) => set({ bucketFillError }),
+  splitAreaActive: false,
+  setSplitAreaActive: (splitAreaActive) =>
+    set({
+      splitAreaActive,
+      splitLineA: null,
+      splitLineB: null,
+      splitPreview: null,
+      splitError: null,
+      ...(splitAreaActive
+        ? { bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillError: null, bucketFillBarrierMode: false, bucketFillBarriers: [] }
+        : {}),
+    }),
+  splitLineA: null,
+  splitLineB: null,
+  setSplitLineEndpoint: (which, pt) =>
+    set((s) => (which === "a" ? { splitLineA: pt } : { splitLineB: pt })),
+  splitPreview: null,
+  setSplitPreview: (splitPreview) => set({ splitPreview }),
+  splitError: null,
+  setSplitError: (splitError) => set({ splitError }),
   bucketFillBarriers: [],
   addBucketFillBarrier: (line) =>
     set((s) => ({ bucketFillBarriers: [...s.bucketFillBarriers, line] })),
