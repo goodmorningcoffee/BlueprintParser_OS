@@ -7,6 +7,7 @@ export function ArchitectureSvgDiagram() {
       <svg
         viewBox="0 0 900 420"
         className="w-full h-auto text-[var(--fg)]"
+        fill="currentColor"
         role="img"
         aria-label="BlueprintParser AWS architecture diagram"
       >
