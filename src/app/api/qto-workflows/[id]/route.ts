@@ -73,7 +73,9 @@ export async function PUT(
       updates[key] = body[key];
     }
   }
-  for (const key of ["yoloModelFilter", "yoloClassFilter", "tagPattern", "materialLabel"] as const) {
+  // SHIP 2: dropped yoloModelFilter + tagPattern (migration 0024);
+  // added itemType + tagShapeClass.
+  for (const key of ["yoloClassFilter", "materialLabel", "itemType", "tagShapeClass"] as const) {
     if (body[key] !== undefined) {
       if (body[key] !== null && (typeof body[key] !== "string" || body[key].length > MAX_STRING_LEN)) {
         return NextResponse.json({ error: `invalid ${key}` }, { status: 400 });

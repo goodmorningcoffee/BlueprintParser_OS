@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
-import { mapYoloToOcrText, scanClassForTexts } from "@/lib/yolo-tag-engine";
+import { findItemOccurrences, scanClassForTexts } from "@/lib/yolo-tag-engine";
 import { applyExclusionFilter } from "@/lib/composite-classifier";
 import type {
   ClientAnnotation,
@@ -11,17 +11,35 @@ import type {
   YoloTagInstance,
   ClassifiedPageRegions,
   PageIntelligence,
+  QtoItemType,
 } from "@/types";
+
+const VALID_ITEM_TYPES: QtoItemType[] = [
+  "yolo-only",
+  "text-only",
+  "yolo-with-inner-text",
+  "yolo-object-with-tag-shape",
+  "yolo-object-with-nearby-text",
+];
 
 /**
  * POST /api/projects/[id]/map-tags-batch
  *
- * Batch tag mapping: loads all annotations + textract data ONCE,
- * maps ALL tags in a single request. Much more efficient than N
- * individual /map-tags calls for a full schedule.
+ * Batch tag mapping. Loads all annotations + textract data ONCE, dispatches
+ * each tag through the SHIP 2 findItemOccurrences engine, and applies the
+ * composite-classifier exclusion filter.
  *
- * Body: { tags: string[], yoloClass?, yoloModel?, selectedPages?: number[] }
- * Returns: { results: Record<string, YoloTagInstance[]> }
+ * Body: {
+ *   tags: string[],                 // list of tag texts (ignored when itemType === "yolo-only")
+ *   yoloClass?: string,             // primary class (Types 1, 3, 4, 5)
+ *   yoloModel?: string,
+ *   itemType?: QtoItemType,         // defaults to "yolo-with-inner-text" when yoloClass set,
+ *                                   // otherwise "text-only". Keeps pre-SHIP-2 callers working.
+ *   tagShapeClass?: string,         // required when itemType === "yolo-object-with-tag-shape"
+ *   selectedPages?: number[],
+ *   action?: "map" | "scanClass",
+ * }
+ * Returns: { results: Record<string, YoloTagInstance[]>, dropCounts }
  */
 export async function POST(
   req: Request,
@@ -30,11 +48,15 @@ export async function POST(
   const { id } = await params;
 
   const body = await req.json();
-  const { action, tags, yoloClass, yoloModel, selectedPages } = body as {
+  const {
+    action, tags, yoloClass, yoloModel, itemType, tagShapeClass, selectedPages,
+  } = body as {
     action?: "map" | "scanClass";
     tags?: string[];
     yoloClass?: string;
     yoloModel?: string;
+    itemType?: string;
+    tagShapeClass?: string;
     selectedPages?: number[];
   };
 
@@ -61,6 +83,16 @@ export async function POST(
     if (selectedPages.length > 2000) {
       return NextResponse.json({ error: "Max 2000 pages per batch" }, { status: 400 });
     }
+  }
+
+  // Validate itemType + Type-4 prerequisites
+  if (itemType !== undefined && !VALID_ITEM_TYPES.includes(itemType as QtoItemType)) {
+    return NextResponse.json({ error: `invalid itemType: ${itemType}` }, { status: 400 });
+  }
+  if (itemType === "yolo-object-with-tag-shape" && (!tagShapeClass || typeof tagShapeClass !== "string")) {
+    return NextResponse.json({
+      error: "tagShapeClass required for itemType='yolo-object-with-tag-shape'",
+    }, { status: 400 });
   }
 
   // Auth: check session for real projects, allow demo projects without auth
@@ -153,25 +185,73 @@ export async function POST(
     return NextResponse.json({ texts: scanResults });
   }
 
-  // ─── map mode (default): map specific tag texts to instances ───
+  // ─── map mode: dispatch each tag through the 5-type engine ───
+  //
+  // Effective item type: explicit from body, else inferred for backward compat —
+  // pre-SHIP-2 callers that pass only `yoloClass` get Type 3 semantics; callers
+  // that pass nothing get Type 2 (free-floating text).
+  const effectiveItemType: QtoItemType =
+    (itemType as QtoItemType | undefined)
+      ?? (yoloClass ? "yolo-with-inner-text" : "text-only");
+
   const results: Record<string, YoloTagInstance[]> = {};
   // Aggregate drop counts for debugging — returned in the response body so
-  // callers can see WHY results are smaller than raw matches. Not used by
-  // the current UI but useful for the admin Table Parsing debug panel.
+  // callers can see WHY results are smaller than raw matches.
   const dropCounts = { inside_table: 0, inside_title_block: 0, outside_drawings: 0 };
 
+  // Type 1 special case: yolo-only doesn't use tags[] for filtering —
+  // every shape of the class counts. Run the dispatcher once and key the
+  // result by the FIRST tag in the array (or yoloClass if tags is empty).
+  // This keeps the response shape identical so the client-side line-item
+  // builder still works without changes.
+  if (effectiveItemType === "yolo-only") {
+    const key = tags && tags.length > 0 ? tags[0].trim() : (yoloClass || "__all__");
+    let instances = findItemOccurrences(
+      {
+        itemType: "yolo-only",
+        label: key,
+        yoloClass: yoloClass || undefined,
+        yoloModel: yoloModel || undefined,
+      },
+      "project",
+      undefined,
+      clientAnnotations,
+      textractMap,
+    );
+    if (pageFilter) {
+      instances = instances.filter((inst) => pageFilter.has(inst.pageNumber));
+    }
+    const filtered = applyExclusionFilter(instances, classifiedRegionsByPage);
+    for (const d of filtered.dropped) dropCounts[d.reason]++;
+    // Emit the same result under every tag key so the client's line-item
+    // building loop sees consistent counts per row.
+    for (const tag of tags ?? [key]) {
+      const t = tag.trim();
+      if (!t) continue;
+      results[t] = filtered.kept;
+    }
+    return NextResponse.json({ results, dropCounts });
+  }
+
+  // Types 2, 3, 4, 5 — per-tag dispatch via findItemOccurrences
   for (const tag of tags!) {
     const trimmed = tag.trim();
     if (!trimmed) continue;
 
-    let instances = mapYoloToOcrText({
-      tagText: trimmed,
-      yoloClass: yoloClass || undefined,
-      yoloModel: yoloModel || undefined,
-      scope: "project",
-      annotations: clientAnnotations,
-      textractData: textractMap,
-    });
+    let instances = findItemOccurrences(
+      {
+        itemType: effectiveItemType,
+        label: trimmed,
+        yoloClass: yoloClass || undefined,
+        yoloModel: yoloModel || undefined,
+        tagShapeClass: tagShapeClass || undefined,
+        text: trimmed,
+      },
+      "project",
+      undefined,
+      clientAnnotations,
+      textractMap,
+    );
 
     if (pageFilter) {
       instances = instances.filter((inst) => pageFilter.has(inst.pageNumber));

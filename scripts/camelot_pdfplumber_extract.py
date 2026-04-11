@@ -250,13 +250,21 @@ def run_camelot(pdf_path: str, page_number: int, region_bbox: list, flavor: str)
         )
 
         # Cropped PDF is single-page, so we always read page 1.
+        # CAMELOT-FIX-3: lattice flavor gets line_scale=40 (default 15) so it
+        # picks up thin (0.5-1pt) vector borders common on architectural
+        # schedules. Spike test on a door schedule returned 1 row at
+        # line_scale=15; 40 detects the finer row separators. Stream flavor
+        # does not use line_scale.
+        read_pdf_kwargs = {
+            "pages": "1",
+            "flavor": flavor,
+            "suppress_stdout": True,
+        }
+        if flavor == "lattice":
+            read_pdf_kwargs["line_scale"] = 40
+
         _progress(f"{flavor}: read_pdf starting (cropped, single page)")
-        tables = camelot.read_pdf(
-            cropped_pdf_path,
-            pages="1",
-            flavor=flavor,
-            suppress_stdout=True,
-        )
+        tables = camelot.read_pdf(cropped_pdf_path, **read_pdf_kwargs)
         _progress(f"{flavor}: read_pdf returned {len(tables) if tables else 0} tables")
 
         if not tables or len(tables) == 0:
