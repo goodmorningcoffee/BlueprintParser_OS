@@ -77,6 +77,18 @@ for mod, name, extra in [
     except ImportError as e:
         check(name, False, str(e))
 
+# PROD-FIX-3: PyMuPDF (fitz) is needed by Phase C's img2table PDF mode for
+# in-memory PDF cropping AND by camelot-fix for the same purpose. img2table
+# itself imports fine without it (lazy fitz import), so this needs to be
+# checked explicitly. Production was missing this for one full release.
+try:
+    import fitz
+    ver = getattr(fitz, "version", None) or getattr(fitz, "__doc__", "")
+    short = (ver[:60] if isinstance(ver, str) else str(ver))
+    check("PyMuPDF (fitz)", True, short.strip() or "OK")
+except Exception as e:
+    check("PyMuPDF (fitz)", False, f"{e} — needed for img2table PDF mode + camelot crop. pip install pymupdf")
+
 # Check if img2table TesseractOCR actually instantiates
 try:
     from img2table.ocr import TesseractOCR

@@ -112,6 +112,26 @@ def main():
     ):
         patched += 1
 
+    # PROD-FIX-1: img2table 0.0.12 uses @njit(cache=True) in rotation.py.
+    # In containers, numba can't write its cache file because it can't
+    # determine a "locator" for the source file (filesystem permissions or
+    # numba/Python version interaction). The result is a hard import error
+    # at module load time:
+    #
+    #   RuntimeError: cannot cache function 'compute_angles': no locator
+    #   available for file '.../img2table/document/base/rotation.py'
+    #
+    # Disabling caching forces numba to JIT-compile on first call instead
+    # of trying to load/save a cached version. The performance hit is
+    # negligible for our use case (one-shot parses, not hot loops).
+    if patch_file(
+        os.path.join(pkg_dir, "document/base/rotation.py"),
+        [
+            ("cache=True", "cache=False"),
+        ],
+    ):
+        patched += 1
+
     # Clear __pycache__ so Python uses the patched source
     for root, dirs, _ in os.walk(pkg_dir):
         for d in dirs:

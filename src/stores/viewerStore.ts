@@ -285,6 +285,12 @@ interface ViewerState {
   } | null;
   setTableCellStructure: (structure: ViewerState["tableCellStructure"]) => void;
   toggleCellHighlight: (row: number, col: number) => void;
+  /** TATR-OVERLAY: visibility toggle for the TATR cell overlay on the canvas.
+   *  Defaults to true after the user runs Detect Cell Structure so they can
+   *  see what was found. Toggle button lives in AutoParseTab next to the
+   *  DetectCellStructureButton. Off by default at app start. */
+  showTableCellStructure: boolean;
+  setShowTableCellStructure: (show: boolean) => void;
   tableParseColumnBBs: [number, number, number, number][]; // user-drawn column BBs
   addTableParseColumnBB: (bb: [number, number, number, number]) => void;
   tableParseColumnNames: string[]; // user-defined names for each column
@@ -787,7 +793,13 @@ export const useViewerStore = create<ViewerState>((set) => ({
   tableParsedGrid: null,
   setTableParsedGrid: (tableParsedGrid) => set({ tableParsedGrid }),
   tableCellStructure: null,
-  setTableCellStructure: (tableCellStructure) => set({ tableCellStructure }),
+  // TATR-OVERLAY: when the user runs Detect Cell Structure, auto-show the
+  // overlay so they can see what was found. Setter wired to a toggle button
+  // in AutoParseTab. Persists for the session, resets to false on app load.
+  setTableCellStructure: (tableCellStructure) =>
+    set({ tableCellStructure, showTableCellStructure: tableCellStructure !== null }),
+  showTableCellStructure: false,
+  setShowTableCellStructure: (showTableCellStructure) => set({ showTableCellStructure }),
   toggleCellHighlight: (row, col) => set((s) => {
     if (!s.tableCellStructure) return {};
     return {

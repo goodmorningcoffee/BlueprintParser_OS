@@ -49,13 +49,27 @@ export async function extractWithCamelotPdfplumber(
         stdio: ["pipe", "pipe", "pipe"],
       });
 
+      // CAMELOT-FIX-2: bumped from 30s → 120s.
+      // First bump (30→60s) wasn't enough — local end-to-end test on a real
+      // 24×36" door hardware schedule showed:
+      //   camelot-lattice  31874ms  (success, 11r × 3c — real data)
+      //   camelot-stream   31612ms  (188r × 22c — likely noise but ran)
+      //   pdfplumber       13034ms  (empty — needs more grid lines)
+      //   total            87516ms  (sequential in Python script)
+      // Production Python 3.11 should be ~2× faster than local Python 3.14
+      // (estimated ~45s total) but we want headroom. 120s is the right budget
+      // for "let it complete or genuinely hang."
+      // The route runs all 5 methods in Promise.all so camelot's 90-120s
+      // doesn't block the others — only the slowest method dictates user-
+      // visible wait time, and the merger picks whatever finishes first with
+      // good confidence.
       const timer = setTimeout(() => {
         proc.kill("SIGKILL");
         // Phase I.1.c: include any stderr captured before the timeout
         const cappedStderr = stderr.length > 10_000 ? stderr.slice(-10_000) : stderr;
         const debug = { stderr: cappedStderr || undefined, exitCode: -1 };
-        resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: "Script timed out (30s)", debug }]);
-      }, 30_000);
+        resolve([{ method: "camelot-pdfplumber", headers: [], rows: [], confidence: 0, error: "Script timed out (120s)", debug }]);
+      }, 120_000);
 
       let stdout = "";
       let stderr = "";

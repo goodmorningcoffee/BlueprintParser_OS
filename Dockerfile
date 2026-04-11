@@ -60,6 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pytesseract==0.3.13 \
     pdfplumber \
     pdfminer.six \
+    pymupdf \
     tabulate \
     openpyxl \
     camelot-py[base] \
@@ -90,8 +91,29 @@ COPY --from=builder /app/dist/process-worker.js ./scripts/process-worker.js
 # .dockerignore selectively allows models/tatr/ through while excluding YOLO weights.
 COPY --from=builder /app/models/tatr ./models/tatr
 
-# Patch img2table for Polars API compatibility (img2table 0.0.12 uses deprecated Polars API)
+# PROD-FIX-2: patch TATR preprocessor_config.json Size format. The model was
+# exported with size: {longest_edge: 800} which the installed transformers
+# >= 4.40 rejects with: "Size must contain 'height' and 'width' keys or
+# 'shortest_edge' and 'longest_edge' keys. Got dict_keys(['longest_edge'])".
+# Surfaced via the Phase I debug UI on the first prod parse. The fix is a
+# trivial schema update — DETR ImageProcessor needs both keys.
+RUN python3 -c "import json; \
+p='/app/models/tatr/preprocessor_config.json'; \
+c=json.load(open(p)); \
+c['size']={'shortest_edge': 800, 'longest_edge': 800}; \
+json.dump(c, open(p,'w'), indent=2); \
+print('Patched TATR preprocessor_config.json size to', c['size'])"
+
+# Patch img2table for Polars API compatibility AND disable numba caching in
+# rotation.py (img2table 0.0.12 uses @njit(cache=True) which fails in containers
+# with "RuntimeError: no locator available" — surfaced via Phase I debug UI).
 RUN python3 ./scripts/patch_img2table.py
+
+# PROD-FIX-1 defense in depth: give numba a writable cache directory in case any
+# other numba-cached function tries to write a cache file. /tmp is writable by
+# the nextjs user.
+ENV NUMBA_CACHE_DIR=/tmp/numba_cache
+RUN mkdir -p /tmp/numba_cache && chmod 777 /tmp/numba_cache
 
 # Install drizzle-orm and pg for migrations (already in standalone but need migrator)
 RUN npm install drizzle-orm pg 2>/dev/null || true
