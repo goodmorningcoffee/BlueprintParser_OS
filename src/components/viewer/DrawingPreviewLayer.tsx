@@ -42,8 +42,10 @@ export default memo(function DrawingPreviewLayer({
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
+  const bucketFillActive = useViewerStore((s) => s.bucketFillActive);
   const bucketFillPreview = useViewerStore((s) => s.bucketFillPreview);
   const bucketFillLoading = useViewerStore((s) => s.bucketFillLoading);
+  const bucketFillError = useViewerStore((s) => s.bucketFillError);
   const bucketFillBarriers = useViewerStore((s) => s.bucketFillBarriers);
   const bucketFillBarrierMode = useViewerStore((s) => s.bucketFillBarrierMode);
   const barrierPendingPoint = useViewerStore((s) => s.barrierPendingPoint);
@@ -367,7 +369,9 @@ export default memo(function DrawingPreviewLayer({
     || bucketFillPreview
     || bucketFillLoading
     || bucketFillBarriers.length > 0
-    || barrierPendingPoint;
+    || barrierPendingPoint
+    || bucketFillActive
+    || bucketFillError;
 
   // Compute centroid for accept/cancel buttons
   const previewCentroid = bucketFillPreview ? (() => {
@@ -446,6 +450,120 @@ export default memo(function DrawingPreviewLayer({
             }}
           >
             Cancel
+          </button>
+        </div>
+      )}
+      {/* Bucket fill error banner — takes priority over HUDs */}
+      {bucketFillError && (
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "12px",
+            transform: `translateX(-50%)${cssScale !== 1 ? ` scale(${cssScale})` : ""}`,
+            transformOrigin: "top center",
+            padding: "8px 14px",
+            borderRadius: "6px",
+            background: "rgba(127, 29, 29, 0.92)",
+            border: "1px solid #ef4444",
+            color: "#fff",
+            fontSize: "12px",
+            fontWeight: 500,
+            zIndex: 17,
+            pointerEvents: "none",
+            maxWidth: "420px",
+            textAlign: "center",
+          }}
+        >
+          {bucketFillError}
+        </div>
+      )}
+      {/* Barrier drawing HUD — red, with Done button */}
+      {bucketFillActive && bucketFillBarrierMode && !bucketFillPreview && !bucketFillError && (
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "12px",
+            transform: `translateX(-50%)${cssScale !== 1 ? ` scale(${cssScale})` : ""}`,
+            transformOrigin: "top center",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            padding: "6px 12px",
+            borderRadius: "6px",
+            background: "rgba(0,0,0,0.82)",
+            border: "1px solid #ef4444",
+            color: "#fff",
+            fontSize: "12px",
+            zIndex: 16,
+            pointerEvents: "auto",
+          }}
+        >
+          <span style={{ color: "#fca5a5" }}>
+            Drawing barriers — click two points per line
+            {bucketFillBarriers.length > 0 ? ` (${bucketFillBarriers.length} drawn)` : ""}
+          </span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              useViewerStore.getState().setBucketFillBarrierMode(false);
+            }}
+            style={{
+              padding: "3px 10px",
+              borderRadius: "4px",
+              border: "none",
+              background: "#22c55e",
+              color: "#fff",
+              fontSize: "11px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Done
+          </button>
+        </div>
+      )}
+      {/* Bucket fill active HUD — cyan, with Exit button */}
+      {bucketFillActive && !bucketFillBarrierMode && !bucketFillPreview && !bucketFillLoading && !bucketFillError && (
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "12px",
+            transform: `translateX(-50%)${cssScale !== 1 ? ` scale(${cssScale})` : ""}`,
+            transformOrigin: "top center",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            padding: "6px 12px",
+            borderRadius: "6px",
+            background: "rgba(0,0,0,0.82)",
+            border: "1px solid #22d3ee",
+            color: "#fff",
+            fontSize: "12px",
+            zIndex: 16,
+            pointerEvents: "auto",
+          }}
+        >
+          <span style={{ color: "#67e8f9" }}>Click inside a room to detect</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              useViewerStore.getState().setBucketFillActive(false);
+            }}
+            style={{
+              padding: "3px 10px",
+              borderRadius: "4px",
+              border: "none",
+              background: "#475569",
+              color: "#fff",
+              fontSize: "11px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Exit
           </button>
         </div>
       )}

@@ -249,6 +249,8 @@ interface ViewerState {
   setBucketFillPreview: (v: { vertices: { x: number; y: number }[]; method: string } | null) => void;
   bucketFillLoading: boolean;
   setBucketFillLoading: (v: boolean) => void;
+  bucketFillError: string | null;
+  setBucketFillError: (msg: string | null) => void;
   bucketFillBarriers: { x1: number; y1: number; x2: number; y2: number }[];
   addBucketFillBarrier: (line: { x1: number; y1: number; x2: number; y2: number }) => void;
   undoLastBarrier: () => void;
@@ -736,6 +738,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       bucketFillActive,
       bucketFillPreview: null,
       bucketFillLoading: false,
+      bucketFillError: null,
       bucketFillBarrierMode: false,
       ...(!bucketFillActive ? { bucketFillBarriers: [] } : {}),
     }),
@@ -743,6 +746,8 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setBucketFillPreview: (bucketFillPreview) => set({ bucketFillPreview }),
   bucketFillLoading: false,
   setBucketFillLoading: (bucketFillLoading) => set({ bucketFillLoading }),
+  bucketFillError: null,
+  setBucketFillError: (bucketFillError) => set({ bucketFillError }),
   bucketFillBarriers: [],
   addBucketFillBarrier: (line) =>
     set((s) => ({ bucketFillBarriers: [...s.bucketFillBarriers, line] })),
