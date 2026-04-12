@@ -12,8 +12,46 @@ import { detectCsiFromGrid } from "@/lib/csi-detect";
 import { extractWithImg2Table } from "@/lib/img2table-extract";
 import { extractWithCamelotPdfplumber } from "@/lib/camelot-extract";
 import { methodOcrPositions, methodTextractTables, methodOpenCvLines } from "@/lib/services/table-parse";
+import { analyzePageImage } from "@/lib/textract";
 import { logger } from "@/lib/logger";
 import { addToHistory, type ParseHistoryEntry, type InfraStage } from "@/lib/parse-history";
+
+/**
+ * Lazy Textract re-run: if cached textractData has no tables, try a live
+ * Textract call for this page. Updates the DB cache on success so future
+ * calls don't re-trigger. Falls back to "no tables" error on any failure.
+ */
+async function resolveTextractTables(
+  textractData: TextractPageData,
+  dataUrl: string,
+  pageId: number,
+  pageNumber: number,
+  regionBbox: [number, number, number, number],
+): Promise<MethodResult> {
+  if (textractData.tables && textractData.tables.length > 0) {
+    return methodTextractTables(textractData.tables, regionBbox);
+  }
+
+  try {
+    const s3Key = `${dataUrl}/pages/page_${String(pageNumber).padStart(4, "0")}.png`;
+    const pngBuffer = await downloadFromS3(s3Key);
+    const freshData = await analyzePageImage(pngBuffer);
+
+    if (freshData.tables && freshData.tables.length > 0) {
+      // Cache the tables for future calls
+      await db.update(pages).set({
+        textractData: { ...textractData, tables: freshData.tables },
+      }).where(eq(pages.id, pageId));
+      logger.info(`[table-parse] Lazy Textract re-run found ${freshData.tables.length} table(s) for page ${pageNumber}`);
+      return methodTextractTables(freshData.tables, regionBbox);
+    }
+
+    return methodTextractTables(undefined, regionBbox);
+  } catch (err) {
+    logger.warn(`[table-parse] Lazy Textract re-run failed for page ${pageNumber}:`, err);
+    return methodTextractTables(undefined, regionBbox);
+  }
+}
 
 /**
  * POST /api/table-parse
@@ -62,7 +100,7 @@ export async function POST(req: Request) {
 
   try {
     const [pageRow] = await db
-      .select({ textractData: pages.textractData })
+      .select({ id: pages.id, textractData: pages.textractData })
       .from(pages)
       .where(and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber)))
       .limit(1);
@@ -152,7 +190,7 @@ export async function POST(req: Request) {
 
     const methodPromises: Promise<MethodResult | MethodResult[]>[] = [
       timed(Promise.resolve(methodOcrPositions(textractData.words, regionBbox, { rowTolerance, minColGap, colHitRatio, headerMode }))),
-      timed(Promise.resolve(methodTextractTables(textractData.tables, regionBbox))),
+      timed(resolveTextractTables(textractData, project.dataUrl || "", pageRow.id, pageNumber, regionBbox)),
       pagePngBuffer && pdfBuffer
         ? timed(methodOpenCvLines(pdfBuffer, pageNumber, regionBbox, textractData.words, { minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance }))
         : Promise.resolve({ method: "opencv-lines", headers: [], rows: [], confidence: 0, error: skippedReason("page image") } as MethodResult),

@@ -8,7 +8,7 @@
  */
 
 import { resolveProjectAccess, apiError } from "@/lib/api-utils";
-import { getS3Url, downloadFromS3 } from "@/lib/s3";
+import { downloadFromS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
 import { writeFile, rm, mkdtemp } from "fs/promises";
 import { join } from "path";
@@ -58,23 +58,16 @@ export async function POST(req: Request) {
   const tempDir = await mkdtemp(join(tmpdir(), "bp2-bucket-fill-"));
 
   try {
-    // Download PDF for vector mode
-    const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
-    const pdfResp = await fetch(pdfUrl);
-    if (!pdfResp.ok) {
-      return apiError("Failed to fetch PDF", 500);
-    }
-    const pdfBuffer = Buffer.from(await pdfResp.arrayBuffer());
-    const pdfPath = join(tempDir, "original.pdf");
-    await writeFile(pdfPath, pdfBuffer);
-
-    // Download page PNG for raster fallback
+    // Happy path: download pre-rendered PNG from S3 (no PDF fetch needed)
     const s3Key = `${project.dataUrl}/pages/page_${String(pageNumber).padStart(4, "0")}.png`;
     let pngBuffer: Buffer | null = null;
     try {
       pngBuffer = await downloadFromS3(s3Key);
     } catch {
+      // Fallback: PNG missing from S3 — fetch PDF and rasterize
+      logger.warn(`[BUCKET_FILL] PNG missing at ${s3Key}, falling back to PDF rasterize`);
       try {
+        const pdfBuffer = await downloadFromS3(`${project.dataUrl}/original.pdf`);
         pngBuffer = await rasterizePage(pdfBuffer, pageNumber, 200);
       } catch (err) {
         logger.error("[BUCKET_FILL] Failed to rasterize page:", err);
@@ -85,10 +78,9 @@ export async function POST(req: Request) {
     const imagePath = join(tempDir, `page_${String(pageNumber).padStart(4, "0")}.png`);
     await writeFile(imagePath, pngBuffer);
 
-    // Run bucket fill (tries vector first via PDF, falls back to raster via PNG)
+    // Raster-only flood fill (vector mode removed)
     const result = await bucketFill({
       imagePath,
-      pdfPath,
       pageNumber,
       seedX: x,
       seedY: y,
