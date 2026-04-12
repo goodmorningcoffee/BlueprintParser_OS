@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 
     if (body.text && typeof body.text === "string") {
       // Text mode: detect CSI from raw text
-      const csiTags = detectCsiCodes(body.text, body.config);
+      const csiTags = detectCsiCodes(body.text, undefined, body.config);
       return NextResponse.json({
         csiTags: csiTags.map((c) => ({ code: c.code, description: c.description })),
       });
