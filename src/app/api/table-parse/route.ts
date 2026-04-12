@@ -10,7 +10,6 @@ import { mergeGrids, type MethodResult } from "@/lib/grid-merger";
 import type { TextractPageData, TextractTable } from "@/types";
 import { detectCsiFromGrid } from "@/lib/csi-detect";
 import { extractWithImg2Table } from "@/lib/img2table-extract";
-import { extractWithCamelotPdfplumber } from "@/lib/camelot-extract";
 import { methodOcrPositions, methodTextractTables, methodOpenCvLines } from "@/lib/services/table-parse";
 import { analyzePageImage } from "@/lib/textract";
 import { logger } from "@/lib/logger";
@@ -314,13 +313,6 @@ export async function POST(req: Request) {
       (pdfBuffer || pagePngBuffer)
         ? timed(extractWithImg2Table(pdfBuffer, pagePngBuffer, pageNumber, regionBbox))
         : Promise.resolve({ method: "img2table", headers: [], rows: [], confidence: 0, error: skippedReason("PDF and page image") } as MethodResult),
-      pdfBuffer
-        ? timed(extractWithCamelotPdfplumber(pdfBuffer, pageNumber, regionBbox))
-        : Promise.resolve([
-            { method: "camelot-lattice", headers: [], rows: [], confidence: 0, error: skippedReason("PDF") } as MethodResult,
-            { method: "camelot-stream", headers: [], rows: [], confidence: 0, error: skippedReason("PDF") } as MethodResult,
-            { method: "pdfplumber", headers: [], rows: [], confidence: 0, error: skippedReason("PDF") } as MethodResult,
-          ]),
     ];
 
     const rawResults = await Promise.all(methodPromises);
