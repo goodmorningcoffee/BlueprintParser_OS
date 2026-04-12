@@ -26,6 +26,7 @@ export async function POST(req: Request) {
     dilate = 3,
     simplifyEpsilon = 0.005,
     barriers = [],
+    polygonBarriers = [],
   } = body as {
     projectId: number;
     pageNumber: number;
@@ -34,6 +35,7 @@ export async function POST(req: Request) {
     dilate?: number;
     simplifyEpsilon?: number;
     barriers?: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+    polygonBarriers?: Array<{ vertices: Array<{ x: number; y: number }> }>;
   };
 
   if (!projectId || !pageNumber || !seedPoint) {
@@ -94,6 +96,7 @@ export async function POST(req: Request) {
       dilatePx: dilate,
       simplifyEpsilon,
       barriers,
+      polygonBarriers,
     });
 
     return Response.json(result);

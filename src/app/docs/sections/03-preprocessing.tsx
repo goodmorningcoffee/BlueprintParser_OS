@@ -201,24 +201,6 @@ export function Section03Preprocessing() {
         </Callout>
       </SubSection>
 
-      <SubSection title="Visual references">
-        <Figure
-          kind="shot"
-          src="/docs/shots/textract-raw.png"
-          alt="A page with Textract word-level bounding boxes overlaid"
-          caption="Textract word-level OCR output rendered on top of a rasterized page. The Text panel can toggle this overlay on."
-          frame="viewer"
-          size="lg"
-        />
-        <Figure
-          kind="shot"
-          src="/docs/shots/page-intelligence-panel.png"
-          alt="Page Intelligence panel showing discipline, drawing type, cross-refs, note blocks, and classified tables"
-          caption="Page Intelligence panel after processing. Classification, cross-references, note blocks, classified tables, and heuristic inferences are all visible, sourced from the structured pageIntelligence field."
-          frame="panel"
-          size="md"
-        />
-      </SubSection>
     </Section>
   );
 }

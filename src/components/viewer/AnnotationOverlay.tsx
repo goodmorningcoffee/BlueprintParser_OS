@@ -5,8 +5,9 @@ import { useViewerStore, useNavigation, useProject, useTableParse, useKeynotePar
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
 import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
-import { splitPolygonByLine } from "@/lib/polygon-split";
+import { splitPolygonByLine, findSplittablePolygons } from "@/lib/polygon-split";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
+import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
 
@@ -187,6 +188,7 @@ export default memo(function AnnotationOverlay({
   const setSplitPreview = useViewerStore((s) => s.setSplitPreview);
   const setSplitError = useViewerStore((s) => s.setSplitError);
   const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
+  const tempPanMode = useViewerStore((s) => s.tempPanMode);
   const addYoloTag = useViewerStore((s) => s.addYoloTag);
 
   // During keynote Step 2 with Column A drawn: only show YOLO fully inside Column A
@@ -199,6 +201,12 @@ export default memo(function AnnotationOverlay({
       if (a.pageNumber !== pageNumber) return false;
       // Individual annotation visibility toggle
       if (hiddenAnnotationIds.has(a.id)) return false;
+      // During split mode: only show area polygons
+      if (splitAreaActive) {
+        if (a.source !== "takeoff") return false;
+        const d = a.data as any;
+        return d?.type === "area-polygon";
+      }
       // Filter YOLO annotations by toggle, per-model active state, and per-model confidence
       if (a.source === "yolo") {
         // During keynote YOLO picking: ONLY show annotations fully inside Column A
@@ -249,7 +257,7 @@ export default memo(function AnnotationOverlay({
     }
     pageAnnotationsRef.current = filtered;
     return filtered;
-  }, [annotations, pageNumber, showDetections, activeModels, hiddenClasses, confidenceThresholds, confidenceThreshold, activeCsiFilter, activeAnnotationFilter, isKeynoteYoloPicking, keynoteColA, hiddenAnnotationIds]);
+  }, [annotations, pageNumber, showDetections, activeModels, hiddenClasses, confidenceThresholds, confidenceThreshold, activeCsiFilter, activeAnnotationFilter, isKeynoteYoloPicking, keynoteColA, hiddenAnnotationIds, splitAreaActive]);
 
   const pageKeynotes = keynotes[pageNumber] || [];
 
@@ -770,15 +778,10 @@ export default memo(function AnnotationOverlay({
     setMousePos(null);
   }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, resetPolygonDrawing, isDemo]);
 
-  /** Accept bucket fill preview polygon and save as annotation */
-  const acceptBucketFillPolygon = useCallback(() => {
+  /** Prepare bucket fill preview for item assignment (doesn't create annotation yet) */
+  const prepareBucketFillPolygon = useCallback(() => {
     const preview = useViewerStore.getState().bucketFillPreview;
     if (!preview || preview.vertices.length < 3) return;
-
-    const items = useViewerStore.getState().takeoffItems;
-    const activeId = useViewerStore.getState().activeTakeoffItemId;
-    const activeItem = items.find((t) => t.id === activeId);
-    if (!activeItem) return;
 
     const verts = preview.vertices;
     const xs = verts.map((v) => v.x);
@@ -796,51 +799,18 @@ export default memo(function AnnotationOverlay({
       unit = AREA_UNIT_MAP[calibration.unit] || "SF";
     }
 
-    const polygonData: AreaPolygonData = {
-      type: "area-polygon",
-      takeoffItemId: activeItem.id,
-      color: activeItem.color,
+    useViewerStore.getState().setBucketFillPendingPolygon({
       vertices: [...verts],
+      method: preview.method,
+      bbox,
       areaSqUnits,
       unit,
-    };
-
-    const tempId = -Date.now();
-    addAnnotation({
-      id: tempId,
-      pageNumber,
-      name: activeItem.name,
-      bbox,
-      note: null,
-      source: "takeoff",
-      data: polygonData as unknown as Record<string, unknown>,
     });
-
-    if (!isDemo) {
-      fetch("/api/annotations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: publicId,
-          pageNumber,
-          name: activeItem.name,
-          bbox,
-          source: "takeoff",
-          data: polygonData,
-        }),
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((saved) => {
-          if (saved) updateAnnotation(tempId, { id: saved.id });
-        })
-        .catch(() => {});
-    }
-
     setBucketFillPreview(null);
-  }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, setBucketFillPreview, isDemo]);
+  }, [scaleCalibrations, pageNumber, width, height, setBucketFillPreview]);
 
-  /** Accept a pending Split Area preview: update original to left half, create new item + annotation for right half. */
-  const acceptSplit = useCallback(async () => {
+  /** Accept a pending Split Area preview: both halves stay under same takeoff item. */
+  const acceptSplit = useCallback(() => {
     const preview = useViewerStore.getState().splitPreview;
     if (!preview) return;
 
@@ -848,12 +818,13 @@ export default memo(function AnnotationOverlay({
     const currentItems = useViewerStore.getState().takeoffItems;
     const target = currentAnnotations.find((a) => a.id === preview.targetAnnotationId);
     if (!target) {
-      useViewerStore.getState().setSplitAreaActive(false);
+      useViewerStore.getState().setSplitPreview(null);
+      useViewerStore.getState().setSplitLineEndpoint("a", null as unknown as { x: number; y: number });
       return;
     }
     const parentItem = currentItems.find((t) => t.id === (target.data as AreaPolygonData).takeoffItemId);
     if (!parentItem) {
-      useViewerStore.getState().setSplitAreaActive(false);
+      useViewerStore.getState().setSplitPreview(null);
       return;
     }
 
@@ -882,71 +853,36 @@ export default memo(function AnnotationOverlay({
       return { data, bbox };
     };
 
-    // 1. Update original annotation to left half
+    // Both halves stay under the SAME takeoff item — no new item creation.
     const leftResult = computeData(preview.left, parentItem.id);
-    updateAnnotation(target.id, {
-      bbox: leftResult.bbox,
-      data: leftResult.data as unknown as Record<string, unknown>,
-    });
+    const rightResult = computeData(preview.right, parentItem.id);
 
-    if (!isDemo && target.id > 0) {
-      fetch(`/api/annotations/${target.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bbox: leftResult.bbox, data: leftResult.data }),
-      }).catch(() => {});
-    }
-
-    // 2. Create new takeoff item for the right half
-    const newItemName = `${parentItem.name} (2)`;
-    let newItemId: number;
-
-    if (isDemo) {
-      newItemId = -Date.now();
-      addTakeoffItem({
-        id: newItemId,
-        groupId: parentItem.groupId ?? null,
-        name: newItemName,
-        shape: "polygon",
-        color: parentItem.color,
-        size: parentItem.size ?? 24,
-        sortOrder: 0,
-      });
-    } else {
-      try {
-        const res = await fetch("/api/takeoff-items", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectId: projectDbId,
-            name: newItemName,
-            shape: "polygon",
-            color: parentItem.color,
-            groupId: parentItem.groupId ?? null,
-          }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const newItem = await res.json();
-        addTakeoffItem(newItem);
-        newItemId = newItem.id;
-      } catch {
-        useViewerStore.getState().setSplitAreaActive(false);
-        return;
-      }
-    }
-
-    // 3. Create new annotation (right half) under the new item
-    const rightResult = computeData(preview.right, newItemId);
+    // 1. Create right-half annotation FIRST (safe ordering — if anything fails, original is intact)
     const tempAnnId = -Date.now() - 1;
     addAnnotation({
       id: tempAnnId,
       pageNumber,
-      name: newItemName,
+      name: parentItem.name,
       bbox: rightResult.bbox,
       note: null,
       source: "takeoff",
       data: rightResult.data as unknown as Record<string, unknown>,
     });
+
+    // 2. Update original annotation to left half
+    updateAnnotation(target.id, {
+      bbox: leftResult.bbox,
+      data: leftResult.data as unknown as Record<string, unknown>,
+    });
+
+    // 3. Persist both to server (fire-and-forget with logging)
+    if (!isDemo && target.id > 0) {
+      fetch(`/api/annotations/${target.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bbox: leftResult.bbox, data: leftResult.data }),
+      }).catch((err) => console.error("Failed to persist left-half annotation:", err));
+    }
 
     if (!isDemo) {
       fetch("/api/annotations", {
@@ -955,7 +891,7 @@ export default memo(function AnnotationOverlay({
         body: JSON.stringify({
           projectId: publicId,
           pageNumber,
-          name: newItemName,
+          name: parentItem.name,
           bbox: rightResult.bbox,
           source: "takeoff",
           data: rightResult.data,
@@ -963,12 +899,15 @@ export default memo(function AnnotationOverlay({
       })
         .then((res) => (res.ok ? res.json() : null))
         .then((saved) => { if (saved) updateAnnotation(tempAnnId, { id: saved.id }); })
-        .catch(() => {});
+        .catch((err) => console.error("Failed to persist right-half annotation:", err));
     }
 
-    // 4. Exit split mode (clears preview, line endpoints, etc via cascade setter)
-    useViewerStore.getState().setSplitAreaActive(false);
-  }, [scaleCalibrations, pageNumber, width, height, publicId, projectDbId, addAnnotation, updateAnnotation, addTakeoffItem, isDemo]);
+    // 4. Stay in split mode — clear preview + line, ready for next split. Escape exits.
+    const store = useViewerStore.getState();
+    store.setSplitPreview(null);
+    store.setSplitLineEndpoint("a", null);
+    store.setSplitLineEndpoint("b", null);
+  }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, isDemo]);
 
   /** Save the current in-progress polyline as a linear-polyline annotation */
   const saveLinearPolyline = useCallback(() => {
@@ -1093,7 +1032,7 @@ export default memo(function AnnotationOverlay({
         return;
       }
 
-      // Split Area mode — 3-stage click (line A, line B, target polygon)
+      // Split Area mode — 2-click auto-detect (line A, line B → auto-find polygon)
       if (splitAreaActive) {
         e.stopPropagation();
         const normX = pos.x / width;
@@ -1105,42 +1044,87 @@ export default memo(function AnnotationOverlay({
           setSplitLineEndpoint("a", { x: normX, y: normY });
           return;
         }
-        if (!splitLineB) {
-          setSplitLineEndpoint("b", { x: normX, y: normY });
-          return;
-        }
 
-        // Both endpoints set — this click picks the target polygon
+        // Second click: set B and immediately auto-detect which polygon to split
+        const pointB = { x: normX, y: normY };
+        setSplitLineEndpoint("b", pointB);
+
         const polyAnnotations = pageAnnotations.filter(
           (a) => a.source === "takeoff" && (a.data as AreaPolygonData)?.type === "area-polygon"
         );
-        const hit = polyAnnotations.find((a) => {
-          const verts = (a.data as AreaPolygonData).vertices;
-          return pointInPolygon({ x: normX, y: normY }, verts);
-        });
+        const candidates = findSplittablePolygons(
+          splitLineA,
+          pointB,
+          polyAnnotations.map((a) => ({ id: a.id, vertices: (a.data as AreaPolygonData).vertices }))
+        );
 
-        if (!hit) {
-          setSplitError("Click inside an area polygon to split it");
+        if (candidates.length === 0) {
+          setSplitError("Line does not cross any area polygon in exactly 2 places");
           setTimeout(() => setSplitError(null), 3500);
           return;
         }
 
-        const polygon = (hit.data as AreaPolygonData).vertices;
-        const result = splitPolygonByLine(polygon, splitLineA, splitLineB);
-        if (!result) {
-          setSplitError("Line must cross the polygon in exactly 2 places");
-          setTimeout(() => setSplitError(null), 3500);
-          return;
-        }
-
+        // Longest chord wins (most overlap = intended target)
+        const best = candidates[0];
+        const hitAnn = polyAnnotations.find((a) => a.id === best.id)!;
         setSplitPreview({
-          targetAnnotationId: hit.id,
-          original: polygon,
-          left: result.left,
-          right: result.right,
+          targetAnnotationId: best.id,
+          original: (hitAnn.data as AreaPolygonData).vertices,
+          left: best.left,
+          right: best.right,
           lineA: splitLineA,
-          lineB: splitLineB,
+          lineB: pointB,
         });
+        return;
+      }
+
+      // Bucket fill mode — independent of item selection
+      const bfState = useViewerStore.getState();
+      if (bfState.bucketFillActive) {
+        e.stopPropagation();
+        const normX = pos.x / width;
+        const normY = pos.y / height;
+
+        if (bfState.bucketFillBarrierMode) {
+          const pending = bfState.barrierPendingPoint;
+          if (pending) {
+            addBucketFillBarrier({ x1: pending.x, y1: pending.y, x2: normX, y2: normY });
+            bfState.setBarrierPendingPoint(null);
+          } else {
+            bfState.setBarrierPendingPoint({ x: normX, y: normY });
+          }
+          return;
+        }
+
+        if (bfState.bucketFillLoading) return;
+        if (bfState.bucketFillPreview || bfState.bucketFillPendingPolygon) return; // preview/dialog showing
+        setBucketFillLoading(true);
+        setBucketFillPreview(null);
+
+        const existingPolygons = bfState.annotations
+          .filter((a: any) => a.pageNumber === pageNumber && a.source === "takeoff"
+            && a.data?.type === "area-polygon" && a.data?.vertices?.length >= 3)
+          .map((a: any) => ({ vertices: a.data.vertices }));
+
+        // Client-side bucket fill via WebWorker
+        const pageCanvas = findPageCanvas();
+        clientBucketFill(pageCanvas, { x: normX, y: normY }, {
+          tolerance: bfState.bucketFillTolerance,
+          dilation: bfState.bucketFillDilatePx,
+          barriers: bfState.bucketFillBarriers,
+          polygonBarriers: existingPolygons,
+        })
+          .then((data) => {
+            useViewerStore.setState({
+              bucketFillLoading: false,
+              bucketFillPreview: { vertices: data.vertices, method: data.method },
+            });
+          })
+          .catch((err) => {
+            useViewerStore.getState().setBucketFillLoading(false);
+            useViewerStore.getState().setBucketFillError(err?.message || "Bucket fill failed");
+            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 4000);
+          });
         return;
       }
 
@@ -1149,71 +1133,6 @@ export default memo(function AnnotationOverlay({
         const activeItem = takeoffItems.find((t) => t.id === activeTakeoffItemId);
         if (!activeItem) return;
         e.stopPropagation();
-
-        // Bucket fill mode: click to fill or draw barriers
-        if (activeItem.shape === "polygon" && bucketFillActive) {
-          const normX = pos.x / width;
-          const normY = pos.y / height;
-
-          // Barrier drawing sub-mode: click-click to draw line segments
-          if (bucketFillBarrierMode) {
-            const pending = useViewerStore.getState().barrierPendingPoint;
-            if (pending) {
-              addBucketFillBarrier({ x1: pending.x, y1: pending.y, x2: normX, y2: normY });
-              useViewerStore.getState().setBarrierPendingPoint(null);
-            } else {
-              useViewerStore.getState().setBarrierPendingPoint({ x: normX, y: normY });
-            }
-            return;
-          }
-
-          // Bucket fill click: send seed point to API
-          if (bucketFillLoading) return; // ignore clicks while loading
-          setBucketFillLoading(true);
-          setBucketFillPreview(null);
-
-          const barriers = useViewerStore.getState().bucketFillBarriers;
-          fetch("/api/bucket-fill", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              projectId: projectDbId,
-              pageNumber,
-              seedPoint: { x: normX, y: normY },
-              tolerance: 30,
-              dilate: 3,
-              barriers,
-            }),
-          })
-            .then(async (res) => {
-              if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err?.error || `HTTP ${res.status}`);
-              }
-              return res.json();
-            })
-            .then((data) => {
-              if (data?.type === "result" && data.vertices?.length >= 3) {
-                // Atomic update — avoid split render where loading=false commits before preview=obj
-                useViewerStore.setState({
-                  bucketFillLoading: false,
-                  bucketFillPreview: { vertices: data.vertices, method: data.method || "raster" },
-                });
-              } else if (data?.type === "error") {
-                setBucketFillLoading(false);
-                setBucketFillError(data.error || "Bucket fill failed");
-                setTimeout(() => setBucketFillError(null), 4000);
-              } else {
-                setBucketFillLoading(false);
-              }
-            })
-            .catch((e) => {
-              setBucketFillLoading(false);
-              setBucketFillError(e?.message || "Bucket fill failed");
-              setTimeout(() => setBucketFillError(null), 4000);
-            });
-          return;
-        }
 
         // Polygon drawing mode
         if (activeItem.shape === "polygon") {
@@ -1745,7 +1664,7 @@ export default memo(function AnnotationOverlay({
       setDrawStart(pos);
       setDrawEnd(pos);
     },
-    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, projectDbId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError, splitAreaActive, splitLineA, splitLineB, splitPreview, setSplitLineEndpoint, setSplitPreview, setSplitError]
+    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, projectDbId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError, splitAreaActive, splitLineA, splitPreview, setSplitLineEndpoint, setSplitPreview, setSplitError]
   );
 
   const handleMouseMove = useCallback(
@@ -1948,6 +1867,9 @@ export default memo(function AnnotationOverlay({
         } else if (store.splitAreaActive) {
           // Exit split area mode entirely
           store.setSplitAreaActive(false);
+        } else if (store.bucketFillPendingPolygon) {
+          // Dismiss item assignment dialog
+          store.setBucketFillPendingPolygon(null);
         } else if (store.bucketFillPreview) {
           // Cancel bucket fill preview
           store.setBucketFillPreview(null);
@@ -1981,7 +1903,7 @@ export default memo(function AnnotationOverlay({
           acceptSplit();
         } else if (store.bucketFillPreview) {
           e.preventDefault();
-          acceptBucketFillPolygon();
+          prepareBucketFillPolygon();
         } else if (polygonDrawingMode === "drawing") {
           e.preventDefault();
           const verts = store.polygonVertices;
@@ -2016,7 +1938,7 @@ export default memo(function AnnotationOverlay({
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [activeTakeoffItemId, setActiveTakeoffItemId, polygonDrawingMode, resetPolygonDrawing, calibrationMode, resetCalibration, undoLastVertex, savePolygon, saveLinearPolyline, acceptBucketFillPolygon, acceptSplit]);
+  }, [activeTakeoffItemId, setActiveTakeoffItemId, polygonDrawingMode, resetPolygonDrawing, calibrationMode, resetCalibration, undoLastVertex, savePolygon, saveLinearPolyline, prepareBucketFillPolygon, acceptSplit]);
 
   // Keyboard: Delete/Backspace to delete, Enter to place dragged annotation
   useEffect(() => {
@@ -2183,7 +2105,7 @@ export default memo(function AnnotationOverlay({
           left: 0,
           width: `${width}px`,
           height: `${height}px`,
-          pointerEvents: activeTakeoffItemId !== null || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" || tableParseStep !== "idle" || keynoteParseStep !== "idle" || symbolSearchActive || splitAreaActive ? "auto" : "none",
+          pointerEvents: tempPanMode ? "none" : (activeTakeoffItemId !== null || bucketFillActive || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" || tableParseStep !== "idle" || keynoteParseStep !== "idle" || symbolSearchActive || splitAreaActive ? "auto" : "none"),
           transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
           transformOrigin: "top left",
           willChange: "transform",

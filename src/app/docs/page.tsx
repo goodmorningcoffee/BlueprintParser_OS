@@ -100,9 +100,9 @@ export default function DocsPage() {
             <p>
               BlueprintParser is open source. Found an error in these docs? Edit{" "}
               <code className="font-mono">src/app/docs/sections/</code> &mdash;
-              every section is a standalone TSX file, and every visual either
-              mounts a real React component or is a committed screenshot under{" "}
-              <code className="font-mono">public/docs/shots/</code>.
+              every section is a standalone TSX file, and every visual is a real
+              React component (live demo or inline SVG diagram) under{" "}
+              <code className="font-mono">src/app/docs/_components/demos/</code>.
             </p>
           </footer>
         </main>

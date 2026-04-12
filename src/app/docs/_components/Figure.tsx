@@ -1,32 +1,15 @@
-"use client";
+import type { ReactNode } from "react";
 
-import { useState, type ReactNode } from "react";
-
-type FigureKind = "live" | "shot";
 type FigureFrame = "viewer" | "panel" | "page" | "none";
 type FigureSize = "sm" | "md" | "lg" | "full";
 
-interface FigureBaseProps {
+interface FigureProps {
+  kind: "live";
   caption: string;
+  children: ReactNode;
   frame?: FigureFrame;
   size?: FigureSize;
 }
-
-interface FigureLiveProps extends FigureBaseProps {
-  kind: "live";
-  children: ReactNode;
-  src?: never;
-  alt?: never;
-}
-
-interface FigureShotProps extends FigureBaseProps {
-  kind: "shot";
-  src: string;
-  alt: string;
-  children?: never;
-}
-
-type FigureProps = FigureLiveProps | FigureShotProps;
 
 const SIZE_CLASS: Record<FigureSize, string> = {
   sm: "max-w-md",
@@ -52,52 +35,15 @@ function FrameChrome({ variant, children }: { variant: FigureFrame; children: Re
   );
 }
 
-export function Figure(props: FigureProps) {
-  const { caption, frame = "none", size = "md" } = props;
-  const [lightbox, setLightbox] = useState(false);
-
-  const inner =
-    props.kind === "live" ? (
-      <div className="p-4 bg-[var(--bg)]/30">{props.children}</div>
-    ) : (
-      <button
-        type="button"
-        onClick={() => setLightbox(true)}
-        className="block w-full cursor-zoom-in"
-        aria-label={`Open full-size: ${props.alt}`}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={props.src}
-          alt={props.alt}
-          loading="lazy"
-          className="block w-full h-auto"
-        />
-      </button>
-    );
-
+export function Figure({ caption, frame = "none", size = "md", children }: FigureProps) {
   return (
     <figure className={`my-6 ${SIZE_CLASS[size]}`}>
-      <FrameChrome variant={frame}>{inner}</FrameChrome>
+      <FrameChrome variant={frame}>
+        <div className="p-4 bg-[var(--bg)]/30">{children}</div>
+      </FrameChrome>
       <figcaption className="mt-2 text-xs text-[var(--muted)] italic leading-relaxed">
         {caption}
       </figcaption>
-
-      {lightbox && props.kind === "shot" && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-6 cursor-zoom-out"
-          onClick={() => setLightbox(false)}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={props.src}
-            alt={props.alt}
-            className="max-w-full max-h-full object-contain"
-          />
-        </div>
-      )}
     </figure>
   );
 }
