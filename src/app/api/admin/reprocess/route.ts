@@ -425,9 +425,10 @@ export async function POST(req: Request) {
               }
             } catch { /* textAnnotations column may not exist */ }
 
-            // Re-run CSI detection (before text annotations, since CSI feeds into them)
+            // Re-run CSI detection (before text annotations, since CSI feeds into them).
+            // Pass Textract words so trigger bboxes are recorded on each detected code.
             const rawText = page.rawText || extractRawText(textractData);
-            const csiCodes = detectCsiCodes(rawText);
+            const csiCodes = detectCsiCodes(rawText, textractData.words);
 
             // Re-run text annotation detectors (with CSI codes + pipeline config)
             const textAnnotationResult = detectTextAnnotations(textractData, csiCodes, enabledDetectorIds);

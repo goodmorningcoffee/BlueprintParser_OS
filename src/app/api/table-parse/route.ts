@@ -7,7 +7,7 @@ import { eq, and } from "drizzle-orm";
 import { downloadFromS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
 import { mergeGrids, type MethodResult } from "@/lib/grid-merger";
-import type { TextractPageData } from "@/types";
+import type { TextractPageData, TextractTable } from "@/types";
 import { detectCsiFromGrid } from "@/lib/csi-detect";
 import { extractWithImg2Table } from "@/lib/img2table-extract";
 import { extractWithCamelotPdfplumber } from "@/lib/camelot-extract";
@@ -17,38 +17,151 @@ import { logger } from "@/lib/logger";
 import { addToHistory, type ParseHistoryEntry, type InfraStage } from "@/lib/parse-history";
 
 /**
- * Lazy Textract re-run: if cached textractData has no tables, try a live
- * Textract call for this page. Updates the DB cache on success so future
- * calls don't re-trigger. Falls back to "no tables" error on any failure.
+ * Crop a PNG buffer to a normalized region [x0, y0, x1, y1] using sharp.
+ * Returns null if the crop dimensions are invalid.
+ */
+async function cropPngToRegion(
+  pngBuffer: Buffer,
+  regionBbox: [number, number, number, number],
+): Promise<Buffer | null> {
+  const sharp = (await import("sharp")).default;
+  const metadata = await sharp(pngBuffer).metadata();
+  const imgW = metadata.width ?? 0;
+  const imgH = metadata.height ?? 0;
+  if (imgW === 0 || imgH === 0) return null;
+
+  const [x0, y0, x1, y1] = regionBbox;
+  let left = Math.round(x0 * imgW);
+  let top = Math.round(y0 * imgH);
+  let width = Math.round((x1 - x0) * imgW);
+  let height = Math.round((y1 - y0) * imgH);
+
+  // Clamp to image bounds
+  left = Math.max(0, Math.min(left, imgW - 1));
+  top = Math.max(0, Math.min(top, imgH - 1));
+  width = Math.max(1, Math.min(width, imgW - left));
+  height = Math.max(1, Math.min(height, imgH - top));
+
+  return await sharp(pngBuffer)
+    .extract({ left, top, width, height })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Remap TextractTable bboxes from cropped-image coordinates [0,1] back to
+ * full-page coordinates [0,1]. Mutates new copies; original unchanged.
+ *
+ * Math: cropped coord c maps to full-page coord = regionStart + c * regionSize
+ */
+function remapTablesToFullPage(
+  tables: TextractTable[],
+  regionBbox: [number, number, number, number],
+): TextractTable[] {
+  const [x0, y0, x1, y1] = regionBbox;
+  const regionW = x1 - x0;
+  const regionH = y1 - y0;
+  return tables.map((t) => ({
+    ...t,
+    bbox: [
+      x0 + t.bbox[0] * regionW,
+      y0 + t.bbox[1] * regionH,
+      t.bbox[2] * regionW,
+      t.bbox[3] * regionH,
+    ] as [number, number, number, number],
+    cells: t.cells.map((c) => ({
+      ...c,
+      bbox: [
+        x0 + c.bbox[0] * regionW,
+        y0 + c.bbox[1] * regionH,
+        c.bbox[2] * regionW,
+        c.bbox[3] * regionH,
+      ] as [number, number, number, number],
+    })),
+  }));
+}
+
+/**
+ * Check if any table in the cached set has meaningful overlap (>=30%) with
+ * the region. Matches the threshold used in methodTextractTables so a cache
+ * hit means the cached tables are actually usable for this region.
+ */
+function hasOverlappingTable(
+  tables: TextractTable[],
+  regionBbox: [number, number, number, number],
+): boolean {
+  const [rMinX, rMinY, rMaxX, rMaxY] = regionBbox;
+  const regionArea = (rMaxX - rMinX) * (rMaxY - rMinY);
+  if (regionArea <= 0) return false;
+
+  for (const table of tables) {
+    const [tL, tT, tW, tH] = table.bbox;
+    const intMinX = Math.max(rMinX, tL);
+    const intMinY = Math.max(rMinY, tT);
+    const intMaxX = Math.min(rMaxX, tL + tW);
+    const intMaxY = Math.min(rMaxY, tT + tH);
+    if (intMinX < intMaxX && intMinY < intMaxY) {
+      const intArea = (intMaxX - intMinX) * (intMaxY - intMinY);
+      if (intArea / regionArea >= 0.3) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Textract tables with region-aware caching and cropping.
+ *
+ * Logic:
+ * 1. If cache has a table that overlaps this region → use cache (fast path,
+ *    happy case when initial processing's full-page Textract succeeded).
+ * 2. Else → crop PNG to region, call Textract live, remap bboxes back to
+ *    full-page coords, return result. We intentionally do NOT write the
+ *    region-specific result to `pages.textractData.tables` because that cache
+ *    slot represents page-wide data and storing region-specific tables there
+ *    would poison subsequent parses of other regions on the same page.
+ *    Each region is its own Textract call until we add a per-region cache.
  */
 async function resolveTextractTables(
   textractData: TextractPageData,
   dataUrl: string,
-  pageId: number,
   pageNumber: number,
   regionBbox: [number, number, number, number],
 ): Promise<MethodResult> {
-  if (textractData.tables && textractData.tables.length > 0) {
+  // Cache hit: only if at least one cached table actually overlaps the region
+  if (
+    textractData.tables &&
+    textractData.tables.length > 0 &&
+    hasOverlappingTable(textractData.tables, regionBbox)
+  ) {
     return methodTextractTables(textractData.tables, regionBbox);
   }
 
   try {
     const s3Key = `${dataUrl}/pages/page_${String(pageNumber).padStart(4, "0")}.png`;
     const pngBuffer = await downloadFromS3(s3Key);
-    const freshData = await analyzePageImage(pngBuffer);
+
+    // Crop PNG to just the user's region before sending to Textract.
+    // Textract's TABLES feature gets confused by dense blueprint noise —
+    // cropping gives it a clean, focused view of the table.
+    const croppedBuffer = await cropPngToRegion(pngBuffer, regionBbox);
+    if (!croppedBuffer) {
+      logger.warn(`[table-parse] Could not crop PNG for page ${pageNumber}`);
+      return methodTextractTables(undefined, regionBbox);
+    }
+
+    const freshData = await analyzePageImage(croppedBuffer);
 
     if (freshData.tables && freshData.tables.length > 0) {
-      // Cache the tables for future calls
-      await db.update(pages).set({
-        textractData: { ...textractData, tables: freshData.tables },
-      }).where(eq(pages.id, pageId));
-      logger.info(`[table-parse] Lazy Textract re-run found ${freshData.tables.length} table(s) for page ${pageNumber}`);
-      return methodTextractTables(freshData.tables, regionBbox);
+      // Remap cropped-image coords back to full-page coords so the merger
+      // pipeline sees consistent coordinates across all methods.
+      const remappedTables = remapTablesToFullPage(freshData.tables, regionBbox);
+      logger.info(`[table-parse] Live Textract (cropped) found ${remappedTables.length} table(s) for page ${pageNumber}`);
+      return methodTextractTables(remappedTables, regionBbox);
     }
 
     return methodTextractTables(undefined, regionBbox);
   } catch (err) {
-    logger.warn(`[table-parse] Lazy Textract re-run failed for page ${pageNumber}:`, err);
+    logger.warn(`[table-parse] Live Textract (cropped) failed for page ${pageNumber}:`, err);
     return methodTextractTables(undefined, regionBbox);
   }
 }
@@ -190,7 +303,7 @@ export async function POST(req: Request) {
 
     const methodPromises: Promise<MethodResult | MethodResult[]>[] = [
       timed(Promise.resolve(methodOcrPositions(textractData.words, regionBbox, { rowTolerance, minColGap, colHitRatio, headerMode }))),
-      timed(resolveTextractTables(textractData, project.dataUrl || "", pageRow.id, pageNumber, regionBbox)),
+      timed(resolveTextractTables(textractData, project.dataUrl || "", pageNumber, regionBbox)),
       pagePngBuffer && pdfBuffer
         ? timed(methodOpenCvLines(pdfBuffer, pageNumber, regionBbox, textractData.words, { minHLineLengthRatio, minVLineLengthRatio, clusteringTolerance }))
         : Promise.resolve({ method: "opencv-lines", headers: [], rows: [], confidence: 0, error: skippedReason("page image") } as MethodResult),

@@ -262,11 +262,21 @@ export interface KeynoteShapeData {
   contour?: [number, number][];
 }
 
+/** A specific word/phrase on the page that caused a CSI code to be detected. */
+export interface CsiCodeTrigger {
+  text: string;        // matched word/phrase (lowercased, as it appeared)
+  bbox: BboxLTWH;      // normalized 0-1 bbox on the full page
+  tier: 1 | 2 | 3;     // 1=exact phrase, 2=bag-of-words, 3=anchor word
+}
+
 export interface CsiCode {
   code: string;
   description: string;
   trade: string;
   division: string;
+  /** Words/phrases on the page that triggered this code's detection.
+   *  Optional for backward compat with cached data from before triggers existed. */
+  triggers?: CsiCodeTrigger[];
 }
 
 export interface PageData {

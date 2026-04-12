@@ -604,6 +604,102 @@ function TextractTab({ pageData, pageNumber }: { pageData: any; pageNumber: numb
           />
         </div>
       )}
+
+      <CsiRecomputeSection pageNumber={pageNumber} />
+    </div>
+  );
+}
+
+/** Per-page CSI recompute debug tool. Re-runs detectCsiCodes on cached OCR text
+ *  (no S3/Textract round-trip) and overwrites pages.csiCodes. Updates the
+ *  in-store CSI data so trade filter highlights refresh without a page reload. */
+function CsiRecomputeSection({ pageNumber }: { pageNumber: number }) {
+  const { projectId: projectDbId } = useProject();
+  const setCsiCodes = useViewerStore((s) => s.setCsiCodes);
+  const csiCodes = useViewerStore((s) => s.csiCodes);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ durationMs: number; stats: { codeCount: number; triggerCount: number; tradeCount: number } } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const currentPageCsi = csiCodes[pageNumber] || [];
+  const currentStats = {
+    codes: currentPageCsi.length,
+    triggers: currentPageCsi.reduce((n, c) => n + (c.triggers?.length || 0), 0),
+    trades: new Set(currentPageCsi.map((c) => c.trade)).size,
+  };
+
+  const handleRecompute = async () => {
+    if (loading || !projectDbId) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch("/api/pages/csi-recompute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: projectDbId, pageNumber }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setResult({ durationMs: data.durationMs, stats: data.stats });
+      if (data.csiCodes && setCsiCodes) setCsiCodes(pageNumber, data.csiCodes);
+    } catch (e: any) {
+      setError(e?.message || "Recompute failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 pt-3 border-t border-[var(--border)]">
+      <button
+        onClick={handleRecompute}
+        disabled={loading || !projectDbId}
+        className={`w-full px-3 py-2 rounded border text-sm font-medium transition-colors ${
+          loading
+            ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
+            : !projectDbId
+            ? "border-[var(--border)] text-[var(--muted)]/50 cursor-not-allowed"
+            : "border-pink-400/60 text-pink-300 bg-pink-400/10 hover:bg-pink-400/20"
+        }`}
+      >
+        {loading ? "Recomputing CSI…" : "Recompute CSI Codes"}
+      </button>
+      <p className="mt-1 text-[10px] text-[var(--muted)] leading-snug">
+        Re-runs <code className="font-mono">detectCsiCodes()</code> on the cached OCR text for
+        page {pageNumber} and overwrites <code className="font-mono">pages.csiCodes</code>.
+        No S3/Textract round-trip. Uses the same code path as the Overview{" "}
+        <em>Re-run All Processes</em> button. Good for testing detection logic changes on one page.
+      </p>
+
+      <div className="border border-[var(--border)] rounded p-2 space-y-1 mt-2">
+        <div className="text-[var(--muted)] font-medium mb-1 uppercase tracking-wide text-[10px]">
+          Current cached CSI — page {pageNumber}
+        </div>
+        <StatRow label="CSI codes" value={currentStats.codes} />
+        <StatRow label="Trade triggers" value={currentStats.triggers} tone={currentStats.triggers > 0 ? "good" : "bad"} hint={currentStats.triggers === 0 && currentStats.codes > 0 ? "Old cached data — no trigger bboxes stored. Recompute to add them." : undefined} />
+        <StatRow label="Distinct trades" value={currentStats.trades} />
+      </div>
+
+      {error && (
+        <div className="border border-red-500/40 bg-red-500/10 rounded p-2 text-red-300 space-y-1 mt-2">
+          <div className="font-medium">Recompute failed</div>
+          <div className="text-[11px] break-words">{error}</div>
+        </div>
+      )}
+
+      {result && (
+        <div className="border border-green-500/40 bg-green-500/10 rounded p-2 space-y-1 mt-2">
+          <div className="text-green-300 font-medium uppercase tracking-wide text-[10px]">Recompute complete</div>
+          <StatRow label="Duration" value={`${result.durationMs}ms`} />
+          <StatRow label="New CSI codes" value={result.stats.codeCount} />
+          <StatRow label="New trade triggers" value={result.stats.triggerCount} tone={result.stats.triggerCount > 0 ? "good" : "bad"} />
+          <StatRow label="New distinct trades" value={result.stats.tradeCount} />
+        </div>
+      )}
     </div>
   );
 }
