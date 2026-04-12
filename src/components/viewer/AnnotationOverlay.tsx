@@ -1106,25 +1106,63 @@ export default memo(function AnnotationOverlay({
             && a.data?.type === "area-polygon" && a.data?.vertices?.length >= 3)
           .map((a: any) => ({ vertices: a.data.vertices }));
 
-        // Client-side bucket fill via WebWorker
-        const pageCanvas = findPageCanvas();
-        clientBucketFill(pageCanvas, { x: normX, y: normY }, {
-          tolerance: bfState.bucketFillTolerance,
-          dilation: bfState.bucketFillDilatePx,
-          barriers: bfState.bucketFillBarriers,
-          polygonBarriers: existingPolygons,
-        })
-          .then((data) => {
-            useViewerStore.setState({
-              bucketFillLoading: false,
-              bucketFillPreview: { vertices: data.vertices, method: data.method },
-            });
-          })
-          .catch((err) => {
-            useViewerStore.getState().setBucketFillLoading(false);
-            useViewerStore.getState().setBucketFillError(err?.message || "Bucket fill failed");
-            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 4000);
+        const handleFillSuccess = (data: { vertices: { x: number; y: number }[]; method: string }) => {
+          useViewerStore.setState({
+            bucketFillLoading: false,
+            bucketFillPreview: { vertices: data.vertices, method: data.method },
           });
+        };
+
+        const serverFallback = () => {
+          fetch("/api/bucket-fill", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId: projectDbId,
+              pageNumber,
+              seedPoint: { x: normX, y: normY },
+              tolerance: bfState.bucketFillTolerance,
+              dilate: bfState.bucketFillDilatePx,
+              barriers: bfState.bucketFillBarriers,
+              polygonBarriers: existingPolygons,
+            }),
+          })
+            .then(async (res) => {
+              if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err?.error || `HTTP ${res.status}`); }
+              return res.json();
+            })
+            .then((data) => {
+              if (data?.type === "result" && data.vertices?.length >= 3) {
+                handleFillSuccess({ vertices: data.vertices, method: data.method || "server-raster" });
+              } else if (data?.type === "error") {
+                useViewerStore.getState().setBucketFillLoading(false);
+                useViewerStore.getState().setBucketFillError(data.error || "Bucket fill failed");
+                setTimeout(() => useViewerStore.getState().setBucketFillError(null), 4000);
+              } else {
+                useViewerStore.getState().setBucketFillLoading(false);
+              }
+            })
+            .catch((err) => {
+              useViewerStore.getState().setBucketFillLoading(false);
+              useViewerStore.getState().setBucketFillError(err?.message || "Bucket fill failed");
+              setTimeout(() => useViewerStore.getState().setBucketFillError(null), 4000);
+            });
+        };
+
+        // Try client-side WebWorker first, fall back to server
+        const pageCanvas = findPageCanvas();
+        if (pageCanvas) {
+          clientBucketFill(pageCanvas, { x: normX, y: normY }, {
+            tolerance: bfState.bucketFillTolerance,
+            dilation: bfState.bucketFillDilatePx,
+            barriers: bfState.bucketFillBarriers,
+            polygonBarriers: existingPolygons,
+          })
+            .then(handleFillSuccess)
+            .catch(() => serverFallback());
+        } else {
+          serverFallback();
+        }
         return;
       }
 

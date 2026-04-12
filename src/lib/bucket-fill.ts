@@ -11,7 +11,6 @@ import { logger } from "@/lib/logger";
 
 export interface BucketFillOptions {
   imagePath: string;
-  pdfPath?: string;
   pageNumber: number;
   seedX: number; // normalized 0-1
   seedY: number; // normalized 0-1
@@ -25,11 +24,10 @@ export interface BucketFillOptions {
 
 export interface BucketFillResult {
   type: "result" | "error";
-  method?: "raster" | "vector";
+  method?: "raster";
   vertices?: Array<{ x: number; y: number }>;
   vertexCount?: number;
   areaFraction?: number;
-  edgesOnPage?: number;
   error?: string;
 }
 
@@ -40,7 +38,6 @@ export async function bucketFill(
 
   const config = {
     image_path: options.imagePath,
-    pdf_path: options.pdfPath,
     page_number: options.pageNumber,
     seed_x: options.seedX,
     seed_y: options.seedY,

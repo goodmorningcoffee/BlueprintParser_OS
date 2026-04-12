@@ -338,6 +338,7 @@ export default memo(function PDFPage({
       )}
       <canvas
         ref={canvasRef}
+        data-page-canvas="true"
         style={{
           transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
           transformOrigin: "top left",
