@@ -1,6 +1,5 @@
 import { Section } from "../_components/Section";
 import { SubSection } from "../_components/SubSection";
-import { Figure } from "../_components/Figure";
 import { InlineCode } from "../_components/InlineCode";
 import { Callout } from "../_components/Callout";
 import { DeploymentTierTable } from "../_components/demos/DeploymentTierTable";
@@ -105,15 +104,6 @@ export function Section01Overview() {
           IAM, Secrets Manager, and CloudFront.
         </p>
       </SubSection>
-
-      <Figure
-        kind="shot"
-        src="/docs/shots/dashboard-home.png"
-        alt="BlueprintParser dashboard showing a project list and the global chat widget"
-        caption="The /home dashboard. Cards link into projects; the bottom-right chat widget runs cross-project RAG against every project visible to the current user."
-        frame="viewer"
-        size="lg"
-      />
     </Section>
   );
 }

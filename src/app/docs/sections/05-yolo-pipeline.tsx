@@ -7,6 +7,7 @@ import { CodeBlock } from "../_components/CodeBlock";
 import { TableEl } from "../_components/TableEl";
 import { YoloClassChipDemo } from "../_components/demos/YoloClassChipDemo";
 import { ConfidenceSliderDemo } from "../_components/demos/ConfidenceSliderDemo";
+import { YoloRunFlowDiagram } from "../_components/demos/YoloRunFlowDiagram";
 
 export function Section05YoloPipeline() {
   return (
@@ -62,13 +63,12 @@ export function Section05YoloPipeline() {
           mode.
         </p>
         <Figure
-          kind="shot"
-          src="/docs/shots/admin-ai-models-tab.png"
-          alt="Admin AI Models tab with model list, project selector, Run button, and a running SageMaker job"
-          caption="Admin → AI Models. The single place in BP where YOLO inference can be initiated. Note the sagemakerEnabled kill switch at the top and the quota indicator."
-          frame="page"
+          kind="live"
+          caption="YoloRunFlowDiagram — admin click → POST /api/yolo/run → SageMaker Processing → S3 yolo-output → POST /api/yolo/load → annotations + CSI heatmap refresh. Four safety layers gate the run path."
           size="full"
-        />
+        >
+          <YoloRunFlowDiagram />
+        </Figure>
       </SubSection>
 
       <SubSection title="Safety toggles">
@@ -136,22 +136,6 @@ export function Section05YoloPipeline() {
               </span>,
             ],
           ]}
-        />
-        <Figure
-          kind="shot"
-          src="/docs/shots/detection-panel-models.png"
-          alt="Detection Panel showing Models sub-tab with expanded classes"
-          caption="Detection Panel → Models. Each model row expands into classes; each class row expands into individual annotations with confidence, CSI tags, and per-annotation visibility."
-          frame="panel"
-          size="md"
-        />
-        <Figure
-          kind="shot"
-          src="/docs/shots/detection-panel-tags.png"
-          alt="Detection Panel showing Tags sub-tab with YoloTags from a door schedule"
-          caption="Detection Panel → Tags after a Map Tags pass on a door schedule. Each tag (D-01, D-02, ...) is bound to the YOLO shapes that contain it and grouped by model and class."
-          frame="panel"
-          size="md"
         />
       </SubSection>
 
@@ -244,16 +228,6 @@ export function Section05YoloPipeline() {
         </Callout>
       </SubSection>
 
-      <SubSection title="Visual reference">
-        <Figure
-          kind="shot"
-          src="/docs/shots/yolo-canvas-overlay.png"
-          alt="Canvas with YOLO overlay showing door detections with bboxes and class labels"
-          caption="A YOLO overlay on a door-heavy floor plan. Each detection is a colored bounding box with class name and confidence; clicking selects the annotation in the Detection Panel."
-          frame="viewer"
-          size="full"
-        />
-      </SubSection>
     </Section>
   );
 }

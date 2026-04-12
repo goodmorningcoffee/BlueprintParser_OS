@@ -183,22 +183,6 @@ export function Section04CsiEngine() {
         >
           <CsiDivisionChipGrid />
         </Figure>
-        <Figure
-          kind="shot"
-          src="/docs/shots/csi-graph-d3.png"
-          alt="D3 force-directed CSI network graph showing division clusters"
-          caption="The live CSI network graph rendered at /project/[id]/csi-graph. Nodes are divisions, links are co-occurrences, and the four standard clusters (MEP/Arch/Struct/Site) are visibly separated."
-          frame="page"
-          size="full"
-        />
-        <Figure
-          kind="shot"
-          src="/docs/shots/csi-panel-divisions.png"
-          alt="CSI panel with all divisions expanded"
-          caption="CSI panel in the viewer. Page and project scope switch; clicking a division filters the canvas to show only annotations tagged with that division."
-          frame="panel"
-          size="md"
-        />
       </SubSection>
 
       <SubSection title="How the LLM uses all three layers">

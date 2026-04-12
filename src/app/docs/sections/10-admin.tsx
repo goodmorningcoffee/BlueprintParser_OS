@@ -1,6 +1,5 @@
 import { Section } from "../_components/Section";
 import { SubSection } from "../_components/SubSection";
-import { Figure } from "../_components/Figure";
 import { InlineCode } from "../_components/InlineCode";
 import { Callout } from "../_components/Callout";
 import { TableEl } from "../_components/TableEl";
@@ -136,32 +135,6 @@ export function Section10Admin() {
         </Callout>
       </SubSection>
 
-      <SubSection title="Visual reference">
-        <Figure
-          kind="shot"
-          src="/docs/shots/admin-overview.png"
-          alt="Admin Overview tab showing recent parses, running jobs, and system health"
-          caption="Admin → Overview. Recent parses on the left, running jobs on the right, per-company quota readouts across the top."
-          frame="page"
-          size="full"
-        />
-        <Figure
-          kind="shot"
-          src="/docs/shots/admin-heuristics.png"
-          alt="Admin Heuristics tab showing built-in rules and a custom rule editor"
-          caption="Admin → Heuristics. Built-in rules toggleable on the left; a custom rule editor on the right with JSON input for text keywords, YOLO requirements, spatial conditions, and output CSI codes."
-          frame="page"
-          size="full"
-        />
-        <Figure
-          kind="shot"
-          src="/docs/shots/admin-csi-config.png"
-          alt="Admin CSI tab with threshold sliders and custom database upload"
-          caption="Admin → CSI. Threshold and tier-weight sliders on top; custom database upload (TSV) below; re-process CSI button on the right."
-          frame="page"
-          size="full"
-        />
-      </SubSection>
     </Section>
   );
 }

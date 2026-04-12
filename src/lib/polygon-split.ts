@@ -111,6 +111,29 @@ function pointsEqual(a: Pt, b: Pt): boolean {
   return Math.abs(a.x - b.x) < EPS_VERTEX && Math.abs(a.y - b.y) < EPS_VERTEX;
 }
 
+/**
+ * Find all polygons that the given line cleanly bisects.
+ * Returns results sorted by chordLength descending (longest overlap first).
+ */
+export function findSplittablePolygons(
+  lineA: Pt,
+  lineB: Pt,
+  polygons: { id: number; vertices: Pt[] }[]
+): { id: number; left: Pt[]; right: Pt[]; chordLength: number }[] {
+  const results: { id: number; left: Pt[]; right: Pt[]; chordLength: number }[] = [];
+  for (const poly of polygons) {
+    const split = splitPolygonByLine(poly.vertices, lineA, lineB);
+    if (!split) continue;
+    // Chord = distance between the two intersection points (first/last shared vertices)
+    const p1 = split.left[0];
+    const p2 = split.left[split.left.length - 1];
+    const chordLength = Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
+    results.push({ id: poly.id, left: split.left, right: split.right, chordLength });
+  }
+  results.sort((a, b) => b.chordLength - a.chordLength);
+  return results;
+}
+
 export function polygonArea(polygon: Pt[]): number {
   let sum = 0;
   const n = polygon.length;

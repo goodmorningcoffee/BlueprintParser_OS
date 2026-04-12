@@ -20,6 +20,7 @@ import TagBrowseBar from "./TagBrowseBar";
 import KeynotePanel from "./KeynotePanel";
 import SymbolSearchPanel from "./SymbolSearchPanel";
 import { useChunkLoader } from "@/hooks/useChunkLoader";
+import { loadViewport, saveViewport, type ViewerViewport } from "@/lib/viewer-state";
 
 interface PDFViewerProps {
   pdfUrl: string;
@@ -37,9 +38,10 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const [containerWidth, setContainerWidth] = useState(1200);
 
   // Slice selectors — grouped subscriptions prevent cascading re-renders
-  const { pageNumber, numPages, setNumPages, mode, setMode } = useNavigation();
+  const { pageNumber, numPages, setPage, setNumPages, mode, setMode } = useNavigation();
   const { scale, setScale } = useViewerStore(useShallow((s) => ({ scale: s.scale, setScale: s.setScale })));
-  const { projectId, dataUrl } = useProject();
+  const tempPanMode = useViewerStore((s) => s.tempPanMode);
+  const { projectId, publicId, dataUrl } = useProject();
   const {
     symbolSearchActive, symbolSearchResults, symbolSearchLoading,
     symbolSearchTemplateBbox, symbolSearchError,
@@ -132,16 +134,47 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     }, 100);
   }, [llmHighlight, pageDimensions, scale]);
 
-  // Keyboard shortcuts: a = pointer/select, v = pan/zoom
+  // Keyboard shortcuts: a = pointer/select, v = pan/zoom (hold V = temp pan in tools)
+  const isPanningRef = useRef(false);
+  const vReleasedDuringPanRef = useRef(false);
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement).isContentEditable) return;
       if (e.key === "a") setMode("pointer");
-      else if (e.key === "v") setMode("move");
+      else if (e.key === "v") {
+        if (e.repeat) return;
+        const s = useViewerStore.getState();
+        const toolActive = s.activeTakeoffItemId !== null || s.bucketFillActive || s.splitAreaActive
+          || s.polygonDrawingMode === "drawing" || s.calibrationMode !== "idle";
+        if (toolActive) {
+          s.setTempPanMode(true);
+        } else {
+          setMode("move");
+        }
+      }
+    }
+    function handleKeyUp(e: KeyboardEvent) {
+      if (e.key !== "v") return;
+      const s = useViewerStore.getState();
+      if (!s.tempPanMode) return;
+      if (isPanningRef.current) {
+        vReleasedDuringPanRef.current = true;
+      } else {
+        s.setTempPanMode(false);
+      }
+    }
+    function handleBlur() {
+      useViewerStore.getState().setTempPanMode(false);
     }
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleBlur);
+    };
   }, [setMode]);
 
   // Measure container width for fit-to-width rendering
@@ -203,24 +236,108 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     };
   }, [pdfUrl, setNumPages]);
 
-  // Auto-center blueprint on load (inner div has 25vw horizontal / 50vh vertical
-  // free-panning padding so the page is reachable by panning; without centering,
-  // the browser starts scrolled to 0,0 which is the empty top-left padding zone).
-  //
-  // We can't rely on container.scrollWidth/scrollHeight during initial load —
-  // the first PDFPage hasn't rendered yet, so scrollWidth may still be ~clientWidth
-  // and the early-return kicks in. Instead, use the known padding values directly
-  // (same approach as the pendingCenter effect below) so we land on the page
-  // regardless of what pdf.js has done by the time this fires.
-  const centeredRef = useRef(false);
+  // Per-project viewport restore-or-center. Two effects cooperate:
+  // intent reads localStorage and stashes the target; apply waits for
+  // pageDimensions[targetPage] (populated by PDFPage once the inner padded
+  // div has grown past the container) before placing the scroll. This is
+  // why the earlier single-effect fix clamped to 0 — the inner div was
+  // still at minimum width when the scroll assignment fired.
+  const pendingRestoreRef = useRef<ViewerViewport | "center" | null>(null);
+  const hasAppliedRef = useRef(false);
+
   useEffect(() => {
-    if (!pdfDoc || centeredRef.current) return;
-    centeredRef.current = true;
+    if (!publicId) return;
+    pendingRestoreRef.current = null;
+    hasAppliedRef.current = false;
+
+    const saved = loadViewport(publicId);
+    if (saved) {
+      const clampedPage = Math.max(1, Math.min(saved.pageNumber, numPages || saved.pageNumber));
+      pendingRestoreRef.current = { ...saved, pageNumber: clampedPage };
+      setScale(saved.scale);
+      setPage(clampedPage);
+    } else {
+      pendingRestoreRef.current = "center";
+    }
+  }, [publicId, numPages, setScale, setPage]);
+
+  const restorePageDimensions = useViewerStore((s) => s.pageDimensions);
+  useEffect(() => {
+    if (hasAppliedRef.current) return;
+    if (!pdfDoc) return;
+    const intent = pendingRestoreRef.current;
+    if (!intent) return;
     const container = containerRef.current;
     if (!container) return;
-    container.scrollLeft = window.innerWidth * 0.25;
-    container.scrollTop = window.innerHeight * 0.5;
-  }, [pdfDoc]);
+
+    const targetPage = intent === "center" ? 1 : intent.pageNumber;
+    const dim = restorePageDimensions[targetPage];
+    if (!dim) return;
+
+    if (intent === "center") {
+      container.scrollLeft = window.innerWidth * 0.25;
+      container.scrollTop = window.innerHeight * 0.5;
+    } else {
+      container.scrollLeft = intent.scrollLeft;
+      container.scrollTop = intent.scrollTop;
+    }
+    hasAppliedRef.current = true;
+    pendingRestoreRef.current = null;
+  }, [pdfDoc, restorePageDimensions]);
+
+  // Persist viewport to localStorage on scroll / scale / page changes.
+  // The flush-on-cleanup is gated on "store still has this project's publicId"
+  // so that the A→B re-use path (where PDFViewer stays mounted and
+  // resetProjectData() has already zeroed the store) skips the flush and
+  // doesn't overwrite A's saved entry with the reset values. The A→/home
+  // unmount path still has the store at this project's state, so flush fires.
+  useEffect(() => {
+    if (!publicId) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const doSave = () => {
+      if (!hasAppliedRef.current) return;
+      if (useViewerStore.getState().publicId !== publicId) return;
+      const current = useViewerStore.getState();
+      saveViewport(publicId, {
+        scale: current.scale,
+        pageNumber: current.pageNumber,
+        scrollLeft: container.scrollLeft,
+        scrollTop: container.scrollTop,
+        savedAt: Date.now(),
+      });
+    };
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onScroll = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(doSave, 500);
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      if (timer) clearTimeout(timer);
+      doSave();
+    };
+  }, [publicId]);
+
+  useEffect(() => {
+    if (!publicId || !hasAppliedRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const timer = setTimeout(() => {
+      if (useViewerStore.getState().publicId !== publicId) return;
+      saveViewport(publicId, {
+        scale,
+        pageNumber,
+        scrollLeft: container.scrollLeft,
+        scrollTop: container.scrollTop,
+        savedAt: Date.now(),
+      });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [publicId, scale, pageNumber]);
 
   // Center when zoomFit is triggered (via store flag)
   const { pendingCenter, clearPendingCenter } = useViewerStore(useShallow((s) => ({
@@ -313,13 +430,15 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (mode !== "move") return;
+      const shouldPan = mode === "move" || useViewerStore.getState().tempPanMode;
+      if (!shouldPan) return;
       if (e.button !== 0) return;
 
       const container = containerRef.current;
       if (!container) return;
 
       setIsPanning(true);
+      isPanningRef.current = true;
       panStart.current = {
         x: e.clientX,
         y: e.clientY,
@@ -348,8 +467,15 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   const handleMouseUp = useCallback(() => {
     setIsPanning(false);
+    isPanningRef.current = false;
     const container = containerRef.current;
-    if (container) container.style.cursor = mode === "move" ? "grab" : "default";
+    const tempPan = useViewerStore.getState().tempPanMode;
+    if (container) container.style.cursor = (mode === "move" || tempPan) ? "grab" : "default";
+    if (vReleasedDuringPanRef.current) {
+      vReleasedDuringPanRef.current = false;
+      useViewerStore.getState().setTempPanMode(false);
+      if (container) container.style.cursor = "default";
+    }
   }, [mode]);
 
   // Hooks must be before early returns (Rules of Hooks)
@@ -441,7 +567,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
           <div
             ref={containerRef}
             className="flex-1 bg-[var(--bg)] overflow-auto relative"
-            style={{ cursor: mode === "move" ? "grab" : "default" }}
+            style={{ cursor: (mode === "move" || tempPanMode) ? "grab" : "default" }}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}

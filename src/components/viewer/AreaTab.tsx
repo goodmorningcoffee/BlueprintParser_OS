@@ -312,6 +312,10 @@ export default function AreaTab() {
   const setBucketFillBarrierMode = useViewerStore((s) => s.setBucketFillBarrierMode);
   const bucketFillBarriers = useViewerStore((s) => s.bucketFillBarriers);
   const clearBucketFillBarriers = useViewerStore((s) => s.clearBucketFillBarriers);
+  const bucketFillTolerance = useViewerStore((s) => s.bucketFillTolerance);
+  const setBucketFillTolerance = useViewerStore((s) => s.setBucketFillTolerance);
+  const bucketFillDilatePx = useViewerStore((s) => s.bucketFillDilatePx);
+  const setBucketFillDilatePx = useViewerStore((s) => s.setBucketFillDilatePx);
   const splitAreaActive = useViewerStore((s) => s.splitAreaActive);
   const setSplitAreaActive = useViewerStore((s) => s.setSplitAreaActive);
 
@@ -349,73 +353,80 @@ export default function AreaTab() {
         )}
       </div>
       <ScaleStatus />
-      {/* Bucket fill toolbar — shown whenever area items exist, disabled until one is selected */}
-      {areaItems.length > 0 && (() => {
-        const hasActiveAreaItem = activeTakeoffItemId !== null && areaItems.some((i) => i.id === activeTakeoffItemId);
-        return (
-        <div className="px-2 py-1.5 border-b border-[var(--border)] space-y-1">
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => hasActiveAreaItem && setBucketFillActive(!bucketFillActive)}
-              disabled={!hasActiveAreaItem}
-              className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded border transition-colors ${
-                !hasActiveAreaItem
-                  ? "border-[var(--border)] text-[var(--muted)]/40 cursor-not-allowed"
-                  : bucketFillActive
-                  ? "border-cyan-400/60 text-cyan-300 bg-cyan-400/10"
-                  : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]"
-              }`}
-              title={hasActiveAreaItem ? "Bucket Fill — click inside a room to auto-detect its boundary" : "Select an area item first"}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M16 2v5h5" /><path d="M21 6v6.5c0 .8-.7 1.5-1.5 1.5h-2l-3.5 4-3.5-4h-2C7.7 14 7 13.3 7 12.5V6c0-.8.7-1.5 1.5-1.5H19l2 1.5Z" />
-                <path d="m2 2 20 20" />
-              </svg>
-              Bucket Fill
-            </button>
-            {bucketFillActive && hasActiveAreaItem && (
-              <>
+      {/* Bucket fill toolbar — always enabled, independent of item selection */}
+      <div className="px-2 py-1.5 border-b border-[var(--border)] space-y-1">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setBucketFillActive(!bucketFillActive)}
+            className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded border transition-colors ${
+              bucketFillActive
+                ? "border-cyan-400/60 text-cyan-300 bg-cyan-400/10"
+                : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]"
+            }`}
+            title="Bucket Fill — click inside a room to auto-detect its boundary"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M16 2v5h5" /><path d="M21 6v6.5c0 .8-.7 1.5-1.5 1.5h-2l-3.5 4-3.5-4h-2C7.7 14 7 13.3 7 12.5V6c0-.8.7-1.5 1.5-1.5H19l2 1.5Z" />
+              <path d="m2 2 20 20" />
+            </svg>
+            Bucket Fill
+          </button>
+          {bucketFillActive && (
+            <>
+              <button
+                onClick={() => setBucketFillBarrierMode(!bucketFillBarrierMode)}
+                className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded border transition-colors ${
+                  bucketFillBarrierMode
+                    ? "border-red-400/60 text-red-300 bg-red-400/10"
+                    : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-red-400/40"
+                }`}
+                title="Draw barrier lines across doorways to seal rooms (B)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="4" y1="4" x2="20" y2="20" />
+                </svg>
+                Barrier{bucketFillBarriers.length > 0 ? ` (${bucketFillBarriers.length})` : ""}
+              </button>
+              {bucketFillBarriers.length > 0 && (
                 <button
-                  onClick={() => setBucketFillBarrierMode(!bucketFillBarrierMode)}
-                  className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded border transition-colors ${
-                    bucketFillBarrierMode
-                      ? "border-red-400/60 text-red-300 bg-red-400/10"
-                      : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-red-400/40"
-                  }`}
-                  title="Draw barrier lines across doorways to seal rooms (B)"
+                  onClick={clearBucketFillBarriers}
+                  className="text-[10px] text-red-400/60 hover:text-red-400"
+                  title="Clear all barrier lines"
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <line x1="4" y1="4" x2="20" y2="20" />
-                  </svg>
-                  Barrier{bucketFillBarriers.length > 0 ? ` (${bucketFillBarriers.length})` : ""}
+                  Clear
                 </button>
-                {bucketFillBarriers.length > 0 && (
-                  <button
-                    onClick={clearBucketFillBarriers}
-                    className="text-[10px] text-red-400/60 hover:text-red-400"
-                    title="Clear all barrier lines"
-                  >
-                    Clear
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-          {bucketFillActive && hasActiveAreaItem && (
+              )}
+            </>
+          )}
+        </div>
+        {bucketFillActive && (
+          <div className="space-y-1.5">
             <div className="text-[10px] text-[var(--muted)] leading-tight">
               {bucketFillBarrierMode
                 ? "Click two points to draw a barrier line across a doorway"
                 : "Click inside a room to detect its boundary"}
             </div>
-          )}
-          {!hasActiveAreaItem && (
-            <div className="text-[10px] text-[var(--muted)]/60 leading-tight">
-              Click an area item below to enable bucket fill
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Tolerance</span>
+                <input type="range" min={5} max={80} step={1}
+                  value={bucketFillTolerance}
+                  onChange={(e) => setBucketFillTolerance(Number(e.target.value))}
+                  className="flex-1 h-1 accent-cyan-400" />
+                <span className="w-5 text-[10px] text-right font-mono text-[var(--muted)]">{bucketFillTolerance}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Dilation</span>
+                <input type="range" min={0} max={10} step={1}
+                  value={bucketFillDilatePx}
+                  onChange={(e) => setBucketFillDilatePx(Number(e.target.value))}
+                  className="flex-1 h-1 accent-cyan-400" />
+                <span className="w-5 text-[10px] text-right font-mono text-[var(--muted)]">{bucketFillDilatePx}</span>
+              </div>
             </div>
-          )}
-        </div>
-        );
-      })()}
+          </div>
+        )}
+      </div>
       {areaItems.length > 0 && (
         <div className="px-2 py-1.5 border-b border-[var(--border)] space-y-1">
           <div className="flex items-center gap-1.5">

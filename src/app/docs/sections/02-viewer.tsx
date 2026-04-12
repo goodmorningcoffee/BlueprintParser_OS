@@ -11,6 +11,7 @@ import { MenuDropdownDemo } from "../_components/demos/MenuDropdownDemo";
 import { ConfidenceSliderDemo } from "../_components/demos/ConfidenceSliderDemo";
 import { MarkupDialogDemo } from "../_components/demos/MarkupDialogDemo";
 import { AreaUnitChipDemo } from "../_components/demos/AreaUnitChipDemo";
+import { ViewerAnatomyDiagram } from "../_components/demos/ViewerAnatomyDiagram";
 
 export function Section02Viewer() {
   return (
@@ -35,21 +36,12 @@ export function Section02Viewer() {
           row grouping markups, YOLO detections, and takeoff items by source.
         </p>
         <Figure
-          kind="shot"
-          src="/docs/shots/viewer-full.png"
-          alt="The blueprint viewer with a project loaded, panels closed, canvas showing a floor plan"
-          caption="Viewer at rest: sidebar open, all right-side panels closed, canvas showing the current page."
-          frame="viewer"
+          kind="live"
+          caption="ViewerAnatomyDiagram — toolbar, sidebar, canvas with overlay layers, the right-side panel stack, and the bottom annotation panel. Each region toggles independently."
           size="full"
-        />
-        <Figure
-          kind="shot"
-          src="/docs/shots/viewer-panels-open.png"
-          alt="Viewer with Text, CSI, LLM Chat, and QTO panels simultaneously open"
-          caption="Everything-on: Text, CSI, Chat, and QTO panels stacked. Panels can be toggled independently and remember their open state per session."
-          frame="viewer"
-          size="full"
-        />
+        >
+          <ViewerAnatomyDiagram />
+        </Figure>
       </SubSection>
 
       <SubSection title="The toolbar">
@@ -128,14 +120,6 @@ export function Section02Viewer() {
         >
           <MarkupDialogDemo />
         </Figure>
-        <Figure
-          kind="shot"
-          src="/docs/shots/viewer-markup-mode.png"
-          alt="Canvas showing three overlapping markups in different colors"
-          caption="Several markups on a single page. Each is click-selectable, has a hover tooltip with its notes, and shows up in the Annotation Panel."
-          frame="viewer"
-          size="lg"
-        />
       </SubSection>
 
       <SubSection title="Menu dropdown">
@@ -242,14 +226,6 @@ export function Section02Viewer() {
         <Figure kind="live" caption="AreaUnitChipDemo — the four base units from src/components/viewer/AreaTab.tsx." size="sm">
           <AreaUnitChipDemo />
         </Figure>
-        <Figure
-          kind="shot"
-          src="/docs/shots/scale-calibration.png"
-          alt="Scale calibration input on the canvas showing two picked points and the distance prompt"
-          caption="Scale calibration in progress. The viewer enters a two-click mode and the CalibrationInput appears with a distance field and unit picker."
-          frame="viewer"
-          size="lg"
-        />
       </SubSection>
     </Section>
   );

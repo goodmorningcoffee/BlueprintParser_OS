@@ -45,6 +45,8 @@ interface ViewerState {
   // ─── Mode ────────────────────────────────────────────────
   mode: "move" | "pointer" | "markup";
   setMode: (m: "move" | "pointer" | "markup") => void;
+  tempPanMode: boolean;
+  setTempPanMode: (v: boolean) => void;
 
   // ─── Search ──────────────────────────────────────────────
   searchQuery: string;
@@ -251,6 +253,19 @@ interface ViewerState {
   setBucketFillLoading: (v: boolean) => void;
   bucketFillError: string | null;
   setBucketFillError: (msg: string | null) => void;
+  bucketFillTolerance: number;
+  setBucketFillTolerance: (n: number) => void;
+  bucketFillDilatePx: number;
+  setBucketFillDilatePx: (n: number) => void;
+  bucketFillPendingPolygon: {
+    vertices: { x: number; y: number }[];
+    method: string;
+    bbox: [number, number, number, number];
+    areaSqUnits: number;
+    unit: string;
+  } | null;
+  setBucketFillPendingPolygon: (v: ViewerState["bucketFillPendingPolygon"]) => void;
+  commitBucketFillToItem: (item: ClientTakeoffItem) => void;
   // ─── Split Area tool ────────────────────────────────────
   splitAreaActive: boolean;
   setSplitAreaActive: (v: boolean) => void;
@@ -480,7 +495,7 @@ function _debounceSaveYoloTags() {
   }, 500);
 }
 
-export const useViewerStore = create<ViewerState>((set) => ({
+export const useViewerStore = create<ViewerState>((set, get) => ({
   pageNumber: 1,
   numPages: 0,
   setPage: (n) =>
@@ -496,7 +511,9 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setScale: (scale) => set({ scale }),
 
   mode: "move",
-  setMode: (mode) => set({ mode, activeTakeoffItemId: null, polygonDrawingMode: "idle", polygonVertices: [], bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarriers: [], bucketFillBarrierMode: false }),
+  setMode: (mode) => set({ mode, activeTakeoffItemId: null, polygonDrawingMode: "idle", polygonVertices: [], bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarriers: [], bucketFillBarrierMode: false, tempPanMode: false }),
+  tempPanMode: false,
+  setTempPanMode: (tempPanMode) => set({ tempPanMode }),
 
   searchQuery: "",
   searchResults: [],
@@ -764,6 +781,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       bucketFillLoading: false,
       bucketFillError: null,
       bucketFillBarrierMode: false,
+      bucketFillPendingPolygon: null,
       ...(bucketFillActive
         ? { splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null }
         : { bucketFillBarriers: [] }),
@@ -774,6 +792,60 @@ export const useViewerStore = create<ViewerState>((set) => ({
   setBucketFillLoading: (bucketFillLoading) => set({ bucketFillLoading }),
   bucketFillError: null,
   setBucketFillError: (bucketFillError) => set({ bucketFillError }),
+  bucketFillTolerance: 30,
+  setBucketFillTolerance: (bucketFillTolerance) => set({ bucketFillTolerance }),
+  bucketFillDilatePx: 3,
+  setBucketFillDilatePx: (bucketFillDilatePx) => set({ bucketFillDilatePx }),
+  bucketFillPendingPolygon: null,
+  setBucketFillPendingPolygon: (bucketFillPendingPolygon) => set({ bucketFillPendingPolygon }),
+  commitBucketFillToItem: (item) => {
+    const s = get();
+    const pending = s.bucketFillPendingPolygon;
+    if (!pending) return;
+    const polygonData = {
+      type: "area-polygon" as const,
+      takeoffItemId: item.id,
+      color: item.color,
+      vertices: pending.vertices,
+      areaSqUnits: pending.areaSqUnits,
+      unit: pending.unit,
+    };
+    const tempId = -Date.now();
+    set((prev) => ({
+      annotations: [...prev.annotations, {
+        id: tempId,
+        pageNumber: prev.pageNumber,
+        name: item.name,
+        bbox: pending.bbox,
+        note: null,
+        source: "takeoff" as const,
+        data: polygonData as unknown as Record<string, unknown>,
+      }],
+      bucketFillPendingPolygon: null,
+    }));
+    // Persist to server (non-demo)
+    if (!s.isDemo) {
+      fetch("/api/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: s.publicId,
+          pageNumber: s.pageNumber,
+          name: item.name,
+          bbox: pending.bbox,
+          source: "takeoff",
+          data: polygonData,
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((saved) => {
+          if (saved) set((prev) => ({
+            annotations: prev.annotations.map((a) => a.id === tempId ? { ...a, id: saved.id } : a),
+          }));
+        })
+        .catch((err) => console.error("Failed to persist bucket fill annotation:", err));
+    }
+  },
   splitAreaActive: false,
   setSplitAreaActive: (splitAreaActive) =>
     set({
@@ -783,7 +855,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       splitPreview: null,
       splitError: null,
       ...(splitAreaActive
-        ? { bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillError: null, bucketFillBarrierMode: false, bucketFillBarriers: [] }
+        ? { bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillError: null, bucketFillBarrierMode: false, bucketFillBarriers: [], activeTakeoffItemId: null }
         : {}),
     }),
   splitLineA: null,
@@ -1204,6 +1276,7 @@ export const useViewerStore = create<ViewerState>((set) => ({
       guidedParseRegion: null,
       guidedParseRows: [],
       guidedParseCols: [],
+      tempPanMode: false,
     }),
 }));
 

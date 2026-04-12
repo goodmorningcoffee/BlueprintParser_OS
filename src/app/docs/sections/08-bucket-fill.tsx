@@ -70,30 +70,6 @@ export function Section08BucketFill() {
             sealed.
           </li>
         </ol>
-        <Figure
-          kind="shot"
-          src="/docs/shots/bucket-fill-idle.png"
-          alt="Area tab with Bucket Fill button in idle state and a calibrated scale indicator"
-          caption="Bucket Fill in idle state. The scale indicator at the top confirms the page is calibrated; the button is armed-ready."
-          frame="panel"
-          size="md"
-        />
-        <Figure
-          kind="shot"
-          src="/docs/shots/bucket-fill-active.png"
-          alt="Canvas showing a newly generated bucket-fill polygon"
-          caption="Bucket Fill after a successful click. The generated polygon is overlaid on the room in the color of the active area item."
-          frame="viewer"
-          size="lg"
-        />
-        <Figure
-          kind="shot"
-          src="/docs/shots/bucket-fill-barrier.png"
-          alt="Canvas with a barrier line drawn across an open doorway"
-          caption="Barrier mode. The red barrier line seals an open doorway so the subsequent fill stays inside the room."
-          frame="viewer"
-          size="lg"
-        />
       </SubSection>
 
       <SubSection title="Raster vs. vector methods">
