@@ -137,14 +137,6 @@ const QTO_RECOMMENDED_CLASSES = ["grid", "vertical_area", "horizontal_area"] as 
               launch into the Table Parse panel inline &mdash; you parse the
               schedule, the wizard picks up where you left off.
             </p>
-            <Figure
-              kind="shot"
-              src="/docs/shots/auto-qto-step1-schedule.png"
-              alt="Auto-QTO step 1 showing suggested schedule pages with confidence badges"
-              caption="Step 1: select-schedule. The wizard suggests pages whose classified table category matches the chosen material."
-              frame="panel"
-              size="md"
-            />
           </div>
 
           <div>
@@ -175,14 +167,6 @@ const QTO_RECOMMENDED_CLASSES = ["grid", "vertical_area", "horizontal_area"] as 
               and writes the resulting YoloTags. Results stream back as line
               items with counts per tag value.
             </p>
-            <Figure
-              kind="shot"
-              src="/docs/shots/auto-qto-step3-mapping.png"
-              alt="Auto-QTO step 3 showing the tag-shape picker and Run Mapping button"
-              caption="Step 3: map-tags. The tag-shape picker defaults to the most common shape inside the schedule&apos;s table region."
-              frame="panel"
-              size="md"
-            />
           </div>
 
           <div>
@@ -197,14 +181,6 @@ const QTO_RECOMMENDED_CLASSES = ["grid", "vertical_area", "horizontal_area"] as 
               <InlineCode>qto_workflows.userEdits</InlineCode> so they survive a
               re-run.
             </p>
-            <Figure
-              kind="shot"
-              src="/docs/shots/auto-qto-step4-review.png"
-              alt="Auto-QTO review step with line items, counts, ambiguity flags, and an export button"
-              caption="Step 4: review. Each line item is editable; ambiguity flags appear next to rows that need human attention before export."
-              frame="panel"
-              size="md"
-            />
           </div>
 
           <div>

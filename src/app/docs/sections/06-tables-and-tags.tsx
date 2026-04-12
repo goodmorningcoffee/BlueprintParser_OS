@@ -7,6 +7,7 @@ import { TableEl } from "../_components/TableEl";
 import { TableParseTabsDemo } from "../_components/demos/TableParseTabsDemo";
 import { GuidedSlidersDemo } from "../_components/demos/GuidedSlidersDemo";
 import { MapTagsDemoShell } from "../_components/demos/MapTagsDemoShell";
+import { MapTagsBindingDiagram } from "../_components/demos/MapTagsBindingDiagram";
 
 export function Section06TablesAndTags() {
   return (
@@ -69,14 +70,6 @@ export function Section06TablesAndTags() {
           a <InlineCode>parsedRegion</InlineCode> on the page with{" "}
           <InlineCode>{"{ type: \"schedule\", data: { headers, rows, tagColumn, colBoundaries, rowBoundaries, csiTags } }"}</InlineCode>.
         </p>
-        <Figure
-          kind="shot"
-          src="/docs/shots/table-parse-auto.png"
-          alt="Auto Parse tab with a parsed door schedule rendered as a grid"
-          caption="Auto Parse showing a parsed door schedule. Columns are editable; the tag column is highlighted; the Map Tags section is ready to bind rows to YOLO shapes."
-          frame="panel"
-          size="lg"
-        />
       </SubSection>
 
       <SubSection title="Guided Parse — tune row/column detection">
@@ -115,14 +108,6 @@ export function Section06TablesAndTags() {
           you save the parse through the same <InlineCode>/api/table-parse</InlineCode>{" "}
           endpoint as Auto Parse.
         </p>
-        <Figure
-          kind="shot"
-          src="/docs/shots/table-parse-guided.png"
-          alt="Guided Parse with row/column grid lines overlaid on a schedule and the tuning panel open"
-          caption="Guided Parse in action. Blue lines are the proposed row boundaries, cyan lines are the column boundaries, and the sliders hot-reload the proposal."
-          frame="viewer"
-          size="lg"
-        />
       </SubSection>
 
       <SubSection title="Manual Parse and Compare/Edit Cells">
@@ -169,13 +154,12 @@ export function Section06TablesAndTags() {
           <em>counts</em> is literally this step.
         </p>
         <Figure
-          kind="shot"
-          src="/docs/shots/map-tags-bound.png"
-          alt="Map Tags section after a successful bind, showing 'Mapped 24 tags to YOLO Tags panel'"
-          caption="Map Tags after a successful bind on a door schedule. The confirmation tells you how many unique tag values were bound, and the Tags sub-tab of the Detection Panel now shows the YoloTags they created."
-          frame="panel"
-          size="md"
-        />
+          kind="live"
+          caption="MapTagsBindingDiagram — schedule rows on the left, drawing pages on the right. Each row's tag value gets bound to every YOLO shape instance whose inner OCR text matches it. Regions tagged tables / title_block are excluded so the schedule's own tag column doesn't double-count."
+          size="full"
+        >
+          <MapTagsBindingDiagram />
+        </Figure>
       </SubSection>
 
       <SubSection title="Output shape">

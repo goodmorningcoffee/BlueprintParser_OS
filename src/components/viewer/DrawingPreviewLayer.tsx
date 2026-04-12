@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import BucketFillAssignDialog from "./BucketFillAssignDialog";
 
 interface DrawingPreviewLayerProps {
   width: number;
@@ -54,6 +55,7 @@ export default memo(function DrawingPreviewLayer({
   const splitLineB = useViewerStore((s) => s.splitLineB);
   const splitPreview = useViewerStore((s) => s.splitPreview);
   const splitError = useViewerStore((s) => s.splitError);
+  const bucketFillPendingPolygon = useViewerStore((s) => s.bucketFillPendingPolygon);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -389,9 +391,7 @@ export default memo(function DrawingPreviewLayer({
       ctx.font = "12px sans-serif";
       const msg = !splitLineA
         ? "Click first point of split line"
-        : !splitLineB
-        ? "Click second point of split line"
-        : "Click inside the polygon to split";
+        : "Click second point to split";
       const tw = ctx.measureText(msg).width;
       ctx.fillStyle = "rgba(0,0,0,0.75)";
       ctx.fillRect(8, 8, tw + 12, 22);
@@ -437,6 +437,24 @@ export default memo(function DrawingPreviewLayer({
       ctx.restore();
     }
 
+    // ── Bucket fill pending polygon (awaiting item assignment) ──
+    if (bucketFillPendingPolygon) {
+      const verts = bucketFillPendingPolygon.vertices;
+      if (verts.length >= 3) {
+        ctx.save();
+        ctx.fillStyle = "rgba(34, 211, 238, 0.25)";
+        ctx.beginPath();
+        ctx.moveTo(verts[0].x * width, verts[0].y * height);
+        for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x * width, verts[i].y * height);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = "#22d3ee";
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     // ── Bucket fill loading indicator ────────────────────────
     if (bucketFillLoading) {
       ctx.save();
@@ -454,7 +472,8 @@ export default memo(function DrawingPreviewLayer({
     calibrationMode, calibrationPoints,
     polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems,
     bucketFillPreview, bucketFillLoading, bucketFillBarriers, bucketFillBarrierMode, barrierPendingPoint,
-    splitAreaActive, splitLineA, splitLineB, splitPreview]);
+    splitAreaActive, splitLineA, splitLineB, splitPreview,
+    bucketFillPendingPolygon]);
 
   // Compute centroid for accept/cancel buttons
   const previewCentroid = bucketFillPreview ? (() => {
@@ -617,6 +636,15 @@ export default memo(function DrawingPreviewLayer({
         >
           {splitError}
         </div>
+      )}
+      {/* Bucket fill item assignment dialog */}
+      {bucketFillPendingPolygon && (
+        <BucketFillAssignDialog
+          pendingPolygon={bucketFillPendingPolygon}
+          width={width}
+          height={height}
+          cssScale={cssScale}
+        />
       )}
       {/* Bucket fill error banner — takes priority over HUDs */}
       {bucketFillError && (

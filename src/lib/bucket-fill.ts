@@ -19,6 +19,8 @@ export interface BucketFillOptions {
   dilatePx?: number;
   simplifyEpsilon?: number;
   barriers?: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+  polygonBarriers?: Array<{ vertices: Array<{ x: number; y: number }> }>;
+  maxDimension?: number;
 }
 
 export interface BucketFillResult {
@@ -46,6 +48,8 @@ export async function bucketFill(
     dilate_px: options.dilatePx ?? 3,
     simplify_epsilon: options.simplifyEpsilon ?? 0.005,
     barriers: options.barriers ?? [],
+    polygon_barriers: options.polygonBarriers ?? [],
+    max_dimension: options.maxDimension ?? 2000,
   };
 
   return new Promise<BucketFillResult>((resolve, reject) => {

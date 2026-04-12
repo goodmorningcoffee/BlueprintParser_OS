@@ -161,6 +161,15 @@ def vector_fill(config):
             p2 = (float(b["x2"]), float(b["y2"]))
             raw_segments.append((p1, p2))
 
+        # Add existing area-polygon edges as barriers
+        for poly in config.get("polygon_barriers", []):
+            verts = poly.get("vertices", [])
+            for i in range(len(verts)):
+                j = (i + 1) % len(verts)
+                p1 = (float(verts[i]["x"]), float(verts[i]["y"]))
+                p2 = (float(verts[j]["x"]), float(verts[j]["y"]))
+                raw_segments.append((p1, p2))
+
         # Split at intersections (critical for T-junctions)
         segments = split_edges_at_intersections(raw_segments)
 
@@ -260,6 +269,14 @@ def raster_fill(config):
     if img is None:
         return {"type": "error", "error": f"Could not load image: {image_path}"}
 
+    # Downscale large images for faster flood fill (coords are normalized 0-1)
+    max_dim = int(config.get("max_dimension", 2000))
+    h_orig, w_orig = img.shape[:2]
+    if max_dim > 0 and max(h_orig, w_orig) > max_dim:
+        factor = max_dim / max(h_orig, w_orig)
+        img = cv2.resize(img, None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA)
+        print(f"raster: downscaled {w_orig}x{h_orig} -> {img.shape[1]}x{img.shape[0]}", file=sys.stderr)
+
     h, w = img.shape
 
     sx = int(seed_x * w)
@@ -267,7 +284,6 @@ def raster_fill(config):
     if sx < 0 or sx >= w or sy < 0 or sy >= h:
         return {"type": "error", "error": "Seed point outside image bounds"}
 
-    # Pre-process
     blurred = cv2.GaussianBlur(img, (5, 5), 0)
     binary = cv2.adaptiveThreshold(
         blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -285,6 +301,14 @@ def raster_fill(config):
         bx2 = int(float(barrier["x2"]) * w)
         by2 = int(float(barrier["y2"]) * h)
         cv2.line(binary, (bx1, by1), (bx2, by2), 0, thickness=3)
+
+    # Burn existing area polygons as filled barriers (impassable regions)
+    for poly in config.get("polygon_barriers", []):
+        verts = poly.get("vertices", [])
+        if len(verts) < 3:
+            continue
+        pts = np.array([(int(v["x"] * w), int(v["y"] * h)) for v in verts], dtype=np.int32)
+        cv2.fillPoly(binary, [pts], 0)
 
     if binary[sy, sx] == 0:
         return {"type": "error", "error": "Seed point is on a wall or line, not inside a room"}

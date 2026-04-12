@@ -355,22 +355,6 @@ export function Section09LlmAndTools() {
           write to the same set of tables and both updates take effect on the
           next chat turn (no deployment required).
         </p>
-        <Figure
-          kind="shot"
-          src="/docs/shots/chat-panel-streaming.png"
-          alt="Chat panel mid-stream with a partial reply, a tool_call_start indicator, and tool results"
-          caption="The viewer's ChatPanel mid-stream. Text deltas arrive as the model types; the cyan pill marks an in-flight tool call; results land inline under the prompt."
-          frame="panel"
-          size="md"
-        />
-        <Figure
-          kind="shot"
-          src="/docs/shots/admin-llm-context-tab.png"
-          alt="Admin LLM Context tab with section priority sliders, preset picker, and per-section budget readout"
-          caption="Admin → LLM Context. Preset picker on the left, per-section sliders in the middle, post-assembly metadata on the right."
-          frame="page"
-          size="full"
-        />
       </SubSection>
     </Section>
   );
