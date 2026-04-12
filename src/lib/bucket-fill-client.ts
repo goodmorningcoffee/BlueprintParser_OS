@@ -13,7 +13,7 @@ let workerInstance: Worker | null = null;
 function getWorker(): Worker {
   if (!workerInstance) {
     workerInstance = new Worker(
-      new URL("@/workers/bucket-fill.worker.ts", import.meta.url),
+      new URL("../workers/bucket-fill.worker.ts", import.meta.url),
       { type: "module" }
     );
   }
@@ -82,9 +82,9 @@ export async function clientBucketFill(
 }
 
 /**
- * Find the react-pdf page canvas in the DOM.
+ * Find the page canvas in the DOM via data attribute set on PDFPage's canvas.
  * Returns null if not found.
  */
 export function findPageCanvas(): HTMLCanvasElement | null {
-  return document.querySelector<HTMLCanvasElement>(".react-pdf__Page__canvas");
+  return document.querySelector<HTMLCanvasElement>("canvas[data-page-canvas]");
 }
