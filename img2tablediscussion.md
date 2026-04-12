@@ -2566,4 +2566,30 @@ check_deps.py|
 
 
 
+   cd blueprintparser_2 && npx tsc --noEmit
+
+     A clean type-check is the local-side gate before deploy. (Local npm test covers store
+     mutations; no bucket-fill-specific tests exist.)
+
+     Notes
+
+     - Memory project_bucket_fill_plan_deferred.md should be updated to "implemented" once
+     this lands.
+     - Worth a follow-up grep pass for the silent-swallow antipattern after this ships: rg -n
+      "res\.ok \? res\.json\(\) : null" blueprintparser_2/src/ — multiple sites in
+     AnnotationOverlay.tsx and elsewhere will hide future bugs of this exact class. Out of
+     scope for this PR.
+     - Ordering matters: Step 0 must run and the build must be green locally before touching
+     Steps 1–3. Otherwise a second deploy failure gets blamed on a bucket-fill change that
+     actually works fine. Fail-fast first, feature second.
+     - Commit layout suggestion: Step 0 as one commit (unblock deploy: split BP_TOOLS into
+     tools-defs to keep docs client bundle clean), Steps 1–3 as a second commit (bucket fill:
+      fix projectId type, surface errors, on-canvas HUDs). Two commits in one push. Easier to
+      bisect if something regresses.
+
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  '
+  April 12 
+
   
