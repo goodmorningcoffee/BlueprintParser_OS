@@ -11,8 +11,13 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
-import type { CsiCode } from "@/types";
+import type { CsiCode, CsiCodeTrigger, TextractWord, BboxLTWH } from "@/types";
 import { logger } from "@/lib/logger";
+import { DEFAULT_CSI_DETECT_CONFIG, type CsiDetectConfig } from "@/lib/csi-detect-defs";
+
+// Re-export the client-safe types so existing server-side callers that
+// `import { CsiDetectConfig } from "@/lib/csi-detect"` keep working.
+export type { CsiDetectConfig };
 
 // ═══════════════════════════════════════════════════════════════
 // Database types
@@ -33,23 +38,14 @@ export { normalizeCsiCode, normalizeCsiCodes } from "@/lib/csi-utils";
 
 // ═══════════════════════════════════════════════════════════════
 // Config defaults (overridable via pipeline_config.csi)
+//
+// The interface and defaults live in csi-detect-defs.ts (client-safe,
+// no `fs` import) so the admin UI can share them without bundling
+// server-only code. We alias the canonical default locally so the
+// existing `{ ...DEFAULT_CONFIG, ...config }` spread keeps working.
 // ═══════════════════════════════════════════════════════════════
 
-export interface CsiDetectConfig {
-  matchingConfidenceThreshold: number;
-  tier2MinWords: number;
-  tier3MinWords: number;
-  tier2Weight: number;
-  tier3Weight: number;
-}
-
-const DEFAULT_CONFIG: CsiDetectConfig = {
-  matchingConfidenceThreshold: 0.4,
-  tier2MinWords: 3,
-  tier3MinWords: 5,
-  tier2Weight: 0.75,
-  tier3Weight: 0.50,
-};
+const DEFAULT_CONFIG = DEFAULT_CSI_DETECT_CONFIG;
 
 // ═══════════════════════════════════════════════════════════════
 // Stop words (filtered from bag-of-words matching)
@@ -179,15 +175,125 @@ function anchorScore(phraseWords: string[], textWordSet: Set<string>): number {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Trigger collection — record the words/phrases on the page that
+// caused a CSI code to be detected. Called only when textractWords
+// are provided. Matches the same normalization as detection.
+// ═══════════════════════════════════════════════════════════════
+
+interface NormalizedWord {
+  text: string;
+  bbox: BboxLTWH;
+  idx: number;
+}
+
+function normalizeTextractWords(textractWords: TextractWord[]): NormalizedWord[] {
+  const out: NormalizedWord[] = [];
+  for (let i = 0; i < textractWords.length; i++) {
+    const w = textractWords[i];
+    // Match detection's normalization: lowercase only, no punctuation strip
+    // (keeps parity with how rawText is tokenized in detectCsiCodes)
+    const text = w.text.toLowerCase();
+    if (!text) continue;
+    out.push({ text, bbox: w.bbox, idx: i });
+  }
+  return out;
+}
+
+/**
+ * Collect trigger words/phrases on the page that fire an entry's detection tiers.
+ *
+ * Walks the normalized Textract word list and labels each matching word by its
+ * strongest tier: Tier 1 (consecutive phrase span), Tier 3 (anchor / rarest
+ * words), then Tier 2 (other phrase words). A word is labeled at most once.
+ *
+ * The labeling priority is phrase > anchor > word, so the user sees the most
+ * specific reason for each highlight in the UI.
+ */
+function collectTriggersForEntry(
+  entry: CsiEntry,
+  normalizedWords: NormalizedWord[],
+): CsiCodeTrigger[] {
+  const triggers: CsiCodeTrigger[] = [];
+  const usedIdxs = new Set<number>();
+
+  // ── Tier 1: consecutive phrase spans matching entry.allWords ──
+  const allWords = entry.allWords;
+  if (allWords.length > 0 && normalizedWords.length >= allWords.length) {
+    const limit = normalizedWords.length - allWords.length;
+    for (let i = 0; i <= limit; i++) {
+      let match = true;
+      for (let j = 0; j < allWords.length; j++) {
+        if (normalizedWords[i + j].text !== allWords[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (!match) continue;
+
+      // Union bbox across the matching span
+      let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+      const textParts: string[] = [];
+      for (let j = 0; j < allWords.length; j++) {
+        const w = normalizedWords[i + j];
+        const [L, T, W, H] = w.bbox;
+        if (L < minL) minL = L;
+        if (T < minT) minT = T;
+        if (L + W > maxR) maxR = L + W;
+        if (T + H > maxB) maxB = T + H;
+        textParts.push(w.text);
+        usedIdxs.add(w.idx);
+      }
+      triggers.push({
+        text: textParts.join(" "),
+        bbox: [minL, minT, maxR - minL, maxB - minT],
+        tier: 1,
+      });
+    }
+  }
+
+  // ── Tier 3: anchor words (rare/distinctive — label these before plain Tier 2) ──
+  const anchorSet = new Set(getAnchorWords(entry.phraseWords));
+  if (anchorSet.size > 0) {
+    for (const nw of normalizedWords) {
+      if (usedIdxs.has(nw.idx)) continue;
+      if (anchorSet.has(nw.text)) {
+        triggers.push({ text: nw.text, bbox: nw.bbox, tier: 3 });
+        usedIdxs.add(nw.idx);
+      }
+    }
+  }
+
+  // ── Tier 2: remaining phrase words ──
+  const phraseSet = new Set(entry.phraseWords);
+  if (phraseSet.size > 0) {
+    for (const nw of normalizedWords) {
+      if (usedIdxs.has(nw.idx)) continue;
+      if (phraseSet.has(nw.text)) {
+        triggers.push({ text: nw.text, bbox: nw.bbox, tier: 2 });
+        usedIdxs.add(nw.idx);
+      }
+    }
+  }
+
+  return triggers;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Main export
 // ═══════════════════════════════════════════════════════════════
 
 /**
  * Detect CSI codes in page text using 3-tier matching.
  * Returns unique CSI codes found with confidence scores.
+ *
+ * If `textractWords` is provided, each returned code also includes `triggers`:
+ * the exact words/phrases on the page that fired its detection, with bboxes.
+ * Callers that only have raw text (e.g. table-parse grids) can omit the param;
+ * the function works as before and returns codes without triggers.
  */
 export function detectCsiCodes(
   rawText: string,
+  textractWords?: TextractWord[],
   config?: Partial<CsiDetectConfig>,
 ): CsiCode[] {
   if (!rawText || rawText.length < 10) return [];
@@ -198,6 +304,9 @@ export function detectCsiCodes(
   const textWords = text.split(/\s+/).filter(Boolean);
   const textWordSet = new Set(textWords);
 
+  // Pre-normalize Textract words once if available (shared across all entries)
+  const normalizedWords = textractWords ? normalizeTextractWords(textractWords) : null;
+
   // Track best match per code (highest confidence wins)
   const bestMatches = new Map<string, { entry: CsiEntry; confidence: number; tier: number }>();
 
@@ -207,9 +316,16 @@ export function detectCsiCodes(
     let bestConf = 0;
     let bestTier = 0;
 
-    // Tier 1: Exact subphrase — 0.95 confidence
+    // Tier 1: Exact subphrase — 0.95 confidence, weighted by description length.
+    // Short descriptions (1-2 significant words) are down-weighted so they fall
+    // below the threshold. See tier1WeightByWordCount in csi-detect-defs.ts.
     if (entry.allWords.length > 0 && isSubphrase(entry.allWords, textWords)) {
-      bestConf = 0.95;
+      const weights = cfg.tier1WeightByWordCount;
+      const n = entry.wordCount; // significant words (stop-word-filtered)
+      const weight = weights && weights.length > 0
+        ? (n < weights.length ? weights[n] : weights[weights.length - 1])
+        : 1;
+      bestConf = 0.95 * weight;
       bestTier = 1;
     }
 
@@ -250,15 +366,19 @@ export function detectCsiCodes(
     }
   }
 
-  // Convert to results
+  // Convert to results (collect triggers only for codes that passed the threshold)
   const results: CsiCode[] = [];
-  for (const [code, { entry, confidence }] of bestMatches) {
-    results.push({
+  for (const [, { entry }] of bestMatches) {
+    const code: CsiCode = {
       code: entry.code,
       description: entry.description,
       trade: entry.trade,
       division: entry.division,
-    });
+    };
+    if (normalizedWords) {
+      code.triggers = collectTriggersForEntry(entry, normalizedWords);
+    }
+    results.push(code);
   }
 
   return results;
@@ -280,5 +400,6 @@ export function detectCsiFromGrid(
     }
   }
   const text = parts.join(" ");
-  return detectCsiCodes(text, config);
+  // Grid cells have no Textract word positions — call without textractWords.
+  return detectCsiCodes(text, undefined, config);
 }
