@@ -2,28 +2,25 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
+import { DEFAULT_CSI_DETECT_CONFIG, type CsiDetectConfig } from "@/lib/csi-detect-defs";
 
-interface CsiConfig {
-  matchingConfidenceThreshold: number;  // min confidence to report a CSI match (0-1)
+// CsiConfig is a superset of CsiDetectConfig — the extra fields belong to
+// adjacent systems (CSI tagger, LLM context budgets), not the detection engine.
+interface CsiConfig extends CsiDetectConfig {
   taggerKeywordOverlap: number;         // min % word overlap for CSI tagging annotations (0-1)
   taggerMinWordMatches: number;         // min absolute word matches for CSI tagging
   maxCsiTagsPerAnnotation: number;      // max CSI tags shown per annotation in LLM context
-  tier2MinWords: number;                // min significant words in description for Tier 2 matching
-  tier3MinWords: number;                // min significant words for Tier 3 anchor matching
-  tier2Weight: number;                  // max confidence for Tier 2 bag-of-words (0-1)
-  tier3Weight: number;                  // max confidence for Tier 3 anchors (0-1)
   contextBudgetOverrides: Record<string, number>; // model → context budget chars
 }
 
 const DEFAULTS: CsiConfig = {
-  matchingConfidenceThreshold: 0.4,
+  // Canonical detection defaults — imported from csi-detect-defs.ts so the
+  // admin UI and the detection engine can never drift.
+  ...DEFAULT_CSI_DETECT_CONFIG,
+  // Admin-only fields for adjacent systems (not used by detectCsiCodes)
   taggerKeywordOverlap: 0.6,
   taggerMinWordMatches: 3,
   maxCsiTagsPerAnnotation: 2,
-  tier2MinWords: 3,
-  tier3MinWords: 5,
-  tier2Weight: 0.75,
-  tier3Weight: 0.50,
   contextBudgetOverrides: {},
 };
 
@@ -102,6 +99,16 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
 
   function updateConfig<K extends keyof CsiConfig>(key: K, value: CsiConfig[K]) {
     setConfig(prev => ({ ...prev, [key]: value }));
+  }
+
+  function updateTier1Weight(index: number, value: number) {
+    setConfig(prev => {
+      const src = prev.tier1WeightByWordCount || DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount;
+      const next = [...src];
+      while (next.length <= index) next.push(next[next.length - 1] ?? 0);
+      next[index] = value;
+      return { ...prev, tier1WeightByWordCount: next };
+    });
   }
 
   if (loading) {
@@ -243,6 +250,55 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
             onChange={(v) => updateConfig("tier3MinWords", v)}
             min={3} max={12}
           />
+        </div>
+
+        {/* Tier 1 word-count weights — down-weights short-description matches */}
+        <div className="mt-2 pt-3 border-t border-[var(--border)]">
+          <h4 className="text-xs font-semibold text-[var(--fg)] mb-1">Tier 1 Word-Count Weights</h4>
+          <p className="text-[10px] text-[var(--muted)] mb-3 leading-snug">
+            Multiplies Tier 1 (95%) confidence by a weight based on how many significant words
+            the CSI description has. Default 1% for 1-word descriptions means codes like
+            &ldquo;doors&rdquo; or &ldquo;concrete&rdquo; score 0.0095 and fall below the
+            confidence threshold, killing false positives. 3+ word descriptions keep most
+            of their confidence. Set a weight to 0 to disable that bucket entirely.
+          </p>
+          <div className="grid gap-3">
+            <SliderField
+              label="1-word description weight"
+              description="E.g. single-word codes like 'doors', 'concrete', 'metals'"
+              value={config.tier1WeightByWordCount?.[1] ?? DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount[1]}
+              onChange={(v) => updateTier1Weight(1, v)}
+              min={0} max={1} step={0.01}
+            />
+            <SliderField
+              label="2-word description weight"
+              description="E.g. 'structural steel', 'wood doors', 'roof insulation'"
+              value={config.tier1WeightByWordCount?.[2] ?? DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount[2]}
+              onChange={(v) => updateTier1Weight(2, v)}
+              min={0} max={1} step={0.01}
+            />
+            <SliderField
+              label="3-word description weight"
+              description="E.g. 'cast in place concrete', 'hollow metal doors'"
+              value={config.tier1WeightByWordCount?.[3] ?? DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount[3]}
+              onChange={(v) => updateTier1Weight(3, v)}
+              min={0} max={1} step={0.01}
+            />
+            <SliderField
+              label="4-word description weight"
+              description="E.g. 'fluid applied waterproofing membrane'"
+              value={config.tier1WeightByWordCount?.[4] ?? DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount[4]}
+              onChange={(v) => updateTier1Weight(4, v)}
+              min={0} max={1} step={0.01}
+            />
+            <SliderField
+              label="5+ word description weight"
+              description="Longer, highly specific phrases — used for 5 or more significant words"
+              value={config.tier1WeightByWordCount?.[5] ?? DEFAULT_CSI_DETECT_CONFIG.tier1WeightByWordCount[5]}
+              onChange={(v) => updateTier1Weight(5, v)}
+              min={0} max={1} step={0.01}
+            />
+          </div>
         </div>
       </section>
 

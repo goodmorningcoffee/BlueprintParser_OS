@@ -130,39 +130,40 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   }, [activeCsiFilter, summaries, csiCodes]);
   const isCsiFiltered = activeCsiFilter !== null && csiFilteredPages.length > 0;
 
-  // Compute per-page word match counts for trade/CSI filters
-  const tradeWordCounts = useMemo(() => {
+  // Count of distinct CSI codes per page that match the active trade filter.
+  // Meaningful number: "this page has N CSI codes for this trade."
+  // Fast: no runtime text matching — just array filters over cached CSI data.
+  const tradeCodeCounts = useMemo(() => {
     if (!activeTradeFilter) return {};
     const counts: Record<number, number> = {};
-    for (const pageNum of tradeFilteredPages) {
-      const pageWords = textractData[pageNum]?.words;
-      if (!pageWords?.length) continue;
-      const pageCsi = csiCodes[pageNum] || [];
-      const matchingCodes = pageCsi.filter((c) => c.trade === activeTradeFilter);
-      let total = 0;
-      for (const code of matchingCodes) {
-        total += findPhraseMatches(pageWords, code.description).length;
-      }
-      // Also count trade name word matches
-      const tradeWords = activeTradeFilter.toLowerCase().split(/\s+/);
-      for (const word of pageWords) {
-        if (tradeWords.includes(word.text.toLowerCase())) total++;
-      }
-      if (total > 0) counts[pageNum] = total;
+    for (const [pageNumStr, codes] of Object.entries(csiCodes)) {
+      const n = Number(pageNumStr);
+      const matching = codes.filter((c) => c.trade === activeTradeFilter);
+      if (matching.length > 0) counts[n] = matching.length;
     }
     return counts;
-  }, [activeTradeFilter, tradeFilteredPages, csiCodes, textractData]);
+  }, [activeTradeFilter, csiCodes]);
 
+  // Per-page count of trigger hits for the active CSI code. Uses stored
+  // triggers when available (fast, precise), falls back to runtime phrase
+  // matching for old cached data.
   const csiWordCounts = useMemo(() => {
     if (!activeCsiFilter) return {};
     const counts: Record<number, number> = {};
     for (const pageNum of csiFilteredPages) {
-      const pageWords = textractData[pageNum]?.words;
-      if (!pageWords?.length) continue;
       const pageCsi = csiCodes[pageNum] || [];
       const matchingCode = pageCsi.find((c) => c.code === activeCsiFilter);
       if (!matchingCode) continue;
-      const total = findPhraseMatches(pageWords, matchingCode.description).length;
+
+      let total: number;
+      if (matchingCode.triggers !== undefined) {
+        total = matchingCode.triggers.length;
+      } else {
+        // Fallback: runtime phrase matching (old cached data)
+        const pageWords = textractData[pageNum]?.words;
+        if (!pageWords?.length) continue;
+        total = findPhraseMatches(pageWords, matchingCode.description).length;
+      }
       if (total > 0) counts[pageNum] = total;
     }
     return counts;
@@ -456,9 +457,9 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
               {annotationPageCounts[n]}
             </span>
           )}
-          {isTradeFiltered && tradeWordCounts[n] > 0 && (
-            <span className="bg-pink-500/20 text-pink-300 text-[10px] px-1.5 rounded-full shrink-0">
-              {tradeWordCounts[n]}
+          {isTradeFiltered && tradeCodeCounts[n] > 0 && (
+            <span className="bg-pink-500/20 text-pink-300 text-[10px] px-1.5 rounded-full shrink-0" title={`${tradeCodeCounts[n]} CSI codes for ${activeTradeFilter}`}>
+              {tradeCodeCounts[n]}
             </span>
           )}
           {isCsiFiltered && csiWordCounts[n] > 0 && (

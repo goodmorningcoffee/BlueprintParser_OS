@@ -116,47 +116,69 @@ export default memo(function SearchHighlightOverlay({
       .map((w) => ({ text: w.text, bbox: w.bbox }));
   }, [searchQuery, searchHits.length, textractData, pageNumber]);
 
-  // CSI highlight: try phrase match first (Tier 1), fall back to word match (Tier 2/3)
+  // CSI highlight: use stored triggers from CSI detection when available,
+  // fall back to runtime phrase matching for old cached data without triggers.
   const csiHits = useMemo(() => {
     if (!activeCsiFilter) return [];
     const pageCsi = csiCodes[pageNumber] || [];
     const matchingCode = pageCsi.find((c) => c.code === activeCsiFilter);
     if (!matchingCode) return [];
 
+    if (matchingCode.triggers !== undefined) {
+      // New path: stored triggers — precise and fast, no runtime matching
+      return matchingCode.triggers.map((t) => ({ text: t.text, bbox: t.bbox }));
+    }
+
+    // Fallback for old cached data (pre-trigger): runtime phrase matching
     const pageWords = textractData[pageNumber]?.words;
     if (!pageWords || pageWords.length === 0) return [];
-
     const phraseHits = findPhraseMatches(pageWords, matchingCode.description);
     if (phraseHits.length > 0) return phraseHits;
     return findWordMatches(pageWords, matchingCode.description);
   }, [activeCsiFilter, csiCodes, textractData, pageNumber]);
 
-  // Trade highlight: phrase match + word fallback for each code, plus trade name words
+  // Trade highlight: use stored triggers from CSI detection when available,
+  // fall back to runtime phrase matching for old cached data without triggers.
   const tradeHits = useMemo(() => {
     if (!activeTradeFilter) return [];
     const pageCsi = csiCodes[pageNumber] || [];
     const matchingCodes = pageCsi.filter((c) => c.trade === activeTradeFilter);
     if (matchingCodes.length === 0) return [];
 
-    const pageWords = textractData[pageNumber]?.words;
-    if (!pageWords || pageWords.length === 0) return [];
-
     const hits: SearchWordMatch[] = [];
+
     for (const code of matchingCodes) {
-      const phraseHits = findPhraseMatches(pageWords, code.description);
-      if (phraseHits.length > 0) {
-        hits.push(...phraseHits);
+      if (code.triggers !== undefined) {
+        // New path: stored triggers — precise and fast, no runtime matching
+        for (const t of code.triggers) {
+          hits.push({ text: t.text, bbox: t.bbox });
+        }
       } else {
-        hits.push(...findWordMatches(pageWords, code.description));
+        // Fallback for old cached data (pre-trigger): runtime phrase matching
+        const pageWords = textractData[pageNumber]?.words;
+        if (!pageWords?.length) continue;
+        const phraseHits = findPhraseMatches(pageWords, code.description);
+        if (phraseHits.length > 0) {
+          hits.push(...phraseHits);
+        } else {
+          hits.push(...findWordMatches(pageWords, code.description));
+        }
       }
     }
-    // Also match the trade name itself as individual words
-    const tradeWords = activeTradeFilter.toLowerCase().split(/\s+/);
-    for (const word of pageWords) {
-      if (tradeWords.includes(word.text.toLowerCase()) && !hits.some((h) => h.bbox === word.bbox)) {
-        hits.push({ text: word.text, bbox: word.bbox });
+
+    // Always also match the trade name itself as individual words — trade names
+    // aren't in the CSI description (e.g., "Mechanical" isn't in "HVAC"), so
+    // they don't show up in the stored triggers either way.
+    const pageWords = textractData[pageNumber]?.words;
+    if (pageWords?.length) {
+      const tradeWords = activeTradeFilter.toLowerCase().split(/\s+/);
+      for (const word of pageWords) {
+        if (tradeWords.includes(word.text.toLowerCase()) && !hits.some((h) => h.bbox === word.bbox)) {
+          hits.push({ text: word.text, bbox: word.bbox });
+        }
       }
     }
+
     return hits;
   }, [activeTradeFilter, csiCodes, textractData, pageNumber]);
 
