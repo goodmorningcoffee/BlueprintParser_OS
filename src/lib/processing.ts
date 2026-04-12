@@ -180,10 +180,11 @@ export async function processProject(projectId: number): Promise<{
           logger.error(`[processing] Drawing number extraction FAILED for page ${pageNum}:`, err);
         }
 
-        // Detect CSI codes from OCR text
+        // Detect CSI codes from OCR text. Pass Textract words so each detected
+        // code records its trigger word bboxes (for trade filter highlights).
         let csiCodes: CsiCode[] = [];
         try {
-          csiCodes = detectCsiCodes(rawText);
+          csiCodes = detectCsiCodes(rawText, textractData.words);
         } catch (err) {
           logger.error(`[processing] CSI detection FAILED for page ${pageNum}:`, err);
         }
