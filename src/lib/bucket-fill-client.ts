@@ -23,9 +23,21 @@ function getWorker(): Worker {
 export interface ClientBucketFillOptions {
   tolerance: number;
   dilation: number;
+  /** Max accepted net-area fraction before a fill is a leak. 0.05–0.95, default 0.25. */
+  leakThreshold?: number;
   barriers: { x1: number; y1: number; x2: number; y2: number }[];
   polygonBarriers: { vertices: { x: number; y: number }[] }[];
   maxDimension?: number;
+}
+
+export interface ClientBucketFillSuccess {
+  vertices: { x: number; y: number }[];
+  holes: { vertices: { x: number; y: number }[] }[];
+  holeCount: number;
+  areaFraction: number;
+  method: string;
+  retryHistory: BucketFillResult["retryHistory"];
+  leakThreshold: number;
 }
 
 /**
@@ -36,7 +48,7 @@ export async function clientBucketFill(
   pageCanvas: HTMLCanvasElement | null,
   seedPoint: { x: number; y: number },
   options: ClientBucketFillOptions
-): Promise<{ vertices: { x: number; y: number }[]; method: string }> {
+): Promise<ClientBucketFillSuccess> {
   if (!pageCanvas) {
     throw new Error("Page canvas not available");
   }
@@ -56,7 +68,15 @@ export async function clientBucketFill(
       worker.removeEventListener("message", handler);
       const data = e.data;
       if (data.type === "result" && data.vertices && data.vertices.length >= 3) {
-        resolve({ vertices: data.vertices, method: data.method || "client-raster" });
+        resolve({
+          vertices: data.vertices,
+          holes: data.holes ?? [],
+          holeCount: data.holeCount ?? 0,
+          areaFraction: data.areaFraction ?? 0,
+          method: data.method || "client-raster",
+          retryHistory: data.retryHistory,
+          leakThreshold: data.leakThreshold ?? 0.25,
+        });
       } else {
         reject(new Error(data.error || "Bucket fill returned no result"));
       }
@@ -72,6 +92,7 @@ export async function clientBucketFill(
         seedY: seedPoint.y,
         tolerance: options.tolerance,
         dilation: options.dilation,
+        leakThreshold: options.leakThreshold ?? 0.25,
         barriers: options.barriers,
         polygonBarriers: options.polygonBarriers,
         maxDimension: options.maxDimension ?? 1000,

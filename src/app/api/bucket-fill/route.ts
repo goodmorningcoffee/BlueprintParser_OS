@@ -25,6 +25,7 @@ export async function POST(req: Request) {
     tolerance = 30,
     dilate = 3,
     simplifyEpsilon = 0.005,
+    leakThreshold = 0.25,
     barriers = [],
     polygonBarriers = [],
   } = body as {
@@ -34,6 +35,7 @@ export async function POST(req: Request) {
     tolerance?: number;
     dilate?: number;
     simplifyEpsilon?: number;
+    leakThreshold?: number;
     barriers?: Array<{ x1: number; y1: number; x2: number; y2: number }>;
     polygonBarriers?: Array<{ vertices: Array<{ x: number; y: number }> }>;
   };
@@ -87,6 +89,7 @@ export async function POST(req: Request) {
       tolerance,
       dilatePx: dilate,
       simplifyEpsilon,
+      leakThreshold,
       barriers,
       polygonBarriers,
     });
