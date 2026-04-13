@@ -784,6 +784,7 @@ export default memo(function AnnotationOverlay({
     if (!preview || preview.vertices.length < 3) return;
 
     const verts = preview.vertices;
+    const holes = preview.holes ?? [];
     const xs = verts.map((v) => v.x);
     const ys = verts.map((v) => v.y);
     const bbox: [number, number, number, number] = [
@@ -795,12 +796,23 @@ export default memo(function AnnotationOverlay({
     let areaSqUnits = 0;
     let unit: import("@/types").AreaUnitSq = "SF";
     if (calibration) {
-      areaSqUnits = computeRealArea(verts, width, height, calibration);
+      // Outer polygon area, then subtract each hole's area. Matches what the
+      // preview renders via fill-rule="evenodd" so the number matches the
+      // visual.
+      const outer = computeRealArea(verts, width, height, calibration);
+      let holesArea = 0;
+      for (const hole of holes) {
+        if (hole.vertices.length >= 3) {
+          holesArea += computeRealArea(hole.vertices, width, height, calibration);
+        }
+      }
+      areaSqUnits = Math.max(0, outer - holesArea);
       unit = AREA_UNIT_MAP[calibration.unit] || "SF";
     }
 
     useViewerStore.getState().setBucketFillPendingPolygon({
       vertices: [...verts],
+      holes: holes.length > 0 ? holes.map((h) => ({ vertices: [...h.vertices] })) : undefined,
       method: preview.method,
       bbox,
       areaSqUnits,
@@ -1106,10 +1118,22 @@ export default memo(function AnnotationOverlay({
             && a.data?.type === "area-polygon" && a.data?.vertices?.length >= 3)
           .map((a: any) => ({ vertices: a.data.vertices }));
 
-        const handleFillSuccess = (data: { vertices: { x: number; y: number }[]; method: string }) => {
+        // Convert the user-facing 0-100% slider value into the 0.0-1.0
+        // fraction the worker + Python script expect. Both paths use the same key.
+        const leakThreshold = Math.max(0.05, Math.min(0.95, bfState.bucketFillLeakThresholdPct / 100));
+
+        const handleFillSuccess = (data: {
+          vertices: { x: number; y: number }[];
+          holes?: { vertices: { x: number; y: number }[] }[];
+          method: string;
+        }) => {
           useViewerStore.setState({
             bucketFillLoading: false,
-            bucketFillPreview: { vertices: data.vertices, method: data.method },
+            bucketFillPreview: {
+              vertices: data.vertices,
+              holes: data.holes && data.holes.length > 0 ? data.holes : undefined,
+              method: data.method,
+            },
           });
         };
 
@@ -1123,6 +1147,7 @@ export default memo(function AnnotationOverlay({
               seedPoint: { x: normX, y: normY },
               tolerance: bfState.bucketFillTolerance,
               dilate: bfState.bucketFillDilatePx,
+              leakThreshold,
               barriers: bfState.bucketFillBarriers,
               polygonBarriers: existingPolygons,
             }),
@@ -1133,7 +1158,11 @@ export default memo(function AnnotationOverlay({
             })
             .then((data) => {
               if (data?.type === "result" && data.vertices?.length >= 3) {
-                handleFillSuccess({ vertices: data.vertices, method: data.method || "server-raster" });
+                handleFillSuccess({
+                  vertices: data.vertices,
+                  holes: data.holes,
+                  method: data.method || "server-raster",
+                });
               } else if (data?.type === "error") {
                 useViewerStore.getState().setBucketFillLoading(false);
                 useViewerStore.getState().setBucketFillError(data.error || "Bucket fill failed");
@@ -1155,6 +1184,7 @@ export default memo(function AnnotationOverlay({
           clientBucketFill(pageCanvas, { x: normX, y: normY }, {
             tolerance: bfState.bucketFillTolerance,
             dilation: bfState.bucketFillDilatePx,
+            leakThreshold,
             barriers: bfState.bucketFillBarriers,
             polygonBarriers: existingPolygons,
           })

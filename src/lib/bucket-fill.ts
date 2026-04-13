@@ -17,6 +17,9 @@ export interface BucketFillOptions {
   tolerance?: number;
   dilatePx?: number;
   simplifyEpsilon?: number;
+  /** Max accepted net-area fraction before a fill is treated as a leak
+   *  (0.05–0.95, default 0.25). Matches the client worker threshold. */
+  leakThreshold?: number;
   barriers?: Array<{ x1: number; y1: number; x2: number; y2: number }>;
   polygonBarriers?: Array<{ vertices: Array<{ x: number; y: number }> }>;
   maxDimension?: number;
@@ -28,6 +31,10 @@ export interface BucketFillResult {
   vertices?: Array<{ x: number; y: number }>;
   vertexCount?: number;
   areaFraction?: number;
+  /** Inner hole polygons (e.g., courtyards inside a U-shaped hallway).
+   *  Empty or omitted when the fill has no enclosed regions. */
+  holes?: Array<{ vertices: Array<{ x: number; y: number }>; areaFraction?: number }>;
+  holeCount?: number;
   error?: string;
 }
 
@@ -44,6 +51,7 @@ export async function bucketFill(
     tolerance: options.tolerance ?? 30,
     dilate_px: options.dilatePx ?? 3,
     simplify_epsilon: options.simplifyEpsilon ?? 0.005,
+    leak_threshold: options.leakThreshold ?? 0.25,
     barriers: options.barriers ?? [],
     polygon_barriers: options.polygonBarriers ?? [],
     max_dimension: options.maxDimension ?? 2000,

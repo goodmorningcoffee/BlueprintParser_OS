@@ -18,14 +18,35 @@ export interface BucketFillRequest {
   barriers: { x1: number; y1: number; x2: number; y2: number }[];
   polygonBarriers: { vertices: { x: number; y: number }[] }[];
   maxDimension?: number;
+  /** Max accepted net-area fraction before an attempt is treated as a leak.
+   *  0.10–0.80 typical. Default 0.25. Exposed to the user via the tool slider. */
+  leakThreshold?: number;
+}
+
+export interface BucketFillRetryEntry {
+  dilationRadius: number;
+  areaFraction: number;
+  accepted: boolean;
+  status: "ok" | "leak" | "tiny";
 }
 
 export interface BucketFillResult {
   type: "result" | "error";
   vertices?: { x: number; y: number }[];
+  /** Inner hole polygons (e.g., courtyards inside a U-shaped hallway). Each is a
+   *  closed polygon in normalized 0–1 coordinates. Empty if no holes. */
+  holes?: { vertices: { x: number; y: number }[] }[];
+  holeCount?: number;
+  /** Net area as fraction of page (filled pixels, already excludes holes). */
+  areaFraction?: number;
   method?: string;
   error?: string;
+  /** Number of retries past the first attempt (back-compat). */
   retries?: number;
+  /** Full per-attempt retry log for debug drill-down. */
+  retryHistory?: BucketFillRetryEntry[];
+  /** The leak threshold that was in effect for this run. */
+  leakThreshold?: number;
 }
 
 // ─── Image processing primitives ─────────────────────────────────
@@ -325,6 +346,79 @@ function douglasPeucker(points: { x: number; y: number }[], epsilon: number): { 
   return [start, end];
 }
 
+// ─── Hole detection ──────────────────────────────────────────────
+
+/**
+ * Find and trace holes in a filled binary region.
+ *
+ * Algorithm: flood from the image edges through unfilled pixels; anything
+ * still unfilled afterward is enclosed-inside = a hole. Group connected hole
+ * pixels into components and trace each one's border with the same Moore
+ * neighbor routine used for the outer contour. This is the JS equivalent of
+ * OpenCV's RETR_CCOMP hierarchy.
+ */
+function findHoleBorders(filled: Uint8Array, w: number, h: number): { x: number; y: number }[][] {
+  // marks: 0 = filled, 1 = outside-reachable-from-edge, 2 = enclosed (hole candidate)
+  const marks = new Uint8Array(filled.length);
+  for (let i = 0; i < filled.length; i++) marks[i] = filled[i] ? 0 : 2;
+
+  // Seed the outside-flood from every image-edge unfilled pixel.
+  const stack: number[] = [];
+  for (let x = 0; x < w; x++) {
+    if (marks[x] === 2) { marks[x] = 1; stack.push(x); }
+    const bi = (h - 1) * w + x;
+    if (marks[bi] === 2) { marks[bi] = 1; stack.push(bi); }
+  }
+  for (let y = 0; y < h; y++) {
+    const li = y * w;
+    if (marks[li] === 2) { marks[li] = 1; stack.push(li); }
+    const ri = y * w + (w - 1);
+    if (marks[ri] === 2) { marks[ri] = 1; stack.push(ri); }
+  }
+
+  // 4-connected flood through unfilled pixels.
+  while (stack.length) {
+    const i = stack.pop()!;
+    const x = i % w;
+    const y = (i - x) / w;
+    if (x > 0 && marks[i - 1] === 2) { marks[i - 1] = 1; stack.push(i - 1); }
+    if (x < w - 1 && marks[i + 1] === 2) { marks[i + 1] = 1; stack.push(i + 1); }
+    if (y > 0 && marks[i - w] === 2) { marks[i - w] = 1; stack.push(i - w); }
+    if (y < h - 1 && marks[i + w] === 2) { marks[i + w] = 1; stack.push(i + w); }
+  }
+
+  // Anything still at mark==2 is enclosed. Group into components and trace.
+  const holePolys: { x: number; y: number }[][] = [];
+  const visited = new Uint8Array(filled.length);
+  for (let i = 0; i < marks.length; i++) {
+    if (marks[i] !== 2 || visited[i]) continue;
+    const holeMask = new Uint8Array(filled.length);
+    const bfs: number[] = [i];
+    visited[i] = 1;
+    holeMask[i] = 1;
+    while (bfs.length) {
+      const j = bfs.pop()!;
+      const x = j % w;
+      const y = (j - x) / w;
+      if (x > 0 && marks[j - 1] === 2 && !visited[j - 1]) {
+        visited[j - 1] = 1; holeMask[j - 1] = 1; bfs.push(j - 1);
+      }
+      if (x < w - 1 && marks[j + 1] === 2 && !visited[j + 1]) {
+        visited[j + 1] = 1; holeMask[j + 1] = 1; bfs.push(j + 1);
+      }
+      if (y > 0 && marks[j - w] === 2 && !visited[j - w]) {
+        visited[j - w] = 1; holeMask[j - w] = 1; bfs.push(j - w);
+      }
+      if (y < h - 1 && marks[j + w] === 2 && !visited[j + w]) {
+        visited[j + w] = 1; holeMask[j + w] = 1; bfs.push(j + w);
+      }
+    }
+    const border = traceBorder(holeMask, w, h);
+    if (border.length >= 3) holePolys.push(border);
+  }
+  return holePolys;
+}
+
 // ─── Main pipeline ───────────────────────────────────────────────
 
 function processFill(req: BucketFillRequest): BucketFillResult {
@@ -340,10 +434,15 @@ function processFill(req: BucketFillRequest): BucketFillResult {
   const seedPx = Math.max(0, Math.min(w - 1, Math.round(req.seedX * w)));
   const seedPy = Math.max(0, Math.min(h - 1, Math.round(req.seedY * h)));
 
-  const LEAK_THRESHOLD = 0.25;
+  // leakThreshold is user-tunable via the tool slider. 0.25 default matches
+  // the old hardcoded value so existing behavior is unchanged at defaults.
+  const leakThreshold = typeof req.leakThreshold === "number"
+    ? Math.max(0.05, Math.min(0.95, req.leakThreshold))
+    : 0.25;
   const MAX_RETRIES = 3;
-  let bestResult: { filled: Uint8Array; area: number } | null = null;
-  let retries = 0;
+
+  const retryHistory: BucketFillRetryEntry[] = [];
+  let bestResult: { filled: Uint8Array; area: number; dilationRadius: number } | null = null;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const radius = Math.max(1, Math.ceil(req.dilation / 2)) + attempt;
@@ -366,40 +465,104 @@ function processFill(req: BucketFillRequest): BucketFillResult {
     // 6. Flood fill
     const filled = floodFill(closed, w, h, seedPx, seedPy);
 
+    // 7. Count filled pixels. filled[i]==1 means "reached by flood from seed";
+    // holes inside the filled region stay at 0, so this count is already the
+    // net area (outer minus holes).
     let area = 0;
     for (let i = 0; i < filled.length; i++) if (filled[i]) area++;
 
-    if (area < 20) { retries++; continue; } // tiny speck, retry with more dilation
-
     const areaRatio = area / (w * h);
-    if (!bestResult || (areaRatio <= LEAK_THRESHOLD && area > (bestResult.area / (w * h) <= LEAK_THRESHOLD ? bestResult.area : 0))) {
-      bestResult = { filled, area };
+
+    if (area < 20) {
+      retryHistory.push({ dilationRadius: radius, areaFraction: areaRatio, accepted: false, status: "tiny" });
+      continue;
     }
-    if (areaRatio <= LEAK_THRESHOLD) break;
-    retries++;
+
+    const status: "ok" | "leak" = areaRatio <= leakThreshold ? "ok" : "leak";
+
+    // Picker rules, simplified from the previous convoluted one-liner:
+    //   1. If we have no bestResult, take this one.
+    //   2. If bestResult is a leak and this one is OK, upgrade (ok beats leak).
+    //   3. If bestResult is OK and this one is OK, prefer the LARGER area
+    //      (more of the room captured).
+    //   4. If both are leaks, prefer the SMALLER area (less escaped).
+    //   5. If bestResult is OK and this one is a leak, keep bestResult.
+    let accept = false;
+    if (!bestResult) {
+      accept = true;
+    } else {
+      const bestRatio = bestResult.area / (w * h);
+      const bestStatus = bestRatio <= leakThreshold ? "ok" : "leak";
+      if (bestStatus === "leak" && status === "ok") accept = true;
+      else if (bestStatus === "ok" && status === "ok") accept = area > bestResult.area;
+      else if (bestStatus === "leak" && status === "leak") accept = area < bestResult.area;
+      // bestStatus === "ok" && status === "leak" → keep best
+    }
+
+    if (accept) {
+      // Mark the previous winner (if any) as no-longer-accepted.
+      for (const entry of retryHistory) entry.accepted = false;
+      retryHistory.push({ dilationRadius: radius, areaFraction: areaRatio, accepted: true, status });
+      bestResult = { filled, area, dilationRadius: radius };
+    } else {
+      retryHistory.push({ dilationRadius: radius, areaFraction: areaRatio, accepted: false, status });
+    }
+
+    // First OK result wins — don't keep retrying once we have one.
+    if (status === "ok") break;
   }
 
   if (!bestResult || bestResult.area === 0) {
-    return { type: "error", error: "Could not detect room boundary at click point" };
+    return {
+      type: "error",
+      error: "Could not detect room boundary at click point",
+      retryHistory,
+      leakThreshold,
+    };
   }
 
-  // 7. Border trace
+  // 8. Border trace (outer contour only). Holes are traced separately below
+  // so the preview can render them with fill-rule="evenodd".
   const border = traceBorder(bestResult.filled, w, h);
   if (border.length < 3) {
-    return { type: "error", error: "Detected region too small" };
+    return { type: "error", error: "Detected region too small", retryHistory, leakThreshold };
   }
 
-  // 8. Simplify
+  // 9. Find and trace enclosed holes (e.g., a courtyard inside a U-shaped
+  // hallway). This is the JS equivalent of OpenCV RETR_CCOMP.
+  const holeBorders = findHoleBorders(bestResult.filled, w, h);
+
+  // 10. Simplify outer + holes with Douglas-Peucker.
   const epsilon = Math.max(w, h) * 0.005;
   const simplified = douglasPeucker(border, epsilon);
   if (simplified.length < 3) {
-    return { type: "error", error: "Simplified polygon has too few vertices" };
+    return { type: "error", error: "Simplified polygon has too few vertices", retryHistory, leakThreshold };
   }
 
-  // 9. Normalize to 0-1
+  // 11. Normalize outer to 0-1
   const vertices = simplified.map((p) => ({ x: p.x / w, y: p.y / h }));
 
-  return { type: "result", vertices, method: "client-raster", retries };
+  // 12. Simplify + normalize each hole; drop degenerate ones
+  const holes: { vertices: { x: number; y: number }[] }[] = [];
+  for (const hb of holeBorders) {
+    const hSimp = douglasPeucker(hb, epsilon);
+    if (hSimp.length < 3) continue;
+    holes.push({ vertices: hSimp.map((p) => ({ x: p.x / w, y: p.y / h })) });
+  }
+
+  const retries = Math.max(0, retryHistory.length - 1);
+
+  return {
+    type: "result",
+    vertices,
+    holes,
+    holeCount: holes.length,
+    areaFraction: bestResult.area / (w * h),
+    method: "client-raster",
+    retries,
+    retryHistory,
+    leakThreshold,
+  };
 }
 
 // ─── Worker message handler ──────────────────────────────────────

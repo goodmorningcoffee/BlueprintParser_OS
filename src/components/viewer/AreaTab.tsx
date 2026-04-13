@@ -316,6 +316,8 @@ export default function AreaTab() {
   const setBucketFillTolerance = useViewerStore((s) => s.setBucketFillTolerance);
   const bucketFillDilatePx = useViewerStore((s) => s.bucketFillDilatePx);
   const setBucketFillDilatePx = useViewerStore((s) => s.setBucketFillDilatePx);
+  const bucketFillLeakThresholdPct = useViewerStore((s) => s.bucketFillLeakThresholdPct);
+  const setBucketFillLeakThresholdPct = useViewerStore((s) => s.setBucketFillLeakThresholdPct);
   const splitAreaActive = useViewerStore((s) => s.splitAreaActive);
   const setSplitAreaActive = useViewerStore((s) => s.setSplitAreaActive);
 
@@ -422,6 +424,17 @@ export default function AreaTab() {
                   onChange={(e) => setBucketFillDilatePx(Number(e.target.value))}
                   className="flex-1 h-1 accent-cyan-400" />
                 <span className="w-5 text-[10px] text-right font-mono text-[var(--muted)]">{bucketFillDilatePx}</span>
+              </div>
+              <div
+                className="flex items-center gap-1.5"
+                title="Max accepted fill area (as % of page) before it's treated as a leak. Raise this if your room is legitimately large (lobbies, big hallways) and the picker keeps rejecting it."
+              >
+                <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Leak %</span>
+                <input type="range" min={10} max={80} step={5}
+                  value={bucketFillLeakThresholdPct}
+                  onChange={(e) => setBucketFillLeakThresholdPct(Number(e.target.value))}
+                  className="flex-1 h-1 accent-cyan-400" />
+                <span className="w-5 text-[10px] text-right font-mono text-[var(--muted)]">{bucketFillLeakThresholdPct}</span>
               </div>
             </div>
           </div>

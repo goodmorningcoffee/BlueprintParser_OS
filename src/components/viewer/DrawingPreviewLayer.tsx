@@ -318,9 +318,11 @@ export default memo(function DrawingPreviewLayer({
       const activeItem = takeoffItems.find((t) => t.id === activeTakeoffItemId);
       const fillColor = activeItem?.color || "#22d3ee";
       const verts = bucketFillPreview.vertices;
+      const holes = bucketFillPreview.holes ?? [];
       ctx.save();
 
-      // Semi-transparent fill
+      // Semi-transparent fill — use evenodd so inner holes (courtyards inside
+      // a U-shaped hallway) render as cutouts rather than getting painted over.
       ctx.fillStyle = fillColor + "33";
       ctx.beginPath();
       ctx.moveTo(verts[0].x * width, verts[0].y * height);
@@ -328,20 +330,47 @@ export default memo(function DrawingPreviewLayer({
         ctx.lineTo(verts[i].x * width, verts[i].y * height);
       }
       ctx.closePath();
-      ctx.fill();
+      for (const hole of holes) {
+        if (hole.vertices.length < 3) continue;
+        ctx.moveTo(hole.vertices[0].x * width, hole.vertices[0].y * height);
+        for (let i = 1; i < hole.vertices.length; i++) {
+          ctx.lineTo(hole.vertices[i].x * width, hole.vertices[i].y * height);
+        }
+        ctx.closePath();
+      }
+      ctx.fill("evenodd");
 
-      // Dashed outline
+      // Dashed outline: trace the outer polygon, then each hole separately so
+      // the user can visually identify which regions are cutouts.
       ctx.strokeStyle = fillColor;
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(verts[0].x * width, verts[0].y * height);
+      for (let i = 1; i < verts.length; i++) {
+        ctx.lineTo(verts[i].x * width, verts[i].y * height);
+      }
+      ctx.closePath();
       ctx.stroke();
+      for (const hole of holes) {
+        if (hole.vertices.length < 3) continue;
+        ctx.beginPath();
+        ctx.moveTo(hole.vertices[0].x * width, hole.vertices[0].y * height);
+        for (let i = 1; i < hole.vertices.length; i++) {
+          ctx.lineTo(hole.vertices[i].x * width, hole.vertices[i].y * height);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
       ctx.setLineDash([]);
 
-      // Method label near centroid
+      // Method label near centroid — append "(N holes)" when present so the
+      // user immediately sees that courtyards were detected and excluded.
       const cx = verts.reduce((s, v) => s + v.x, 0) / verts.length * width;
       const cy = verts.reduce((s, v) => s + v.y, 0) / verts.length * height;
       ctx.font = "bold 11px sans-serif";
-      const label = bucketFillPreview.method === "vector" ? "Vector" : "Raster";
+      const baseLabel = bucketFillPreview.method === "vector" ? "Vector" : "Raster";
+      const label = holes.length > 0 ? `${baseLabel} · ${holes.length} hole${holes.length === 1 ? "" : "s"}` : baseLabel;
       const tw = ctx.measureText(label).width;
       ctx.fillStyle = "rgba(0,0,0,0.7)";
       ctx.fillRect(cx - tw / 2 - 4, cy - 16, tw + 8, 18);
@@ -440,17 +469,41 @@ export default memo(function DrawingPreviewLayer({
     // ── Bucket fill pending polygon (awaiting item assignment) ──
     if (bucketFillPendingPolygon) {
       const verts = bucketFillPendingPolygon.vertices;
+      const pendingHoles = bucketFillPendingPolygon.holes ?? [];
       if (verts.length >= 3) {
         ctx.save();
+        // Matches the preview render: evenodd fill so inner holes are cutouts.
         ctx.fillStyle = "rgba(34, 211, 238, 0.25)";
         ctx.beginPath();
         ctx.moveTo(verts[0].x * width, verts[0].y * height);
         for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x * width, verts[i].y * height);
         ctx.closePath();
-        ctx.fill();
+        for (const hole of pendingHoles) {
+          if (hole.vertices.length < 3) continue;
+          ctx.moveTo(hole.vertices[0].x * width, hole.vertices[0].y * height);
+          for (let i = 1; i < hole.vertices.length; i++) {
+            ctx.lineTo(hole.vertices[i].x * width, hole.vertices[i].y * height);
+          }
+          ctx.closePath();
+        }
+        ctx.fill("evenodd");
         ctx.strokeStyle = "#22d3ee";
         ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(verts[0].x * width, verts[0].y * height);
+        for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i].x * width, verts[i].y * height);
+        ctx.closePath();
         ctx.stroke();
+        for (const hole of pendingHoles) {
+          if (hole.vertices.length < 3) continue;
+          ctx.beginPath();
+          ctx.moveTo(hole.vertices[0].x * width, hole.vertices[0].y * height);
+          for (let i = 1; i < hole.vertices.length; i++) {
+            ctx.lineTo(hole.vertices[i].x * width, hole.vertices[i].y * height);
+          }
+          ctx.closePath();
+          ctx.stroke();
+        }
         ctx.restore();
       }
     }

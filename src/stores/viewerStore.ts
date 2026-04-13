@@ -247,8 +247,13 @@ interface ViewerState {
   // Bucket fill
   bucketFillActive: boolean;
   setBucketFillActive: (active: boolean) => void;
-  bucketFillPreview: { vertices: { x: number; y: number }[]; method: string } | null;
-  setBucketFillPreview: (v: { vertices: { x: number; y: number }[]; method: string } | null) => void;
+  bucketFillPreview: {
+    vertices: { x: number; y: number }[];
+    /** Inner holes (courtyards inside the filled region). Empty when none. */
+    holes?: { vertices: { x: number; y: number }[] }[];
+    method: string;
+  } | null;
+  setBucketFillPreview: (v: ViewerState["bucketFillPreview"]) => void;
   bucketFillLoading: boolean;
   setBucketFillLoading: (v: boolean) => void;
   bucketFillError: string | null;
@@ -257,8 +262,17 @@ interface ViewerState {
   setBucketFillTolerance: (n: number) => void;
   bucketFillDilatePx: number;
   setBucketFillDilatePx: (n: number) => void;
+  /** 0-100 (percent). Default 25. User slider in AreaTab maps to 0.10-0.80
+   *  fraction at API call time. Matches the client worker default. */
+  bucketFillLeakThresholdPct: number;
+  setBucketFillLeakThresholdPct: (n: number) => void;
   bucketFillPendingPolygon: {
     vertices: { x: number; y: number }[];
+    /** Inner holes (courtyards) excluded from the net area calc. Rendered as
+     *  evenodd cutouts in the preview. Dropped at commit time because the
+     *  current annotation schema only stores a flat vertex array — see
+     *  featureRoadMap/debug_and_vector_methods_plan.md for follow-up work. */
+    holes?: { vertices: { x: number; y: number }[] }[];
     method: string;
     bbox: [number, number, number, number];
     areaSqUnits: number;
@@ -796,6 +810,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setBucketFillTolerance: (bucketFillTolerance) => set({ bucketFillTolerance }),
   bucketFillDilatePx: 3,
   setBucketFillDilatePx: (bucketFillDilatePx) => set({ bucketFillDilatePx }),
+  bucketFillLeakThresholdPct: 25,
+  setBucketFillLeakThresholdPct: (bucketFillLeakThresholdPct) => set({ bucketFillLeakThresholdPct }),
   bucketFillPendingPolygon: null,
   setBucketFillPendingPolygon: (bucketFillPendingPolygon) => set({ bucketFillPendingPolygon }),
   commitBucketFillToItem: (item) => {
