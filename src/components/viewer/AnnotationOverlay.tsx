@@ -335,6 +335,13 @@ export default memo(function AnnotationOverlay({
         continue;
       }
 
+      // Area polygons have their own dedicated render pass below (Loop 2).
+      // Skip the bbox-rectangle drawing here — it only adds visual clutter
+      // overlapping adjacent rooms since the actual polygon shape is drawn
+      // by the polygon loop. The label, delete "x", and click handlers
+      // still use `ann.bbox` as an invisible-but-stable anchor.
+      const isAreaPolygon = ann.source === "takeoff" && (ann.data as any)?.type === "area-polygon";
+
       const color = labelColor(ann.name);
       const [minX, minY, maxX, maxY] = ann.bbox;
       const x = minX * width;
@@ -348,7 +355,10 @@ export default memo(function AnnotationOverlay({
       if (activeTag && ann.source === "yolo" && !isTagMatch) continue;
       const dimmed = (activeTag && !isTagMatch) || (symbolSearchResults !== null);
 
-      if (isTagMatch) {
+      if (isAreaPolygon) {
+        // Bbox fill/stroke skipped — Loop 2 draws the actual polygon below.
+        ctx.globalAlpha = dimmed ? 0.25 : 1;
+      } else if (isTagMatch) {
         // Bright magenta fill + tag color stroke for active tag instances
         ctx.fillStyle = "#ff00ff40"; // magenta at 25% opacity
         ctx.fillRect(x, y, w, h);
@@ -392,13 +402,18 @@ export default memo(function AnnotationOverlay({
         ctx.font = `bold ${fontSize}px sans-serif`;
         ctx.fillText("x", iconX, y - 4);
 
-        // Corner handles
-        const hs = 6;
-        ctx.fillStyle = color;
-        ctx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
-        ctx.fillRect(x + w - hs / 2, y - hs / 2, hs, hs);
-        ctx.fillRect(x - hs / 2, y + h - hs / 2, hs, hs);
-        ctx.fillRect(x + w - hs / 2, y + h - hs / 2, hs, hs);
+        // Corner handles — skipped for area polygons. The resize handler only
+        // updates ann.bbox, not data.vertices, so dragging a corner visually
+        // shifts the (now-invisible) bbox without reshaping the polygon. The
+        // handles would be dead decorations floating in space.
+        if (!isAreaPolygon) {
+          const hs = 6;
+          ctx.fillStyle = color;
+          ctx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
+          ctx.fillRect(x + w - hs / 2, y - hs / 2, hs, hs);
+          ctx.fillRect(x - hs / 2, y + h - hs / 2, hs, hs);
+          ctx.fillRect(x + w - hs / 2, y + h - hs / 2, hs, hs);
+        }
       }
 
       // Tag name label for active tag match
@@ -597,8 +612,14 @@ export default memo(function AnnotationOverlay({
       if (hiddenTakeoffItemIds.has(data.takeoffItemId)) continue;
       if (!data.vertices || data.vertices.length < 3) continue;
 
+      // Holes (e.g., courtyards inside a U-shaped hallway). Rendered via
+      // fill-rule="evenodd" as cutouts. Same pattern as DrawingPreviewLayer
+      // so committed annotations match their pre-commit preview exactly.
+      const holes = data.holes ?? [];
+
       ctx.save();
-      // Fill
+      // Fill — outer polygon + hole subpaths, evenodd rule for cutouts.
+      // With no holes this is identical to the previous `fill()` behavior.
       ctx.fillStyle = data.color + "40";
       ctx.beginPath();
       ctx.moveTo(data.vertices[0].x * width, data.vertices[0].y * height);
@@ -606,14 +627,39 @@ export default memo(function AnnotationOverlay({
         ctx.lineTo(data.vertices[i].x * width, data.vertices[i].y * height);
       }
       ctx.closePath();
-      ctx.fill();
+      for (const hole of holes) {
+        if (hole.vertices.length < 3) continue;
+        ctx.moveTo(hole.vertices[0].x * width, hole.vertices[0].y * height);
+        for (let i = 1; i < hole.vertices.length; i++) {
+          ctx.lineTo(hole.vertices[i].x * width, hole.vertices[i].y * height);
+        }
+        ctx.closePath();
+      }
+      ctx.fill("evenodd");
 
-      // Stroke
+      // Stroke outer polygon
       ctx.strokeStyle = data.color;
       ctx.lineWidth = ann.id === selectedId ? 3 : 2;
+      ctx.beginPath();
+      ctx.moveTo(data.vertices[0].x * width, data.vertices[0].y * height);
+      for (let i = 1; i < data.vertices.length; i++) {
+        ctx.lineTo(data.vertices[i].x * width, data.vertices[i].y * height);
+      }
+      ctx.closePath();
       ctx.stroke();
+      // Stroke each hole so the user can see which regions are cutouts
+      for (const hole of holes) {
+        if (hole.vertices.length < 3) continue;
+        ctx.beginPath();
+        ctx.moveTo(hole.vertices[0].x * width, hole.vertices[0].y * height);
+        for (let i = 1; i < hole.vertices.length; i++) {
+          ctx.lineTo(hole.vertices[i].x * width, hole.vertices[i].y * height);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
 
-      // Vertices when selected
+      // Vertices when selected (outer only — hole vertices aren't editable)
       if (ann.id === selectedId) {
         for (const v of data.vertices) {
           ctx.fillStyle = data.color;
@@ -1432,7 +1478,12 @@ export default memo(function AnnotationOverlay({
             let hit = false;
             if (ann.source === "takeoff" && (ann.data as any)?.type === "area-polygon") {
               const data = ann.data as unknown as AreaPolygonData;
-              hit = pointInPolygon({ x: pos.x / width, y: pos.y / height }, data.vertices);
+              const clickNorm = { x: pos.x / width, y: pos.y / height };
+              if (pointInPolygon(clickNorm, data.vertices)) {
+                // Clicking inside a hole (courtyard) should NOT select the polygon
+                const insideHole = (data.holes ?? []).some((h) => pointInPolygon(clickNorm, h.vertices));
+                hit = !insideHole;
+              }
             } else if (ann.source === "takeoff" && (ann.data as any)?.type === "linear-polyline") {
               const data = ann.data as unknown as LinearPolylineData;
               for (let i = 0; i < data.vertices.length - 1; i++) {
@@ -1544,20 +1595,30 @@ export default memo(function AnnotationOverlay({
           const selAnn = pageAnnotations.find((a) => a.id === selectedId);
           if (selAnn) {
             const [minX, minY, maxX, maxY] = selAnn.bbox;
-            const corners = {
-              tl: { x: minX * width, y: minY * height },
-              tr: { x: maxX * width, y: minY * height },
-              bl: { x: minX * width, y: maxY * height },
-              br: { x: maxX * width, y: maxY * height },
-            };
+            // Skip corner-resize detection for area polygons. The resize
+            // handler only updates ann.bbox (not data.vertices), so dragging
+            // a corner visually moves an invisible bbox without reshaping
+            // the polygon — dead functionality. The label + delete "x" click
+            // handler below still runs so delete/edit keep working.
+            const selIsAreaPolygon = selAnn.source === "takeoff"
+              && (selAnn.data as any)?.type === "area-polygon";
 
-            // Check if clicking a corner handle for resize
-            for (const [key, corner] of Object.entries(corners)) {
-              if (Math.abs(pos.x - corner.x) < HANDLE && Math.abs(pos.y - corner.y) < HANDLE) {
-                e.stopPropagation();
-                setResizeCorner(key);
-                setDragging(true);
-                return;
+            if (!selIsAreaPolygon) {
+              const corners = {
+                tl: { x: minX * width, y: minY * height },
+                tr: { x: maxX * width, y: minY * height },
+                bl: { x: minX * width, y: maxY * height },
+                br: { x: maxX * width, y: maxY * height },
+              };
+
+              // Check if clicking a corner handle for resize
+              for (const [key, corner] of Object.entries(corners)) {
+                if (Math.abs(pos.x - corner.x) < HANDLE && Math.abs(pos.y - corner.y) < HANDLE) {
+                  e.stopPropagation();
+                  setResizeCorner(key);
+                  setDragging(true);
+                  return;
+                }
               }
             }
 
@@ -1595,12 +1656,16 @@ export default memo(function AnnotationOverlay({
             }
           }
         }
-        // Check area polygons first (point-in-polygon test)
+        // Check area polygons first (point-in-polygon test).
+        // A click inside a hole (courtyard cutout) falls through to whatever
+        // is underneath — matches the visual since holes render as cutouts.
         for (const ann of pageAnnotations) {
           if (ann.source !== "takeoff" || (ann.data as any)?.type !== "area-polygon") continue;
           const data = ann.data as unknown as AreaPolygonData;
           const clickNorm = { x: pos.x / width, y: pos.y / height };
           if (pointInPolygon(clickNorm, data.vertices)) {
+            const insideHole = (data.holes ?? []).some((h) => pointInPolygon(clickNorm, h.vertices));
+            if (insideHole) continue;
             e.stopPropagation();
             setSelectedId(ann.id);
             return;

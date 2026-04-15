@@ -818,11 +818,15 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     const s = get();
     const pending = s.bucketFillPendingPolygon;
     if (!pending) return;
+    // Only include `holes` when actually present — keeps JSONB clean for the
+    // common case (most rooms don't have courtyards). Preview and render paths
+    // both treat `undefined` and `[]` identically via `data.holes ?? []`.
     const polygonData = {
       type: "area-polygon" as const,
       takeoffItemId: item.id,
       color: item.color,
       vertices: pending.vertices,
+      ...(pending.holes && pending.holes.length > 0 ? { holes: pending.holes } : {}),
       areaSqUnits: pending.areaSqUnits,
       unit: pending.unit,
     };
