@@ -64,6 +64,13 @@ interface ViewerState {
   addAnnotation: (a: ClientAnnotation) => void;
   removeAnnotation: (id: number) => void;
   updateAnnotation: (id: number, updates: Partial<ClientAnnotation>) => void;
+  /** One-shot signal to focus/select an annotation from outside AnnotationOverlay.
+   *  AnnotationOverlay owns the local `selectedId` state; external callers
+   *  (TakeoffPanel instance-click, AreaTab instance-click) set this field and
+   *  AnnotationOverlay's useEffect consumes it, setting its local selectedId
+   *  and clearing the field back to null. */
+  focusAnnotationId: number | null;
+  setFocusAnnotationId: (id: number | null) => void;
 
   // ─── Page data ───────────────────────────────────────────
   pageNames: Record<number, string>;
@@ -549,6 +556,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
         a.id === id ? { ...a, ...updates } : a
       ),
     })),
+  focusAnnotationId: null,
+  setFocusAnnotationId: (focusAnnotationId) => set({ focusAnnotationId }),
 
   pageNames: {},
   setPageNames: (pageNames) => set({ pageNames }),

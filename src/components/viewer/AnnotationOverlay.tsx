@@ -141,6 +141,19 @@ export default memo(function AnnotationOverlay({
   const [dragging, setDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const dragBboxRef = useRef<[number, number, number, number] | null>(null);
+  // Vertex drag state (Bug 2). Lives outside the bbox drag path — polygon
+  // vertex edits update data.vertices instead of the annotation bbox.
+  const [draggingVertex, setDraggingVertex] = useState<{ annId: number; idx: number } | null>(null);
+  const draggingVertexRef = useRef<{ annId: number; idx: number } | null>(null);
+  // One-shot focus signal from external components (TakeoffPanel, AreaTab).
+  // When set, we transfer the value to local selectedId and clear the field.
+  const focusAnnotationId = useViewerStore((s) => s.focusAnnotationId);
+  useEffect(() => {
+    if (focusAnnotationId !== null) {
+      setSelectedId(focusAnnotationId);
+      useViewerStore.getState().setFocusAnnotationId(null);
+    }
+  }, [focusAnnotationId]);
 
   // Markup name+notes modal state
   const [pendingMarkup, setPendingMarkup] = useState<[number, number, number, number] | null>(null);
@@ -856,6 +869,61 @@ export default memo(function AnnotationOverlay({
       unit = AREA_UNIT_MAP[calibration.unit] || "SF";
     }
 
+    // If the user already has an area item active, commit directly and skip
+    // the assign-to-item dialog. The dialog exists to pick a target when
+    // there's no context; pre-selecting the item IS that context. This matches
+    // the free-polygon drawing flow at L780-820 which also commits directly
+    // to the active item.
+    const activeId = useViewerStore.getState().activeTakeoffItemId;
+    const activeItem = activeId
+      ? useViewerStore.getState().takeoffItems.find((t) => t.id === activeId)
+      : null;
+    if (activeItem && activeItem.shape === "polygon") {
+      const polygonData: AreaPolygonData = {
+        type: "area-polygon",
+        takeoffItemId: activeItem.id,
+        color: activeItem.color,
+        vertices: [...verts],
+        ...(holes.length > 0
+          ? { holes: holes.map((h) => ({ vertices: [...h.vertices] })) }
+          : {}),
+        areaSqUnits,
+        unit,
+      };
+      const tempId = -Date.now();
+      addAnnotation({
+        id: tempId,
+        pageNumber,
+        name: activeItem.name,
+        bbox,
+        note: null,
+        source: "takeoff",
+        data: polygonData as unknown as Record<string, unknown>,
+      });
+      if (!isDemo) {
+        fetch("/api/annotations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: publicId,
+            pageNumber,
+            name: activeItem.name,
+            bbox,
+            source: "takeoff",
+            data: polygonData,
+          }),
+        })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((saved) => {
+            if (saved) updateAnnotation(tempId, { id: saved.id });
+          })
+          .catch(() => {});
+      }
+      setBucketFillPreview(null);
+      return;
+    }
+
+    // No active area item — fall through to the assign dialog flow.
     useViewerStore.getState().setBucketFillPendingPolygon({
       vertices: [...verts],
       holes: holes.length > 0 ? holes.map((h) => ({ vertices: [...h.vertices] })) : undefined,
@@ -865,7 +933,7 @@ export default memo(function AnnotationOverlay({
       unit,
     });
     setBucketFillPreview(null);
-  }, [scaleCalibrations, pageNumber, width, height, setBucketFillPreview]);
+  }, [scaleCalibrations, pageNumber, width, height, setBucketFillPreview, addAnnotation, updateAnnotation, publicId, isDemo]);
 
   /** Accept a pending Split Area preview: both halves stay under same takeoff item. */
   const acceptSplit = useCallback(() => {
@@ -1065,6 +1133,21 @@ export default memo(function AnnotationOverlay({
       }).catch(() => {});
     }
   }, [selectedId, annotations, isDemo]);
+
+  /** Persist a vertex edit: PUTs both bbox and data. Parallel to
+   *  saveDragPosition which only sends bbox. Pattern cloned from the
+   *  split-area persistence code at L941 which also sends both fields. */
+  const saveVertexEdit = useCallback((annId: number) => {
+    if (isDemo) return;
+    if (annId <= 0) return; // skip tempIds (optimistic local-only)
+    const ann = annotations.find((a) => a.id === annId);
+    if (!ann) return;
+    fetch(`/api/annotations/${annId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bbox: ann.bbox, data: ann.data }),
+    }).catch(() => {});
+  }, [annotations, isDemo]);
 
   const HANDLE = 8; // corner handle size in pixels
 
@@ -1603,6 +1686,26 @@ export default memo(function AnnotationOverlay({
             const selIsAreaPolygon = selAnn.source === "takeoff"
               && (selAnn.data as any)?.type === "area-polygon";
 
+            // Vertex drag for selected area polygons (Bug 2). Runs BEFORE
+            // any other click handling so pointer-down near a vertex claims
+            // the click and enters drag mode. Uses the same HANDLE size as
+            // bbox corner handles.
+            if (selIsAreaPolygon) {
+              const polyData = selAnn.data as unknown as AreaPolygonData;
+              for (let i = 0; i < polyData.vertices.length; i++) {
+                const vx = polyData.vertices[i].x * width;
+                const vy = polyData.vertices[i].y * height;
+                if (Math.abs(pos.x - vx) < HANDLE && Math.abs(pos.y - vy) < HANDLE) {
+                  e.stopPropagation();
+                  const handle = { annId: selAnn.id, idx: i };
+                  setDraggingVertex(handle);
+                  draggingVertexRef.current = handle;
+                  setDragging(true);
+                  return;
+                }
+              }
+            }
+
             if (!selIsAreaPolygon) {
               const corners = {
                 tl: { x: minX * width, y: minY * height },
@@ -1813,6 +1916,54 @@ export default memo(function AnnotationOverlay({
         setDrawEnd(getPos(e));
         return;
       }
+      // Vertex drag (Bug 2). Runs before bbox drag since draggingVertex and
+      // selectedId are both set. Early return so the bbox path doesn't also
+      // execute.
+      if (dragging && draggingVertexRef.current) {
+        const pos = getPos(e);
+        const dv = draggingVertexRef.current;
+        const ann = pageAnnotations.find((a) => a.id === dv.annId);
+        if (!ann) return;
+        const data = ann.data as unknown as AreaPolygonData;
+        if (!data.vertices || dv.idx >= data.vertices.length) return;
+        const newX = Math.max(0, Math.min(1, pos.x / width));
+        const newY = Math.max(0, Math.min(1, pos.y / height));
+        const newVertices = data.vertices.map((v, i) =>
+          i === dv.idx ? { x: newX, y: newY } : v,
+        );
+        // Recompute bbox from new vertices
+        const xs = newVertices.map((v) => v.x);
+        const ys = newVertices.map((v) => v.y);
+        const newBboxVtx: [number, number, number, number] = [
+          Math.min(...xs), Math.min(...ys),
+          Math.max(...xs), Math.max(...ys),
+        ];
+        // Recompute net area if this page is calibrated. Subtracts holes.
+        let newAreaSqUnits = data.areaSqUnits;
+        const cal = scaleCalibrations[ann.pageNumber];
+        if (cal) {
+          const outerArea = computeRealArea(newVertices, width, height, cal);
+          let holesArea = 0;
+          for (const hole of data.holes ?? []) {
+            if (hole.vertices && hole.vertices.length >= 3) {
+              holesArea += computeRealArea(hole.vertices, width, height, cal);
+            }
+          }
+          newAreaSqUnits = Math.max(0, outerArea - holesArea);
+        }
+        const updatedData = { ...data, vertices: newVertices, areaSqUnits: newAreaSqUnits };
+        // rAF-throttle — matches the bbox-drag pattern below.
+        cancelAnimationFrame(rafRef.current);
+        const id = ann.id;
+        rafRef.current = requestAnimationFrame(() => {
+          updateAnnotation(id, {
+            bbox: newBboxVtx,
+            data: updatedData as unknown as Record<string, unknown>,
+          });
+        });
+        return;
+      }
+
       if (dragging && selectedId !== null) {
         const pos = getPos(e);
         const ann = pageAnnotations.find((a) => a.id === selectedId);
@@ -1857,10 +2008,22 @@ export default memo(function AnnotationOverlay({
         });
       }
     },
-    [dragging, selectedId, dragOffset, resizeCorner, pageAnnotations, width, height, getPos, updateAnnotation, polygonDrawingMode, setDrawEnd, setMousePos]
+    [dragging, selectedId, dragOffset, resizeCorner, pageAnnotations, width, height, getPos, updateAnnotation, polygonDrawingMode, setDrawEnd, setMousePos, scaleCalibrations]
   );
 
   const handleMouseUp = useCallback(async () => {
+    // Vertex drag end (Bug 2). Runs before bbox-drag end — both conditions
+    // could be true (dragging && selectedId) but vertex drag needs a
+    // different persistence path (bbox + data) vs bbox-only.
+    if (dragging && draggingVertexRef.current) {
+      const annId = draggingVertexRef.current.annId;
+      setDragging(false);
+      setDraggingVertex(null);
+      draggingVertexRef.current = null;
+      saveVertexEdit(annId);
+      return;
+    }
+
     // Save dragged/resized position
     if (dragging && selectedId !== null) {
       setDragging(false);
@@ -1948,7 +2111,7 @@ export default memo(function AnnotationOverlay({
     setMarkupName("");
     setMarkupNote("");
     setTimeout(() => nameInputRef.current?.focus(), 50);
-  }, [dragging, selectedId, saveDragPosition, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setTableParseRegion, setDrawing]);
+  }, [dragging, selectedId, saveDragPosition, saveVertexEdit, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setTableParseRegion, setDrawing]);
 
   const handleDoubleClick = useCallback(() => {
     // Close polygon or linear polyline on double-click
