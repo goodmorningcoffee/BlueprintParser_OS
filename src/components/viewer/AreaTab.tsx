@@ -92,6 +92,13 @@ export default function AreaTab() {
   const [newGroupName, setNewGroupName] = useState("");
   const [groupError, setGroupError] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  // Bug 3: which area items have their instance list expanded
+  const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
+  const toggleItemExpanded = (id: number) => setExpandedItems((s) => {
+    const next = new Set(s);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const areaItems = useMemo(() => takeoffItems.filter((i) => i.shape === "polygon"), [takeoffItems]);
   const areaGroups = useMemo(() => takeoffGroups.filter((g) => g.kind === "area"), [takeoffGroups]);
@@ -111,10 +118,51 @@ export default function AreaTab() {
       const dim = pageDimensions[ann.pageNumber];
       const cal = scaleCalibrations[ann.pageNumber];
       if (vertices && dim && cal) {
-        map[itemId].totalArea += computeRealArea(vertices, dim.width, dim.height, cal);
+        // Subtract hole areas so courtyards don't inflate the total.
+        const outerArea = computeRealArea(vertices, dim.width, dim.height, cal);
+        let holesArea = 0;
+        for (const hole of (((data as any).holes ?? []) as { vertices: { x: number; y: number }[] }[])) {
+          if (hole.vertices && hole.vertices.length >= 3) {
+            holesArea += computeRealArea(hole.vertices, dim.width, dim.height, cal);
+          }
+        }
+        map[itemId].totalArea += Math.max(0, outerArea - holesArea);
       } else {
         map[itemId].hasCalibration = false;
       }
+    }
+    return map;
+  }, [annotations, pageDimensions, scaleCalibrations]);
+
+  // Per-item instance list for the expand-on-click hierarchy (Bug 3).
+  const areaInstances = useMemo(() => {
+    const map: Record<number, Array<{ annId: number; pageNumber: number; area: number; hasCal: boolean }>> = {};
+    for (const ann of annotations) {
+      if (ann.source !== "takeoff" || !ann.data) continue;
+      const data = ann.data as any;
+      if (data.type !== "area-polygon") continue;
+      const itemId = data.takeoffItemId as number;
+      if (!itemId) continue;
+      if (!map[itemId]) map[itemId] = [];
+      const dim = pageDimensions[ann.pageNumber];
+      const cal = scaleCalibrations[ann.pageNumber];
+      let area = 0;
+      let hasCal = false;
+      if (cal && dim && data.vertices) {
+        const outer = computeRealArea(data.vertices, dim.width, dim.height, cal);
+        let holesArea = 0;
+        for (const hole of ((data.holes ?? []) as { vertices: { x: number; y: number }[] }[])) {
+          if (hole.vertices && hole.vertices.length >= 3) {
+            holesArea += computeRealArea(hole.vertices, dim.width, dim.height, cal);
+          }
+        }
+        area = Math.max(0, outer - holesArea);
+        hasCal = true;
+      }
+      map[itemId].push({ annId: ann.id, pageNumber: ann.pageNumber, area, hasCal });
+    }
+    for (const key of Object.keys(map)) {
+      map[Number(key)].sort((a, b) => a.pageNumber - b.pageNumber || b.area - a.area);
     }
     return map;
   }, [annotations, pageDimensions, scaleCalibrations]);
@@ -265,6 +313,8 @@ export default function AreaTab() {
   const renderAreaItem = (item: ClientTakeoffItem, moveDropdown: React.ReactNode) => {
     const s = areaSummaries[item.id];
     const isActive = activeTakeoffItemId === item.id;
+    const instances = areaInstances[item.id] ?? [];
+    const isExpanded = expandedItems.has(item.id);
     return (
       <div>
         <div
@@ -276,6 +326,16 @@ export default function AreaTab() {
           className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors ${isActive ? "ring-1 ring-[var(--accent)]" : "hover:bg-[var(--surface-hover)]"}`}
           style={isActive ? { backgroundColor: item.color + "20" } : undefined}
         >
+          {/* Expand chevron: toggles per-instance list. Only visible when
+              the item has polygons; click stops propagation so activation
+              doesn't fire. */}
+          <button
+            onClick={(e) => { e.stopPropagation(); if (instances.length > 0) toggleItemExpanded(item.id); }}
+            className="text-[var(--muted)] w-3 shrink-0 text-left"
+            title={instances.length > 0 ? (isExpanded ? "Collapse instances" : "Expand instances") : undefined}
+          >
+            {instances.length > 0 ? (isExpanded ? "\u25BE" : "\u25B8") : ""}
+          </button>
           <ColorDot color={item.color} />
           {editingId === item.id ? (
             <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
@@ -296,6 +356,28 @@ export default function AreaTab() {
           <button onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
             className="text-[10px] text-red-400/40 opacity-50 group-hover:opacity-100 hover:text-red-400" title="Delete item and all polygons">x</button>
         </div>
+        {isExpanded && instances.length > 0 && (
+          <div className="ml-5 border-l border-[var(--border)] pl-2">
+            {instances.map((inst, idx) => (
+              <div
+                key={inst.annId}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useViewerStore.getState().setPage(inst.pageNumber);
+                  useViewerStore.getState().setFocusAnnotationId(inst.annId);
+                }}
+                className="flex items-center gap-2 px-2 py-0.5 text-[11px] rounded cursor-pointer hover:bg-[var(--surface-hover)]"
+                title={`Go to page ${inst.pageNumber}`}
+              >
+                <span className="text-[var(--muted)] w-6 shrink-0">#{idx + 1}</span>
+                <span className="flex-1 text-[var(--muted)]">p{inst.pageNumber}</span>
+                <span className="text-[var(--muted)] tabular-nums">
+                  {inst.hasCal ? `${inst.area.toFixed(1)}` : "\u2014"}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         {editPanelId === item.id && (
           <TakeoffEditPanel item={item}
             onSave={async (updates) => { updateTakeoffItem(item.id, updates); if (!isDemo) { await fetch(`/api/takeoff-items/${item.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) }); } }}

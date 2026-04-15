@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
-import { eq, and, gte, lte, isNull } from "drizzle-orm";
+import { eq, and, gte, lte, isNull, or } from "drizzle-orm";
 import type { ClientAnnotation } from "@/types";
 
 /**
@@ -96,7 +96,13 @@ export async function GET(
         eq(annotations.projectId, project.id),
         gte(annotations.pageNumber, from),
         lte(annotations.pageNumber, to),
-        isNull(annotations.creatorId),
+        // Show project-scoped annotations (null creator) OR YOLO annotations.
+        // YOLO annotations are inserted with the running user's creator_id by
+        // /api/yolo/load, but they're conceptually project-scoped — they
+        // represent model detections, not user markups. For demo users (who
+        // are read-only), show all YOLO regardless of who ran the model, so
+        // the YOLO toolbar button and tag-mapping UI are discoverable.
+        or(isNull(annotations.creatorId), eq(annotations.source, "yolo")),
       )
     );
 

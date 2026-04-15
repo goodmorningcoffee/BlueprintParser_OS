@@ -47,6 +47,13 @@ export default function TakeoffPanel() {
   // ─── All-Takeoffs grouped data ────────────────────────────
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const toggleGroup = (group: string) => setCollapsedGroups((s) => ({ ...s, [group]: !s[group] }));
+  // Expanded-item state: which area items have their instance list open
+  const [expandedAreaItems, setExpandedAreaItems] = useState<Set<number>>(new Set());
+  const toggleAreaItem = (id: number) => setExpandedAreaItems((s) => {
+    const next = new Set(s);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const allSummary = useMemo(() => {
     const counts: Record<number, { count: number; pages: Set<number> }> = {};
@@ -70,7 +77,19 @@ export default function TakeoffPanel() {
         const vertices = (data as AreaPolygonData).vertices;
         const dim = pageDimensions[ann.pageNumber];
         const cal = scaleCalibrations[ann.pageNumber];
-        if (vertices && dim && cal) areas[itemId].totalArea += computeRealArea(vertices, dim.width, dim.height, cal);
+        if (vertices && dim && cal) {
+          // Subtract hole areas so courtyards inside U-shaped hallways don't
+          // inflate the total. Matches what the preview/render loop produces
+          // via fill-rule="evenodd".
+          const outerArea = computeRealArea(vertices, dim.width, dim.height, cal);
+          let holesArea = 0;
+          for (const hole of (((data as any).holes ?? []) as { vertices: { x: number; y: number }[] }[])) {
+            if (hole.vertices && hole.vertices.length >= 3) {
+              holesArea += computeRealArea(hole.vertices, dim.width, dim.height, cal);
+            }
+          }
+          areas[itemId].totalArea += Math.max(0, outerArea - holesArea);
+        }
       } else if (data.type === "linear-polyline") {
         if (!linears[itemId]) linears[itemId] = { totalLength: 0, lineCount: 0, pages: new Set() };
         linears[itemId].lineCount++;
@@ -79,6 +98,41 @@ export default function TakeoffPanel() {
       }
     }
     return { counts, areas, linears };
+  }, [annotations, pageDimensions, scaleCalibrations]);
+
+  // Per-item area instance list for the expand-on-click hierarchy (Bug 3).
+  // Lists each polygon annotation with its page number and net area so the
+  // user can click an instance to navigate to it.
+  const areaInstances = useMemo(() => {
+    const map: Record<number, Array<{ annId: number; pageNumber: number; area: number; hasCal: boolean }>> = {};
+    for (const ann of annotations) {
+      if (ann.source !== "takeoff" || !ann.data) continue;
+      const data = ann.data as any;
+      if (data.type !== "area-polygon") continue;
+      const itemId = data.takeoffItemId as number;
+      if (!itemId) continue;
+      if (!map[itemId]) map[itemId] = [];
+      const dim = pageDimensions[ann.pageNumber];
+      const cal = scaleCalibrations[ann.pageNumber];
+      let area = 0;
+      let hasCal = false;
+      if (cal && dim && data.vertices) {
+        const outer = computeRealArea(data.vertices, dim.width, dim.height, cal);
+        let holesArea = 0;
+        for (const hole of ((data.holes ?? []) as { vertices: { x: number; y: number }[] }[])) {
+          if (hole.vertices && hole.vertices.length >= 3) {
+            holesArea += computeRealArea(hole.vertices, dim.width, dim.height, cal);
+          }
+        }
+        area = Math.max(0, outer - holesArea);
+        hasCal = true;
+      }
+      map[itemId].push({ annId: ann.id, pageNumber: ann.pageNumber, area, hasCal });
+    }
+    for (const key of Object.keys(map)) {
+      map[Number(key)].sort((a, b) => a.pageNumber - b.pageNumber || b.area - a.area);
+    }
+    return map;
   }, [annotations, pageDimensions, scaleCalibrations]);
 
   const countItems = takeoffItems.filter((i) => i.shape !== "polygon" && i.shape !== "linear");
@@ -330,13 +384,49 @@ export default function TakeoffPanel() {
                   </button>
                   {!collapsedGroups.area && areaItems.map((item) => {
                     const s = allSummary.areas[item.id];
+                    const instances = areaInstances[item.id] ?? [];
+                    const isExpanded = expandedAreaItems.has(item.id);
                     return (
-                      <div key={item.id} onClick={() => { useViewerStore.getState().setActiveTakeoffItemId(item.id); setTakeoffTab("area"); }}
-                        className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-[var(--surface-hover)] text-xs">
-                        <ColorDot color={item.color} />
-                        <span className="flex-1 truncate">{item.name}</span>
-                        <span className="text-[var(--muted)]">{s ? `${s.totalArea.toFixed(1)}` : "0"}</span>
-                        {s && <span className="text-[10px] text-[var(--muted)]">{s.pages.size}pg</span>}
+                      <div key={item.id}>
+                        <div
+                          onClick={() => {
+                            // Toggle expand + set as active item. Click on
+                            // the chevron area or item row both expand.
+                            toggleAreaItem(item.id);
+                            useViewerStore.getState().setActiveTakeoffItemId(item.id);
+                            setTakeoffTab("area");
+                          }}
+                          className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-[var(--surface-hover)] text-xs"
+                        >
+                          <span className="text-[var(--muted)] w-3 shrink-0">
+                            {instances.length > 0 ? (isExpanded ? "\u25BE" : "\u25B8") : ""}
+                          </span>
+                          <ColorDot color={item.color} />
+                          <span className="flex-1 truncate">{item.name}</span>
+                          <span className="text-[var(--muted)]">{s ? `${s.totalArea.toFixed(1)}` : "0"}</span>
+                          {s && <span className="text-[10px] text-[var(--muted)]">{s.pages.size}pg</span>}
+                        </div>
+                        {isExpanded && instances.length > 0 && (
+                          <div className="ml-5 border-l border-[var(--border)] pl-2">
+                            {instances.map((inst, idx) => (
+                              <div
+                                key={inst.annId}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  useViewerStore.getState().setPage(inst.pageNumber);
+                                  useViewerStore.getState().setFocusAnnotationId(inst.annId);
+                                }}
+                                className="flex items-center gap-2 px-2 py-0.5 text-[11px] rounded cursor-pointer hover:bg-[var(--surface-hover)]"
+                              >
+                                <span className="text-[var(--muted)] w-6 shrink-0">#{idx + 1}</span>
+                                <span className="flex-1 text-[var(--muted)]">p{inst.pageNumber}</span>
+                                <span className="text-[var(--muted)] tabular-nums">
+                                  {inst.hasCal ? inst.area.toFixed(1) : "\u2014"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
