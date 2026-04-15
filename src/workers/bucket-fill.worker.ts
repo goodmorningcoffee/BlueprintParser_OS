@@ -285,7 +285,7 @@ function floodFill(
 
 // ─── Border tracing (Moore neighbor) ─────────────────────────────
 
-function traceBorder(filled: Uint8Array, w: number, h: number): { x: number; y: number }[] {
+export function traceBorder(filled: Uint8Array, w: number, h: number): { x: number; y: number }[] {
   let startX = -1, startY = -1;
   outer: for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -357,7 +357,7 @@ function douglasPeucker(points: { x: number; y: number }[], epsilon: number): { 
  * neighbor routine used for the outer contour. This is the JS equivalent of
  * OpenCV's RETR_CCOMP hierarchy.
  */
-function findHoleBorders(filled: Uint8Array, w: number, h: number): { x: number; y: number }[][] {
+export function findHoleBorders(filled: Uint8Array, w: number, h: number): { x: number; y: number }[][] {
   // marks: 0 = filled, 1 = outside-reachable-from-edge, 2 = enclosed (hole candidate)
   const marks = new Uint8Array(filled.length);
   for (let i = 0; i < filled.length; i++) marks[i] = filled[i] ? 0 : 2;
@@ -508,7 +508,16 @@ function processFill(req: BucketFillRequest): BucketFillResult {
       retryHistory.push({ dilationRadius: radius, areaFraction: areaRatio, accepted: false, status });
     }
 
-    // First OK result wins — don't keep retrying once we have one.
+    // First OK result wins — break out of the retry loop.
+    //
+    // COUPLING: this is correct only because the retry strategy is
+    // monotonically increasing dilation (radius = base + attempt). More
+    // dilation = thicker walls = smaller fill area, so the FIRST attempt
+    // that lands below the leak threshold is also the LARGEST valid fill
+    // we could get. If someone later changes the retry strategy to
+    // non-monotonic (e.g., tries different tolerances, or varies dilation
+    // up/down), this break is wrong — we might break on a suboptimal OK
+    // result before finding a better one. Revisit if the retry loop changes.
     if (status === "ok") break;
   }
 

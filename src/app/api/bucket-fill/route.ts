@@ -49,6 +49,13 @@ export async function POST(req: Request) {
     return apiError("Invalid seedPoint (must be normalized 0-1)", 400);
   }
 
+  // Belt-and-suspenders clamp. The client worker and Python script also clamp,
+  // but a direct API caller that passes a nonsense value (e.g., leakThreshold=100
+  // meaning "100%" interpreted as a raw fraction) would otherwise pass an
+  // impossible threshold into the picker logic. Clamp to sane bounds at the
+  // boundary so no downstream code has to assume input validity.
+  const clampedLeakThreshold = Math.max(0.05, Math.min(0.95, leakThreshold));
+
   const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
   if (access.error) return access.error;
   const { project } = access;
@@ -89,7 +96,7 @@ export async function POST(req: Request) {
       tolerance,
       dilatePx: dilate,
       simplifyEpsilon,
-      leakThreshold,
+      leakThreshold: clampedLeakThreshold,
       barriers,
       polygonBarriers,
     });

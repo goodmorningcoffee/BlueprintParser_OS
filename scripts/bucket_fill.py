@@ -42,11 +42,12 @@ def raster_fill(config):
     dilate_px = int(config.get("dilate_px", 3))
     simplify_epsilon = float(config.get("simplify_epsilon", 0.005))
     # leak_threshold: max accepted net area as a fraction of the page.
-    # Default matches the client worker's retry threshold so the two paths
-    # agree. Previously this was hardcoded at 0.40 (server) while the worker
-    # used 0.25 — two different behaviors for the same user action. The
-    # user-facing slider now controls both.
-    leak_threshold = float(config.get("leak_threshold", 0.25))
+    # Default stays at 0.40 for back-compat with direct API callers that
+    # don't know about the slider. The BlueprintParser UI passes 0.25 (the
+    # client worker's matching default) via the Leak Threshold slider, so
+    # the UI path is unchanged. Direct /api/bucket-fill callers that were
+    # relying on the old 0.40 permissive default still get it.
+    leak_threshold = float(config.get("leak_threshold", 0.40))
     barriers = config.get("barriers", [])
 
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
@@ -132,25 +133,31 @@ def raster_fill(config):
     total_px = w * h
 
     # Walk the hole chain for the chosen outer contour.
+    # The area accumulation ALWAYS runs when ha > 0 (even for simplified
+    # polygons that are too small to render) so the net-area calc is
+    # accurate. Only the renderable polygon is gated by len >= 3.
     holes_data = []
     hole_area_px = 0.0
     child_idx = hier[outer_idx][2]  # first_child, or -1 if no holes
     while child_idx >= 0:
         hc = contours[child_idx]
         ha = cv2.contourArea(hc)
-        # Skip degenerate holes (zero area from quantization).
         if ha > 0:
             hole_area_px += ha
             h_perim = cv2.arcLength(hc, True)
             h_eps = simplify_epsilon * h_perim
             h_simp = cv2.approxPolyDP(hc, h_eps, True)
-            holes_data.append({
-                "vertices": [
-                    {"x": round(float(pt[0][0]) / w, 6), "y": round(float(pt[0][1]) / h, 6)}
-                    for pt in h_simp
-                ],
-                "areaFraction": round(ha / total_px, 6),
-            })
+            # Drop degenerate holes that simplify below 3 vertices — renderer
+            # would skip them anyway, but returning invalid polygons pollutes
+            # downstream consumers (debug UI, annotation commit).
+            if len(h_simp) >= 3:
+                holes_data.append({
+                    "vertices": [
+                        {"x": round(float(pt[0][0]) / w, 6), "y": round(float(pt[0][1]) / h, 6)}
+                        for pt in h_simp
+                    ],
+                    "areaFraction": round(ha / total_px, 6),
+                })
         child_idx = hier[child_idx][0]  # next sibling
 
     # Net area subtracts holes so a hallway wrapping a courtyard reports the

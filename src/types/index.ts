@@ -209,6 +209,11 @@ export interface AreaPolygonData {
   takeoffItemId: number;
   color: string;
   vertices: { x: number; y: number }[];
+  /** Inner holes (e.g., courtyards inside a U-shaped hallway). Optional for
+   *  back-compat with existing annotations created before hole support. When
+   *  present, rendered via ctx.fill("evenodd") as cutouts and excluded from
+   *  hit tests so clicks on the hole region don't select the polygon. */
+  holes?: { vertices: { x: number; y: number }[] }[];
   areaSqUnits: number;
   unit: AreaUnitSq;
 }
