@@ -11,12 +11,13 @@ import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { getS3Url, downloadFromS3 } from "@/lib/s3";
+import { getS3Url, downloadFromS3, uploadToS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
-import { writeFile, rm, mkdtemp } from "fs/promises";
+import { readFile, writeFile, rm, mkdtemp } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { templateMatch } from "@/lib/template-match";
+import { isLambdaCvEnabled, fanOutTemplateMatch } from "@/lib/lambda-cv";
 import type { TemplateMatchProgress, SymbolSearchMatch } from "@/types";
 import { logger } from "@/lib/logger";
 
@@ -129,8 +130,104 @@ cv2.imwrite(cfg["dst"], crop)
       JSON.stringify({ src: sourcePagePath, dst: templatePath, x: cropX, y: cropY, w: cropW, h: cropH }),
     ], { timeout: 10000 });
 
-    // ─── Load all target pages (parallel, 4 at a time) ───────
-    // Try S3 pre-rendered PNGs first, fall back to rasterization from PDF
+    // ─── Lambda path: fan out across Lambda workers ─────────
+    if (isLambdaCvEnabled()) {
+      try {
+        const templateBuffer = await readFile(templatePath);
+        const pageS3Keys = pageNumbers.map(
+          (n) => `${project.dataUrl}/pages/page_${String(n).padStart(4, "0")}.png`
+        );
+
+        const scales: number[] = [];
+        for (let s = scaleMin; s <= scaleMax + 0.001; s += 0.1) {
+          scales.push(Math.round(s * 100) / 100);
+        }
+        if (scales.length === 0) scales.push(1.0);
+
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          async start(controller) {
+            try {
+              controller.enqueue(encoder.encode(JSON.stringify({
+                type: "progress", page: 0, pageIndex: 0,
+                totalPages: pageNumbers.length, matches: 0,
+                message: `Dispatching to Lambda workers...`,
+              }) + "\n"));
+
+              const { results, failedPages } = await fanOutTemplateMatch({
+                templateBuffer,
+                pageS3Keys,
+                config: {
+                  confidence_threshold: confidenceThreshold,
+                  multi_scale: multiScale,
+                  use_sift_fallback: useSiftFallback,
+                  scales,
+                  nms_iou_threshold: nmsThreshold,
+                  max_matches_per_page: maxMatchesPerPage,
+                },
+                onBatchComplete: (batchIdx, matchCount) => {
+                  const totalBatches = Math.ceil(pageNumbers.length / 5);
+                  controller.enqueue(encoder.encode(JSON.stringify({
+                    type: "progress", page: 0,
+                    pageIndex: Math.min((batchIdx + 1) * 5, pageNumbers.length),
+                    totalPages: pageNumbers.length,
+                    matches: matchCount,
+                    message: `Batch ${batchIdx + 1}/${totalBatches} complete`,
+                  }) + "\n"));
+                },
+              });
+
+              const pageKeyToNumber: Record<string, number> = {};
+              for (const n of pageNumbers) {
+                pageKeyToNumber[`${project.dataUrl}/pages/page_${String(n).padStart(4, "0")}.png`] = n;
+              }
+
+              const matches: SymbolSearchMatch[] = results.map((r, i) => ({
+                id: `sm-${Date.now()}-${i}`,
+                pageNumber: pageKeyToNumber[r.pageS3Key] ?? 0,
+                bbox: r.bbox,
+                confidence: r.confidence,
+                method: r.method,
+              }));
+
+              const pagesWithMatches = [...new Set(matches.map((m) => m.pageNumber))].sort((a, b) => a - b);
+
+              const done = JSON.stringify({
+                type: "done",
+                templateBbox: [templateBbox.x, templateBbox.y, templateBbox.w, templateBbox.h],
+                sourcePageNumber,
+                totalMatches: matches.length,
+                pagesWithMatches,
+                matches,
+                searchedAt: new Date().toISOString(),
+                ...(failedPages.length > 0 && { failedPages }),
+              });
+              controller.enqueue(encoder.encode(done + "\n"));
+            } catch (err) {
+              controller.enqueue(encoder.encode(JSON.stringify({
+                type: "error",
+                message: err instanceof Error ? err.message : "Lambda symbol search failed",
+              }) + "\n"));
+            } finally {
+              controller.close();
+              await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+            }
+          },
+        });
+
+        return new Response(stream, {
+          headers: {
+            "Content-Type": "application/x-ndjson",
+            "Transfer-Encoding": "chunked",
+            "Cache-Control": "no-cache",
+          },
+        });
+      } catch (err) {
+        logger.warn("[SYMBOL_SEARCH] Lambda path failed, falling back to local:", err);
+      }
+    }
+
+    // ─── Local path: download pages and run Python subprocess ──
     const targetPaths: string[] = [];
     const pageMap: number[] = []; // index -> pageNumber
 
@@ -176,13 +273,11 @@ cv2.imwrite(cfg["dst"], crop)
       return apiError("No page images available", 500);
     }
 
-    // ─── Run template matching engine ────────────────────────
     // Stream results as NDJSON
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          // Build scale list from min/max range (0.1 step to keep it fast)
           const scales: number[] = [];
           for (let s = scaleMin; s <= scaleMax + 0.001; s += 0.1) {
             scales.push(Math.round(s * 100) / 100);
@@ -216,7 +311,6 @@ cv2.imwrite(cfg["dst"], crop)
             }
           );
 
-          // Map results to page numbers and build SymbolSearchMatches
           const matches: SymbolSearchMatch[] = result.results.map((r, i) => ({
             id: `sm-${Date.now()}-${i}`,
             pageNumber: pageMap[r.targetIndex] ?? 0,
@@ -247,7 +341,6 @@ cv2.imwrite(cfg["dst"], crop)
           controller.enqueue(encoder.encode(errMsg + "\n"));
         } finally {
           controller.close();
-          // Cleanup temp dir
           await rm(tempDir, { recursive: true, force: true }).catch(() => {});
         }
       },
