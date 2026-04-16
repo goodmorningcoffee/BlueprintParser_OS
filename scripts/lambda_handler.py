@@ -28,12 +28,10 @@ TMP = "/tmp"
 
 
 def download_s3(bucket, key, local_path):
-    """Download an S3 object to a local path."""
     s3.download_file(bucket, key, local_path)
 
 
 def upload_json(bucket, key, data):
-    """Upload a JSON object to S3."""
     s3.put_object(
         Bucket=bucket,
         Key=key,
@@ -43,7 +41,6 @@ def upload_json(bucket, key, data):
 
 
 def clean_tmp():
-    """Remove all files from /tmp to free ephemeral storage between invocations."""
     for f in os.listdir(TMP):
         path = os.path.join(TMP, f)
         if os.path.isfile(path) and f != "runtime":
@@ -53,32 +50,17 @@ def clean_tmp():
                 pass
 
 
-def handle_template_match(event):
+def process_pages(event, worker_fn):
     """
-    Download template + page PNGs from S3, run template matching, upload results.
+    Generic page processor.
 
-    process_target(template_gray, target_path, config) takes:
-      - template_gray: numpy array (grayscale image)
-      - target_path: str (file path to target image)
-      - config: dict with matching parameters
-    Returns list of tuples: (nx, ny, nw, nh, confidence, method, scale) — LTWH normalized.
+    worker_fn(page_path) → list of result dicts, each with at least bbox/confidence fields.
+    Downloads pages from S3, calls worker_fn, collects results, uploads JSON.
     """
     bucket = event["s3_bucket"]
-    template_key = event["template_s3_key"]
     page_keys = event["page_s3_keys"]
     result_key = event["result_s3_key"]
-    config = event.get("config", {})
-
-    template_path = os.path.join(TMP, "template.png")
-    download_s3(bucket, template_key, template_path)
-
-    template_gray = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-    if template_gray is None:
-        return {
-            "status": "error",
-            "error": f"Failed to load template from s3://{bucket}/{template_key}",
-            "match_count": 0,
-        }
+    action = event.get("action", "unknown")
 
     all_results = []
     pages_processed = 0
@@ -89,22 +71,17 @@ def handle_template_match(event):
         page_path = os.path.join(TMP, f"page_{i:04d}.png")
         try:
             download_s3(bucket, page_key, page_path)
-            hits = process_target(template_gray, page_path, config)
+            hits = worker_fn(page_path)
 
             for h in hits:
-                all_results.append({
-                    "page_s3_key": page_key,
-                    "page_index": i,
-                    "bbox": [round(h[0], 6), round(h[1], 6), round(h[2], 6), round(h[3], 6)],
-                    "confidence": round(h[4], 4),
-                    "method": h[5],
-                    "scale": round(h[6], 3),
-                })
+                h["page_s3_key"] = page_key
+                h["page_index"] = i
+            all_results.extend(hits)
             pages_processed += 1
         except Exception as e:
             pages_failed += 1
             errors.append(f"Page {page_key}: {e}")
-            print(f"[lambda] template_match failed for {page_key}: {e}", file=sys.stderr)
+            print(f"[lambda] {action} failed for {page_key}: {e}", file=sys.stderr)
         finally:
             try:
                 os.remove(page_path)
@@ -112,65 +89,11 @@ def handle_template_match(event):
                 pass
 
     upload_json(bucket, result_key, {
-        "action": "template_match",
+        "action": action,
         "results": all_results,
         "pages_processed": pages_processed,
         "pages_failed": pages_failed,
-        "errors": errors,
-    })
-
-    return {
-        "status": "success" if pages_failed == 0 else "partial",
-        "match_count": len(all_results),
-        "pages_processed": pages_processed,
-        "pages_failed": pages_failed,
-        "result_s3_key": result_key,
-    }
-
-
-def handle_shape_parse(event):
-    """
-    Download page PNGs from S3, run keynote extraction, upload results.
-
-    extract_keynotes_main(img_path) takes a file path string.
-    Returns list of dicts: {"shape", "bbox": [l,t,r,b], "text", "contour"} — MinMax normalized.
-    """
-    bucket = event["s3_bucket"]
-    page_keys = event["page_s3_keys"]
-    result_key = event["result_s3_key"]
-
-    all_results = []
-    pages_processed = 0
-    pages_failed = 0
-    errors = []
-
-    for i, page_key in enumerate(page_keys):
-        page_path = os.path.join(TMP, f"page_{i:04d}.png")
-        try:
-            download_s3(bucket, page_key, page_path)
-            keynotes = extract_keynotes_main(page_path)
-
-            for k in keynotes:
-                k["page_s3_key"] = page_key
-                k["page_index"] = i
-            all_results.extend(keynotes)
-            pages_processed += 1
-        except Exception as e:
-            pages_failed += 1
-            errors.append(f"Page {page_key}: {e}")
-            print(f"[lambda] shape_parse failed for {page_key}: {e}", file=sys.stderr)
-        finally:
-            try:
-                os.remove(page_path)
-            except OSError:
-                pass
-
-    upload_json(bucket, result_key, {
-        "action": "shape_parse",
-        "results": all_results,
-        "pages_processed": pages_processed,
-        "pages_failed": pages_failed,
-        "errors": errors,
+        "errors": errors[:50],
     })
 
     return {
@@ -203,14 +126,40 @@ def handler(event, context):
         clean_tmp()
 
         if action == "template_match":
-            result = handle_template_match(event)
+            bucket = event["s3_bucket"]
+            config = event.get("config", {})
+            template_path = os.path.join(TMP, "template.png")
+            download_s3(bucket, event["template_s3_key"], template_path)
+
+            template_gray = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+            if template_gray is None:
+                return {
+                    "status": "error",
+                    "error": f"Failed to load template from s3://{bucket}/{event['template_s3_key']}",
+                }
+
+            def match_worker(page_path):
+                hits = process_target(template_gray, page_path, config)
+                return [
+                    {
+                        "bbox": [round(h[0], 6), round(h[1], 6), round(h[2], 6), round(h[3], 6)],
+                        "confidence": round(h[4], 4),
+                        "method": h[5],
+                        "scale": round(h[6], 3),
+                    }
+                    for h in hits
+                ]
+
+            result = process_pages(event, match_worker)
+
         elif action == "shape_parse":
-            result = handle_shape_parse(event)
+            def parse_worker(page_path):
+                return extract_keynotes_main(page_path)
+
+            result = process_pages(event, parse_worker)
+
         else:
-            return {
-                "status": "error",
-                "error": f"Unknown action: {action}",
-            }
+            return {"status": "error", "error": f"Unknown action: {action}"}
 
         result["elapsed_ms"] = int((time.time() - start) * 1000)
         return result
