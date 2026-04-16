@@ -774,8 +774,11 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   takeoffTab: "count",
   setTakeoffTab: (takeoffTab) => set({ takeoffTab }),
   pageDimensions: {},
-  setPageDimensions: (pageNum, width, height) =>
-    set((s) => ({ pageDimensions: { ...s.pageDimensions, [pageNum]: { width, height } } })),
+  setPageDimensions: (pageNum, width, height) => {
+    const existing = get().pageDimensions[pageNum];
+    if (existing && existing.width === width && existing.height === height) return;
+    set((s) => ({ pageDimensions: { ...s.pageDimensions, [pageNum]: { width, height } } }));
+  },
   scaleCalibrations: {},
   setScaleCalibration: (pageNum, cal) =>
     set((s) => ({ scaleCalibrations: { ...s.scaleCalibrations, [pageNum]: cal } })),

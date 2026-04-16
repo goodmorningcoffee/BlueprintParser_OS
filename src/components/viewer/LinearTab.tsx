@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
@@ -61,7 +61,7 @@ function ScaleStatus() {
 }
 
 // ─── Linear tab main component ─────────────────────────────
-export default function LinearTab() {
+export default memo(function LinearTab() {
   const annotations = useViewerStore((s) => s.annotations);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
   const addTakeoffItem = useViewerStore((s) => s.addTakeoffItem);
@@ -398,4 +398,4 @@ export default function LinearTab() {
       )}
     </>
   );
-}
+})
