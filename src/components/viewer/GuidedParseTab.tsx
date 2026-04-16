@@ -128,12 +128,18 @@ export default function GuidedParseTab({
     useViewerStore.getState().setTableParseMeta(null);
     setTableParseStep("review");
 
-    // Save via shared detectCsiAndPersist
-    await detectCsiAndPersist({
-      headers: result.headers,
-      rows: result.rows,
-      tableName: `Table p.${pageNumber}`,
-    });
+    // Save via shared detectCsiAndPersist — surface PATCH failures to the
+    // user via the local error state so we don't silently lose the parse.
+    try {
+      await detectCsiAndPersist({
+        headers: result.headers,
+        rows: result.rows,
+        tableName: `Table p.${pageNumber}`,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+      return;
+    }
 
     resetGuidedParse();
     setParsed(true);

@@ -806,7 +806,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       bucketFillBarrierMode: false,
       bucketFillPendingPolygon: null,
       ...(bucketFillActive
-        ? { splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null }
+        ? { splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null, tempPanMode: false }
         : { bucketFillBarriers: [] }),
     }),
   bucketFillPreview: null,

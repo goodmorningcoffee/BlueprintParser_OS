@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages, annotations } from "@/lib/db/schema";
-import { and, gte, lte, eq } from "drizzle-orm";
+import { and, gte, lte, eq, or } from "drizzle-orm";
 import type { ClientAnnotation } from "@/types";
 
 /**
@@ -60,7 +60,13 @@ export async function GET(
           eq(annotations.projectId, project.id),
           gte(annotations.pageNumber, from),
           lte(annotations.pageNumber, to),
-          eq(annotations.creatorId, session!.user.dbId),
+          // YOLO annotations are project-scoped — show them to every member
+          // regardless of who ran /api/yolo/load. Other sources (user, takeoff,
+          // takeoff-scale) stay per-creator for per-user isolation.
+          or(
+            eq(annotations.creatorId, session!.user.dbId),
+            eq(annotations.source, "yolo"),
+          ),
         )
       ),
   ]);

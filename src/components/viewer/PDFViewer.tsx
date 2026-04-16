@@ -275,8 +275,17 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     if (!dim) return;
 
     if (intent === "center") {
+      // The inner scroll content has paddingLeft: 25vw and paddingTop: 50vh
+      // (inline style at PDFViewer.tsx:577-578, which overrides the p-4 class).
+      // Scrolling to those offsets lands the page at the top-left of the viewport.
+      // For horizontal: at scale=1 the page width ≈ containerWidth-32, so
+      // scrollLeft = 25vw approximately centers it (off by up to 16px of slack).
+      // For vertical: we additionally center the page within the container when
+      // it fits, and clamp to the page top when it overflows.
       container.scrollLeft = window.innerWidth * 0.25;
-      container.scrollTop = window.innerHeight * 0.5;
+      const pageTopY = window.innerHeight * 0.5;
+      const gap = dim.height - container.clientHeight;
+      container.scrollTop = gap <= 0 ? pageTopY + gap / 2 : pageTopY;
     } else {
       container.scrollLeft = intent.scrollLeft;
       container.scrollTop = intent.scrollTop;
@@ -285,7 +294,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     pendingRestoreRef.current = null;
   }, [pdfDoc, restorePageDimensions]);
 
-  // Persist viewport to localStorage on scroll / scale / page changes.
+  // Persist viewport to the in-memory session map on scroll / scale / page
+  // changes (see viewer-state.ts — storage is per-tab and resets on refresh).
   // The flush-on-cleanup is gated on "store still has this project's publicId"
   // so that the A→B re-use path (where PDFViewer stays mounted and
   // resetProjectData() has already zeroed the store) skips the flush and
