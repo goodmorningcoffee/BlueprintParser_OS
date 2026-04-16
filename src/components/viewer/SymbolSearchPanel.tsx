@@ -279,6 +279,11 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
           <div className="text-[10px] text-[var(--muted)] mt-3">
             Click and drag on the blueprint to select.
           </div>
+          <div className="text-[9px] text-[var(--muted)]/50 mt-4 leading-relaxed">
+            Uses OpenCV template matching (TM_CCOEFF_NORMED) with multi-scale
+            search, plus optional SIFT+RANSAC fallback for rotation-invariant
+            detection.
+          </div>
         </div>
       )}
 
@@ -593,6 +598,57 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
 
           {/* Bottom actions */}
           <div className="px-3 py-2 border-t border-[var(--border)] space-y-1">
+            {visibleMatches.length > 0 && (
+              <button
+                onClick={async () => {
+                  const store = useViewerStore.getState();
+                  const { publicId, isDemo } = store;
+                  if (!publicId || isDemo) return;
+                  try {
+                    const annInputs = visibleMatches.map((m) => ({
+                      pageNumber: m.pageNumber,
+                      name: "symbol-match",
+                      bbox: [m.bbox[0], m.bbox[1], m.bbox[0] + m.bbox[2], m.bbox[1] + m.bbox[3]] as [number, number, number, number],
+                      source: "symbol-search",
+                      threshold: m.confidence,
+                      data: {
+                        modelName: "symbol-search",
+                        method: m.method,
+                        confidence: m.confidence,
+                        scale: (m as any).scale ?? 1,
+                        templateSourcePage: symbolSearchResults?.sourcePageNumber,
+                      },
+                    }));
+                    const pageNums = [...new Set(annInputs.map((a) => a.pageNumber))];
+                    const res = await fetch("/api/annotations", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        projectId: publicId,
+                        annotations: annInputs,
+                        deleteSource: "symbol-search",
+                        deletePageNumbers: pageNums,
+                      }),
+                    });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+                    if (data.annotations) {
+                      const current = store.annotations;
+                      const cleaned = current.filter((a) => !(a.source === "symbol-search" && pageNums.includes(a.pageNumber)));
+                      store.setAnnotations([...cleaned, ...data.annotations]);
+                    }
+                  } catch (err) {
+                    console.error("[SYMBOL_SEARCH] Save failed:", err);
+                    useViewerStore.getState().setSymbolSearchError(
+                      err instanceof Error ? err.message : "Save failed"
+                    );
+                  }
+                }}
+                className="w-full text-[9px] px-2 py-1 rounded border border-green-500/40 text-green-300 bg-green-500/5 hover:bg-green-500/10"
+              >
+                Save {visibleMatches.length} matches as annotations
+              </button>
+            )}
             <button
               onClick={runSearch}
               className="w-full text-[9px] px-2 py-1 rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"

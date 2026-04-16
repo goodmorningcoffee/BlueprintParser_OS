@@ -66,6 +66,8 @@ export async function GET(
           or(
             eq(annotations.creatorId, session!.user.dbId),
             eq(annotations.source, "yolo"),
+            eq(annotations.source, "shape-parse"),
+            eq(annotations.source, "symbol-search"),
           ),
         )
       ),

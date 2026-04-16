@@ -465,9 +465,12 @@ if __name__ == "__main__":
 
     try:
         results = main(sys.argv[1])
-        print(json.dumps(results))
+        warnings = []
+        if not _HAVE_OCR:
+            warnings.append("Tesseract not installed — shapes detected but text will be empty")
+        print(json.dumps({"results": results, "warnings": warnings}))
     except Exception as e:
         import traceback
         print(f"[keynote] FATAL: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
-        print("[]")
+        print(json.dumps({"results": [], "warnings": [f"Extraction failed: {e}"]}))

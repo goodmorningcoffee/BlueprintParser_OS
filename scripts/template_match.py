@@ -161,43 +161,46 @@ def tier2_sift_match(template_gray, target_gray):
 
 def process_target(template_gray, target_path, config):
     """Process a single target image against the template."""
-    target = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
-    if target is None:
-        print(f"[template_match] Failed to load: {target_path}", file=sys.stderr)
+    try:
+        target = cv2.imread(target_path, cv2.IMREAD_GRAYSCALE)
+        if target is None:
+            print(f"[template_match] Failed to load: {target_path}", file=sys.stderr)
+            return []
+
+        threshold = config.get("confidence_threshold", 0.75)
+        multi_scale = config.get("multi_scale", True)
+        scales = config.get("scales", [0.9, 0.95, 1.0, 1.05, 1.1])
+        use_sift = config.get("use_sift_fallback", True)
+        sift_threshold = config.get("sift_fallback_threshold", 3)
+        nms_iou = config.get("nms_iou_threshold", 0.3)
+        max_matches = config.get("max_matches_per_page", 100)
+
+        if not multi_scale:
+            scales = [1.0]
+
+        # Tier 1: matchTemplate
+        hits = tier1_match_template(template_gray, target, scales, threshold)
+        hits = nms_boxes(hits, nms_iou)
+
+        # Tier 2: SIFT fallback if too few hits
+        if use_sift and len(hits) < sift_threshold:
+            try:
+                sift_hits = tier2_sift_match(template_gray, target)
+                if sift_hits:
+                    all_hits = hits + sift_hits
+                    hits = nms_boxes(all_hits, nms_iou)
+            except Exception as e:
+                print(f"[template_match] SIFT fallback failed (opencv-contrib may not be installed): {e}", file=sys.stderr)
+
+        # Cap matches
+        if len(hits) > max_matches:
+            hits.sort(key=lambda h: h[4], reverse=True)
+            hits = hits[:max_matches]
+
+        return hits
+    except Exception as e:
+        print(f"[template_match] process_target failed for {target_path}: {e}", file=sys.stderr)
         return []
-
-    threshold = config.get("confidence_threshold", 0.75)
-    multi_scale = config.get("multi_scale", True)
-    scales = config.get("scales", [0.9, 0.95, 1.0, 1.05, 1.1])
-    use_sift = config.get("use_sift_fallback", True)
-    sift_threshold = config.get("sift_fallback_threshold", 3)
-    nms_iou = config.get("nms_iou_threshold", 0.3)
-    max_matches = config.get("max_matches_per_page", 100)
-
-    if not multi_scale:
-        scales = [1.0]
-
-    # Tier 1: matchTemplate
-    hits = tier1_match_template(template_gray, target, scales, threshold)
-    hits = nms_boxes(hits, nms_iou)
-
-    # Tier 2: SIFT fallback if too few hits
-    if use_sift and len(hits) < sift_threshold:
-        try:
-            sift_hits = tier2_sift_match(template_gray, target)
-            if sift_hits:
-                # Merge and deduplicate
-                all_hits = hits + sift_hits
-                hits = nms_boxes(all_hits, nms_iou)
-        except Exception as e:
-            print(f"[template_match] SIFT fallback failed (opencv-contrib may not be installed): {e}", file=sys.stderr)
-
-    # Cap matches
-    if len(hits) > max_matches:
-        hits.sort(key=lambda h: h[4], reverse=True)
-        hits = hits[:max_matches]
-
-    return hits
 
 
 def run_search(config):
@@ -353,12 +356,16 @@ if __name__ == "__main__":
     mode = config.get("mode", "search")
     print(f"[template_match] Mode: {mode}", file=sys.stderr)
 
-    if mode == "search":
-        run_search(config)
-    elif mode == "match_one":
-        run_match_one(config)
-    elif mode == "batch":
-        run_batch(config)
-    else:
-        print(json.dumps({"type": "error", "message": f"Unknown mode: {mode}"}), flush=True)
+    try:
+        if mode == "search":
+            run_search(config)
+        elif mode == "match_one":
+            run_match_one(config)
+        elif mode == "batch":
+            run_batch(config)
+        else:
+            print(json.dumps({"type": "error", "message": f"Unknown mode: {mode}"}), flush=True)
+            sys.exit(1)
+    except Exception as e:
+        print(json.dumps({"type": "error", "message": f"{mode} crashed: {e}"}), flush=True)
         sys.exit(1)

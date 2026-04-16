@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useYoloTags, usePageData } from "@/stores/viewerStore";
 import { TWENTY_COLORS, SHAPE_COLORS } from "@/types";
 import type { ClientAnnotation, YoloTag, Shape } from "@/types";
@@ -35,7 +35,13 @@ export default function DetectionPanel() {
   const [detectionTab, setDetectionTab] = useState<"models" | "tags" | "shape">("models");
   const [shapeParseLoading, setShapeParseLoading] = useState(false);
   const [shapeParseError, setShapeParseError] = useState<string | null>(null);
+  const [shapeParseWarnings, setShapeParseWarnings] = useState<string[]>([]);
+  const [shapeParseRegion, setShapeParseRegion] = useState<[number, number, number, number] | null>(null);
   const { keynotes, setKeynotes } = usePageData();
+  const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
+  const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
+  const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
+  const setMode = useViewerStore((s) => s.setMode);
   const showKeynotes = useViewerStore((s) => s.showKeynotes);
   const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
   const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);
@@ -55,15 +61,33 @@ export default function DetectionPanel() {
     return Object.entries(groups).sort(([, a], [, b]) => b.count - a.count);
   }, [pageKeynotes]);
 
+  // Capture drawn region for shape parse: when the Shape tab is active and the
+  // user draws via the shared pointer/select-region mode, grab the bbox and
+  // clear the table parse region so it doesn't bleed into the Table tab.
+  const shapeTabDrawingRef = useRef(false);
+  useEffect(() => {
+    if (detectionTab !== "shape" || !shapeTabDrawingRef.current || !tableParseRegion) return;
+    setShapeParseRegion(tableParseRegion as [number, number, number, number]);
+    setTableParseRegion(null);
+    shapeTabDrawingRef.current = false;
+  }, [detectionTab, tableParseRegion, setTableParseRegion]);
+
+  function startShapeRegionDraw() {
+    shapeTabDrawingRef.current = true;
+    setTableParseStep("select-region");
+    setMode("pointer");
+  }
+
   async function runShapeParse() {
     if (!projectId || shapeParseLoading) return;
     setShapeParseLoading(true);
     setShapeParseError(null);
+    setShapeParseWarnings([]);
     try {
       const res = await fetch("/api/shape-parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, pageNumber }),
+        body: JSON.stringify({ projectId, pageNumber, regionBbox: shapeParseRegion || undefined }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -72,6 +96,7 @@ export default function DetectionPanel() {
       }
       const data = await res.json();
       setKeynotes(pageNumber, data.keynotes || []);
+      if (data.warnings?.length) setShapeParseWarnings(data.warnings);
       // Auto-show shapes on canvas after a successful parse
       if (!showKeynotes) toggleKeynotes();
     } catch (err) {
@@ -93,8 +118,9 @@ export default function DetectionPanel() {
   const [savingCsi, setSavingCsi] = useState(false);
   const [csiMessage, setCsiMessage] = useState("");
 
+  const DETECTION_SOURCES = new Set(["yolo", "shape-parse", "symbol-search"]);
   const yoloAnnotations = useMemo(() => annotations.filter((a) => {
-    if (a.source !== "yolo") return false;
+    if (!DETECTION_SOURCES.has(a.source)) return false;
     return ((a.data?.confidence as number) ?? 1) >= confidenceThreshold;
   }), [annotations, confidenceThreshold]);
 
@@ -676,19 +702,40 @@ export default function DetectionPanel() {
         <div className="flex-1 overflow-y-auto flex flex-col">
           {/* Run / Visibility controls */}
           <div className="px-3 py-2 border-b border-[var(--border)] space-y-1.5">
-            <button
-              onClick={runShapeParse}
-              disabled={shapeParseLoading || !projectId}
-              className={`w-full px-2 py-1.5 text-[11px] rounded border transition-colors ${
-                shapeParseLoading
-                  ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
-                  : "border-cyan-500/40 text-cyan-300 bg-cyan-500/5 hover:bg-cyan-500/10"
-              } disabled:opacity-40`}
-            >
-              {shapeParseLoading ? "Detecting shapes..." : `Run Shape Parse (page ${pageNumber})`}
-            </button>
+            <div className="flex gap-1">
+              <button
+                onClick={runShapeParse}
+                disabled={shapeParseLoading || !projectId}
+                className={`flex-1 px-2 py-1.5 text-[11px] rounded border transition-colors ${
+                  shapeParseLoading
+                    ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
+                    : "border-cyan-500/40 text-cyan-300 bg-cyan-500/5 hover:bg-cyan-500/10"
+                } disabled:opacity-40`}
+              >
+                {shapeParseLoading ? "Detecting..." : shapeParseRegion ? "Scan Region" : `Scan Page ${pageNumber}`}
+              </button>
+              <button
+                onClick={startShapeRegionDraw}
+                disabled={shapeParseLoading}
+                className="px-2 py-1.5 text-[11px] rounded border border-[var(--border)] text-[var(--muted)] hover:text-cyan-300 hover:border-cyan-500/40 disabled:opacity-40"
+                title="Draw a region to limit shape detection"
+              >
+                BB
+              </button>
+            </div>
+            {shapeParseRegion && (
+              <div className="flex items-center gap-1 text-[9px] text-cyan-400/60">
+                <span>Region: ({(shapeParseRegion[0]*100).toFixed(0)}%,{(shapeParseRegion[1]*100).toFixed(0)}%) to ({(shapeParseRegion[2]*100).toFixed(0)}%,{(shapeParseRegion[3]*100).toFixed(0)}%)</span>
+                <button onClick={() => setShapeParseRegion(null)} className="text-[var(--muted)] hover:text-red-400">&times;</button>
+              </div>
+            )}
             {shapeParseError && (
               <div className="text-[10px] text-red-400 px-1">{shapeParseError}</div>
+            )}
+            {shapeParseWarnings.length > 0 && (
+              <div className="text-[10px] text-amber-400 px-1 py-0.5 border border-amber-500/20 rounded bg-amber-500/5">
+                {shapeParseWarnings.map((w, i) => <div key={i}>{w}</div>)}
+              </div>
             )}
             {pageKeynotes.length > 0 && (
               <button
@@ -707,6 +754,57 @@ export default function DetectionPanel() {
               OpenCV + Tesseract, no ML model needed.
             </div>
           </div>
+
+          {/* Save as annotations button */}
+          {pageKeynotes.length > 0 && (
+            <div className="px-3 py-1.5 border-b border-[var(--border)]">
+              <button
+                onClick={async () => {
+                  const store = useViewerStore.getState();
+                  const { publicId, isDemo } = store;
+                  if (!publicId || isDemo) return;
+                  try {
+                    const annInputs = pageKeynotes.map((k) => ({
+                      pageNumber,
+                      name: k.shape,
+                      bbox: k.bbox,
+                      source: "shape-parse",
+                      threshold: 0.9,
+                      data: {
+                        modelName: "shape-parse",
+                        shapeType: k.shape,
+                        text: k.text,
+                        contour: k.contour,
+                        confidence: 0.9,
+                      },
+                    }));
+                    const res = await fetch("/api/annotations", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        projectId: publicId,
+                        annotations: annInputs,
+                        deleteSource: "shape-parse",
+                        deletePageNumbers: [pageNumber],
+                      }),
+                    });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+                    if (data.annotations) {
+                      const current = useViewerStore.getState().annotations;
+                      const cleaned = current.filter((a) => !(a.source === "shape-parse" && a.pageNumber === pageNumber));
+                      useViewerStore.getState().setAnnotations([...cleaned, ...data.annotations]);
+                    }
+                  } catch (err) {
+                    setShapeParseError(err instanceof Error ? err.message : "Save failed");
+                  }
+                }}
+                className="w-full px-2 py-1 text-[10px] rounded border border-green-500/40 text-green-300 bg-green-500/5 hover:bg-green-500/10"
+              >
+                Save {pageKeynotes.length} shapes as annotations
+              </button>
+            </div>
+          )}
 
           {/* Results summary */}
           {pageKeynotes.length > 0 ? (

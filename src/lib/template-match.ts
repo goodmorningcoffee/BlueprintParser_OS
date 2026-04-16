@@ -67,6 +67,7 @@ export async function templateMatch(
     let stdout = "";
     let stderr = "";
     let finalResult: TemplateMatchResult | null = null;
+    let engineError: string | null = null;
 
     proc.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
@@ -99,7 +100,8 @@ export async function templateMatch(
               })),
             };
           } else if (msg.type === "error") {
-            logger.error(`[TEMPLATE_MATCH] Engine error: ${msg.message}`);
+            engineError = msg.message as string;
+            logger.error(`[TEMPLATE_MATCH] Engine error: ${engineError}`);
           }
         } catch {
           // Ignore malformed lines
@@ -111,7 +113,7 @@ export async function templateMatch(
       stderr += chunk.toString();
     });
 
-    proc.on("close", (code) => {
+    proc.on("close", (code, signal) => {
       clearTimeout(killTimer);
       if (stderr?.trim()) {
         logger.info(`[TEMPLATE_MATCH] ${stderr.trim()}`);
@@ -138,8 +140,13 @@ export async function templateMatch(
         }
       }
 
-      if (code !== 0 && !finalResult) {
-        reject(new Error(`template_match.py exited with code ${code}: ${stderr}`));
+      if ((code !== 0 || signal) && !finalResult) {
+        if (engineError) {
+          reject(new Error(engineError));
+        } else {
+          const reason = signal ? `killed by ${signal}` : `exit code ${code}`;
+          reject(new Error(`template_match.py ${reason}: ${stderr}`));
+        }
         return;
       }
 

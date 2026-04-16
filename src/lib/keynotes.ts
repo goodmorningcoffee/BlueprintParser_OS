@@ -15,9 +15,14 @@ const execFileAsync = promisify(execFile);
  * @param pngBuffer - Rasterized page image as PNG
  * @returns Array of detected keynotes with shape, text, bbox, and contour
  */
+export interface KeynoteExtractionResult {
+  keynotes: KeynoteShapeData[];
+  warnings: string[];
+}
+
 export async function extractKeynotes(
   pngBuffer: Buffer
-): Promise<KeynoteShapeData[]> {
+): Promise<KeynoteExtractionResult> {
   const tempDir = await mkdtemp(join(tmpdir(), "bp2-keynote-"));
 
   try {
@@ -32,27 +37,29 @@ export async function extractKeynotes(
       { timeout: 180000, maxBuffer: 50 * 1024 * 1024 }
     );
 
-    // Log all stderr output for diagnostics (keynote counts, image size, etc.)
     if (stderr?.trim()) {
       logger.info(`[KEYNOTE] ${stderr.trim()}`);
     }
 
-    const results = JSON.parse(stdout.trim() || "[]");
+    const parsed = JSON.parse(stdout.trim() || "[]");
+    const rawResults = Array.isArray(parsed) ? parsed : parsed.results || [];
+    const warnings: string[] = Array.isArray(parsed) ? [] : parsed.warnings || [];
 
-    return results.map((r: any) => ({
+    const keynotes = rawResults.map((r: any) => ({
       shape: r.shape || "circle",
       text: r.text || "",
       bbox: r.bbox || [0, 0, 0, 0],
       contour: r.contour || [],
     }));
+
+    return { keynotes, warnings };
   } catch (err: any) {
-    // Log the full error including stderr so we can diagnose container issues
     const stderr = err?.stderr || "";
     const message = err?.message || String(err);
     logger.error(
       `[KEYNOTE] Extraction failed:\n  Error: ${message}\n  Stderr: ${stderr}\n  Exit code: ${err?.code || "unknown"}`
     );
-    return [];
+    return { keynotes: [], warnings: [`Extraction failed: ${message}`] };
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
