@@ -71,7 +71,7 @@ export interface ClientAnnotation {
   name: string;
   bbox: [number, number, number, number]; // [minX, minY, maxX, maxY] normalized 0-1
   note: string | null;
-  source: "user" | "yolo" | "takeoff" | "takeoff-scale";
+  source: "user" | "yolo" | "takeoff" | "takeoff-scale" | "shape-parse" | "symbol-search";
   data?: AnnotationData | null;
 }
 

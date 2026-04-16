@@ -102,7 +102,12 @@ export async function GET(
         // represent model detections, not user markups. For demo users (who
         // are read-only), show all YOLO regardless of who ran the model, so
         // the YOLO toolbar button and tag-mapping UI are discoverable.
-        or(isNull(annotations.creatorId), eq(annotations.source, "yolo")),
+        or(
+          isNull(annotations.creatorId),
+          eq(annotations.source, "yolo"),
+          eq(annotations.source, "shape-parse"),
+          eq(annotations.source, "symbol-search"),
+        ),
       )
     );
 
