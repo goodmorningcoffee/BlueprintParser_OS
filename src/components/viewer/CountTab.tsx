@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { TAKEOFF_SHAPES, TWENTY_COLORS } from "@/types";
 import type { TakeoffShape, ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { SHAPE_ICONS, TakeoffEditPanel } from "./TakeoffShared";
 import TakeoffGroupSection from "./TakeoffGroupSection";
 
-export default function CountTab() {
+export default memo(function CountTab() {
   const annotations = useViewerStore((s) => s.annotations);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
   const addTakeoffItem = useViewerStore((s) => s.addTakeoffItem);
@@ -380,4 +380,4 @@ export default function CountTab() {
       )}
     </>
   );
-}
+})

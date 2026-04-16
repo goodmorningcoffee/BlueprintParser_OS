@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { YoloTagInstance } from "@/types";
 
@@ -17,7 +17,7 @@ interface ParsedTableItemProps {
 }
 
 /** Expandable parsed table item with tag sub-items */
-export default function ParsedTableItem({
+export default memo(function ParsedTableItem({
   table,
   pageNames,
   isCurrentPage,
@@ -72,20 +72,21 @@ export default function ParsedTableItem({
   const rows = table.region?.data?.rows || [];
   const headers = table.region?.data?.headers || [];
   const tagColumn = table.region?.data?.tagColumn;
-
-  // Find tag value for each row
   const tagKey = tagColumn || headers[0] || "";
-  const rowTags = rows.map((row: Record<string, string>) => {
-    const tag = (row[tagKey] || "").trim();
-    const descParts = headers.filter((h: string) => h !== tagKey).map((h: string) => row[h] || "");
-    return { tag, description: descParts.join(" ").trim() };
-  });
 
-  // Find matching YoloTags for instance counts
-  const tagInstances = (tag: string) => {
+  const rowTags = useMemo(() =>
+    rows.map((row: Record<string, string>) => {
+      const tag = (row[tagKey] || "").trim();
+      const descParts = headers.filter((h: string) => h !== tagKey).map((h: string) => row[h] || "");
+      return { tag, description: descParts.join(" ").trim() };
+    }),
+    [rows, headers, tagKey]
+  );
+
+  const tagInstances = useCallback((tag: string) => {
     const yt = yoloTags.find((t: any) => t.tagText === tag && t.source === "schedule");
     return yt?.instances?.length || 0;
-  };
+  }, [yoloTags]);
 
   const handleTagClick = (tag: string) => {
     const store = useViewerStore.getState();
@@ -609,4 +610,4 @@ export default function ParsedTableItem({
       )}
     </div>
   );
-}
+})
