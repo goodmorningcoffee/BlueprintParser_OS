@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useViewerStore, useTableParse, useNavigation, useProject } from "@/stores/viewerStore";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
-import MapTagsSection from "./MapTagsSection";
+import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 
 interface GuidedParseTabProps {
   detectCsiAndPersist: (grid: any) => Promise<void>;
@@ -14,6 +14,13 @@ interface GuidedParseTabProps {
   tagMappingDone: boolean;
   tagMappingCount: number;
   setTagMappingDone: (done: boolean) => void;
+  // Phase 3 — Map Tags strictness + drawing-number-prefix scope + audit
+  mapTagsStrictness: MapTagsStrictness;
+  setMapTagsStrictness: (s: MapTagsStrictness) => void;
+  drawingNumberPrefixes: string[];
+  setDrawingNumberPrefixes: (prefixes: string[]) => void;
+  availablePrefixes: string[];
+  lastDropCounts: Record<string, number> | null;
 }
 
 export default function GuidedParseTab({
@@ -21,6 +28,10 @@ export default function GuidedParseTab({
   yoloInTableRegion,
   tagYoloClass, setTagYoloClass,
   handleMapTags, tagMappingDone, tagMappingCount, setTagMappingDone,
+  mapTagsStrictness, setMapTagsStrictness,
+  drawingNumberPrefixes, setDrawingNumberPrefixes,
+  availablePrefixes,
+  // lastDropCounts intentionally unused here — audit line lives in AutoParseTab
 }: GuidedParseTabProps) {
   const { pageNumber } = useNavigation();
   const { projectId } = useProject();
@@ -353,6 +364,11 @@ export default function GuidedParseTab({
             onMapTags={handleMapTags}
             tagMappingDone={tagMappingDone}
             tagMappingCount={tagMappingCount}
+            strictness={mapTagsStrictness}
+            onStrictnessChange={setMapTagsStrictness}
+            drawingNumberPrefixes={drawingNumberPrefixes}
+            onDrawingNumberPrefixesChange={setDrawingNumberPrefixes}
+            availablePrefixes={availablePrefixes}
           />
         </div>
       )}

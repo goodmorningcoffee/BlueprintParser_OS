@@ -2,7 +2,8 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useViewerStore, useProject, useNavigation, useQtoWorkflow, useSummaries, isDemoFeatureEnabled } from "@/stores/viewerStore";
-import type { QtoWorkflow, QtoLineItem, QtoFlag, YoloTagInstance, QtoItemType } from "@/types";
+import type { QtoWorkflow, QtoLineItem, QtoFlag, QtoItemType } from "@/types";
+import type { ScoredMatch, DropReason } from "@/lib/tag-mapping";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
 import { escCsv } from "@/lib/table-parse-utils";
 import TakeoffCsvModal from "./TakeoffCsvModal";
@@ -1059,38 +1060,61 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
         itemType: workflow.itemType,
         tagShapeClass: workflow.tagShapeClass || undefined,
         selectedPages,
+        // Auto-QTO always runs strict. Only tier=high matches survive —
+        // reproduces the pre-Phase-2 applyExclusionFilter behavior
+        // (drops inside_table + inside_title_block + outside_drawings).
+        strictnessMode: "strict",
       }),
     })
       .then((res) => {
         if (!res.ok) throw new Error(`Server error ${res.status}`);
         return res.json();
       })
-      .then(({ results }: { results: Record<string, YoloTagInstance[]> }) => {
-        // Build QtoLineItems
+      .then(({ results }: { results: Record<string, ScoredMatch[]> }) => {
+        // Build QtoLineItems. Auto-QTO filters to tier=high server-side, so
+        // everything arriving here is kept. We preserve confidenceTier +
+        // dropReason on the line-item instances so the review UI can still
+        // surface per-instance audit info (even though for strict mode every
+        // instance is tier="high").
         let lineItems: QtoLineItem[];
 
-        if (isYoloOnly) {
-          // Type 1 — single line item keyed by yolo class, not per schedule row.
-          // Tag column and schedule rows are ignored; autoQuantity = total count.
-          const yoloKey = workflow.yoloClassFilter || "";
-          const instances = results[yoloKey] || [];
+        const buildInstance = (i: ScoredMatch) => ({
+          pageNumber: i.pageNumber,
+          bbox: i.bbox,
+          confidence: i.confidence,
+          confidenceTier: i.confidenceTier,
+          dropReason: i.dropReason,
+        });
+
+        const computeFlags = (instances: ScoredMatch[]): QtoFlag[] => {
           const flags: QtoFlag[] = [];
           if (instances.length === 0) flags.push("not-found");
+          const mediumCount = instances.filter((i) => i.confidenceTier === "medium").length;
+          const lowCount = instances.filter((i) => i.confidenceTier === "low").length;
+          // Fallback for pre-Phase-2 instances missing tier: use confidence
+          const fuzzyCount = instances.filter((i) =>
+            i.confidenceTier === undefined && i.confidence < 1.0
+          ).length;
+          if (mediumCount > 0) flags.push("medium-confidence");
+          if (lowCount > 0 || fuzzyCount > 0) flags.push("low-confidence");
+          return flags;
+        };
+
+        if (isYoloOnly) {
+          // Type 1 — single line item keyed by yolo class
+          const yoloKey = workflow.yoloClassFilter || "";
+          const instances = results[yoloKey] || [];
           lineItems = [{
             tag: yoloKey,
             specs: {},
             autoQuantity: instances.length,
-            instances: instances.map((i) => ({
-              pageNumber: i.pageNumber,
-              bbox: i.bbox,
-              confidence: i.confidence,
-            })),
+            instances: instances.map(buildInstance),
             pages: [...new Set(instances.map((i) => i.pageNumber))].sort((a, b) => a - b),
-            flags,
+            flags: computeFlags(instances),
             notes: "",
           }];
         } else {
-          // Types 2, 3, 4, 5 — per-tag line items from the schedule rows
+          // Types 2, 3, 4, 5 — per-tag line items
           lineItems = tags.map((tag) => {
             const instances = results[tag] || [];
             const scheduleRow = (schedule.rows as Record<string, string>[]).find(
@@ -1100,23 +1124,13 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
             for (const h of schedule.headers) {
               if (h !== schedule.tagColumn) specs[h] = scheduleRow?.[h] || "";
             }
-            const flags: QtoFlag[] = [];
-            if (instances.length === 0) flags.push("not-found");
-            // Engine emits confidence 1.0 (exact) or 0.9 (fuzzy OCR match).
-            const fuzzyCount = instances.filter((i) => i.confidence < 1.0).length;
-            if (fuzzyCount > 0) flags.push("low-confidence");
-
             return {
               tag,
               specs,
               autoQuantity: instances.length,
-              instances: instances.map((i) => ({
-                pageNumber: i.pageNumber,
-                bbox: i.bbox,
-                confidence: i.confidence,
-              })),
+              instances: instances.map(buildInstance),
               pages: [...new Set(instances.map((i) => i.pageNumber))].sort((a, b) => a - b),
-              flags,
+              flags: computeFlags(instances),
               notes: "",
             };
           });
@@ -1367,14 +1381,32 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
                 {li.flags.includes("not-found") && (
                   <span className="text-[8px] px-1 py-0.5 rounded bg-red-500/10 text-red-400 shrink-0">Not Found</span>
                 )}
-                {li.flags.includes("low-confidence") && (() => {
-                  const fuzzy = li.instances.filter((i) => i.confidence < 1.0).length;
+                {li.flags.includes("medium-confidence") && (() => {
+                  const medium = li.instances.filter((i) => i.confidenceTier === "medium").length;
                   return (
                     <span
                       className="text-[8px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 shrink-0"
-                      title={`${fuzzy} of ${li.instances.length} instances are OCR-fuzzy matches (not exact)`}
+                      title={`${medium} of ${li.instances.length} instances are medium-tier (e.g., unclassified region, weak pattern match)`}
                     >
-                      {fuzzy} fuzzy
+                      {medium} med
+                    </span>
+                  );
+                })()}
+                {li.flags.includes("low-confidence") && (() => {
+                  // Prefer tier-based count when available; fall back to
+                  // fuzzy-confidence count for pre-Phase-2 data.
+                  const lowTier = li.instances.filter((i) => i.confidenceTier === "low").length;
+                  const fuzzy = li.instances.filter((i) =>
+                    i.confidenceTier === undefined && i.confidence < 1.0
+                  ).length;
+                  const count = lowTier + fuzzy;
+                  const label = lowTier > 0 ? "low" : "fuzzy";
+                  return (
+                    <span
+                      className="text-[8px] px-1 py-0.5 rounded bg-red-500/10 text-red-400 shrink-0"
+                      title={`${count} of ${li.instances.length} instances are ${label}-tier matches`}
+                    >
+                      {count} {label}
                     </span>
                   );
                 })()}

@@ -139,6 +139,65 @@ describe("viewerStore — YOLO tags", () => {
     useViewerStore.getState().setYoloTagVisibility("tag-1", true);
     expect(useViewerStore.getState().yoloTagVisibility["tag-1"]).toBe(true);
   });
+
+  it("addYoloTagsBulk appends in one store update (batch Map Tags path)", () => {
+    const mk = (id: string) => ({
+      id, name: id, tagText: id,
+      yoloClass: "door", yoloModel: "v1",
+      source: "schedule" as const, scope: "project" as const,
+      description: "", instances: [],
+    });
+    useViewerStore.getState().addYoloTagsBulk([mk("D-101"), mk("D-102"), mk("D-103")]);
+    const tags = useViewerStore.getState().yoloTags;
+    expect(tags).toHaveLength(3);
+    expect(tags.map((t) => t.id)).toEqual(["D-101", "D-102", "D-103"]);
+  });
+
+  it("addYoloTagsBulk coexists with addYoloTag (preserves order)", () => {
+    useViewerStore.getState().addYoloTag({
+      id: "first", name: "first", tagText: "first",
+      yoloClass: "", yoloModel: "", source: "keynote", scope: "page",
+      description: "", instances: [],
+    });
+    useViewerStore.getState().addYoloTagsBulk([{
+      id: "second", name: "second", tagText: "second",
+      yoloClass: "", yoloModel: "", source: "schedule", scope: "project",
+      description: "", instances: [],
+    }, {
+      id: "third", name: "third", tagText: "third",
+      yoloClass: "", yoloModel: "", source: "schedule", scope: "project",
+      description: "", instances: [],
+    }]);
+    expect(useViewerStore.getState().yoloTags.map((t) => t.id))
+      .toEqual(["first", "second", "third"]);
+  });
+
+  it("addYoloTagsBulk with empty array is a no-op", () => {
+    useViewerStore.getState().addYoloTagsBulk([]);
+    expect(useViewerStore.getState().yoloTags).toEqual([]);
+  });
+});
+
+describe("viewerStore — page drawing numbers", () => {
+  it("setPageDrawingNumbers replaces the map", () => {
+    expect(useViewerStore.getState().pageDrawingNumbers).toEqual({});
+    useViewerStore.getState().setPageDrawingNumbers({
+      1: "E-101",
+      2: "E-102",
+      3: null,
+    });
+    expect(useViewerStore.getState().pageDrawingNumbers).toEqual({
+      1: "E-101",
+      2: "E-102",
+      3: null,
+    });
+  });
+
+  it("resetProjectData clears pageDrawingNumbers", () => {
+    useViewerStore.getState().setPageDrawingNumbers({ 1: "A-501" });
+    useViewerStore.getState().resetProjectData();
+    expect(useViewerStore.getState().pageDrawingNumbers).toEqual({});
+  });
 });
 
 describe("viewerStore — resetProjectData", () => {

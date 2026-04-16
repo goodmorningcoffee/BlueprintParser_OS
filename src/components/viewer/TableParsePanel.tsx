@@ -1,15 +1,17 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useViewerStore, useSummaries, useProject } from "@/stores/viewerStore";
 import ParsedTableItem from "./ParsedTableItem";
 import AutoParseTab from "./AutoParseTab";
 import GuidedParseTab from "./GuidedParseTab";
 import ManualParseTab from "./ManualParseTab";
 import CompareEditTab from "./CompareEditTab";
-import { mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import ExportCsvModal from "./ExportCsvModal";
+import type { MapTagsStrictness } from "./MapTagsSection";
+import type { YoloTag, QtoItemType } from "@/types";
+import type { ScoredMatch } from "@/lib/tag-mapping";
 
 /**
  * TableParsePanel — Orchestrator for table/schedule parsing.
@@ -31,8 +33,9 @@ export default function TableParsePanel() {
   const tableParseTab = useViewerStore((s) => s.tableParseTab);
   const setTableParseTab = useViewerStore((s) => s.setTableParseTab);
   const pageNames = useViewerStore((s) => s.pageNames);
+  const pageDrawingNumbers = useViewerStore((s) => s.pageDrawingNumbers);
   const annotations = useViewerStore((s) => s.annotations);
-  const addYoloTag = useViewerStore((s) => s.addYoloTag);
+  const addYoloTagsBulk = useViewerStore((s) => s.addYoloTagsBulk);
   const yoloTags = useViewerStore((s) => s.yoloTags);
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
   const toggleParsedRegions = useViewerStore((s) => s.toggleParsedRegions);
@@ -48,6 +51,25 @@ export default function TableParsePanel() {
   const [tagYoloClass, setTagYoloClass] = useState<{ model: string; className: string } | null>(null);
   const [tagMappingDone, setTagMappingDone] = useState(false);
   const [tagMappingCount, setTagMappingCount] = useState(0);
+  // Phase 3: strictness + scope UI for the server-side Map Tags route.
+  const [mapTagsStrictness, setMapTagsStrictness] = useState<MapTagsStrictness>("balanced");
+  const [drawingNumberPrefixes, setDrawingNumberPrefixes] = useState<string[]>([]);
+  const [lastDropCounts, setLastDropCounts] = useState<Record<string, number> | null>(null);
+  const mapTagsAbortRef = useRef<AbortController | null>(null);
+  // Cleanup any in-flight fetch if the panel unmounts mid-request.
+  useEffect(() => () => { mapTagsAbortRef.current?.abort(); }, []);
+  // Derive available drawing-number prefixes from loaded pages. Leading
+  // non-digit chars up to the first digit, uppercased. `""` represents
+  // pages without a drawingNumber (or ones starting with a digit) —
+  // rendered as an "Unnumbered" chip.
+  const availablePrefixes = useMemo(() => {
+    const set = new Set<string>();
+    for (const num of Object.values(pageDrawingNumbers)) {
+      const match = num ? num.match(/^[^\d]+/) : null;
+      set.add((match?.[0] ?? "").toUpperCase());
+    }
+    return Array.from(set).sort();
+  }, [pageDrawingNumbers]);
 
   const intel = pageIntelligence[pageNumber] as any;
 
@@ -171,46 +193,87 @@ export default function TableParsePanel() {
   }, [tableParseRegion, annotations, pageNumber]);
 
   // ─── Map Tags: create YoloTags from parsed tag column ─────
-  const handleMapTags = useCallback(() => {
+  // Phase 3: fetch the server-side /api/map-tags-batch route so scoring
+  // (pattern inference + scope + strictness) applies to the manual flow.
+  // AbortController cancels the in-flight request on rapid re-clicks or
+  // unmount. All results flow through addYoloTagsBulk as a single store
+  // update to avoid N-rerenders from a batch.
+  const handleMapTags = useCallback(async () => {
     if (!tableParsedGrid?.tagColumn || !tableParsedGrid.rows.length) return;
+    if (!publicId) return;
     const tagCol = tableParsedGrid.tagColumn;
-    const uniqueTags = new Set<string>();
-    for (const row of tableParsedGrid.rows) {
-      const val = row[tagCol]?.trim();
-      if (val) uniqueTags.add(val);
-    }
-    const allAnns = useViewerStore.getState().annotations;
-    const td = useViewerStore.getState().textractData;
-    let count = 0;
-    for (const tagText of uniqueTags) {
-      const row = tableParsedGrid.rows.find((r) => r[tagCol]?.trim() === tagText);
+    const uniqueTags = [...new Set(
+      tableParsedGrid.rows
+        .map((r) => r[tagCol]?.trim())
+        .filter((v): v is string => Boolean(v)),
+    )];
+    if (uniqueTags.length === 0) return;
+
+    // Build a description map from the non-tag columns.
+    const descByTag = new Map<string, string>();
+    for (const t of uniqueTags) {
+      const row = tableParsedGrid.rows.find((r) => r[tagCol]?.trim() === t);
       const desc = row
         ? tableParsedGrid.headers.filter((h) => h !== tagCol).map((h) => row[h] || "").join(" ").trim()
         : "";
-      const instances = mapYoloToOcrText({
-        tagText,
-        yoloClass: tagYoloClass?.className,
-        yoloModel: tagYoloClass?.model,
-        scope: "project",
-        annotations: allAnns,
-        textractData: td,
-      });
-      addYoloTag({
-        id: `schedule-${pageNumber}-${tagText}-${Date.now()}`,
-        name: tagText,
-        tagText,
-        yoloClass: tagYoloClass?.className || "",
-        yoloModel: tagYoloClass?.model || "",
-        source: "schedule",
-        scope: "project",
-        description: desc.slice(0, 200),
-        instances,
-      });
-      count++;
+      descByTag.set(t, desc.slice(0, 200));
     }
-    setTagMappingDone(true);
-    setTagMappingCount(count);
-  }, [tableParsedGrid, tagYoloClass, pageNumber, addYoloTag]);
+
+    // Explicit itemType — decouples the call from route defaults so future
+    // route-default changes don't silently alter the manual Map Tags path.
+    const itemType: QtoItemType = tagYoloClass?.className
+      ? "yolo-with-inner-text"
+      : "text-only";
+
+    mapTagsAbortRef.current?.abort();
+    const controller = new AbortController();
+    mapTagsAbortRef.current = controller;
+
+    try {
+      const res = await fetch(`/api/projects/${publicId}/map-tags-batch`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tags: uniqueTags,
+          yoloClass: tagYoloClass?.className || undefined,
+          yoloModel: tagYoloClass?.model || undefined,
+          itemType,
+          strictnessMode: mapTagsStrictness,
+          drawingNumberPrefixes,
+        }),
+      });
+      if (!res.ok) {
+        console.error(`[TableParsePanel] Map Tags failed: HTTP ${res.status}`);
+        return; // leave tagMappingDone as-is so user can retry
+      }
+      const { results, dropCounts } = (await res.json()) as {
+        results: Record<string, ScoredMatch[]>;
+        dropCounts: Record<string, number>;
+      };
+      const newTags: YoloTag[] = uniqueTags
+        .filter((t) => results[t]?.length > 0)
+        .map((t) => ({
+          id: `schedule-${pageNumber}-${t}-${Date.now()}`,
+          name: t,
+          tagText: t,
+          yoloClass: tagYoloClass?.className || "",
+          yoloModel: tagYoloClass?.model || "",
+          source: "schedule",
+          scope: "project",
+          description: descByTag.get(t) || "",
+          instances: results[t],
+        }));
+      addYoloTagsBulk(newTags);
+      setTagMappingCount(newTags.length);
+      setLastDropCounts(dropCounts);
+      setTagMappingDone(true);
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      console.error("[TableParsePanel] Map Tags error", e);
+    }
+  }, [tableParsedGrid, tagYoloClass, pageNumber, publicId,
+      mapTagsStrictness, drawingNumberPrefixes, addYoloTagsBulk]);
 
   // ─── Load existing parsed region ──────────────────────────
   const loadExistingParsed = useCallback(
@@ -289,6 +352,10 @@ export default function TableParsePanel() {
   const mapTagsProps = {
     tagYoloClass, setTagYoloClass, handleMapTags,
     tagMappingDone, tagMappingCount, setTagMappingDone,
+    // Phase 3 — strictness + drawing-number-prefix scope + audit signal
+    mapTagsStrictness, setMapTagsStrictness,
+    drawingNumberPrefixes, setDrawingNumberPrefixes,
+    availablePrefixes, lastDropCounts,
   };
 
   // ─── Render ───────────────────────────────────────────────

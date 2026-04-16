@@ -295,6 +295,196 @@ describe("findOccurrences — ranking", () => {
   });
 });
 
+describe("strictness-mode tier filtering (simulates route behavior)", () => {
+  /**
+   * The map-tags-batch route applies tier-based post-filter:
+   *   strict    → keep tier === "high"
+   *   balanced  → keep tier !== "low"
+   *   lenient   → keep everything
+   * Auto-QTO passes "strict" to reproduce applyExclusionFilter behavior.
+   * These tests simulate that filter over findOccurrences output.
+   */
+  const mkCase = () => {
+    // Scatter one match per page at different regions → tiers h/m/l
+    const textract: Record<number, TextractPageData> = {
+      1: mkTextract([mkWord("D-101", 0.5, 0.5)]),   // drawings → high
+      2: mkTextract([mkWord("D-101", 0.5, 0.5)]),   // unclassified → medium
+      3: mkTextract([mkWord("D-101", 0.5, 0.5)]),   // tables → low
+    };
+    const regions: Record<number, ClassifiedPageRegions> = {
+      1: mkRegions({ drawings: [[0.1, 0.1, 0.9, 0.9]] }),
+      // page 2: no regions → unclassified
+      3: mkRegions({ tables: [[0.3, 0.3, 0.7, 0.7]] }),
+    };
+    const ctx: MatchContext = {
+      scope: allPagesScope(),
+      isPageScoped: false,
+      annotations: [],
+      textractData: textract,
+      classifiedRegionsByPage: regions,
+      pattern: null,
+    };
+    return findOccurrences(item, ctx);
+  };
+
+  it("strict mode keeps only tier=high", () => {
+    const all = mkCase();
+    const strict = all.filter((m) => (m.confidenceTier ?? "high") === "high");
+    expect(strict.length).toBe(1);
+    expect(strict[0].pageNumber).toBe(1);
+    expect(strict[0].signals?.regionType).toBe("drawings");
+  });
+
+  it("balanced mode keeps tier != low", () => {
+    const all = mkCase();
+    const balanced = all.filter((m) => (m.confidenceTier ?? "high") !== "low");
+    expect(balanced.length).toBe(2);
+    const pages = balanced.map((m) => m.pageNumber).sort();
+    expect(pages).toEqual([1, 2]);
+  });
+
+  it("lenient mode keeps everything including low-tier", () => {
+    const all = mkCase();
+    expect(all.length).toBe(3);
+    // Low-tier match should carry its dropReason
+    const low = all.find((m) => m.confidenceTier === "low");
+    expect(low).toBeDefined();
+    expect(low!.dropReason).toBe("inside_table");
+  });
+
+  it("Auto-QTO parity: strict drops inside_table, inside_title_block, outside_drawings", () => {
+    // Scatter 4 matches: one high (drawings), one low (tables),
+    // one low (title_block), one low (unclassified but page has drawings).
+    const textract: Record<number, TextractPageData> = {
+      1: mkTextract([mkWord("D-101", 0.5, 0.5)]),
+      2: mkTextract([mkWord("D-101", 0.4, 0.4)]),
+      3: mkTextract([mkWord("D-101", 0.05, 0.05)]),
+      4: mkTextract([mkWord("D-101", 0.95, 0.95)]),
+    };
+    const regions: Record<number, ClassifiedPageRegions> = {
+      1: mkRegions({ drawings: [[0.1, 0.1, 0.9, 0.9]] }),
+      2: mkRegions({ tables: [[0.3, 0.3, 0.7, 0.7]] }),
+      3: mkRegions({
+        titleBlocks: [[0.0, 0.0, 0.2, 0.2]],
+        drawings: [[0.3, 0.3, 0.9, 0.9]],
+      }),
+      4: mkRegions({ drawings: [[0.1, 0.1, 0.9, 0.9]] }),
+      // Page 4's match at (0.95, 0.95) is OUTSIDE its drawings region (0.1-0.9).
+    };
+    const ctx: MatchContext = {
+      scope: allPagesScope(),
+      isPageScoped: false,
+      annotations: [],
+      textractData: textract,
+      classifiedRegionsByPage: regions,
+      pattern: null,
+    };
+    const all = findOccurrences(item, ctx);
+    expect(all.length).toBe(4);
+
+    // Under strict (tier === "high"), only page 1 survives.
+    const strict = all.filter((m) => (m.confidenceTier ?? "high") === "high");
+    expect(strict.length).toBe(1);
+    expect(strict[0].pageNumber).toBe(1);
+
+    // The three dropped matches carry reasons that aggregate to the same
+    // drop categories applyExclusionFilter used to produce.
+    const dropped = all.filter((m) => (m.confidenceTier ?? "high") !== "high");
+    const reasons = dropped.map((m) => m.dropReason).sort();
+    expect(reasons).toContain("inside_table");
+    expect(reasons).toContain("inside_title_block");
+    expect(reasons).toContain("outside_drawings");
+  });
+});
+
+describe("Phase 3 — pattern + scope combined", () => {
+  it("hard-zeros pattern-mismatch matches when a strong pattern is inferred", () => {
+    // Schedule values produce strong pattern D-\d{3}
+    const pattern = inferTagPattern(["D-101", "D-102", "D-103", "D-104"]);
+    expect(pattern?.strength).toBe("strong");
+
+    // Page 1 has "01" free-floating — the kind of phone-number-like digit
+    // that used to over-match when searching for raw "01". With the strong
+    // D-\d{3} pattern, searching for the bare "01" label should hard-zero.
+    const textract: Record<number, TextractPageData> = {
+      1: mkTextract([mkWord("01", 0.5, 0.5)]),
+    };
+    const regions: Record<number, ClassifiedPageRegions> = {
+      1: mkRegions({ drawings: [[0.1, 0.1, 0.9, 0.9]] }),
+    };
+
+    const ctx: MatchContext = {
+      scope: allPagesScope(),
+      isPageScoped: false,
+      annotations: [],
+      textractData: textract,
+      classifiedRegionsByPage: regions,
+      pattern,
+    };
+    const results = findOccurrences(
+      { itemType: "text-only", label: "01", text: "01" } as CountableItem,
+      ctx,
+    );
+    // itemText "01" doesn't match D-\d{3} → composeScore hard-zeros.
+    // findOccurrences still returns the raw match, but tier=low + dropReason.
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.confidenceTier).toBe("low");
+      expect(r.dropReason).toBe("pattern_mismatch");
+    }
+  });
+
+  it("drawing-number-prefix scope drops matches on out-of-scope pages", () => {
+    // Same tag present on both pages; scope keeps only E- pages.
+    const pattern = inferTagPattern(["D-101", "D-102", "D-103", "D-104"]);
+    const textract: Record<number, TextractPageData> = {
+      1: mkTextract([mkWord("D-101", 0.5, 0.5)]),
+      2: mkTextract([mkWord("D-101", 0.5, 0.5)]),
+    };
+    const regions: Record<number, ClassifiedPageRegions> = {
+      1: mkRegions({ drawings: [[0.1, 0.1, 0.9, 0.9]] }),
+      2: mkRegions({ drawings: [[0.1, 0.1, 0.9, 0.9]] }),
+    };
+    const pageMeta = [
+      { pageNumber: 1, drawingNumber: "A-501" },  // excluded
+      { pageNumber: 2, drawingNumber: "E-201" },  // allowed
+    ];
+
+    const ctx: MatchContext = {
+      scope: buildScope({ drawingNumberPrefixes: ["E-"] }, pageMeta),
+      isPageScoped: false,
+      annotations: [],
+      textractData: textract,
+      classifiedRegionsByPage: regions,
+      pattern,
+    };
+    const results = findOccurrences(
+      { itemType: "text-only", label: "D-101", text: "D-101" } as CountableItem,
+      ctx,
+    );
+
+    const hi = results.filter((r) => r.confidenceTier === "high");
+    expect(hi.length).toBe(1);
+    expect(hi[0].pageNumber).toBe(2);
+
+    const pg1 = results.filter((r) => r.pageNumber === 1);
+    expect(pg1.length).toBe(1);
+    expect(pg1[0].confidenceTier).toBe("low");
+    expect(pg1[0].dropReason).toBe("outside_scope");
+  });
+
+  it("empty drawingNumberPrefixes (undefined) == no prefix filter, all pages allowed", () => {
+    const pageMeta = [
+      { pageNumber: 1, drawingNumber: "A-501" },
+      { pageNumber: 2, drawingNumber: null },
+    ];
+    // Phase 3 route passes `undefined` when the UI array is empty.
+    const scope = buildScope({ drawingNumberPrefixes: undefined }, pageMeta);
+    expect(scope.allowsPage(1)).toBe(true);
+    expect(scope.allowsPage(2)).toBe(true);
+  });
+});
+
 describe("legacy findItemOccurrences shim", () => {
   it("returns YoloTagInstance[] with narrow fields preserved", () => {
     const textract: Record<number, TextractPageData> = {

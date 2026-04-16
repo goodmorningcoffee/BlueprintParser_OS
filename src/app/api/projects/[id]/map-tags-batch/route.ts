@@ -3,12 +3,19 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
-import { findItemOccurrences, scanClassForTexts } from "@/lib/yolo-tag-engine";
-import { applyExclusionFilter } from "@/lib/composite-classifier";
+import {
+  findOccurrences,
+  scanClassForTexts,
+  buildScope,
+  inferTagPattern,
+  type ScoredMatch,
+  type MatchContext,
+  type DropReason,
+  type PageMeta,
+} from "@/lib/tag-mapping";
 import type {
   ClientAnnotation,
   TextractPageData,
-  YoloTagInstance,
   ClassifiedPageRegions,
   PageIntelligence,
   QtoItemType,
@@ -22,24 +29,46 @@ const VALID_ITEM_TYPES: QtoItemType[] = [
   "yolo-object-with-nearby-text",
 ];
 
+type StrictnessMode = "strict" | "balanced" | "lenient";
+const VALID_STRICTNESS: StrictnessMode[] = ["strict", "balanced", "lenient"];
+
 /**
  * POST /api/projects/[id]/map-tags-batch
  *
  * Batch tag mapping. Loads all annotations + textract data ONCE, dispatches
- * each tag through the SHIP 2 findItemOccurrences engine, and applies the
- * composite-classifier exclusion filter.
+ * each tag through `findOccurrences` from @/lib/tag-mapping, which returns
+ * scored matches (tier + dropReason). Post-filters by `strictnessMode`.
  *
  * Body: {
- *   tags: string[],                 // list of tag texts (ignored when itemType === "yolo-only")
- *   yoloClass?: string,             // primary class (Types 1, 3, 4, 5)
+ *   tags: string[],
+ *   yoloClass?: string,
  *   yoloModel?: string,
- *   itemType?: QtoItemType,         // defaults to "yolo-with-inner-text" when yoloClass set,
- *                                   // otherwise "text-only". Keeps pre-SHIP-2 callers working.
- *   tagShapeClass?: string,         // required when itemType === "yolo-object-with-tag-shape"
+ *   itemType?: QtoItemType,
+ *   tagShapeClass?: string,
  *   selectedPages?: number[],
+ *   drawingNumberPrefixes?: string[],  // ["E-", "M-"] → restrict to pages
+ *                                       //   whose drawingNumber starts with
+ *                                       //   one of these (case-insensitive)
  *   action?: "map" | "scanClass",
+ *   strictnessMode?: "strict" | "balanced" | "lenient",  // default "balanced"
  * }
- * Returns: { results: Record<string, YoloTagInstance[]>, dropCounts }
+ *
+ * Returns: { results: Record<string, ScoredMatch[]>, dropCounts, strictnessMode }
+ *
+ * Strictness semantics:
+ *   - "strict"   keep tier === "high"    (reproduces pre-refactor
+ *                                         applyExclusionFilter behavior)
+ *   - "balanced" keep tier !== "low"     (default for general Map Tags)
+ *   - "lenient"  keep everything, including tier="low" matches with
+ *                dropReason populated for audit/review
+ *
+ * Pattern inference (Phase 3): for non-Type-1 item types, the route runs
+ * inferTagPattern() on the tag corpus. Strong patterns hard-zero plan-side
+ * matches that don't fit the format (kills "01" matching phone numbers
+ * when the schedule is D-101/D-102/D-103). Weak patterns attenuate instead
+ * of dropping. Scope filter respects selectedPages ∩ drawingNumberPrefixes.
+ * Pre-YOLO projects (no classifiedRegions) resolve to "unclassified" →
+ * tier=medium → kept under "balanced" (graceful degrade preserved).
  */
 export async function POST(
   req: Request,
@@ -49,7 +78,8 @@ export async function POST(
 
   const body = await req.json();
   const {
-    action, tags, yoloClass, yoloModel, itemType, tagShapeClass, selectedPages,
+    action, tags, yoloClass, yoloModel, itemType, tagShapeClass,
+    selectedPages, strictnessMode, drawingNumberPrefixes,
   } = body as {
     action?: "map" | "scanClass";
     tags?: string[];
@@ -58,9 +88,10 @@ export async function POST(
     itemType?: string;
     tagShapeClass?: string;
     selectedPages?: number[];
+    strictnessMode?: StrictnessMode;
+    drawingNumberPrefixes?: string[];
   };
 
-  // Validate based on action
   const isScan = action === "scanClass";
   if (!isScan) {
     if (!tags || !Array.isArray(tags) || tags.length === 0) {
@@ -84,8 +115,12 @@ export async function POST(
       return NextResponse.json({ error: "Max 2000 pages per batch" }, { status: 400 });
     }
   }
+  if (drawingNumberPrefixes !== undefined && drawingNumberPrefixes !== null) {
+    if (!Array.isArray(drawingNumberPrefixes) || !drawingNumberPrefixes.every((p) => typeof p === "string")) {
+      return NextResponse.json({ error: "drawingNumberPrefixes must be strings" }, { status: 400 });
+    }
+  }
 
-  // Validate itemType + Type-4 prerequisites
   if (itemType !== undefined && !VALID_ITEM_TYPES.includes(itemType as QtoItemType)) {
     return NextResponse.json({ error: `invalid itemType: ${itemType}` }, { status: 400 });
   }
@@ -95,18 +130,23 @@ export async function POST(
     }, { status: 400 });
   }
 
-  // Auth: check session for real projects, allow demo projects without auth
+  // strictnessMode: validate + default to "balanced"
+  const effectiveStrictness: StrictnessMode =
+    (strictnessMode && VALID_STRICTNESS.includes(strictnessMode))
+      ? strictnessMode
+      : "balanced";
+
+  // Auth
   const session = await auth();
   let project;
   if (session?.user) {
-    const companyId = (session.user as any).companyId;
+    const companyId = (session.user as { companyId?: number }).companyId;
     [project] = await db
       .select({ id: projects.id })
       .from(projects)
-      .where(and(eq(projects.publicId, id), eq(projects.companyId, companyId)))
+      .where(and(eq(projects.publicId, id), eq(projects.companyId, companyId!)))
       .limit(1);
   } else {
-    // Demo fallback: allow read-only access to demo projects
     [project] = await db
       .select({ id: projects.id })
       .from(projects)
@@ -118,7 +158,7 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Load all annotations ONCE
+  // Load annotations + textract + pageIntelligence
   const allAnnotations = await db
     .select({
       id: annotations.id,
@@ -145,18 +185,13 @@ export async function POST(
     data: a.data ?? null,
   }));
 
-  // Load textract data + pageIntelligence (filtered to selectedPages when
-  // available to avoid loading ~80KB/page for unused pages).
-  //
-  // pageIntelligence.classifiedRegions is used by the exclusion filter to
-  // drop tag matches that sit inside tables/title_blocks or outside the
-  // drawings region. Populated by the post-YOLO hook in /api/yolo/load.
   const pageFilter = !isScan && selectedPages && selectedPages.length > 0
     ? new Set(selectedPages)
     : null;
   const pageRows = await db
     .select({
       pageNumber: pages.pageNumber,
+      drawingNumber: pages.drawingNumber,
       textractData: pages.textractData,
       pageIntelligence: pages.pageIntelligence,
     })
@@ -169,6 +204,7 @@ export async function POST(
 
   const textractMap: Record<number, TextractPageData> = {};
   const classifiedRegionsByPage: Record<number, ClassifiedPageRegions | undefined> = {};
+  const pageMeta: PageMeta[] = [];
   for (const row of pageRows) {
     if (row.textractData) {
       textractMap[row.pageNumber] = row.textractData as TextractPageData;
@@ -177,68 +213,120 @@ export async function POST(
     if (pi?.classifiedRegions) {
       classifiedRegionsByPage[row.pageNumber] = pi.classifiedRegions;
     }
+    pageMeta.push({
+      pageNumber: row.pageNumber,
+      drawingNumber: row.drawingNumber,
+    });
   }
 
-  // ─── scanClass mode: find all unique texts inside annotations of a class ───
+  // scanClass mode (unchanged)
   if (isScan) {
     const scanResults = scanClassForTexts(yoloClass!, yoloModel, clientAnnotations, textractMap);
     return NextResponse.json({ texts: scanResults });
   }
 
-  // ─── map mode: dispatch each tag through the 5-type engine ───
-  //
-  // Effective item type: explicit from body, else inferred for backward compat —
-  // pre-SHIP-2 callers that pass only `yoloClass` get Type 3 semantics; callers
-  // that pass nothing get Type 2 (free-floating text).
   const effectiveItemType: QtoItemType =
     (itemType as QtoItemType | undefined)
       ?? (yoloClass ? "yolo-with-inner-text" : "text-only");
 
-  const results: Record<string, YoloTagInstance[]> = {};
-  // Aggregate drop counts for debugging — returned in the response body so
-  // callers can see WHY results are smaller than raw matches.
-  const dropCounts = { inside_table: 0, inside_title_block: 0, outside_drawings: 0 };
+  // Sanitize the tag corpus before pattern inference: trim, drop empties,
+  // dedupe. inferTagPattern handles these internally too but redundancy
+  // is cheap and keeps the returned InferredPattern stable across duplicate
+  // tag inputs.
+  const cleanTags = tags
+    ? [...new Set(tags.map((t) => t.trim()).filter(Boolean))]
+    : [];
 
-  // Type 1 special case: yolo-only doesn't use tags[] for filtering —
-  // every shape of the class counts. Run the dispatcher once and key the
-  // result by the FIRST tag in the array (or yoloClass if tags is empty).
-  // This keeps the response shape identical so the client-side line-item
-  // builder still works without changes.
+  // Skip pattern inference for Type 1 (yolo-only) — no tag-text corpus to
+  // infer from; tag values are placeholders/labels not meant to constrain
+  // plan-side text matches.
+  const inferredPattern = (effectiveItemType === "yolo-only" || cleanTags.length === 0)
+    ? null
+    : inferTagPattern(cleanTags);
+
+  // Build the MatchContext once — all tags share the same scope, regions,
+  // annotations, textract, and inferred pattern.
+  const baseContext: MatchContext = {
+    scope: buildScope(
+      {
+        pages: selectedPages,
+        drawingNumberPrefixes: drawingNumberPrefixes && drawingNumberPrefixes.length > 0
+          ? drawingNumberPrefixes
+          : undefined,
+      },
+      pageMeta,
+    ),
+    isPageScoped: Array.isArray(selectedPages) && selectedPages.length === 1,
+    annotations: clientAnnotations,
+    textractData: textractMap,
+    classifiedRegionsByPage,
+    pattern: inferredPattern,
+  };
+
+  const results: Record<string, ScoredMatch[]> = {};
+  const dropCounts: Record<DropReason, number> = {
+    outside_scope: 0,
+    pattern_mismatch: 0,
+    inside_title_block: 0,
+    inside_table: 0,
+    outside_drawings: 0,
+  };
+
+  const applyStrictness = (scored: ScoredMatch[]): ScoredMatch[] => {
+    if (effectiveStrictness === "lenient") return scored;
+    const threshold = effectiveStrictness === "strict" ? "high" : "medium";
+    const kept: ScoredMatch[] = [];
+    for (const m of scored) {
+      const tier = m.confidenceTier ?? "high";
+      if (threshold === "high") {
+        if (tier === "high") kept.push(m);
+        else if (m.dropReason) dropCounts[m.dropReason]++;
+      } else {
+        // threshold "medium" — keep high + medium, drop low
+        if (tier !== "low") kept.push(m);
+        else if (m.dropReason) dropCounts[m.dropReason]++;
+      }
+    }
+    // Also post-filter by selectedPages (redundant with pageFilter below,
+    // but cheap and explicit for the yolo-only path where findItemOccurrences
+    // scanned all pages).
+    if (pageFilter) {
+      return kept.filter((inst) => pageFilter.has(inst.pageNumber));
+    }
+    return kept;
+  };
+
+  // Type 1 special case: yolo-only — one dispatch, result shared across all tags
   if (effectiveItemType === "yolo-only") {
     const key = tags && tags.length > 0 ? tags[0].trim() : (yoloClass || "__all__");
-    let instances = findItemOccurrences(
+    const scored = findOccurrences(
       {
         itemType: "yolo-only",
         label: key,
         yoloClass: yoloClass || undefined,
         yoloModel: yoloModel || undefined,
       },
-      "project",
-      undefined,
-      clientAnnotations,
-      textractMap,
+      baseContext,
     );
-    if (pageFilter) {
-      instances = instances.filter((inst) => pageFilter.has(inst.pageNumber));
-    }
-    const filtered = applyExclusionFilter(instances, classifiedRegionsByPage);
-    for (const d of filtered.dropped) dropCounts[d.reason]++;
-    // Emit the same result under every tag key so the client's line-item
-    // building loop sees consistent counts per row.
+    const kept = applyStrictness(scored);
     for (const tag of tags ?? [key]) {
       const t = tag.trim();
       if (!t) continue;
-      results[t] = filtered.kept;
+      results[t] = kept;
     }
-    return NextResponse.json({ results, dropCounts });
+    return NextResponse.json({
+      results,
+      dropCounts,
+      strictnessMode: effectiveStrictness,
+    });
   }
 
-  // Types 2, 3, 4, 5 — per-tag dispatch via findItemOccurrences
+  // Types 2, 3, 4, 5 — per-tag dispatch
   for (const tag of tags!) {
     const trimmed = tag.trim();
     if (!trimmed) continue;
 
-    let instances = findItemOccurrences(
+    const scored = findOccurrences(
       {
         itemType: effectiveItemType,
         label: trimmed,
@@ -247,23 +335,15 @@ export async function POST(
         tagShapeClass: tagShapeClass || undefined,
         text: trimmed,
       },
-      "project",
-      undefined,
-      clientAnnotations,
-      textractMap,
+      baseContext,
     );
 
-    if (pageFilter) {
-      instances = instances.filter((inst) => pageFilter.has(inst.pageNumber));
-    }
-
-    // QTO SHIP 1: apply exclusion + inclusion rules using classifiedRegions.
-    // Pages without classifiedRegions (yolo never loaded, or classifier found
-    // nothing) pass through unchanged — Map Tags degrades gracefully.
-    const filtered = applyExclusionFilter(instances, classifiedRegionsByPage);
-    for (const d of filtered.dropped) dropCounts[d.reason]++;
-    results[trimmed] = filtered.kept;
+    results[trimmed] = applyStrictness(scored);
   }
 
-  return NextResponse.json({ results, dropCounts });
+  return NextResponse.json({
+    results,
+    dropCounts,
+    strictnessMode: effectiveStrictness,
+  });
 }
