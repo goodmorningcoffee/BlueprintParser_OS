@@ -17,13 +17,15 @@
 import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { downloadFromS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
 import { extractKeynotes } from "@/lib/keynotes";
+import { bindOcrToShapes } from "@/lib/ocr-shape-binding";
 import { isLambdaCvEnabled, fanOutShapeParse } from "@/lib/lambda-cv";
 import { logger } from "@/lib/logger";
 import { NextResponse } from "next/server";
+import type { TextractPageData } from "@/types";
 
 export async function POST(req: Request) {
   const body = await req.json();
@@ -192,7 +194,35 @@ export async function POST(req: Request) {
       ] as [number, number]),
     }));
 
-    return NextResponse.json({ keynotes: remapped, warnings });
+    // Bind OCR text to detected shapes
+    let enriched = remapped;
+    try {
+      const [pageRow] = await db
+        .select({ textractData: pages.textractData })
+        .from(pages)
+        .where(and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber!)))
+        .limit(1);
+      if (pageRow?.textractData) {
+        const textractMap: Record<number, TextractPageData> = {
+          [pageNumber!]: pageRow.textractData as TextractPageData,
+        };
+        const bound = bindOcrToShapes(
+          remapped.map((k) => ({
+            pageNumber: pageNumber!,
+            bbox: k.bbox,
+            shapeType: k.shape,
+            confidence: 0.9,
+            method: "shape-parse",
+          })),
+          textractMap,
+        );
+        enriched = remapped.map((k, i) => ({ ...k, boundText: bound[i]?.boundText ?? null }));
+      }
+    } catch (err) {
+      logger.warn("[SHAPE_PARSE] OCR binding failed, returning shapes without text:", err);
+    }
+
+    return NextResponse.json({ keynotes: enriched, warnings });
   } catch (err) {
     logger.error("[SHAPE_PARSE] Error:", err);
     const message = err instanceof Error ? err.message : "unknown";

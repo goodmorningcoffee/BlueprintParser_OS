@@ -59,7 +59,92 @@ function s3Bucket(): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Template Match Fan-out
+// Generic fan-out core
+// ═══════════════════════════════════════════════════════════════════
+
+interface FanOutOpts<T> {
+  action: string;
+  batchSize: number;
+  pageS3Keys: string[];
+  jobId?: string;
+  extraPayload?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  resultMapper: (r: any) => T;
+  onBatchComplete?: (batchIdx: number, count: number) => void;
+}
+
+async function fanOut<T>(opts: FanOutOpts<T>): Promise<{ results: (T & { pageS3Key: string })[]; failedPages: string[] }> {
+  const bucket = s3Bucket();
+  if (!bucket) throw new Error("S3_BUCKET env var is not set — cannot fan out to Lambda");
+  const jobId = opts.jobId || crypto.randomUUID();
+
+  try {
+    const batches = partition(opts.pageS3Keys, opts.batchSize);
+    const allResults: (T & { pageS3Key: string })[] = [];
+    const failedPages: string[] = [];
+
+    const outcomes = await Promise.allSettled(
+      batches.map((batch, idx) =>
+        invokeLambda({
+          action: opts.action,
+          job_id: jobId,
+          s3_bucket: bucket,
+          page_s3_keys: batch,
+          result_s3_key: `tmp/cv-jobs/${jobId}/results/batch_${idx}.json`,
+          config: opts.config || {},
+          ...opts.extraPayload,
+        })
+      )
+    );
+
+    for (let i = 0; i < outcomes.length; i++) {
+      const outcome = outcomes[i];
+      if (outcome.status === "fulfilled" && outcome.value.status !== "error") {
+        const parsed = await readResultsFromS3(bucket, `tmp/cv-jobs/${jobId}/results/batch_${i}.json`);
+        if (parsed?.results) {
+          for (const r of parsed.results) {
+            allResults.push({ ...opts.resultMapper(r), pageS3Key: r.page_s3_key });
+          }
+        }
+        opts.onBatchComplete?.(i, parsed?.results?.length ?? 0);
+      } else {
+        const batchPages = batches[i];
+        const error = outcome.status === "rejected" ? outcome.reason : outcome.value?.error;
+        logger.warn(`[LAMBDA_CV] ${opts.action} batch ${i} failed: ${error}`);
+
+        for (const pageKey of batchPages) {
+          try {
+            const retryKey = `tmp/cv-jobs/${jobId}/results/retry_${pageKey.replace(/\//g, "_")}.json`;
+            await invokeLambda({
+              action: opts.action,
+              job_id: jobId,
+              s3_bucket: bucket,
+              page_s3_keys: [pageKey],
+              result_s3_key: retryKey,
+              config: opts.config || {},
+              ...opts.extraPayload,
+            });
+            const parsed = await readResultsFromS3(bucket, retryKey);
+            if (parsed?.results) {
+              for (const r of parsed.results) {
+                allResults.push({ ...opts.resultMapper(r), pageS3Key: r.page_s3_key });
+              }
+            }
+          } catch {
+            failedPages.push(pageKey);
+          }
+        }
+      }
+    }
+
+    return { results: allResults, failedPages };
+  } finally {
+    cleanupJob(jobId).catch(() => {});
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Public API — thin wrappers
 // ═══════════════════════════════════════════════════════════════════
 
 interface TemplateMatchFanOutOpts {
@@ -73,96 +158,28 @@ export async function fanOutTemplateMatch(
   opts: TemplateMatchFanOutOpts
 ): Promise<{ results: (TemplateMatchHit & { pageS3Key: string })[]; failedPages: string[] }> {
   const bucket = s3Bucket();
-  if (!bucket) throw new Error("S3_BUCKET env var is not set — cannot fan out to Lambda");
+  if (!bucket) throw new Error("S3_BUCKET env var is not set");
   const jobId = crypto.randomUUID();
   const templateKey = `tmp/cv-jobs/${jobId}/template.png`;
-
   await uploadToS3(templateKey, opts.templateBuffer, "image/png");
 
-  try {
-    const batches = partition(opts.pageS3Keys, TEMPLATE_MATCH_BATCH_SIZE);
-    const allResults: (TemplateMatchHit & { pageS3Key: string })[] = [];
-    const failedPages: string[] = [];
-
-    const outcomes = await Promise.allSettled(
-      batches.map((batch, idx) =>
-        invokeLambda({
-          action: "template_match",
-          job_id: jobId,
-          s3_bucket: bucket,
-          template_s3_key: templateKey,
-          page_s3_keys: batch,
-          result_s3_key: `tmp/cv-jobs/${jobId}/results/batch_${idx}.json`,
-          config: opts.config || {},
-        })
-      )
-    );
-
-    for (let i = 0; i < outcomes.length; i++) {
-      const outcome = outcomes[i];
-      if (outcome.status === "fulfilled" && outcome.value.status !== "error") {
-        const resultKey = `tmp/cv-jobs/${jobId}/results/batch_${i}.json`;
-        const parsed = await readResultsFromS3(bucket, resultKey);
-        if (parsed?.results) {
-          for (const r of parsed.results) {
-            allResults.push({
-              targetIndex: r.page_index ?? 0,
-              bbox: r.bbox as BboxLTWH,
-              confidence: r.confidence,
-              method: r.method,
-              scale: r.scale,
-              pageS3Key: r.page_s3_key,
-            });
-          }
-        }
-        opts.onBatchComplete?.(i, parsed?.results?.length ?? 0);
-      } else {
-        const batchPages = batches[i];
-        const error = outcome.status === "rejected" ? outcome.reason : outcome.value?.error;
-        logger.warn(`[LAMBDA_CV] Batch ${i} failed: ${error}`);
-
-        // Retry failed batch with batch_size=1
-        for (const pageKey of batchPages) {
-          try {
-            const retryKey = `tmp/cv-jobs/${jobId}/results/retry_${pageKey.replace(/\//g, "_")}.json`;
-            await invokeLambda({
-              action: "template_match",
-              job_id: jobId,
-              s3_bucket: bucket,
-              template_s3_key: templateKey,
-              page_s3_keys: [pageKey],
-              result_s3_key: retryKey,
-              config: opts.config || {},
-            });
-            const parsed = await readResultsFromS3(bucket, retryKey);
-            if (parsed?.results) {
-              for (const r of parsed.results) {
-                allResults.push({
-                  targetIndex: r.page_index ?? 0,
-                  bbox: r.bbox as BboxLTWH,
-                  confidence: r.confidence,
-                  method: r.method,
-                  scale: r.scale,
-                  pageS3Key: r.page_s3_key,
-                });
-              }
-            }
-          } catch {
-            failedPages.push(pageKey);
-          }
-        }
-      }
-    }
-
-    return { results: allResults, failedPages };
-  } finally {
-    cleanupJob(bucket, jobId).catch(() => {});
-  }
+  return fanOut<TemplateMatchHit>({
+    action: "template_match",
+    batchSize: TEMPLATE_MATCH_BATCH_SIZE,
+    pageS3Keys: opts.pageS3Keys,
+    jobId,
+    extraPayload: { template_s3_key: templateKey },
+    config: opts.config,
+    resultMapper: (r) => ({
+      targetIndex: r.page_index ?? 0,
+      bbox: r.bbox as BboxLTWH,
+      confidence: r.confidence,
+      method: r.method,
+      scale: r.scale,
+    }),
+    onBatchComplete: opts.onBatchComplete,
+  });
 }
-
-// ═══════════════════════════════════════════════════════════════════
-// Shape Parse Fan-out
-// ═══════════════════════════════════════════════════════════════════
 
 interface ShapeParseFanOutOpts {
   pageS3Keys: string[];
@@ -173,84 +190,19 @@ interface ShapeParseFanOutOpts {
 export async function fanOutShapeParse(
   opts: ShapeParseFanOutOpts
 ): Promise<{ results: (KeynoteShapeData & { pageS3Key: string })[]; failedPages: string[] }> {
-  const bucket = s3Bucket();
-  if (!bucket) throw new Error("S3_BUCKET env var is not set — cannot fan out to Lambda");
-  const jobId = crypto.randomUUID();
-
-  try {
-    const batches = partition(opts.pageS3Keys, SHAPE_PARSE_BATCH_SIZE);
-    const allResults: (KeynoteShapeData & { pageS3Key: string })[] = [];
-    const failedPages: string[] = [];
-
-    const outcomes = await Promise.allSettled(
-      batches.map((batch, idx) =>
-        invokeLambda({
-          action: "shape_parse",
-          job_id: jobId,
-          s3_bucket: bucket,
-          page_s3_keys: batch,
-          result_s3_key: `tmp/cv-jobs/${jobId}/results/batch_${idx}.json`,
-          config: opts.config || {},
-        })
-      )
-    );
-
-    for (let i = 0; i < outcomes.length; i++) {
-      const outcome = outcomes[i];
-      if (outcome.status === "fulfilled" && outcome.value.status !== "error") {
-        const resultKey = `tmp/cv-jobs/${jobId}/results/batch_${i}.json`;
-        const parsed = await readResultsFromS3(bucket, resultKey);
-        if (parsed?.results) {
-          for (const r of parsed.results) {
-            allResults.push({
-              shape: r.shape || "circle",
-              text: r.text || "",
-              bbox: r.bbox || [0, 0, 0, 0],
-              contour: r.contour || [],
-              pageS3Key: r.page_s3_key,
-            });
-          }
-        }
-        opts.onBatchComplete?.(i, parsed?.results?.length ?? 0);
-      } else {
-        const batchPages = batches[i];
-        const error = outcome.status === "rejected" ? outcome.reason : outcome.value?.error;
-        logger.warn(`[LAMBDA_CV] Shape parse batch ${i} failed: ${error}`);
-
-        for (const pageKey of batchPages) {
-          try {
-            const retryKey = `tmp/cv-jobs/${jobId}/results/retry_${pageKey.replace(/\//g, "_")}.json`;
-            await invokeLambda({
-              action: "shape_parse",
-              job_id: jobId,
-              s3_bucket: bucket,
-              page_s3_keys: [pageKey],
-              result_s3_key: retryKey,
-              config: opts.config || {},
-            });
-            const parsed = await readResultsFromS3(bucket, retryKey);
-            if (parsed?.results) {
-              for (const r of parsed.results) {
-                allResults.push({
-                  shape: r.shape || "circle",
-                  text: r.text || "",
-                  bbox: r.bbox || [0, 0, 0, 0],
-                  contour: r.contour || [],
-                  pageS3Key: r.page_s3_key,
-                });
-              }
-            }
-          } catch {
-            failedPages.push(pageKey);
-          }
-        }
-      }
-    }
-
-    return { results: allResults, failedPages };
-  } finally {
-    cleanupJob(bucket, jobId).catch(() => {});
-  }
+  return fanOut<KeynoteShapeData>({
+    action: "shape_parse",
+    batchSize: SHAPE_PARSE_BATCH_SIZE,
+    pageS3Keys: opts.pageS3Keys,
+    config: opts.config,
+    resultMapper: (r) => ({
+      shape: r.shape || "circle",
+      text: r.text || "",
+      bbox: r.bbox || [0, 0, 0, 0],
+      contour: r.contour || [],
+    }),
+    onBatchComplete: opts.onBatchComplete,
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -298,7 +250,7 @@ async function readResultsFromS3(bucket: string, key: string): Promise<any> {
   }
 }
 
-async function cleanupJob(_bucket: string, jobId: string): Promise<void> {
+async function cleanupJob(jobId: string): Promise<void> {
   try {
     await deleteProjectFiles(`tmp/cv-jobs/${jobId}`);
   } catch (err) {

@@ -18,7 +18,8 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { templateMatch } from "@/lib/template-match";
 import { isLambdaCvEnabled, fanOutTemplateMatch } from "@/lib/lambda-cv";
-import type { TemplateMatchProgress, SymbolSearchMatch } from "@/types";
+import { bindOcrToShapes } from "@/lib/ocr-shape-binding";
+import type { TemplateMatchProgress, SymbolSearchMatch, TextractPageData, BboxMinMax } from "@/types";
 import { logger } from "@/lib/logger";
 
 export async function POST(req: Request) {
@@ -182,7 +183,7 @@ cv2.imwrite(cfg["dst"], crop)
                 pageKeyToNumber[`${project.dataUrl}/pages/page_${String(n).padStart(4, "0")}.png`] = n;
               }
 
-              const matches: SymbolSearchMatch[] = results.map((r, i) => ({
+              const matches: (SymbolSearchMatch & { boundText?: string | null })[] = results.map((r, i) => ({
                 id: `sm-${Date.now()}-${i}`,
                 pageNumber: pageKeyToNumber[r.pageS3Key] ?? 0,
                 bbox: r.bbox,
@@ -190,7 +191,33 @@ cv2.imwrite(cfg["dst"], crop)
                 method: r.method,
               }));
 
+              // Bind OCR text to matches
               const pagesWithMatches = [...new Set(matches.map((m) => m.pageNumber))].sort((a, b) => a - b);
+              try {
+                const textractRows = await db
+                  .select({ pageNumber: pages.pageNumber, textractData: pages.textractData })
+                  .from(pages)
+                  .where(eq(pages.projectId, project.id));
+                const textractMap: Record<number, TextractPageData> = {};
+                for (const row of textractRows) {
+                  if (row.textractData) textractMap[row.pageNumber] = row.textractData as TextractPageData;
+                }
+                const bound = bindOcrToShapes(
+                  matches.map((m) => ({
+                    pageNumber: m.pageNumber,
+                    bbox: [m.bbox[0], m.bbox[1], m.bbox[0] + m.bbox[2], m.bbox[1] + m.bbox[3]] as BboxMinMax,
+                    shapeType: "symbol-match",
+                    confidence: m.confidence,
+                    method: m.method,
+                  })),
+                  textractMap,
+                );
+                for (let i = 0; i < matches.length; i++) {
+                  matches[i].boundText = bound[i]?.boundText ?? null;
+                }
+              } catch (err) {
+                logger.warn("[SYMBOL_SEARCH] OCR binding failed:", err);
+              }
 
               const done = JSON.stringify({
                 type: "done",
@@ -311,7 +338,7 @@ cv2.imwrite(cfg["dst"], crop)
             }
           );
 
-          const matches: SymbolSearchMatch[] = result.results.map((r, i) => ({
+          const matches: (SymbolSearchMatch & { boundText?: string | null })[] = result.results.map((r, i) => ({
             id: `sm-${Date.now()}-${i}`,
             pageNumber: pageMap[r.targetIndex] ?? 0,
             bbox: r.bbox,
@@ -319,9 +346,35 @@ cv2.imwrite(cfg["dst"], crop)
             method: r.method,
           }));
 
+          // Bind OCR text to matches
           const pagesWithMatches = [...new Set(matches.map((m) => m.pageNumber))].sort(
             (a, b) => a - b
           );
+          try {
+            const textractRows = await db
+              .select({ pageNumber: pages.pageNumber, textractData: pages.textractData })
+              .from(pages)
+              .where(eq(pages.projectId, project.id));
+            const textractMap: Record<number, TextractPageData> = {};
+            for (const row of textractRows) {
+              if (row.textractData) textractMap[row.pageNumber] = row.textractData as TextractPageData;
+            }
+            const bound = bindOcrToShapes(
+              matches.map((m) => ({
+                pageNumber: m.pageNumber,
+                bbox: [m.bbox[0], m.bbox[1], m.bbox[0] + m.bbox[2], m.bbox[1] + m.bbox[3]] as BboxMinMax,
+                shapeType: "symbol-match",
+                confidence: m.confidence,
+                method: m.method,
+              })),
+              textractMap,
+            );
+            for (let i = 0; i < matches.length; i++) {
+              matches[i].boundText = bound[i]?.boundText ?? null;
+            }
+          } catch (err) {
+            logger.warn("[SYMBOL_SEARCH] OCR binding failed:", err);
+          }
 
           const done = JSON.stringify({
             type: "done",
