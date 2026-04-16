@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { AreaUnitSq, ClientTakeoffItem, AreaPolygonData, TakeoffGroup } from "@/types";
@@ -62,7 +62,7 @@ function ScaleStatus() {
 }
 
 // ─── Area tab main component ────────────────────────────────
-export default function AreaTab() {
+export default memo(function AreaTab() {
   const annotations = useViewerStore((s) => s.annotations);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
   const addTakeoffItem = useViewerStore((s) => s.addTakeoffItem);
@@ -622,4 +622,4 @@ export default function AreaTab() {
       )}
     </>
   );
-}
+})
