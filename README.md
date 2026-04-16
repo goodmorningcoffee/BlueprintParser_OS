@@ -2,7 +2,7 @@
 
 Open-source AI-powered construction blueprint analysis platform. Upload PDF blueprints → auto-extract text (OCR) → detect objects (YOLO) → classify pages/tables/keynotes → detect CSI codes → spatial mapping → multi-provider LLM chat → Quantity Takeoff. Self-hostable, multi-tenant, designed for construction estimators.
 
-**Live demo**: [blueprintparser.com/demo](https://blueprintparser.com/demo)
+**Live demo**: [blueprintparser.com/demo](https://app.blueprintparser.com/demo)
 
 ---
 
