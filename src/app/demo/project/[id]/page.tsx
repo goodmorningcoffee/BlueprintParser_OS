@@ -62,6 +62,7 @@ export default function DemoProjectPage() {
   const setNumPages = useViewerStore((s) => s.setNumPages);
   const initDetectionModels = useViewerStore((s) => s.initDetectionModels);
   const setPageNames = useViewerStore((s) => s.setPageNames);
+  const setPageDrawingNumbers = useViewerStore((s) => s.setPageDrawingNumbers);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const setIsDemo = useViewerStore((s) => s.setIsDemo);
@@ -120,10 +121,13 @@ export default function DemoProjectPage() {
 
       // Page names
       const names: Record<number, string> = {};
+      const drawingNumbers: Record<number, string | null> = {};
       for (const page of data.pages) {
         names[page.pageNumber] = page.drawingNumber || page.name;
+        drawingNumbers[page.pageNumber] = page.drawingNumber;
       }
       setPageNames(names);
+      setPageDrawingNumbers(drawingNumbers);
 
       if (csiParam) setCsiFilter(csiParam);
       if (qParam) useViewerStore.getState().setSearch(qParam);
@@ -190,7 +194,7 @@ export default function DemoProjectPage() {
     } finally {
       setLoading(false);
     }
-  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, initDetectionModels, setPageNames, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData, csiParam, qParam, setCsiFilter]);
+  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, initDetectionModels, setPageNames, setPageDrawingNumbers, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData, csiParam, qParam, setCsiFilter]);
 
   useEffect(() => {
     load();

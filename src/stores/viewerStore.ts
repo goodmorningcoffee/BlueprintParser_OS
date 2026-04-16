@@ -76,6 +76,8 @@ interface ViewerState {
   pageNames: Record<number, string>;
   setPageNames: (names: Record<number, string>) => void;
   setPageName: (pageNum: number, name: string) => void;
+  pageDrawingNumbers: Record<number, string | null>;
+  setPageDrawingNumbers: (map: Record<number, string | null>) => void;
 
   // ─── Project data ────────────────────────────────────────
   projectId: number;
@@ -417,6 +419,10 @@ interface ViewerState {
   yoloTags: YoloTag[];
   setYoloTags: (tags: YoloTag[]) => void;
   addYoloTag: (tag: YoloTag) => void;
+  /** Bulk-add variant for batch Map Tags results. One set() call → one
+   *  store-subscriber fan-out → one _debounceSaveYoloTags cycle. Prefer
+   *  over N sequential addYoloTag calls when inserting a batch. */
+  addYoloTagsBulk: (tags: YoloTag[]) => void;
   removeYoloTag: (id: string) => void;
   updateYoloTag: (id: string, updates: Partial<YoloTag>) => void;
   activeYoloTagId: string | null;
@@ -564,6 +570,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setPageNames: (pageNames) => set({ pageNames }),
   setPageName: (pageNum, name) =>
     set((s) => ({ pageNames: { ...s.pageNames, [pageNum]: name } })),
+  pageDrawingNumbers: {},
+  setPageDrawingNumbers: (pageDrawingNumbers) => set({ pageDrawingNumbers }),
 
   projectId: 0,
   setProjectId: (projectId) => set({ projectId }),
@@ -1070,6 +1078,11 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     set((s) => ({ yoloTags: [...s.yoloTags, tag] }));
     _debounceSaveYoloTags();
   },
+  addYoloTagsBulk: (tags) => {
+    if (tags.length === 0) return;
+    set((s) => ({ yoloTags: [...s.yoloTags, ...tags] }));
+    _debounceSaveYoloTags();
+  },
   removeYoloTag: (id) => {
     set((s) => ({ yoloTags: s.yoloTags.filter((t) => t.id !== id) }));
     _debounceSaveYoloTags();
@@ -1212,6 +1225,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       searchLoading: false,
       annotations: [],
       pageNames: {},
+      pageDrawingNumbers: {},
       projectId: 0,
       dataUrl: "",
       publicId: "",

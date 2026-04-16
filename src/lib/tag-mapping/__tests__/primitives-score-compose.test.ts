@@ -78,16 +78,18 @@ describe("composeScore", () => {
     expect(result.dropReason).toBe("inside_title_block");
   });
 
-  it("unclassified region on page with drawings → outside_drawings", () => {
+  it("unclassified region on page with drawings → dropReason outside_drawings (audit info)", () => {
     const result = composeScore(
       baseSignals({ regionType: "unclassified", regionWeight: 0.5 }),
       DEFAULT_SCORING_CONFIG,
       true,
     );
-    // Score 0.5 → tier=medium (>=0.35) — not outside_drawings
+    // Score 0.5 → tier=medium (>=0.35). The dropReason is populated
+    // regardless of tier so that "strict mode" filters downstream can
+    // surface WHY a medium-tier match was dropped.
     expect(result.score).toBeCloseTo(0.5, 2);
     expect(result.tier).toBe("medium");
-    expect(result.dropReason).toBeUndefined();
+    expect(result.dropReason).toBe("outside_drawings");
   });
 
   it("unclassified region tier=low on page with drawings → outside_drawings", () => {

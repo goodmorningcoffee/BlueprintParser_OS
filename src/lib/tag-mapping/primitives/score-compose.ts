@@ -78,17 +78,18 @@ export function composeScore(
         ? "medium"
         : "low";
 
-  // Populate dropReason based on dominant region even for tier=low non-hard-zero
-  // cases. Lets the UI explain "this is low because it's in a title_block"
-  // vs. "low because no regions and no other signals".
+  // Populate dropReason based on the signal set, not just tier. A match
+  // inside a table OR outside the drawings region carries the audit info
+  // even if it happens to score above the low threshold — so callers
+  // filtering by "strict mode" know why a medium-tier match was dropped.
   let dropReason: DropReason | undefined;
-  if (tier === "low") {
-    if (signals.regionType === "title_block") dropReason = "inside_title_block";
-    else if (signals.regionType === "tables") dropReason = "inside_table";
-    else if (signals.regionType === "unclassified" && pageHasDrawings) {
-      // Page has drawings; this match landed in none of them → outside_drawings.
-      dropReason = "outside_drawings";
-    }
+  if (signals.regionType === "title_block") {
+    dropReason = "inside_title_block";
+  } else if (signals.regionType === "tables") {
+    dropReason = "inside_table";
+  } else if (signals.regionType === "unclassified" && pageHasDrawings) {
+    // Page has drawings; this match landed in none of them → outside_drawings.
+    dropReason = "outside_drawings";
   }
 
   return { score, tier, dropReason };

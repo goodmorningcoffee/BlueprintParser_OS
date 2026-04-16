@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useYoloTags, useSymbolSearch, useAnnotationFilters } from "@/stores/viewerStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
+import type { ScoredMatch } from "@/lib/tag-mapping";
 import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
 import { splitPolygonByLine, findSplittablePolygons } from "@/lib/polygon-split";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
@@ -283,7 +284,11 @@ export default memo(function AnnotationOverlay({
 
   // Pre-filtered tag instances by page: avoids inner-loop pageNumber check
   const pageTagInstances = useMemo(() => {
-    const map = new Map<string, Array<{ bbox: [number, number, number, number]; annotationId: number }>>();
+    // Preserve scoring fields (confidenceTier, signals, score, dropReason)
+    // so the render + browse UI can surface them. Pre-Phase-2 data lacks
+    // these fields but ScoredMatch is a structural superset so the typing
+    // is compatible either way.
+    const map = new Map<string, ScoredMatch[]>();
     for (const tag of yoloTags) {
       const filtered = tag.instances.filter((i) => i.pageNumber === pageNumber);
       if (filtered.length) map.set(tag.id, filtered);
@@ -323,15 +328,27 @@ export default memo(function AnnotationOverlay({
       }
     }
     // Visible tags: collect all visible tag instances on this page (only if explicitly toggled on)
-    // When an active tag is selected, hide all other tags' dots so the selected tag is easy to spot
-    const visibleTagInstances: { bbox: [number, number, number, number]; color: string; name: string }[] = [];
+    // When an active tag is selected, hide all other tags' dots so the selected tag is easy to spot.
+    // Phase 2: each instance carries an optional confidenceTier. Low-tier → red dashed;
+    // medium-tier → amber; high-tier (or absent for pre-Phase-2 data) → the tag's own color.
+    const visibleTagInstances: {
+      bbox: [number, number, number, number];
+      color: string;
+      name: string;
+      tier: "high" | "medium" | "low";
+    }[] = [];
     if (!activeTag) {
       for (const tag of yoloTags) {
         if (tag.id === activeYoloTagId) continue; // active tag drawn separately
         if (yoloTagVisibility[tag.id] === false) continue; // hidden if explicitly toggled off
         const tagPageInsts = pageTagInstances.get(tag.id) || [];
         for (const inst of tagPageInsts) {
-          visibleTagInstances.push({ bbox: inst.bbox, color: tag.color || "#22d3ee", name: tag.tagText });
+          const tier = inst.confidenceTier ?? "high";
+          const color =
+            tier === "low"    ? "#ef4444" :
+            tier === "medium" ? "#f59e0b" :
+                                (tag.color || "#22d3ee");
+          visibleTagInstances.push({ bbox: inst.bbox, color, name: tag.tagText, tier });
         }
       }
     }
@@ -478,8 +495,10 @@ export default memo(function AnnotationOverlay({
       const vw = (bMaxX - bMinX) * width;
       const vh = (bMaxY - bMinY) * height;
       ctx.strokeStyle = vi.color;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = vi.tier === "low" ? 1 : 1.5;
+      // Low-tier instances get a tighter dash to visually distinguish audit-flagged
+      // matches from normal hits. Medium + high share the standard dash.
+      ctx.setLineDash(vi.tier === "low" ? [2, 4] : [4, 3]);
       ctx.strokeRect(vx, vy, vw, vh);
       ctx.setLineDash([]);
     }

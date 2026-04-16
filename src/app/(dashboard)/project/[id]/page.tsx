@@ -71,6 +71,7 @@ export default function ProjectPage() {
 
   const initDetectionModels = useViewerStore((s) => s.initDetectionModels);
   const setPageNames = useViewerStore((s) => s.setPageNames);
+  const setPageDrawingNumbers = useViewerStore((s) => s.setPageDrawingNumbers);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const setChatMessages = useViewerStore((s) => s.setChatMessages);
@@ -127,10 +128,13 @@ export default function ProjectPage() {
 
       // Page names from lightweight page list
       const names: Record<number, string> = {};
+      const drawingNumbers: Record<number, string | null> = {};
       for (const page of data.pages) {
         names[page.pageNumber] = page.drawingNumber || page.name;
+        drawingNumbers[page.pageNumber] = page.drawingNumber;
       }
       setPageNames(names);
+      setPageDrawingNumbers(drawingNumbers);
 
       // Apply filters from URL query params
       if (csiParam) setCsiFilter(csiParam);
@@ -223,6 +227,7 @@ export default function ProjectPage() {
     id,
     initDetectionModels,
     setPageNames,
+    setPageDrawingNumbers,
     setAllTrades,
     setAllCsiCodes,
     setChatMessages,
