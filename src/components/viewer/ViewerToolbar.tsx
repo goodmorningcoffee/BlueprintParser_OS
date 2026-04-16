@@ -466,8 +466,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             onClick={() => { toggleDetectionPanel(); if (!showDetections) toggleDetections(); }}
             className={`px-2 py-1 text-xs rounded-l border ${
               showDetectionPanel
-                ? "border-green-400/45 text-green-400/70 bg-green-400/8"
-                : "border-red-400/30 text-red-400/50 hover:text-red-300/60 hover:border-red-400/40"
+                ? "border-cyan-400/60 text-cyan-400 bg-cyan-400/10"
+                : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/30"
             }`}
           >
             YOLO
@@ -477,8 +477,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
               onClick={() => setYoloDropdownOpen((o) => !o)}
               className={`px-1.5 py-1 text-xs border border-l-0 rounded-r ${
                 yoloDropdownOpen
-                  ? "border-green-400/45 text-green-400/70 bg-green-400/8"
-                  : "border-red-400/30 text-red-400/50 hover:text-red-300/60 hover:border-red-400/40"
+                  ? "border-cyan-400/60 text-cyan-400 bg-cyan-400/10"
+                  : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/30"
               }`}
             >
               ▾

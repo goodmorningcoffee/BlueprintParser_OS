@@ -278,6 +278,119 @@ export async function POST(req: Request) {
         return;
       }
 
+      if (scope === "shape-parse") {
+        const { isLambdaCvEnabled, fanOutShapeParse } = await import("@/lib/lambda-cv");
+        const { extractKeynotes } = await import("@/lib/keynotes");
+        const useLambda = isLambdaCvEnabled();
+        send({ type: "config", useLambda });
+
+        for (const project of allProjects) {
+          const projectPages = await db
+            .select({ id: pages.id, pageNumber: pages.pageNumber })
+            .from(pages)
+            .where(eq(pages.projectId, project.id))
+            .orderBy(pages.pageNumber);
+
+          if (projectPages.length === 0) continue;
+          send({ type: "project", name: project.name, pages: projectPages.length });
+          totalPages += projectPages.length;
+
+          // Delete existing shape-parse annotations for this project
+          await db.delete(annotations).where(
+            and(eq(annotations.projectId, project.id), eq(annotations.source, "shape-parse"))
+          );
+
+          let lambdaSucceeded = false;
+          if (useLambda) {
+            try {
+              const pageS3Keys = projectPages.map(
+                (p) => `${project.dataUrl}/pages/page_${String(p.pageNumber).padStart(4, "0")}.png`
+              );
+              const pageKeyToNum: Record<string, number> = {};
+              for (const p of projectPages) {
+                pageKeyToNum[`${project.dataUrl}/pages/page_${String(p.pageNumber).padStart(4, "0")}.png`] = p.pageNumber;
+              }
+
+              const { results } = await fanOutShapeParse({ pageS3Keys });
+
+              const byPage: Record<number, typeof results> = {};
+              for (const r of results) {
+                const pn = pageKeyToNum[r.pageS3Key] ?? 0;
+                if (!byPage[pn]) byPage[pn] = [];
+                byPage[pn].push(r);
+              }
+
+              for (const [pnStr, shapes] of Object.entries(byPage)) {
+                const pn = Number(pnStr);
+                await db.update(pages).set({ keynotes: shapes }).where(
+                  and(eq(pages.projectId, project.id), eq(pages.pageNumber, pn))
+                );
+                if (shapes.length > 0) {
+                  await db.insert(annotations).values(
+                    shapes.map((k) => ({
+                      name: k.shape,
+                      minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
+                      pageNumber: pn,
+                      threshold: 0.9,
+                      source: "shape-parse" as const,
+                      data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
+                      projectId: project.id,
+                    }))
+                  );
+                }
+                updatedPages++;
+              }
+              lambdaSucceeded = true;
+              send({ type: "progress", updated: updatedPages, skipped: skippedPages, total: totalPages, project: project.name });
+            } catch (err) {
+              logger.error(`[reprocess-shape-parse] Lambda failed for ${project.name}, falling back to sequential:`, err);
+              send({ type: "warning", project: project.name, message: "Lambda failed, using sequential fallback" });
+            }
+          }
+          if (!lambdaSucceeded) {
+            // Sequential fallback
+            for (const page of projectPages) {
+              try {
+                const s3Key = `${project.dataUrl}/pages/page_${String(page.pageNumber).padStart(4, "0")}.png`;
+                const pngBuffer = await downloadFromS3(s3Key);
+                const result = await extractKeynotes(pngBuffer);
+
+                await db.update(pages).set({
+                  keynotes: result.keynotes.length > 0 ? result.keynotes : null,
+                }).where(eq(pages.id, page.id));
+
+                if (result.keynotes.length > 0) {
+                  await db.insert(annotations).values(
+                    result.keynotes.map((k) => ({
+                      name: k.shape,
+                      minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
+                      pageNumber: page.pageNumber,
+                      threshold: 0.9,
+                      source: "shape-parse" as const,
+                      data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
+                      projectId: project.id,
+                    }))
+                  );
+                  updatedPages++;
+                } else {
+                  skippedPages++;
+                }
+              } catch (err) {
+                logger.error(`[reprocess-shape-parse] Page ${page.pageNumber} failed for ${project.name}:`, err);
+                skippedPages++;
+              }
+              if ((updatedPages + skippedPages) % 5 === 0) {
+                send({ type: "progress", updated: updatedPages, skipped: skippedPages, total: totalPages, project: project.name });
+              }
+            }
+          }
+        }
+
+        send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
+        controller.close();
+        return;
+      }
+
       if (scope === "intelligence") {
         // Intelligence-only reprocess: re-run page analysis + project analysis on existing data
         for (const project of allProjects) {

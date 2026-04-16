@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { projects, pages, companies } from "@/lib/db/schema";
+import { projects, pages, companies, annotations } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { getS3Url, uploadToS3, warmCloudFrontCache } from "@/lib/s3";
@@ -9,7 +9,7 @@ import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { detectCsiCodes } from "@/lib/csi-detect";
 import { detectTextAnnotations } from "@/lib/text-annotations";
-// NOTE: extractKeynotes is now user-initiated via the Keynotes panel, not run at upload
+import { extractKeynotes } from "@/lib/keynotes";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
@@ -105,6 +105,7 @@ export async function processProject(projectId: number): Promise<{
     let companyHeuristics: any[] | undefined;
     let pageConcurrency = DEFAULT_PAGE_CONCURRENCY;
     let csiSpatialGrid: { rows: number; cols: number } | undefined;
+    let disabledSteps = new Set<string>();
     try {
       const [company] = await db
         .select({ pipelineConfig: companies.pipelineConfig })
@@ -114,6 +115,7 @@ export async function processProject(projectId: number): Promise<{
       companyHeuristics = company?.pipelineConfig?.heuristics;
       pageConcurrency = (company?.pipelineConfig?.pipeline as any)?.pageConcurrency || DEFAULT_PAGE_CONCURRENCY;
       csiSpatialGrid = (company?.pipelineConfig?.pipeline as any)?.csiSpatialGrid;
+      disabledSteps = new Set<string>((company?.pipelineConfig as any)?.disabledSteps || []);
     } catch { /* ignore — use built-in defaults */ }
 
     logger.info(`[processing] Processing ${numPages} pages with concurrency ${pageConcurrency}`);
@@ -200,9 +202,39 @@ export async function processProject(projectId: number): Promise<{
           logger.error(`[processing] Text annotation detection FAILED for page ${pageNum}:`, err);
         }
 
-        // NOTE: Keynote extraction (OpenCV + Tesseract) is now user-initiated via the Keynotes panel.
-        // Classification (Systems 1-3) still identifies keynote table regions.
-        const keynotes: any = null;
+        // Shape parse: detect circles, diamonds, hexagons with text (OpenCV + Tesseract)
+        let keynotes: any = null;
+        if (!disabledSteps.has("shape-parse")) {
+          try {
+            const result = await extractKeynotes(pngBuffer);
+            if (result.keynotes.length > 0) {
+              keynotes = result.keynotes;
+              logger.info(`[processing] Page ${pageNum}: ${result.keynotes.length} shapes detected`);
+              await db.insert(annotations).values(
+                result.keynotes.map((k) => ({
+                  name: k.shape,
+                  minX: k.bbox[0],
+                  minY: k.bbox[1],
+                  maxX: k.bbox[2],
+                  maxY: k.bbox[3],
+                  pageNumber: pageNum,
+                  threshold: 0.9,
+                  source: "shape-parse" as const,
+                  data: {
+                    modelName: "shape-parse",
+                    shapeType: k.shape,
+                    text: k.text,
+                    contour: k.contour,
+                    confidence: 0.9,
+                  },
+                  projectId: project.id,
+                }))
+              );
+            }
+          } catch (err) {
+            logger.error(`[processing] Shape parse FAILED for page ${pageNum}:`, err);
+          }
+        }
 
         // Analyze page intelligence (classification, cross-refs, note blocks)
         let pageIntelligence: Record<string, unknown> | null = null;

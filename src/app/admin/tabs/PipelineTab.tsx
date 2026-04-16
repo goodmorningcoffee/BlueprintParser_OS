@@ -31,6 +31,7 @@ const UPLOAD_STEPS = [
   { id: "heuristic-engine", name: "Heuristic Engine (text-only)", description: "Rule-based inference: schedule detection, symbol legends, notes", configTab: "heuristics", alwaysOn: false },
   { id: "table-classification", name: "Table Classification", description: "Combine text regions + heuristics to classify schedules", configTab: null, alwaysOn: false },
   { id: "csi-spatial", name: "CSI Spatial Mapping", description: "Heatmap: which page zones contain which CSI codes", configTab: null, alwaysOn: false },
+  { id: "shape-parse", name: "Shape Parse (Keynotes)", description: "Detect circles, diamonds, hexagons with text — OpenCV + Tesseract, no ML model needed", configTab: null, alwaysOn: false },
 ];
 
 const POST_YOLO_STEPS = [
@@ -50,6 +51,7 @@ const REPROCESS_SCOPES = [
   { id: "intelligence", label: "Intelligence (Heuristics + Tables)", description: "Re-run page analysis, heuristics, table classification, summaries" },
   { id: "page-names", label: "Page Names", description: "Re-extract drawing numbers (optionally using YOLO title blocks)" },
   { id: "thumbnails", label: "Regenerate Thumbnails", description: "Re-rasterize 72 DPI thumbnails for all pages and upload to S3/CloudFront" },
+  { id: "shape-parse", label: "Shape Parse (Keynotes)", description: "Detect circles, diamonds, hexagons with text on all pages (uses Lambda if available)" },
 ];
 
 export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, projects }: PipelineTabProps) {
