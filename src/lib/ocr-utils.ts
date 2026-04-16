@@ -179,3 +179,47 @@ export function wordsToText(words: TextractWord[]): string {
 
   return lines.join("\n");
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Spatial word-finding helpers (shared by yolo-tag-engine + ocr-shape-binding)
+// ═══════════════════════════════════════════════════════════════════
+
+import {
+  bboxCenterLTWH as _bboxCenterLTWH,
+  bboxContainsPoint as _bboxContainsPoint,
+} from "@/lib/bbox-utils";
+
+/** Find all words whose center falls inside a MinMax bbox. */
+export function findWordsInBbox(words: TextractWord[], bbox: BboxMinMax): TextractWord[] {
+  return words.filter((w) => _bboxContainsPoint(bbox, _bboxCenterLTWH(w.bbox)));
+}
+
+/** Sort words in reading order: group by line (y-center proximity), then left-to-right. */
+export function sortWordsReadingOrder(words: TextractWord[]): TextractWord[] {
+  return [...words].sort((a, b) => {
+    const ay = a.bbox[1] + a.bbox[3] / 2;
+    const by = b.bbox[1] + b.bbox[3] / 2;
+    const avgH = (a.bbox[3] + b.bbox[3]) / 2;
+    if (Math.abs(ay - by) < avgH * 0.5) return a.bbox[0] - b.bbox[0];
+    return ay - by;
+  });
+}
+
+/** Find the nearest word to a point, optionally within a max distance. */
+export function findNearestWord(
+  point: { x: number; y: number },
+  words: TextractWord[],
+  maxDistance?: number,
+): { word: TextractWord; distance: number } | null {
+  let best: TextractWord | null = null;
+  let bestDist = Infinity;
+  for (const w of words) {
+    const c = _bboxCenterLTWH(w.bbox);
+    const d = Math.sqrt((c.x - point.x) ** 2 + (c.y - point.y) ** 2);
+    if (d < bestDist && (maxDistance === undefined || d <= maxDistance)) {
+      bestDist = d;
+      best = w;
+    }
+  }
+  return best ? { word: best, distance: bestDist } : null;
+}

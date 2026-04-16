@@ -63,47 +63,35 @@ All deployed and working on AWS.
 
 ---
 
-## What's Left — Shape Parse UI (3 Modes)
+## Shape Parse UI (3 Modes) — IMPLEMENTED
 
-The shape-parse API route now supports 3 modes but the **DetectionPanel UI** only has the first two wired up. Need to add "Scan All Pages" button.
+All 3 modes are fully implemented:
+1. **BB mode** — draw a region → scan shapes in that region only ✅
+2. **Page mode** — scan full current page (no region) ✅
+3. **All Pages mode** — `scanAll: true` → Lambda fan-out → results for every page ✅
 
-### Current Shape Tab UI (DetectionPanel.tsx)
-- Located in the YOLO/Detection panel under the "Shape" tab
-- Has: "Run Shape Parse" button that calls `runShapeParse()` with current page
-- Has: BB region draw mode (click "Draw Region" → draw bbox → "Scan Region")
-- Has: Results list grouped by shape type, clickable filter, save button
-- Missing: "Scan All Pages" button + project-wide results display
+Button layout: `[ Scan Page 3 ] [ BB ] [ All ]`
+- "All" button triggers `runShapeParseAll()` → `POST /api/shape-parse { scanAll: true }`
+- Uses `setBatchKeynotes(data.byPage)` for single atomic store update
+- Save page + Save all pages buttons both implemented
+- Admin Pipeline tab toggle + reprocess scope both implemented
+- Shape parse during upload wired into processing.ts (gated by disabledSteps)
 
-### Planned 3 Modes
-1. **BB mode** (existing) — draw a region → scan shapes in that region only
-2. **Page mode** (existing) — scan full current page (no region)
-3. **All Pages mode** (NEW) — `scanAll: true` → Lambda fan-out → results for every page
+## OCR-Tag Binding — IMPLEMENTED
 
-### UI Plan for All Pages Mode
+- Shared helpers extracted to `ocr-utils.ts`: `findWordsInBbox`, `sortWordsReadingOrder`, `findNearestWord`
+- `ocr-shape-binding.ts` rewritten to use shared helpers
+- `yolo-tag-engine.ts` updated to use same helpers
+- Binding wired into shape-parse route (returns `boundText` per shape)
+- Binding wired into symbol-search route (both Lambda and local paths)
 
-**Button**: Add a third button next to the existing "Scan Page N" button:
-```
-[ Scan Page 3 ] [ Draw Region ] [ Scan All Pages ▶ ]
-```
-"Scan All Pages" only enabled when `LAMBDA_CV_ENABLED` or always available (sequential fallback exists).
+## Code Dedup — IMPLEMENTED
 
-**Progress**: Show "Scanning page X of N..." during all-pages scan.
+- `lambda-cv.ts`: generic `fanOut<T>()` with `resultMapper` callback (307→240 lines)
+- `lambda_handler.py`: generic `process_pages(event, worker_fn)` (227→160 lines)
 
-**Results**: When `scanAll` returns `byPage`, store keynotes for ALL pages in the zustand `keynotes` store (currently `Record<number, KeynoteShapeData[]>`). The KeynoteOverlay already renders per-page — it will automatically show shapes on every page as the user navigates.
+## Still Deferred
 
-**Response handling**: The API returns `{ keynotes, byPage }`. The `byPage` object maps page numbers to their keynotes. Store each page's keynotes:
-```typescript
-const data = await res.json();
-for (const [pn, shapes] of Object.entries(data.byPage)) {
-  setKeynotes(Number(pn), shapes);
-}
-```
-
-**Save**: The existing save button saves current page keynotes. For all-pages, we'd need a "Save All" that batches across pages. Could be a follow-up — users can navigate page-by-page and save each.
-
-### Files to Modify
-- `src/components/viewer/DetectionPanel.tsx` — add "Scan All Pages" button + handler + progress
-- `src/stores/viewerStore.ts` — possibly add a `shapeParseAllLoading` state (or reuse `shapeParseLoading`)
-
-### No New Files Needed
-The API route and Lambda orchestrator are already complete.
+- Symbol Search as 4th tab in DetectionPanel (keeping floating panel for now)
+- Unified Shape Schema (Phase E from original plan)
+- Dockerfile.lambda USER directive (minor security hardening)
