@@ -31,6 +31,8 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
 
   // Template preview image
   const [templateImageUrl, setTemplateImageUrl] = useState<string | null>(null);
+  const [symbolSaving, setSymbolSaving] = useState(false);
+  const [symbolSaveMsg, setSymbolSaveMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!pdfDoc || !symbolSearchTemplateBbox || !symbolSearchSourcePage) {
@@ -279,10 +281,11 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
           <div className="text-[10px] text-[var(--muted)] mt-3">
             Click and drag on the blueprint to select.
           </div>
-          <div className="text-[9px] text-[var(--muted)]/50 mt-4 leading-relaxed">
-            Uses OpenCV template matching (TM_CCOEFF_NORMED) with multi-scale
-            search, plus optional SIFT+RANSAC fallback for rotation-invariant
-            detection.
+          <div className="text-[9px] text-amber-400/60 mt-4 leading-relaxed border border-amber-500/20 rounded px-2 py-1.5 bg-amber-500/5">
+            Hint: Symbol Search looks for exact visual matches of the selected
+            symbol. It works best when symbols are consistent in size and style
+            across pages. Rotated, scaled, or stylistically different versions
+            of the same symbol may not be found.
           </div>
         </div>
       )}
@@ -600,10 +603,16 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
           <div className="px-3 py-2 border-t border-[var(--border)] space-y-1">
             {visibleMatches.length > 0 && (
               <button
+                disabled={symbolSaving}
                 onClick={async () => {
                   const store = useViewerStore.getState();
                   const { publicId, isDemo } = store;
-                  if (!publicId || isDemo) return;
+                  if (!publicId || isDemo) {
+                    store.setSymbolSearchError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
+                    return;
+                  }
+                  setSymbolSaving(true);
+                  setSymbolSaveMsg(null);
                   try {
                     const annInputs = visibleMatches.map((m) => ({
                       pageNumber: m.pageNumber,
@@ -630,23 +639,30 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
                         deletePageNumbers: pageNums,
                       }),
                     });
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    if (!res.ok) {
+                      const errBody = await res.json().catch(() => ({}));
+                      throw new Error(errBody.error || `HTTP ${res.status}`);
+                    }
                     const data = await res.json();
                     if (data.annotations) {
                       const current = store.annotations;
                       const cleaned = current.filter((a) => !(a.source === "symbol-search" && pageNums.includes(a.pageNumber)));
                       store.setAnnotations([...cleaned, ...data.annotations]);
+                      setSymbolSaveMsg(`Saved ${data.annotations.length} annotations`);
+                      setTimeout(() => setSymbolSaveMsg(null), 3000);
                     }
                   } catch (err) {
                     console.error("[SYMBOL_SEARCH] Save failed:", err);
-                    useViewerStore.getState().setSymbolSearchError(
+                    store.setSymbolSearchError(
                       err instanceof Error ? err.message : "Save failed"
                     );
+                  } finally {
+                    setSymbolSaving(false);
                   }
                 }}
-                className="w-full text-[9px] px-2 py-1 rounded border border-green-500/40 text-green-300 bg-green-500/5 hover:bg-green-500/10"
+                className={`w-full text-[9px] px-2 py-1 rounded border ${symbolSaving ? "border-[var(--border)] text-[var(--muted)] cursor-wait" : symbolSaveMsg ? "border-green-500/60 text-green-300 bg-green-500/15" : "border-green-500/40 text-green-300 bg-green-500/5 hover:bg-green-500/10"}`}
               >
-                Save {visibleMatches.length} matches as annotations
+                {symbolSaving ? "Saving..." : symbolSaveMsg || `Save ${visibleMatches.length} matches as annotations`}
               </button>
             )}
             <button

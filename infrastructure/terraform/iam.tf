@@ -190,6 +190,22 @@ resource "aws_iam_role_policy" "beaver_ecs_task_sagemaker" {
   })
 }
 
+resource "aws_iam_role_policy" "beaver_ecs_task_lambda" {
+  name = "blueprintparser-ecs-task-lambda-invoke"
+  role = aws_iam_role.beaver_ecs_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "lambda:InvokeFunction"
+        Resource = aws_lambda_function.beaver_cv_pipeline.arn
+      }
+    ]
+  })
+}
+
 ###############################################################################
 # SageMaker Role
 ###############################################################################

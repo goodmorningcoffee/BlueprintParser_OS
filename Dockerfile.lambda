@@ -1,0 +1,47 @@
+# ── Lambda CV Pipeline Container ──────────────────────────────
+# Runs template matching (symbol search) and shape parsing (keynote
+# detection) on batches of blueprint pages. Invoked by the web server
+# via AWS Lambda fan-out for parallel page processing.
+#
+# Uses python:3.11-slim (Debian) + awslambdaric instead of the official
+# Lambda base image (Amazon Linux) because:
+#   1. Main app Dockerfile uses Debian slim — matching system libraries
+#   2. tesseract-ocr installs at /usr/bin/tesseract via apt-get
+#      (extract_keynotes.py line 22 hardcodes this path)
+#   3. opencv-python-headless wheels are reliable on Debian
+#
+# Build:  docker build -f Dockerfile.lambda -t beaver-cv-lambda .
+# ~400-500MB image. Cold start ~5-8s.
+
+FROM python:3.11-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# System deps — same packages as main Dockerfile lines 45-57
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python deps + AWS Lambda Runtime Interface Client
+RUN pip install --no-cache-dir \
+    awslambdaric \
+    numpy \
+    opencv-python-headless \
+    pytesseract \
+    boto3
+
+COPY scripts/template_match.py /opt/code/
+COPY scripts/extract_keynotes.py /opt/code/
+COPY scripts/lambda_handler.py /opt/code/
+
+WORKDIR /opt/code
+
+ENTRYPOINT ["python3", "-m", "awslambdaric"]
+CMD ["lambda_handler.handler"]

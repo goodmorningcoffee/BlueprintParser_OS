@@ -336,23 +336,27 @@ def deduplicate(results, threshold=IOU_DEDUP_THRESHOLD):
 
 # ── Per-tile extraction (core logic) ────────────────────────────
 
-def extract_from_image(img, skip_ocr=False):
+def extract_from_image(img, skip_ocr=False, scale_factor=1.0):
     """
     Run keynote extraction on a single image (tile or full page).
     Returns list of result dicts with tile-local normalized coords.
     When skip_ocr=True, skips Tesseract OCR (the crash-prone step) and returns empty text.
+    scale_factor: how much the image was downscaled from original (1.0 = no downscale).
     """
     h, w = img.shape
     img_cleaned = clean_img(img)
 
-    # Theta's proven candidate filters:
-    # - Text: loose aspect (0.1-2), any size
-    # - Keynotes: tight aspect (0.9-4), size 20-200px (matches real architectural symbols)
+    # Adapt size filter to downscale factor. At scale_factor=0.37 (full 300 DPI page
+    # downscaled to 4000px), a 60px keynote becomes 22px. The base 20px minimum would
+    # reject 50px symbols (→18px). Scaling the bounds keeps detection stable.
+    min_kn = max(10, int(20 * scale_factor))
+    max_kn = max(50, int(200 * scale_factor))
+
     candidate_text = filter_components(
         img_cleaned, (0.1, 2), (None, None), (None, None)
     )[1]
     candidate_keynotes = filter_components(
-        img_cleaned, (0.9, 4), (20, 200), (20, 200), invert=True
+        img_cleaned, (0.9, 4), (min_kn, max_kn), (min_kn, max_kn), invert=True
     )[1]
 
     selected_keynotes = filter_keynote_candidates(candidate_keynotes, candidate_text)
@@ -424,7 +428,7 @@ def main(img_path):
     # Small images: process directly without tiling
     if w <= MIN_SIZE_FOR_TILING and h <= MIN_SIZE_FOR_TILING:
         print(f"[keynote] Small image, no tiling needed", file=sys.stderr)
-        results = extract_from_image(img, skip_ocr=False)
+        results = extract_from_image(img, skip_ocr=False, scale_factor=scale_factor)
         print(f"[keynote] Returning {len(results)} keynotes", file=sys.stderr)
         return results
 
@@ -437,7 +441,7 @@ def main(img_path):
     all_results = []
     for ti, (ty, tx, th, tw) in enumerate(tiles):
         tile_img = img[ty : ty + th, tx : tx + tw].copy()  # copy to avoid holding ref to full image
-        tile_results = extract_from_image(tile_img, skip_ocr=False)
+        tile_results = extract_from_image(tile_img, skip_ocr=False, scale_factor=scale_factor)
         del tile_img
 
         if tile_results:

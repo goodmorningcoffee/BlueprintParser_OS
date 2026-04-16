@@ -59,6 +59,19 @@ resource "aws_s3_bucket_lifecycle_configuration" "beaver_data" {
       noncurrent_days = 90
     }
   }
+
+  rule {
+    id     = "expire-cv-temp"
+    status = "Enabled"
+
+    filter {
+      prefix = "tmp/cv-jobs/"
+    }
+
+    expiration {
+      days = 1
+    }
+  }
 }
 
 resource "aws_s3_bucket_cors_configuration" "beaver_data" {

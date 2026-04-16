@@ -1,30 +1,44 @@
 /**
  * POST /api/shape-parse
  *
- * Runs the OpenCV + Tesseract "Shape Parse" (theta-style) extractor
- * on a single page. Detects architectural symbols (circles, diamonds,
- * hexagons etc.) that contain keynote text like A1, B-2, 1A.
+ * Runs the OpenCV + Tesseract "Shape Parse" (theta-style) extractor.
+ * Detects architectural symbols (circles, diamonds, hexagons etc.)
+ * that contain keynote text like A1, B-2, 1A.
  *
- * Returns: { keynotes: KeynoteShapeData[] }
+ * Three modes:
+ *   - BB mode:   { projectId, pageNumber, regionBbox } — crop to drawn region
+ *   - Page mode: { projectId, pageNumber }             — full current page
+ *   - All pages: { projectId, scanAll: true }           — fan out via Lambda
+ *
+ * Returns: { keynotes: KeynoteShapeData[], warnings?: string[] }
+ * All-pages mode adds: { byPage: Record<number, KeynoteShapeData[]>, failedPages?: string[] }
  */
 
 import { resolveProjectAccess, apiError } from "@/lib/api-utils";
+import { db } from "@/lib/db";
+import { pages } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { downloadFromS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
 import { extractKeynotes } from "@/lib/keynotes";
+import { isLambdaCvEnabled, fanOutShapeParse } from "@/lib/lambda-cv";
 import { logger } from "@/lib/logger";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { projectId, pageNumber, regionBbox } = body as {
+  const { projectId, pageNumber, regionBbox, scanAll } = body as {
     projectId: number;
-    pageNumber: number;
+    pageNumber?: number;
     regionBbox?: [number, number, number, number];
+    scanAll?: boolean;
   };
 
-  if (!projectId || !pageNumber) {
-    return apiError("Missing projectId or pageNumber", 400);
+  if (!projectId) {
+    return apiError("Missing projectId", 400);
+  }
+  if (!scanAll && !pageNumber) {
+    return apiError("Missing pageNumber (or set scanAll: true)", 400);
   }
 
   const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
@@ -35,18 +49,91 @@ export async function POST(req: Request) {
     return apiError("Project not found", 404);
   }
 
+  // ─── All-pages mode: fan out via Lambda ─────────────────────
+  if (scanAll) {
+    try {
+      const allPages = await db
+        .select({ pageNumber: pages.pageNumber })
+        .from(pages)
+        .where(eq(pages.projectId, project.id))
+        .orderBy(pages.pageNumber);
+
+      if (allPages.length === 0) {
+        return NextResponse.json({ keynotes: [], byPage: {}, warnings: ["No pages found"] });
+      }
+
+      const pageS3Keys = allPages.map(
+        (p) => `${project.dataUrl}/pages/page_${String(p.pageNumber).padStart(4, "0")}.png`
+      );
+      const pageKeyToNumber: Record<string, number> = {};
+      for (const p of allPages) {
+        pageKeyToNumber[`${project.dataUrl}/pages/page_${String(p.pageNumber).padStart(4, "0")}.png`] = p.pageNumber;
+      }
+
+      if (isLambdaCvEnabled()) {
+        const { results, failedPages } = await fanOutShapeParse({ pageS3Keys });
+
+        const byPage: Record<number, typeof results> = {};
+        const allKeynotes = results.map((r) => {
+          const pn = pageKeyToNumber[r.pageS3Key] ?? 0;
+          const keynote = { shape: r.shape, text: r.text, bbox: r.bbox, contour: r.contour };
+          if (!byPage[pn]) byPage[pn] = [];
+          byPage[pn].push(r);
+          return { ...keynote, pageNumber: pn };
+        });
+
+        return NextResponse.json({
+          keynotes: allKeynotes,
+          byPage,
+          totalPages: allPages.length,
+          ...(failedPages.length > 0 && { failedPages }),
+        });
+      }
+
+      // Fallback: sequential local processing (slow but works without Lambda)
+      const byPage: Record<number, any[]> = {};
+      const allKeynotes: any[] = [];
+      const warnings: string[] = [];
+
+      for (const p of allPages) {
+        try {
+          const s3Key = `${project.dataUrl}/pages/page_${String(p.pageNumber).padStart(4, "0")}.png`;
+          const pngBuffer = await downloadFromS3(s3Key);
+          const result = await extractKeynotes(pngBuffer);
+          byPage[p.pageNumber] = result.keynotes;
+          for (const k of result.keynotes) {
+            allKeynotes.push({ ...k, pageNumber: p.pageNumber });
+          }
+          if (result.warnings.length) warnings.push(...result.warnings);
+        } catch (err) {
+          logger.warn(`[SHAPE_PARSE] Page ${p.pageNumber} failed:`, err);
+          warnings.push(`Page ${p.pageNumber} failed`);
+        }
+      }
+
+      return NextResponse.json({
+        keynotes: allKeynotes,
+        byPage,
+        totalPages: allPages.length,
+        warnings: warnings.length > 0 ? warnings : undefined,
+      });
+    } catch (err) {
+      logger.error("[SHAPE_PARSE] All-pages scan failed:", err);
+      return apiError(`All-pages scan failed: ${err instanceof Error ? err.message : "unknown"}`, 500);
+    }
+  }
+
+  // ─── Single-page mode (BB or full page) ─────────────────────
   try {
-    // Prefer the pre-rendered page PNG; fall back to rasterizing the PDF.
     const s3Key = `${project.dataUrl}/pages/page_${String(pageNumber).padStart(4, "0")}.png`;
     let pngBuffer: Buffer | null = null;
 
     try {
       pngBuffer = await downloadFromS3(s3Key);
     } catch {
-      // Fall back to on-demand rasterization from PDF
       try {
         const pdfBuffer = await downloadFromS3(`${project.dataUrl}/original.pdf`);
-        pngBuffer = await rasterizePage(pdfBuffer, pageNumber, 300);
+        pngBuffer = await rasterizePage(pdfBuffer, pageNumber!, 300);
       } catch (err) {
         logger.error("[SHAPE_PARSE] Failed to load page image:", err);
         return apiError("Failed to load page image", 500);
@@ -63,7 +150,6 @@ export async function POST(req: Request) {
     let regionW = 1;
     let regionH = 1;
 
-    // Crop to user-drawn region if provided — reduces noise, improves accuracy
     if (regionBbox && regionBbox.length === 4) {
       const [minX, minY, maxX, maxY] = regionBbox;
       try {
@@ -92,7 +178,6 @@ export async function POST(req: Request) {
 
     const { keynotes, warnings } = await extractKeynotes(inputBuffer);
 
-    // Remap cropped coordinates back to full-page normalized space
     const remapped = keynotes.map((k) => ({
       ...k,
       bbox: [
