@@ -72,8 +72,9 @@ interface TemplateMatchFanOutOpts {
 export async function fanOutTemplateMatch(
   opts: TemplateMatchFanOutOpts
 ): Promise<{ results: (TemplateMatchHit & { pageS3Key: string })[]; failedPages: string[] }> {
-  const jobId = crypto.randomUUID();
   const bucket = s3Bucket();
+  if (!bucket) throw new Error("S3_BUCKET env var is not set — cannot fan out to Lambda");
+  const jobId = crypto.randomUUID();
   const templateKey = `tmp/cv-jobs/${jobId}/template.png`;
 
   await uploadToS3(templateKey, opts.templateBuffer, "image/png");
@@ -172,8 +173,9 @@ interface ShapeParseFanOutOpts {
 export async function fanOutShapeParse(
   opts: ShapeParseFanOutOpts
 ): Promise<{ results: (KeynoteShapeData & { pageS3Key: string })[]; failedPages: string[] }> {
-  const jobId = crypto.randomUUID();
   const bucket = s3Bucket();
+  if (!bucket) throw new Error("S3_BUCKET env var is not set — cannot fan out to Lambda");
+  const jobId = crypto.randomUUID();
 
   try {
     const batches = partition(opts.pageS3Keys, SHAPE_PARSE_BATCH_SIZE);

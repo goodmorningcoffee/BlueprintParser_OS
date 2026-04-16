@@ -51,6 +51,8 @@ export default function DetectionPanel() {
   const projectId = useViewerStore((s) => s.projectId);
 
   const pageKeynotes = keynotes[pageNumber] || [];
+  const hasMultiPageKeynotes = useMemo(() => Object.keys(keynotes).length > 1, [keynotes]);
+  const totalKeynoteCount = useMemo(() => Object.values(keynotes).reduce((n, k) => n + (k?.length || 0), 0), [keynotes]);
 
   // Group detected shapes by type for the summary list
   const shapesByType = useMemo(() => {
@@ -861,7 +863,7 @@ export default function DetectionPanel() {
               >
                 {shapeSaving ? "Saving..." : shapeSaveSuccess || `Save page ${pageNumber} (${pageKeynotes.length} shapes)`}
               </button>
-              {Object.keys(keynotes).length > 1 && (
+              {hasMultiPageKeynotes && (
                 <button
                   disabled={shapeSaving}
                   onClick={async () => {
@@ -929,7 +931,7 @@ export default function DetectionPanel() {
                   }}
                   className={`w-full px-2 py-1 text-[10px] rounded border ${shapeSaving ? "border-[var(--border)] text-[var(--muted)] cursor-wait" : "border-amber-500/40 text-amber-300 bg-amber-500/5 hover:bg-amber-500/10"}`}
                 >
-                  {shapeSaving ? "Saving..." : `Save all pages (${Object.values(keynotes).reduce((n, k) => n + (k?.length || 0), 0)} shapes)`}
+                  {shapeSaving ? "Saving..." : `Save all pages (${totalKeynoteCount} shapes)`}
                 </button>
               )}
             </div>
