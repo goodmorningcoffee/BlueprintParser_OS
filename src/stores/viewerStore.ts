@@ -114,6 +114,7 @@ interface ViewerState {
   // ─── Keynotes per page ───────────────────────────────────
   keynotes: Record<number, KeynoteShapeData[]>;
   setKeynotes: (pageNum: number, data: KeynoteShapeData[]) => void;
+  setBatchKeynotes: (updates: Record<number, KeynoteShapeData[]>) => void;
 
   // ─── CSI codes per page ──────────────────────────────────
   csiCodes: Record<number, CsiCode[]>;
@@ -599,6 +600,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   keynotes: {},
   setKeynotes: (pageNum, data) =>
     set((s) => ({ keynotes: { ...s.keynotes, [pageNum]: data } })),
+  setBatchKeynotes: (updates) =>
+    set((s) => ({ keynotes: { ...s.keynotes, ...updates } })),
 
   csiCodes: {},
   setCsiCodes: (pageNum, codes) =>
@@ -1499,6 +1502,7 @@ export const usePageData = () =>
     setTextractData: s.setTextractData,
     keynotes: s.keynotes,
     setKeynotes: s.setKeynotes,
+    setBatchKeynotes: s.setBatchKeynotes,
     csiCodes: s.csiCodes,
     setCsiCodes: s.setCsiCodes,
     textAnnotations: s.textAnnotations,

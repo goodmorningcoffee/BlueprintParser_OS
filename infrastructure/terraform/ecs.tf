@@ -75,6 +75,8 @@ resource "aws_ecs_task_definition" "beaver_app" {
         { name = "ROOT_ADMIN_EMAIL", value = var.label_studio_admin_email },
         { name = "YOLO_ECR_IMAGE", value = "${aws_ecr_repository.beaver_yolo_pipeline.repository_url}:latest" },
         { name = "SAGEMAKER_ROLE_ARN", value = aws_iam_role.beaver_sagemaker_role.arn },
+        { name = "LAMBDA_CV_ENABLED", value = "true" },
+        { name = "LAMBDA_CV_FUNCTION_NAME", value = aws_lambda_function.beaver_cv_pipeline.function_name },
       ]
 
       secrets = [

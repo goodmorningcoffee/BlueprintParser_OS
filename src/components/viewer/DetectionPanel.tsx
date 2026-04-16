@@ -37,7 +37,9 @@ export default function DetectionPanel() {
   const [shapeParseError, setShapeParseError] = useState<string | null>(null);
   const [shapeParseWarnings, setShapeParseWarnings] = useState<string[]>([]);
   const [shapeParseRegion, setShapeParseRegion] = useState<[number, number, number, number] | null>(null);
-  const { keynotes, setKeynotes } = usePageData();
+  const [shapeSaving, setShapeSaving] = useState(false);
+  const [shapeSaveSuccess, setShapeSaveSuccess] = useState<string | null>(null);
+  const { keynotes, setKeynotes, setBatchKeynotes } = usePageData();
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
   const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
@@ -105,6 +107,35 @@ export default function DetectionPanel() {
       setShapeParseLoading(false);
     }
   }
+  async function runShapeParseAll() {
+    if (!projectId || shapeParseLoading) return;
+    setShapeParseLoading(true);
+    setShapeParseError(null);
+    setShapeParseWarnings([]);
+    try {
+      const res = await fetch("/api/shape-parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, scanAll: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setShapeParseError(err.error || `Failed (${res.status})`);
+        return;
+      }
+      const data = await res.json();
+      if (data.byPage) {
+        setBatchKeynotes(data.byPage);
+      }
+      if (data.warnings?.length) setShapeParseWarnings(data.warnings);
+      if (!showKeynotes) toggleKeynotes();
+    } catch (err) {
+      setShapeParseError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setShapeParseLoading(false);
+    }
+  }
+
   const [expandedModels, setExpandedModels] = useState<Record<string, boolean>>({});
   const [expandedClasses, setExpandedClasses] = useState<Record<string, boolean>>({});
   const [expandedTagModels, setExpandedTagModels] = useState<Record<string, boolean>>({});
@@ -722,6 +753,18 @@ export default function DetectionPanel() {
               >
                 BB
               </button>
+              <button
+                onClick={runShapeParseAll}
+                disabled={shapeParseLoading || !projectId}
+                className={`px-2 py-1.5 text-[11px] rounded border transition-colors ${
+                  shapeParseLoading
+                    ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
+                    : "border-amber-500/40 text-amber-300 bg-amber-500/5 hover:bg-amber-500/10"
+                } disabled:opacity-40`}
+                title="Scan all pages for shapes (uses Lambda if available)"
+              >
+                All
+              </button>
             </div>
             {shapeParseRegion && (
               <div className="flex items-center gap-1 text-[9px] text-cyan-400/60">
@@ -755,14 +798,21 @@ export default function DetectionPanel() {
             </div>
           </div>
 
-          {/* Save as annotations button */}
+          {/* Save as annotations buttons */}
           {pageKeynotes.length > 0 && (
-            <div className="px-3 py-1.5 border-b border-[var(--border)]">
+            <div className="px-3 py-1.5 border-b border-[var(--border)] space-y-1">
               <button
+                disabled={shapeSaving}
                 onClick={async () => {
                   const store = useViewerStore.getState();
                   const { publicId, isDemo } = store;
-                  if (!publicId || isDemo) return;
+                  if (!publicId || isDemo) {
+                    setShapeParseError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
+                    return;
+                  }
+                  setShapeSaving(true);
+                  setShapeParseError(null);
+                  setShapeSaveSuccess(null);
                   try {
                     const annInputs = pageKeynotes.map((k) => ({
                       pageNumber,
@@ -788,21 +838,100 @@ export default function DetectionPanel() {
                         deletePageNumbers: [pageNumber],
                       }),
                     });
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    if (!res.ok) {
+                      const errBody = await res.json().catch(() => ({}));
+                      throw new Error(errBody.error || `HTTP ${res.status}`);
+                    }
                     const data = await res.json();
                     if (data.annotations) {
                       const current = useViewerStore.getState().annotations;
                       const cleaned = current.filter((a) => !(a.source === "shape-parse" && a.pageNumber === pageNumber));
                       useViewerStore.getState().setAnnotations([...cleaned, ...data.annotations]);
+                      setShapeSaveSuccess(`Saved ${data.annotations.length} annotations`);
+                      setTimeout(() => setShapeSaveSuccess(null), 3000);
                     }
                   } catch (err) {
+                    console.error("[SHAPE_PARSE] Save failed:", err);
                     setShapeParseError(err instanceof Error ? err.message : "Save failed");
+                  } finally {
+                    setShapeSaving(false);
                   }
                 }}
-                className="w-full px-2 py-1 text-[10px] rounded border border-green-500/40 text-green-300 bg-green-500/5 hover:bg-green-500/10"
+                className={`w-full px-2 py-1 text-[10px] rounded border ${shapeSaving ? "border-[var(--border)] text-[var(--muted)] cursor-wait" : shapeSaveSuccess ? "border-green-500/60 text-green-300 bg-green-500/15" : "border-green-500/40 text-green-300 bg-green-500/5 hover:bg-green-500/10"}`}
               >
-                Save {pageKeynotes.length} shapes as annotations
+                {shapeSaving ? "Saving..." : shapeSaveSuccess || `Save page ${pageNumber} (${pageKeynotes.length} shapes)`}
               </button>
+              {Object.keys(keynotes).length > 1 && (
+                <button
+                  disabled={shapeSaving}
+                  onClick={async () => {
+                    const store = useViewerStore.getState();
+                    const { publicId, isDemo } = store;
+                    if (!publicId || isDemo) {
+                      setShapeParseError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
+                      return;
+                    }
+                    setShapeSaving(true);
+                    setShapeParseError(null);
+                    setShapeSaveSuccess(null);
+                    try {
+                      const allAnnotations: Array<{pageNumber: number; name: string; bbox: [number,number,number,number]; source: string; threshold: number; data: Record<string, unknown>}> = [];
+                      const allPageNums: number[] = [];
+                      for (const [pn, shapes] of Object.entries(keynotes)) {
+                        const pageNum = Number(pn);
+                        if (!shapes?.length) continue;
+                        allPageNums.push(pageNum);
+                        for (const k of shapes) {
+                          allAnnotations.push({
+                            pageNumber: pageNum,
+                            name: k.shape,
+                            bbox: k.bbox,
+                            source: "shape-parse",
+                            threshold: 0.9,
+                            data: {
+                              modelName: "shape-parse",
+                              shapeType: k.shape,
+                              text: k.text,
+                              contour: k.contour,
+                              confidence: 0.9,
+                            },
+                          });
+                        }
+                      }
+                      const res = await fetch("/api/annotations", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          projectId: publicId,
+                          annotations: allAnnotations,
+                          deleteSource: "shape-parse",
+                          deletePageNumbers: allPageNums,
+                        }),
+                      });
+                      if (!res.ok) {
+                        const errBody = await res.json().catch(() => ({}));
+                        throw new Error(errBody.error || `HTTP ${res.status}`);
+                      }
+                      const data = await res.json();
+                      if (data.annotations) {
+                        const current = store.annotations;
+                        const cleaned = current.filter((a) => !(a.source === "shape-parse" && allPageNums.includes(a.pageNumber)));
+                        store.setAnnotations([...cleaned, ...data.annotations]);
+                        setShapeSaveSuccess(`Saved ${data.annotations.length} across ${allPageNums.length} pages`);
+                        setTimeout(() => setShapeSaveSuccess(null), 3000);
+                      }
+                    } catch (err) {
+                      console.error("[SHAPE_PARSE] Save all failed:", err);
+                      setShapeParseError(err instanceof Error ? err.message : "Save failed");
+                    } finally {
+                      setShapeSaving(false);
+                    }
+                  }}
+                  className={`w-full px-2 py-1 text-[10px] rounded border ${shapeSaving ? "border-[var(--border)] text-[var(--muted)] cursor-wait" : "border-amber-500/40 text-amber-300 bg-amber-500/5 hover:bg-amber-500/10"}`}
+                >
+                  {shapeSaving ? "Saving..." : `Save all pages (${Object.values(keynotes).reduce((n, k) => n + (k?.length || 0), 0)} shapes)`}
+                </button>
+              )}
             </div>
           )}
 

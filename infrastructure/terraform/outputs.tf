@@ -126,6 +126,11 @@ output "ecr_beaver_yolo_pipeline_url" {
   value       = aws_ecr_repository.beaver_yolo_pipeline.repository_url
 }
 
+output "ecr_beaver_cv_lambda_url" {
+  description = "ECR repository URL for blueprintparser-cv-lambda"
+  value       = aws_ecr_repository.beaver_cv_lambda.repository_url
+}
+
 ###############################################################################
 # IAM
 ###############################################################################
@@ -162,6 +167,25 @@ output "step_functions_state_machine_arn" {
 output "step_functions_state_machine_name" {
   description = "Name of the Step Functions state machine"
   value       = aws_sfn_state_machine.beaver_process_blueprint.name
+}
+
+###############################################################################
+# Lambda
+###############################################################################
+
+output "lambda_cv_pipeline_arn" {
+  description = "ARN of the CV pipeline Lambda function"
+  value       = aws_lambda_function.beaver_cv_pipeline.arn
+}
+
+output "lambda_cv_pipeline_name" {
+  description = "Name of the CV pipeline Lambda function"
+  value       = aws_lambda_function.beaver_cv_pipeline.function_name
+}
+
+output "lambda_cv_role_arn" {
+  description = "ARN of the CV Lambda execution role"
+  value       = aws_iam_role.beaver_lambda_cv_role.arn
 }
 
 ###############################################################################
