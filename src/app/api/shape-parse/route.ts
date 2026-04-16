@@ -17,9 +17,10 @@ import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { projectId, pageNumber } = body as {
+  const { projectId, pageNumber, regionBbox } = body as {
     projectId: number;
     pageNumber: number;
+    regionBbox?: [number, number, number, number];
   };
 
   if (!projectId || !pageNumber) {
@@ -56,9 +57,57 @@ export async function POST(req: Request) {
       return apiError("Page image unavailable", 500);
     }
 
-    const keynotes = await extractKeynotes(pngBuffer);
+    let inputBuffer = pngBuffer;
+    let offsetX = 0;
+    let offsetY = 0;
+    let regionW = 1;
+    let regionH = 1;
 
-    return NextResponse.json({ keynotes });
+    // Crop to user-drawn region if provided — reduces noise, improves accuracy
+    if (regionBbox && regionBbox.length === 4) {
+      const [minX, minY, maxX, maxY] = regionBbox;
+      try {
+        const sharp = (await import("sharp")).default;
+        const meta = await sharp(pngBuffer).metadata();
+        const imgW = meta.width || 1;
+        const imgH = meta.height || 1;
+        const cropX = Math.max(0, Math.round(minX * imgW));
+        const cropY = Math.max(0, Math.round(minY * imgH));
+        const cropW = Math.min(imgW - cropX, Math.round((maxX - minX) * imgW));
+        const cropH = Math.min(imgH - cropY, Math.round((maxY - minY) * imgH));
+        if (cropW > 10 && cropH > 10) {
+          inputBuffer = await sharp(pngBuffer)
+            .extract({ left: cropX, top: cropY, width: cropW, height: cropH })
+            .png()
+            .toBuffer();
+          offsetX = minX;
+          offsetY = minY;
+          regionW = maxX - minX;
+          regionH = maxY - minY;
+        }
+      } catch (err) {
+        logger.warn("[SHAPE_PARSE] Region crop failed, using full page:", err);
+      }
+    }
+
+    const { keynotes, warnings } = await extractKeynotes(inputBuffer);
+
+    // Remap cropped coordinates back to full-page normalized space
+    const remapped = keynotes.map((k) => ({
+      ...k,
+      bbox: [
+        offsetX + k.bbox[0] * regionW,
+        offsetY + k.bbox[1] * regionH,
+        offsetX + k.bbox[2] * regionW,
+        offsetY + k.bbox[3] * regionH,
+      ] as [number, number, number, number],
+      contour: k.contour?.map(([cx, cy]: [number, number]) => [
+        offsetX + cx * regionW,
+        offsetY + cy * regionH,
+      ] as [number, number]),
+    }));
+
+    return NextResponse.json({ keynotes: remapped, warnings });
   } catch (err) {
     logger.error("[SHAPE_PARSE] Error:", err);
     const message = err instanceof Error ? err.message : "unknown";
