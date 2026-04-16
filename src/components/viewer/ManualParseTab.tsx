@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { useViewerStore, useTableParse, useNavigation, usePageData } from "@/stores/viewerStore";
-import MapTagsSection from "./MapTagsSection";
+import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 
 interface ManualParseTabProps {
   yoloInTableRegion: { model: string; className: string; count: number }[];
@@ -12,6 +12,12 @@ interface ManualParseTabProps {
   handleMapTags: () => void;
   tagMappingDone: boolean;
   tagMappingCount: number;
+  // Phase 3 — Map Tags strictness + drawing-number-prefix scope
+  mapTagsStrictness: MapTagsStrictness;
+  setMapTagsStrictness: (s: MapTagsStrictness) => void;
+  drawingNumberPrefixes: string[];
+  setDrawingNumberPrefixes: (prefixes: string[]) => void;
+  availablePrefixes: string[];
 }
 
 export default function ManualParseTab({
@@ -22,6 +28,11 @@ export default function ManualParseTab({
   handleMapTags,
   tagMappingDone,
   tagMappingCount,
+  mapTagsStrictness,
+  setMapTagsStrictness,
+  drawingNumberPrefixes,
+  setDrawingNumberPrefixes,
+  availablePrefixes,
 }: ManualParseTabProps) {
   const { pageNumber } = useNavigation();
   const { textractData } = usePageData();
@@ -284,9 +295,20 @@ export default function ManualParseTab({
           <div className="text-[10px] text-green-400 px-1 py-1 border border-green-500/20 rounded bg-green-500/5">
             Parsed: {tableParsedGrid.headers.length} cols, {tableParsedGrid.rows.length} rows — use Compare/Edit Cells tab to verify.
           </div>
-          <MapTagsSection grid={tableParsedGrid} yoloInTableRegion={yoloInTableRegion} tagYoloClass={tagYoloClass}
-            onTagYoloClassChange={setTagYoloClass} onMapTags={handleMapTags} tagMappingDone={tagMappingDone}
-            tagMappingCount={tagMappingCount} />
+          <MapTagsSection
+            grid={tableParsedGrid}
+            yoloInTableRegion={yoloInTableRegion}
+            tagYoloClass={tagYoloClass}
+            onTagYoloClassChange={setTagYoloClass}
+            onMapTags={handleMapTags}
+            tagMappingDone={tagMappingDone}
+            tagMappingCount={tagMappingCount}
+            strictness={mapTagsStrictness}
+            onStrictnessChange={setMapTagsStrictness}
+            drawingNumberPrefixes={drawingNumberPrefixes}
+            onDrawingNumberPrefixesChange={setDrawingNumberPrefixes}
+            availablePrefixes={availablePrefixes}
+          />
         </div>
       )}
     </div>

@@ -11,6 +11,10 @@ import type {
   models,
   llmConfigs,
 } from "@/lib/db/schema";
+// Type-only import — ScoredMatch lives in tag-mapping but is a structural
+// superset of YoloTagInstance, so we expose it on YoloTag.instances for
+// tier badges + audit review. Type-only import avoids runtime cycles.
+import type { ScoredMatch } from "@/lib/tag-mapping/types";
 
 // ─── Database row types ──────────────────────────────────────
 export type Company = InferSelectModel<typeof companies>;
@@ -147,13 +151,27 @@ export interface QtoLineItem {
   specs: Record<string, string>;
   autoQuantity: number;
   manualQuantity?: number;
-  instances: { pageNumber: number; bbox: [number, number, number, number]; confidence: number }[];
+  instances: {
+    pageNumber: number;
+    bbox: [number, number, number, number];
+    confidence: number;
+    /** Phase 2: optional tier + dropReason preserved for per-instance audit
+     *  review in the ReviewStep expander. Absent on pre-Phase-2 data. */
+    confidenceTier?: "high" | "medium" | "low";
+    dropReason?: "outside_scope" | "pattern_mismatch" | "inside_title_block" | "inside_table" | "outside_drawings";
+  }[];
   pages: number[];
   flags: QtoFlag[];
   notes: string;
 }
 
-export type QtoFlag = "not-found" | "extra" | "low-confidence" | "qty-mismatch" | "manual-override";
+export type QtoFlag =
+  | "not-found"
+  | "extra"
+  | "low-confidence"
+  | "medium-confidence"
+  | "qty-mismatch"
+  | "manual-override";
 
 /** SHIP 2: trimmed to only fields the UI actually populates. Previously had
  *  5 structured-but-unused fields (addedInstances, removedInstances, addedRows,
@@ -707,7 +725,12 @@ export interface YoloTag {
   description?: string;                // from keynote/schedule parsing
   color?: string;                      // user-customizable
   csiCodes?: string[];                 // CSI codes inherited from parsed region (e.g., ["08 11 13"])
-  instances: YoloTagInstance[];
+  /** Scored matches for this tag across the project. ScoredMatch is a
+   *  structural superset of YoloTagInstance — pre-Phase-2 data (and
+   *  legacy callers returning YoloTagInstance[] via shims) are still
+   *  assignable. UI code can read optional confidenceTier / dropReason /
+   *  signals / score fields for tier badges and audit review. */
+  instances: ScoredMatch[];
 }
 
 export interface YoloTagInstance {

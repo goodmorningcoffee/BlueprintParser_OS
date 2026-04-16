@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useViewerStore, useTableParse, useNavigation, useProject } from "@/stores/viewerStore";
 import { exportTableCsv } from "@/lib/table-parse-utils";
 import HelpTooltip from "./HelpTooltip";
-import MapTagsSection from "./MapTagsSection";
+import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 
 type ProposedRegion = [number, number, number, number]; // [minX, minY, maxX, maxY]
 
@@ -47,6 +47,13 @@ interface AutoParseTabProps {
   tagMappingDone: boolean;
   tagMappingCount: number;
   setTagMappingDone: (done: boolean) => void;
+  // Phase 3 — Map Tags strictness + drawing-number-prefix scope + audit
+  mapTagsStrictness: MapTagsStrictness;
+  setMapTagsStrictness: (s: MapTagsStrictness) => void;
+  drawingNumberPrefixes: string[];
+  setDrawingNumberPrefixes: (prefixes: string[]) => void;
+  availablePrefixes: string[];
+  lastDropCounts: Record<string, number> | null;
 }
 
 export default function AutoParseTab({
@@ -61,6 +68,12 @@ export default function AutoParseTab({
   tagMappingDone,
   tagMappingCount,
   setTagMappingDone,
+  mapTagsStrictness,
+  setMapTagsStrictness,
+  drawingNumberPrefixes,
+  setDrawingNumberPrefixes,
+  availablePrefixes,
+  lastDropCounts,
 }: AutoParseTabProps) {
   const { pageNumber } = useNavigation();
   const { projectId, isDemo } = useProject();
@@ -443,9 +456,39 @@ export default function AutoParseTab({
               ))}
             </div>
           )}
-          <MapTagsSection grid={tableParsedGrid} yoloInTableRegion={yoloInTableRegion} tagYoloClass={tagYoloClass}
-            onTagYoloClassChange={setTagYoloClass} onMapTags={handleMapTags} tagMappingDone={tagMappingDone}
-            tagMappingCount={tagMappingCount} showUniqueCount />
+          <MapTagsSection
+            grid={tableParsedGrid}
+            yoloInTableRegion={yoloInTableRegion}
+            tagYoloClass={tagYoloClass}
+            onTagYoloClassChange={setTagYoloClass}
+            onMapTags={handleMapTags}
+            tagMappingDone={tagMappingDone}
+            tagMappingCount={tagMappingCount}
+            showUniqueCount
+            strictness={mapTagsStrictness}
+            onStrictnessChange={setMapTagsStrictness}
+            drawingNumberPrefixes={drawingNumberPrefixes}
+            onDrawingNumberPrefixesChange={setDrawingNumberPrefixes}
+            availablePrefixes={availablePrefixes}
+          />
+          {tagMappingDone && lastDropCounts && (() => {
+            const scopePattern = (lastDropCounts.outside_scope ?? 0)
+              + (lastDropCounts.pattern_mismatch ?? 0);
+            const strictnessDrops = (lastDropCounts.inside_title_block ?? 0)
+              + (lastDropCounts.inside_table ?? 0)
+              + (lastDropCounts.outside_drawings ?? 0);
+            if (scopePattern === 0 && strictnessDrops === 0) return null;
+            return (
+              <div className="text-[9px] text-[var(--muted)] px-1 space-y-0.5">
+                {scopePattern > 0 && (
+                  <div>{scopePattern} filtered by scope/pattern</div>
+                )}
+                {strictnessDrops > 0 && (
+                  <div>{strictnessDrops} dropped by strictness</div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* TATR Cell Structure Detection */}
           <DetectCellStructureButton />

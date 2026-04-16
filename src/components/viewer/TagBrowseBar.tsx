@@ -94,6 +94,31 @@ export default function TagBrowseBar() {
         </span>
       )}
 
+      {/* Tier badge for the current instance — color-coded by confidence tier.
+          Pre-Phase-2 data lacks `confidenceTier` → defaults to "high" (no badge). */}
+      {(() => {
+        const tier = inst?.confidenceTier;
+        if (!tier || tier === "high") return null;
+        const label = tier === "medium" ? "Med" : "Low";
+        const className =
+          tier === "medium"
+            ? "text-[8px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-medium"
+            : "text-[8px] px-1.5 py-0.5 rounded border border-red-400/60 text-red-300 font-medium";
+        const signals = inst?.signals;
+        const score = inst?.score;
+        const reason = inst?.dropReason;
+        const title = [
+          `tier=${tier}`,
+          score !== undefined ? `score=${score.toFixed(2)}` : null,
+          signals ? `region=${signals.regionType}` : null,
+          signals?.patternMatch !== undefined ? `pattern=${signals.patternMatch ? "✓" : "✗"}` : null,
+          signals?.windowMatch !== undefined ? `window=${signals.windowMatch ? "✓" : "✗"}` : null,
+          signals?.fuzzy ? "fuzzy-OCR" : null,
+          reason ? `reason=${reason}` : null,
+        ].filter(Boolean).join(" · ");
+        return <span className={className} title={title}>{label}</span>;
+      })()}
+
       {/* Navigation */}
       <button
         onClick={() => navigate(-1)}
