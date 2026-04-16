@@ -22,7 +22,8 @@ type ProposedRegion = [number, number, number, number]; // [minX, minY, maxX, ma
  * Future: an Admin Control "Table Parsing" tab will replace this with a
  * persisted server-side appSettings flag.
  */
-function isTableParseDebugMode(): boolean {
+function isTableParseDebugMode(isDemo: boolean): boolean {
+  if (isDemo) return true;
   if (process.env.NEXT_PUBLIC_TABLE_PARSE_DEBUG === "1") return true;
   if (typeof window !== "undefined" && window.localStorage) {
     try {
@@ -62,7 +63,7 @@ export default function AutoParseTab({
   setTagMappingDone,
 }: AutoParseTabProps) {
   const { pageNumber } = useNavigation();
-  const { projectId } = useProject();
+  const { projectId, isDemo } = useProject();
   const {
     tableParseStep, setTableParseStep,
     tableParseRegion, setTableParseRegion,
@@ -112,7 +113,7 @@ export default function AutoParseTab({
       setAutoParseInfraErrors([]);
       setAutoParseMethodResults(null);
 
-      const debugMode = isTableParseDebugMode();
+      const debugMode = isTableParseDebugMode(isDemo);
 
       try {
         // Parse each region independently then merge
@@ -224,7 +225,7 @@ export default function AutoParseTab({
         setAutoParsing(false);
       }
     },
-    [proposedRegions, projectId, pageNumber, setTableParsedGrid, setTableParseStep, detectCsiAndPersist]
+    [proposedRegions, projectId, pageNumber, isDemo, setTableParsedGrid, setTableParseStep, detectCsiAndPersist]
   );
 
   const exportCsv = () => {
@@ -485,7 +486,18 @@ export default function AutoParseTab({
           <div className="flex gap-2">
             <button
               onClick={async () => {
-                if (tableParsedGrid) await detectCsiAndPersist(tableParsedGrid);
+                if (tableParsedGrid) {
+                  try {
+                    await detectCsiAndPersist(tableParsedGrid);
+                  } catch (err) {
+                    // Surface persistence failure to the user instead of
+                    // silently keeping a parsed table that only exists in
+                    // memory. Keep the review step open so the user can retry
+                    // or copy the data before dismissing.
+                    setAutoParseError(err instanceof Error ? err.message : "Save failed");
+                    return;
+                  }
+                }
                 resetTableParse(); setTableParseStep("idle"); setTagMappingDone(false); setTagYoloClass(null);
               }}
               className="flex-1 text-xs px-3 py-1.5 rounded bg-green-600 text-white hover:bg-green-500"
