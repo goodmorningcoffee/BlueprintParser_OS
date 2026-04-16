@@ -76,8 +76,23 @@ function downscaleAndGrayscale(
   return { gray, w, h };
 }
 
-/** Otsu threshold + binarize in a single pass over the image. */
-function otsuAndBinarize(gray: Uint8Array): Uint8Array {
+/**
+ * Otsu threshold + binarize in a single pass over the image.
+ *
+ * `tolerance` shifts the computed Otsu threshold to give the user a tunable
+ * "fills more / fills less" knob. Walls are dark (0), rooms are light (255);
+ * the binarize step classifies a pixel as room when `gray[i] > threshold`.
+ *
+ * Lowering the threshold → more pixels classified as room → fewer walls → more
+ * aggressive fill (user wants this when rooms have faint dividers).
+ * Raising the threshold → stricter room classification → more walls → less
+ * leakage (user wants this when fills escape the room outline).
+ *
+ * Slider range 5–80, default 30. `offset = 30 - tolerance`, so the default
+ * preserves pure Otsu behavior; tolerance=5 adds +25 (tighter), tolerance=80
+ * adds -50 (looser).
+ */
+function otsuAndBinarize(gray: Uint8Array, tolerance: number): Uint8Array {
   const n = gray.length;
 
   // Pass 1: build histogram + compute sum
@@ -104,9 +119,11 @@ function otsuAndBinarize(gray: Uint8Array): Uint8Array {
     if (between > maxVar) { maxVar = between; threshold = t; }
   }
 
+  const adjustedThreshold = Math.max(0, Math.min(255, threshold + (30 - tolerance)));
+
   // Pass 2: binarize
   const bin = new Uint8Array(n);
-  for (let i = 0; i < n; i++) bin[i] = gray[i] > threshold ? 255 : 0;
+  for (let i = 0; i < n; i++) bin[i] = gray[i] > adjustedThreshold ? 255 : 0;
   return bin;
 }
 
@@ -429,7 +446,7 @@ function processFill(req: BucketFillRequest): BucketFillResult {
   req.imageBitmap.close();
 
   // 2. Otsu + binarize (single pass for histogram, single pass for threshold)
-  const baseBin = otsuAndBinarize(gray);
+  const baseBin = otsuAndBinarize(gray, req.tolerance);
 
   const seedPx = Math.max(0, Math.min(w - 1, Math.round(req.seedX * w)));
   const seedPy = Math.max(0, Math.min(h - 1, Math.round(req.seedY * h)));

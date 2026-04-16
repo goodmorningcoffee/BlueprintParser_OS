@@ -491,7 +491,10 @@ export default function AreaTab() {
                 : "Click inside a room to detect its boundary"}
             </div>
             <div className="space-y-1">
-              <div className="flex items-center gap-1.5">
+              <div
+                className="flex items-center gap-1.5"
+                title="How aggressively the fill pushes past faint pixels. Lower = stops at every subtle line (tight rooms). Higher = ignores small gaps and extends further."
+              >
                 <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Tolerance</span>
                 <input type="range" min={5} max={80} step={1}
                   value={bucketFillTolerance}
@@ -499,7 +502,10 @@ export default function AreaTab() {
                   className="flex-1 h-1 accent-cyan-400" />
                 <span className="w-5 text-[10px] text-right font-mono text-[var(--muted)]">{bucketFillTolerance}</span>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div
+                className="flex items-center gap-1.5"
+                title="Padding added to walls before filling, in pixels. Higher values close small gaps in line art (like 1–2px gaps at door frames). Set to 0 for very clean blueprints."
+              >
                 <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Dilation</span>
                 <input type="range" min={0} max={10} step={1}
                   value={bucketFillDilatePx}

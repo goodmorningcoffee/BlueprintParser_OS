@@ -81,6 +81,12 @@ export default function TableParsePanel() {
   }, [pageNumber, setPageIntelligence]);
 
   // ─── CSI detect + persist to DB ───────────────────────────
+  // Throws on DB PATCH failure so callers can surface the error to the user
+  // instead of showing a successful-looking in-memory save that won't survive
+  // project re-entry. The previous silent-catch variant was the root cause
+  // of the "parsed tables disappear on re-entry" bug: when PATCH returned an
+  // error (stale session, payload too large, etc.), local state had the
+  // region but the DB never did, so next load hydrated without it.
   const detectCsiAndPersist = useCallback(async (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] }) => {
     if (!grid.csiTags || grid.csiTags.length === 0) {
       try {
@@ -98,17 +104,36 @@ export default function TableParsePanel() {
     saveParsedToIntelligence(grid);
     refreshPageCsiSpatialMap(pageNumber);
     const { projectId: pid, isDemo } = useViewerStore.getState();
-    if (pid && !isDemo) {
-      const currentIntel = useViewerStore.getState().pageIntelligence[pageNumber];
-      console.log("[save-intelligence] Saving:", { projectId: pid, pageNumber, hasIntel: !!currentIntel, parsedRegions: (currentIntel as any)?.parsedRegions?.length || 0 });
-      fetch("/api/pages/intelligence", {
+    if (!pid || isDemo) return;
+
+    const currentIntel = useViewerStore.getState().pageIntelligence[pageNumber];
+    let resp: Response;
+    try {
+      resp = await fetch("/api/pages/intelligence", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId: pid, pageNumber, intelligence: currentIntel }),
-      }).then((r) => {
-        if (!r.ok) r.json().then((d) => console.error("[save-intelligence] Failed:", r.status, d)).catch(() => {});
-      }).catch((e) => console.error("[save-intelligence] Network error:", e));
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Network error";
+      console.error("[save-intelligence] Network error:", err);
+      throw new Error(`Could not save parsed table: ${msg}`);
     }
+
+    if (!resp.ok) {
+      let detail = `HTTP ${resp.status}`;
+      try {
+        const errBody = await resp.json();
+        if (errBody?.error) detail = errBody.error;
+      } catch { /* non-json body */ }
+      console.error("[save-intelligence] Failed:", resp.status, detail);
+      throw new Error(`Could not save parsed table: ${detail}`);
+    }
+
+    try {
+      const data = await resp.json();
+      if (data?.summaries) useViewerStore.getState().setSummaries(data.summaries);
+    } catch { /* response parse is best-effort — save succeeded */ }
   }, [pageNumber, saveParsedToIntelligence]);
 
   // ─── Shared memos ─────────────────────────────────────────
