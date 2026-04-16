@@ -62,17 +62,6 @@ The setup wizard prompts for: database URL, auth secrets, LLM API keys (Groq/Ant
 | **Full AWS** (ECS + RDS + SageMaker) | + Textract OCR, YOLO inference, Step Functions orchestration, multi-tenant | ~$150-300/month |
 | **SageMaker GPU** (on-demand) | YOLO model inference jobs (ml.g4dn.xlarge) | ~$0.75/hour per run |
 
-## Model Weights
-
-Three pre-trained YOLOv8 models are included via Git LFS in the `models/` directory:
-
-| Model | Size | Classes | Use |
-|-------|------|---------|-----|
-| `yolo_medium.pt` | 136 MB | 7 (doors, tables, drawings, text boxes, title blocks, symbol legends) | General layout analysis |
-| `yolo_precise.pt` | 137 MB | 2 (door_single, door_double) | Precise door detection |
-| `yolo_primitive.pt` | 137 MB | 16 shapes (circles, rectangles, triangles, hexagons, etc.) | Keynote symbol detection |
-
-After cloning, run `git lfs pull` if model files show as LFS pointers instead of actual weights.
 
 ---
 
