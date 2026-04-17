@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
-import type { YoloTagInstance } from "@/types";
+import type { YoloTag } from "@/types";
+import type { ScoredMatch } from "@/lib/tag-mapping";
+import type { MapTagsStrictness } from "./MapTagsSection";
 
 interface ParsedTableItemProps {
   table: { pageNum: number; region: any; name: string; category: string; rowCount: number; colCount: number; csiTags: any[] };
@@ -48,6 +50,25 @@ export default memo(function ParsedTableItem({
   const [mapYoloClass, setMapYoloClass] = useState<{ model: string; className: string } | null>(null);
   const [mapping, setMapping] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  // Phase 4 — inline strictness + drawing-number-prefix scope for the
+  // per-table Map Tags panel. Mirror the TableParsePanel selector UX,
+  // but condensed (stacked chip rows inside the existing panel).
+  const [mapStrictness, setMapStrictness] = useState<MapTagsStrictness>("balanced");
+  const [mapPrefixes, setMapPrefixes] = useState<string[]>([]);
+  const pageDrawingNumbers = useViewerStore((s) => s.pageDrawingNumbers);
+  const availablePrefixes = useMemo(() => {
+    const set = new Set<string>();
+    for (const num of Object.values(pageDrawingNumbers)) {
+      const match = num ? num.match(/^[^\d]+/) : null;
+      set.add((match?.[0] ?? "").toUpperCase());
+    }
+    return Array.from(set).sort();
+  }, [pageDrawingNumbers]);
+  const togglePrefix = useCallback((prefix: string) => {
+    setMapPrefixes((prev) =>
+      prev.includes(prefix) ? prev.filter((p) => p !== prefix) : [...prev, prefix],
+    );
+  }, []);
 
   // Reactive selectors for render-path (not getState)
   const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
@@ -464,6 +485,54 @@ export default memo(function ParsedTableItem({
                   })()}
                 </div>
               )}
+              {/* Phase 4 — scope + strictness selectors. Condensed for the inline panel. */}
+              {availablePrefixes.length > 0 && (
+                <div>
+                  <label className="text-[9px] text-[var(--muted)] block">Scope</label>
+                  <div className="flex flex-wrap gap-0.5">
+                    <button
+                      title="Search all pages in the project"
+                      onClick={() => setMapPrefixes([])}
+                      className={`text-[9px] px-1.5 py-0.5 rounded border ${
+                        mapPrefixes.length === 0
+                          ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                          : "border-[var(--border)] text-[var(--muted)]"
+                      }`}
+                    >All pages</button>
+                    {availablePrefixes.map((prefix) => {
+                      const active = mapPrefixes.includes(prefix);
+                      const label = prefix === "" ? "Unnumbered" : `${prefix}*`;
+                      return (
+                        <button
+                          key={prefix}
+                          onClick={() => togglePrefix(prefix)}
+                          className={`text-[9px] px-1.5 py-0.5 rounded border ${
+                            active
+                              ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                              : "border-[var(--border)] text-[var(--muted)]"
+                          }`}
+                        >{label}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <div>
+                <label className="text-[9px] text-[var(--muted)] block">Strictness</label>
+                <div className="flex gap-0.5">
+                  {(["strict", "balanced", "lenient"] as const).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setMapStrictness(s)}
+                      className={`flex-1 text-[9px] px-1.5 py-0.5 rounded border capitalize ${
+                        mapStrictness === s
+                          ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                          : "border-[var(--border)] text-[var(--muted)]"
+                      }`}
+                    >{s}</button>
+                  ))}
+                </div>
+              </div>
               <div className="flex gap-1">
                 <button
                   disabled={mapping}
@@ -487,29 +556,34 @@ export default memo(function ParsedTableItem({
                           tags,
                           yoloClass: mapTagType === "yolo" ? mapYoloClass?.className : undefined,
                           yoloModel: mapTagType === "yolo" ? mapYoloClass?.model : undefined,
+                          itemType: mapTagType === "yolo" ? "yolo-with-inner-text" : "text-only",
+                          strictnessMode: mapStrictness,
+                          drawingNumberPrefixes: mapPrefixes,
                         }),
                       });
                       if (!res.ok) throw new Error(`Server error: ${res.status}`);
-                      const { results }: { results: Record<string, YoloTagInstance[]> } = await res.json();
+                      const { results }: { results: Record<string, ScoredMatch[]> } = await res.json();
 
-                      // Create YoloTags from results
-                      for (const tag of tags) {
-                        const instances = results[tag] || [];
-                        const row = rows.find((r: Record<string, string>) => (r[mapTagColumn] || "").trim() === tag);
-                        const descParts = headers.filter((h: string) => h !== mapTagColumn).map((h: string) => row?.[h] || "");
-                        const desc = descParts.join(" ").trim();
-                        store.addYoloTag({
-                          id: `schedule-${table.pageNum}-${tag}-${Date.now()}`,
-                          name: tag,
-                          tagText: tag,
-                          yoloClass: mapTagType === "yolo" ? (mapYoloClass?.className || "") : "",
-                          yoloModel: mapTagType === "yolo" ? (mapYoloClass?.model || "") : "",
-                          source: "schedule",
-                          scope: "project",
-                          description: desc.slice(0, 200),
-                          instances,
+                      // Build YoloTag[] from results and bulk-add in one store update.
+                      const newTags: YoloTag[] = tags
+                        .filter((t) => (results[t]?.length ?? 0) > 0)
+                        .map((tag) => {
+                          const row = rows.find((r: Record<string, string>) => (r[mapTagColumn] || "").trim() === tag);
+                          const descParts = headers.filter((h: string) => h !== mapTagColumn).map((h: string) => row?.[h] || "");
+                          const desc = descParts.join(" ").trim();
+                          return {
+                            id: `schedule-${table.pageNum}-${tag}-${Date.now()}`,
+                            name: tag,
+                            tagText: tag,
+                            yoloClass: mapTagType === "yolo" ? (mapYoloClass?.className || "") : "",
+                            yoloModel: mapTagType === "yolo" ? (mapYoloClass?.model || "") : "",
+                            source: "schedule",
+                            scope: "project",
+                            description: desc.slice(0, 200),
+                            instances: results[tag],
+                          };
                         });
-                      }
+                      if (newTags.length > 0) store.addYoloTagsBulk(newTags);
                       setShowMapTags(false);
                     } catch (err) {
                       console.error("[MAP_TAGS] Batch mapping failed:", err);

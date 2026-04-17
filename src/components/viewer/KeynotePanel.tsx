@@ -5,10 +5,11 @@ import { useViewerStore, useSummaries, useProject } from "@/stores/viewerStore";
 import HelpTooltip from "./HelpTooltip";
 import KeynoteItem from "./KeynoteItem";
 import CompareEditTab from "./CompareEditTab";
-import { mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import ExportCsvModal from "./ExportCsvModal";
+import type { YoloTag, QtoItemType } from "@/types";
+import type { ScoredMatch } from "@/lib/tag-mapping";
 // CSI detection runs server-side (csi-detect.ts uses fs); client components can't import it directly
 
 /** Convert keynote parsedRegion data to grid format for TableCompareModal */
@@ -56,7 +57,7 @@ export default function KeynotePanel() {
   const setActiveKeynoteHighlight = useViewerStore((s) => s.setActiveKeynoteHighlight);
   const resetKeynoteParse = useViewerStore((s) => s.resetKeynoteParse);
   const projectId = useViewerStore((s) => s.projectId);
-  const addYoloTag = useViewerStore((s) => s.addYoloTag);
+  const addYoloTagsBulk = useViewerStore((s) => s.addYoloTagsBulk);
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
   const toggleTableCompareModal = useViewerStore((s) => s.toggleTableCompareModal);
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
@@ -199,8 +200,69 @@ export default function KeynotePanel() {
     return Object.values(groups).sort((a, b) => b.count - a.count);
   }, [yoloFullyInTagColumn]);
 
+  // ─── Map keynote keys → YoloTag[] via the server route ─────
+  // Phase 4: replaces the legacy client-side mapYoloToOcrText loop with a
+  // single fetch to /api/map-tags-batch per parse. Preserves scope:"page"
+  // semantics by passing `selectedPages: [pageNumber]`. Results come back
+  // as ScoredMatch[] which is a structural superset of YoloTagInstance.
+  const mapKeynoteKeysToYoloTags = useCallback(async (params: {
+    keys: { key: string; description: string }[];
+    yoloClass?: string;
+    yoloModel?: string;
+    pageNumber: number;
+  }) => {
+    const { keys, yoloClass, yoloModel, pageNumber } = params;
+    if (!publicId) return;
+    const uniqueKeys = [...new Set(
+      keys.map((k) => k.key?.trim()).filter((k): k is string => Boolean(k)),
+    )];
+    if (uniqueKeys.length === 0) return;
+    const descByKey = new Map<string, string>();
+    for (const k of keys) {
+      if (k.key?.trim()) descByKey.set(k.key.trim(), k.description);
+    }
+    const itemType: QtoItemType = yoloClass ? "yolo-with-inner-text" : "text-only";
+    try {
+      const res = await fetch(`/api/projects/${publicId}/map-tags-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tags: uniqueKeys,
+          yoloClass: yoloClass || undefined,
+          yoloModel: yoloModel || undefined,
+          itemType,
+          selectedPages: [pageNumber],
+        }),
+      });
+      if (!res.ok) {
+        console.error(`[KeynotePanel] Map Tags failed: HTTP ${res.status}`);
+        return;
+      }
+      const { results } = (await res.json()) as {
+        results: Record<string, ScoredMatch[]>;
+      };
+      const newTags: YoloTag[] = uniqueKeys
+        .filter((k) => results[k]?.length > 0)
+        .map((k) => ({
+          id: `keynote-${pageNumber}-${k}-${Date.now()}`,
+          name: k,
+          tagText: k,
+          yoloClass: yoloClass || "",
+          yoloModel: yoloModel || "",
+          source: "keynote",
+          scope: "page",
+          pageNumber,
+          description: descByKey.get(k) || "",
+          instances: results[k],
+        }));
+      if (newTags.length > 0) addYoloTagsBulk(newTags);
+    } catch (e) {
+      console.error("[KeynotePanel] Map Tags error", e);
+    }
+  }, [publicId, addYoloTagsBulk]);
+
   // ─── Parse keynotes from column/row intersections ───────
-  const parseKeynotes = useCallback(() => {
+  const parseKeynotes = useCallback(async () => {
     const pageTextract = textractData[pageNumber];
     if (!pageTextract?.words || keynoteColumnBBs.length < 2 || keynoteRowBBs.length === 0) return;
 
@@ -243,36 +305,16 @@ export default function KeynotePanel() {
         tableName: `Keynotes p.${pageNumber}`,
       });
       saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`);
-      // Create YoloTags for each parsed keynote key
-      const allAnns = useViewerStore.getState().annotations;
-      for (const k of keys) {
-        if (!k.key) continue;
-        const instances = mapYoloToOcrText({
-          tagText: k.key,
-          yoloClass: keynoteYoloClass?.className,
-          yoloModel: keynoteYoloClass?.model,
-          scope: "page",
-          pageNumber,
-          annotations: allAnns,
-          textractData,
-        });
-        addYoloTag({
-          id: `keynote-${pageNumber}-${k.key}-${Date.now()}`,
-          name: k.key,
-          tagText: k.key,
-          yoloClass: keynoteYoloClass?.className || "",
-          yoloModel: keynoteYoloClass?.model || "",
-          source: "keynote",
-          scope: "page",
-          pageNumber,
-          description: k.description,
-          instances,
-        });
-      }
+      await mapKeynoteKeysToYoloTags({
+        keys,
+        yoloClass: keynoteYoloClass?.className,
+        yoloModel: keynoteYoloClass?.model,
+        pageNumber,
+      });
       setKeynoteParseStep("review");
       useViewerStore.getState().setMode("move");
     }
-  }, [textractData, pageNumber, keynoteColumnBBs, keynoteRowBBs, keynoteYoloClass, addParsedKeynote, addYoloTag, setKeynoteParseStep]);
+  }, [textractData, pageNumber, keynoteColumnBBs, keynoteRowBBs, keynoteYoloClass, addParsedKeynote, mapKeynoteKeysToYoloTags, setKeynoteParseStep]);
 
   // ─── Auto parse via API ─────────────────────────────────
   const autoParseKeynote = useCallback(async (bbox: [number, number, number, number]) => {
@@ -297,33 +339,10 @@ export default function KeynotePanel() {
         if (keys.length > 0) {
           addParsedKeynote({ pageNumber, keys, tableName: `Keynotes p.${pageNumber}` });
           saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`, result.csiTags || []);
-          // Create YoloTags for auto-parsed keynotes (no YOLO class assigned in auto mode)
-          const allAnns = useViewerStore.getState().annotations;
-          const td = useViewerStore.getState().textractData;
-          for (const k of keys) {
-            if (!k.key) continue;
-            const instances = mapYoloToOcrText({
-              tagText: k.key,
-              scope: "page",
-              pageNumber,
-              annotations: allAnns,
-              textractData: td,
-            });
-            addYoloTag({
-              id: `keynote-${pageNumber}-${k.key}-${Date.now()}`,
-              name: k.key,
-              tagText: k.key,
-              yoloClass: "",
-              yoloModel: "",
-              source: "keynote",
-              scope: "page",
-              pageNumber,
-              description: k.description,
-              instances,
-            });
-          }
+          // Auto-parse doesn't pick a YOLO class, so we map as text-only.
+          await mapKeynoteKeysToYoloTags({ keys, pageNumber });
           setKeynoteParseStep("review");
-      useViewerStore.getState().setMode("move");
+          useViewerStore.getState().setMode("move");
         }
       }
     } catch (err) {
@@ -331,7 +350,7 @@ export default function KeynotePanel() {
     } finally {
       setAutoParsing(false);
     }
-  }, [projectId, pageNumber, addParsedKeynote, addYoloTag, setKeynoteParseStep]);
+  }, [projectId, pageNumber, addParsedKeynote, mapKeynoteKeysToYoloTags, setKeynoteParseStep]);
 
   // ─── Guided parse: propose grid ─────────────────────────
   const [guidedLoading, setGuidedLoading] = useState(false);
@@ -432,31 +451,7 @@ export default function KeynotePanel() {
     })).filter((k: any) => k.key || k.description);
     if (keys.length > 0) {
       addParsedKeynote({ pageNumber, keys, tableName: `Keynotes p.${pageNumber}` });
-      // Create YoloTags for guided-parsed keynotes
-      const allAnns = store.annotations;
-      const td = store.textractData;
-      for (const k of keys) {
-        if (!k.key) continue;
-        const instances = mapYoloToOcrText({
-          tagText: k.key,
-          scope: "page",
-          pageNumber,
-          annotations: allAnns,
-          textractData: td,
-        });
-        addYoloTag({
-          id: `keynote-${pageNumber}-${k.key}-${Date.now()}`,
-          name: k.key,
-          tagText: k.key,
-          yoloClass: "",
-          yoloModel: "",
-          source: "keynote",
-          scope: "page",
-          pageNumber,
-          description: k.description,
-          instances,
-        });
-      }
+      await mapKeynoteKeysToYoloTags({ keys, pageNumber });
     }
 
     // Refresh spatial map
@@ -478,7 +473,7 @@ export default function KeynotePanel() {
     resetGuidedParse();
     setKeynoteParseStep("review");
     useViewerStore.getState().setMode("move");
-  }, [pageNumber, projectId, guidedParseRows, guidedParseCols, guidedParseRegion, resetGuidedParse, addParsedKeynote, addYoloTag, setKeynoteParseStep]);
+  }, [pageNumber, projectId, guidedParseRows, guidedParseCols, guidedParseRegion, resetGuidedParse, addParsedKeynote, mapKeynoteKeysToYoloTags, setKeynoteParseStep]);
 
   // ─── Repeat row down ───────────────────────────────────
   const repeatRowDown = useCallback((rowBB: [number, number, number, number]) => {

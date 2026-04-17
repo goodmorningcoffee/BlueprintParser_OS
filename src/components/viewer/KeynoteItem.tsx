@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
-import type { YoloTagInstance } from "@/types";
+import type { YoloTag } from "@/types";
+import type { ScoredMatch } from "@/lib/tag-mapping";
+import type { MapTagsStrictness } from "./MapTagsSection";
 
 /** Convert keynote parsedRegion data to grid format for TableCompareModal */
 function keynoteDataToGrid(data: any): { headers: string[]; rows: Record<string, string>[]; tagColumn: string; tableName?: string } {
@@ -47,6 +49,23 @@ export default function KeynoteItem({
   const [mapYoloClass, setMapYoloClass] = useState<{ model: string; className: string } | null>(null);
   const [mapping, setMapping] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  // Phase 4 — inline strictness + drawing-number-prefix scope.
+  const [mapStrictness, setMapStrictness] = useState<MapTagsStrictness>("balanced");
+  const [mapPrefixes, setMapPrefixes] = useState<string[]>([]);
+  const pageDrawingNumbers = useViewerStore((s) => s.pageDrawingNumbers);
+  const availablePrefixes = useMemo(() => {
+    const set = new Set<string>();
+    for (const num of Object.values(pageDrawingNumbers)) {
+      const match = num ? num.match(/^[^\d]+/) : null;
+      set.add((match?.[0] ?? "").toUpperCase());
+    }
+    return Array.from(set).sort();
+  }, [pageDrawingNumbers]);
+  const togglePrefix = useCallback((prefix: string) => {
+    setMapPrefixes((prev) =>
+      prev.includes(prefix) ? prev.filter((p) => p !== prefix) : [...prev, prefix],
+    );
+  }, []);
 
   const yoloTags = useViewerStore((s) => s.yoloTags);
   const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
@@ -258,6 +277,52 @@ export default function KeynoteItem({
                   })()}
                 </div>
               )}
+              {availablePrefixes.length > 0 && (
+                <div>
+                  <label className="text-[9px] text-[var(--muted)] block">Scope</label>
+                  <div className="flex flex-wrap gap-0.5">
+                    <button
+                      onClick={() => setMapPrefixes([])}
+                      className={`text-[9px] px-1.5 py-0.5 rounded border ${
+                        mapPrefixes.length === 0
+                          ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                          : "border-[var(--border)] text-[var(--muted)]"
+                      }`}
+                    >All pages</button>
+                    {availablePrefixes.map((prefix) => {
+                      const active = mapPrefixes.includes(prefix);
+                      const label = prefix === "" ? "Unnumbered" : `${prefix}*`;
+                      return (
+                        <button
+                          key={prefix}
+                          onClick={() => togglePrefix(prefix)}
+                          className={`text-[9px] px-1.5 py-0.5 rounded border ${
+                            active
+                              ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                              : "border-[var(--border)] text-[var(--muted)]"
+                          }`}
+                        >{label}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <div>
+                <label className="text-[9px] text-[var(--muted)] block">Strictness</label>
+                <div className="flex gap-0.5">
+                  {(["strict", "balanced", "lenient"] as const).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setMapStrictness(s)}
+                      className={`flex-1 text-[9px] px-1.5 py-0.5 rounded border capitalize ${
+                        mapStrictness === s
+                          ? "border-cyan-400 bg-cyan-500/10 text-cyan-300"
+                          : "border-[var(--border)] text-[var(--muted)]"
+                      }`}
+                    >{s}</button>
+                  ))}
+                </div>
+              </div>
               <div className="flex gap-1">
                 <button
                   disabled={mapping}
@@ -279,27 +344,32 @@ export default function KeynoteItem({
                           tags,
                           yoloClass: mapTagType === "yolo" ? mapYoloClass?.className : undefined,
                           yoloModel: mapTagType === "yolo" ? mapYoloClass?.model : undefined,
+                          itemType: mapTagType === "yolo" ? "yolo-with-inner-text" : "text-only",
+                          strictnessMode: mapStrictness,
+                          drawingNumberPrefixes: mapPrefixes,
                         }),
                       });
                       if (!res.ok) throw new Error(`Server error: ${res.status}`);
-                      const { results }: { results: Record<string, YoloTagInstance[]> } = await res.json();
+                      const { results }: { results: Record<string, ScoredMatch[]> } = await res.json();
 
-                      for (const tag of tags) {
-                        const instances = results[tag] || [];
-                        const k = keynote.keys.find((kk) => kk.key.trim() === tag);
-                        store.addYoloTag({
-                          id: `keynote-${keynote.pageNumber}-${tag}-${Date.now()}`,
-                          name: tag,
-                          tagText: tag,
-                          yoloClass: mapTagType === "yolo" ? (mapYoloClass?.className || "") : "",
-                          yoloModel: mapTagType === "yolo" ? (mapYoloClass?.model || "") : "",
-                          source: "keynote",
-                          scope: "project",
-                          pageNumber: keynote.pageNumber,
-                          description: (k?.description || "").slice(0, 200),
-                          instances,
+                      const newTags: YoloTag[] = tags
+                        .filter((t) => (results[t]?.length ?? 0) > 0)
+                        .map((tag) => {
+                          const k = keynote.keys.find((kk) => kk.key.trim() === tag);
+                          return {
+                            id: `keynote-${keynote.pageNumber}-${tag}-${Date.now()}`,
+                            name: tag,
+                            tagText: tag,
+                            yoloClass: mapTagType === "yolo" ? (mapYoloClass?.className || "") : "",
+                            yoloModel: mapTagType === "yolo" ? (mapYoloClass?.model || "") : "",
+                            source: "keynote",
+                            scope: "project",
+                            pageNumber: keynote.pageNumber,
+                            description: (k?.description || "").slice(0, 200),
+                            instances: results[tag],
+                          };
                         });
-                      }
+                      if (newTags.length > 0) store.addYoloTagsBulk(newTags);
                       setShowMapTags(false);
                     } catch (err) {
                       console.error("[MAP_TAGS] Keynote batch mapping failed:", err);

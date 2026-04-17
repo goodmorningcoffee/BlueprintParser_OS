@@ -23,8 +23,14 @@ import type {
   BboxLTWH,
 } from "@/types";
 
-const TEMPLATE_MATCH_BATCH_SIZE = parseInt(process.env.LAMBDA_CV_BATCH_SIZE || "5", 10);
-const SHAPE_PARSE_BATCH_SIZE = 3;
+// One page per Lambda invocation. Lambda has 2GB (or more, if bumped via
+// `aws lambda update-function-configuration --memory-size N`). A single
+// full-size construction page at 300 DPI plus Tesseract OCR + OpenCV
+// intermediates can approach that ceiling; packing multiple pages into
+// one invocation historically caused SIGKILLs. Batching is still useful
+// on tiny-page projects — override via env var to re-batch for cost.
+export const TEMPLATE_MATCH_BATCH_SIZE = parseInt(process.env.LAMBDA_CV_BATCH_SIZE || "1", 10);
+export const SHAPE_PARSE_BATCH_SIZE = 1;
 
 let lambdaClient: LambdaClient | null = null;
 
@@ -73,49 +79,69 @@ interface FanOutOpts<T> {
   onBatchComplete?: (batchIdx: number, count: number) => void;
 }
 
-async function fanOut<T>(opts: FanOutOpts<T>): Promise<{ results: (T & { pageS3Key: string })[]; failedPages: string[] }> {
+interface FanOutResult<T> {
+  results: (T & { pageS3Key: string })[];
+  failedPages: string[];
+  warnings: string[];
+}
+
+function assertLambdaOk(resp: any): void {
+  if (resp?.status === "error") {
+    throw new Error(resp.error || "Lambda returned error status");
+  }
+}
+
+async function fanOut<T>(opts: FanOutOpts<T>): Promise<FanOutResult<T>> {
   const bucket = s3Bucket();
   if (!bucket) throw new Error("S3_BUCKET env var is not set — cannot fan out to Lambda");
   const jobId = opts.jobId || crypto.randomUUID();
 
   try {
     const batches = partition(opts.pageS3Keys, opts.batchSize);
-    const allResults: (T & { pageS3Key: string })[] = [];
-    const failedPages: string[] = [];
 
-    const outcomes = await Promise.allSettled(
-      batches.map((batch, idx) =>
-        invokeLambda({
+    // Each batch runs in its own async function so onBatchComplete fires as
+    // that batch settles, not after all batches finish. The caller's
+    // ReadableStream can then flush progress chunks to the client in real
+    // time instead of going silent until the slowest Lambda returns.
+    const batchPromises = batches.map(async (batch, idx) => {
+      const primaryResultKey = `tmp/cv-jobs/${jobId}/results/batch_${idx}.json`;
+      try {
+        const resp = await invokeLambda({
           action: opts.action,
           job_id: jobId,
           s3_bucket: bucket,
           page_s3_keys: batch,
-          result_s3_key: `tmp/cv-jobs/${jobId}/results/batch_${idx}.json`,
+          result_s3_key: primaryResultKey,
           config: opts.config || {},
           ...opts.extraPayload,
-        })
-      )
-    );
-
-    for (let i = 0; i < outcomes.length; i++) {
-      const outcome = outcomes[i];
-      if (outcome.status === "fulfilled" && outcome.value.status !== "error") {
-        const parsed = await readResultsFromS3(bucket, `tmp/cv-jobs/${jobId}/results/batch_${i}.json`);
+        });
+        assertLambdaOk(resp);
+        const parsed = await readResultsFromS3(bucket, primaryResultKey);
+        const mapped: (T & { pageS3Key: string })[] = [];
         if (parsed?.results) {
           for (const r of parsed.results) {
-            allResults.push({ ...opts.resultMapper(r), pageS3Key: r.page_s3_key });
+            mapped.push({ ...opts.resultMapper(r), pageS3Key: r.page_s3_key });
           }
         }
-        opts.onBatchComplete?.(i, parsed?.results?.length ?? 0);
-      } else {
-        const batchPages = batches[i];
-        const error = outcome.status === "rejected" ? outcome.reason : outcome.value?.error;
-        logger.warn(`[LAMBDA_CV] ${opts.action} batch ${i} failed: ${error}`);
-
-        for (const pageKey of batchPages) {
+        const warnings: string[] = Array.isArray(parsed?.warnings) ? parsed.warnings : [];
+        opts.onBatchComplete?.(idx, mapped.length);
+        return { kind: "success" as const, mapped, warnings };
+      } catch (err) {
+        // This catch fires on three distinct conditions:
+        //   (a) AWS SDK threw (FunctionError, network, throttle) — invokeLambda throws.
+        //   (b) Lambda returned {status: "error"} — assertLambdaOk threw above.
+        //   (c) `opts.onBatchComplete` itself threw — e.g. if the caller's
+        //       ReadableStream controller was closed because the client disconnected.
+        //       In (c) we'll retry N pages even though the client is gone. Waste, not
+        //       catastrophe — the fetch is already aborted upstream. Not worth guarding.
+        logger.warn(`[LAMBDA_CV] ${opts.action} batch ${idx} failed: ${err}`);
+        const retryResults: (T & { pageS3Key: string })[] = [];
+        const retryWarnings: string[] = [];
+        const retryFailed: string[] = [];
+        for (const pageKey of batch) {
           try {
             const retryKey = `tmp/cv-jobs/${jobId}/results/retry_${pageKey.replace(/\//g, "_")}.json`;
-            await invokeLambda({
+            const retryResp = await invokeLambda({
               action: opts.action,
               job_id: jobId,
               s3_bucket: bucket,
@@ -124,20 +150,42 @@ async function fanOut<T>(opts: FanOutOpts<T>): Promise<{ results: (T & { pageS3K
               config: opts.config || {},
               ...opts.extraPayload,
             });
+            assertLambdaOk(retryResp);
             const parsed = await readResultsFromS3(bucket, retryKey);
             if (parsed?.results) {
               for (const r of parsed.results) {
-                allResults.push({ ...opts.resultMapper(r), pageS3Key: r.page_s3_key });
+                retryResults.push({ ...opts.resultMapper(r), pageS3Key: r.page_s3_key });
               }
             }
+            if (Array.isArray(parsed?.warnings)) {
+              retryWarnings.push(...parsed.warnings);
+            }
           } catch {
-            failedPages.push(pageKey);
+            retryFailed.push(pageKey);
           }
         }
+        opts.onBatchComplete?.(idx, retryResults.length);
+        return { kind: "retry" as const, retryResults, retryWarnings, retryFailed };
+      }
+    });
+
+    const outcomes = await Promise.all(batchPromises);
+
+    const allResults: (T & { pageS3Key: string })[] = [];
+    const failedPages: string[] = [];
+    const allWarnings: string[] = [];
+    for (const outcome of outcomes) {
+      if (outcome.kind === "success") {
+        allResults.push(...outcome.mapped);
+        allWarnings.push(...outcome.warnings);
+      } else {
+        allResults.push(...outcome.retryResults);
+        allWarnings.push(...outcome.retryWarnings);
+        failedPages.push(...outcome.retryFailed);
       }
     }
 
-    return { results: allResults, failedPages };
+    return { results: allResults, failedPages, warnings: allWarnings };
   } finally {
     cleanupJob(jobId).catch(() => {});
   }
@@ -156,7 +204,7 @@ interface TemplateMatchFanOutOpts {
 
 export async function fanOutTemplateMatch(
   opts: TemplateMatchFanOutOpts
-): Promise<{ results: (TemplateMatchHit & { pageS3Key: string })[]; failedPages: string[] }> {
+): Promise<FanOutResult<TemplateMatchHit>> {
   const bucket = s3Bucket();
   if (!bucket) throw new Error("S3_BUCKET env var is not set");
   const jobId = crypto.randomUUID();
@@ -187,9 +235,15 @@ interface ShapeParseFanOutOpts {
   onBatchComplete?: (batchIdx: number, shapeCount: number) => void;
 }
 
+// NOTE: unlike `fanOutTemplateMatch`, current callers of
+// `fanOutShapeParse` (src/app/api/shape-parse/route.ts:76) don't pass
+// `onBatchComplete` — Shape Parse scanAll has no progress stream today.
+// The UI just spins during a multi-minute scan. To add progress, the
+// route would need to switch to a ReadableStream response (same pattern
+// as symbol-search/route.ts) and thread onBatchComplete through.
 export async function fanOutShapeParse(
   opts: ShapeParseFanOutOpts
-): Promise<{ results: (KeynoteShapeData & { pageS3Key: string })[]; failedPages: string[] }> {
+): Promise<FanOutResult<KeynoteShapeData>> {
   return fanOut<KeynoteShapeData>({
     action: "shape_parse",
     batchSize: SHAPE_PARSE_BATCH_SIZE,
