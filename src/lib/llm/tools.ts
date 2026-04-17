@@ -12,7 +12,12 @@
 import { db } from "@/lib/db";
 import { projects, pages, annotations } from "@/lib/db/schema";
 import { eq, and, sql, inArray } from "drizzle-orm";
-import { mapYoloToOcrText, scanClassForTexts } from "@/lib/yolo-tag-engine";
+import {
+  findOccurrences,
+  scanClassForTexts,
+  allPagesScope,
+  type MatchContext,
+} from "@/lib/tag-mapping";
 import { detectCsiCodes } from "@/lib/csi-detect";
 import { detectTagPatterns } from "@/lib/tag-patterns";
 import type { ClientAnnotation, TextractPageData } from "@/types";
@@ -433,11 +438,31 @@ async function execMapTagsToPages(tagsStr: string, yoloClass: string | undefined
   const textractMap: Record<number, TextractPageData> = {};
   for (const row of pageRows) if (row.textractData) textractMap[row.pageNumber] = row.textractData as TextractPageData;
 
-  const scope = pageNumber ? "page" : "project";
+  // Build a MatchContext once for all tags. No pattern inference here —
+  // the LLM-supplied tag list isn't a schedule corpus, so pattern-hard-zero
+  // would be too aggressive. Scope is allPagesScope unless the caller
+  // narrowed via `pageNumber`; scoping is already applied at the DB query
+  // level (pageConditions) so clientAnns/textractMap only contain scoped data.
+  const matchCtx: MatchContext = {
+    scope: allPagesScope(),
+    isPageScoped: pageNumber != null,
+    pageNumber,
+    annotations: clientAnns,
+    textractData: textractMap,
+    classifiedRegionsByPage: {},
+    pattern: null,
+  };
+  const itemType = yoloClass ? "yolo-with-inner-text" : "text-only";
   const results: Record<string, { count: number; pages: number[] }> = {};
   for (const tag of tags) {
-    const instances = mapYoloToOcrText({ tagText: tag, yoloClass, yoloModel, scope, pageNumber, annotations: clientAnns, textractData: textractMap });
-    results[tag] = { count: instances.length, pages: [...new Set(instances.map((i) => i.pageNumber))].sort((a, b) => a - b) };
+    const scored = findOccurrences(
+      { itemType, label: tag, text: tag, yoloClass, yoloModel },
+      matchCtx,
+    );
+    results[tag] = {
+      count: scored.length,
+      pages: [...new Set(scored.map((i) => i.pageNumber))].sort((a, b) => a - b),
+    };
   }
   return { results };
 }

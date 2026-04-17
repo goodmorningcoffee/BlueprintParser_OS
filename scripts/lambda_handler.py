@@ -20,6 +20,10 @@ import boto3
 import cv2
 
 from template_match import process_target, nms_boxes
+# Worker contract: worker_fn(page_path) → (results_list, warnings_list).
+# `extract_keynotes.main()` already returns this shape; `template_match`
+# has no warnings and returns []. Warnings flow through process_pages
+# into the S3 result JSON so the TS fan-out can surface them to the UI.
 from extract_keynotes import main as extract_keynotes_main
 
 s3 = boto3.client("s3")
@@ -54,8 +58,12 @@ def process_pages(event, worker_fn):
     """
     Generic page processor.
 
-    worker_fn(page_path) → list of result dicts, each with at least bbox/confidence fields.
-    Downloads pages from S3, calls worker_fn, collects results, uploads JSON.
+    worker_fn(page_path) → (results_list, warnings_list).
+      results_list: result dicts, each with at least bbox/confidence fields.
+      warnings_list: human-readable diagnostic strings (e.g. "0 keynotes
+      after tiled sweep"). Empty list when the worker has no diagnostics.
+    Downloads pages from S3, calls worker_fn, collects results + warnings,
+    uploads JSON.
     """
     bucket = event["s3_bucket"]
     page_keys = event["page_s3_keys"]
@@ -63,6 +71,7 @@ def process_pages(event, worker_fn):
     action = event.get("action", "unknown")
 
     all_results = []
+    all_warnings = []
     pages_processed = 0
     pages_failed = 0
     errors = []
@@ -71,12 +80,14 @@ def process_pages(event, worker_fn):
         page_path = os.path.join(TMP, f"page_{i:04d}.png")
         try:
             download_s3(bucket, page_key, page_path)
-            hits = worker_fn(page_path)
+            hits, page_warnings = worker_fn(page_path)
 
             for h in hits:
                 h["page_s3_key"] = page_key
                 h["page_index"] = i
             all_results.extend(hits)
+            if page_warnings:
+                all_warnings.extend(page_warnings)
             pages_processed += 1
         except Exception as e:
             pages_failed += 1
@@ -91,6 +102,7 @@ def process_pages(event, worker_fn):
     upload_json(bucket, result_key, {
         "action": action,
         "results": all_results,
+        "warnings": all_warnings,
         "pages_processed": pages_processed,
         "pages_failed": pages_failed,
         "errors": errors[:50],
@@ -99,6 +111,7 @@ def process_pages(event, worker_fn):
     return {
         "status": "success" if pages_failed == 0 else "partial",
         "match_count": len(all_results),
+        "warnings_count": len(all_warnings),
         "pages_processed": pages_processed,
         "pages_failed": pages_failed,
         "result_s3_key": result_key,
@@ -140,7 +153,7 @@ def handler(event, context):
 
             def match_worker(page_path):
                 hits = process_target(template_gray, page_path, config)
-                return [
+                results = [
                     {
                         "bbox": [round(h[0], 6), round(h[1], 6), round(h[2], 6), round(h[3], 6)],
                         "confidence": round(h[4], 4),
@@ -149,14 +162,14 @@ def handler(event, context):
                     }
                     for h in hits
                 ]
+                return results, []
 
             result = process_pages(event, match_worker)
 
         elif action == "shape_parse":
-            def parse_worker(page_path):
-                return extract_keynotes_main(page_path)
-
-            result = process_pages(event, parse_worker)
+            # extract_keynotes.main() already returns (results, diag_warnings) —
+            # the worker_fn contract, so pass it through directly.
+            result = process_pages(event, extract_keynotes_main)
 
         else:
             return {"status": "error", "error": f"Unknown action: {action}"}

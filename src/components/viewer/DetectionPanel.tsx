@@ -68,18 +68,35 @@ export default function DetectionPanel() {
   // Capture drawn region for shape parse: when the Shape tab is active and the
   // user draws via the shared pointer/select-region mode, grab the bbox and
   // clear the table parse region so it doesn't bleed into the Table tab.
-  const shapeTabDrawingRef = useRef(false);
+  // shapeDrawing: tracks "user clicked BB and is actively in draw-region mode".
+  // Converted from a ref to state so the BB button re-renders as green
+  // immediately on click (previously only re-rendered once a region was drawn,
+  // which gave the user no feedback that the click had registered).
+  const [shapeDrawing, setShapeDrawing] = useState(false);
   useEffect(() => {
-    if (detectionTab !== "shape" || !shapeTabDrawingRef.current || !tableParseRegion) return;
+    if (detectionTab !== "shape" || !shapeDrawing || !tableParseRegion) return;
     setShapeParseRegion(tableParseRegion as [number, number, number, number]);
     setTableParseRegion(null);
-    shapeTabDrawingRef.current = false;
-  }, [detectionTab, tableParseRegion, setTableParseRegion]);
+    // Keep shapeDrawing=true — we now have a region, button stays green.
+    // It'll clear when the user either clicks the × next to the region chip
+    // or clicks the Bounding Box button again (toggles off).
+  }, [detectionTab, tableParseRegion, setTableParseRegion, shapeDrawing]);
 
   function startShapeRegionDraw() {
-    shapeTabDrawingRef.current = true;
-    setTableParseStep("select-region");
-    setMode("pointer");
+    // Click-to-toggle: if already engaged (drawing mode OR region already
+    // drawn), this click CANCELS; otherwise it enters draw mode. Gives the
+    // user immediate visual feedback instead of having to draw before the
+    // button reflects any state.
+    if (shapeDrawing || shapeParseRegion !== null) {
+      setShapeDrawing(false);
+      setShapeParseRegion(null);
+      setMode("move");
+      setTableParseStep("idle");
+    } else {
+      setShapeDrawing(true);
+      setTableParseStep("select-region");
+      setMode("pointer");
+    }
   }
 
   async function runShapeParse() {
@@ -99,7 +116,11 @@ export default function DetectionPanel() {
         return;
       }
       const data = await res.json();
-      setKeynotes(pageNumber, data.keynotes || []);
+      // Append to existing pending shapes — multiple BB parses within a session
+      // should accumulate, not replace. The UI "Save" button flushes pageKeynotes
+      // to annotations; parsing again adds more pending shapes on top.
+      const existingPending = useViewerStore.getState().keynotes[pageNumber] ?? [];
+      setKeynotes(pageNumber, [...existingPending, ...(data.keynotes || [])]);
       if (data.warnings?.length) setShapeParseWarnings(data.warnings);
       // Auto-show shapes on canvas after a successful parse
       if (!showKeynotes) toggleKeynotes();
@@ -735,51 +756,82 @@ export default function DetectionPanel() {
         <div className="flex-1 overflow-y-auto flex flex-col">
           {/* Run / Visibility controls */}
           <div className="px-3 py-2 border-b border-[var(--border)] space-y-1.5">
-            <div className="flex gap-1">
+            {/* Action stack — broad-to-narrow scope, light→dark blue gradient,
+                green when the button's state is engaged (loading, drawing, or
+                has a region drawn). Follows the app's active-state convention:
+                `border-[color]-400 bg-[color]-500/15 text-[color]-300`. */}
+            <div className="flex flex-col gap-1.5">
+              <button
+                onClick={runShapeParseAll}
+                disabled={shapeParseLoading || !projectId}
+                className={`w-full px-2 py-1.5 text-[11px] rounded border transition-colors disabled:opacity-40 ${
+                  shapeParseLoading
+                    ? "border-green-500/60 bg-green-500/15 text-green-300 cursor-wait"
+                    : "border-sky-500/30 bg-sky-500/5 text-sky-300 hover:bg-sky-500/10"
+                }`}
+                title="Scan every page in the project (uses Lambda if available)"
+              >
+                {shapeParseLoading ? "Detecting…" : "Scan All Pages"}
+              </button>
               <button
                 onClick={runShapeParse}
                 disabled={shapeParseLoading || !projectId}
-                className={`flex-1 px-2 py-1.5 text-[11px] rounded border transition-colors ${
+                className={`w-full px-2 py-1.5 text-[11px] rounded border transition-colors disabled:opacity-40 ${
                   shapeParseLoading
-                    ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
-                    : "border-cyan-500/40 text-cyan-300 bg-cyan-500/5 hover:bg-cyan-500/10"
-                } disabled:opacity-40`}
+                    ? "border-green-500/60 bg-green-500/15 text-green-300 cursor-wait"
+                    : "border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/15"
+                }`}
+                title={shapeParseRegion
+                  ? `Scan page ${pageNumber} within the drawn region`
+                  : `Scan the full current page (${pageNumber})`}
               >
-                {shapeParseLoading ? "Detecting..." : shapeParseRegion ? "Scan Region" : `Scan Page ${pageNumber}`}
+                {shapeParseLoading ? "Detecting…" : "Scan this Page"}
               </button>
               <button
                 onClick={startShapeRegionDraw}
                 disabled={shapeParseLoading}
-                className="px-2 py-1.5 text-[11px] rounded border border-[var(--border)] text-[var(--muted)] hover:text-cyan-300 hover:border-cyan-500/40 disabled:opacity-40"
-                title="Draw a region to limit shape detection"
+                aria-pressed={shapeDrawing || shapeParseRegion !== null}
+                className={`w-full px-2 py-1.5 text-[11px] rounded border transition-colors disabled:opacity-40 ${
+                  shapeDrawing || shapeParseRegion !== null
+                    ? "border-green-500/60 bg-green-500/15 text-green-300"
+                    : "border-sky-500/50 bg-sky-500/15 text-sky-300 hover:bg-sky-500/20"
+                }`}
+                title={shapeDrawing || shapeParseRegion !== null
+                  ? "Click to cancel region draw"
+                  : "Draw a region on the page, then run Scan this Page"}
               >
-                BB
-              </button>
-              <button
-                onClick={runShapeParseAll}
-                disabled={shapeParseLoading || !projectId}
-                className={`px-2 py-1.5 text-[11px] rounded border transition-colors ${
-                  shapeParseLoading
-                    ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
-                    : "border-amber-500/40 text-amber-300 bg-amber-500/5 hover:bg-amber-500/10"
-                } disabled:opacity-40`}
-                title="Scan all pages for shapes (uses Lambda if available)"
-              >
-                All
+                {shapeParseRegion !== null
+                  ? "Region drawn — click to clear"
+                  : shapeDrawing
+                    ? "Drawing… click to cancel"
+                    : "Scan a specific region"}
               </button>
             </div>
             {shapeParseRegion && (
-              <div className="flex items-center gap-1 text-[9px] text-cyan-400/60">
+              <div className="flex items-center gap-1 text-[9px] text-green-400/70">
                 <span>Region: ({(shapeParseRegion[0]*100).toFixed(0)}%,{(shapeParseRegion[1]*100).toFixed(0)}%) to ({(shapeParseRegion[2]*100).toFixed(0)}%,{(shapeParseRegion[3]*100).toFixed(0)}%)</span>
-                <button onClick={() => setShapeParseRegion(null)} className="text-[var(--muted)] hover:text-red-400">&times;</button>
+                <button
+                  onClick={() => { setShapeParseRegion(null); setShapeDrawing(false); }}
+                  className="text-[var(--muted)] hover:text-red-400"
+                >&times;</button>
               </div>
             )}
-            {shapeParseError && (
-              <div className="text-[10px] text-red-400 px-1">{shapeParseError}</div>
-            )}
-            {shapeParseWarnings.length > 0 && (
-              <div className="text-[10px] text-amber-400 px-1 py-0.5 border border-amber-500/20 rounded bg-amber-500/5">
-                {shapeParseWarnings.map((w, i) => <div key={i}>{w}</div>)}
+            {/* Debug / results area — consolidated error + warnings into one
+                panel with a header so it reads as the tab's diagnostic output
+                (the python pipeline emits the funnel counts here). */}
+            {(shapeParseError || shapeParseWarnings.length > 0) && (
+              <div className="rounded border border-[var(--border)] bg-[var(--panel-secondary)]/40 px-2 py-1.5 space-y-1">
+                <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">
+                  Debug / Results
+                </div>
+                {shapeParseError && (
+                  <div className="text-[10px] text-red-400">{shapeParseError}</div>
+                )}
+                {shapeParseWarnings.map((w, i) => (
+                  <div key={i} className="text-[10px] text-amber-300 font-mono leading-snug">
+                    {w}
+                  </div>
+                ))}
               </div>
             )}
             {pageKeynotes.length > 0 && (
@@ -833,11 +885,12 @@ export default function DetectionPanel() {
                     const res = await fetch("/api/annotations", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
+                      // Append-only save: no deleteSource/deletePageNumbers,
+                      // so multiple BB parses on the same page accumulate in
+                      // the DB instead of wiping prior saves.
                       body: JSON.stringify({
                         projectId: publicId,
                         annotations: annInputs,
-                        deleteSource: "shape-parse",
-                        deletePageNumbers: [pageNumber],
                       }),
                     });
                     if (!res.ok) {
@@ -847,8 +900,16 @@ export default function DetectionPanel() {
                     const data = await res.json();
                     if (data.annotations) {
                       const current = useViewerStore.getState().annotations;
-                      const cleaned = current.filter((a) => !(a.source === "shape-parse" && a.pageNumber === pageNumber));
-                      useViewerStore.getState().setAnnotations([...cleaned, ...data.annotations]);
+                      // Append the newly-saved rows; prior shape-parse rows
+                      // stay untouched (server no longer deletes them).
+                      useViewerStore.getState().setAnnotations([...current, ...data.annotations]);
+                      // Clear the pending-shapes panel — they've moved from
+                      // "pending" to "saved" (now visible via annotations overlay).
+                      setKeynotes(pageNumber, []);
+                      // Reset the BB draw state so the user can start a new
+                      // region without a manual cancel-click.
+                      setShapeParseRegion(null);
+                      setMode("move");
                       setShapeSaveSuccess(`Saved ${data.annotations.length} annotations`);
                       setTimeout(() => setShapeSaveSuccess(null), 3000);
                     }
@@ -903,11 +964,10 @@ export default function DetectionPanel() {
                       const res = await fetch("/api/annotations", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
+                        // Append-only — see single-page save comment above.
                         body: JSON.stringify({
                           projectId: publicId,
                           annotations: allAnnotations,
-                          deleteSource: "shape-parse",
-                          deletePageNumbers: allPageNums,
                         }),
                       });
                       if (!res.ok) {
@@ -917,8 +977,14 @@ export default function DetectionPanel() {
                       const data = await res.json();
                       if (data.annotations) {
                         const current = store.annotations;
-                        const cleaned = current.filter((a) => !(a.source === "shape-parse" && allPageNums.includes(a.pageNumber)));
-                        store.setAnnotations([...cleaned, ...data.annotations]);
+                        store.setAnnotations([...current, ...data.annotations]);
+                        // Clear the pending-shapes panel for every page we saved.
+                        for (const pn of allPageNums) {
+                          store.setKeynotes(pn, []);
+                        }
+                        // Reset BB draw state so the next parse starts fresh.
+                        setShapeParseRegion(null);
+                        setMode("move");
                         setShapeSaveSuccess(`Saved ${data.annotations.length} across ${allPageNums.length} pages`);
                         setTimeout(() => setShapeSaveSuccess(null), 3000);
                       }

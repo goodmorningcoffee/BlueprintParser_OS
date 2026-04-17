@@ -73,7 +73,7 @@ export async function POST(req: Request) {
       }
 
       if (isLambdaCvEnabled()) {
-        const { results, failedPages } = await fanOutShapeParse({ pageS3Keys });
+        const { results, failedPages, warnings } = await fanOutShapeParse({ pageS3Keys });
 
         const byPage: Record<number, typeof results> = {};
         const allKeynotes = results.map((r) => {
@@ -89,6 +89,7 @@ export async function POST(req: Request) {
           byPage,
           totalPages: allPages.length,
           ...(failedPages.length > 0 && { failedPages }),
+          ...(warnings.length > 0 && { warnings }),
         });
       }
 

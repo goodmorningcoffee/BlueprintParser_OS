@@ -31,7 +31,16 @@ TILE_SIZE = 1200
 TILE_OVERLAP = 150
 IOU_DEDUP_THRESHOLD = 0.5
 MIN_SIZE_FOR_TILING = 1500  # Don't tile images smaller than this
-MAX_DIM_BEFORE_DOWNSCALE = 4000  # Downscale images larger than this
+# Downscale target. At 300 DPI E-size (~10800px long edge) the old 4000
+# cap forced scale_factor=0.37, which eroded 2px blueprint lines (standard
+# 0.5pt rendering) below the clean_img distance>1 threshold and also
+# crushed keynote-text into the 20%-of-shape-height check in
+# valid_keynote_candidate. Result: full-page detection silently returned 0
+# while the BB path kept working because its crop yielded ~scale 0.7+.
+# 8000 picks up the BB-path scale (0.74 for 10800px pages) so full-page and
+# BB share the same preprocessing characteristics. Raise further only if
+# we see scale<0.5 diag warnings on even larger blueprints.
+MAX_DIM_BEFORE_DOWNSCALE = 8000
 
 
 # ── Geometry helpers ─────────────────────────────────────────────
@@ -339,18 +348,31 @@ def deduplicate(results, threshold=IOU_DEDUP_THRESHOLD):
 def extract_from_image(img, skip_ocr=False, scale_factor=1.0):
     """
     Run keynote extraction on a single image (tile or full page).
-    Returns list of result dicts with tile-local normalized coords.
+
+    Returns: Tuple[list[dict], dict]
+      - results: list of result dicts with tile-local normalized coords,
+        each containing {shape, bbox, contour, text}.
+      - stats: pipeline funnel counts for diagnostics —
+        {text_candidates, keynote_candidates, selected}. Used by main()
+        to aggregate across tiles and surface into the diag_warning,
+        so the UI can tell WHICH stage dropped the shapes when a full-
+        page scan returns 0.
+
     When skip_ocr=True, skips Tesseract OCR (the crash-prone step) and returns empty text.
     scale_factor: how much the image was downscaled from original (1.0 = no downscale).
     """
     h, w = img.shape
     img_cleaned = clean_img(img)
 
-    # Adapt size filter to downscale factor. At scale_factor=0.37 (full 300 DPI page
-    # downscaled to 4000px), a 60px keynote becomes 22px. The base 20px minimum would
-    # reject 50px symbols (→18px). Scaling the bounds keeps detection stable.
+    # Scale MIN down with downscale factor so tiny shapes aren't rejected when the
+    # page is shrunk (a 50px symbol at scale 0.37 becomes 18px — below the base 20
+    # minimum without this). Do NOT scale MAX: a large native keynote becomes smaller
+    # in absolute pixels after downscale but it's still a valid shape and we want
+    # to keep it. Scaling max down was the 2026-04-16 regression that made full-page
+    # scans silently return 0 — reference bubbles and column markers at ~200-300px
+    # native were clipped once scale_factor dropped to ~0.4.
     min_kn = max(10, int(20 * scale_factor))
-    max_kn = max(50, int(200 * scale_factor))
+    max_kn = 200
 
     candidate_text = filter_components(
         img_cleaned, (0.1, 2), (None, None), (None, None)
@@ -361,9 +383,15 @@ def extract_from_image(img, skip_ocr=False, scale_factor=1.0):
 
     selected_keynotes = filter_keynote_candidates(candidate_keynotes, candidate_text)
 
+    stats = {
+        "text_candidates": len(candidate_text),
+        "keynote_candidates": len(candidate_keynotes),
+        "selected": len(selected_keynotes),
+    }
+
     if not selected_keynotes:
         del img_cleaned
-        return []
+        return [], stats
 
     # Get contour and shape for each keynote region
     results = []
@@ -400,17 +428,34 @@ def extract_from_image(img, skip_ocr=False, scale_factor=1.0):
         })
 
     del img_cleaned
-    return results
+    return results, stats
 
 
 # ── Main entry point ─────────────────────────────────────────────
 
 def main(img_path):
+    """
+    Run keynote extraction on a page PNG file.
+
+    Returns: Tuple[list[dict], list[str]] = (results, diag_warnings)
+      - results: each dict has keys {shape, bbox, contour, text}
+      - diag_warnings: user-visible warning strings (empty on success)
+
+    Callers:
+      - `__main__` CLI block below (ECS subprocess path) — unpacks
+         both elements and merges diag_warnings into the stdout JSON.
+      - `scripts/lambda_handler.py` `parse_worker` — unpacks and
+         discards diag_warnings (Lambda path has no warnings plumbing).
+
+    Both callers depend on this being a 2-tuple. If you change the
+    shape, update both call sites OR this becomes a silent Lambda
+    crash (for h in tuple: h["key"] = v → TypeError).
+    """
     import gc
 
     img = cv2.imread(img_path, 0)
     if img is None:
-        return []
+        return [], []
 
     h, w = img.shape
     print(f"[keynote] Image: {w}x{h}", file=sys.stderr)
@@ -428,9 +473,25 @@ def main(img_path):
     # Small images: process directly without tiling
     if w <= MIN_SIZE_FOR_TILING and h <= MIN_SIZE_FOR_TILING:
         print(f"[keynote] Small image, no tiling needed", file=sys.stderr)
-        results = extract_from_image(img, skip_ocr=False, scale_factor=scale_factor)
+        results, stats = extract_from_image(img, skip_ocr=False, scale_factor=scale_factor)
+        print(
+            f"[keynote] Pipeline: {stats['text_candidates']} text candidates, "
+            f"{stats['keynote_candidates']} keynote candidates, "
+            f"{stats['selected']} passed text-inside filter",
+            file=sys.stderr,
+        )
         print(f"[keynote] Returning {len(results)} keynotes", file=sys.stderr)
-        return results
+        diag = []
+        if len(results) == 0:
+            diag.append(
+                f"Shape Parse found 0 keynotes in small-image path; "
+                f"image {w}x{h} @ scale {scale_factor:.2f}, "
+                f"filters min_kn={max(10, int(20 * scale_factor))} max_kn=200. "
+                f"Pipeline: {stats['text_candidates']} text candidates, "
+                f"{stats['keynote_candidates']} shape candidates, "
+                f"{stats['selected']} passed text-inside filter"
+            )
+        return results, diag
 
     # Large images: tile and merge. Run OCR per-shape inside each tile —
     # per-shape OCR is fast (shapes are 20-200px), only whole-image OCR is problematic.
@@ -439,16 +500,36 @@ def main(img_path):
     print(f"[keynote] Tiling: {num_tiles} tiles ({TILE_SIZE}px, {TILE_OVERLAP}px overlap)", file=sys.stderr)
 
     all_results = []
+    # Aggregate pipeline-stage counts across tiles so the UI warning can show
+    # WHERE shapes are getting dropped (filter stage vs. text-inside stage).
+    agg_text_candidates = 0
+    agg_keynote_candidates = 0
+    agg_selected = 0
     for ti, (ty, tx, th, tw) in enumerate(tiles):
         tile_img = img[ty : ty + th, tx : tx + tw].copy()  # copy to avoid holding ref to full image
-        tile_results = extract_from_image(tile_img, skip_ocr=False, scale_factor=scale_factor)
+        tile_results, tile_stats = extract_from_image(tile_img, skip_ocr=False, scale_factor=scale_factor)
         del tile_img
+
+        agg_text_candidates += tile_stats["text_candidates"]
+        agg_keynote_candidates += tile_stats["keynote_candidates"]
+        agg_selected += tile_stats["selected"]
 
         if tile_results:
             for r in tile_results:
                 remap_result(r, tx, ty, tw, th, w, h)
             all_results.extend(tile_results)
-            print(f"[keynote] Tile {ti}: {len(tile_results)} keynotes", file=sys.stderr)
+        # Log EVERY tile's count — empty tiles used to be invisible, which hid
+        # the 2026-04-16 regression. Always-on logging makes future silent
+        # failures findable in CloudWatch. Include per-stage counts so we can
+        # see which filter dropped shapes on this tile.
+        print(
+            f"[keynote] Tile {ti} @ ({tx},{ty}) {tw}x{th}: "
+            f"{len(tile_results)} keynotes "
+            f"(stages: {tile_stats['text_candidates']} text, "
+            f"{tile_stats['keynote_candidates']} shape, "
+            f"{tile_stats['selected']} selected)",
+            file=sys.stderr,
+        )
 
         # Free memory every 10 tiles
         if ti % 10 == 9:
@@ -459,7 +540,44 @@ def main(img_path):
     results = deduplicate(all_results)
     print(f"[keynote] After dedup: {len(results)} keynotes", file=sys.stderr)
 
-    return results
+    # Surface 0-keynote tiled runs as a user-visible warning so silent failures
+    # never hide again. The filter bounds + scale are included so whatever
+    # goes wrong next has its symptoms stated up front.
+    #
+    # NOTE: this warning currently only reaches the UI on the ECS single-page
+    # path (keynotes.ts → {results, warnings} JSON → shape-parse/route.ts →
+    # DetectionPanel). The Lambda scanAll path drops warnings today because
+    # process_pages/fanOutShapeParse don't carry them. Plumbing them through
+    # scanAll is follow-up work.
+    #
+    # The min_kn/max_kn values here MUST match extract_from_image:352-353.
+    # If you tune the formula there, re-check this computation.
+    diag_warnings = []
+    if len(results) == 0 and num_tiles > 0:
+        min_kn_report = max(10, int(20 * scale_factor))
+        max_kn_report = 200
+        # Pipeline funnel tells us WHICH stage dropped shapes:
+        #   text_candidates high + keynote_candidates low → size/aspect filter too tight
+        #   keynote_candidates high + selected 0 → text-inside check too strict
+        #   all three low → clean_img eroded outlines (distance-transform stage)
+        diag_warnings.append(
+            f"Shape Parse found 0 keynotes across {num_tiles} tiles "
+            f"({TILE_SIZE}px, {TILE_OVERLAP}px overlap); "
+            f"image {w}x{h} @ scale {scale_factor:.2f}, "
+            f"filters min_kn={min_kn_report} max_kn={max_kn_report}. "
+            f"Pipeline (all tiles): {agg_text_candidates} text candidates, "
+            f"{agg_keynote_candidates} shape candidates, "
+            f"{agg_selected} passed text-inside filter"
+        )
+
+    print(
+        f"[keynote] Pipeline totals: {agg_text_candidates} text candidates, "
+        f"{agg_keynote_candidates} shape candidates, "
+        f"{agg_selected} passed text-inside filter (pre-dedup)",
+        file=sys.stderr,
+    )
+
+    return results, diag_warnings
 
 
 if __name__ == "__main__":
@@ -468,8 +586,8 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        results = main(sys.argv[1])
-        warnings = []
+        results, diag_warnings = main(sys.argv[1])
+        warnings = list(diag_warnings)
         if not _HAVE_OCR:
             warnings.append("Tesseract not installed — shapes detected but text will be empty")
         print(json.dumps({"results": results, "warnings": warnings}))
