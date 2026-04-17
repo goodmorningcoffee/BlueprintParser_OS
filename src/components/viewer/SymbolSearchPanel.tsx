@@ -104,9 +104,10 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
     const abort = new AbortController();
     abortRef.current = abort;
 
-    // Auto-timeout after 120s
+    // Auto-timeout after 10 min — full-project Lambda scans can legitimately
+    // take minutes; 120s was firing before Lambda workers finished.
     let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; abort.abort(); }, 120000);
+    const timeout = setTimeout(() => { timedOut = true; abort.abort(); }, 600000);
 
     const bbox = store.symbolSearchTemplateBbox;
     store.setSymbolSearchLoading(true);

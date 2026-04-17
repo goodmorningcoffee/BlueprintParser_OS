@@ -17,7 +17,7 @@ import { readFile, writeFile, rm, mkdtemp } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { templateMatch } from "@/lib/template-match";
-import { isLambdaCvEnabled, fanOutTemplateMatch } from "@/lib/lambda-cv";
+import { isLambdaCvEnabled, fanOutTemplateMatch, TEMPLATE_MATCH_BATCH_SIZE } from "@/lib/lambda-cv";
 import { bindOcrToShapes } from "@/lib/ocr-shape-binding";
 import type { TemplateMatchProgress, SymbolSearchMatch, TextractPageData, BboxMinMax } from "@/types";
 import { logger } from "@/lib/logger";
@@ -155,6 +155,16 @@ cv2.imwrite(cfg["dst"], crop)
                 message: `Dispatching to Lambda workers...`,
               }) + "\n"));
 
+              const totalBatches = Math.ceil(pageNumbers.length / TEMPLATE_MATCH_BATCH_SIZE);
+              // NOTE: after lambda-cv's per-batch fanOut refactor, onBatchComplete
+              // fires as each Lambda settles — which may be OUT OF ORDER (batch 3
+              // before batch 1 if batch 3 returns faster). `batchesDone` is a count,
+              // not an index, so `pagesDone` grows monotonically and the progress
+              // bar is stable. The `Batch X/N complete` MESSAGE string can appear
+              // to jump around (e.g. "Batch 4/10", "Batch 1/10") — that's expected,
+              // not a bug worth "fixing". The client UI shows pageIndex/totalPages.
+              let cumulativeMatches = 0;
+              let batchesDone = 0;
               const { results, failedPages } = await fanOutTemplateMatch({
                 templateBuffer,
                 pageS3Keys,
@@ -167,12 +177,14 @@ cv2.imwrite(cfg["dst"], crop)
                   max_matches_per_page: maxMatchesPerPage,
                 },
                 onBatchComplete: (batchIdx, matchCount) => {
-                  const totalBatches = Math.ceil(pageNumbers.length / 5);
+                  cumulativeMatches += matchCount;
+                  batchesDone += 1;
+                  const pagesDone = Math.min(batchesDone * TEMPLATE_MATCH_BATCH_SIZE, pageNumbers.length);
                   controller.enqueue(encoder.encode(JSON.stringify({
                     type: "progress", page: 0,
-                    pageIndex: Math.min((batchIdx + 1) * 5, pageNumbers.length),
+                    pageIndex: pagesDone,
                     totalPages: pageNumbers.length,
-                    matches: matchCount,
+                    matches: cumulativeMatches,
                     message: `Batch ${batchIdx + 1}/${totalBatches} complete`,
                   }) + "\n"));
                 },
