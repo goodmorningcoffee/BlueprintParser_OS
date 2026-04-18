@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# BuildKit required for cache mounts in Dockerfile.lambda.
+export DOCKER_BUILDKIT=1
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CV Lambda Pipeline Deploy Script
 # Builds the OpenCV+Tesseract Lambda container image, pushes to ECR, and

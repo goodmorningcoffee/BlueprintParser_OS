@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # ── Lambda CV Pipeline Container ──────────────────────────────
 # Runs template matching (symbol search) and shape parsing (keynote
 # detection) on batches of blueprint pages. Invoked by the web server
@@ -29,8 +30,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Python deps + AWS Lambda Runtime Interface Client
-RUN pip install --no-cache-dir \
+# Python deps + AWS Lambda Runtime Interface Client.
+# --no-cache-dir removed: BuildKit cache mount keeps wheel cache outside the
+# layer, so no image bloat and reinstalls reuse downloads.
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install \
     awslambdaric \
     numpy \
     opencv-python-headless \

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# BuildKit required for cache mounts in Dockerfile.yolo (big torch download).
+export DOCKER_BUILDKIT=1
+
 # ─────────────────────────────────────────────────────────────────────────────
 # YOLO Pipeline Deploy Script
 # Builds GPU inference image and pushes to ECR for SageMaker.
