@@ -40,7 +40,7 @@ MIN_SIZE_FOR_TILING = 1500  # Don't tile images smaller than this
 # 8000 picks up the BB-path scale (0.74 for 10800px pages) so full-page and
 # BB share the same preprocessing characteristics. Raise further only if
 # we see scale<0.5 diag warnings on even larger blueprints.
-MAX_DIM_BEFORE_DOWNSCALE = 8000
+MAX_DIM_BEFORE_DOWNSCALE = 12000
 
 
 # ── Geometry helpers ─────────────────────────────────────────────
@@ -542,16 +542,12 @@ def main(img_path):
 
     # Surface 0-keynote tiled runs as a user-visible warning so silent failures
     # never hide again. The filter bounds + scale are included so whatever
-    # goes wrong next has its symptoms stated up front.
+    # goes wrong next has its symptoms stated up front. The warning reaches
+    # the UI via both the ECS single-page path and the Lambda scanAll path
+    # (process_pages → fanOut warnings → shape-parse/route.ts).
     #
-    # NOTE: this warning currently only reaches the UI on the ECS single-page
-    # path (keynotes.ts → {results, warnings} JSON → shape-parse/route.ts →
-    # DetectionPanel). The Lambda scanAll path drops warnings today because
-    # process_pages/fanOutShapeParse don't carry them. Plumbing them through
-    # scanAll is follow-up work.
-    #
-    # The min_kn/max_kn values here MUST match extract_from_image:352-353.
-    # If you tune the formula there, re-check this computation.
+    # The min_kn/max_kn values here MUST match extract_from_image's min_kn/
+    # max_kn formula. If you tune the formula there, re-check this computation.
     diag_warnings = []
     if len(results) == 0 and num_tiles > 0:
         min_kn_report = max(10, int(20 * scale_factor))

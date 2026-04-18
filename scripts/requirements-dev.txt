@@ -1,0 +1,7 @@
+# Dev-only Python deps. Not shipped to Lambda (Dockerfile.lambda installs
+# its own subset) and not strictly required by the web server.
+#
+# Install alongside scripts/requirements.txt to run the pytest suite:
+#   pip install -r scripts/requirements.txt -r scripts/requirements-dev.txt
+#   pytest scripts/
+pytest>=8.0
