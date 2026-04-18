@@ -28,19 +28,19 @@ except ImportError:
 kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype="uint8")
 
 TILE_SIZE = 1200
-TILE_OVERLAP = 150
+TILE_OVERLAP = 300  # Catches medium shapes (up to ~280px) that straddle tile boundaries.
 IOU_DEDUP_THRESHOLD = 0.5
-MIN_SIZE_FOR_TILING = 1500  # Don't tile images smaller than this
-# Downscale target. At 300 DPI E-size (~10800px long edge) the old 4000
-# cap forced scale_factor=0.37, which eroded 2px blueprint lines (standard
-# 0.5pt rendering) below the clean_img distance>1 threshold and also
-# crushed keynote-text into the 20%-of-shape-height check in
-# valid_keynote_candidate. Result: full-page detection silently returned 0
-# while the BB path kept working because its crop yielded ~scale 0.7+.
-# 8000 picks up the BB-path scale (0.74 for 10800px pages) so full-page and
-# BB share the same preprocessing characteristics. Raise further only if
-# we see scale<0.5 diag warnings on even larger blueprints.
-MAX_DIM_BEFORE_DOWNSCALE = 12000
+
+# Unified sliding-window BB pipeline: every extraction iterates tiles at
+# native resolution. No downscale, no size-based dispatch. Small images
+# produce one tile via generate_tiles; large images produce N tiles and
+# IOU_DEDUP_THRESHOLD merges overlap duplicates. Filter bounds are
+# absolute pixel sizes — shapes 15-200px are in range regardless of source
+# page dimensions. MIN_KN_ABS=15 covers the small-shape coverage that the
+# old downscaled path got implicitly (scale_factor 0.92 * 20 = 18); being
+# below 18 ensures no recall regression from the unified refactor.
+MIN_KN_ABS = 15
+MAX_KN_ABS = 200
 
 
 # ── Geometry helpers ─────────────────────────────────────────────
@@ -345,7 +345,7 @@ def deduplicate(results, threshold=IOU_DEDUP_THRESHOLD):
 
 # ── Per-tile extraction (core logic) ────────────────────────────
 
-def extract_from_image(img, skip_ocr=False, scale_factor=1.0):
+def extract_from_image(img, skip_ocr=False):
     """
     Run keynote extraction on a single image (tile or full page).
 
@@ -359,20 +359,15 @@ def extract_from_image(img, skip_ocr=False, scale_factor=1.0):
         page scan returns 0.
 
     When skip_ocr=True, skips Tesseract OCR (the crash-prone step) and returns empty text.
-    scale_factor: how much the image was downscaled from original (1.0 = no downscale).
+    Always operates at native resolution — filter bounds are absolute pixel sizes
+    (MIN_KN_ABS, MAX_KN_ABS), not scale-relative. The caller controls what image
+    region this function sees by tile-slicing in generate_tiles.
     """
     h, w = img.shape
     img_cleaned = clean_img(img)
 
-    # Scale MIN down with downscale factor so tiny shapes aren't rejected when the
-    # page is shrunk (a 50px symbol at scale 0.37 becomes 18px — below the base 20
-    # minimum without this). Do NOT scale MAX: a large native keynote becomes smaller
-    # in absolute pixels after downscale but it's still a valid shape and we want
-    # to keep it. Scaling max down was the 2026-04-16 regression that made full-page
-    # scans silently return 0 — reference bubbles and column markers at ~200-300px
-    # native were clipped once scale_factor dropped to ~0.4.
-    min_kn = max(10, int(20 * scale_factor))
-    max_kn = 200
+    min_kn = MIN_KN_ABS
+    max_kn = MAX_KN_ABS
 
     candidate_text = filter_components(
         img_cleaned, (0.1, 2), (None, None), (None, None)
@@ -460,41 +455,10 @@ def main(img_path):
     h, w = img.shape
     print(f"[keynote] Image: {w}x{h}", file=sys.stderr)
 
-    # Downscale very large images (like old Theta's 4x reduction)
-    scale_factor = 1.0
-    if max(w, h) > MAX_DIM_BEFORE_DOWNSCALE:
-        scale_factor = MAX_DIM_BEFORE_DOWNSCALE / max(w, h)
-        new_w = int(w * scale_factor)
-        new_h = int(h * scale_factor)
-        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        h, w = img.shape
-        print(f"[keynote] Downscaled to {w}x{h} (factor {scale_factor:.2f})", file=sys.stderr)
-
-    # Small images: process directly without tiling
-    if w <= MIN_SIZE_FOR_TILING and h <= MIN_SIZE_FOR_TILING:
-        print(f"[keynote] Small image, no tiling needed", file=sys.stderr)
-        results, stats = extract_from_image(img, skip_ocr=False, scale_factor=scale_factor)
-        print(
-            f"[keynote] Pipeline: {stats['text_candidates']} text candidates, "
-            f"{stats['keynote_candidates']} keynote candidates, "
-            f"{stats['selected']} passed text-inside filter",
-            file=sys.stderr,
-        )
-        print(f"[keynote] Returning {len(results)} keynotes", file=sys.stderr)
-        diag = []
-        if len(results) == 0:
-            diag.append(
-                f"Shape Parse found 0 keynotes in small-image path; "
-                f"image {w}x{h} @ scale {scale_factor:.2f}, "
-                f"filters min_kn={max(10, int(20 * scale_factor))} max_kn=200. "
-                f"Pipeline: {stats['text_candidates']} text candidates, "
-                f"{stats['keynote_candidates']} shape candidates, "
-                f"{stats['selected']} passed text-inside filter"
-            )
-        return results, diag
-
-    # Large images: tile and merge. Run OCR per-shape inside each tile —
-    # per-shape OCR is fast (shapes are 20-200px), only whole-image OCR is problematic.
+    # Unified sliding-window BB pipeline: always tile at native resolution.
+    # generate_tiles returns a single tile for small images (both dims <
+    # TILE_SIZE), so the "small image" case falls out for free — no
+    # special dispatch, no divergence between BB-mode and full-page behaviors.
     tiles = generate_tiles(h, w)
     num_tiles = len(tiles)
     print(f"[keynote] Tiling: {num_tiles} tiles ({TILE_SIZE}px, {TILE_OVERLAP}px overlap)", file=sys.stderr)
@@ -507,7 +471,7 @@ def main(img_path):
     agg_selected = 0
     for ti, (ty, tx, th, tw) in enumerate(tiles):
         tile_img = img[ty : ty + th, tx : tx + tw].copy()  # copy to avoid holding ref to full image
-        tile_results, tile_stats = extract_from_image(tile_img, skip_ocr=False, scale_factor=scale_factor)
+        tile_results, tile_stats = extract_from_image(tile_img, skip_ocr=False)
         del tile_img
 
         agg_text_candidates += tile_stats["text_candidates"]
@@ -540,18 +504,13 @@ def main(img_path):
     results = deduplicate(all_results)
     print(f"[keynote] After dedup: {len(results)} keynotes", file=sys.stderr)
 
-    # Surface 0-keynote tiled runs as a user-visible warning so silent failures
-    # never hide again. The filter bounds + scale are included so whatever
-    # goes wrong next has its symptoms stated up front. The warning reaches
-    # the UI via both the ECS single-page path and the Lambda scanAll path
-    # (process_pages → fanOut warnings → shape-parse/route.ts).
-    #
-    # The min_kn/max_kn values here MUST match extract_from_image's min_kn/
-    # max_kn formula. If you tune the formula there, re-check this computation.
+    # Surface 0-keynote runs as a user-visible warning so silent failures
+    # never hide again. The filter bounds are stated up front so whatever
+    # goes wrong next has its symptoms visible to the user immediately.
+    # Warning reaches the UI via both ECS single-page path and Lambda
+    # scanAll path (process_pages → fanOut warnings → shape-parse/route.ts).
     diag_warnings = []
     if len(results) == 0 and num_tiles > 0:
-        min_kn_report = max(10, int(20 * scale_factor))
-        max_kn_report = 200
         # Pipeline funnel tells us WHICH stage dropped shapes:
         #   text_candidates high + keynote_candidates low → size/aspect filter too tight
         #   keynote_candidates high + selected 0 → text-inside check too strict
@@ -559,8 +518,8 @@ def main(img_path):
         diag_warnings.append(
             f"Shape Parse found 0 keynotes across {num_tiles} tiles "
             f"({TILE_SIZE}px, {TILE_OVERLAP}px overlap); "
-            f"image {w}x{h} @ scale {scale_factor:.2f}, "
-            f"filters min_kn={min_kn_report} max_kn={max_kn_report}. "
+            f"image {w}x{h}, "
+            f"filters min_kn={MIN_KN_ABS} max_kn={MAX_KN_ABS}. "
             f"Pipeline (all tiles): {agg_text_candidates} text candidates, "
             f"{agg_keynote_candidates} shape candidates, "
             f"{agg_selected} passed text-inside filter"
