@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# BuildKit is required for the RUN --mount=type=cache directives in Dockerfile.
+# Default since Docker 23 but explicit removes ambiguity across dev environments.
+export DOCKER_BUILDKIT=1
+
 # ─────────────────────────────────────────────────────────────────────────────
 # BlueprintParser 2 Deploy Script
 # Builds, pushes Docker image to ECR, and updates ECS service.

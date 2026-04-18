@@ -1,9 +1,11 @@
+# syntax=docker/dockerfile:1.7
 # ── Stage 1: Install dependencies ──────────────────────────────
 # Build stages use Alpine (small, fast). Runner uses Debian for Python/ML deps.
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm install --ignore-scripts
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm install --ignore-scripts
 
 # ── Stage 2: Build the Next.js app ────────────────────────────
 FROM node:20-alpine AS builder
@@ -20,7 +22,8 @@ ARG NEXT_PUBLIC_S3_BUCKET=""
 ENV NEXT_PUBLIC_CLOUDFRONT_DOMAIN=$NEXT_PUBLIC_CLOUDFRONT_DOMAIN
 ENV NEXT_PUBLIC_S3_BUCKET=$NEXT_PUBLIC_S3_BUCKET
 
-RUN npm run build
+RUN --mount=type=cache,target=/app/.next/cache \
+    npm run build
 
 # Bundle standalone processing worker for Step Functions / ECS tasks
 RUN npx esbuild scripts/process-worker.ts \
@@ -42,7 +45,11 @@ RUN groupadd --system --gid 1001 nodejs && \
     useradd --system --uid 1001 --no-create-home --gid nodejs nextjs
 
 # Install Ghostscript, Python 3, Tesseract OCR, and system libraries
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# pip3 --no-cache-dir is intentionally REMOVED below because we've mounted a
+# BuildKit cache at /root/.cache/pip — the cache lives outside the final image
+# layer, so there's no image bloat, and wheel downloads are reused across builds.
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ghostscript \
     python3 \
@@ -55,7 +62,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     libgl1 \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --break-system-packages --no-cache-dir \
+    && pip3 install --break-system-packages \
     numpy \
     opencv-python-headless \
     pytesseract==0.3.13 \
@@ -66,11 +73,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openpyxl \
     camelot-py[base] \
     img2table==0.0.12 \
-    && pip3 install --break-system-packages --no-cache-dir \
+    && pip3 install --break-system-packages \
     torch==2.5.1+cpu torchvision==0.20.1+cpu --index-url https://download.pytorch.org/whl/cpu \
-    && pip3 install --break-system-packages --no-cache-dir \
+    && pip3 install --break-system-packages \
     "transformers>=4.40.0,<5.0.0" \
     "timm>=0.9.0,<2.0.0"
+
+# Migrator deps (drizzle-orm, pg). Not traced by Next.js standalone because
+# entrypoint.sh uses them via `node -e "require(...)"` inside a shell heredoc,
+# not from TS code — so the tracer never sees the imports. Installed here
+# (cacheable across source-only rebuilds) instead of at the end of the runner
+# stage, where every builder COPY invalidated the layer and this install cost
+# ~195s every deploy. The `COPY package.json` pins the install to the exact
+# versions the main app depends on (drizzle-orm@0.45.1, pg@8.19.0).
+COPY package.json package-lock.json* ./
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm install drizzle-orm pg
 
 # Copy standalone output
 COPY --from=builder /app/public ./public
@@ -115,9 +133,6 @@ RUN python3 ./scripts/patch_img2table.py
 # the nextjs user.
 ENV NUMBA_CACHE_DIR=/tmp/numba_cache
 RUN mkdir -p /tmp/numba_cache && chmod 777 /tmp/numba_cache
-
-# Install drizzle-orm and pg for migrations (already in standalone but need migrator)
-RUN npm install drizzle-orm pg 2>/dev/null || true
 
 USER nextjs
 

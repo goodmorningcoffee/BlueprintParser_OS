@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.10-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -10,10 +11,13 @@ RUN apt-get update && \
         libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# PyTorch with CUDA 11.8 (bundles CUDA runtime), then ultralytics
-RUN pip install --no-cache-dir \
+# PyTorch with CUDA 11.8 (bundles CUDA runtime), then ultralytics.
+# --no-cache-dir removed: BuildKit cache mount at /root/.cache/pip lives outside
+# the image layer, so repeat builds skip the ~2GB torch download without bloat.
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install \
         torch torchvision --index-url https://download.pytorch.org/whl/cu118 \
-    && pip install --no-cache-dir ultralytics pyyaml
+    && pip install ultralytics pyyaml
 
 COPY scripts/yolo_inference.py /opt/ml/code/yolo_inference.py
 

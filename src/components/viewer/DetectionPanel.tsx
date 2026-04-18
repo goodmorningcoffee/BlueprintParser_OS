@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, useCallback, useRef, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useYoloTags, usePageData } from "@/stores/viewerStore";
+import { useShapeParseInteraction } from "@/hooks/useShapeParseInteraction";
 import { TWENTY_COLORS, SHAPE_COLORS } from "@/types";
 import type { ClientAnnotation, YoloTag, Shape } from "@/types";
 import ClassGroupHeader from "./ClassGroupHeader";
@@ -13,6 +14,10 @@ function classColor(name: string): string {
   for (let i = 0; i < name.length; i++) hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
   return TWENTY_COLORS[Math.abs(hash) % TWENTY_COLORS.length];
 }
+
+// Stable module-level const — hoisted so the Set identity doesn't change per
+// render. Used by yoloAnnotations to filter out non-detection annotations.
+const DETECTION_SOURCES: ReadonlySet<string> = new Set(["yolo", "shape-parse", "symbol-search"]);
 
 export default function DetectionPanel() {
   const { pageNumber, setPage } = useNavigation();
@@ -33,16 +38,10 @@ export default function DetectionPanel() {
   } = useYoloTags();
 
   const [detectionTab, setDetectionTab] = useState<"models" | "tags" | "shape">("models");
-  const [shapeParseLoading, setShapeParseLoading] = useState(false);
-  const [shapeParseError, setShapeParseError] = useState<string | null>(null);
-  const [shapeParseWarnings, setShapeParseWarnings] = useState<string[]>([]);
-  const [shapeParseRegion, setShapeParseRegion] = useState<[number, number, number, number] | null>(null);
+  const shapeParse = useShapeParseInteraction({ detectionTab });
   const [shapeSaving, setShapeSaving] = useState(false);
   const [shapeSaveSuccess, setShapeSaveSuccess] = useState<string | null>(null);
-  const { keynotes, setKeynotes, setBatchKeynotes } = usePageData();
-  const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
-  const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
-  const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
+  const { keynotes, setKeynotes } = usePageData();
   const setMode = useViewerStore((s) => s.setMode);
   const showKeynotes = useViewerStore((s) => s.showKeynotes);
   const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
@@ -65,100 +64,6 @@ export default function DetectionPanel() {
     return Object.entries(groups).sort(([, a], [, b]) => b.count - a.count);
   }, [pageKeynotes]);
 
-  // Capture drawn region for shape parse: when the Shape tab is active and the
-  // user draws via the shared pointer/select-region mode, grab the bbox and
-  // clear the table parse region so it doesn't bleed into the Table tab.
-  // shapeDrawing: tracks "user clicked BB and is actively in draw-region mode".
-  // Converted from a ref to state so the BB button re-renders as green
-  // immediately on click (previously only re-rendered once a region was drawn,
-  // which gave the user no feedback that the click had registered).
-  const [shapeDrawing, setShapeDrawing] = useState(false);
-  useEffect(() => {
-    if (detectionTab !== "shape" || !shapeDrawing || !tableParseRegion) return;
-    setShapeParseRegion(tableParseRegion as [number, number, number, number]);
-    setTableParseRegion(null);
-    // Keep shapeDrawing=true — we now have a region, button stays green.
-    // It'll clear when the user either clicks the × next to the region chip
-    // or clicks the Bounding Box button again (toggles off).
-  }, [detectionTab, tableParseRegion, setTableParseRegion, shapeDrawing]);
-
-  function startShapeRegionDraw() {
-    // Click-to-toggle: if already engaged (drawing mode OR region already
-    // drawn), this click CANCELS; otherwise it enters draw mode. Gives the
-    // user immediate visual feedback instead of having to draw before the
-    // button reflects any state.
-    if (shapeDrawing || shapeParseRegion !== null) {
-      setShapeDrawing(false);
-      setShapeParseRegion(null);
-      setMode("move");
-      setTableParseStep("idle");
-    } else {
-      setShapeDrawing(true);
-      setTableParseStep("select-region");
-      setMode("pointer");
-    }
-  }
-
-  async function runShapeParse() {
-    if (!projectId || shapeParseLoading) return;
-    setShapeParseLoading(true);
-    setShapeParseError(null);
-    setShapeParseWarnings([]);
-    try {
-      const res = await fetch("/api/shape-parse", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, pageNumber, regionBbox: shapeParseRegion || undefined }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        setShapeParseError(err.error || `Failed (${res.status})`);
-        return;
-      }
-      const data = await res.json();
-      // Append to existing pending shapes — multiple BB parses within a session
-      // should accumulate, not replace. The UI "Save" button flushes pageKeynotes
-      // to annotations; parsing again adds more pending shapes on top.
-      const existingPending = useViewerStore.getState().keynotes[pageNumber] ?? [];
-      setKeynotes(pageNumber, [...existingPending, ...(data.keynotes || [])]);
-      if (data.warnings?.length) setShapeParseWarnings(data.warnings);
-      // Auto-show shapes on canvas after a successful parse
-      if (!showKeynotes) toggleKeynotes();
-    } catch (err) {
-      setShapeParseError(err instanceof Error ? err.message : "Network error");
-    } finally {
-      setShapeParseLoading(false);
-    }
-  }
-  async function runShapeParseAll() {
-    if (!projectId || shapeParseLoading) return;
-    setShapeParseLoading(true);
-    setShapeParseError(null);
-    setShapeParseWarnings([]);
-    try {
-      const res = await fetch("/api/shape-parse", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, scanAll: true }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        setShapeParseError(err.error || `Failed (${res.status})`);
-        return;
-      }
-      const data = await res.json();
-      if (data.byPage) {
-        setBatchKeynotes(data.byPage);
-      }
-      if (data.warnings?.length) setShapeParseWarnings(data.warnings);
-      if (!showKeynotes) toggleKeynotes();
-    } catch (err) {
-      setShapeParseError(err instanceof Error ? err.message : "Network error");
-    } finally {
-      setShapeParseLoading(false);
-    }
-  }
-
   const [expandedModels, setExpandedModels] = useState<Record<string, boolean>>({});
   const [expandedClasses, setExpandedClasses] = useState<Record<string, boolean>>({});
   const [expandedTagModels, setExpandedTagModels] = useState<Record<string, boolean>>({});
@@ -172,7 +77,6 @@ export default function DetectionPanel() {
   const [savingCsi, setSavingCsi] = useState(false);
   const [csiMessage, setCsiMessage] = useState("");
 
-  const DETECTION_SOURCES = new Set(["yolo", "shape-parse", "symbol-search"]);
   const yoloAnnotations = useMemo(() => annotations.filter((a) => {
     if (!DETECTION_SOURCES.has(a.source)) return false;
     return ((a.data?.confidence as number) ?? 1) >= confidenceThreshold;
@@ -219,6 +123,17 @@ export default function DetectionPanel() {
         tags: tags.sort((a, b) => a.tagText.localeCompare(b.tagText)),
       })),
     }));
+  }, [yoloTags]);
+
+  // Per-tag page count — precomputed so the per-tag render row can do an O(1)
+  // lookup instead of allocating a Set per tag per render. On a project with
+  // 50 tags × 20 instances that's 1000 allocations saved on every list render.
+  const pageCountByTag = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const tag of yoloTags) {
+      counts[tag.id] = new Set(tag.instances.map((i) => i.pageNumber)).size;
+    }
+    return counts;
   }, [yoloTags]);
 
   function handleTagClick(tag: YoloTag) {
@@ -629,7 +544,7 @@ export default function DetectionPanel() {
                                   const isActive = activeYoloTagId === tag.id;
                                   const isVisible = yoloTagVisibility[tag.id] !== false;
                                   const tiExpanded = expandedTagItems[tag.id] === true;
-                                  const pageCount = new Set(tag.instances.map((i) => i.pageNumber)).size;
+                                  const pageCount = pageCountByTag[tag.id] ?? 0;
                                   const isEditing = editingTagId === tag.id;
 
                                   // Source badge color
@@ -762,56 +677,56 @@ export default function DetectionPanel() {
                 `border-[color]-400 bg-[color]-500/15 text-[color]-300`. */}
             <div className="flex flex-col gap-1.5">
               <button
-                onClick={runShapeParseAll}
-                disabled={shapeParseLoading || !projectId}
+                onClick={shapeParse.runOnAll}
+                disabled={shapeParse.loading || !projectId}
                 className={`w-full px-2 py-1.5 text-[11px] rounded border transition-colors disabled:opacity-40 ${
-                  shapeParseLoading
+                  shapeParse.loading
                     ? "border-green-500/60 bg-green-500/15 text-green-300 cursor-wait"
                     : "border-sky-500/30 bg-sky-500/5 text-sky-300 hover:bg-sky-500/10"
                 }`}
                 title="Scan every page in the project (uses Lambda if available)"
               >
-                {shapeParseLoading ? "Detecting…" : "Scan All Pages"}
+                {shapeParse.loading ? "Detecting…" : "Scan All Pages"}
               </button>
               <button
-                onClick={runShapeParse}
-                disabled={shapeParseLoading || !projectId}
+                onClick={shapeParse.runOnPage}
+                disabled={shapeParse.loading || !projectId}
                 className={`w-full px-2 py-1.5 text-[11px] rounded border transition-colors disabled:opacity-40 ${
-                  shapeParseLoading
+                  shapeParse.loading
                     ? "border-green-500/60 bg-green-500/15 text-green-300 cursor-wait"
                     : "border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/15"
                 }`}
-                title={shapeParseRegion
+                title={shapeParse.region
                   ? `Scan page ${pageNumber} within the drawn region`
                   : `Scan the full current page (${pageNumber})`}
               >
-                {shapeParseLoading ? "Detecting…" : "Scan this Page"}
+                {shapeParse.loading ? "Detecting…" : "Scan this Page"}
               </button>
               <button
-                onClick={startShapeRegionDraw}
-                disabled={shapeParseLoading}
-                aria-pressed={shapeDrawing || shapeParseRegion !== null}
+                onClick={shapeParse.startRegionDraw}
+                disabled={shapeParse.loading}
+                aria-pressed={shapeParse.drawing || shapeParse.region !== null}
                 className={`w-full px-2 py-1.5 text-[11px] rounded border transition-colors disabled:opacity-40 ${
-                  shapeDrawing || shapeParseRegion !== null
+                  shapeParse.drawing || shapeParse.region !== null
                     ? "border-green-500/60 bg-green-500/15 text-green-300"
                     : "border-sky-500/50 bg-sky-500/15 text-sky-300 hover:bg-sky-500/20"
                 }`}
-                title={shapeDrawing || shapeParseRegion !== null
+                title={shapeParse.drawing || shapeParse.region !== null
                   ? "Click to cancel region draw"
                   : "Draw a region on the page, then run Scan this Page"}
               >
-                {shapeParseRegion !== null
+                {shapeParse.region !== null
                   ? "Region drawn — click to clear"
-                  : shapeDrawing
+                  : shapeParse.drawing
                     ? "Drawing… click to cancel"
                     : "Scan a specific region"}
               </button>
             </div>
-            {shapeParseRegion && (
+            {shapeParse.region && (
               <div className="flex items-center gap-1 text-[9px] text-green-400/70">
-                <span>Region: ({(shapeParseRegion[0]*100).toFixed(0)}%,{(shapeParseRegion[1]*100).toFixed(0)}%) to ({(shapeParseRegion[2]*100).toFixed(0)}%,{(shapeParseRegion[3]*100).toFixed(0)}%)</span>
+                <span>Region: ({(shapeParse.region[0]*100).toFixed(0)}%,{(shapeParse.region[1]*100).toFixed(0)}%) to ({(shapeParse.region[2]*100).toFixed(0)}%,{(shapeParse.region[3]*100).toFixed(0)}%)</span>
                 <button
-                  onClick={() => { setShapeParseRegion(null); setShapeDrawing(false); }}
+                  onClick={() => { shapeParse.setRegion(null); shapeParse.setDrawing(false); }}
                   className="text-[var(--muted)] hover:text-red-400"
                 >&times;</button>
               </div>
@@ -819,15 +734,15 @@ export default function DetectionPanel() {
             {/* Debug / results area — consolidated error + warnings into one
                 panel with a header so it reads as the tab's diagnostic output
                 (the python pipeline emits the funnel counts here). */}
-            {(shapeParseError || shapeParseWarnings.length > 0) && (
+            {(shapeParse.error || shapeParse.warnings.length > 0) && (
               <div className="rounded border border-[var(--border)] bg-[var(--panel-secondary)]/40 px-2 py-1.5 space-y-1">
                 <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">
                   Debug / Results
                 </div>
-                {shapeParseError && (
-                  <div className="text-[10px] text-red-400">{shapeParseError}</div>
+                {shapeParse.error && (
+                  <div className="text-[10px] text-red-400">{shapeParse.error}</div>
                 )}
-                {shapeParseWarnings.map((w, i) => (
+                {shapeParse.warnings.map((w, i) => (
                   <div key={i} className="text-[10px] text-amber-300 font-mono leading-snug">
                     {w}
                   </div>
@@ -861,11 +776,11 @@ export default function DetectionPanel() {
                   const store = useViewerStore.getState();
                   const { publicId, isDemo } = store;
                   if (!publicId || isDemo) {
-                    setShapeParseError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
+                    shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                     return;
                   }
                   setShapeSaving(true);
-                  setShapeParseError(null);
+                  shapeParse.setError(null);
                   setShapeSaveSuccess(null);
                   try {
                     const annInputs = pageKeynotes.map((k) => ({
@@ -908,14 +823,14 @@ export default function DetectionPanel() {
                       setKeynotes(pageNumber, []);
                       // Reset the BB draw state so the user can start a new
                       // region without a manual cancel-click.
-                      setShapeParseRegion(null);
+                      shapeParse.setRegion(null);
                       setMode("move");
                       setShapeSaveSuccess(`Saved ${data.annotations.length} annotations`);
                       setTimeout(() => setShapeSaveSuccess(null), 3000);
                     }
                   } catch (err) {
                     console.error("[SHAPE_PARSE] Save failed:", err);
-                    setShapeParseError(err instanceof Error ? err.message : "Save failed");
+                    shapeParse.setError(err instanceof Error ? err.message : "Save failed");
                   } finally {
                     setShapeSaving(false);
                   }
@@ -931,11 +846,11 @@ export default function DetectionPanel() {
                     const store = useViewerStore.getState();
                     const { publicId, isDemo } = store;
                     if (!publicId || isDemo) {
-                      setShapeParseError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
+                      shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                       return;
                     }
                     setShapeSaving(true);
-                    setShapeParseError(null);
+                    shapeParse.setError(null);
                     setShapeSaveSuccess(null);
                     try {
                       const allAnnotations: Array<{pageNumber: number; name: string; bbox: [number,number,number,number]; source: string; threshold: number; data: Record<string, unknown>}> = [];
@@ -983,14 +898,14 @@ export default function DetectionPanel() {
                           store.setKeynotes(pn, []);
                         }
                         // Reset BB draw state so the next parse starts fresh.
-                        setShapeParseRegion(null);
+                        shapeParse.setRegion(null);
                         setMode("move");
                         setShapeSaveSuccess(`Saved ${data.annotations.length} across ${allPageNums.length} pages`);
                         setTimeout(() => setShapeSaveSuccess(null), 3000);
                       }
                     } catch (err) {
                       console.error("[SHAPE_PARSE] Save all failed:", err);
-                      setShapeParseError(err instanceof Error ? err.message : "Save failed");
+                      shapeParse.setError(err instanceof Error ? err.message : "Save failed");
                     } finally {
                       setShapeSaving(false);
                     }
@@ -1059,7 +974,7 @@ export default function DetectionPanel() {
                 );
               })}
             </div>
-          ) : !shapeParseLoading ? (
+          ) : !shapeParse.loading ? (
             <div className="flex-1 flex items-center justify-center text-[10px] text-[var(--muted)] px-6 text-center">
               No shapes parsed for page {pageNumber} yet.
               <br />
