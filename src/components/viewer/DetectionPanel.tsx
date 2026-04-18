@@ -721,6 +721,20 @@ export default function DetectionPanel() {
                     ? "Drawing… click to cancel"
                     : "Scan a specific region"}
               </button>
+              {shapeParse.region !== null && (
+                <button
+                  onClick={shapeParse.runOnPage}
+                  disabled={shapeParse.loading}
+                  className={`w-full px-2 py-1.5 text-[11px] rounded border font-medium transition-colors disabled:opacity-40 ${
+                    shapeParse.loading
+                      ? "border-green-500/60 bg-green-500/15 text-green-300 cursor-wait"
+                      : "border-green-500/60 bg-green-500/20 text-green-200 hover:bg-green-500/30"
+                  }`}
+                  title={`Process the drawn region on page ${pageNumber}`}
+                >
+                  {shapeParse.loading ? "Detecting…" : "Scan Region"}
+                </button>
+              )}
             </div>
             {shapeParse.region && (
               <div className="flex items-center gap-1 text-[9px] text-green-400/70">
