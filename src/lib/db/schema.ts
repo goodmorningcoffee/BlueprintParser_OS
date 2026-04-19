@@ -483,6 +483,7 @@ export const annotationGroups = pgTable(
     csiCode: varchar("csi_code", { length: 20 }),
     notes: text("notes"),
     color: varchar("color", { length: 20 }),
+    isActive: boolean("is_active").notNull().default(true),
     createdBy: integer("created_by").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),

@@ -183,6 +183,13 @@
       "when": 1776546184391,
       "tag": "0025_open_millenium_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1777200000000,
+      "tag": "0026_add_group_is_active",
+      "breakpoints": true
     }
   ]
 }

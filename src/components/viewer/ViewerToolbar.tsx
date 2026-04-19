@@ -25,6 +25,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
     showTakeoffPanel, toggleTakeoffPanel, showDetectionPanel, toggleDetectionPanel,
     showCsiPanel, toggleCsiPanel, showPageIntelPanel, togglePageIntelPanel,
     showTableParsePanel, toggleTableParsePanel, showKeynoteParsePanel, toggleKeynoteParsePanel,
+    showViewAllPanel, toggleViewAllPanel,
   } = usePanels();
   const { allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
   const { annotations, activeModels, setModelActive, searchQuery, setSearch } = useDetection();
@@ -632,6 +633,19 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         Keynotes
       </button>
       </HelpTooltip>
+
+      {/* View All — unified tree over every parsed element */}
+      <button
+        onClick={toggleViewAllPanel}
+        className={`px-2 py-1 text-xs rounded border ${
+          showViewAllPanel
+            ? "border-violet-400/60 text-violet-300 bg-violet-400/12"
+            : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
+        }`}
+        title="View All — unified tree over every parsed element on this project"
+      >
+        View All
+      </button>
     </div>
   );
 }

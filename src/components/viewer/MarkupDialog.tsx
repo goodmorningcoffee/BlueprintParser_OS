@@ -12,11 +12,13 @@ interface MarkupDialogProps {
   note: string;
   csiCode?: string;
   color?: string | null;
+  isActive?: boolean;
   annotationCount?: number;
   onNameChange: (name: string) => void;
   onNoteChange: (note: string) => void;
   onCsiChange?: (csi: string) => void;
   onColorChange?: (color: string) => void;
+  onActiveChange?: (active: boolean) => void;
   onSave: () => void;
   onCancel: () => void;
 }
@@ -39,11 +41,13 @@ export default function MarkupDialog({
   note,
   csiCode = "",
   color = null,
+  isActive,
   annotationCount,
   onNameChange,
   onNoteChange,
   onCsiChange,
   onColorChange,
+  onActiveChange,
   onSave,
   onCancel,
 }: MarkupDialogProps) {
@@ -131,6 +135,20 @@ export default function MarkupDialog({
               ))}
             </div>
           </>
+        )}
+
+        {mode === "group" && onActiveChange && (
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, fontSize: 12, color: "var(--muted, #aaa)", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={isActive !== false}
+              onChange={(e) => onActiveChange(e.target.checked)}
+              style={{ cursor: "pointer" }}
+            />
+            <span>
+              Active <span style={{ color: "var(--muted, #777)" }}>— enables outline + sibling-select. Uncheck to keep members grouped silently.</span>
+            </span>
+          </label>
         )}
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>

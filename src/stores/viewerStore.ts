@@ -200,6 +200,8 @@ interface ViewerState {
   toggleDetections: () => void;
   showDetectionPanel: boolean;      // sidebar panel visibility
   toggleDetectionPanel: () => void;
+  showViewAllPanel: boolean;        // unified tree panel visibility
+  toggleViewAllPanel: () => void;
   activeModels: Record<string, boolean>;
   setModelActive: (model: string, active: boolean) => void;
   confidenceThreshold: number;
@@ -804,6 +806,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   showDetectionPanel: false,
   toggleDetectionPanel: () =>
     set((s) => ({ showDetectionPanel: !s.showDetectionPanel })),
+  showViewAllPanel: false,
+  toggleViewAllPanel: () =>
+    set((s) => ({ showViewAllPanel: !s.showViewAllPanel })),
   activeModels: {},
   setModelActive: (model, active) =>
     set((s) => ({ activeModels: { ...s.activeModels, [model]: active } })),
@@ -1400,6 +1405,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       annotationPanelCollapsed: false,
       showDetections: false,
       showDetectionPanel: false,
+      showViewAllPanel: false,
       confidenceThreshold: 0.10,
       activeModels: {},
       confidenceThresholds: {},
@@ -1501,6 +1507,8 @@ export const usePanels = () =>
     toggleTakeoffPanel: s.toggleTakeoffPanel,
     showDetectionPanel: s.showDetectionPanel,
     toggleDetectionPanel: s.toggleDetectionPanel,
+    showViewAllPanel: s.showViewAllPanel,
+    toggleViewAllPanel: s.toggleViewAllPanel,
     showCsiPanel: s.showCsiPanel,
     toggleCsiPanel: s.toggleCsiPanel,
     showPageIntelPanel: s.showPageIntelPanel,

@@ -651,6 +651,13 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
                       store.setAnnotations([...cleaned, ...data.annotations]);
                       setSymbolSaveMsg(`Saved ${data.annotations.length} annotations`);
                       setTimeout(() => setSymbolSaveMsg(null), 3000);
+                      // Clear the search UI — matches vanish from the panel
+                      // and the Save button goes with them. Mirrors Shape
+                      // Parse's post-save `setMode("move")` lifecycle so
+                      // users see "done" instead of "still showing results."
+                      store.setSymbolSearchResults(null);
+                      store.setSymbolSearchTemplateBbox(null);
+                      store.setSymbolSearchActive(false);
                     }
                   } catch (err) {
                     console.error("[SYMBOL_SEARCH] Save failed:", err);
