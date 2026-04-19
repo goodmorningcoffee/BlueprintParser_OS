@@ -150,6 +150,7 @@ function toClientGroup(g: typeof annotationGroups.$inferSelect) {
     csiCode: g.csiCode,
     notes: g.notes,
     color: g.color,
+    isActive: g.isActive,
     createdBy: g.createdBy,
     createdAt: g.createdAt?.toISOString() ?? null,
     updatedAt: g.updatedAt?.toISOString() ?? null,

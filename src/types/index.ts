@@ -685,6 +685,7 @@ export interface AnnotationGroup {
   csiCode: string | null;
   notes: string | null;
   color: string | null;
+  isActive: boolean;
   createdBy: number | null;
   createdAt: string | null;
   updatedAt: string | null;

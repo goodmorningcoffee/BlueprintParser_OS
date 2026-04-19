@@ -57,8 +57,14 @@ export async function PUT(
     autoCsiCodes = detected.map((c) => c.code);
   }
 
-  if (autoCsiCodes.length > 0 && updates.data) {
-    const data = updates.data as Record<string, unknown>;
+  if (autoCsiCodes.length > 0) {
+    // When the PUT is note-only (no `data` in request), seed from the
+    // existing row so detected codes merge in instead of being silently
+    // dropped. Manual codes always win — Set dedupe preserves them.
+    const data =
+      (updates.data as Record<string, unknown> | undefined) ??
+      (annotation.data as Record<string, unknown> | null) ??
+      {};
     const manualCodes = (data.csiCodes as string[]) || [];
     const merged = [...new Set([...manualCodes, ...autoCsiCodes])];
     data.csiCodes = merged;

@@ -20,6 +20,7 @@ import TableCompareModal from "./TableCompareModal";
 import TagBrowseBar from "./TagBrowseBar";
 import KeynotePanel from "./KeynotePanel";
 import SymbolSearchPanel from "./SymbolSearchPanel";
+import ViewAllPanel from "./ViewAllPanel";
 import { useChunkLoader } from "@/hooks/useChunkLoader";
 import { loadViewport, saveViewport, type ViewerViewport } from "@/lib/viewer-state";
 
@@ -642,6 +643,7 @@ function ViewerPanels() {
   const {
     showTextPanel, showChatPanel, showTakeoffPanel, showDetectionPanel,
     showCsiPanel, showPageIntelPanel, showTableParsePanel, showKeynoteParsePanel,
+    showViewAllPanel,
   } = usePanels();
 
   return (
@@ -654,6 +656,7 @@ function ViewerPanels() {
       {showPageIntelPanel && <PageIntelligencePanel />}
       {showTableParsePanel && <TableParsePanel />}
       {showKeynoteParsePanel && <KeynotePanel />}
+      {showViewAllPanel && <ViewAllPanel />}
     </div>
   );
 }

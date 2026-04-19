@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, takeoffGroups } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
+import { detectCsiCodes } from "@/lib/csi-detect";
 import { logger } from "@/lib/logger";
 
 const VALID_KINDS = ["count", "area", "linear"] as const;
@@ -86,6 +87,14 @@ export async function POST(req: Request) {
     );
     const sortOrder = (maxResult.rows[0] as { next_order: number })?.next_order ?? 0;
 
+    // Auto-CSI from the name when the caller didn't set one explicitly.
+    // Mirrors annotation-groups POST behavior — user-provided value wins.
+    let finalCsiCode: string | null = csiCode ?? null;
+    if (!finalCsiCode) {
+      const detected = detectCsiCodes(name);
+      if (detected.length > 0) finalCsiCode = detected[0].code;
+    }
+
     const [group] = await db
       .insert(takeoffGroups)
       .values({
@@ -93,7 +102,7 @@ export async function POST(req: Request) {
         name: name.trim(),
         kind,
         color: color ?? null,
-        csiCode: csiCode ?? null,
+        csiCode: finalCsiCode,
         sortOrder,
       })
       .returning();

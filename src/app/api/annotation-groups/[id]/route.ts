@@ -57,6 +57,12 @@ export async function PUT(
     }
     updates.color = body.color;
   }
+  if (body.isActive !== undefined) {
+    if (typeof body.isActive !== "boolean") {
+      return apiError("invalid isActive", 400);
+    }
+    updates.isActive = body.isActive;
+  }
   if (body.csiCode !== undefined) {
     if (body.csiCode !== null && (typeof body.csiCode !== "string" || body.csiCode.length > 20)) {
       return apiError("invalid csiCode", 400);
@@ -89,6 +95,7 @@ export async function PUT(
         csiCode: updated.csiCode,
         notes: updated.notes,
         color: updated.color,
+        isActive: updated.isActive,
         createdBy: updated.createdBy,
         createdAt: updated.createdAt?.toISOString() ?? null,
         updatedAt: updated.updatedAt?.toISOString() ?? null,

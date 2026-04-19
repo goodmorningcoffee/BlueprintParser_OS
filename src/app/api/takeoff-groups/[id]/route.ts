@@ -3,6 +3,7 @@ import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { takeoffGroups } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { detectCsiCodes } from "@/lib/csi-detect";
 import { logger } from "@/lib/logger";
 
 export async function PUT(
@@ -48,6 +49,15 @@ export async function PUT(
       return NextResponse.json({ error: "invalid csiCode" }, { status: 400 });
     }
     updates.csiCode = body.csiCode;
+  } else if (
+    // Fill-when-empty: only auto-detect if the user didn't explicitly
+    // set a code, the current record has none, and the rename might
+    // contain a CSI hint. Never overwrites a curated code.
+    group.csiCode === null &&
+    typeof updates.name === "string"
+  ) {
+    const detected = detectCsiCodes(updates.name as string);
+    if (detected.length > 0) updates.csiCode = detected[0].code;
   }
   if (body.sortOrder !== undefined) {
     if (!Number.isInteger(body.sortOrder)) {

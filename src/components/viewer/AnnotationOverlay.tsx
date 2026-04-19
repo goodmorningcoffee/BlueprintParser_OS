@@ -776,6 +776,27 @@ export default memo(function AnnotationOverlay({
       ctx.restore();
     }
 
+    // Group-membership outlines — one pass after all shape-specific loops.
+    // Uses ann.bbox so every annotation type (bbox / polygon / polyline /
+    // count-marker) gets a consistent ring. Inactive groups are filtered
+    // upstream in useMultiSelectInteraction (getGroupOutlineColor returns
+    // null for them).
+    for (const ann of pageAnnotations) {
+      const groupColor = multiSelect.getGroupOutlineColor(ann.id);
+      if (!groupColor) continue;
+      const [minX, minY, maxX, maxY] = ann.bbox;
+      const x = minX * width;
+      const y = minY * height;
+      const w = (maxX - minX) * width;
+      const h = (maxY - minY) * height;
+      ctx.save();
+      ctx.strokeStyle = groupColor;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 2]);
+      ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+      ctx.restore();
+    }
+
     // Calibration + polygon preview — rendered by DrawingPreviewLayer
   }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight, hiddenTakeoffItemIds, tableCellStructure, showTableCellStructure, multiSelect]);
 
@@ -1867,6 +1888,9 @@ export default memo(function AnnotationOverlay({
             // to single-select + drag-to-move as before.
             const { handled } = multiSelect.handleAnnotationClick(ann.id, e);
             if (handled) return;
+            // Plain click on a grouped annotation → expand to group siblings.
+            // Hook no-ops when ann isn't in any active group.
+            multiSelect.expandSelectionViaGroups(ann.id);
             setSelectedId(ann.id);
             setSearch(ann.name);
             // If this YOLO annotation matches a known tag, activate it

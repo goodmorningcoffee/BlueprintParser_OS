@@ -3,7 +3,29 @@ import { resolveProjectAccess, apiError } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { annotations } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
+import { detectCsiCodes } from "@/lib/csi-detect";
 import type { ClientAnnotation } from "@/types";
+
+/**
+ * Auto-CSI merger for annotation inserts. Runs detectCsiCodes against the
+ * note text and merges any detected codes into `data.csiCodes`, preserving
+ * manual entries. No-ops on empty/short notes (detectCsiCodes early-returns
+ * below 10 chars at csi-detect.ts:299), so bulk saves of detection results
+ * with no notes stay cheap.
+ */
+function mergeAutoCsi(
+  noteText: string | undefined,
+  existingData: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null {
+  const text = (noteText || "").trim();
+  if (!text) return existingData ?? null;
+  const auto = detectCsiCodes(text).map((c) => c.code);
+  if (auto.length === 0) return existingData ?? null;
+  const data = { ...(existingData ?? {}) };
+  const manual = (data.csiCodes as string[]) || [];
+  data.csiCodes = [...new Set([...manual, ...auto])];
+  return data;
+}
 
 interface AnnotationInput {
   pageNumber: number;
@@ -83,7 +105,7 @@ export async function POST(req: Request) {
         threshold: ann.threshold ?? null,
         note: ann.note || null,
         source: ann.source || "user",
-        data: ann.data || null,
+        data: mergeAutoCsi(ann.note, ann.data),
         creatorId: session.user.dbId,
         projectId: project.id,
       }))
@@ -121,7 +143,7 @@ export async function POST(req: Request) {
       pageNumber,
       note: note || null,
       source: source || "user",
-      data: data || null,
+      data: mergeAutoCsi(note, data),
       creatorId: session.user.dbId,
       projectId: project.id,
     })
