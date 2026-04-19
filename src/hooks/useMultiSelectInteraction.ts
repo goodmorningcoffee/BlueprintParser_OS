@@ -34,13 +34,24 @@ export function useMultiSelectInteraction() {
 
   // O(1) lookup from groupId → color, built from the groups list.
   // Drives the member-outline stroke in the overlay draw loop.
+  // Skips groups marked inactive so their members stay "grouped silently"
+  // without the visual ring or select-all behavior.
   const groupIdToColor = useMemo(() => {
     const m = new Map<number, string>();
     for (const g of annotationGroups) {
+      if (g.isActive === false) continue;
       if (g.color) m.set(g.id, g.color);
     }
     return m;
   }, [annotationGroups]);
+
+  // Set of group ids that are currently active. Used to filter
+  // sibling-expansion so clicking a member of an inactive group only
+  // selects that member, not its siblings.
+  const activeGroupIds = useMemo(
+    () => new Set(annotationGroups.filter((g) => g.isActive !== false).map((g) => g.id)),
+    [annotationGroups],
+  );
 
   /**
    * Decide what to do when the user clicks an annotation's hitbox.
@@ -89,13 +100,14 @@ export function useMultiSelectInteraction() {
       const next = new Set(selectedAnnotationIds);
       next.add(annotationId);
       for (const groupId of memberships) {
+        if (!activeGroupIds.has(groupId)) continue;
         const members = groupMembers[groupId];
         if (!members) continue;
         for (const aid of members) next.add(aid);
       }
       setSelectedAnnotationIds(next);
     },
-    [annotationGroupMemberships, groupMembers, selectedAnnotationIds, setSelectedAnnotationIds],
+    [annotationGroupMemberships, groupMembers, selectedAnnotationIds, setSelectedAnnotationIds, activeGroupIds],
   );
 
   /**

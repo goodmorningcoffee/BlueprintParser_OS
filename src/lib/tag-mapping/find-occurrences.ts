@@ -72,11 +72,12 @@ function dispatchMatcher(item: CountableItem, ctx: MatchContext): YoloTagInstanc
       );
     }
 
+    //are these two functions missing 75 and 80? 
     case "yolo-object-with-tag-shape":
       return findObjectWithTagShapeMatches(
         item, scopeLegacy, pageNumber, ctx.annotations, ctx.textractData,
       );
-
+//missing?  like the function logic?  
     case "yolo-object-with-nearby-text":
       return findObjectWithNearbyTextMatches(
         item, scopeLegacy, pageNumber, ctx.annotations, ctx.textractData,

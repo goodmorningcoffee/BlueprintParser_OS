@@ -38,6 +38,15 @@ export default function GroupActionsBar() {
   const [groupColor, setGroupColor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Edit-group state. The picker modal doubles as a lightweight group
+  // manager until the View All panel ships a dedicated one.
+  const [editingGroup, setEditingGroup] = useState<AnnotationGroup | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [editCsi, setEditCsi] = useState("");
+  const [editColor, setEditColor] = useState<string | null>(null);
+  const [editActive, setEditActive] = useState(true);
+
   const count = selectedAnnotationIds.size;
   if (count < 2) return null;
 
@@ -112,6 +121,44 @@ export default function GroupActionsBar() {
       clearSelection();
     } catch (err) {
       console.error("[GroupActionsBar] Add to existing failed:", err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openEdit(group: AnnotationGroup) {
+    setEditingGroup(group);
+    setEditName(group.name);
+    setEditNote(group.notes ?? "");
+    setEditCsi(group.csiCode ?? "");
+    setEditColor(group.color);
+    setEditActive(group.isActive !== false);
+    setShowAddPicker(false);
+  }
+
+  async function handleEditSave() {
+    if (!editingGroup || !editName.trim()) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/annotation-groups/${editingGroup.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editName.trim(),
+          notes: editNote.trim() || null,
+          csiCode: editCsi.trim() || null,
+          color: editColor,
+          isActive: editActive,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (data.group) {
+        upsertAnnotationGroup(data.group as AnnotationGroup);
+      }
+      setEditingGroup(null);
+    } catch (err) {
+      console.error("[GroupActionsBar] Edit group failed:", err);
     } finally {
       setBusy(false);
     }
@@ -216,6 +263,26 @@ export default function GroupActionsBar() {
         />
       )}
 
+      {/* Edit group dialog — same MarkupDialog in edit mode */}
+      {editingGroup && (
+        <MarkupDialog
+          isEditing={true}
+          mode="group"
+          name={editName}
+          note={editNote}
+          csiCode={editCsi}
+          color={editColor}
+          isActive={editActive}
+          onNameChange={setEditName}
+          onNoteChange={setEditNote}
+          onCsiChange={setEditCsi}
+          onColorChange={setEditColor}
+          onActiveChange={setEditActive}
+          onSave={handleEditSave}
+          onCancel={() => setEditingGroup(null)}
+        />
+      )}
+
       {/* Add-to-existing picker — simple dropdown modal */}
       {showAddPicker && (
         <div
@@ -233,20 +300,37 @@ export default function GroupActionsBar() {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {annotationGroups.map((g) => (
-                  <button
+                  <div
                     key={g.id}
-                    onClick={() => handleAddToExisting(g.id)}
-                    disabled={busy}
-                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", background: "transparent", border: "1px solid var(--border, #3a3a3a)", borderRadius: 4, cursor: busy ? "wait" : "pointer", textAlign: "left" }}
+                    style={{ display: "flex", alignItems: "center", gap: 4, padding: "0", border: "1px solid var(--border, #3a3a3a)", borderRadius: 4, overflow: "hidden" }}
                   >
-                    {g.color && (
-                      <span style={{ width: 12, height: 12, background: g.color, borderRadius: 2, flexShrink: 0 }} />
-                    )}
-                    <span style={{ fontSize: 13, color: "var(--fg, #ededed)", flexGrow: 1 }}>{g.name}</span>
-                    {g.csiCode && (
-                      <span style={{ fontSize: 11, color: "var(--muted, #aaa)", fontFamily: "ui-monospace, monospace" }}>{g.csiCode}</span>
-                    )}
-                  </button>
+                    <button
+                      onClick={() => handleAddToExisting(g.id)}
+                      disabled={busy}
+                      style={{ flexGrow: 1, display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", background: "transparent", border: "none", cursor: busy ? "wait" : "pointer", textAlign: "left" }}
+                      title={`Add ${count} to “${g.name}”`}
+                    >
+                      {g.color && (
+                        <span style={{ width: 12, height: 12, background: g.color, borderRadius: 2, flexShrink: 0, opacity: g.isActive === false ? 0.4 : 1 }} />
+                      )}
+                      <span style={{ fontSize: 13, color: g.isActive === false ? "var(--muted, #888)" : "var(--fg, #ededed)", flexGrow: 1 }}>
+                        {g.name}
+                        {g.isActive === false && <span style={{ fontSize: 10, marginLeft: 6, color: "var(--muted, #777)" }}>(inactive)</span>}
+                      </span>
+                      {g.csiCode && (
+                        <span style={{ fontSize: 11, color: "var(--muted, #aaa)", fontFamily: "ui-monospace, monospace" }}>{g.csiCode}</span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => openEdit(g)}
+                      disabled={busy}
+                      title="Edit group"
+                      aria-label={`Edit group ${g.name}`}
+                      style={{ flexShrink: 0, width: 30, height: "100%", minHeight: 30, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, background: "transparent", border: "none", borderLeft: "1px solid var(--border, #3a3a3a)", color: "var(--muted, #aaa)", cursor: busy ? "wait" : "pointer", fontSize: 13 }}
+                    >
+                      ✎
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
