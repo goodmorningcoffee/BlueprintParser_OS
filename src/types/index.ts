@@ -16,6 +16,15 @@ import type {
 // tier badges + audit review. Type-only import avoids runtime cycles.
 import type { ScoredMatch } from "@/lib/tag-mapping/types";
 
+// ─── Multi-file upload ───────────────────────────────────────
+// One staged upload per entry; persisted on projects.stagingManifest
+// (JSONB) and consumed by processing.ts pre-stage concat.
+export interface StagingFile {
+  filename: string;
+  stagingKey: string;
+  size: number;
+}
+
 // ─── Database row types ──────────────────────────────────────
 export type Company = InferSelectModel<typeof companies>;
 export type NewCompany = InferInsertModel<typeof companies>;

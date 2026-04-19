@@ -4,16 +4,20 @@ import { db } from "@/lib/db";
 import { projects, pages, processingJobs, companies } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { processProject } from "@/lib/processing";
-import { getS3Url } from "@/lib/s3";
+import { getS3Url, headS3Object } from "@/lib/s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 import { checkUploadQuota } from "@/lib/quotas";
 import { logger } from "@/lib/logger";
+import type { StagingFile } from "@/types";
+
+const PROJECT_AGGREGATE_MAX_BYTES = 1024 * 1024 * 1024; // 1 GB
+const PROJECT_MAX_FILES = 30;
 
 export async function POST(req: Request) {
   const { session, error } = await requireAuth();
   if (error) return error;
 
-  const { name, dataUrl } = await req.json();
+  const { name, dataUrl, stagingFiles } = await req.json();
 
   if (!name || !dataUrl) {
     return NextResponse.json(
@@ -28,6 +32,72 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: quota.message }, { status: 429 });
   }
 
+  // Validate the multi-file staging manifest if provided. Legacy single-PDF
+  // uploads (staging-less) pass stagingFiles=undefined and skip this block —
+  // `processing.ts` then expects `original.pdf` to already exist at dataUrl.
+  let stagingManifest: StagingFile[] | undefined;
+  if (stagingFiles !== undefined) {
+    if (!Array.isArray(stagingFiles) || stagingFiles.length === 0) {
+      return NextResponse.json(
+        { error: "stagingFiles must be a non-empty array" },
+        { status: 400 },
+      );
+    }
+    if (stagingFiles.length > PROJECT_MAX_FILES) {
+      return NextResponse.json(
+        { error: `Maximum ${PROJECT_MAX_FILES} files per project` },
+        { status: 400 },
+      );
+    }
+    const stagingPrefix = `${dataUrl}/staging/`;
+    for (const sf of stagingFiles as Array<{ filename?: unknown; stagingKey?: unknown }>) {
+      if (
+        !sf ||
+        typeof sf.filename !== "string" ||
+        typeof sf.stagingKey !== "string" ||
+        !sf.stagingKey.startsWith(stagingPrefix)
+      ) {
+        return NextResponse.json(
+          { error: "Each stagingFile needs filename + stagingKey under dataUrl/staging/" },
+          { status: 400 },
+        );
+      }
+    }
+
+    // Confirm every staged upload landed + collect sizes. Parallel HeadObject
+    // keeps the common case fast (~one AWS RTT per file, overlapped).
+    const heads = await Promise.all(
+      (stagingFiles as Array<{ filename: string; stagingKey: string }>).map(async (sf) => {
+        const head = await headS3Object(sf.stagingKey);
+        return { ...sf, head };
+      }),
+    );
+    for (const h of heads) {
+      if (!h.head.exists) {
+        return NextResponse.json(
+          { error: `Staged file missing in S3: ${h.filename}` },
+          { status: 400 },
+        );
+      }
+    }
+
+    const totalBytes = heads.reduce((sum, h) => sum + (h.head.size ?? 0), 0);
+    if (totalBytes > PROJECT_AGGREGATE_MAX_BYTES) {
+      return NextResponse.json(
+        {
+          error: `Project exceeds ${PROJECT_AGGREGATE_MAX_BYTES / (1024 * 1024)} MB cap (got ${Math.round(totalBytes / (1024 * 1024))} MB)`,
+        },
+        { status: 413 },
+      );
+    }
+
+    stagingManifest = heads.map((h) => ({
+      filename: h.filename,
+      stagingKey: h.stagingKey,
+      size: h.head.size ?? 0,
+    }));
+  }
+
   const [project] = await db
     .insert(projects)
     .values({
@@ -36,6 +106,7 @@ export async function POST(req: Request) {
       status: "uploading",
       authorId: session.user.dbId,
       companyId: session.user.companyId,
+      ...(stagingManifest && { stagingManifest }),
     })
     .returning();
 
