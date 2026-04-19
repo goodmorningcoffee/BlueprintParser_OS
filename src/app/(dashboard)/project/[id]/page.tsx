@@ -89,11 +89,12 @@ export default function ProjectPage() {
       // Clear stale data from any previously viewed project
       resetProjectData();
 
-      // ─── Fetch metadata + initial chunk in parallel ───
-      // Both APIs resolve publicId independently — no dependency between them
-      const [res, chunkRes] = await Promise.all([
+      // ─── Fetch metadata + initial chunk + annotation groups in parallel ───
+      // All three APIs resolve publicId independently — no dependency between them
+      const [res, chunkRes, groupsRes] = await Promise.all([
         fetch(`/api/projects/${id}`),
         fetch(`/api/projects/${id}/pages?from=1&to=15`),
+        fetch(`/api/annotation-groups?projectId=${id}`),
       ]);
       if (!res.ok) throw new Error("Failed to load project");
 
@@ -158,6 +159,20 @@ export default function ProjectPage() {
       }
       if (data.takeoffGroups) {
         setTakeoffGroups(data.takeoffGroups);
+      }
+
+      // Hydrate annotation groups + M:N membership indexes. Both the
+      // flat group list and the junction rows come from a single endpoint
+      // — see /api/annotation-groups GET handler. Non-blocking — a failed
+      // fetch just means no groups show up; core viewer still works.
+      if (groupsRes.ok) {
+        const groupsData = await groupsRes.json().catch(() => null);
+        if (groupsData?.groups) {
+          useViewerStore.getState().setAnnotationGroups(groupsData.groups);
+        }
+        if (groupsData?.memberships) {
+          useViewerStore.getState().hydrateGroupMemberships(groupsData.memberships);
+        }
       }
 
       // ─── Hydrate initial chunk (already fetched in parallel above) ───

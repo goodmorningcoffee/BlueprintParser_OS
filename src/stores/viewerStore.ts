@@ -18,6 +18,7 @@ import type {
   SymbolSearchMatch,
   QtoWorkflow,
   ProjectSummaries,
+  AnnotationGroup,
 } from "@/types";
 
 interface TagScanResults {
@@ -43,8 +44,13 @@ interface ViewerState {
   setScale: (s: number) => void;
 
   // ─── Mode ────────────────────────────────────────────────
-  mode: "move" | "pointer" | "markup";
-  setMode: (m: "move" | "pointer" | "markup") => void;
+  // "group" mode powers the new multi-select / lasso tool. In this mode,
+  // click-drag on empty canvas starts a marquee that selects every
+  // intersecting annotation. Click on an annotation adds/removes it
+  // from `selectedAnnotationIds`. See useSelection + useAnnotationGroups
+  // slices below.
+  mode: "move" | "pointer" | "markup" | "group";
+  setMode: (m: "move" | "pointer" | "markup" | "group") => void;
   tempPanMode: boolean;
   setTempPanMode: (v: boolean) => void;
 
@@ -71,6 +77,36 @@ interface ViewerState {
    *  and clearing the field back to null. */
   focusAnnotationId: number | null;
   setFocusAnnotationId: (id: number | null) => void;
+
+  // ─── Multi-select + Groups ──────────────────────────────
+  // Set of annotation ids currently selected by the Group tool lasso,
+  // shift-click accumulation, or ViewAllPanel tree checkboxes. The
+  // existing single-select `selectedId` in AnnotationOverlay is derived
+  // from `size === 1 ? [...][0] : null` for drag-to-move + pencil-edit
+  // backward compat.
+  selectedAnnotationIds: Set<number>;
+  setSelectedAnnotationIds: (ids: Set<number>) => void;
+  addToSelection: (id: number) => void;
+  removeFromSelection: (id: number) => void;
+  toggleSelection: (id: number) => void;
+  clearSelection: () => void;
+
+  // Project-scoped groups, hydrated at project load via
+  // GET /api/annotation-groups?projectId=X.
+  annotationGroups: AnnotationGroup[];
+  setAnnotationGroups: (groups: AnnotationGroup[]) => void;
+  upsertAnnotationGroup: (group: AnnotationGroup) => void;
+  removeAnnotationGroupLocal: (id: number) => void;
+
+  // M:N membership maintained as two indexes kept in sync by the
+  // mutation helpers: annotation → its groups, and group → its members.
+  // The reverse index (groupMembers) powers O(1) click-highlight —
+  // clicking one member looks up all siblings without scanning memberships.
+  annotationGroupMemberships: Record<number, Set<number>>;
+  groupMembers: Record<number, Set<number>>;
+  hydrateGroupMemberships: (pairs: { annotationId: number; groupId: number }[]) => void;
+  addAnnotationToGroup: (annotationId: number, groupId: number) => void;
+  removeAnnotationFromGroup: (annotationId: number, groupId: number) => void;
 
   // ─── Page data ───────────────────────────────────────────
   pageNames: Record<number, string>;
@@ -565,6 +601,104 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     })),
   focusAnnotationId: null,
   setFocusAnnotationId: (focusAnnotationId) => set({ focusAnnotationId }),
+
+  // ─── Multi-select + Groups state ─────────────────────────
+  selectedAnnotationIds: new Set<number>(),
+  setSelectedAnnotationIds: (selectedAnnotationIds) => set({ selectedAnnotationIds }),
+  addToSelection: (id) =>
+    set((s) => {
+      if (s.selectedAnnotationIds.has(id)) return {};
+      const next = new Set(s.selectedAnnotationIds);
+      next.add(id);
+      return { selectedAnnotationIds: next };
+    }),
+  removeFromSelection: (id) =>
+    set((s) => {
+      if (!s.selectedAnnotationIds.has(id)) return {};
+      const next = new Set(s.selectedAnnotationIds);
+      next.delete(id);
+      return { selectedAnnotationIds: next };
+    }),
+  toggleSelection: (id) =>
+    set((s) => {
+      const next = new Set(s.selectedAnnotationIds);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { selectedAnnotationIds: next };
+    }),
+  clearSelection: () => set({ selectedAnnotationIds: new Set<number>() }),
+
+  annotationGroups: [],
+  setAnnotationGroups: (annotationGroups) => set({ annotationGroups }),
+  upsertAnnotationGroup: (group) =>
+    set((s) => {
+      const idx = s.annotationGroups.findIndex((g) => g.id === group.id);
+      if (idx === -1) return { annotationGroups: [...s.annotationGroups, group] };
+      const next = [...s.annotationGroups];
+      next[idx] = group;
+      return { annotationGroups: next };
+    }),
+  removeAnnotationGroupLocal: (id) =>
+    set((s) => {
+      const nextGroups = s.annotationGroups.filter((g) => g.id !== id);
+      // Also drop all membership rows that reference this group.
+      const nextGroupMembers = { ...s.groupMembers };
+      const removedAnnotationIds = nextGroupMembers[id] ?? new Set<number>();
+      delete nextGroupMembers[id];
+      const nextMemberships = { ...s.annotationGroupMemberships };
+      for (const aid of removedAnnotationIds) {
+        const set = new Set(nextMemberships[aid]);
+        set.delete(id);
+        if (set.size === 0) delete nextMemberships[aid];
+        else nextMemberships[aid] = set;
+      }
+      return {
+        annotationGroups: nextGroups,
+        groupMembers: nextGroupMembers,
+        annotationGroupMemberships: nextMemberships,
+      };
+    }),
+
+  annotationGroupMemberships: {},
+  groupMembers: {},
+  hydrateGroupMemberships: (pairs) =>
+    set(() => {
+      const memberships: Record<number, Set<number>> = {};
+      const reverse: Record<number, Set<number>> = {};
+      for (const { annotationId, groupId } of pairs) {
+        if (!memberships[annotationId]) memberships[annotationId] = new Set();
+        memberships[annotationId].add(groupId);
+        if (!reverse[groupId]) reverse[groupId] = new Set();
+        reverse[groupId].add(annotationId);
+      }
+      return { annotationGroupMemberships: memberships, groupMembers: reverse };
+    }),
+  addAnnotationToGroup: (annotationId, groupId) =>
+    set((s) => {
+      const memberships = { ...s.annotationGroupMemberships };
+      const reverse = { ...s.groupMembers };
+      const annSet = new Set(memberships[annotationId] ?? []);
+      annSet.add(groupId);
+      memberships[annotationId] = annSet;
+      const groupSet = new Set(reverse[groupId] ?? []);
+      groupSet.add(annotationId);
+      reverse[groupId] = groupSet;
+      return { annotationGroupMemberships: memberships, groupMembers: reverse };
+    }),
+  removeAnnotationFromGroup: (annotationId, groupId) =>
+    set((s) => {
+      const memberships = { ...s.annotationGroupMemberships };
+      const reverse = { ...s.groupMembers };
+      const annSet = new Set(memberships[annotationId] ?? []);
+      annSet.delete(groupId);
+      if (annSet.size === 0) delete memberships[annotationId];
+      else memberships[annotationId] = annSet;
+      const groupSet = new Set(reverse[groupId] ?? []);
+      groupSet.delete(annotationId);
+      if (groupSet.size === 0) delete reverse[groupId];
+      else reverse[groupId] = groupSet;
+      return { annotationGroupMemberships: memberships, groupMembers: reverse };
+    }),
 
   pageNames: {},
   setPageNames: (pageNames) => set({ pageNames }),
@@ -1379,6 +1513,32 @@ export const usePanels = () =>
     toggleSidebar: s.toggleSidebar,
     textPanelTab: s.textPanelTab,
     setTextPanelTab: s.setTextPanelTab,
+  })));
+
+/** Multi-select selection state — shared by Group tool lasso,
+ *  shift-click accumulation, and ViewAllPanel tree checkboxes. */
+export const useSelection = () =>
+  useViewerStore(useShallow((s) => ({
+    selectedAnnotationIds: s.selectedAnnotationIds,
+    setSelectedAnnotationIds: s.setSelectedAnnotationIds,
+    addToSelection: s.addToSelection,
+    removeFromSelection: s.removeFromSelection,
+    toggleSelection: s.toggleSelection,
+    clearSelection: s.clearSelection,
+  })));
+
+/** Annotation groups + M:N membership indexes. */
+export const useAnnotationGroups = () =>
+  useViewerStore(useShallow((s) => ({
+    annotationGroups: s.annotationGroups,
+    setAnnotationGroups: s.setAnnotationGroups,
+    upsertAnnotationGroup: s.upsertAnnotationGroup,
+    removeAnnotationGroupLocal: s.removeAnnotationGroupLocal,
+    annotationGroupMemberships: s.annotationGroupMemberships,
+    groupMembers: s.groupMembers,
+    hydrateGroupMemberships: s.hydrateGroupMemberships,
+    addAnnotationToGroup: s.addAnnotationToGroup,
+    removeAnnotationFromGroup: s.removeAnnotationFromGroup,
   })));
 
 /** Drawing state (only DrawingPreviewLayer should subscribe) */

@@ -12,6 +12,7 @@ import {
   timestamp,
   doublePrecision,
   index,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import type {
   ProjectIntelligence, PageIntelligence, TextractPageData, KeynoteShapeData,
@@ -463,4 +464,49 @@ export const qtoWorkflows = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
   (table) => [index("idx_qto_workflows_project").on(table.projectId)]
+);
+
+// ─── Annotation Groups ─────────────────────────────────────
+// User-created groupings over annotations (YOLO detections, Shape Parse
+// keynotes, Symbol Search matches, markups, etc.). Project-scoped.
+// Groups carry their own name/CSI/notes/color metadata — the membership
+// is M:N via annotation_group_members so one annotation can belong to
+// many groups.
+export const annotationGroups = pgTable(
+  "annotation_groups",
+  {
+    id: serial("id").primaryKey(),
+    projectId: integer("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    csiCode: varchar("csi_code", { length: 20 }),
+    notes: text("notes"),
+    color: varchar("color", { length: 20 }),
+    createdBy: integer("created_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [index("idx_annotation_groups_project").on(table.projectId)]
+);
+
+// Junction table — M:N annotations ↔ annotation_groups. Composite PK
+// prevents duplicate memberships. Both sides cascade on delete so
+// removing an annotation or a group cleans up stale links without
+// touching the other side's primary row.
+export const annotationGroupMembers = pgTable(
+  "annotation_group_members",
+  {
+    annotationId: integer("annotation_id")
+      .notNull()
+      .references(() => annotations.id, { onDelete: "cascade" }),
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => annotationGroups.id, { onDelete: "cascade" }),
+    addedAt: timestamp("added_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.annotationId, table.groupId] }),
+    index("idx_annotation_group_members_group").on(table.groupId),
+  ]
 );
