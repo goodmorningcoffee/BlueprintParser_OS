@@ -2,7 +2,14 @@ import { db } from "@/lib/db";
 import { projects, pages, companies, annotations } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import { getS3Url, uploadToS3, warmCloudFrontCache } from "@/lib/s3";
+import {
+  getS3Url,
+  uploadToS3,
+  warmCloudFrontCache,
+  downloadFromS3,
+  headS3Object,
+  sanitizeFilename,
+} from "@/lib/s3";
 import { logger } from "@/lib/logger";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
@@ -16,7 +23,11 @@ import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
 import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
-import type { CsiCode, TextAnnotationResult } from "@/types";
+import type { CsiCode, TextAnnotationResult, StagingFile } from "@/types";
+import { spawn } from "child_process";
+import { mkdtemp, rm, writeFile, readFile } from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
 
 const DEFAULT_PAGE_CONCURRENCY = 8;
 
@@ -38,6 +49,111 @@ async function mapConcurrent<T, R>(
 
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
   return results;
+}
+
+/**
+ * Spawn build_project_pdf.py with stdin JSON, collect stdout JSON.
+ * Mirrors the bucket-fill.ts:60-115 pattern (timeout + SIGTERM escalation).
+ */
+async function runPythonConcat(
+  scriptPath: string,
+  config: {
+    files: Array<{ filename: string; tmpPath: string }>;
+    outputPath: string;
+  },
+): Promise<{
+  status: "ok" | "error";
+  totalPages?: number;
+  fileOffsets?: Array<{ filename: string; startPage: number; endPage: number }>;
+  error?: string;
+  filename?: string;
+  message?: string;
+}> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("python3", [scriptPath], { stdio: ["pipe", "pipe", "pipe"] });
+
+    // Concat for 30 files × 250 MB can push several minutes; 5 min ceiling.
+    const timeoutMs = 300_000;
+    const killTimer = setTimeout(() => {
+      proc.kill("SIGTERM");
+      setTimeout(() => {
+        try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+      }, 3000);
+      reject(new Error("build_project_pdf.py timed out (300s)"));
+    }, timeoutMs);
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (c: Buffer) => { stdout += c.toString(); });
+    proc.stderr.on("data", (c: Buffer) => { stderr += c.toString(); });
+
+    proc.on("close", (code) => {
+      clearTimeout(killTimer);
+      if (stderr.trim()) {
+        logger.info(`[BUILD_PDF] ${stderr.trim()}`);
+      }
+      try {
+        resolve(JSON.parse(stdout.trim()));
+      } catch {
+        reject(new Error(
+          `build_project_pdf.py exited with code ${code}, no parseable JSON. stderr: ${stderr.slice(0, 500)}`,
+        ));
+      }
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(killTimer);
+      reject(err);
+    });
+
+    proc.stdin.write(JSON.stringify(config));
+    proc.stdin.end();
+  });
+}
+
+/**
+ * Pre-stage for multi-file uploads: download staged files to a tempdir,
+ * concatenate them into a single PDF via scripts/build_project_pdf.py,
+ * and upload the result as `${projectPath}/original.pdf`.
+ *
+ * Idempotent via the headS3Object check in processProject — on SFN retry,
+ * the second pass sees original.pdf already present and skips this function.
+ * Staging files are NOT deleted post-concat; kept on S3 for audit.
+ */
+async function buildProjectPdf(
+  projectPath: string,
+  manifest: StagingFile[],
+): Promise<void> {
+  const tempDir = await mkdtemp(join(tmpdir(), "bp2-concat-"));
+  try {
+    const fileRecords: Array<{ filename: string; tmpPath: string }> = [];
+    for (const [i, sf] of manifest.entries()) {
+      const buf = await downloadFromS3(sf.stagingKey);
+      const localName = `${i.toString().padStart(3, "0")}_${sanitizeFilename(sf.filename)}`;
+      const localPath = join(tempDir, localName);
+      await writeFile(localPath, buf);
+      fileRecords.push({ filename: sf.filename, tmpPath: localPath });
+    }
+
+    const outputPath = join(tempDir, "output.pdf");
+    const scriptPath = join(process.cwd(), "scripts", "build_project_pdf.py");
+    const result = await runPythonConcat(scriptPath, { files: fileRecords, outputPath });
+
+    if (result.status !== "ok") {
+      const msg = [result.error, result.filename && `(${result.filename})`, result.message]
+        .filter(Boolean)
+        .join(" ");
+      throw new Error(`build_project_pdf: ${msg || "unknown error"}`);
+    }
+
+    const pdfBuffer = await readFile(outputPath);
+    await uploadToS3(`${projectPath}/original.pdf`, pdfBuffer, "application/pdf");
+    logger.info(
+      `[processing] Built original.pdf from ${manifest.length} files → ${result.totalPages} pages`,
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -73,6 +189,23 @@ export async function processProject(projectId: number): Promise<{
     .where(eq(projects.id, project.id));
 
   try {
+    // Pre-stage: if original.pdf doesn't exist yet, build it from the staging
+    // manifest. Idempotent — SFN retry after mid-concat failure sees the uploaded
+    // original.pdf and skips. HeadObject goes direct to S3 (not CloudFront) to
+    // avoid 404-cache poisoning.
+    const originalKey = `${project.dataUrl}/original.pdf`;
+    const originalHead = await headS3Object(originalKey);
+    if (!originalHead.exists) {
+      const manifest = project.stagingManifest as StagingFile[] | null;
+      if (!manifest?.length) {
+        throw new Error(
+          `Project ${project.id} has no original.pdf and no stagingManifest — cannot start processing.`,
+        );
+      }
+      logger.info(`[processing] Building original.pdf from ${manifest.length} staged files`);
+      await buildProjectPdf(project.dataUrl, manifest);
+    }
+
     // Download PDF from S3
     const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
     const pdfResponse = await fetch(pdfUrl);

@@ -4,6 +4,7 @@ import {
   GetObjectCommand,
   ListObjectsV2Command,
   DeleteObjectsCommand,
+  HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -38,6 +39,89 @@ export async function createUploadPresignedPost(projectPath: string) {
   });
 
   return { url, fields, key, projectPath };
+}
+
+// ─── Multi-file staging upload ───────────────────────────────
+// Files land in ${projectPath}/staging/${idx3}_${safeFilename} then get
+// concatenated into ${projectPath}/original.pdf by processing.ts pre-stage.
+
+const STAGING_MAX_BYTES = 250 * 1024 * 1024; // 250 MB per file
+
+const STAGING_CONTENT_TYPE: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  tif: "image/tiff",
+  tiff: "image/tiff",
+  heic: "image/heic",
+};
+
+export function extensionFromFilename(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  if (dot < 0) return "";
+  return filename.slice(dot + 1).toLowerCase();
+}
+
+/**
+ * Strip path separators, truncate to 120 chars, replace non-[A-Za-z0-9._-]
+ * with "_", collapse consecutive underscores. Defense-in-depth: File.name
+ * from the browser is already just a filename, but we scrub anyway before
+ * using it in an S3 key.
+ */
+export function sanitizeFilename(filename: string): string {
+  const base = filename.split(/[\\/]/).pop() || "file";
+  const scrubbed = base.replace(/[^A-Za-z0-9._-]/g, "_").replace(/_+/g, "_");
+  return scrubbed.slice(0, 120) || "file";
+}
+
+export async function createStagingUploadPresignedPost(
+  projectPath: string,
+  filename: string,
+  index: number,
+): Promise<{ url: string; fields: Record<string, string>; stagingKey: string }> {
+  const ext = extensionFromFilename(filename);
+  const contentType = STAGING_CONTENT_TYPE[ext];
+  if (!contentType) {
+    throw new Error(`Unsupported staging upload extension: .${ext}`);
+  }
+
+  const safe = sanitizeFilename(filename);
+  const idx3 = index.toString().padStart(3, "0");
+  const stagingKey = `${projectPath}/staging/${idx3}_${safe}`;
+
+  const { url, fields } = await createPresignedPost(s3Client, {
+    Bucket: S3_BUCKET,
+    Key: stagingKey,
+    Fields: { "Content-Type": contentType },
+    Conditions: [["content-length-range", 0, STAGING_MAX_BYTES]],
+    Expires: 900,
+  });
+
+  return { url, fields, stagingKey };
+}
+
+/**
+ * HeadObject wrapper that returns existence + size without throwing on 404.
+ * Used as the idempotency gate in processing.ts (avoids CloudFront 404-cache
+ * poisoning by going straight to S3).
+ */
+export async function headS3Object(
+  key: string,
+): Promise<{ exists: boolean; size?: number }> {
+  try {
+    const res = await s3Client.send(
+      new HeadObjectCommand({ Bucket: S3_BUCKET, Key: key }),
+    );
+    return { exists: true, size: res.ContentLength };
+  } catch (err: unknown) {
+    const name = (err as { name?: string; $metadata?: { httpStatusCode?: number } })?.name;
+    const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+    if (name === "NotFound" || name === "NoSuchKey" || status === 404) {
+      return { exists: false };
+    }
+    throw err;
+  }
 }
 
 export function getS3Url(projectPath: string, filename: string): string {

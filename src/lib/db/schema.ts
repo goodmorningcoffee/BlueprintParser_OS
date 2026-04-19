@@ -19,6 +19,7 @@ import type {
   TextAnnotationResult, AnnotationData, QtoParsedSchedule, QtoLineItem, QtoUserEdits,
   QtoItemType,
   ModelConfig,
+  StagingFile,
 } from "@/types";
 
 // Enums
@@ -162,6 +163,7 @@ export const projects = pgTable(
       .references(() => companies.id),
     isDemo: boolean("is_demo").default(false).notNull(),
     projectIntelligence: jsonb("project_intelligence").$type<ProjectIntelligence>(),
+    stagingManifest: jsonb("staging_manifest").$type<StagingFile[]>(),
     projectSummary: text("project_summary"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),

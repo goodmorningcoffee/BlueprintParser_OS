@@ -57,6 +57,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     tesseract-ocr \
     tesseract-ocr-eng \
     libglib2.0-0 \
+    libheif-dev \
     libsm6 \
     libxext6 \
     libxrender1 \
@@ -71,6 +72,8 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pymupdf \
     tabulate \
     openpyxl \
+    "Pillow>=10.0" \
+    "pillow-heif>=0.16" \
     camelot-py[base] \
     img2table==0.0.12 \
     && pip3 install --break-system-packages \
