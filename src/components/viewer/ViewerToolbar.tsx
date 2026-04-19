@@ -472,6 +472,20 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       {/* Spacer — pushes right buttons to edge */}
       <div className="flex-1" />
 
+      {/* View All — unified tree + macro-visibility control. Positioned
+          left of YOLO so it reads as the "everything" entry point. */}
+      <button
+        onClick={toggleViewAllPanel}
+        className={`px-2 py-1 text-xs rounded border ${
+          showViewAllPanel
+            ? "border-violet-400/60 text-violet-300 bg-violet-400/12"
+            : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
+        }`}
+        title="View All — unified tree over every parsed element + hide/show toggles at every level"
+      >
+        View All
+      </button>
+
       {/* YOLO detections panel + per-model dropdown */}
       {hasYoloAnnotations && (
         <HelpTooltip id="yolo-toggle">
@@ -633,19 +647,6 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         Keynotes
       </button>
       </HelpTooltip>
-
-      {/* View All — unified tree over every parsed element */}
-      <button
-        onClick={toggleViewAllPanel}
-        className={`px-2 py-1 text-xs rounded border ${
-          showViewAllPanel
-            ? "border-violet-400/60 text-violet-300 bg-violet-400/12"
-            : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
-        }`}
-        title="View All — unified tree over every parsed element on this project"
-      >
-        View All
-      </button>
     </div>
   );
 }
