@@ -11,6 +11,7 @@ import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine"
 import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
+import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
 
 interface AnnotationOverlayProps {
   width: number;
@@ -139,6 +140,11 @@ export default memo(function AnnotationOverlay({
   const { _setDrawing: setDrawing, _setDrawStart: setDrawStart, _setDrawEnd: setDrawEnd, _setMousePos: setMousePos } = useViewerStore.getState();
   const rafRef = useRef<number>(0);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Multi-select layer — owns the Group-tool lasso + shift-click accumulation.
+  // See useMultiSelectInteraction for the interaction contract. Backward
+  // compat: single-select paths (drag-to-move, pencil-edit) keep using the
+  // local `selectedId` state; render code ORs with `multiSelect.isSelected`.
+  const multiSelect = useMultiSelectInteraction();
   const [dragging, setDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const dragBboxRef = useRef<[number, number, number, number] | null>(null);
@@ -156,10 +162,13 @@ export default memo(function AnnotationOverlay({
     }
   }, [focusAnnotationId]);
 
-  // Markup name+notes modal state
+  // Markup name+notes+csi modal state. csiCode is new — when editing an
+  // existing annotation, loaded from data.csiCodes[0] if present. Users can
+  // overwrite or leave blank; saveMarkup persists into data.csiCodes.
   const [pendingMarkup, setPendingMarkup] = useState<[number, number, number, number] | null>(null);
   const [markupName, setMarkupName] = useState("");
   const [markupNote, setMarkupNote] = useState("");
+  const [markupCsi, setMarkupCsi] = useState("");
   const [editingAnnotationId, setEditingAnnotationId] = useState<number | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const {
@@ -361,7 +370,7 @@ export default memo(function AnnotationOverlay({
         if (hiddenTakeoffItemIds.has(itemId)) continue;
         const items = useViewerStore.getState().takeoffItems;
         const item = items.find((t) => t.id === itemId || String(t.id) === String(itemId));
-        drawCountMarker(ctx, ann, width, height, ann.id === selectedId, item?.size, cssScale);
+        drawCountMarker(ctx, ann, width, height, ann.id === selectedId || multiSelect.isSelected(ann.id), item?.size, cssScale);
         continue;
       }
 
@@ -398,7 +407,7 @@ export default memo(function AnnotationOverlay({
       } else {
         ctx.globalAlpha = dimmed ? 0.25 : 1;
         ctx.strokeStyle = color;
-        ctx.lineWidth = ann.id === selectedId ? 3 : 2;
+        ctx.lineWidth = (ann.id === selectedId || multiSelect.isSelected(ann.id)) ? 3 : 2;
         ctx.strokeRect(x, y, w, h);
         ctx.fillStyle = color + "15";
         ctx.fillRect(x, y, w, h);
@@ -409,7 +418,7 @@ export default memo(function AnnotationOverlay({
       ctx.font = `bold ${fontSize}px sans-serif`;
       const labelText = ann.name;
       const textW = ctx.measureText(labelText).width;
-      const isSelected = ann.id === selectedId;
+      const isSelected = ann.id === selectedId || multiSelect.isSelected(ann.id);
 
       // Label background + text
       const isUserSource = ann.source === "user";
@@ -692,7 +701,7 @@ export default memo(function AnnotationOverlay({
       }
 
       // Vertices when selected (outer only — hole vertices aren't editable)
-      if (ann.id === selectedId) {
+      if (ann.id === selectedId || multiSelect.isSelected(ann.id)) {
         for (const v of data.vertices) {
           ctx.fillStyle = data.color;
           ctx.beginPath();
@@ -739,7 +748,7 @@ export default memo(function AnnotationOverlay({
       ctx.stroke();
 
       // Vertices when selected
-      if (ann.id === selectedId) {
+      if (ann.id === selectedId || multiSelect.isSelected(ann.id)) {
         for (const v of data.vertices) {
           ctx.fillStyle = data.color;
           ctx.beginPath();
@@ -768,7 +777,7 @@ export default memo(function AnnotationOverlay({
     }
 
     // Calibration + polygon preview — rendered by DrawingPreviewLayer
-  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight, hiddenTakeoffItemIds, tableCellStructure, showTableCellStructure]);
+  }, [pageAnnotations, width, height, selectedId, activeYoloTagId, yoloTags, yoloTagVisibility, pageNumber, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches, activeTableTagViews, llmHighlight, hiddenTakeoffItemIds, tableCellStructure, showTableCellStructure, multiSelect]);
 
   const getPos = useCallback(
     (e: React.MouseEvent) => {
@@ -1131,12 +1140,30 @@ export default memo(function AnnotationOverlay({
   const [resizeCorner, setResizeCorner] = useState<string | null>(null);
 
   function deleteSelected() {
+    // Multi-selection path: batch-delete via the new endpoint when ≥2
+    // annotations are selected. Single DELETE per annotation is still
+    // used when only `selectedId` is set (the legacy single-select path).
+    const multiIds = [...multiSelect.selectedAnnotationIds];
+    if (multiIds.length > 1) {
+      if (!isDemo && publicId) {
+        fetch(`/api/annotations/batch-delete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId: publicId, annotationIds: multiIds }),
+        }).catch(() => {});
+      }
+      for (const id of multiIds) removeAnnotation(id);
+      multiSelect.clearSelection();
+      setSelectedId(null);
+      return;
+    }
     if (selectedId === null) return;
     if (!isDemo) {
       fetch(`/api/annotations/${selectedId}`, { method: "DELETE" }).catch(() => {});
     }
     removeAnnotation(selectedId);
     setSelectedId(null);
+    multiSelect.clearSelection();
   }
 
   /** Save the current position of the selected annotation to the API */
@@ -1553,8 +1580,13 @@ export default memo(function AnnotationOverlay({
         return;
       }
 
-      // Pointer mode: select, delete, move, resize annotations + click keynotes
-      if (mode === "pointer") {
+      // Pointer mode (and Group mode, which shares most interactions but adds
+      // shift-click multi-select + empty-canvas lasso): select, delete, move,
+      // resize annotations + click keynotes. The Group-specific branches are
+      // (a) the multiSelect.handleAnnotationClick call inside the bbox-hit
+      // loop below, and (b) the empty-canvas "mode === 'group'" lasso-start
+      // at the bottom of this block.
+      if (mode === "pointer" || mode === "group") {
         // TATR cell click: single click = search by text, double click = toggle highlight.
         // Gated on showTableCellStructure so the user can disable cell-level
         // interaction without losing the underlying data.
@@ -1763,6 +1795,8 @@ export default memo(function AnnotationOverlay({
                   setPendingMarkup(selAnn.bbox as [number, number, number, number]);
                   setMarkupName(selAnn.name);
                   setMarkupNote(selAnn.note || "");
+                  const existingCsi = (selAnn.data as { csiCodes?: string[] } | null)?.csiCodes?.[0] ?? "";
+                  setMarkupCsi(existingCsi);
                   setEditingAnnotationId(selAnn.id);
                   setTimeout(() => nameInputRef.current?.focus(), 50);
                   return;
@@ -1827,6 +1861,12 @@ export default memo(function AnnotationOverlay({
           const ah = (maxY - minY) * height;
           if (pos.x >= ax && pos.x <= ax + aw && pos.y >= ay && pos.y <= ay + ah) {
             e.stopPropagation();
+            // Multi-select layer decides first. In group mode OR pointer mode
+            // with a modifier key, this toggles the annotation in the set and
+            // skips the default drag/yolo-tag path. Otherwise we fall through
+            // to single-select + drag-to-move as before.
+            const { handled } = multiSelect.handleAnnotationClick(ann.id, e);
+            if (handled) return;
             setSelectedId(ann.id);
             setSearch(ann.name);
             // If this YOLO annotation matches a known tag, activate it
@@ -1857,8 +1897,16 @@ export default memo(function AnnotationOverlay({
             return;
           }
         }
-        // Clicked empty space — deselect
+        // Clicked empty space — deselect, OR start a lasso in Group mode.
+        if (mode === "group") {
+          setDrawing(true);
+          setDrawStart(pos);
+          setDrawEnd(pos);
+          // Don't clear the selection here — the lasso is additive.
+          return;
+        }
         setSelectedId(null);
+        multiSelect.clearSelection();
         return;
       }
 
@@ -2064,6 +2112,15 @@ export default memo(function AnnotationOverlay({
     // Minimum size check
     if (Math.abs(maxX - minX) < 0.01 || Math.abs(maxY - minY) < 0.01) return;
 
+    // Group tool: lasso-finalize. Computes intersecting annotations on
+    // the current page and adds them to selectedAnnotationIds. Additive
+    // — previously-selected stay selected so users can accumulate across
+    // multiple drags. No mode exit — Group tool stays active.
+    if (mode === "group") {
+      multiSelect.finalizeLasso(pageAnnotations, [minX, minY, maxX, maxY]);
+      return;
+    }
+
     // Symbol search: capture template BB — don't auto-fire, let panel show config first
     if (symbolSearchActive) {
       const store = useViewerStore.getState();
@@ -2130,7 +2187,7 @@ export default memo(function AnnotationOverlay({
     setMarkupName("");
     setMarkupNote("");
     setTimeout(() => nameInputRef.current?.focus(), 50);
-  }, [dragging, selectedId, saveDragPosition, saveVertexEdit, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setTableParseRegion, setDrawing]);
+  }, [dragging, selectedId, saveDragPosition, saveVertexEdit, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setTableParseRegion, setDrawing, mode, pageAnnotations, multiSelect]);
 
   const handleDoubleClick = useCallback(() => {
     // Close polygon or linear polyline on double-click
@@ -2341,21 +2398,31 @@ export default memo(function AnnotationOverlay({
     }
   }, [showTakeoffPanel]);
 
-  // Save markup from dialog (handles both create and edit)
+  // Save markup from dialog (handles both create and edit). CSI code is
+  // persisted into data.csiCodes as a single-element array — the server's
+  // annotation PUT/POST merges with any auto-detected codes so both manual
+  // and detected entries end up in data.csiCodes.
   const saveMarkup = useCallback(() => {
     if (!pendingMarkup || !markupName.trim()) return;
     const [minX, minY, maxX, maxY] = pendingMarkup;
     const name = markupName.trim();
     const note = markupNote.trim() || null;
+    const csi = markupCsi.trim();
+    const csiCodes = csi ? [csi] : undefined;
+    const annotationData = csiCodes ? { csiCodes } : undefined;
 
     if (editingAnnotationId !== null) {
-      // Edit existing annotation
-      updateAnnotation(editingAnnotationId, { name, note });
+      // Edit existing annotation — merge csiCodes into existing data.
+      const existing = annotations.find((a) => a.id === editingAnnotationId);
+      const mergedData = annotationData
+        ? { ...(existing?.data ?? {}), csiCodes }
+        : existing?.data;
+      updateAnnotation(editingAnnotationId, { name, note, data: mergedData ?? null });
       if (!isDemo) {
         fetch(`/api/annotations/${editingAnnotationId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, note }),
+          body: JSON.stringify({ name, note, ...(annotationData ? { data: mergedData } : {}) }),
         }).catch(() => {});
       }
     } else {
@@ -2368,6 +2435,7 @@ export default memo(function AnnotationOverlay({
         bbox: [minX, minY, maxX, maxY],
         note,
         source: "user",
+        data: annotationData ?? null,
       });
 
       if (!isDemo) {
@@ -2380,6 +2448,7 @@ export default memo(function AnnotationOverlay({
             name,
             note,
             bbox: [minX, minY, maxX, maxY],
+            ...(annotationData ? { data: annotationData } : {}),
           }),
         })
           .then((res) => res.ok ? res.json() : null)
@@ -2393,11 +2462,12 @@ export default memo(function AnnotationOverlay({
     setPendingMarkup(null);
     setMarkupName("");
     setMarkupNote("");
+    setMarkupCsi("");
     setEditingAnnotationId(null);
-  }, [pendingMarkup, markupName, markupNote, editingAnnotationId, pageNumber, publicId, addAnnotation, updateAnnotation, isDemo]);
+  }, [pendingMarkup, markupName, markupNote, markupCsi, editingAnnotationId, pageNumber, publicId, addAnnotation, updateAnnotation, annotations, isDemo]);
 
   // Always render — annotations should be visible in all modes
-  if (pageAnnotations.length === 0 && activeTakeoffItemId === null && calibrationMode === "idle" && polygonDrawingMode === "idle" && mode !== "markup" && mode !== "pointer" && !pendingMarkup) return null;
+  if (pageAnnotations.length === 0 && activeTakeoffItemId === null && calibrationMode === "idle" && polygonDrawingMode === "idle" && mode !== "markup" && mode !== "pointer" && mode !== "group" && !pendingMarkup) return null;
 
   return (
     <>
@@ -2420,11 +2490,11 @@ export default memo(function AnnotationOverlay({
           left: 0,
           width: `${width}px`,
           height: `${height}px`,
-          pointerEvents: tempPanMode ? "none" : (activeTakeoffItemId !== null || bucketFillActive || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" || tableParseStep !== "idle" || keynoteParseStep !== "idle" || symbolSearchActive || splitAreaActive ? "auto" : "none"),
+          pointerEvents: tempPanMode ? "none" : (activeTakeoffItemId !== null || bucketFillActive || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" || mode === "group" || tableParseStep !== "idle" || keynoteParseStep !== "idle" || symbolSearchActive || splitAreaActive ? "auto" : "none"),
           transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
           transformOrigin: "top left",
           willChange: "transform",
-          cursor: splitAreaActive ? "crosshair" : bucketFillActive && bucketFillLoading ? "wait" : bucketFillActive && bucketFillBarrierMode ? "crosshair" : bucketFillActive ? "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24'><path d='M6 6 L18 6 L16 20 L8 20 Z' fill='%2322d3ee' stroke='%23ffffff' stroke-width='1.5' stroke-linejoin='round'/><path d='M6 6 Q12 1 18 6' fill='none' stroke='%2322d3ee' stroke-width='2' stroke-linecap='round'/><circle cx='12' cy='22' r='1' fill='%23ffffff'/></svg>\") 14 24, crosshair" : symbolSearchActive ? "crosshair" : calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : isKeynoteYoloPicking ? "pointer" : yoloTagPickingMode ? "pointer" : (tableParseStep !== "idle" || keynoteParseStep !== "idle") ? "crosshair" : mode === "pointer" ? "default" : "default",
+          cursor: splitAreaActive ? "crosshair" : bucketFillActive && bucketFillLoading ? "wait" : bucketFillActive && bucketFillBarrierMode ? "crosshair" : bucketFillActive ? "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24'><path d='M6 6 L18 6 L16 20 L8 20 Z' fill='%2322d3ee' stroke='%23ffffff' stroke-width='1.5' stroke-linejoin='round'/><path d='M6 6 Q12 1 18 6' fill='none' stroke='%2322d3ee' stroke-width='2' stroke-linecap='round'/><circle cx='12' cy='22' r='1' fill='%23ffffff'/></svg>\") 14 24, crosshair" : symbolSearchActive ? "crosshair" : calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : mode === "group" ? "crosshair" : isKeynoteYoloPicking ? "pointer" : yoloTagPickingMode ? "pointer" : (tableParseStep !== "idle" || keynoteParseStep !== "idle") ? "crosshair" : mode === "pointer" ? "default" : "default",
         }}
       />
 
@@ -2435,16 +2505,18 @@ export default memo(function AnnotationOverlay({
         cssScale={cssScale}
       />
 
-      {/* Markup name + notes dialog */}
+      {/* Markup name + notes + CSI dialog */}
       {pendingMarkup && (
         <MarkupDialog
           isEditing={!!editingAnnotationId}
           name={markupName}
           note={markupNote}
+          csiCode={markupCsi}
           onNameChange={setMarkupName}
           onNoteChange={setMarkupNote}
+          onCsiChange={setMarkupCsi}
           onSave={saveMarkup}
-          onCancel={() => { setPendingMarkup(null); setEditingAnnotationId(null); }}
+          onCancel={() => { setPendingMarkup(null); setEditingAnnotationId(null); setMarkupCsi(""); }}
         />
       )}
     </>

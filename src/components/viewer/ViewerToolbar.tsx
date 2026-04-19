@@ -222,6 +222,19 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             <span className="block">Pan</span><span className="block">Zoom</span>
           </button>
         </HelpTooltip>
+        <HelpTooltip id="group-mode">
+          <button
+            onClick={() => setMode("group")}
+            className={`px-2 py-0.5 text-[10px] leading-tight text-center ${
+              mode === "group"
+                ? "bg-[var(--accent)] text-white"
+                : "text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}
+            title="Drag to lasso-select annotations, shift-click to add. Then Group / Edit / Delete."
+          >
+            <span className="block">Group</span><span className="block">Select</span>
+          </button>
+        </HelpTooltip>
         <HelpTooltip id="markup-mode">
           <button
             onClick={() => setMode("markup")}

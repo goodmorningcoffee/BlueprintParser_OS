@@ -673,6 +673,28 @@ export const TWENTY_COLORS = [
   "#aaffc3", "#808000", "#ffd8b1", "#000080", "#808080",
 ];
 
+// ─── Annotation Groups ──────────────────────────────────────
+// User-created groupings over annotations. M:N with annotations via
+// annotation_group_members junction. See migration 0025 + the Group
+// tool in ViewerToolbar. Groups are project-scoped and can span pages.
+
+export interface AnnotationGroup {
+  id: number;
+  projectId: number;
+  name: string;
+  csiCode: string | null;
+  notes: string | null;
+  color: string | null;
+  createdBy: number | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface AnnotationGroupMembership {
+  annotationId: number;
+  groupId: number;
+}
+
 // ─── YOLO types ──────────────────────────────────────────────
 
 export interface YoloDetection {

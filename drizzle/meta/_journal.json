@@ -176,6 +176,13 @@
       "when": 1775580000000,
       "tag": "0024_qto_itemtype_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1776546184391,
+      "tag": "0025_open_millenium_guard",
+      "breakpoints": true
     }
   ]
 }
