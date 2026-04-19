@@ -12,6 +12,7 @@ import ChatPanel from "./ChatPanel";
 import AnnotationPanel from "./AnnotationPanel";
 import TakeoffPanel from "./TakeoffPanel";
 import DetectionPanel from "./DetectionPanel";
+import GroupActionsBar from "./GroupActionsBar";
 import CsiPanel from "./CsiPanel";
 import PageIntelligencePanel from "./PageIntelligencePanel";
 import TableParsePanel from "./TableParsePanel";
@@ -514,6 +515,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   return (
     <div className="flex-1 flex flex-col h-screen">
       <ViewerToolbar projectName={projectName} backHref={backHref} onRename={onRename} />
+      <GroupActionsBar />
 
       {/* Help tips banner — dismissible, toggleable from Menu → Help */}
       {showTips && (
