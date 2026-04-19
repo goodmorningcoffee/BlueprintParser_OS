@@ -7,10 +7,13 @@ import {
   useSelection,
   useAnnotationGroups,
   usePageData,
+  useDetection,
+  useTextAnnotationDisplay,
 } from "@/stores/viewerStore";
-import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem, TextAnnotation, CsiCode } from "@/types";
+import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem, TextAnnotation } from "@/types";
 import TreeSection from "./TreeSection";
 import MarkupDialog from "./MarkupDialog";
+import VisibilityEye, { type VisibilityState } from "./VisibilityEye";
 
 const DETECTION_SOURCES = new Set(["yolo", "shape-parse", "symbol-search"]);
 const ROW_CAP_STEP = 100;
@@ -24,22 +27,117 @@ const ROW_CAP_STEP = 100;
  *   - Group row click → expand to members; pencil → MarkupDialog in edit mode
  *   - Takeoff item click → setActiveTakeoffItemId
  *   - CSI code click → setCsiFilter
+ *   - Eyeball at every level → hide/show via existing canonical store actions
  *
- * Performance strategy: sections collapsed by default (no child rendering
- * until expanded); per-section row cap of 100 with "Show N more" grows cap
- * by 100 each click. No virtualization — collapse-by-default keeps DOM
- * small for typical scroll.
+ * Macro-visibility: every level (master, section, sub-section, row) carries
+ * a VisibilityEye. Parent eyes show an aggregate state (all-visible /
+ * all-hidden / partial) computed from their descendant rows and clicking
+ * them fires bulk operations against the same canonical state used by the
+ * canvas (hiddenAnnotationIds, hiddenClasses, activeModels, hiddenTakeoffItemIds,
+ * hiddenTextAnnotations, activeTextAnnotationTypes, annotationGroups.isActive).
+ * No parallel visibility state introduced — the panel is a remote control
+ * over existing canvas plumbing.
  */
+
+function aggregate<T>(items: readonly T[], isHidden: (item: T) => boolean): VisibilityState {
+  if (items.length === 0) return "all-visible";
+  let h = 0;
+  for (const i of items) if (isHidden(i)) h++;
+  if (h === 0) return "all-visible";
+  if (h === items.length) return "all-hidden";
+  return "partial";
+}
+
+// ─── Bulk visibility helpers (escape hatch via setState) ──
+// These avoid N round-trips through individual toggle actions when the user
+// clicks a parent eye. All operate on the same store state the canvas reads.
+
+function setAnnotationsHiddenBulk(ids: number[], hide: boolean) {
+  useViewerStore.setState((s) => {
+    const next = new Set(s.hiddenAnnotationIds);
+    if (hide) for (const id of ids) next.add(id);
+    else for (const id of ids) next.delete(id);
+    return { hiddenAnnotationIds: next };
+  });
+}
+
+function setTakeoffItemsHiddenBulk(ids: number[], hide: boolean) {
+  useViewerStore.setState((s) => {
+    const next = new Set(s.hiddenTakeoffItemIds);
+    if (hide) for (const id of ids) next.add(id);
+    else for (const id of ids) next.delete(id);
+    return { hiddenTakeoffItemIds: next };
+  });
+}
+
+function setTextAnnotationsHiddenBulk(keys: string[], hide: boolean) {
+  useViewerStore.setState((s) => {
+    const next = new Set(s.hiddenTextAnnotations);
+    if (hide) for (const k of keys) next.add(k);
+    else for (const k of keys) next.delete(k);
+    return { hiddenTextAnnotations: next };
+  });
+}
+
+// hiddenClasses uses inverted semantic: key === false means hidden; default visible.
+function setClassesHiddenBulk(keys: string[], hide: boolean) {
+  useViewerStore.setState((s) => {
+    const next = { ...s.hiddenClasses };
+    for (const k of keys) {
+      if (hide) next[k] = false;
+      else delete next[k];
+    }
+    return { hiddenClasses: next };
+  });
+}
+
+// activeModels same inverted semantic.
+function setModelsHiddenBulk(names: string[], hide: boolean) {
+  useViewerStore.setState((s) => {
+    const next = { ...s.activeModels };
+    for (const m of names) next[m] = !hide;
+    return { activeModels: next };
+  });
+}
+
+function setTextAnnotationTypesHiddenBulk(types: string[], hide: boolean) {
+  useViewerStore.setState((s) => {
+    const next = { ...s.activeTextAnnotationTypes };
+    for (const t of types) next[t] = !hide;
+    return { activeTextAnnotationTypes: next };
+  });
+}
+
 export default function ViewAllPanel() {
   const { toggleViewAllPanel } = usePanels();
 
-  // Direct selectors — no useTakeoffs hook exists; matches TakeoffPanel.tsx:28 pattern.
+  // Direct selectors — matches TakeoffPanel.tsx:28 convention for takeoff state
+  // + picks up the visibility fields that aren't in a slice hook.
   const annotations = useViewerStore((s) => s.annotations);
   const takeoffItems = useViewerStore((s) => s.takeoffItems);
   const takeoffGroups = useViewerStore((s) => s.takeoffGroups);
+  const hiddenTakeoffItemIds = useViewerStore((s) => s.hiddenTakeoffItemIds);
+  const toggleTakeoffItemVisibility = useViewerStore((s) => s.toggleTakeoffItemVisibility);
   const setPage = useViewerStore((s) => s.setPage);
   const setFocusAnnotationId = useViewerStore((s) => s.setFocusAnnotationId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
+  // Master-visibility fields that gate the whole overlay class on the canvas.
+  // ViewAllPanel eyeballs for YOLO / Text sub-sections bind to these so toggling
+  // either surface (panel button or View All eye) keeps the other in sync.
+  const showDetections = useViewerStore((s) => s.showDetections);
+  const toggleDetections = useViewerStore((s) => s.toggleDetections);
+
+  const {
+    hiddenAnnotationIds, toggleAnnotationVisibility,
+    hiddenClasses, toggleClassVisibility,
+    activeModels, setModelActive,
+  } = useDetection();
+
+  const {
+    showTextAnnotations, toggleTextAnnotations,
+    hiddenTextAnnotations, toggleTextAnnotationVisibility,
+    activeTextAnnotationTypes, setTextAnnotationType,
+  } = useTextAnnotationDisplay();
 
   const {
     annotationGroups,
@@ -111,6 +209,45 @@ export default function ViewAllPanel() {
     }
   }
 
+  // Toggle a single group's `isActive`. Optimistic update + rollback on error.
+  async function toggleGroupActive(g: AnnotationGroup) {
+    const nextActive = g.isActive === false;
+    upsertAnnotationGroup({ ...g, isActive: nextActive });
+    try {
+      const res = await fetch(`/api/annotation-groups/${g.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: nextActive }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (data.group) upsertAnnotationGroup(data.group as AnnotationGroup);
+    } catch (err) {
+      console.error("[ViewAllPanel] Toggle group active failed:", err);
+      upsertAnnotationGroup(g); // rollback
+    }
+  }
+
+  // Bulk toggle `isActive` across many groups. Optimistic + parallel PUTs.
+  async function setGroupsActiveBulk(gs: AnnotationGroup[], nextActive: boolean) {
+    for (const g of gs) upsertAnnotationGroup({ ...g, isActive: nextActive });
+    const results = await Promise.allSettled(
+      gs.map((g) =>
+        fetch(`/api/annotation-groups/${g.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isActive: nextActive }),
+        }),
+      ),
+    );
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)) {
+        upsertAnnotationGroup(gs[i]); // rollback
+      }
+    }
+  }
+
   // Shared row-action helpers.
   const handleNav = (pageNumber: number, focusId?: number) => {
     setPage(pageNumber);
@@ -126,13 +263,11 @@ export default function ViewAllPanel() {
 
   // ─── Derived per-section data ────────────────────────────
 
-  // Groups — filter by search on name/csi.
   const groupsFiltered = useMemo(
     () => annotationGroups.filter((g) => match(g.name) || match(g.csiCode)),
     [annotationGroups, q],
   );
 
-  // Annotations by source (filter by search once).
   const filteredAnnotations = useMemo(
     () =>
       annotations.filter(
@@ -144,11 +279,14 @@ export default function ViewAllPanel() {
     [annotations, q],
   );
 
-  // Detections hierarchy: YOLO by model→class, Shape Parse by shape, Symbol Search by source page.
+  // Detections hierarchy + per-bucket id lists for aggregate eyes.
   const detectionBuckets = useMemo(() => {
     const yoloModels: Record<string, Record<string, ClientAnnotation[]>> = {};
     const shapeByShape: Record<string, ClientAnnotation[]> = {};
     const symbolByPage: Record<number, ClientAnnotation[]> = {};
+    const allYolo: ClientAnnotation[] = [];
+    const allShape: ClientAnnotation[] = [];
+    const allSymbol: ClientAnnotation[] = [];
     let total = 0;
     for (const a of filteredAnnotations) {
       if (!DETECTION_SOURCES.has(a.source)) continue;
@@ -159,43 +297,48 @@ export default function ViewAllPanel() {
         if (!yoloModels[model]) yoloModels[model] = {};
         if (!yoloModels[model][cls]) yoloModels[model][cls] = [];
         yoloModels[model][cls].push(a);
+        allYolo.push(a);
       } else if (a.source === "shape-parse") {
         const shape = (a.data?.shapeType as string) || a.name || "shape";
         if (!shapeByShape[shape]) shapeByShape[shape] = [];
         shapeByShape[shape].push(a);
+        allShape.push(a);
       } else if (a.source === "symbol-search") {
         const src = (a.data?.templateSourcePage as number) || a.pageNumber;
         if (!symbolByPage[src]) symbolByPage[src] = [];
         symbolByPage[src].push(a);
+        allSymbol.push(a);
       }
     }
-    return { yoloModels, shapeByShape, symbolByPage, total };
+    return { yoloModels, shapeByShape, symbolByPage, allYolo, allShape, allSymbol, total };
   }, [filteredAnnotations]);
 
-  // Markup by page.
+  // Markup by page + flat list for section aggregate.
   const markupByPage = useMemo(() => {
     const byPage: Record<number, ClientAnnotation[]> = {};
+    const all: ClientAnnotation[] = [];
     let total = 0;
     for (const a of filteredAnnotations) {
       if (a.source !== "user") continue;
       if (!byPage[a.pageNumber]) byPage[a.pageNumber] = [];
       byPage[a.pageNumber].push(a);
+      all.push(a);
       total++;
     }
-    return { byPage, total };
+    return { byPage, all, total };
   }, [filteredAnnotations]);
 
-  // Takeoffs by kind nested under takeoffGroups.
+  // Takeoffs grouped by kind nested under TakeoffGroup.
   const takeoffsByKind = useMemo(() => {
     const byKind: Record<string, Record<string, ClientTakeoffItem[]>> = {
       count: {},
       area: {},
       linear: {},
     };
+    const allItems: ClientTakeoffItem[] = [];
     let total = 0;
     const groupById: Record<number, TakeoffGroup> = {};
     for (const g of takeoffGroups) groupById[g.id] = g;
-
     for (const item of takeoffItems) {
       if (!match(item.name)) continue;
       const kind: "count" | "area" | "linear" =
@@ -203,30 +346,37 @@ export default function ViewAllPanel() {
       const groupName = item.groupId && groupById[item.groupId] ? groupById[item.groupId].name : "Ungrouped";
       if (!byKind[kind][groupName]) byKind[kind][groupName] = [];
       byKind[kind][groupName].push(item);
+      allItems.push(item);
       total++;
     }
-    return { byKind, groupById, total };
+    return { byKind, groupById, allItems, total };
   }, [takeoffItems, takeoffGroups, q]);
 
-  // Text annotations by page → type.
+  // Text annotations per page → type, carrying original index for
+  // toggleTextAnnotationVisibility(pageNum, index) calls.
   const textByPage = useMemo(() => {
-    const byPage: Record<number, Record<string, TextAnnotation[]>> = {};
+    type TaWithIdx = { ta: TextAnnotation; idx: number };
+    const byPage: Record<number, Record<string, TaWithIdx[]>> = {};
+    const allKeys: string[] = [];
+    const typesInUse = new Set<string>();
     let total = 0;
     for (const [pnStr, list] of Object.entries(textAnnotations)) {
       const pn = Number(pnStr);
       if (!list) continue;
-      for (const ta of list) {
-        if (!match(ta.text) && !match(ta.type)) continue;
+      list.forEach((ta, idx) => {
+        if (!match(ta.text) && !match(ta.type)) return;
         if (!byPage[pn]) byPage[pn] = {};
         if (!byPage[pn][ta.type]) byPage[pn][ta.type] = [];
-        byPage[pn][ta.type].push(ta);
+        byPage[pn][ta.type].push({ ta, idx });
+        allKeys.push(`${pn}:${idx}`);
+        typesInUse.add(ta.type);
         total++;
-      }
+      });
     }
-    return { byPage, total };
+    return { byPage, allKeys, typesInUse: Array.from(typesInUse), total };
   }, [textAnnotations, q]);
 
-  // CSI codes by division — aggregate detected codes across all pages.
+  // CSI codes by division — aggregate detected codes across pages.
   const csiByDivision = useMemo(() => {
     type CsiAgg = {
       code: string;
@@ -264,11 +414,132 @@ export default function ViewAllPanel() {
     for (const d of Object.keys(byDivision)) {
       byDivision[d].sort((a, b) => a.code.localeCompare(b.code));
     }
-    const total = Object.keys(agg).length;
-    return { byDivision, total };
+    return { byDivision, total: Object.keys(agg).length };
   }, [csiCodes, q]);
 
-  // Shared row-cap renderer: slice + optional "Show more" button.
+  // ─── Aggregate visibility states ─────────────────────────
+
+  const isAnnHidden = (a: ClientAnnotation) => hiddenAnnotationIds.has(a.id);
+  const isTakeoffHidden = (i: ClientTakeoffItem) => hiddenTakeoffItemIds.has(i.id);
+  const isGroupHidden = (g: AnnotationGroup) => g.isActive === false;
+  // Text "effective-hidden" = master off OR type filtered off OR individual hidden.
+  const isTextHidden = (args: { ta: TextAnnotation; idx: number; pn: number }) =>
+    !showTextAnnotations ||
+    hiddenTextAnnotations.has(`${args.pn}:${args.idx}`) ||
+    activeTextAnnotationTypes[args.ta.type] === false;
+  // YOLO "effective-hidden" = master off OR model/class flag off OR individual hidden.
+  const isYoloHidden = (a: ClientAnnotation) => {
+    if (!showDetections) return true;
+    if (hiddenAnnotationIds.has(a.id)) return true;
+    const model = (a.data?.modelName as string | undefined) || "";
+    if (model && activeModels[model] === false) return true;
+    if (model && hiddenClasses[`${model}:${a.name}`] === false) return true;
+    return false;
+  };
+
+  function rollupStates(...states: VisibilityState[]): VisibilityState {
+    if (states.length === 0) return "all-visible";
+    if (states.every((s) => s === "all-hidden")) return "all-hidden";
+    if (states.every((s) => s === "all-visible")) return "all-visible";
+    return "partial";
+  }
+
+  // Reveal helpers — when transitioning a master from hidden → visible we
+  // clear per-item/per-class/per-model hides so the reveal is complete.
+  function clearYoloHides() {
+    const yoloIds = detectionBuckets.allYolo.map((a) => a.id);
+    setAnnotationsHiddenBulk(yoloIds, false);
+    const modelsInUse = Object.keys(detectionBuckets.yoloModels);
+    setModelsHiddenBulk(modelsInUse, false);
+    const classKeys: string[] = [];
+    for (const [model, classes] of Object.entries(detectionBuckets.yoloModels)) {
+      for (const cls of Object.keys(classes)) classKeys.push(`${model}:${cls}`);
+    }
+    setClassesHiddenBulk(classKeys, false);
+  }
+  function clearTextHides() {
+    setTextAnnotationsHiddenBulk(textByPage.allKeys, false);
+    setTextAnnotationTypesHiddenBulk(textByPage.typesInUse, false);
+  }
+
+  // Per-section aggregate states.
+  // YOLO uses isYoloHidden (folds showDetections master + model/class flags);
+  // Text uses isTextHidden (folds showTextAnnotations master + type filter).
+  // Shape Parse + Symbol Search have no master — just per-item hides.
+  const sectionStates = useMemo(() => {
+    const groups = aggregate(groupsFiltered, isGroupHidden);
+    const yolo = aggregate(detectionBuckets.allYolo, isYoloHidden);
+    const shape = aggregate(detectionBuckets.allShape, isAnnHidden);
+    const symbol = aggregate(detectionBuckets.allSymbol, isAnnHidden);
+    const detections = rollupStates(yolo, shape, symbol);
+    const markup = aggregate(markupByPage.all, isAnnHidden);
+    const takeoffs = aggregate(takeoffsByKind.allItems, isTakeoffHidden);
+    const text = aggregate(
+      (() => {
+        const out: { ta: TextAnnotation; idx: number; pn: number }[] = [];
+        for (const [pnStr, types] of Object.entries(textByPage.byPage)) {
+          const pn = Number(pnStr);
+          for (const list of Object.values(types)) {
+            for (const { ta, idx } of list) out.push({ ta, idx, pn });
+          }
+        }
+        return out;
+      })(),
+      isTextHidden,
+    );
+    return { groups, detections, yolo, shape, symbol, markup, takeoffs, text };
+  }, [
+    groupsFiltered,
+    detectionBuckets,
+    markupByPage.all,
+    takeoffsByKind.allItems,
+    textByPage.byPage,
+    showDetections,
+    showTextAnnotations,
+    activeModels,
+    hiddenClasses,
+    hiddenAnnotationIds,
+    hiddenTakeoffItemIds,
+    hiddenTextAnnotations,
+    activeTextAnnotationTypes,
+  ]);
+
+  // Master "everything" aggregate: partial if any section mixed; hidden only if all sections hidden.
+  const masterState: VisibilityState = useMemo(() => {
+    const vs = Object.values(sectionStates);
+    if (vs.every((s) => s === "all-hidden")) return "all-hidden";
+    if (vs.every((s) => s === "all-visible")) return "all-visible";
+    return "partial";
+  }, [sectionStates]);
+
+  // Master toggle: hide everything across every surface when any is visible;
+  // reveal everything when all are hidden. Drives both master flags
+  // (showDetections, showTextAnnotations) AND per-item hides in parallel.
+  function toggleMaster() {
+    if (masterState === "all-hidden") {
+      // Full reveal
+      if (!showDetections) toggleDetections();
+      if (!showTextAnnotations) toggleTextAnnotations();
+      clearYoloHides();
+      clearTextHides();
+      setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), false);
+      setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), false);
+      setAnnotationsHiddenBulk(markupByPage.all.map((a) => a.id), false);
+      setTakeoffItemsHiddenBulk(takeoffsByKind.allItems.map((i) => i.id), false);
+      setGroupsActiveBulk(groupsFiltered, true);
+    } else {
+      // Hide everything
+      if (showDetections) toggleDetections();
+      if (showTextAnnotations) toggleTextAnnotations();
+      setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), true);
+      setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), true);
+      setAnnotationsHiddenBulk(markupByPage.all.map((a) => a.id), true);
+      setTakeoffItemsHiddenBulk(takeoffsByKind.allItems.map((i) => i.id), true);
+      setGroupsActiveBulk(groupsFiltered, false);
+    }
+  }
+
+  // Shared row-cap slicer with "Show more".
   function withCap<T>(key: string, list: T[], renderRow: (item: T, idx: number) => React.ReactNode) {
     const cap = capFor(key);
     const visible = list.slice(0, cap);
@@ -287,14 +558,15 @@ export default function ViewAllPanel() {
     );
   }
 
-  // Small annotation row — used by Groups (members), Detections (instances), Markup.
+  // Annotation row — covers Groups-members + Detections-instances + Markup rows.
   function AnnotationRow({ ann, indent = 0 }: { ann: ClientAnnotation; indent?: number }) {
     const csi = (ann.data?.csiCodes as string[] | undefined)?.[0];
     const color = (ann.data?.color as string | undefined) || null;
     const isSelected = selectedAnnotationIds.has(ann.id);
+    const isHidden = hiddenAnnotationIds.has(ann.id);
     return (
       <div
-        className={`flex items-center gap-2 px-2 py-1 text-[11px] hover:bg-white/5 ${isSelected ? "bg-[var(--accent)]/10" : ""}`}
+        className={`group flex items-center gap-2 px-2 py-1 text-[11px] hover:bg-white/5 ${isSelected ? "bg-[var(--accent)]/10" : ""}`}
         style={{ paddingLeft: 8 + indent * 12 }}
       >
         <input
@@ -307,7 +579,7 @@ export default function ViewAllPanel() {
         {color && <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />}
         <button
           onClick={() => handleNav(ann.pageNumber, ann.id)}
-          className="flex-1 text-left truncate text-[var(--fg)]"
+          className={`flex-1 text-left truncate ${isHidden ? "text-[var(--muted)] line-through opacity-60" : "text-[var(--fg)]"}`}
           title={ann.name}
         >
           {ann.name}
@@ -316,14 +588,33 @@ export default function ViewAllPanel() {
         {csi && (
           <span className="text-[9px] text-[var(--muted)] font-mono shrink-0">{csi}</span>
         )}
+        <VisibilityEye
+          state={isHidden ? "all-hidden" : "all-visible"}
+          onClick={() => toggleAnnotationVisibility(ann.id)}
+          variant="row"
+          size="sm"
+          showOnHover
+        />
       </div>
     );
   }
 
   return (
     <div className="w-80 flex flex-col h-full overflow-hidden border border-[var(--border)] bg-[var(--surface)] shadow-lg">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
-        <h3 className="text-sm font-medium text-[var(--fg)]">View All</h3>
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)]">
+        <h3 className="text-sm font-medium text-[var(--fg)] flex-1">View All</h3>
+        <VisibilityEye
+          state={masterState}
+          onClick={toggleMaster}
+          variant="category"
+          title={
+            masterState === "all-hidden"
+              ? "Show everything"
+              : masterState === "partial"
+              ? "Some hidden — click to hide everything"
+              : "Hide everything"
+          }
+        />
         <button
           onClick={toggleViewAllPanel}
           className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none"
@@ -350,6 +641,17 @@ export default function ViewAllPanel() {
           count={groupsFiltered.length}
           isExpanded={!!expanded.groups}
           onToggleExpand={() => toggle("groups")}
+          badge={
+            groupsFiltered.length > 0 ? (
+              <VisibilityEye
+                state={sectionStates.groups}
+                onClick={() =>
+                  setGroupsActiveBulk(groupsFiltered, sectionStates.groups === "all-hidden")
+                }
+                variant="category"
+              />
+            ) : undefined
+          }
         >
           {groupsFiltered.length === 0 && (
             <div className="px-4 py-2 text-[11px] text-[var(--muted)]">No groups yet.</div>
@@ -362,9 +664,10 @@ export default function ViewAllPanel() {
               : [];
             const memberCount = members.length;
             const isOpen = !!expanded[key];
+            const inactive = g.isActive === false;
             return (
               <div key={g.id}>
-                <div className="flex items-center gap-2 px-3 py-1 hover:bg-white/5">
+                <div className="group flex items-center gap-2 px-3 py-1 hover:bg-white/5">
                   <button
                     onClick={() => toggle(key)}
                     className="text-[10px] text-[var(--muted)] w-3 shrink-0"
@@ -374,16 +677,16 @@ export default function ViewAllPanel() {
                   {g.color && (
                     <span
                       className="w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: g.color, opacity: g.isActive === false ? 0.4 : 1 }}
+                      style={{ backgroundColor: g.color, opacity: inactive ? 0.4 : 1 }}
                     />
                   )}
                   <button
                     onClick={() => toggle(key)}
-                    className={`text-xs flex-1 text-left truncate ${g.isActive === false ? "text-[var(--muted)]" : "text-[var(--fg)]"}`}
+                    className={`text-xs flex-1 text-left truncate ${inactive ? "text-[var(--muted)]" : "text-[var(--fg)]"}`}
                     title={g.name}
                   >
                     {g.name}
-                    {g.isActive === false && (
+                    {inactive && (
                       <span className="text-[9px] ml-2 text-[var(--muted)]">(inactive)</span>
                     )}
                   </button>
@@ -393,6 +696,12 @@ export default function ViewAllPanel() {
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface)] text-[var(--muted)] shrink-0">
                     {memberCount}
                   </span>
+                  <VisibilityEye
+                    state={inactive ? "all-hidden" : "all-visible"}
+                    onClick={() => toggleGroupActive(g)}
+                    variant="category"
+                    size="sm"
+                  />
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -425,37 +734,79 @@ export default function ViewAllPanel() {
           count={detectionBuckets.total}
           isExpanded={!!expanded.detections}
           onToggleExpand={() => toggle("detections")}
+          badge={
+            detectionBuckets.total > 0 ? (
+              <VisibilityEye
+                state={sectionStates.detections}
+                onClick={() => {
+                  if (sectionStates.detections === "all-hidden") {
+                    // Reveal everything detection-related
+                    if (!showDetections) toggleDetections();
+                    clearYoloHides();
+                    setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), false);
+                    setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), false);
+                  } else {
+                    // Hide everything detection-related
+                    if (showDetections) toggleDetections();
+                    setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), true);
+                    setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), true);
+                  }
+                }}
+                variant="category"
+              />
+            ) : undefined
+          }
         >
-          {/* YOLO sub-section */}
+          {/* YOLO sub-section — master-gated by showDetections */}
           {Object.keys(detectionBuckets.yoloModels).length > 0 && (
             <SubHeader
               label="YOLO"
-              count={Object.values(detectionBuckets.yoloModels).reduce(
-                (n, classes) => n + Object.values(classes).reduce((m, anns) => m + anns.length, 0),
-                0,
-              )}
+              count={detectionBuckets.allYolo.length}
               isOpen={!!expanded["det-yolo"]}
               onToggle={() => toggle("det-yolo")}
+              visibility={sectionStates.yolo}
+              onToggleVisibility={() => {
+                if (sectionStates.yolo === "all-hidden") {
+                  if (!showDetections) toggleDetections();
+                  clearYoloHides();
+                } else {
+                  if (showDetections) toggleDetections();
+                }
+              }}
             />
           )}
           {expanded["det-yolo"] &&
             Object.entries(detectionBuckets.yoloModels).map(([model, classes]) => {
               const mkey = `det-yolo-${model}`;
               const mOpen = !!expanded[mkey];
-              const modelTotal = Object.values(classes).reduce((n, anns) => n + anns.length, 0);
+              const modelAnns = Object.values(classes).flat();
+              // Effective visibility folds master + model flag + class flags + individual.
+              const modelVis: VisibilityState = aggregate(modelAnns, isYoloHidden);
               return (
                 <div key={model}>
                   <SubHeader
                     label={model}
-                    count={modelTotal}
+                    count={modelAnns.length}
                     isOpen={mOpen}
                     onToggle={() => toggle(mkey)}
                     indent={2}
+                    visibility={modelVis}
+                    onToggleVisibility={() => {
+                      if (modelVis === "all-hidden") {
+                        if (!showDetections) toggleDetections();
+                        setModelActive(model, true);
+                        setClassesHiddenBulk(Object.keys(classes).map((cls) => `${model}:${cls}`), false);
+                        setAnnotationsHiddenBulk(modelAnns.map((a) => a.id), false);
+                      } else {
+                        setModelActive(model, false);
+                      }
+                    }}
                   />
                   {mOpen &&
                     Object.entries(classes).map(([cls, anns]) => {
                       const ckey = `${mkey}-${cls}`;
                       const cOpen = !!expanded[ckey];
+                      const classVis: VisibilityState = aggregate(anns, isYoloHidden);
                       return (
                         <div key={cls}>
                           <SubHeader
@@ -464,6 +815,17 @@ export default function ViewAllPanel() {
                             isOpen={cOpen}
                             onToggle={() => toggle(ckey)}
                             indent={3}
+                            visibility={classVis}
+                            onToggleVisibility={() => {
+                              if (classVis === "all-hidden") {
+                                if (!showDetections) toggleDetections();
+                                setModelActive(model, true);
+                                setClassesHiddenBulk([`${model}:${cls}`], false);
+                                setAnnotationsHiddenBulk(anns.map((a) => a.id), false);
+                              } else {
+                                toggleClassVisibility(model, cls);
+                              }
+                            }}
                           />
                           {cOpen && withCap(ckey, anns, (a) => <AnnotationRow key={a.id} ann={a} indent={4} />)}
                         </div>
@@ -477,9 +839,15 @@ export default function ViewAllPanel() {
           {Object.keys(detectionBuckets.shapeByShape).length > 0 && (
             <SubHeader
               label="Shape Parse"
-              count={Object.values(detectionBuckets.shapeByShape).reduce((n, a) => n + a.length, 0)}
+              count={detectionBuckets.allShape.length}
               isOpen={!!expanded["det-shape"]}
               onToggle={() => toggle("det-shape")}
+              visibility={aggregate(detectionBuckets.allShape, isAnnHidden)}
+              onToggleVisibility={() => {
+                const next =
+                  aggregate(detectionBuckets.allShape, isAnnHidden) !== "all-hidden";
+                setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), next);
+              }}
             />
           )}
           {expanded["det-shape"] &&
@@ -488,7 +856,18 @@ export default function ViewAllPanel() {
               const sOpen = !!expanded[skey];
               return (
                 <div key={shape}>
-                  <SubHeader label={shape} count={anns.length} isOpen={sOpen} onToggle={() => toggle(skey)} indent={2} />
+                  <SubHeader
+                    label={shape}
+                    count={anns.length}
+                    isOpen={sOpen}
+                    onToggle={() => toggle(skey)}
+                    indent={2}
+                    visibility={aggregate(anns, isAnnHidden)}
+                    onToggleVisibility={() => {
+                      const next = aggregate(anns, isAnnHidden) !== "all-hidden";
+                      setAnnotationsHiddenBulk(anns.map((a) => a.id), next);
+                    }}
+                  />
                   {sOpen && withCap(skey, anns, (a) => <AnnotationRow key={a.id} ann={a} indent={3} />)}
                 </div>
               );
@@ -498,9 +877,15 @@ export default function ViewAllPanel() {
           {Object.keys(detectionBuckets.symbolByPage).length > 0 && (
             <SubHeader
               label="Symbol Search"
-              count={Object.values(detectionBuckets.symbolByPage).reduce((n, a) => n + a.length, 0)}
+              count={detectionBuckets.allSymbol.length}
               isOpen={!!expanded["det-symbol"]}
               onToggle={() => toggle("det-symbol")}
+              visibility={aggregate(detectionBuckets.allSymbol, isAnnHidden)}
+              onToggleVisibility={() => {
+                const next =
+                  aggregate(detectionBuckets.allSymbol, isAnnHidden) !== "all-hidden";
+                setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), next);
+              }}
             />
           )}
           {expanded["det-symbol"] &&
@@ -515,6 +900,11 @@ export default function ViewAllPanel() {
                     isOpen={pOpen}
                     onToggle={() => toggle(pkey)}
                     indent={2}
+                    visibility={aggregate(anns, isAnnHidden)}
+                    onToggleVisibility={() => {
+                      const next = aggregate(anns, isAnnHidden) !== "all-hidden";
+                      setAnnotationsHiddenBulk(anns.map((a) => a.id), next);
+                    }}
                   />
                   {pOpen && withCap(pkey, anns, (a) => <AnnotationRow key={a.id} ann={a} indent={3} />)}
                 </div>
@@ -528,6 +918,18 @@ export default function ViewAllPanel() {
           count={markupByPage.total}
           isExpanded={!!expanded.markup}
           onToggleExpand={() => toggle("markup")}
+          badge={
+            markupByPage.total > 0 ? (
+              <VisibilityEye
+                state={sectionStates.markup}
+                onClick={() => {
+                  const next = sectionStates.markup !== "all-hidden";
+                  setAnnotationsHiddenBulk(markupByPage.all.map((a) => a.id), next);
+                }}
+                variant="category"
+              />
+            ) : undefined
+          }
         >
           {Object.keys(markupByPage.byPage).length === 0 && (
             <div className="px-4 py-2 text-[11px] text-[var(--muted)]">No markup annotations.</div>
@@ -539,7 +941,17 @@ export default function ViewAllPanel() {
               const pOpen = !!expanded[pkey];
               return (
                 <div key={pn}>
-                  <SubHeader label={`Page ${pn}`} count={anns.length} isOpen={pOpen} onToggle={() => toggle(pkey)} />
+                  <SubHeader
+                    label={`Page ${pn}`}
+                    count={anns.length}
+                    isOpen={pOpen}
+                    onToggle={() => toggle(pkey)}
+                    visibility={aggregate(anns, isAnnHidden)}
+                    onToggleVisibility={() => {
+                      const next = aggregate(anns, isAnnHidden) !== "all-hidden";
+                      setAnnotationsHiddenBulk(anns.map((a) => a.id), next);
+                    }}
+                  />
                   {pOpen && withCap(pkey, anns, (a) => <AnnotationRow key={a.id} ann={a} indent={2} />)}
                 </div>
               );
@@ -552,6 +964,18 @@ export default function ViewAllPanel() {
           count={takeoffsByKind.total}
           isExpanded={!!expanded.takeoffs}
           onToggleExpand={() => toggle("takeoffs")}
+          badge={
+            takeoffsByKind.total > 0 ? (
+              <VisibilityEye
+                state={sectionStates.takeoffs}
+                onClick={() => {
+                  const next = sectionStates.takeoffs !== "all-hidden";
+                  setTakeoffItemsHiddenBulk(takeoffsByKind.allItems.map((i) => i.id), next);
+                }}
+                variant="category"
+              />
+            ) : undefined
+          }
         >
           {takeoffItems.length === 0 && (
             <div className="px-4 py-2 text-[11px] text-[var(--muted)]">No takeoff items.</div>
@@ -562,10 +986,20 @@ export default function ViewAllPanel() {
             if (groupsList.length === 0) return null;
             const kKey = `to-${kind}`;
             const kOpen = !!expanded[kKey];
-            const kindTotal = groupsList.reduce((n, [, items]) => n + items.length, 0);
+            const kindItems = groupsList.flatMap(([, items]) => items);
             return (
               <div key={kind}>
-                <SubHeader label={kind} count={kindTotal} isOpen={kOpen} onToggle={() => toggle(kKey)} />
+                <SubHeader
+                  label={kind}
+                  count={kindItems.length}
+                  isOpen={kOpen}
+                  onToggle={() => toggle(kKey)}
+                  visibility={aggregate(kindItems, isTakeoffHidden)}
+                  onToggleVisibility={() => {
+                    const next = aggregate(kindItems, isTakeoffHidden) !== "all-hidden";
+                    setTakeoffItemsHiddenBulk(kindItems.map((i) => i.id), next);
+                  }}
+                />
                 {kOpen &&
                   groupsList.map(([groupName, items]) => {
                     const gKey = `to-${kind}-${groupName}`;
@@ -578,28 +1012,43 @@ export default function ViewAllPanel() {
                           isOpen={gOpen}
                           onToggle={() => toggle(gKey)}
                           indent={2}
+                          visibility={aggregate(items, isTakeoffHidden)}
+                          onToggleVisibility={() => {
+                            const next = aggregate(items, isTakeoffHidden) !== "all-hidden";
+                            setTakeoffItemsHiddenBulk(items.map((i) => i.id), next);
+                          }}
                         />
                         {gOpen &&
-                          withCap(gKey, items, (item) => (
-                            <div
-                              key={item.id}
-                              className="flex items-center gap-2 text-[11px] py-1 hover:bg-white/5"
-                              style={{ paddingLeft: 8 + 3 * 12 }}
-                            >
-                              <span
-                                className="w-2 h-2 rounded-full shrink-0"
-                                style={{ backgroundColor: item.color }}
-                              />
-                              <button
-                                onClick={() => setActiveTakeoffItemId(item.id)}
-                                className="flex-1 text-left truncate text-[var(--fg)]"
-                                title={item.name}
+                          withCap(gKey, items, (item) => {
+                            const itemHidden = hiddenTakeoffItemIds.has(item.id);
+                            return (
+                              <div
+                                key={item.id}
+                                className="group flex items-center gap-2 text-[11px] py-1 hover:bg-white/5"
+                                style={{ paddingLeft: 8 + 3 * 12 }}
                               >
-                                {item.name}
-                              </button>
-                              <span className="text-[10px] text-[var(--muted)] shrink-0">{item.shape}</span>
-                            </div>
-                          ))}
+                                <span
+                                  className="w-2 h-2 rounded-full shrink-0"
+                                  style={{ backgroundColor: item.color }}
+                                />
+                                <button
+                                  onClick={() => setActiveTakeoffItemId(item.id)}
+                                  className={`flex-1 text-left truncate ${itemHidden ? "text-[var(--muted)] line-through opacity-60" : "text-[var(--fg)]"}`}
+                                  title={item.name}
+                                >
+                                  {item.name}
+                                </button>
+                                <span className="text-[10px] text-[var(--muted)] shrink-0">{item.shape}</span>
+                                <VisibilityEye
+                                  state={itemHidden ? "all-hidden" : "all-visible"}
+                                  onClick={() => toggleTakeoffItemVisibility(item.id)}
+                                  variant="row"
+                                  size="sm"
+                                  showOnHover
+                                />
+                              </div>
+                            );
+                          })}
                       </div>
                     );
                   })}
@@ -614,6 +1063,24 @@ export default function ViewAllPanel() {
           count={textByPage.total}
           isExpanded={!!expanded.text}
           onToggleExpand={() => toggle("text")}
+          badge={
+            textByPage.total > 0 ? (
+              <VisibilityEye
+                state={sectionStates.text}
+                onClick={() => {
+                  if (sectionStates.text === "all-hidden") {
+                    // Enable master + clear all text-hides for a clean reveal
+                    if (!showTextAnnotations) toggleTextAnnotations();
+                    clearTextHides();
+                  } else {
+                    // Disable master; per-item hides persist for next reveal
+                    if (showTextAnnotations) toggleTextAnnotations();
+                  }
+                }}
+                variant="category"
+              />
+            ) : undefined
+          }
         >
           {Object.keys(textByPage.byPage).length === 0 && (
             <div className="px-4 py-2 text-[11px] text-[var(--muted)]">No text annotations detected.</div>
@@ -621,16 +1088,39 @@ export default function ViewAllPanel() {
           {Object.entries(textByPage.byPage)
             .sort(([a], [b]) => Number(a) - Number(b))
             .map(([pn, types]) => {
+              const pnNum = Number(pn);
               const pKey = `ta-${pn}`;
               const pOpen = !!expanded[pKey];
-              const pageTotal = Object.values(types).reduce((n, items) => n + items.length, 0);
+              const pageItems: { ta: TextAnnotation; idx: number; pn: number }[] = [];
+              for (const list of Object.values(types)) {
+                for (const t of list) pageItems.push({ ta: t.ta, idx: t.idx, pn: pnNum });
+              }
+              const pageVis = aggregate(pageItems, isTextHidden);
+              const pageKeys = pageItems.map(({ pn, idx }) => `${pn}:${idx}`);
               return (
                 <div key={pn}>
-                  <SubHeader label={`Page ${pn}`} count={pageTotal} isOpen={pOpen} onToggle={() => toggle(pKey)} />
+                  <SubHeader
+                    label={`Page ${pn}`}
+                    count={pageItems.length}
+                    isOpen={pOpen}
+                    onToggle={() => toggle(pKey)}
+                    visibility={pageVis}
+                    onToggleVisibility={() => {
+                      const next = pageVis !== "all-hidden";
+                      setTextAnnotationsHiddenBulk(pageKeys, next);
+                    }}
+                  />
                   {pOpen &&
                     Object.entries(types).map(([type, items]) => {
                       const tKey = `${pKey}-${type}`;
                       const tOpen = !!expanded[tKey];
+                      const typeHidden = activeTextAnnotationTypes[type] === false;
+                      const typeItems: { ta: TextAnnotation; idx: number; pn: number }[] = items.map(
+                        ({ ta, idx }) => ({ ta, idx, pn: pnNum }),
+                      );
+                      const typeVis: VisibilityState = typeHidden
+                        ? "all-hidden"
+                        : aggregate(typeItems, isTextHidden);
                       return (
                         <div key={type}>
                           <SubHeader
@@ -639,26 +1129,41 @@ export default function ViewAllPanel() {
                             isOpen={tOpen}
                             onToggle={() => toggle(tKey)}
                             indent={2}
+                            visibility={typeVis}
+                            onToggleVisibility={() =>
+                              setTextAnnotationType(type, typeHidden)
+                            }
                           />
                           {tOpen &&
-                            withCap(tKey, items, (ta, idx) => (
-                              <div
-                                key={`${type}-${idx}`}
-                                className="flex items-center gap-2 text-[11px] py-1 hover:bg-white/5"
-                                style={{ paddingLeft: 8 + 3 * 12 }}
-                              >
-                                <button
-                                  onClick={() => handleNav(Number(pn))}
-                                  className="flex-1 text-left truncate text-[var(--fg)]"
-                                  title={ta.text}
+                            withCap(tKey, items, ({ ta, idx }) => {
+                              const key = `${pn}:${idx}`;
+                              const isHidden = hiddenTextAnnotations.has(key) || typeHidden;
+                              return (
+                                <div
+                                  key={key}
+                                  className="group flex items-center gap-2 text-[11px] py-1 hover:bg-white/5"
+                                  style={{ paddingLeft: 8 + 3 * 12 }}
                                 >
-                                  {ta.text}
-                                </button>
-                                <span className="text-[10px] text-[var(--muted)] shrink-0">
-                                  {Math.round((ta.confidence || 0) * 100)}%
-                                </span>
-                              </div>
-                            ))}
+                                  <button
+                                    onClick={() => handleNav(pnNum)}
+                                    className={`flex-1 text-left truncate ${isHidden ? "text-[var(--muted)] line-through opacity-60" : "text-[var(--fg)]"}`}
+                                    title={ta.text}
+                                  >
+                                    {ta.text}
+                                  </button>
+                                  <span className="text-[10px] text-[var(--muted)] shrink-0">
+                                    {Math.round((ta.confidence || 0) * 100)}%
+                                  </span>
+                                  <VisibilityEye
+                                    state={isHidden ? "all-hidden" : "all-visible"}
+                                    onClick={() => toggleTextAnnotationVisibility(pnNum, idx)}
+                                    variant="row"
+                                    size="sm"
+                                    showOnHover
+                                  />
+                                </div>
+                              );
+                            })}
                         </div>
                       );
                     })}
@@ -668,6 +1173,9 @@ export default function ViewAllPanel() {
         </TreeSection>
 
         {/* ─── CSI codes ──────────────────────────────────── */}
+        {/* CSI codes have no per-code canvas visibility state (activeCsiFilter
+            is single-select filter, not a visibility toggle). Row click =
+            filter-to-code, matching CsiPanel behavior. No eyeballs here in v1. */}
         <TreeSection
           title="CSI codes"
           count={csiByDivision.total}
@@ -740,9 +1248,8 @@ export default function ViewAllPanel() {
 }
 
 /**
- * Small internal sub-section header — chevron + label + count.
- * Used for nested rows below TreeSection (so TreeSection stays the
- * top-level section frame and SubHeader handles the intermediate tiers).
+ * Small internal sub-section header — chevron + label + count + optional eye.
+ * Used for nested rows below TreeSection.
  */
 function SubHeader({
   label,
@@ -750,26 +1257,39 @@ function SubHeader({
   isOpen,
   onToggle,
   indent = 1,
+  visibility,
+  onToggleVisibility,
 }: {
   label: string;
   count: number;
   isOpen: boolean;
   onToggle: () => void;
   indent?: number;
+  visibility?: VisibilityState;
+  onToggleVisibility?: () => void;
 }) {
   return (
-    <button
-      onClick={onToggle}
-      className="w-full flex items-center gap-2 py-1 pr-2 hover:bg-white/5 text-left"
+    <div
+      className="w-full flex items-center gap-2 py-1 pr-2 hover:bg-white/5"
       style={{ paddingLeft: 8 + indent * 12 }}
     >
-      <span className="text-[10px] text-[var(--muted)] w-3 shrink-0">
-        {isOpen ? "\u25BC" : "\u25B6"}
-      </span>
-      <span className="text-[11px] text-[var(--fg)] flex-1 truncate">{label}</span>
-      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface)] text-[var(--muted)] shrink-0">
-        {count}
-      </span>
-    </button>
+      <button onClick={onToggle} className="flex-1 flex items-center gap-2 text-left">
+        <span className="text-[10px] text-[var(--muted)] w-3 shrink-0">
+          {isOpen ? "\u25BC" : "\u25B6"}
+        </span>
+        <span className="text-[11px] text-[var(--fg)] flex-1 truncate">{label}</span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface)] text-[var(--muted)] shrink-0">
+          {count}
+        </span>
+      </button>
+      {visibility && onToggleVisibility && (
+        <VisibilityEye
+          state={visibility}
+          onClick={onToggleVisibility}
+          variant="category"
+          size="sm"
+        />
+      )}
+    </div>
   );
 }
