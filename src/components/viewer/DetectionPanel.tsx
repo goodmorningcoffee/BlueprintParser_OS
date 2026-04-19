@@ -45,6 +45,8 @@ export default function DetectionPanel() {
   const setMode = useViewerStore((s) => s.setMode);
   const showKeynotes = useViewerStore((s) => s.showKeynotes);
   const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
+  const showDetections = useViewerStore((s) => s.showDetections);
+  const toggleDetections = useViewerStore((s) => s.toggleDetections);
   const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
   const projectId = useViewerStore((s) => s.projectId);
@@ -181,45 +183,55 @@ export default function DetectionPanel() {
       </div>
 
       {detectionTab === "models" && <>
-      {/* Global confidence slider */}
-      <div className="px-3 py-2 border-b border-[var(--border)] space-y-1">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] text-[var(--muted)]">Min Confidence</span>
-          <span className="text-[10px] text-[var(--fg)] font-medium">{Math.round(confidenceThreshold * 100)}%</span>
-        </div>
-        <input type="range" min="0" max="100" value={confidenceThreshold * 100}
-          onChange={(e) => setConfidenceThreshold(Number(e.target.value) / 100)}
-          className="w-full h-1 bg-[var(--border)] rounded-lg appearance-none cursor-pointer accent-[var(--accent)]" />
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] text-[var(--muted)]">
+      {/* Global confidence slider + stats + paired action buttons */}
+      <div className="px-3 py-2 border-b border-[var(--border)] space-y-2">
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-[var(--muted)]">Min Confidence</span>
+            <span className="text-[10px] text-[var(--fg)] font-medium">{Math.round(confidenceThreshold * 100)}%</span>
+          </div>
+          <input type="range" min="0" max="100" value={confidenceThreshold * 100}
+            onChange={(e) => setConfidenceThreshold(Number(e.target.value) / 100)}
+            className="w-full h-1 bg-[var(--border)] rounded-lg appearance-none cursor-pointer accent-[var(--accent)]" />
+          <div className="text-[10px] text-[var(--muted)]">
             {yoloAnnotations.length} detection{yoloAnnotations.length !== 1 ? "s" : ""} shown
-          </span>
-          {modelGroups.length > 0 && (
-            <button
-              onClick={() => {
-                const allVisible = modelGroups.every(({ modelName }) => activeModels[modelName] !== false);
-                for (const { modelName } of modelGroups) setModelActive(modelName, !allVisible);
-              }}
-              className="text-[10px] text-[var(--muted)] hover:text-[var(--fg)]"
-            >
-              {modelGroups.every(({ modelName }) => activeModels[modelName] !== false) ? "Hide All" : "Show All"}
-            </button>
-          )}
+          </div>
         </div>
+
+        {/* CSI Tags (blue) + Show/Hide All (green/red) — paired 50/50 */}
+        {modelGroups.length > 0 && (
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setShowCsiTags(!showCsiTags)}
+              className={`px-2 py-1.5 text-[11px] font-medium rounded border flex items-center justify-center gap-1.5 ${
+                showCsiTags
+                  ? "bg-blue-400/20 border-blue-400/60 text-blue-300"
+                  : "bg-blue-400/10 border-blue-400/40 text-blue-400 hover:bg-blue-400/15"
+              }`}
+              title="CSI code overrides per class (project scope)"
+            >
+              CSI Tags
+              <span className="text-[9px] opacity-70">{showCsiTags ? "\u25BC" : "\u25B6"}</span>
+            </button>
+            <button
+              onClick={toggleDetections}
+              className={`px-2 py-1.5 text-[11px] font-medium rounded border ${
+                showDetections
+                  ? "bg-green-500/15 border-green-500/50 text-green-300 hover:bg-green-500/20"
+                  : "bg-red-500/15 border-red-500/50 text-red-300 hover:bg-red-500/20"
+              }`}
+              title={showDetections ? "Hide all YOLO detections on canvas" : "Show all YOLO detections on canvas"}
+            >
+              {showDetections ? "Hide All" : "Show All"}
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* CSI Tags sub-menu */}
-      {modelGroups.length > 0 && (
+      {/* CSI Tags content — expands below the paired-button row when CSI Tags is toggled on */}
+      {modelGroups.length > 0 && showCsiTags && (
         <div className="border-b border-[var(--border)]">
-          <button
-            onClick={() => setShowCsiTags(!showCsiTags)}
-            className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--surface-hover)]"
-          >
-            <span className="text-[10px] font-medium text-blue-400">CSI Tags</span>
-            <span className="text-[10px] text-[var(--muted)]">{showCsiTags ? "▼" : "▶"}</span>
-          </button>
-          {showCsiTags && (
-            <div className="px-3 pb-2 space-y-1.5">
+          <div className="px-3 py-2 space-y-1.5">
               <p className="text-[9px] text-[var(--muted)]">CSI codes per class for this project. Edit here to override global defaults.</p>
               {csiMessage && <div className="text-[9px] text-blue-400">{csiMessage}</div>}
               {modelGroups.map(({ modelName, classes }) => (
@@ -287,8 +299,7 @@ export default function DetectionPanel() {
                   </button>
                 </div>
               )}
-            </div>
-          )}
+          </div>
         </div>
       )}
 
