@@ -19,6 +19,9 @@ import TableParsePanel from "./TableParsePanel";
 import TableCompareModal from "./TableCompareModal";
 import TagBrowseBar from "./TagBrowseBar";
 import KeynotePanel from "./KeynotePanel";
+import SpecsNotesPanel from "./SpecsNotesPanel";
+import ParsePanel from "./ParsePanel";
+import ToolsPanel from "./ToolsPanel";
 import SymbolSearchPanel from "./SymbolSearchPanel";
 import ViewAllPanel from "./ViewAllPanel";
 import { useChunkLoader } from "@/hooks/useChunkLoader";
@@ -48,6 +51,12 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     symbolSearchActive, symbolSearchResults, symbolSearchLoading,
     symbolSearchTemplateBbox, symbolSearchError,
   } = useSymbolSearch();
+  // Gate the floating Symbol Search popup when Parse panel's Template Parse tab
+  // is open — the embedded SymbolSearchPanel in ParsePanel is the canonical
+  // surface in that case, avoids double-render.
+  const templateTabOpen = useViewerStore(
+    (s) => s.showParsePanel && s.parsePanelTab === "template",
+  );
 
   // Chunk loader: fetches page data when navigating beyond loaded range
   useChunkLoader();
@@ -580,8 +589,11 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
             {sidebarCollapsed ? ">" : "<"}
           </button>
 
-          {/* Symbol Search floating panel — outside scroll container to avoid stacking context issues */}
-          {(symbolSearchActive || symbolSearchResults || symbolSearchLoading || symbolSearchTemplateBbox || symbolSearchError) && (
+          {/* Symbol Search floating panel — suppressed when ParsePanel's Template
+              Parse tab is active (the embedded SymbolSearchPanel there is the
+              canonical surface in that case). */}
+          {(symbolSearchActive || symbolSearchResults || symbolSearchLoading || symbolSearchTemplateBbox || symbolSearchError) &&
+            !templateTabOpen && (
             <div className="absolute top-12 left-10 z-50">
               <SymbolSearchPanel pdfDoc={pdfDoc} />
             </div>
@@ -636,7 +648,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
         </div>
 
         {/* Right-side panels — subscribes independently to avoid re-rendering PDF area */}
-        <ViewerPanels />
+        <ViewerPanels pdfDoc={pdfDoc} />
       </div>
 
       {/* Fullscreen modal overlays */}
@@ -649,11 +661,11 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 }
 
 /** Panels subscribe to their own visibility — toggles don't re-render PDFPage/overlays */
-function ViewerPanels() {
+function ViewerPanels({ pdfDoc }: { pdfDoc: PDFDocumentProxy | null }) {
   const {
     showTextPanel, showChatPanel, showTakeoffPanel, showDetectionPanel,
     showCsiPanel, showPageIntelPanel, showTableParsePanel, showKeynoteParsePanel,
-    showViewAllPanel,
+    showSpecsNotesPanel, showParsePanel, showToolsPanel, showViewAllPanel,
   } = usePanels();
 
   return (
@@ -666,6 +678,9 @@ function ViewerPanels() {
       {showPageIntelPanel && <PageIntelligencePanel />}
       {showTableParsePanel && <TableParsePanel />}
       {showKeynoteParsePanel && <KeynotePanel />}
+      {showSpecsNotesPanel && <SpecsNotesPanel />}
+      {showParsePanel && <ParsePanel pdfDoc={pdfDoc} />}
+      {showToolsPanel && <ToolsPanel />}
       {showViewAllPanel && <ViewAllPanel />}
     </div>
   );

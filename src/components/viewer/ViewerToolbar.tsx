@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useViewerStore, useNavigation, useProject, usePanels, usePageData, useDetection, useSymbolSearch, useSummaries } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useProject, usePanels, usePageData, useDetection, useSummaries } from "@/stores/viewerStore";
 import Link from "next/link";
 import LabelingWizard from "./LabelingWizard";
 import HelpTooltip from "./HelpTooltip";
@@ -21,15 +21,16 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const scale = useViewerStore((s) => s.scale);
   const { publicId, isDemo, demoFeatureConfig } = useProject();
   const {
-    showTextPanel, toggleTextPanel, showChatPanel, toggleChatPanel,
+    showChatPanel, toggleChatPanel,
     showTakeoffPanel, toggleTakeoffPanel, showDetectionPanel, toggleDetectionPanel,
-    showCsiPanel, toggleCsiPanel, showPageIntelPanel, togglePageIntelPanel,
-    showTableParsePanel, toggleTableParsePanel, showKeynoteParsePanel, toggleKeynoteParsePanel,
+    showTableParsePanel, toggleTableParsePanel,
+    showSpecsNotesPanel, toggleSpecsNotesPanel,
+    showParsePanel, toggleParsePanel,
+    showToolsPanel, toggleToolsPanel,
     showViewAllPanel, toggleViewAllPanel,
   } = usePanels();
   const { allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
   const { annotations, activeModels, setModelActive, searchQuery, setSearch } = useDetection();
-  const { symbolSearchActive, setSymbolSearchActive, symbolSearchResults, symbolSearchLoading, clearSymbolSearch } = useSymbolSearch();
 
   // Fields not in slice selectors
   const zoomIn = useViewerStore((s) => s.zoomIn);
@@ -250,38 +251,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </HelpTooltip>
       </div>
 
-      {/* Symbol Search */}
-      <HelpTooltip id="symbol-search">
-        <button
-          onClick={() => {
-            if (symbolSearchActive) {
-              setSymbolSearchActive(false);
-            } else if (symbolSearchResults) {
-              clearSymbolSearch();
-            } else {
-              setSymbolSearchActive(true);
-              setMode("pointer");
-            }
-          }}
-          className={`px-2 py-1 text-xs rounded border flex items-center gap-1 ${
-            symbolSearchActive
-              ? "border-cyan-400/60 text-cyan-400 bg-cyan-400/10 animate-pulse"
-              : symbolSearchResults
-                ? "border-cyan-400/60 text-cyan-400 bg-cyan-400/10"
-                : symbolSearchLoading
-                  ? "border-cyan-400/40 text-cyan-400/60 animate-pulse"
-                  : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/30"
-          }`}
-          title={symbolSearchActive ? "Cancel symbol search" : symbolSearchResults ? "Clear search results" : "Symbol Search — draw a BB around a symbol to find all instances"}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="6.5" cy="6.5" r="4.5" />
-            <line x1="10" y1="10" x2="14" y2="14" />
-            <rect x="3.5" y="3.5" width="6" height="6" rx="0.5" strokeDasharray="2 1" strokeWidth="1" />
-          </svg>
-          {symbolSearchLoading ? "Searching..." : symbolSearchResults ? `${symbolSearchResults.totalMatches} found` : "Symbol"}
-        </button>
-      </HelpTooltip>
+      {/* Template Parse entry point moved into Parse panel (D3) — the
+          draw-BB flow now lives under Parse → Template Parse tab. */}
 
       {/* Spacer — pushes center section */}
       <div className="flex-1" />
@@ -321,12 +292,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
             >
               Settings
             </button>
-            <button
-              onClick={() => { setMenuOpen(false); togglePageIntelPanel(); }}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
-            >
-              {showPageIntelPanel ? "✓ " : ""}Page Intelligence
-            </button>
+            {/* Page Intelligence moved into Tools panel (D4) — the Menu entry
+                is no longer needed. Left intentionally blank for layout. */}
             <div className="border-t border-[var(--border)]" />
             <a
               href={isDemo ? "/demo/admin" : "/admin"}
@@ -560,49 +527,37 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       {/* Gradient: translucent/dark (left) → opaque/bright (right) */}
       {/* Green when active, red when inactive */}
 
-      {/* TEXT — step 2 */}
-      <HelpTooltip id="text-button">
+      {/* Parse — D3 container: Shape Parse + Template Parse + YOLO-Tag-Map */}
+      <HelpTooltip id="parse-button">
         <button
-          onClick={toggleTextPanel}
+          onClick={toggleParsePanel}
           className={`px-2 py-1 text-xs rounded border ${
-            showTextPanel
-              ? "border-green-400/60 text-green-300 bg-green-400/12"
+            showParsePanel
+              ? "border-cyan-400/60 text-cyan-300 bg-cyan-400/12"
               : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
           }`}
+          title="Parse — Shape Parse, Template Parse, YOLO-Tag-Map"
         >
-          Text
+          Parse
         </button>
       </HelpTooltip>
 
-      {/* CSI — step 3 */}
-      <HelpTooltip id="csi-button">
+      {/* Tools — D4 container: CSI + Text + Page Intelligence
+          (replaces the former standalone Text/CSI buttons and the "Page
+          Intelligence" menu entry) */}
+      <HelpTooltip id="tools-button">
         <button
-          onClick={toggleCsiPanel}
+          onClick={toggleToolsPanel}
           className={`px-2 py-1 text-xs rounded border ${
-            showCsiPanel
+            showToolsPanel
               ? "border-green-400/60 text-green-300 bg-green-400/12"
               : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
           }`}
+          title="Tools — CSI codes, Text annotations, Page Intelligence"
         >
-          CSI
+          Tools
         </button>
       </HelpTooltip>
-
-      {/* LLM CHAT — step 4 */}
-      <HelpTooltip id="chat-button">
-        <button
-          onClick={toggleChatPanel}
-          className={`px-2 py-1 text-xs rounded border ${
-            showChatPanel
-              ? "border-green-400/60 text-green-300 bg-green-400/12"
-              : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
-          }`}
-        >
-          LLM Chat
-        </button>
-      </HelpTooltip>
-
-      {/* Intel moved to Menu dropdown */}
 
       {/* QTO */}
       <HelpTooltip id="qto-button">
@@ -618,35 +573,51 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </button>
       </HelpTooltip>
 
-      {/* Schedules/Tables — far right */}
-      <HelpTooltip id="table-panel-button">
-      <button
-        onClick={toggleTableParsePanel}
-        className={`px-2 py-0.5 text-[10px] leading-tight text-center rounded border ${
-          showTableParsePanel
-            ? "border-pink-400/60 text-pink-300 bg-pink-400/12"
-            : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
-        }`}
-        title="Schedules & Table Parser"
-      >
-        <span className="block">Schedules</span><span className="block">Tables</span>
-      </button>
-      </HelpTooltip>
-
-      {/* Keynotes — far right */}
-      <HelpTooltip id="keynote-panel-button">
-      <button
-        onClick={toggleKeynoteParsePanel}
-        className={`px-2 py-1 text-xs rounded border ${
-          showKeynoteParsePanel
-            ? "border-amber-400/60 text-amber-300 bg-amber-400/12"
-            : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
-        }`}
-        title="Keynote Parser"
-      >
-        Keynotes
-      </button>
-      </HelpTooltip>
+      {/* ─── Stacked panel group — saves horizontal space ─── */}
+      {/* Three 2-line buttons in a bordered container, same visual pattern as the */}
+      {/* Pointer/Pan/Group/Markup mode toggle. Each button has its own accent color */}
+      {/* so the active panel is still obvious at a glance. */}
+      <div className="flex border border-[var(--border)] rounded">
+        <HelpTooltip id="chat-button">
+          <button
+            onClick={toggleChatPanel}
+            className={`px-2 py-0.5 text-[10px] leading-tight text-center rounded-l ${
+              showChatPanel
+                ? "border-r border-green-400/60 text-green-300 bg-green-400/12"
+                : "border-r border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}
+            title="LLM Chat — ask questions about the drawings"
+          >
+            <span className="block">LLM</span><span className="block">Chat</span>
+          </button>
+        </HelpTooltip>
+        <HelpTooltip id="table-panel-button">
+          <button
+            onClick={toggleTableParsePanel}
+            className={`px-2 py-0.5 text-[10px] leading-tight text-center ${
+              showTableParsePanel
+                ? "border-r border-pink-400/60 text-pink-300 bg-pink-400/12"
+                : "border-r border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}
+            title="Schedules & Table Parser"
+          >
+            <span className="block">Schedules</span><span className="block">Tables</span>
+          </button>
+        </HelpTooltip>
+        <HelpTooltip id="specs-notes-button">
+          <button
+            onClick={toggleSpecsNotesPanel}
+            className={`px-2 py-0.5 text-[10px] leading-tight text-center rounded-r ${
+              showSpecsNotesPanel
+                ? "text-amber-300 bg-amber-400/12"
+                : "text-[var(--muted)] hover:text-[var(--fg)]"
+            }`}
+            title="Specs / Notes — keynotes, spec text, general notes, tag mapping"
+          >
+            <span className="block">Specs</span><span className="block">Notes</span>
+          </button>
+        </HelpTooltip>
+      </div>
     </div>
   );
 }

@@ -19,7 +19,12 @@ const CATEGORY_LABELS: Record<AnnotationCategory, string> = {
   rooms: "Rooms & Spaces",
 };
 
-export default function TextPanel() {
+/**
+ * `embedded`: when true the outer panel chrome (fixed width, border, shadow)
+ * is skipped so the body can be hosted inside a parent orchestrator (e.g.
+ * ToolsPanel). TextPanel has no header bar, so only the wrapper is affected.
+ */
+export default function TextPanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
   const { textractData, textAnnotations } = usePageData();
   const { textPanelTab: tab, setTextPanelTab: setTab } = usePanels();
@@ -38,7 +43,7 @@ export default function TextPanel() {
   };
 
   return (
-    <div className="w-80 border border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0 shadow-lg">
+    <div className={embedded ? "flex flex-col h-full" : "w-80 border border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0 shadow-lg"}>
       {/* Tab bar */}
       <div className="flex border-b border-[var(--border)]">
         {(["ocr", "annotations", "markups", "graph", "textract"] as const).map((t) => (
