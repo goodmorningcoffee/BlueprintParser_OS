@@ -23,10 +23,11 @@ function getWorker(): Worker {
 export interface ClientBucketFillOptions {
   tolerance: number;
   dilation: number;
-  /** Max accepted net-area fraction before a fill is a leak. 0.05–0.95, default 0.25. */
-  leakThreshold?: number;
   barriers: { x1: number; y1: number; x2: number; y2: number }[];
   polygonBarriers: { vertices: { x: number; y: number }[] }[];
+  /** OCR text bounding boxes (normalized 0-1 [x, y, w, h]). Burned to passable
+   *  before the flood so text inside rooms doesn't block the fill. */
+  textBboxes?: { x: number; y: number; w: number; h: number }[];
   maxDimension?: number;
 }
 
@@ -36,8 +37,6 @@ export interface ClientBucketFillSuccess {
   holeCount: number;
   areaFraction: number;
   method: string;
-  retryHistory: BucketFillResult["retryHistory"];
-  leakThreshold: number;
 }
 
 /**
@@ -74,8 +73,6 @@ export async function clientBucketFill(
           holeCount: data.holeCount ?? 0,
           areaFraction: data.areaFraction ?? 0,
           method: data.method || "client-raster",
-          retryHistory: data.retryHistory,
-          leakThreshold: data.leakThreshold ?? 0.25,
         });
       } else {
         reject(new Error(data.error || "Bucket fill returned no result"));
@@ -92,9 +89,9 @@ export async function clientBucketFill(
         seedY: seedPoint.y,
         tolerance: options.tolerance,
         dilation: options.dilation,
-        leakThreshold: options.leakThreshold ?? 0.25,
         barriers: options.barriers,
         polygonBarriers: options.polygonBarriers,
+        textBboxes: options.textBboxes,
         maxDimension: options.maxDimension ?? 1000,
       },
       [bitmap] // transfer ownership

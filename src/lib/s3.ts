@@ -34,7 +34,7 @@ export async function createUploadPresignedPost(projectPath: string) {
     Bucket: S3_BUCKET,
     Key: key,
     Fields: { "Content-Type": "application/pdf" },
-    Conditions: [["content-length-range", 0, 100 * 1024 * 1024]], // 100 MB max
+    Conditions: [["content-length-range", 0, 500 * 1024 * 1024]], // 500 MB max
     Expires: 900,
   });
 
@@ -45,7 +45,7 @@ export async function createUploadPresignedPost(projectPath: string) {
 // Files land in ${projectPath}/staging/${idx3}_${safeFilename} then get
 // concatenated into ${projectPath}/original.pdf by processing.ts pre-stage.
 
-const STAGING_MAX_BYTES = 250 * 1024 * 1024; // 250 MB per file
+const STAGING_MAX_BYTES = 500 * 1024 * 1024; // 500 MB per file
 
 const STAGING_CONTENT_TYPE: Record<string, string> = {
   pdf: "application/pdf",

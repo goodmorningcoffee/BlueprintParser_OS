@@ -10,7 +10,7 @@ import { checkUploadQuota } from "@/lib/quotas";
 import { logger } from "@/lib/logger";
 import type { StagingFile } from "@/types";
 
-const PROJECT_AGGREGATE_MAX_BYTES = 1024 * 1024 * 1024; // 1 GB
+const PROJECT_AGGREGATE_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
 const PROJECT_MAX_FILES = 30;
 
 export async function POST(req: Request) {

@@ -1314,9 +1314,13 @@ export default memo(function AnnotationOverlay({
             && a.data?.type === "area-polygon" && a.data?.vertices?.length >= 3)
           .map((a: any) => ({ vertices: a.data.vertices }));
 
-        // Convert the user-facing 0-100% slider value into the 0.0-1.0
-        // fraction the worker + Python script expect. Both paths use the same key.
-        const leakThreshold = Math.max(0.05, Math.min(0.95, bfState.bucketFillLeakThresholdPct / 100));
+        // OCR text bboxes — erased (set to passable) before the flood so text
+        // inside rooms doesn't stop the bucket fill. MS-Paint model: text is
+        // a nuisance obstacle, not a wall.
+        const textractWords = bfState.textractData[pageNumber]?.words ?? [];
+        const textBboxes = textractWords.map((w: { bbox: [number, number, number, number] }) => ({
+          x: w.bbox[0], y: w.bbox[1], w: w.bbox[2], h: w.bbox[3],
+        }));
 
         const handleFillSuccess = (data: {
           vertices: { x: number; y: number }[];
@@ -1343,9 +1347,9 @@ export default memo(function AnnotationOverlay({
               seedPoint: { x: normX, y: normY },
               tolerance: bfState.bucketFillTolerance,
               dilate: bfState.bucketFillDilatePx,
-              leakThreshold,
               barriers: bfState.bucketFillBarriers,
               polygonBarriers: existingPolygons,
+              textBboxes,
             }),
           })
             .then(async (res) => {
@@ -1380,9 +1384,9 @@ export default memo(function AnnotationOverlay({
           clientBucketFill(pageCanvas, { x: normX, y: normY }, {
             tolerance: bfState.bucketFillTolerance,
             dilation: bfState.bucketFillDilatePx,
-            leakThreshold,
             barriers: bfState.bucketFillBarriers,
             polygonBarriers: existingPolygons,
+            textBboxes,
           })
             .then(handleFillSuccess)
             .catch(() => serverFallback());
@@ -2490,8 +2494,26 @@ export default memo(function AnnotationOverlay({
     setEditingAnnotationId(null);
   }, [pendingMarkup, markupName, markupNote, markupCsi, editingAnnotationId, pageNumber, publicId, addAnnotation, updateAnnotation, annotations, isDemo]);
 
-  // Always render — annotations should be visible in all modes
-  if (pageAnnotations.length === 0 && activeTakeoffItemId === null && calibrationMode === "idle" && polygonDrawingMode === "idle" && mode !== "markup" && mode !== "pointer" && mode !== "group" && !pendingMarkup) return null;
+  // Canvas gates — single source of truth so render-null and pointer-events can't drift.
+  // Drift here has caused lasso + markup disappear bugs before (see group-tool fix 2026-04-19).
+  const canvasWantsEvents = (
+    activeTakeoffItemId !== null ||
+    bucketFillActive ||
+    calibrationMode !== "idle" ||
+    polygonDrawingMode === "drawing" ||
+    mode === "markup" || mode === "pointer" || mode === "group" ||
+    tableParseStep !== "idle" ||
+    keynoteParseStep !== "idle" ||
+    symbolSearchActive ||
+    splitAreaActive
+  );
+  const canvasShouldRender = (
+    pageAnnotations.length > 0 ||
+    polygonDrawingMode !== "idle" ||
+    pendingMarkup !== null ||
+    canvasWantsEvents
+  );
+  if (!canvasShouldRender) return null;
 
   return (
     <>
@@ -2514,7 +2536,7 @@ export default memo(function AnnotationOverlay({
           left: 0,
           width: `${width}px`,
           height: `${height}px`,
-          pointerEvents: tempPanMode ? "none" : (activeTakeoffItemId !== null || bucketFillActive || calibrationMode !== "idle" || polygonDrawingMode === "drawing" || mode === "markup" || mode === "pointer" || mode === "group" || tableParseStep !== "idle" || keynoteParseStep !== "idle" || symbolSearchActive || splitAreaActive ? "auto" : "none"),
+          pointerEvents: tempPanMode ? "none" : canvasWantsEvents ? "auto" : "none",
           transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
           transformOrigin: "top left",
           willChange: "transform",

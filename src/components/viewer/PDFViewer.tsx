@@ -359,25 +359,35 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   useEffect(() => {
     if (!pendingCenter) return;
     clearPendingCenter();
-    scaleRef.current = 1;
 
-    // Calculate scroll positions directly from known padding values.
-    // We can't rely on scrollWidth during the CSS transition — the wrapper div
-    // shrinks to pageSize * (1/renderedScale) before the canvas re-renders,
-    // making scrollWidth temporarily wrong.
-    //
-    // The inner div has: paddingLeft=25vw, paddingRight=25vw, p-4 (16px).
-    // At scale=1, the page fills containerWidth-32. To center it:
-    //   scrollLeft = 25vw (the left padding offset)
-    //   scrollTop  = 50vh (the top padding offset, centers page vertically)
     const container = containerRef.current;
     if (!container) return;
+
+    // Compute fit scale from current container + page natural size. containerRef.clientWidth
+    // already reflects the current available width (shrinks when side panels open), so fit
+    // adapts to panel state. 0.95 leaves a tiny margin so the page doesn't kiss the edges.
+    const dim = pageDimensions[pageNumber];
+    if (dim && dim.width > 0 && dim.height > 0) {
+      const fitScale = Math.min(container.clientWidth / dim.width, container.clientHeight / dim.height) * 0.95;
+      if (fitScale > 0 && isFinite(fitScale)) {
+        setScale(fitScale);
+        scaleRef.current = fitScale;
+      }
+    } else {
+      // Dimensions not yet known (first render); fall back to scale=1 like the old behavior.
+      setScale(1);
+      scaleRef.current = 1;
+    }
+
+    // Center using hardcoded padding offsets. scrollWidth is unreliable during the CSS
+    // scale transition, so we compute from known layout: inner div has paddingLeft=25vw,
+    // paddingRight=25vw, top-bottom padding p-4 + 50vh offset. These values hold regardless
+    // of the current transform state.
     const targetLeft = window.innerWidth * 0.25;
     const targetTop = window.innerHeight * 0.5;
-    // Apply immediately — these values are correct regardless of CSS transform state
     container.scrollLeft = targetLeft;
     container.scrollTop = targetTop;
-  }, [pendingCenter, clearPendingCenter]);
+  }, [pendingCenter, clearPendingCenter, pageDimensions, pageNumber, setScale]);
 
   // Zoom via wheel — document-level capture phase listener
   // Guarantees we intercept events before browser native scroll or child elements
