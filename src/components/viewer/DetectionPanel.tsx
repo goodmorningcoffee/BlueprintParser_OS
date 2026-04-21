@@ -19,7 +19,19 @@ function classColor(name: string): string {
 // render. Used by yoloAnnotations to filter out non-detection annotations.
 const DETECTION_SOURCES: ReadonlySet<string> = new Set(["yolo", "shape-parse", "symbol-search"]);
 
-export default function DetectionPanel() {
+type DetectionTab = "models" | "tags" | "shape";
+
+/**
+ * `embedded`: when true the outer chrome (w-72 wrapper + header + close button)
+ * is suppressed so the body can be hosted inside a parent orchestrator (e.g.
+ * ParsePanel). `lockedTab` additionally hides the internal tab bar and forces
+ * rendering of the specified tab — use when only one tab's content should
+ * show in the host. Defaults preserve the standalone YOLO-panel behavior.
+ */
+export default function DetectionPanel({
+  embedded = false,
+  lockedTab,
+}: { embedded?: boolean; lockedTab?: DetectionTab } = {}) {
   const { pageNumber, setPage } = useNavigation();
   const { toggleDetectionPanel } = usePanels();
   const { pageNames } = useProject();
@@ -37,7 +49,9 @@ export default function DetectionPanel() {
     tagScanResults, setTagScanResults, tagAddingMode, setTagAddingMode,
   } = useYoloTags();
 
-  const [detectionTab, setDetectionTab] = useState<"models" | "tags" | "shape">("models");
+  const [internalTab, setInternalTab] = useState<DetectionTab>("models");
+  const detectionTab: DetectionTab = lockedTab ?? internalTab;
+  const setDetectionTab = setInternalTab;
   const shapeParse = useShapeParseInteraction({ detectionTab });
   const [shapeSaving, setShapeSaving] = useState(false);
   const [shapeSaveSuccess, setShapeSaveSuccess] = useState<string | null>(null);
@@ -157,30 +171,34 @@ export default function DetectionPanel() {
   }
 
   return (
-    <div className="w-72 flex flex-col h-full overflow-hidden border border-[var(--border)] bg-[var(--surface)] shadow-lg">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
-        <h3 className="text-sm font-medium text-[var(--fg)]">YOLO</h3>
-        <button onClick={toggleDetectionPanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
-      </div>
+    <div className={embedded ? "flex flex-col h-full overflow-hidden" : "w-72 flex flex-col h-full overflow-hidden border border-[var(--border)] bg-[var(--surface)] shadow-lg"}>
+      {/* Header — hidden in embedded mode; parent orchestrator provides it. */}
+      {!embedded && (
+        <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
+          <h3 className="text-sm font-medium text-[var(--fg)]">YOLO</h3>
+          <button onClick={toggleDetectionPanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
+        </div>
+      )}
 
-      {/* Tab bar */}
-      <div className="flex border-b border-[var(--border)]">
-        {(["models", "tags", "shape"] as const).map((tab) => (
-          <button key={tab} onClick={() => setDetectionTab(tab)}
-            className={`flex-1 px-3 py-1.5 text-[11px] font-medium capitalize ${
-              detectionTab === tab
-                ? "text-[var(--accent)] border-b-2 border-[var(--accent)]"
-                : "text-[var(--muted)] hover:text-[var(--fg)]"
-            }`}>
-            {tab === "tags"
-              ? `Tags${yoloTags.length > 0 ? ` (${yoloTags.length})` : ""}`
-              : tab === "shape"
-                ? `Shape${pageKeynotes.length > 0 ? ` (${pageKeynotes.length})` : ""}`
-                : "Models"}
-          </button>
-        ))}
-      </div>
+      {/* Tab bar — hidden when a specific tab is locked by the parent. */}
+      {!lockedTab && (
+        <div className="flex border-b border-[var(--border)]">
+          {(["models", "tags", "shape"] as const).map((tab) => (
+            <button key={tab} onClick={() => setDetectionTab(tab)}
+              className={`flex-1 px-3 py-1.5 text-[11px] font-medium capitalize ${
+                detectionTab === tab
+                  ? "text-[var(--accent)] border-b-2 border-[var(--accent)]"
+                  : "text-[var(--muted)] hover:text-[var(--fg)]"
+              }`}>
+              {tab === "tags"
+                ? `Tags${yoloTags.length > 0 ? ` (${yoloTags.length})` : ""}`
+                : tab === "shape"
+                  ? `Shape${pageKeynotes.length > 0 ? ` (${pageKeynotes.length})` : ""}`
+                  : "Models"}
+            </button>
+          ))}
+        </div>
+      )}
 
       {detectionTab === "models" && <>
       {/* Global confidence slider + stats + paired action buttons */}

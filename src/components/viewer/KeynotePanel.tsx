@@ -30,8 +30,13 @@ function keynoteDataToGrid(data: any): { headers: string[]; rows: Record<string,
  *
  * Guided Parse: user draws region BB, system proposes a grid (rows+cols),
  * user adjusts lines on canvas, then parses via extractCellsFromGrid.
+ *
+ * `embedded`: when true the outer panel chrome (border, shadow, width, own
+ * header+close-button) is skipped so the panel body can be hosted inside a
+ * parent orchestrator (e.g. SpecsNotesPanel). The inner tab bar + content
+ * remain intact.
  */
-export default function KeynotePanel() {
+export default function KeynotePanel({ embedded = false }: { embedded?: boolean } = {}) {
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const setPage = useViewerStore((s) => s.setPage);
   const pageNames = useViewerStore((s) => s.pageNames);
@@ -501,21 +506,23 @@ export default function KeynotePanel() {
 
   // ─── Render ─────────────────────────────────────────────
   return (
-    <div className="w-80 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
-        <h3 className="text-sm font-semibold text-[var(--fg)]">Keynotes</h3>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => useViewerStore.getState().toggleParsedRegions()}
-            className={`text-sm px-1 ${showParsedRegions ? "text-amber-300" : "text-[var(--muted)]/30"}`}
-            title="Toggle region outlines on canvas"
-          >
-            {showParsedRegions ? "\u25CF" : "\u25CB"}
-          </button>
-          <button onClick={toggleKeynoteParsePanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
+    <div className={embedded ? "flex flex-col h-full" : "w-80 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg"}>
+      {/* Header — skipped in embedded mode (parent orchestrator owns it). */}
+      {!embedded && (
+        <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
+          <h3 className="text-sm font-semibold text-[var(--fg)]">Keynotes</h3>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => useViewerStore.getState().toggleParsedRegions()}
+              className={`text-sm px-1 ${showParsedRegions ? "text-amber-300" : "text-[var(--muted)]/30"}`}
+              title="Toggle region outlines on canvas"
+            >
+              {showParsedRegions ? "\u25CF" : "\u25CB"}
+            </button>
+            <button onClick={toggleKeynoteParsePanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Tab bar */}
       <div className="flex border-b border-[var(--border)]">

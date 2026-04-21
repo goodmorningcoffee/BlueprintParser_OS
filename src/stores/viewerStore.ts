@@ -427,6 +427,24 @@ interface ViewerState {
   showTableCompareModal: boolean;
   toggleTableCompareModal: () => void;
 
+  // ─── Specs/Notes (D2 container: Spec Parse + Notes Parse + Keynotes) ──
+  showSpecsNotesPanel: boolean;
+  toggleSpecsNotesPanel: () => void;
+  specsNotesTab: "spec-parse" | "notes-parse" | "keynotes";
+  setSpecsNotesTab: (tab: "spec-parse" | "notes-parse" | "keynotes") => void;
+
+  // ─── Parse (D3 container: Shape Parse + Template Parse + YOLO-Tag-Map) ──
+  showParsePanel: boolean;
+  toggleParsePanel: () => void;
+  parsePanelTab: "shape" | "template" | "yolo-tag-map";
+  setParsePanelTab: (tab: "shape" | "template" | "yolo-tag-map") => void;
+
+  // ─── Tools (D4 container: CSI + Text + Page Intelligence) ──
+  showToolsPanel: boolean;
+  toggleToolsPanel: () => void;
+  toolsPanelTab: "csi" | "text" | "intel";
+  setToolsPanelTab: (tab: "csi" | "text" | "intel") => void;
+
   // ─── Keynote Parse ────────────────────────────────────
   showKeynoteParsePanel: boolean;
   toggleKeynoteParsePanel: () => void;
@@ -1174,6 +1192,34 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   showTableCompareModal: false,
   toggleTableCompareModal: () => set((s) => ({ showTableCompareModal: !s.showTableCompareModal })),
 
+  // ─── Specs/Notes orchestrator panel (D2) ──
+  // Lightweight wrapper — the real content lives in the per-tab components.
+  // Keynotes tab mounts <KeynotePanel embedded />; the other three are stubs.
+  showSpecsNotesPanel: false,
+  toggleSpecsNotesPanel: () =>
+    set((s) => ({ showSpecsNotesPanel: !s.showSpecsNotesPanel })),
+  specsNotesTab: "spec-parse",
+  setSpecsNotesTab: (specsNotesTab) => set({ specsNotesTab }),
+
+  // ─── Parse orchestrator panel (D3) ──
+  // Houses Shape Parse, Template Parse (renamed Symbol Search), YOLO-Tag-Map.
+  // Tabs mount DetectionPanel embedded with lockedTab, or SymbolSearchPanel
+  // embedded, so the underlying logic is reused rather than duplicated.
+  showParsePanel: false,
+  toggleParsePanel: () =>
+    set((s) => ({ showParsePanel: !s.showParsePanel })),
+  parsePanelTab: "shape",
+  setParsePanelTab: (parsePanelTab) => set({ parsePanelTab }),
+
+  // ─── Tools orchestrator panel (D4) ──
+  // Houses CSI, Text, Page Intelligence sub-tabs. Each tab mounts the
+  // respective panel in embedded mode.
+  showToolsPanel: false,
+  toggleToolsPanel: () =>
+    set((s) => ({ showToolsPanel: !s.showToolsPanel })),
+  toolsPanelTab: "csi",
+  setToolsPanelTab: (toolsPanelTab) => set({ toolsPanelTab }),
+
   showKeynoteParsePanel: false,
   toggleKeynoteParsePanel: () =>
     set((s) => ({
@@ -1452,6 +1498,12 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       tableParseRowBBs: [],
       showTableCompareModal: false,
       showKeynoteParsePanel: false,
+      showSpecsNotesPanel: false,
+      specsNotesTab: "spec-parse",
+      showParsePanel: false,
+      parsePanelTab: "shape",
+      showToolsPanel: false,
+      toolsPanelTab: "csi",
       keynoteParseTab: "all",
       keynoteParseStep: "idle",
       keynoteParseRegion: null,
@@ -1534,6 +1586,18 @@ export const usePanels = () =>
     toggleTableParsePanel: s.toggleTableParsePanel,
     showKeynoteParsePanel: s.showKeynoteParsePanel,
     toggleKeynoteParsePanel: s.toggleKeynoteParsePanel,
+    showSpecsNotesPanel: s.showSpecsNotesPanel,
+    toggleSpecsNotesPanel: s.toggleSpecsNotesPanel,
+    specsNotesTab: s.specsNotesTab,
+    setSpecsNotesTab: s.setSpecsNotesTab,
+    showParsePanel: s.showParsePanel,
+    toggleParsePanel: s.toggleParsePanel,
+    parsePanelTab: s.parsePanelTab,
+    setParsePanelTab: s.setParsePanelTab,
+    showToolsPanel: s.showToolsPanel,
+    toggleToolsPanel: s.toggleToolsPanel,
+    toolsPanelTab: s.toolsPanelTab,
+    setToolsPanelTab: s.setToolsPanelTab,
     sidebarCollapsed: s.sidebarCollapsed,
     toggleSidebar: s.toggleSidebar,
     textPanelTab: s.textPanelTab,

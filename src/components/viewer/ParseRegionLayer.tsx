@@ -28,7 +28,11 @@ export default memo(function ParseRegionLayer({
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const tableParseColumnBBs = useViewerStore((s) => s.tableParseColumnBBs);
   const tableParseRowBBs = useViewerStore((s) => s.tableParseRowBBs);
-  const showKeynoteParsePanel = useViewerStore((s) => s.showKeynoteParsePanel);
+  // Keynote region overlay renders when the standalone KeynotePanel is open OR
+  // when Specs/Notes is open on its Keynotes tab (D2 container embeds KeynotePanel).
+  const showKeynoteParsePanel = useViewerStore(
+    (s) => s.showKeynoteParsePanel || (s.showSpecsNotesPanel && s.specsNotesTab === "keynotes"),
+  );
   const keynoteParseRegion = useViewerStore((s) => s.keynoteParseRegion);
   const keynoteColumnBBs = useViewerStore((s) => s.keynoteColumnBBs);
   const keynoteRowBBs = useViewerStore((s) => s.keynoteRowBBs);
