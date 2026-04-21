@@ -181,8 +181,22 @@ export async function resolveProjectAccess(
     return { project: null, session: null, scope: null, error: apiError("Not found", 404) };
   }
 
-  // Demo projects: accessible without auth when allowDemo is set
+  // Demo projects: accessible without auth when allowDemo is set.
+  // But if the requester is authenticated root-admin or same-company admin/member,
+  // return their real scope so their LLM config + quota apply (not the demo defaults).
+  // Without this carve-out, an admin chatting on a demo project would hit the demo
+  // LLM row (Groq) instead of their configured provider (e.g., Anthropic).
   if (project.isDemo && options?.allowDemo) {
+    if (session?.user) {
+      const typedSession = session as unknown as AuthSession;
+      if (typedSession.user.isRootAdmin) {
+        return { project, session: typedSession, scope: "root", error: null };
+      }
+      if (typedSession.user.companyId === project.companyId) {
+        const scope: ProjectAccessScope = typedSession.user.role === "admin" ? "admin" : "member";
+        return { project, session: typedSession, scope, error: null };
+      }
+    }
     return {
       project,
       session: session?.user ? (session as unknown as AuthSession) : null,

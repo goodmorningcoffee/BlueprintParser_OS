@@ -310,10 +310,6 @@ interface ViewerState {
   setBucketFillTolerance: (n: number) => void;
   bucketFillDilatePx: number;
   setBucketFillDilatePx: (n: number) => void;
-  /** 0-100 (percent). Default 25. User slider in AreaTab maps to 0.10-0.80
-   *  fraction at API call time. Matches the client worker default. */
-  bucketFillLeakThresholdPct: number;
-  setBucketFillLeakThresholdPct: (n: number) => void;
   bucketFillPendingPolygon: {
     vertices: { x: number; y: number }[];
     /** Inner holes (courtyards) excluded from the net area calc. Rendered as
@@ -571,13 +567,17 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   scale: 1,
   zoomIn: () => set((s) => ({ scale: Math.min(s.scale * (1 / 0.95), 10) })),
   zoomOut: () => set((s) => ({ scale: Math.max(s.scale * 0.95, 0.2) })),
-  zoomFit: () => set({ scale: 1, pendingCenter: true }),
+  // Scale is computed at fit-time by PDFViewer (needs container + page dimensions).
+  // pendingCenter flag drives the centering + fit-scale effect there.
+  zoomFit: () => set({ pendingCenter: true }),
   pendingCenter: false,
   clearPendingCenter: () => set({ pendingCenter: false }),
   setScale: (scale) => set({ scale }),
 
   mode: "move",
-  setMode: (mode) => set({ mode, activeTakeoffItemId: null, polygonDrawingMode: "idle", polygonVertices: [], bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarriers: [], bucketFillBarrierMode: false, tempPanMode: false }),
+  // Switching modes disengages every competing tool so mode="markup" can't coexist
+  // with bucketFillActive=true / symbolSearchActive=true / etc.
+  setMode: (mode) => set({ mode, activeTakeoffItemId: null, polygonDrawingMode: "idle", polygonVertices: [], bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarriers: [], bucketFillBarrierMode: false, splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null, symbolSearchActive: false, tempPanMode: false }),
   tempPanMode: false,
   setTempPanMode: (tempPanMode) => set({ tempPanMode }),
 
@@ -959,7 +959,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       bucketFillBarrierMode: false,
       bucketFillPendingPolygon: null,
       ...(bucketFillActive
-        ? { splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null, tempPanMode: false }
+        ? { mode: "move" as const, splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null, symbolSearchActive: false, tempPanMode: false }
         : { bucketFillBarriers: [] }),
     }),
   bucketFillPreview: null,
@@ -972,8 +972,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setBucketFillTolerance: (bucketFillTolerance) => set({ bucketFillTolerance }),
   bucketFillDilatePx: 3,
   setBucketFillDilatePx: (bucketFillDilatePx) => set({ bucketFillDilatePx }),
-  bucketFillLeakThresholdPct: 25,
-  setBucketFillLeakThresholdPct: (bucketFillLeakThresholdPct) => set({ bucketFillLeakThresholdPct }),
   bucketFillPendingPolygon: null,
   setBucketFillPendingPolygon: (bucketFillPendingPolygon) => set({ bucketFillPendingPolygon }),
   commitBucketFillToItem: (item) => {
@@ -1037,7 +1035,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       splitPreview: null,
       splitError: null,
       ...(splitAreaActive
-        ? { bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillError: null, bucketFillBarrierMode: false, bucketFillBarriers: [], activeTakeoffItemId: null }
+        ? { mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillError: null, bucketFillBarrierMode: false, bucketFillBarriers: [], symbolSearchActive: false, activeTakeoffItemId: null }
         : {}),
     }),
   splitLineA: null,
@@ -1112,7 +1110,14 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       }),
     })),
   tableParseStep: "idle",
-  setTableParseStep: (tableParseStep) => set({ tableParseStep }),
+  setTableParseStep: (tableParseStep) =>
+    set((s) => ({
+      tableParseStep,
+      // Entering table-parse flow (idle → any other step): disengage markup/bucket-fill/etc.
+      ...(s.tableParseStep === "idle" && tableParseStep !== "idle"
+        ? { mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarrierMode: false, splitAreaActive: false, symbolSearchActive: false }
+        : {}),
+    })),
   tableParseRegion: null,
   setTableParseRegion: (tableParseRegion) => set({ tableParseRegion }),
   tableParsedGrid: null,
@@ -1187,7 +1192,14 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   keynoteParseTab: "all",
   setKeynoteParseTab: (keynoteParseTab) => set({ keynoteParseTab }),
   keynoteParseStep: "idle",
-  setKeynoteParseStep: (keynoteParseStep) => set({ keynoteParseStep }),
+  setKeynoteParseStep: (keynoteParseStep) =>
+    set((s) => ({
+      keynoteParseStep,
+      // Entering keynote-parse flow (idle → any other step): disengage markup/bucket-fill/etc.
+      ...(s.keynoteParseStep === "idle" && keynoteParseStep !== "idle"
+        ? { mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarrierMode: false, splitAreaActive: false, symbolSearchActive: false }
+        : {}),
+    })),
   keynoteParseRegion: null,
   setKeynoteParseRegion: (keynoteParseRegion) => set({ keynoteParseRegion }),
   keynoteColumnBBs: [],
@@ -1287,7 +1299,12 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setFocusedParsedRegionId: (focusedParsedRegionId) => set({ focusedParsedRegionId }),
 
   symbolSearchActive: false,
-  setSymbolSearchActive: (symbolSearchActive) => set({ symbolSearchActive }),
+  setSymbolSearchActive: (symbolSearchActive) =>
+    set(
+      symbolSearchActive
+        ? { symbolSearchActive, mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarrierMode: false, splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null }
+        : { symbolSearchActive }
+    ),
   symbolSearchLoading: false,
   setSymbolSearchLoading: (symbolSearchLoading) => set({ symbolSearchLoading }),
   symbolSearchProgress: null,

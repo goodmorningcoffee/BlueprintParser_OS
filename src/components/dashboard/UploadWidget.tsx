@@ -8,8 +8,8 @@ interface UploadWidgetProps {
 
 const ALLOWED_EXT = new Set(["pdf", "png", "jpg", "jpeg", "tif", "tiff", "heic"]);
 const MAX_FILES = 30;
-const MAX_FILE_BYTES = 250 * 1024 * 1024; // 250 MB
-const MAX_AGGREGATE_BYTES = 1024 * 1024 * 1024; // 1 GB
+const MAX_FILE_BYTES = 500 * 1024 * 1024; // 500 MB
+const MAX_AGGREGATE_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
 
 const ACCEPT_ATTR = ".pdf,.png,.jpg,.jpeg,.tif,.tiff,.heic";
 
@@ -98,7 +98,7 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
         continue;
       }
       if (f.size > MAX_FILE_BYTES) {
-        errors[f.name] = `Too large (${formatMB(f.size)} > 250 MB)`;
+        errors[f.name] = `Too large (${formatMB(f.size)} > 500 MB)`;
         continue;
       }
       aggregate += f.size;
@@ -108,7 +108,7 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
     if (sorted.length > MAX_FILES) {
       global = `Maximum ${MAX_FILES} files per project (got ${sorted.length})`;
     } else if (aggregate > MAX_AGGREGATE_BYTES) {
-      global = `Aggregate size ${formatMB(aggregate)} exceeds 1 GB cap`;
+      global = `Aggregate size ${formatMB(aggregate)} exceeds 2 GB cap`;
     }
 
     setFiles(sorted);

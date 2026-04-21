@@ -131,12 +131,15 @@ describe("resolveProjectAccess", () => {
     expect(result.scope).toBe("root");
   });
 
-  it("returns demo scope for root admin on demo project with allowDemo", async () => {
+  it("returns root scope (not demo) for root admin on demo project even with allowDemo", async () => {
+    // Authenticated users get their real scope so their LLM config + quota apply,
+    // not the demo defaults. allowDemo only grants demo scope to unauthenticated
+    // viewers (and cross-tenant authenticated users who otherwise wouldn't have access).
     setSession(SESSION_ROOT);
     setProject(PROJECT_DEMO);
     const result = await resolveProjectAccess({ publicId: "proj-demo" }, { allowDemo: true });
     expect(result.error).toBeNull();
-    expect(result.scope).toBe("demo");
+    expect(result.scope).toBe("root");
   });
 
   it("returns 404 for nonexistent project", async () => {
