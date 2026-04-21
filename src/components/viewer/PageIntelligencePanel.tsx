@@ -3,7 +3,12 @@
 import { useMemo, useState } from "react";
 import { useNavigation, usePageData, usePanels } from "@/stores/viewerStore";
 
-export default function PageIntelligencePanel() {
+/**
+ * `embedded`: when true the outer panel chrome (fixed width, border, shadow,
+ * own header+close-button) is skipped so the body can be hosted inside a
+ * parent orchestrator (e.g. ToolsPanel).
+ */
+export default function PageIntelligencePanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
   const { pageIntelligence } = usePageData();
   const { togglePageIntelPanel } = usePanels();
@@ -119,23 +124,26 @@ export default function PageIntelligencePanel() {
   }
 
   return (
-    <div className="w-72 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
-        <h3 className="text-sm font-semibold text-[var(--fg)]">Page Intelligence</h3>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={handleCopy}
-            className="text-[10px] px-1.5 py-0.5 rounded text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--surface)]"
-            title="Copy to clipboard"
-          >
-            {copied ? "Copied!" : "Copy"}
-          </button>
-          <button onClick={togglePageIntelPanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">
-            &times;
-          </button>
+    <div className={embedded ? "flex flex-col h-full" : "w-72 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg"}>
+      {/* Header — hidden in embedded mode; parent orchestrator provides it.
+          The Copy button stays as a per-tab utility in the parent when embedded. */}
+      {!embedded && (
+        <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
+          <h3 className="text-sm font-semibold text-[var(--fg)]">Page Intelligence</h3>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleCopy}
+              className="text-[10px] px-1.5 py-0.5 rounded text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--surface)]"
+              title="Copy to clipboard"
+            >
+              {copied ? "Copied!" : "Copy"}
+            </button>
+            <button onClick={togglePageIntelPanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">
+              &times;
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Page indicator */}
       <div className="px-3 py-1.5 border-b border-[var(--border)] text-[10px] text-[var(--muted)]">

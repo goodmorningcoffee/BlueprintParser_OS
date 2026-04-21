@@ -6,9 +6,12 @@ import { useViewerStore, useSymbolSearch, useProject, useNavigation } from "@/st
 
 interface SymbolSearchPanelProps {
   pdfDoc: PDFDocumentProxy | null;
+  /** When true, skip the outer panel chrome (border, shadow, fixed width, header
+   *  bar). Use when mounting inside a parent orchestrator (e.g. ParsePanel). */
+  embedded?: boolean;
 }
 
-export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
+export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSearchPanelProps) {
   const {
     symbolSearchActive,
     symbolSearchResults,
@@ -209,24 +212,26 @@ export default function SymbolSearchPanel({ pdfDoc }: SymbolSearchPanelProps) {
     "idle";
 
   return (
-    <div className="flex flex-col w-72 max-h-[60vh] bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] bg-cyan-900/20">
-        <div className="flex items-center gap-2">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#22d3ee" strokeWidth="1.5">
-            <circle cx="6.5" cy="6.5" r="4.5" />
-            <line x1="10" y1="10" x2="14" y2="14" />
-          </svg>
-          <span className="text-xs font-medium text-cyan-400">Symbol Search</span>
+    <div className={embedded ? "flex flex-col h-full overflow-hidden" : "flex flex-col w-72 max-h-[60vh] bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden"}>
+      {/* Header — hidden in embedded mode; parent orchestrator provides its own. */}
+      {!embedded && (
+        <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] bg-cyan-900/20">
+          <div className="flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#22d3ee" strokeWidth="1.5">
+              <circle cx="6.5" cy="6.5" r="4.5" />
+              <line x1="10" y1="10" x2="14" y2="14" />
+            </svg>
+            <span className="text-xs font-medium text-cyan-400">Template Parse</span>
+          </div>
+          <button
+            onClick={() => { abortRef.current?.abort(); clearSymbolSearch(); }}
+            className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none"
+            title="Close"
+          >
+            &times;
+          </button>
         </div>
-        <button
-          onClick={() => { abortRef.current?.abort(); clearSymbolSearch(); }}
-          className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none"
-          title="Close"
-        >
-          &times;
-        </button>
-      </div>
+      )}
 
       {/* Template preview */}
       {templateImageUrl && (

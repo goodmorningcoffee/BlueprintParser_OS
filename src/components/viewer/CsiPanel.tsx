@@ -28,7 +28,12 @@ const DIVISION_NAMES: Record<string, string> = {
   "32": "Exterior Improvements", "33": "Utilities",
 };
 
-export default function CsiPanel() {
+/**
+ * `embedded`: when true the outer panel chrome (fixed width, border, shadow,
+ * own header+close-button) is skipped so the body can be hosted inside a
+ * parent orchestrator (e.g. ToolsPanel).
+ */
+export default function CsiPanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
   const { csiCodes, allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
   const { toggleCsiPanel } = usePanels();
@@ -106,12 +111,14 @@ export default function CsiPanel() {
   }
 
   return (
-    <div className="w-72 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
-        <h3 className="text-sm font-semibold text-[var(--fg)]">CSI Codes</h3>
-        <button onClick={toggleCsiPanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">×</button>
-      </div>
+    <div className={embedded ? "flex flex-col h-full" : "w-72 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg"}>
+      {/* Header — hidden in embedded mode; parent orchestrator provides it. */}
+      {!embedded && (
+        <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
+          <h3 className="text-sm font-semibold text-[var(--fg)]">CSI Codes</h3>
+          <button onClick={toggleCsiPanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">×</button>
+        </div>
+      )}
 
       {/* Scope toggle */}
       <div className="flex px-3 py-2 gap-1 border-b border-[var(--border)]">

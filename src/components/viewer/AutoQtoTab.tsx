@@ -346,7 +346,8 @@ export default function AutoQtoTab() {
                 <button
                   onClick={() => {
                     const store = useViewerStore.getState();
-                    if (!store.showKeynoteParsePanel) store.toggleKeynoteParsePanel();
+                    if (!store.showSpecsNotesPanel) store.toggleSpecsNotesPanel();
+                    store.setSpecsNotesTab("keynotes");
                   }}
                   className="flex-1 text-[10px] px-2 py-1.5 rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
                 >
