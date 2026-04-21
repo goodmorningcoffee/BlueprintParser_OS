@@ -1,10 +1,15 @@
 /**
  * bucket-fill.worker.ts — Client-side bucket fill via WebWorker.
  *
- * Pipeline: receive ImageBitmap → downscale + grayscale (GPU filter) →
- * Otsu threshold + binarize (single pass) → separable morphological close →
- * burn barriers/exclusions → flood fill → leak-detect with auto-retry →
- * border trace → Douglas-Peucker simplify → normalize → return.
+ * MS-Paint model: one pass, no retry, no leak heuristic. Stops only at dark
+ * pixels after morphological closing. Barriers are the user-facing control
+ * for sealing unintended leaks.
+ *
+ * Pipeline: receive ImageBitmap → downscale + grayscale (GPU filter) → Otsu
+ * threshold + binarize → morph close (user dilation knob) → burn user barriers +
+ * polygon exclusions → erase OCR text bboxes to white (so the flood sweeps
+ * through text like MS Paint would) → flood fill → trace outer border → trace
+ * enclosed holes → Douglas-Peucker simplify → normalize → return.
  *
  * Target: <400ms for a typical blueprint page.
  */
@@ -17,17 +22,10 @@ export interface BucketFillRequest {
   dilation: number;
   barriers: { x1: number; y1: number; x2: number; y2: number }[];
   polygonBarriers: { vertices: { x: number; y: number }[] }[];
+  /** Textract word bounding boxes, normalized 0-1 [x, y, w, h]. Set to white
+   *  (passable) before flood so the fill isn't blocked by text inside rooms. */
+  textBboxes?: { x: number; y: number; w: number; h: number }[];
   maxDimension?: number;
-  /** Max accepted net-area fraction before an attempt is treated as a leak.
-   *  0.10–0.80 typical. Default 0.25. Exposed to the user via the tool slider. */
-  leakThreshold?: number;
-}
-
-export interface BucketFillRetryEntry {
-  dilationRadius: number;
-  areaFraction: number;
-  accepted: boolean;
-  status: "ok" | "leak" | "tiny";
 }
 
 export interface BucketFillResult {
@@ -41,12 +39,6 @@ export interface BucketFillResult {
   areaFraction?: number;
   method?: string;
   error?: string;
-  /** Number of retries past the first attempt (back-compat). */
-  retries?: number;
-  /** Full per-attempt retry log for debug drill-down. */
-  retryHistory?: BucketFillRetryEntry[];
-  /** The leak threshold that was in effect for this run. */
-  leakThreshold?: number;
 }
 
 // ─── Image processing primitives ─────────────────────────────────
@@ -438,6 +430,24 @@ export function findHoleBorders(filled: Uint8Array, w: number, h: number): { x: 
 
 // ─── Main pipeline ───────────────────────────────────────────────
 
+/** Set every pixel inside the normalized bbox to 1 (white / passable). Used to
+ *  erase OCR text so the flood sweeps through those pixels instead of stopping. */
+function eraseBboxToWhite(
+  bin: Uint8Array,
+  w: number,
+  h: number,
+  bbox: { x: number; y: number; w: number; h: number }
+): void {
+  const x0 = Math.max(0, Math.floor(bbox.x * w));
+  const y0 = Math.max(0, Math.floor(bbox.y * h));
+  const x1 = Math.min(w, Math.ceil((bbox.x + bbox.w) * w));
+  const y1 = Math.min(h, Math.ceil((bbox.y + bbox.h) * h));
+  for (let y = y0; y < y1; y++) {
+    const row = y * w;
+    for (let x = x0; x < x1; x++) bin[row + x] = 1;
+  }
+}
+
 function processFill(req: BucketFillRequest): BucketFillResult {
   const maxDim = req.maxDimension ?? 1000;
 
@@ -445,130 +455,71 @@ function processFill(req: BucketFillRequest): BucketFillResult {
   const { gray, w, h } = downscaleAndGrayscale(req.imageBitmap, maxDim);
   req.imageBitmap.close();
 
-  // 2. Otsu + binarize (single pass for histogram, single pass for threshold)
-  const baseBin = otsuAndBinarize(gray, req.tolerance);
+  // 2. Otsu + binarize
+  const bin = otsuAndBinarize(gray, req.tolerance);
 
   const seedPx = Math.max(0, Math.min(w - 1, Math.round(req.seedX * w)));
   const seedPy = Math.max(0, Math.min(h - 1, Math.round(req.seedY * h)));
 
-  // leakThreshold is user-tunable via the tool slider. 0.25 default matches
-  // the old hardcoded value so existing behavior is unchanged at defaults.
-  const leakThreshold = typeof req.leakThreshold === "number"
-    ? Math.max(0.05, Math.min(0.95, req.leakThreshold))
-    : 0.25;
-  const MAX_RETRIES = 3;
+  // 3. Morphological close — the user's Dilation knob controls how aggressive
+  // this is (closes small gaps in line art like 1–2px door-frame breaks).
+  const radius = Math.max(1, Math.ceil(req.dilation / 2));
+  const closed = morphClose(bin, w, h, radius);
 
-  const retryHistory: BucketFillRetryEntry[] = [];
-  let bestResult: { filled: Uint8Array; area: number; dilationRadius: number } | null = null;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const radius = Math.max(1, Math.ceil(req.dilation / 2)) + attempt;
-
-    // 3. Separable morphological close
-    const closed = morphClose(new Uint8Array(baseBin), w, h, radius);
-
-    // 4. Burn barriers
-    for (const b of req.barriers) {
-      burnLine(closed, w, h,
-        Math.round(b.x1 * w), Math.round(b.y1 * h),
-        Math.round(b.x2 * w), Math.round(b.y2 * h), 3);
-    }
-
-    // 5. Burn polygon exclusions
-    for (const pe of req.polygonBarriers) {
-      fillPolygonOnBinary(closed, w, h, pe.vertices);
-    }
-
-    // 6. Flood fill
-    const filled = floodFill(closed, w, h, seedPx, seedPy);
-
-    // 7. Count filled pixels. filled[i]==1 means "reached by flood from seed";
-    // holes inside the filled region stay at 0, so this count is already the
-    // net area (outer minus holes).
-    let area = 0;
-    for (let i = 0; i < filled.length; i++) if (filled[i]) area++;
-
-    const areaRatio = area / (w * h);
-
-    if (area < 20) {
-      retryHistory.push({ dilationRadius: radius, areaFraction: areaRatio, accepted: false, status: "tiny" });
-      continue;
-    }
-
-    const status: "ok" | "leak" = areaRatio <= leakThreshold ? "ok" : "leak";
-
-    // Picker rules, simplified from the previous convoluted one-liner:
-    //   1. If we have no bestResult, take this one.
-    //   2. If bestResult is a leak and this one is OK, upgrade (ok beats leak).
-    //   3. If bestResult is OK and this one is OK, prefer the LARGER area
-    //      (more of the room captured).
-    //   4. If both are leaks, prefer the SMALLER area (less escaped).
-    //   5. If bestResult is OK and this one is a leak, keep bestResult.
-    let accept = false;
-    if (!bestResult) {
-      accept = true;
-    } else {
-      const bestRatio = bestResult.area / (w * h);
-      const bestStatus = bestRatio <= leakThreshold ? "ok" : "leak";
-      if (bestStatus === "leak" && status === "ok") accept = true;
-      else if (bestStatus === "ok" && status === "ok") accept = area > bestResult.area;
-      else if (bestStatus === "leak" && status === "leak") accept = area < bestResult.area;
-      // bestStatus === "ok" && status === "leak" → keep best
-    }
-
-    if (accept) {
-      // Mark the previous winner (if any) as no-longer-accepted.
-      for (const entry of retryHistory) entry.accepted = false;
-      retryHistory.push({ dilationRadius: radius, areaFraction: areaRatio, accepted: true, status });
-      bestResult = { filled, area, dilationRadius: radius };
-    } else {
-      retryHistory.push({ dilationRadius: radius, areaFraction: areaRatio, accepted: false, status });
-    }
-
-    // First OK result wins — break out of the retry loop.
-    //
-    // COUPLING: this is correct only because the retry strategy is
-    // monotonically increasing dilation (radius = base + attempt). More
-    // dilation = thicker walls = smaller fill area, so the FIRST attempt
-    // that lands below the leak threshold is also the LARGEST valid fill
-    // we could get. If someone later changes the retry strategy to
-    // non-monotonic (e.g., tries different tolerances, or varies dilation
-    // up/down), this break is wrong — we might break on a suboptimal OK
-    // result before finding a better one. Revisit if the retry loop changes.
-    if (status === "ok") break;
+  // 4. Burn user-drawn barrier lines (explicit door seals).
+  for (const b of req.barriers) {
+    burnLine(closed, w, h,
+      Math.round(b.x1 * w), Math.round(b.y1 * h),
+      Math.round(b.x2 * w), Math.round(b.y2 * h), 3);
   }
 
-  if (!bestResult || bestResult.area === 0) {
-    return {
-      type: "error",
-      error: "Could not detect room boundary at click point",
-      retryHistory,
-      leakThreshold,
-    };
+  // 5. Burn polygon exclusions (existing takeoff polygons the user already
+  //    captured — shouldn't be re-filled).
+  for (const pe of req.polygonBarriers) {
+    fillPolygonOnBinary(closed, w, h, pe.vertices);
   }
 
-  // 8. Border trace (outer contour only). Holes are traced separately below
-  // so the preview can render them with fill-rule="evenodd".
-  const border = traceBorder(bestResult.filled, w, h);
+  // 6. Erase OCR text — text pixels inside a room are dark and would stop the
+  //    flood even though they're not walls. Burn them to white (passable) so
+  //    the flood sweeps through them like MS Paint would.
+  if (req.textBboxes) {
+    for (const tb of req.textBboxes) eraseBboxToWhite(closed, w, h, tb);
+  }
+
+  // 7. Flood fill — one pass, no retry, no leak rejection. Stops only at dark
+  //    pixels after everything above has been applied.
+  const filled = floodFill(closed, w, h, seedPx, seedPy);
+
+  // 8. Count filled pixels. filled[i]==1 means reached by flood; holes stay 0,
+  //    so this is already the net area.
+  let area = 0;
+  for (let i = 0; i < filled.length; i++) if (filled[i]) area++;
+
+  if (area < 20) {
+    return { type: "error", error: "Bad click — no connected region at that pixel" };
+  }
+
+  // 9. Border trace (outer contour). Holes traced separately so the preview
+  //    can render with fill-rule="evenodd".
+  const border = traceBorder(filled, w, h);
   if (border.length < 3) {
-    return { type: "error", error: "Detected region too small", retryHistory, leakThreshold };
+    return { type: "error", error: "Filled region too small to trace a polygon" };
   }
 
-  // 9. Find and trace enclosed holes (e.g., a courtyard inside a U-shaped
-  // hallway). This is the JS equivalent of OpenCV RETR_CCOMP.
-  const holeBorders = findHoleBorders(bestResult.filled, w, h);
+  // 10. Find + trace enclosed holes (e.g., courtyard in a U-shaped hallway).
+  const holeBorders = findHoleBorders(filled, w, h);
 
-  // 10. Simplify outer + holes with Douglas-Peucker.
+  // 11. Douglas-Peucker simplify outer + holes
   const epsilon = Math.max(w, h) * 0.005;
   const simplified = douglasPeucker(border, epsilon);
   if (simplified.length < 3) {
-    return { type: "error", error: "Simplified polygon has too few vertices", retryHistory, leakThreshold };
+    return { type: "error", error: "Simplified polygon has too few vertices" };
   }
 
-  // 11. Normalize outer to 0-1
+  // 12. Normalize outer to 0-1
   const vertices = simplified.map((p) => ({ x: p.x / w, y: p.y / h }));
 
-  // 12. Simplify + normalize each hole; drop degenerate ones
+  // 13. Simplify + normalize holes; drop degenerate ones
   const holes: { vertices: { x: number; y: number }[] }[] = [];
   for (const hb of holeBorders) {
     const hSimp = douglasPeucker(hb, epsilon);
@@ -576,18 +527,13 @@ function processFill(req: BucketFillRequest): BucketFillResult {
     holes.push({ vertices: hSimp.map((p) => ({ x: p.x / w, y: p.y / h })) });
   }
 
-  const retries = Math.max(0, retryHistory.length - 1);
-
   return {
     type: "result",
     vertices,
     holes,
     holeCount: holes.length,
-    areaFraction: bestResult.area / (w * h),
+    areaFraction: area / (w * h),
     method: "client-raster",
-    retries,
-    retryHistory,
-    leakThreshold,
   };
 }
 

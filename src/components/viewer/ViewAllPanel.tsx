@@ -10,7 +10,7 @@ import {
   useDetection,
   useTextAnnotationDisplay,
 } from "@/stores/viewerStore";
-import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem, TextAnnotation } from "@/types";
+import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem, TextAnnotation, ParsedRegion, ScheduleData, KeynoteData, LegendData, NotesData } from "@/types";
 import TreeSection from "./TreeSection";
 import MarkupDialog from "./MarkupDialog";
 import VisibilityEye, { type VisibilityState } from "./VisibilityEye";
@@ -121,6 +121,35 @@ export default function ViewAllPanel() {
   const setPage = useViewerStore((s) => s.setPage);
   const setFocusAnnotationId = useViewerStore((s) => s.setFocusAnnotationId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
+  // Drawing numbers per page — join into every row so users see "p.12 · A-201"
+  // instead of just "p.12". Hydrated at project load, so no loading state needed.
+  const pageDrawingNumbers = useViewerStore((s) => s.pageDrawingNumbers);
+  const sheetLabel = (pn: number): string => {
+    const dn = pageDrawingNumbers[pn];
+    return dn ? `p.${pn} · ${dn}` : `p.${pn}`;
+  };
+  // Pages touched per takeoff item — derived from takeoff-source annotations
+  // that carry `takeoffItemId` in their data. Used to show "A-201, A-203"
+  // next to each takeoff row (multi-page items show up to 3 sheets + "+N").
+  const pagesByTakeoffItemId = useMemo(() => {
+    const map: Record<number, number[]> = {};
+    for (const a of annotations) {
+      if (a.source !== "takeoff") continue;
+      const tid = (a.data as { takeoffItemId?: number } | undefined)?.takeoffItemId;
+      if (typeof tid !== "number") continue;
+      if (!map[tid]) map[tid] = [];
+      if (!map[tid].includes(a.pageNumber)) map[tid].push(a.pageNumber);
+    }
+    for (const pages of Object.values(map)) pages.sort((a, b) => a - b);
+    return map;
+  }, [annotations]);
+  const takeoffSheetSummary = (itemId: number): string | null => {
+    const pages = pagesByTakeoffItemId[itemId] ?? [];
+    if (pages.length === 0) return null;
+    if (pages.length === 1) return sheetLabel(pages[0]);
+    const labels = pages.slice(0, 3).map((p) => pageDrawingNumbers[p] || `p.${p}`);
+    return pages.length > 3 ? `${labels.join(", ")} +${pages.length - 3}` : labels.join(", ");
+  };
   // Master-visibility fields that gate the whole overlay class on the canvas.
   // ViewAllPanel eyeballs for YOLO / Text sub-sections bind to these so toggling
   // either surface (panel button or View All eye) keeps the other in sync.
@@ -145,13 +174,29 @@ export default function ViewAllPanel() {
     groupMembers,
     upsertAnnotationGroup,
   } = useAnnotationGroups();
-  const { csiCodes, textAnnotations, setCsiFilter } = usePageData();
+  const { csiCodes, textAnnotations, setCsiFilter, pageIntelligence } = usePageData();
   const { selectedAnnotationIds, setSelectedAnnotationIds } = useSelection();
 
   // Section expand state — collapsed by default.
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (k: string) =>
     setExpanded((s) => ({ ...s, [k]: !s[k] }));
+
+  // Master-eye memento: when user master-hides, snapshot exact visibility state
+  // so the subsequent master-show restores that state (not a full reveal of
+  // everything). Ephemeral — resets when the panel unmounts, which falls back
+  // to the original "full reveal" behavior on next show.
+  const [masterSnapshot, setMasterSnapshot] = useState<{
+    showDetections: boolean;
+    showTextAnnotations: boolean;
+    hiddenAnnotationIds: number[];
+    hiddenTakeoffItemIds: number[];
+    hiddenTextAnnotations: string[];
+    hiddenClasses: Record<string, boolean>;
+    activeModels: Record<string, boolean>;
+    activeTextAnnotationTypes: Record<string, boolean>;
+    inactiveGroupIds: number[];
+  } | null>(null);
 
   // Per-section visible row cap (starts at ROW_CAP_STEP, grows on "Show more").
   const [caps, setCaps] = useState<Record<string, number>>({});
@@ -249,9 +294,21 @@ export default function ViewAllPanel() {
   }
 
   // Shared row-action helpers.
+  // Reuses the existing `llmHighlight` scroll-to-bbox effect in PDFViewer so
+  // deep-nested row clicks reliably scroll the annotation into view — same
+  // mechanism used by tag-browse and LLM tool-use highlights.
   const handleNav = (pageNumber: number, focusId?: number) => {
     setPage(pageNumber);
-    if (focusId !== undefined) setFocusAnnotationId(focusId);
+    if (focusId === undefined) return;
+    setFocusAnnotationId(focusId);
+    const ann = useViewerStore.getState().annotations.find((a) => a.id === focusId);
+    if (ann) {
+      useViewerStore.getState().setLlmHighlight({
+        pageNumber: ann.pageNumber,
+        bbox: ann.bbox,
+        label: ann.name,
+      });
+    }
   };
 
   const toggleAnnSelection = (annId: number) => {
@@ -377,6 +434,25 @@ export default function ViewAllPanel() {
   }, [textAnnotations, q]);
 
   // CSI codes by division — aggregate detected codes across pages.
+  // Parsed tables per page — schedules, keynote tables, legends, general notes.
+  // These are user-saved from the Table Parse tool and live in
+  // pageIntelligence[pn].parsedRegions. View All surfaces them so users can
+  // browse every parsed table in the project from one place.
+  const tablesByPage = useMemo(() => {
+    const byPage: Record<number, ParsedRegion[]> = {};
+    let total = 0;
+    for (const [pnStr, pi] of Object.entries(pageIntelligence)) {
+      const pn = Number(pnStr);
+      const parsed = pi?.parsedRegions ?? [];
+      if (parsed.length === 0) continue;
+      const filtered = parsed.filter((r) => match(r.category) || match(r.type));
+      if (filtered.length === 0) continue;
+      byPage[pn] = filtered;
+      total += filtered.length;
+    }
+    return { byPage, total };
+  }, [pageIntelligence, q]);
+
   const csiByDivision = useMemo(() => {
     type CsiAgg = {
       code: string;
@@ -512,23 +588,57 @@ export default function ViewAllPanel() {
     return "partial";
   }, [sectionStates]);
 
-  // Master toggle: hide everything across every surface when any is visible;
-  // reveal everything when all are hidden. Drives both master flags
-  // (showDetections, showTextAnnotations) AND per-item hides in parallel.
+  // Master toggle: hide-all snapshots current state; show-all restores from
+  // snapshot so flipping off+on returns the panel to exactly the state it was
+  // in before. No snapshot = first-ever reveal or a post-reload reveal → fall
+  // back to full reveal of everything.
   function toggleMaster() {
     if (masterState === "all-hidden") {
-      // Full reveal
-      if (!showDetections) toggleDetections();
-      if (!showTextAnnotations) toggleTextAnnotations();
-      clearYoloHides();
-      clearTextHides();
-      setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), false);
-      setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), false);
-      setAnnotationsHiddenBulk(markupByPage.all.map((a) => a.id), false);
-      setTakeoffItemsHiddenBulk(takeoffsByKind.allItems.map((i) => i.id), false);
-      setGroupsActiveBulk(groupsFiltered, true);
+      // Show — restore from snapshot if we have one
+      if (masterSnapshot) {
+        useViewerStore.setState({
+          showDetections: masterSnapshot.showDetections,
+          showTextAnnotations: masterSnapshot.showTextAnnotations,
+          hiddenAnnotationIds: new Set(masterSnapshot.hiddenAnnotationIds),
+          hiddenTakeoffItemIds: new Set(masterSnapshot.hiddenTakeoffItemIds),
+          hiddenTextAnnotations: new Set(masterSnapshot.hiddenTextAnnotations),
+          hiddenClasses: { ...masterSnapshot.hiddenClasses },
+          activeModels: { ...masterSnapshot.activeModels },
+          activeTextAnnotationTypes: { ...masterSnapshot.activeTextAnnotationTypes },
+        });
+        // Restore group active state to match snapshot
+        const inactive = new Set(masterSnapshot.inactiveGroupIds);
+        const toDeactivate = groupsFiltered.filter((g) => inactive.has(g.id));
+        const toActivate = groupsFiltered.filter((g) => !inactive.has(g.id));
+        if (toDeactivate.length > 0) setGroupsActiveBulk(toDeactivate, false);
+        if (toActivate.length > 0) setGroupsActiveBulk(toActivate, true);
+        setMasterSnapshot(null);
+      } else {
+        // No snapshot — full reveal (first time, or after panel remount)
+        if (!showDetections) toggleDetections();
+        if (!showTextAnnotations) toggleTextAnnotations();
+        clearYoloHides();
+        clearTextHides();
+        setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), false);
+        setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), false);
+        setAnnotationsHiddenBulk(markupByPage.all.map((a) => a.id), false);
+        setTakeoffItemsHiddenBulk(takeoffsByKind.allItems.map((i) => i.id), false);
+        setGroupsActiveBulk(groupsFiltered, true);
+      }
     } else {
-      // Hide everything
+      // Hide — snapshot current state FIRST, then hide everything
+      const cur = useViewerStore.getState();
+      setMasterSnapshot({
+        showDetections: cur.showDetections,
+        showTextAnnotations: cur.showTextAnnotations,
+        hiddenAnnotationIds: Array.from(cur.hiddenAnnotationIds),
+        hiddenTakeoffItemIds: Array.from(cur.hiddenTakeoffItemIds),
+        hiddenTextAnnotations: Array.from(cur.hiddenTextAnnotations),
+        hiddenClasses: { ...cur.hiddenClasses },
+        activeModels: { ...cur.activeModels },
+        activeTextAnnotationTypes: { ...cur.activeTextAnnotationTypes },
+        inactiveGroupIds: groupsFiltered.filter((g) => g.isActive === false).map((g) => g.id),
+      });
       if (showDetections) toggleDetections();
       if (showTextAnnotations) toggleTextAnnotations();
       setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), true);
@@ -584,7 +694,7 @@ export default function ViewAllPanel() {
         >
           {ann.name}
         </button>
-        <span className="text-[10px] text-[var(--muted)] shrink-0">p.{ann.pageNumber}</span>
+        <span className="text-[10px] text-[var(--muted)] shrink-0 font-mono">{sheetLabel(ann.pageNumber)}</span>
         {csi && (
           <span className="text-[9px] text-[var(--muted)] font-mono shrink-0">{csi}</span>
         )}
@@ -1032,12 +1142,30 @@ export default function ViewAllPanel() {
                                   style={{ backgroundColor: item.color }}
                                 />
                                 <button
-                                  onClick={() => setActiveTakeoffItemId(item.id)}
+                                  onClick={() => {
+                                    setActiveTakeoffItemId(item.id);
+                                    // Also navigate to the item's first polygon so the
+                                    // canvas jumps to where this takeoff lives.
+                                    const itemAnns = annotations.filter(
+                                      (a) =>
+                                        a.source === "takeoff" &&
+                                        (a.data as { takeoffItemId?: number } | undefined)?.takeoffItemId === item.id,
+                                    );
+                                    if (itemAnns.length > 0) {
+                                      const first = itemAnns.reduce((a, b) =>
+                                        a.pageNumber <= b.pageNumber ? a : b,
+                                      );
+                                      handleNav(first.pageNumber, first.id);
+                                    }
+                                  }}
                                   className={`flex-1 text-left truncate ${itemHidden ? "text-[var(--muted)] line-through opacity-60" : "text-[var(--fg)]"}`}
                                   title={item.name}
                                 >
                                   {item.name}
                                 </button>
+                                {takeoffSheetSummary(item.id) && (
+                                  <span className="text-[10px] text-[var(--muted)] shrink-0 font-mono">{takeoffSheetSummary(item.id)}</span>
+                                )}
                                 <span className="text-[10px] text-[var(--muted)] shrink-0">{item.shape}</span>
                                 <VisibilityEye
                                   state={itemHidden ? "all-hidden" : "all-visible"}
@@ -1164,6 +1292,87 @@ export default function ViewAllPanel() {
                                 </div>
                               );
                             })}
+                        </div>
+                      );
+                    })}
+                </div>
+              );
+            })}
+        </TreeSection>
+
+        {/* ─── Tables (parsed) ─────────────────────────────── */}
+        {/* User-saved schedules / keynote tables / legends / general notes,
+            aggregated from pageIntelligence[pn].parsedRegions. Row click sets
+            page + llmHighlight → PDFViewer scrolls the region into view. No
+            per-region visibility toggle in v1 (parsed regions don't have a
+            canvas-hide flag today). */}
+        <TreeSection
+          title="Tables"
+          count={tablesByPage.total}
+          isExpanded={!!expanded.tables}
+          onToggleExpand={() => toggle("tables")}
+        >
+          {tablesByPage.total === 0 && (
+            <div className="px-4 py-2 text-[11px] text-[var(--muted)]">No parsed tables yet.</div>
+          )}
+          {Object.entries(tablesByPage.byPage)
+            .sort(([a], [b]) => Number(a) - Number(b))
+            .map(([pn, regions]) => {
+              const pnNum = Number(pn);
+              const pKey = `tables-${pn}`;
+              const pOpen = !!expanded[pKey];
+              return (
+                <div key={pn}>
+                  <SubHeader
+                    label={sheetLabel(pnNum)}
+                    count={regions.length}
+                    isOpen={pOpen}
+                    onToggle={() => toggle(pKey)}
+                  />
+                  {pOpen &&
+                    withCap(pKey, regions, (r) => {
+                      const info = (() => {
+                        if (r.type === "schedule") {
+                          const sd = r.data as ScheduleData;
+                          return `${sd.rowCount} rows × ${sd.columnCount} cols`;
+                        }
+                        if (r.type === "keynote") {
+                          const kd = r.data as KeynoteData;
+                          return `${kd.keynotes.length} keynotes`;
+                        }
+                        if (r.type === "legend") {
+                          const ld = r.data as LegendData;
+                          return `${ld.symbols.length} symbols`;
+                        }
+                        if (r.type === "notes") {
+                          const nd = r.data as NotesData;
+                          return `${nd.notes.length} notes`;
+                        }
+                        return null;
+                      })();
+                      return (
+                        <div
+                          key={r.id}
+                          className="flex items-center gap-2 text-[11px] py-1 hover:bg-white/5"
+                          style={{ paddingLeft: 8 + 2 * 12 }}
+                        >
+                          <button
+                            onClick={() => {
+                              setPage(pnNum);
+                              const [l, t, w, h] = r.bbox;
+                              useViewerStore.getState().setLlmHighlight({
+                                pageNumber: pnNum,
+                                bbox: [l, t, l + w, t + h],
+                                label: r.category,
+                              });
+                            }}
+                            className="flex items-center gap-2 flex-1 text-left truncate"
+                            title={`${r.type} · ${r.category}`}
+                          >
+                            <span className="font-mono text-[var(--fg)]">{r.category}</span>
+                            {info && <span className="text-[var(--muted)] truncate">{info}</span>}
+                          </button>
+                          <span className="text-[10px] text-[var(--muted)] shrink-0">{r.type}</span>
                         </div>
                       );
                     })}

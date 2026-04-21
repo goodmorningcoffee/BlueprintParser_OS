@@ -491,7 +491,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         <HelpTooltip id="yolo-toggle">
         <div className="relative" ref={yoloDropdownRef}>
           <button
-            onClick={() => { toggleDetectionPanel(); if (!showDetections) toggleDetections(); }}
+            onClick={toggleDetectionPanel}
             className={`px-2 py-1 text-xs rounded-l border ${
               showDetectionPanel
                 ? "border-cyan-400/60 text-cyan-400 bg-cyan-400/10"
