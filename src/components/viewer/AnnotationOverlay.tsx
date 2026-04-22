@@ -1605,9 +1605,11 @@ export default memo(function AnnotationOverlay({
         return;
       }
 
-      // Table or keynote parse drawing mode
+      // Table or keynote or notes parse drawing mode
+      const notesStep = useViewerStore.getState().notesParseStep;
       if (tableParseStep === "select-region" || tableParseStep === "define-column" || tableParseStep === "define-row"
-          || keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row") {
+          || keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row"
+          || notesStep === "select-region" || notesStep === "define-column" || notesStep === "define-row") {
         e.stopPropagation();
         setSelectedId(null);
         setDrawing(true);
@@ -2198,6 +2200,23 @@ export default memo(function AnnotationOverlay({
     }
     if (keynoteParseStep === "define-row") {
       useViewerStore.getState().addKeynoteRowBB([minX, minY, maxX, maxY]);
+      return;
+    }
+
+    // Notes parse BBs (Stage 4)
+    const notesStep = useViewerStore.getState().notesParseStep;
+    if (notesStep === "select-region") {
+      useViewerStore.getState().setNotesParseRegion([minX, minY, maxX, maxY]);
+      useViewerStore.getState().setNotesParseStep("idle");
+      useViewerStore.getState().setMode("move");
+      return;
+    }
+    if (notesStep === "define-column") {
+      useViewerStore.getState().addGuidedNotesCol([minX, minY, maxX, maxY]);
+      return;
+    }
+    if (notesStep === "define-row") {
+      useViewerStore.getState().addGuidedNotesRow([minX, minY, maxX, maxY]);
       return;
     }
 

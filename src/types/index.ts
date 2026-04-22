@@ -794,6 +794,11 @@ export interface NotesSummaryEntry {
   /** From textRegion.rowCount when available. */
   rowCount?: number;
   csiTags?: CsiCode[];
+  /** Stage 4 follow-up: bbox (LTWH, classifier convention) + regionId
+   *  so NotesIndex row click can seed `notesParseRegion` directly and
+   *  pre-target the specific textRegion for Classifier Accept. */
+  bbox?: BboxLTWH;
+  regionId?: string;
 }
 
 export interface SpecSummaryEntry {

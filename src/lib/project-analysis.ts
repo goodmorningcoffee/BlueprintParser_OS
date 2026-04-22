@@ -404,6 +404,8 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
             confidence: r.confidence,
             rowCount: r.rowCount,
             csiTags: r.csiTags,
+            bbox: r.bbox,
+            regionId: r.id,
           });
         } else if (r.type === "spec-dense-columns") {
           specRegions.push({
