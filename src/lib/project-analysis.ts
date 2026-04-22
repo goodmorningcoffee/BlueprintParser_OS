@@ -14,6 +14,8 @@ import type {
   CsiCode,
   ScheduleSummaryEntry,
   ParsedTableSummaryEntry,
+  NotesSummaryEntry,
+  SpecSummaryEntry,
   AnnotationSummary,
   TakeoffItemTotal,
   TextAnnotationResult,
@@ -284,6 +286,7 @@ export function analyzeProject(pageSummaries: PageSummary[]): {
 interface PageRow {
   pageNumber: number;
   name: string | null;
+  drawingNumber: string | null;
   keynotes: KeynoteShapeData[] | null | undefined;
   csiCodes: { code: string; description: string; trade: string; division: string }[] | null | undefined;
   textAnnotations: TextAnnotationResult | null | undefined;
@@ -309,6 +312,7 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
     .select({
       pageNumber: pages.pageNumber,
       name: pages.name,
+      drawingNumber: pages.drawingNumber,
       keynotes: pages.keynotes,
       csiCodes: pages.csiCodes,
       textAnnotations: pages.textAnnotations,
@@ -334,6 +338,10 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
   const schedules: ScheduleSummaryEntry[] = [];
   const parsedTables: ParsedTableSummaryEntry[] = [];
   const keynoteTablePages: { pageNum: number; confidence: number }[] = [];
+  // Stage 3: notes + spec catalogs. Sourced from pageIntelligence.textRegions
+  // (Layer 1 classifier output). Populated in the pageRows loop below.
+  const notesRegions: NotesSummaryEntry[] = [];
+  const specRegions: SpecSummaryEntry[] = [];
 
   // ─── Build page indexes ───
   const csiPageIndex: Record<string, number[]> = {};
@@ -373,6 +381,41 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
             category: pr.category,
             rowCount: (pr.data as any)?.rowCount || (pr.data as any)?.rows?.length || 0,
             colCount: (pr.data as any)?.columnCount || (pr.data as any)?.headers?.length || 0,
+          });
+        }
+      }
+    }
+
+    // Stage 3: textRegions → notes + spec catalogs
+    if (pi?.textRegions) {
+      for (const r of pi.textRegions) {
+        const pageName = page.name || `Page ${pn}`;
+        const drawingNumber = page.drawingNumber ?? null;
+        if (r.type === "notes-numbered" || r.type === "notes-key-value") {
+          notesRegions.push({
+            pageNum: pn,
+            pageName,
+            drawingNumber,
+            type: r.type,
+            headerText: r.headerText,
+            tier1: r.classifiedLabels?.tier1,
+            tier2: r.classifiedLabels?.tier2,
+            trade: r.classifiedLabels?.trade,
+            confidence: r.confidence,
+            rowCount: r.rowCount,
+            csiTags: r.csiTags,
+          });
+        } else if (r.type === "spec-dense-columns") {
+          specRegions.push({
+            pageNum: pn,
+            pageName,
+            drawingNumber,
+            headerText: r.headerText,
+            tier1: r.classifiedLabels?.tier1,
+            tier2: r.classifiedLabels?.tier2,
+            confidence: r.confidence,
+            wordCount: r.wordCount,
+            csiTags: r.csiTags,
           });
         }
       }
@@ -483,6 +526,8 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
     schedules,
     parsedTables,
     keynoteTablePages,
+    notesRegions: notesRegions.length > 0 ? notesRegions : undefined,
+    specRegions: specRegions.length > 0 ? specRegions : undefined,
     csiPageIndex,
     tradePageIndex,
     keynotePageIndex,

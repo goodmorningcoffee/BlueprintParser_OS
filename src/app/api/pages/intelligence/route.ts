@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { pages, projects } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import type { CsiCode } from "@/types";
+import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import { logger } from "@/lib/logger";
 
@@ -55,25 +56,9 @@ export async function PATCH(req: Request) {
 
     // CSI merge: collect CSI codes from parsedRegions and merge into page-level csiCodes
     const existingCsi = (pageRow.csiCodes || []) as CsiCode[];
-    const existingCodes = new Set(existingCsi.map((c) => c.code));
-    const newCsi = [...existingCsi];
-
-    const parsedRegions = (merged.parsedRegions || []) as Array<{ csiTags?: Array<{ code: string; description: string }> }>;
-    for (const region of parsedRegions) {
-      if (region.csiTags) {
-        for (const tag of region.csiTags) {
-          if (!existingCodes.has(tag.code)) {
-            existingCodes.add(tag.code);
-            newCsi.push({
-              code: tag.code,
-              description: tag.description,
-              division: tag.code.substring(0, 2),
-              trade: "",
-            } as CsiCode);
-          }
-        }
-      }
-    }
+    const parsedRegions = (merged.parsedRegions || []) as Array<{ csiTags?: Array<{ code: string; description: string; division?: string; trade?: string }> }>;
+    const incomingTags = parsedRegions.flatMap((r) => r.csiTags ?? []);
+    const newCsi = mergeCsiCodes(existingCsi, incomingTags);
 
     // Write both fields
     await db

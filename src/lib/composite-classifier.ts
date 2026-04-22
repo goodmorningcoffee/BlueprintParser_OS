@@ -46,6 +46,7 @@ import {
   ltwh2minmax,
 } from "@/lib/bbox-utils";
 import { migrateTextRegions } from "@/lib/text-region-migrate";
+import { isWholeWordMatch } from "@/lib/text-match-utils";
 
 // ═══════════════════════════════════════════════════════════════════
 // Constants
@@ -412,13 +413,6 @@ function findHeaderKeyword(
     }
   }
   return undefined;
-}
-
-/** Whole-word regex match (no partial — "NOTES" matches "GENERAL NOTES" but not "NOTEBOOK"). */
-function isWholeWordMatch(haystack: string, needle: string): boolean {
-  const escaped = needle.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
-  const re = new RegExp(`\\b${escaped}\\b`, "i");
-  return re.test(haystack);
 }
 
 /**

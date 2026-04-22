@@ -533,15 +533,102 @@ export interface PageIntelligence {
    *  post-YOLO reclassification hook in /api/yolo/load. Consumed by the
    *  exclusion filter in map-tags-batch. Absent on pages before YOLO runs. */
   classifiedRegions?: ClassifiedPageRegions;
+  /** Stage 2a Layer 2: universal YOLO density-heatmap output. Aggregates any
+   *  configured YOLO class set (default: text_box + vertical_area +
+   *  horizontal_area) into confident-region bboxes + per-class contribution.
+   *  Absent on pages without YOLO data. Consumed by LLM context-builder
+   *  (immediate) and Stage 2b ensemble reducer. */
+  yoloHeatmap?: YoloHeatmap;
+  /** Stage 2b: ensemble-reducer output. Cross-signal agreement across
+   *  table-classifier + composite-classifier + yolo-heatmap (+ future TATR/LLM).
+   *  Authoritative source for "is there a real table on this page" — filters
+   *  the keyword-only false positives that classifiedTables alone produces. */
+  ensembleRegions?: EnsembleRegion[];
+  /** Stage 2c: auto-table-detector proposals. Written only when
+   *  `pipelineConfig.autoDetect.tables` is enabled. Read by the auto-detect
+   *  API route and (future) by an admin review UI. */
+  autoTableProposals?: AutoTableProposal[];
   parsedRegions?: ParsedRegion[];
+  /** Stage 4: user-dismissed textRegion IDs. Persisted per-page via the same
+   *  `/api/pages/intelligence` PATCH path. Preserved across Layer 1 reprocess
+   *  (reprocess only writes the computed fields, never this one). Consumed
+   *  by the NotesClassifier to suppress rejected regions from the card list. */
+  rejectedTextRegionIds?: string[];
   csiSpatialMap?: { pageNumber: number; zones: Array<{ zone: string; divisions: Array<{ division: string; name: string; count: number; codes: string[] }>; totalInstances: number; dominantDivision?: string }>; summary: string } | null;
+}
+
+// ─── Ensemble region reducer types (Stage 2b) ────────────────
+
+/** Canonical vote sources recognized by the ensemble reducer. */
+export type EnsembleVoteSource =
+  | "table-classifier"           // keyword-driven classifiedTables (weak signal — keyword-only)
+  | "composite-classifier"       // YOLO tables + confirmers → classifiedRegions.tables
+  | "yolo-heatmap"               // density of text_box + vertical_area + horizontal_area
+  | "tatr"                       // future: table-transformer probability (Stage 2c+)
+  | "llm"                        // future: LLM table-likelihood score
+  | "parsed-region";              // user-saved ParsedRegion (strongest)
+
+/** One vote on whether a bbox is a table. Emitted by an adapter wrapping a
+ *  single classifier's output. */
+export interface RegionVote {
+  source: EnsembleVoteSource;
+  bbox: BboxLTWH;
+  score: number;                  // 0-1 self-reported confidence of this classifier
+  category?: string;              // "door-schedule" / "symbol-legend" / etc. (if known)
+  evidence?: string[];
+}
+
+/** Merged vote cluster — one "probable table" after ensemble agreement. */
+export interface EnsembleRegion {
+  bbox: BboxLTWH;                 // union of all contributing vote bboxes
+  tableProbability: number;       // 0-1 consolidated score
+  contributingVotes: RegionVote[]; // full audit trail
+  /** Distinct vote sources that fired on this region (deduplicated). */
+  voteSources: EnsembleVoteSource[];
+  /** Best-guess category from contributing votes (most common, or first). */
+  category?: string;
+  /** Human-readable reasoning string for audit + LLM consumption. */
+  reasoning: string;
+  pageNumber: number;
+}
+
+// ─── YOLO Heatmap types (Stage 2a Layer 2) ───────────────────
+
+export interface YoloHeatmapGridConfig {
+  rows: number;
+  cols: number;
+}
+
+export interface ConfidentRegion {
+  /** Normalized LTWH bounding box of the merged high-density region. */
+  bbox: BboxLTWH;
+  /** 0-1 aggregate confidence from contributing YOLO detections (normalized). */
+  confidence: number;
+  /** Which YOLO classes contributed to this region, sorted descending by
+   *  contribution weight. */
+  classes: string[];
+  /** Number of grid cells in the component. */
+  cellCount: number;
+}
+
+export interface YoloHeatmap {
+  pageNumber: number;
+  gridResolution: [number, number];
+  /** Merged high-density regions after Union-Find on thresholded grid cells. */
+  confidentRegions: ConfidentRegion[];
+  /** Per-class normalized contribution totals across the whole page.
+   *  Lets the UI surface "Run model X for full signal" advisories when a
+   *  required class is missing (e.g., yolo_primitive not yet loaded). */
+  classContributions: Record<string, number>;
+  /** Summary string for LLM context inclusion. */
+  summary: string;
 }
 
 // AnnotationData is defined above (near ClientAnnotation)
 
 // ─── Parsed Region types (System 4: structured data extraction) ──
 
-export type ParsedRegionType = "schedule" | "keynote" | "legend" | "notes";
+export type ParsedRegionType = "schedule" | "keynote" | "legend" | "notes" | "spec";
 
 export interface ParsedRegion {
   id: string;
@@ -550,7 +637,31 @@ export interface ParsedRegion {
   bbox: BboxLTWH;               // region location on page
   confidence: number;
   csiTags?: CsiCode[];
-  data: ScheduleData | KeynoteData | LegendData | NotesData;
+  data: ScheduleData | KeynoteData | LegendData | NotesData | SpecData;
+  /** Stage 2c: discriminates user-committed regions from machine-proposed ones.
+   *  Defaults to "user" when absent (all legacy ParsedRegions were user-saved). */
+  source?: "user" | "auto-detected";
+  /** Stage 4: links a promoted ParsedRegion back to its classifier-detected
+   *  textRegion. Enables the NotesClassifier to hide cards whose region has
+   *  already been committed. Absent for user-drawn regions (Parser Manual). */
+  sourceTextRegionId?: string;
+}
+
+/** Stage 2c: proposal from the auto-table-detector — one step before a
+ *  committed ParsedRegion. Does NOT carry parsed data (headers/rows/cells)
+ *  yet; the auto-parse pass fills that in downstream. */
+export interface AutoTableProposal {
+  id: string;
+  pageNumber: number;
+  bbox: BboxLTWH;
+  /** Inherited from the ensemble region that generated this proposal. */
+  tableProbability: number;
+  /** Best-guess category (door-schedule / symbol-legend / etc.) from
+   *  contributing votes. May be undefined when no keyword vote was present. */
+  category?: string;
+  /** Ensemble evidence trail for audit + UI review. */
+  reasoning: string;
+  voteSources: EnsembleVoteSource[];
 }
 
 export interface ScheduleData {
@@ -574,10 +685,36 @@ export interface LegendData {
   symbols: { yoloClass: string; description: string }[];
 }
 
+/** Stage 3 reshape (2026-04-22): notes now mirror the schedule-style grid
+ *  shape produced by the Layer-1 classifier's `bindNumberedGrid`. Legacy
+ *  shape fields (`title`, `notes[]`, `isBoilerplate?`) are preserved as
+ *  optional so pre-Stage-3 ParsedRegion.data rows still typecheck; consumers
+ *  read via `rowCount ?? notes?.length ?? 0`. */
 export interface NotesData {
-  title: string;
-  notes: string[];
+  // New (Stage 3) — schedule-style grid
+  headers?: string[];                    // typically ["Key", "Note"]
+  rows?: Record<string, string>[];       // [{Key: "1", Note: "..."}, ...]
+  tagColumn?: string;                     // "Key"
+  tableName?: string;                     // "General Notes p.3"
+  rowCount?: number;
+  columnCount?: number;
+  colBoundaries?: number[];
+  rowBoundaries?: number[];
+  noteType?: "general" | "rcp" | "demo" | "key" | "spec-note" | "other";
+
+  // Legacy — kept optional so back-compat reads don't crash
+  title?: string;
+  notes?: string[];
   isBoilerplate?: boolean[];
+}
+
+/** Stage 3 NEW: Spec regions — section-keyed structural data (not K:V).
+ *  Auto mode for specs walks PART 1 / SECTION XX block headers and emits
+ *  one entry per section. Rows-like `grid` is NOT the natural shape here. */
+export interface SpecData {
+  sections: Array<{ sectionHeader: string; body: string }>;
+  tableName?: string;
+  csiTags?: CsiCode[];
 }
 
 // ─── Project Intelligence types ─────────────────────────────
@@ -616,6 +753,14 @@ export interface ProjectSummaries {
   schedules: ScheduleSummaryEntry[];
   parsedTables: ParsedTableSummaryEntry[];
   keynoteTablePages: { pageNum: number; confidence: number }[];
+  /** Stage 3: project-wide notes regions (one per detected notes-numbered /
+   *  notes-key-value region across all pages). Populated from
+   *  pageIntelligence.textRegions during computeProjectSummaries. Read by the
+   *  Stage 4 Notes Index UI. */
+  notesRegions?: NotesSummaryEntry[];
+  /** Stage 3: project-wide spec regions (spec-dense-columns pattern family).
+   *  Populated from pageIntelligence.textRegions. Read by the Stage 5 Spec Index. */
+  specRegions?: SpecSummaryEntry[];
 
   // Page indexes: which pages contain each filter value
   csiPageIndex: Record<string, number[]>;           // "08 11 16" -> [3, 7, 12]
@@ -633,6 +778,34 @@ export interface ProjectSummaries {
   // General
   allTrades: string[];
   allCsiCodes: { code: string; description: string }[];
+}
+
+export interface NotesSummaryEntry {
+  pageNum: number;
+  pageName?: string;
+  drawingNumber?: string | null;
+  /** Maps to TextRegion.type — narrower than ParsedRegionType. */
+  type: "notes-numbered" | "notes-key-value";
+  headerText?: string;
+  tier1?: string;
+  tier2?: string;
+  trade?: string;
+  confidence: number;
+  /** From textRegion.rowCount when available. */
+  rowCount?: number;
+  csiTags?: CsiCode[];
+}
+
+export interface SpecSummaryEntry {
+  pageNum: number;
+  pageName?: string;
+  drawingNumber?: string | null;
+  headerText?: string;
+  tier1?: string;
+  tier2?: string;
+  confidence: number;
+  wordCount?: number;
+  csiTags?: CsiCode[];
 }
 
 export interface ScheduleSummaryEntry {

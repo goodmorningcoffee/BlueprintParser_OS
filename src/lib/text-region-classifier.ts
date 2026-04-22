@@ -719,3 +719,73 @@ export function classifyTextRegions(
 
   return regions;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Stage 4 — Exposed notes-parse wrapper
+// ═══════════════════════════════════════════════════════════════════
+
+export interface ParsedNotesGrid {
+  headers: string[];
+  rows: Record<string, string>[];
+  rowBoundaries?: number[];
+  colBoundaries?: number[];
+}
+
+/**
+ * Parse a user-drawn bbox region into a notes-numbered grid.
+ *
+ * Composes the private `buildLineFeatures` + `bindNumberedGrid` pipeline
+ * and computes column boundaries from the numeric-Key column width so
+ * Stage 4 Parser surfaces (Auto + Guided + Classifier Accept fallback)
+ * can render a preview grid or commit a ParsedRegion.
+ *
+ * Returns `undefined` when no numbered-item rows are detected; the
+ * notes-key-value pattern is deferred (no K:V binder ships in Stage 1a).
+ */
+export function parseNotesFromRegion(
+  textractData: TextractPageData,
+  regionBbox: BboxLTWH,
+): ParsedNotesGrid | undefined {
+  if (!textractData?.lines || textractData.lines.length === 0) return undefined;
+
+  const [rx, ry, rw, rh] = regionBbox;
+  const rRight = rx + rw;
+  const rBottom = ry + rh;
+
+  const linesInRegion = textractData.lines.filter((line) => {
+    if (!line.bbox || line.bbox.length < 4) return false;
+    const cx = line.bbox[0] + line.bbox[2] / 2;
+    const cy = line.bbox[1] + line.bbox[3] / 2;
+    return cx >= rx && cx <= rRight && cy >= ry && cy <= rBottom;
+  });
+
+  if (linesInRegion.length === 0) return undefined;
+
+  const features = buildLineFeatures(linesInRegion);
+  if (features.length === 0) return undefined;
+
+  const grid = bindNumberedGrid(features);
+  if (!grid) return undefined;
+
+  const numberedFirstWordRights: number[] = [];
+  for (const f of features) {
+    if (!RE_NUMBERED_ITEM.test(f.firstWord)) continue;
+    const firstWord = f.line.words?.[0];
+    if (!firstWord?.bbox || firstWord.bbox.length < 4) continue;
+    numberedFirstWordRights.push(firstWord.bbox[0] + firstWord.bbox[2]);
+  }
+
+  let colBoundaries: number[] | undefined;
+  if (numberedFirstWordRights.length > 0) {
+    const keyColRight = median(numberedFirstWordRights);
+    const gap = 0.005;
+    colBoundaries = [rx, Math.min(keyColRight + gap, rRight - 0.001), rRight];
+  }
+
+  return {
+    headers: grid.headers,
+    rows: grid.rows,
+    rowBoundaries: grid.rowBoundaries,
+    colBoundaries,
+  };
+}

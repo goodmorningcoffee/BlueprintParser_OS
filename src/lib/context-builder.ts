@@ -337,6 +337,57 @@ export function buildPageIntelligenceSection(pageIntelligence: any, pageNumber: 
     summaryLines.push(`${refs.length} cross-page reference(s) from Page ${pageNumber}`);
   }
 
+  // Ensemble regions (priority 5.3 — cross-signal-agreement table detection.
+  // Authoritative source for "is there a real table here"; suppresses the
+  // keyword-only false positives legacy classifiedTables produces).
+  if (pageIntelligence.ensembleRegions?.length > 0) {
+    const ensemble = pageIntelligence.ensembleRegions as any[];
+    let text = "";
+    for (const r of ensemble.slice(0, 8)) {
+      const bboxStr = r.bbox.map((v: number) => v.toFixed(2)).join(", ");
+      const sources = (r.voteSources || []).join("+");
+      const cat = r.category ? `${r.category}, ` : "";
+      text += `[${bboxStr}] ${cat}probability ${Math.round(r.tableProbability * 100)}% (sources: ${sources})\n`;
+      if (r.reasoning) text += `  ${r.reasoning}\n`;
+    }
+    if (ensemble.length > 8) text += `  ... (+${ensemble.length - 8} more)\n`;
+    sections.push({
+      header: `ENSEMBLE TABLE REGIONS — Page ${pageNumber}`,
+      content: text,
+      priority: 5.3,
+    });
+    summaryLines.push(`${ensemble.length} ensemble-confirmed table region(s) on Page ${pageNumber}`);
+  }
+
+  // YOLO heatmap (priority 5.4 — spatial density signal, feeds into region
+  // interpretation before text-region details). Only emit regions above
+  // confidence 0.6 to suppress noise.
+  if (pageIntelligence.yoloHeatmap?.confidentRegions?.length > 0) {
+    const heatmap = pageIntelligence.yoloHeatmap;
+    const kept = heatmap.confidentRegions.filter((r: any) => r.confidence >= 0.6);
+    if (kept.length > 0) {
+      let text = "";
+      for (const r of kept.slice(0, 8)) {
+        const bboxStr = r.bbox.map((v: number) => v.toFixed(2)).join(", ");
+        text += `[${bboxStr}] confidence ${Math.round(r.confidence * 100)}% — classes: ${r.classes.join("+") || "—"} (${r.cellCount} cells)\n`;
+      }
+      if (kept.length > 8) text += `  ... (+${kept.length - 8} more)\n`;
+      // Flag partial YOLO coverage for the LLM.
+      const missing = Object.keys(heatmap.classContributions).filter(
+        (c) => heatmap.classContributions[c] === 0,
+      );
+      if (missing.length > 0) {
+        text += `Partial YOLO coverage — classes with no data: ${missing.join(", ")}. Confidence may be limited until those models run.\n`;
+      }
+      sections.push({
+        header: `YOLO DENSITY REGIONS — Page ${pageNumber}`,
+        content: text,
+        priority: 5.4,
+      });
+      summaryLines.push(`${kept.length} YOLO-dense region(s) on Page ${pageNumber}`);
+    }
+  }
+
   // Note blocks (priority 5.5 — after text annotations)
   if (pageIntelligence.noteBlocks?.length > 0) {
     const blocks = pageIntelligence.noteBlocks;

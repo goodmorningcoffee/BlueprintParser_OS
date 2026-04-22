@@ -10,7 +10,7 @@ import {
   useDetection,
   useTextAnnotationDisplay,
 } from "@/stores/viewerStore";
-import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem, TextAnnotation, ParsedRegion, ScheduleData, KeynoteData, LegendData, NotesData } from "@/types";
+import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem, TextAnnotation, ParsedRegion, ScheduleData, KeynoteData, LegendData, NotesData, SpecData } from "@/types";
 import TreeSection from "./TreeSection";
 import MarkupDialog from "./MarkupDialog";
 import VisibilityEye, { type VisibilityState } from "./VisibilityEye";
@@ -1346,7 +1346,14 @@ export default function ViewAllPanel() {
                         }
                         if (r.type === "notes") {
                           const nd = r.data as NotesData;
-                          return `${nd.notes.length} notes`;
+                          // Back-compat: Stage 3 reshape introduces rowCount on new
+                          // NotesData; legacy rows used `notes: string[]`.
+                          const count = nd.rowCount ?? nd.notes?.length ?? nd.rows?.length ?? 0;
+                          return `${count} notes`;
+                        }
+                        if (r.type === "spec") {
+                          const sd = r.data as SpecData;
+                          return `${sd.sections?.length ?? 0} sections`;
                         }
                         return null;
                       })();

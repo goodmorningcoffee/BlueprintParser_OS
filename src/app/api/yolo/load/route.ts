@@ -6,7 +6,14 @@ import { eq, and, sql } from "drizzle-orm";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
+import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
+import { reduceRegionVotes } from "@/lib/ensemble/region-ensemble";
+import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
 import type { ClassifiedTable } from "@/types";
+
+/** YOLO classes aggregated by Layer 2 heatmap. Generic multi-class density —
+ *  not notes-specific; used by LLM context + Stage 2b ensemble reducer. */
+const HEATMAP_CLASSES = ["text_box", "vertical_area", "horizontal_area"] as const;
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { S3_BUCKET } from "@/lib/s3";
@@ -201,8 +208,14 @@ export async function POST(req: Request) {
         .from(pages)
         .where(eq(pages.projectId, project.id));
 
-      // Fetch company heuristic config
+      // Fetch company heuristic config + Stage 2d pipeline toggles.
+      // Absent flags → legacy defaults (heatmap + ensemble on, autoDetect off).
       let companyHeuristics: any[] | undefined;
+      let heatmapEnabled = true;
+      let ensembleEnabled = true;
+      let ensembleConfig: any;
+      let autoDetectEnabled = false;
+      let autoDetectConfig: { minProbability?: number; categoryFilter?: string[] } = {};
       try {
         const [company] = await db
           .select({ pipelineConfig: companies.pipelineConfig })
@@ -210,6 +223,16 @@ export async function POST(req: Request) {
           .where(eq(companies.id, project.companyId))
           .limit(1);
         companyHeuristics = company?.pipelineConfig?.heuristics;
+        const disabledSteps = new Set(company?.pipelineConfig?.disabledSteps ?? []);
+        heatmapEnabled = !disabledSteps.has("yolo-heatmap");
+        ensembleEnabled = !disabledSteps.has("ensemble");
+        ensembleConfig = company?.pipelineConfig?.ensemble?.config;
+        autoDetectEnabled = company?.pipelineConfig?.autoDetect?.tables === true
+          && !disabledSteps.has("auto-table-detect");
+        autoDetectConfig = {
+          minProbability: company?.pipelineConfig?.autoDetect?.minProbability,
+          categoryFilter: company?.pipelineConfig?.autoDetect?.categoryFilter,
+        };
       } catch { /* use defaults */ }
 
       const rules = getEffectiveRules(companyHeuristics);
@@ -292,6 +315,65 @@ export async function POST(req: Request) {
           }
         } catch (err) {
           logger.error(`[YOLO-LOAD] classifyPageRegions failed for page ${page.pageNumber}:`, err);
+        }
+
+        // Stage 2a Layer 2: YOLO density heatmap — aggregates text_box +
+        // vertical_area + horizontal_area into confident-region bboxes.
+        // Universal spatial signal consumed by LLM context + Stage 2b ensemble.
+        // Gated on pipelineConfig.heatmap.
+        if (heatmapEnabled) {
+          try {
+            const heatmap = computeYoloHeatmap(page.pageNumber, yoloDets, {
+              classes: [...HEATMAP_CLASSES],
+            });
+            if (heatmap.confidentRegions.length > 0
+              || Object.values(heatmap.classContributions).some((v) => v > 0)) {
+              updated.yoloHeatmap = heatmap;
+              pageChanged = true;
+            }
+          } catch (err) {
+            logger.error(`[YOLO-LOAD] computeYoloHeatmap failed for page ${page.pageNumber}:`, err);
+          }
+        }
+
+        // Stage 2b: ensemble reducer — cross-signal agreement; suppresses
+        // keyword-only false positives (the 2026-04-22 door-schedule screenshot bug).
+        if (ensembleEnabled) {
+          try {
+            const votes = collectAllVotes({
+              classifiedTables: updated.classifiedTables as ClassifiedTable[] | undefined,
+              classifiedRegionsTables: (updated.classifiedRegions as any)?.tables,
+              yoloHeatmap: updated.yoloHeatmap as any,
+              parsedRegions: (existing.parsedRegions as any) ?? undefined,
+            });
+            if (votes.length > 0) {
+              const ensembleRegions = reduceRegionVotes(page.pageNumber, votes, ensembleConfig);
+              if (ensembleRegions.length > 0) {
+                updated.ensembleRegions = ensembleRegions;
+                pageChanged = true;
+              }
+            }
+          } catch (err) {
+            logger.error(`[YOLO-LOAD] ensemble reducer failed for page ${page.pageNumber}:`, err);
+          }
+        }
+
+        // Stage 2c: auto-table-detector — emit AutoTableProposal[] for review.
+        if (autoDetectEnabled) {
+          try {
+            const { detectAutoTables } = await import("@/lib/auto-detect/auto-table-detector");
+            const proposals = detectAutoTables(
+              page.pageNumber,
+              updated.ensembleRegions as any,
+              autoDetectConfig,
+            );
+            if (proposals.length > 0) {
+              (updated as any).autoTableProposals = proposals;
+              pageChanged = true;
+            }
+          } catch (err) {
+            logger.error(`[YOLO-LOAD] auto-table-detector failed for page ${page.pageNumber}:`, err);
+          }
         }
 
         if (pageChanged) {

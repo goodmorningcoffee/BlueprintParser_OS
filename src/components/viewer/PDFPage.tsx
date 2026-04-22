@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback, memo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore, useKeynoteParse } from "@/stores/viewerStore";
 import SearchHighlightOverlay from "./SearchHighlightOverlay";
 import TextAnnotationOverlay from "./TextAnnotationOverlay";
 import KeynoteOverlay from "./KeynoteOverlay";
@@ -22,6 +22,34 @@ interface CacheEntry {
 }
 
 const MAX_CACHED_PAGES = 8;
+
+const KeynoteGuidedOverlaySlot = memo(function KeynoteGuidedOverlaySlot(props: {
+  width: number;
+  height: number;
+  cssScale: number;
+}) {
+  const {
+    guidedParseActive,
+    guidedParseRegion,
+    guidedParseRows,
+    guidedParseCols,
+    setGuidedParseRows,
+    setGuidedParseCols,
+  } = useKeynoteParse();
+  return (
+    <GuidedParseOverlay
+      active={guidedParseActive}
+      region={guidedParseRegion}
+      rows={guidedParseRows}
+      cols={guidedParseCols}
+      setRows={setGuidedParseRows}
+      setCols={setGuidedParseCols}
+      width={props.width}
+      height={props.height}
+      cssScale={props.cssScale}
+    />
+  );
+});
 
 interface PDFPageProps {
   pdfDoc: PDFDocumentProxy | null;
@@ -364,7 +392,7 @@ export default memo(function PDFPage({
           cssScale={cssScale}
         />
       )}
-      <GuidedParseOverlay
+      <KeynoteGuidedOverlaySlot
         width={pageSize.width}
         height={pageSize.height}
         cssScale={cssScale}
