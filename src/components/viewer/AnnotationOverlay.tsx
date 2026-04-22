@@ -1314,9 +1314,14 @@ export default memo(function AnnotationOverlay({
             && a.data?.type === "area-polygon" && a.data?.vertices?.length >= 3)
           .map((a: any) => ({ vertices: a.data.vertices }));
 
-        // OCR text bboxes — erased (set to passable) before the flood so text
-        // inside rooms doesn't stop the bucket fill. MS-Paint model: text is
-        // a nuisance obstacle, not a wall.
+        // OCR text bboxes — staged for Tier 2 (enclosed-text area accounting).
+        // The worker currently ignores these; pre-2026-04-22 it used them to
+        // erase text-to-passable before flood, which punched holes through
+        // walls when an OCR bbox straddled a thin wall. New paradigm: text
+        // is a wall during flood (stops the fill at letter boundaries), and
+        // a future feature will add the real-world area of fully-enclosed
+        // text bboxes back to the reported sqft. Keep passing the payload so
+        // Tier 2 is a one-line re-adoption; do not delete as "unused."
         const textractWords = bfState.textractData[pageNumber]?.words ?? [];
         const textBboxes = textractWords.map((w: { bbox: [number, number, number, number] }) => ({
           x: w.bbox[0], y: w.bbox[1], w: w.bbox[2], h: w.bbox[3],
@@ -1378,15 +1383,21 @@ export default memo(function AnnotationOverlay({
             });
         };
 
-        // Try client-side WebWorker first, fall back to server
+        // Try client-side WebWorker first, fall back to server.
+        // maxDimension is the worker's resolution knob — 1000 is near-instant
+        // but averages thin walls out of existence on high-DPI CAD exports;
+        // 4000 is near-native PDF.js canvas resolution with a ~150-250ms cost
+        // on big fills. 2000 / 3000 are intermediate snaps on the slider.
         const pageCanvas = findPageCanvas();
         if (pageCanvas) {
+          const maxDimension = bfState.bucketFillResolution;
           clientBucketFill(pageCanvas, { x: normX, y: normY }, {
             tolerance: bfState.bucketFillTolerance,
             dilation: bfState.bucketFillDilatePx,
             barriers: bfState.bucketFillBarriers,
             polygonBarriers: existingPolygons,
             textBboxes,
+            maxDimension,
           })
             .then(handleFillSuccess)
             .catch(() => serverFallback());
