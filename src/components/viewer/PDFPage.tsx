@@ -8,6 +8,7 @@ import TextAnnotationOverlay from "./TextAnnotationOverlay";
 import KeynoteOverlay from "./KeynoteOverlay";
 import AnnotationOverlay from "./AnnotationOverlay";
 import GuidedParseOverlay from "./GuidedParseOverlay";
+import FastManualParseOverlay from "./FastManualParseOverlay";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import ParseRegionLayer from "./ParseRegionLayer";
 import ParsedTableCellOverlay from "./ParsedTableCellOverlay";
@@ -44,6 +45,30 @@ const KeynoteGuidedOverlaySlot = memo(function KeynoteGuidedOverlaySlot(props: {
       cols={guidedParseCols}
       setRows={setGuidedParseRows}
       setCols={setGuidedParseCols}
+      width={props.width}
+      height={props.height}
+      cssScale={props.cssScale}
+    />
+  );
+});
+
+const NotesFastManualOverlaySlot = memo(function NotesFastManualOverlaySlot(props: {
+  pageNumber: number;
+  width: number;
+  height: number;
+  cssScale: number;
+}) {
+  const active = useViewerStore((s) => s.notesFastManualActive);
+  const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
+  const textractData = useViewerStore((s) => s.textractData[props.pageNumber]);
+  const setNotesFastManualGrid = useViewerStore((s) => s.setNotesFastManualGrid);
+  const lines = textractData?.lines ?? [];
+  return (
+    <FastManualParseOverlay
+      active={active}
+      textractLines={lines}
+      regionBbox={notesParseRegion}
+      onGridChange={setNotesFastManualGrid}
       width={props.width}
       height={props.height}
       cssScale={props.cssScale}
@@ -393,6 +418,12 @@ export default memo(function PDFPage({
         />
       )}
       <KeynoteGuidedOverlaySlot
+        width={pageSize.width}
+        height={pageSize.height}
+        cssScale={cssScale}
+      />
+      <NotesFastManualOverlaySlot
+        pageNumber={pageNumber}
         width={pageSize.width}
         height={pageSize.height}
         cssScale={cssScale}

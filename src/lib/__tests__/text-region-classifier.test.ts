@@ -289,4 +289,31 @@ describe("parseNotesFromRegion — Stage 4 Parser wrapper", () => {
     const regionBbox: [number, number, number, number] = [0.9, 0.9, 0.05, 0.05];
     expect(parseNotesFromRegion(data, regionBbox)).toBeUndefined();
   });
+
+  it("falls back to K:V binder when the region has no numbered items", () => {
+    // Build a line with two text tokens separated by a large X gap — mimics
+    // the abbreviations-legend K:V pattern (ABV  ABOVE).
+    const lines = [
+      (() => {
+        const w1 = { text: "ABV", confidence: 95, bbox: [0.1, 0.2, 0.04, 0.02] as [number, number, number, number] };
+        const w2 = { text: "ABOVE", confidence: 95, bbox: [0.25, 0.2, 0.06, 0.02] as [number, number, number, number] };
+        return { text: "ABV ABOVE", confidence: 95, bbox: [0.1, 0.2, 0.21, 0.02] as [number, number, number, number], words: [w1, w2] };
+      })(),
+      (() => {
+        const w1 = { text: "AFF", confidence: 95, bbox: [0.1, 0.23, 0.04, 0.02] as [number, number, number, number] };
+        const w2 = { text: "ABOVE", confidence: 95, bbox: [0.25, 0.23, 0.06, 0.02] as [number, number, number, number] };
+        const w3 = { text: "FLOOR", confidence: 95, bbox: [0.32, 0.23, 0.06, 0.02] as [number, number, number, number] };
+        return { text: "AFF ABOVE FLOOR", confidence: 95, bbox: [0.1, 0.23, 0.28, 0.02] as [number, number, number, number], words: [w1, w2, w3] };
+      })(),
+    ];
+    const data = pageOf(lines);
+    const grid = parseNotesFromRegion(data, [0.05, 0.15, 0.5, 0.2]);
+    expect(grid).toBeDefined();
+    expect(grid?.headers).toEqual(["Key", "Value"]);
+    expect(grid?.rows.length).toBe(2);
+    expect(grid?.rows[0].Key).toBe("ABV");
+    expect(grid?.rows[0].Value).toBe("ABOVE");
+    expect(grid?.rows[1].Key).toBe("AFF");
+    expect(grid?.rows[1].Value).toBe("ABOVE FLOOR");
+  });
 });
