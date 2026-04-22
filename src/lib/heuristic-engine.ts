@@ -24,6 +24,7 @@ import { bboxCenterLTWH, bboxContainsPoint, bboxAreaLTWH, wordsToText } from "@/
 import { logger } from "@/lib/logger";
 import { migrateRule, type LegacyHeuristicRule } from "@/lib/heuristic-rule-migrate";
 import { migrateTextRegions } from "@/lib/text-region-migrate";
+import { isWholeWordMatch } from "@/lib/text-match-utils";
 
 // ═══════════════════════════════════════════════════════════════════
 // Rule Types
@@ -389,7 +390,6 @@ interface PageContext {
 function scoreRule(rule: HeuristicRule, ctx: PageContext): { score: number; evidence: string[] } {
   let score = 0;
   const evidence: string[] = [];
-  const upperText = ctx.rawText.toUpperCase();
 
   // Group YOLO detections by class
   const yoloByClass = new Map<string, YoloDetection[]>();
@@ -423,12 +423,12 @@ function scoreRule(rule: HeuristicRule, ctx: PageContext): { score: number; evid
   }
 
   // Required text keywords: mode-aware match ("all-required" or "any-required").
+  // Whole-word matching (isWholeWordMatch) so "DOOR" doesn't match "INDOOR" etc.
   // Bails if required text is missing AND this is a text-only rule (no YOLO gate).
   if (rule.textKeywordsRequired.length > 0) {
-    const upperKeywords = rule.textKeywordsRequired.map(kw => kw.toUpperCase());
     const match = rule.textKeywordsMode === "all-required"
-      ? upperKeywords.every(kw => upperText.includes(kw))
-      : upperKeywords.some(kw => upperText.includes(kw));
+      ? rule.textKeywordsRequired.every(kw => isWholeWordMatch(ctx.rawText, kw))
+      : rule.textKeywordsRequired.some(kw => isWholeWordMatch(ctx.rawText, kw));
     if (match) {
       score += 0.25;
       evidence.push(`Required keywords: ${rule.textKeywordsRequired.join(", ")}`);
@@ -446,9 +446,9 @@ function scoreRule(rule: HeuristicRule, ctx: PageContext): { score: number; evid
     }
   }
 
-  // Booster keywords: each present adds +0.05, no gating
+  // Booster keywords: each present adds +0.05, no gating. Whole-word matching.
   for (const kw of rule.textKeywordsBoosters) {
-    if (upperText.includes(kw.toUpperCase())) {
+    if (isWholeWordMatch(ctx.rawText, kw)) {
       score += 0.05;
       evidence.push(`Booster keyword: ${kw}`);
     }

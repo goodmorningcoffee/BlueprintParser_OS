@@ -16,7 +16,16 @@ import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
+import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
+import { reduceRegionVotes } from "@/lib/ensemble/region-ensemble";
+import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
 import type { ClassifiedTable } from "@/types";
+
+/** YOLO classes aggregated by Layer 2 heatmap. Matches the "Notes agreement"
+ *  recipe (text_box + vertical_area + horizontal_area) from the 4-layer plan
+ *  but stays deliberately generic — any dense multi-class region surfaces as
+ *  a confident region regardless of pattern family. */
+const HEATMAP_CLASSES = ["text_box", "vertical_area", "horizontal_area"] as const;
 import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
 import type { TextractPageData, TextAnnotation, TextAnnotationResult, CsiCode } from "@/types";
 import { logger } from "@/lib/logger";
@@ -77,6 +86,19 @@ export async function POST(req: Request) {
       let skippedPages = 0;
 
       const companyHeuristics = company?.pipelineConfig?.heuristics;
+      // Stage 2d: pluggable pipeline toggles. The existing PipelineTab UI
+      // drives `disabledSteps` for on/off; advanced tuning lives on dedicated
+      // keys. Defaults: heatmap + ensemble on, autoDetect off.
+      const disabledSteps = new Set(company?.pipelineConfig?.disabledSteps ?? []);
+      const heatmapEnabled = !disabledSteps.has("yolo-heatmap");
+      const ensembleEnabled = !disabledSteps.has("ensemble");
+      const ensembleConfig = company?.pipelineConfig?.ensemble?.config;
+      const autoDetectEnabled = company?.pipelineConfig?.autoDetect?.tables === true
+        && !disabledSteps.has("auto-table-detect");
+      const autoDetectConfig = {
+        minProbability: company?.pipelineConfig?.autoDetect?.minProbability,
+        categoryFilter: company?.pipelineConfig?.autoDetect?.categoryFilter,
+      };
 
       send({ type: "start", projects: allProjects.length });
 
@@ -524,6 +546,69 @@ export async function POST(req: Request) {
                   if (hasRegions) pageIntelligence.classifiedRegions = regions;
                 } catch (err) {
                   logger.error(`[reprocess-intel] classifyPageRegions failed for page ${page.pageNumber}:`, err);
+                }
+
+                // Stage 2a Layer 2: YOLO density heatmap. Universal module —
+                // aggregates text_box + vertical_area + horizontal_area into
+                // confident-region bboxes. Consumed by LLM context-builder
+                // and (Stage 2b) the ensemble reducer. Gated on pipelineConfig.heatmap.
+                if (heatmapEnabled) {
+                  try {
+                    const heatmap = computeYoloHeatmap(page.pageNumber, pageYolo, {
+                      classes: [...HEATMAP_CLASSES],
+                    });
+                    if (heatmap.confidentRegions.length > 0
+                      || Object.values(heatmap.classContributions).some((v) => v > 0)) {
+                      pageIntelligence.yoloHeatmap = heatmap;
+                    }
+                  } catch (err) {
+                    logger.error(`[reprocess-intel] computeYoloHeatmap failed for page ${page.pageNumber}:`, err);
+                  }
+                }
+              }
+
+              // Stage 2b: ensemble reducer — cross-signal agreement across
+              // table-classifier + composite-classifier + yolo-heatmap +
+              // parsed-region. Suppresses keyword-only false positives.
+              // Gated on pipelineConfig.ensemble.
+              if (ensembleEnabled) {
+                try {
+                  const intel = pageIntelligence as any;
+                  const votes = collectAllVotes({
+                    classifiedTables: intel.classifiedTables,
+                    classifiedRegionsTables: intel.classifiedRegions?.tables,
+                    yoloHeatmap: intel.yoloHeatmap,
+                    parsedRegions: intel.parsedRegions,
+                  });
+                  if (votes.length > 0) {
+                    const ensembleRegions = reduceRegionVotes(page.pageNumber, votes, ensembleConfig as any);
+                    if (ensembleRegions.length > 0) {
+                      pageIntelligence.ensembleRegions = ensembleRegions;
+                    }
+                  }
+                } catch (err) {
+                  logger.error(`[reprocess-intel] ensemble reducer failed for page ${page.pageNumber}:`, err);
+                }
+              }
+
+              // Stage 2c: auto-table-detector — emits AutoTableProposal[] for
+              // downstream review. Gated on pipelineConfig.autoDetect.tables.
+              if (autoDetectEnabled) {
+                try {
+                  const { detectAutoTables } = await import("@/lib/auto-detect/auto-table-detector");
+                  const proposals = detectAutoTables(
+                    page.pageNumber,
+                    (pageIntelligence as any).ensembleRegions,
+                    {
+                      minProbability: autoDetectConfig.minProbability,
+                      categoryFilter: autoDetectConfig.categoryFilter,
+                    },
+                  );
+                  if (proposals.length > 0) {
+                    (pageIntelligence as any).autoTableProposals = proposals;
+                  }
+                } catch (err) {
+                  logger.error(`[reprocess-intel] auto-table-detector failed for page ${page.pageNumber}:`, err);
                 }
               }
 

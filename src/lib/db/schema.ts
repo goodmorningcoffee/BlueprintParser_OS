@@ -97,10 +97,42 @@ export const companies = pgTable("companies", {
       domainKnowledge?: string;
     };
     pipeline?: Record<string, unknown>;
+    /** Array of step IDs the admin has toggled off in PipelineTab. Every
+     *  gated pipeline stage checks `!disabledSteps.includes(step.id)`. */
+    disabledSteps?: string[];
     demo?: Record<string, boolean>;
     pageNaming?: {
       enabled?: boolean;
       yoloSources?: Array<{ modelId: number; modelName: string; classes: string[] }>;
+    };
+    /** Stage 2d: pluggable pipeline toggles. Each detector is independently
+     *  enable-able; absent/undefined fields default to the legacy behavior
+     *  (enabled for back-compat). */
+    ensemble?: {
+      /** Enable the Stage 2b ensemble reducer. Default: enabled. */
+      enabled?: boolean;
+      /** Override the ensemble reducer's minDistinctVotes / probabilityThreshold / etc. */
+      config?: {
+        minDistinctVotes?: number;
+        iouThreshold?: number;
+        containThreshold?: number;
+        probabilityThreshold?: number;
+        sourceWeights?: Record<string, number>;
+      };
+    };
+    autoDetect?: {
+      /** Stage 2c: emit AutoTableProposal[] during processing/reprocess.
+       *  Default: disabled (admin opt-in). */
+      tables?: boolean;
+      /** Override the auto-detector's minProbability floor. */
+      minProbability?: number;
+      /** Restrict auto-detection to specific categories. */
+      categoryFilter?: string[];
+    };
+    /** Stage 2a: toggle for the YOLO density heatmap. Default: enabled when
+     *  YOLO data is present. Disable to skip the heatmap step entirely. */
+    heatmap?: {
+      enabled?: boolean;
     };
   }>(),
   features: jsonb("features").$type<{
