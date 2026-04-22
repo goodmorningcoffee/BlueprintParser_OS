@@ -45,7 +45,6 @@ const NOTE_TYPE_OPTIONS: NotesData["noteType"][] = [
 export default function NotesParser() {
   const projectId = useViewerStore((s) => s.projectId);
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
   const textractData = useViewerStore((s) => s.textractData[pageNumber]);
 
@@ -68,14 +67,14 @@ export default function NotesParser() {
   const [error, setError] = useState<string | null>(null);
   const isSavingRef = useRef(false);
 
-  // Sync preview → ParseRegionLayer draft whenever preview or region changes
-  useEffect(() => {
-    if (!preview || !notesParseRegion) {
-      setParseDraftRegion(null);
-      return;
-    }
+  // Derive the draft ParsedRegion via useMemo so its identity is stable while
+  // inputs are stable. Without this, every effect fire (and downstream
+  // ParseRegionLayer canvas redraw) triggers even when the payload is
+  // structurally unchanged across re-renders.
+  const draft = useMemo<ParsedRegion | null>(() => {
+    if (!preview || !notesParseRegion) return null;
     const [x0, y0, x1, y1] = notesParseRegion;
-    const draft: ParsedRegion = {
+    return {
       id: "draft-notes",
       type: "notes",
       category: "notes-preview",
@@ -93,8 +92,11 @@ export default function NotesParser() {
         colBoundaries: preview.colBoundaries,
       },
     };
+  }, [preview, notesParseRegion]);
+
+  useEffect(() => {
     setParseDraftRegion(draft);
-  }, [preview, notesParseRegion, setParseDraftRegion]);
+  }, [draft, setParseDraftRegion]);
 
   // Clear draft on unmount
   useEffect(() => {
@@ -361,7 +363,11 @@ export default function NotesParser() {
             </button>
           ) : (
             <button
-              onClick={() => setNotesParseRegion(null)}
+              onClick={() => {
+                resetNotesParse();
+                setNotesParseStep("select-region");
+                useViewerStore.getState().setMode("pointer");
+              }}
               className="text-[9px] px-1.5 py-0.5 rounded text-[var(--muted)] hover:text-red-400"
             >
               Redraw

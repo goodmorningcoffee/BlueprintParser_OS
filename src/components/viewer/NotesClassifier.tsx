@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import type { PageIntelligence, TextRegion } from "@/types";
@@ -30,14 +30,39 @@ type RowAction = "idle" | "promoting" | "rejecting";
 export default function NotesClassifier({ onEditInParser }: NotesClassifierProps) {
   const projectId = useViewerStore((s) => s.projectId);
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
+  // Scoped subscription: rerender only when this page's intel changes,
+  // not when any page's intel changes.
+  const intel = useViewerStore((s) => s.pageIntelligence[pageNumber]) as PageIntelligence | undefined;
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
   const setNotesParseRegion = useViewerStore((s) => s.setNotesParseRegion);
   const setNotesType = useViewerStore((s) => s.setNotesType);
   const [rowStates, setRowStates] = useState<Record<string, RowAction>>({});
   const [errorByRow, setErrorByRow] = useState<Record<string, string>>({});
 
-  const intel = pageIntelligence[pageNumber] as PageIntelligence | undefined;
+  // One-shot prune of stale rejectedTextRegionIds — IDs whose textRegion no
+  // longer exists after a Layer 1 reprocess. Keyed on (projectId, pageNumber)
+  // so we prune at most once per page visit. Fires only when there's actually
+  // stale data to avoid unnecessary PATCH traffic.
+  const prunedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!projectId || !intel?.textRegions || !intel.rejectedTextRegionIds?.length) return;
+    const key = `${projectId}:${pageNumber}`;
+    if (prunedKeyRef.current === key) return;
+    const activeIds = new Set(intel.textRegions.map((tr) => tr.id));
+    const pruned = intel.rejectedTextRegionIds.filter((id) => activeIds.has(id));
+    if (pruned.length === intel.rejectedTextRegionIds.length) return; // nothing stale
+    prunedKeyRef.current = key;
+    const updated: PageIntelligence = { ...intel, rejectedTextRegionIds: pruned };
+    setPageIntelligence(pageNumber, updated);
+    fetch("/api/pages/intelligence", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, pageNumber, intelligence: updated }),
+    }).catch(() => {
+      // Non-fatal — next page visit will retry if stale IDs still present.
+      prunedKeyRef.current = null;
+    });
+  }, [projectId, pageNumber, intel, setPageIntelligence]);
 
   const visibleRegions = useMemo(() => {
     if (!intel?.textRegions) return [];

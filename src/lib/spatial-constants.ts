@@ -73,3 +73,21 @@ export const CLASSIFIER_MIN_REGION_WORDS = 5;
 /** Stage C skip-gate: only run whitespace-rectangle detection when there
  *  are enough words AND Stage B detected multi-column content. */
 export const CLASSIFIER_WHITESPACE_SKIP_WORD_COUNT = 200;
+
+// ─── Stage 4 notes binder tunables ───────────────────────────
+
+/** Stage 4: Normalized X-padding between the Key and Note columns
+ *  emitted by `parseNotesFromRegion`. Gives the grid overlay a small
+ *  visual gutter without eating content in either cell. */
+export const NOTES_KEY_COLUMN_GAP = 0.005;
+
+/** Stage 4: Minimum inter-word X-gap, as a fraction of the line's
+ *  width, for `bindKeyValueGrid` to treat the gap as a K:V split.
+ *  Lines with gaps below this are treated as single-column prose. */
+export const KV_MIN_GAP_RATIO = 0.05;
+
+/** Stage 4: Default `ParsedRegion.confidence` when a user-committed
+ *  region is promoted via `/api/regions/promote`. Confidence here is
+ *  a UI cue ("how confidently the region is labeled"), not a
+ *  probability — user action is the authoritative signal. */
+export const PARSED_REGION_DEFAULT_CONFIDENCE = 0.85;
