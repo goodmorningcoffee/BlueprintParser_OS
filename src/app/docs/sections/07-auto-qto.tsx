@@ -10,6 +10,16 @@ import { AutoQtoProgressBar } from "../_components/demos/AutoQtoProgressBar";
 export function Section07AutoQto() {
   return (
     <Section id="auto-qto" eyebrow="Engines" title="Auto-QTO: Schedule-Driven Takeoff">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: Auto-QTO is the whole &quot;count everything on the
+        drawings&quot; workflow in one wizard. Pick a material (doors, finishes,
+        equipment, plumbing, electrical), confirm which schedule it came from,
+        pick which shape contains the tags, click Run, review the numbers,
+        export. It&apos;s what turns all the earlier work into a number you
+        can paste into a bid.
+      </div>
+
       <p>
         Auto-QTO is the pipeline from &quot;I parsed a schedule and mapped its
         tags to YOLO shapes&quot; to &quot;I have a line-item quantity takeoff

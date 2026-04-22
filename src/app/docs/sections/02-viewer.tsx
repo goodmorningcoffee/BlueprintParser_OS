@@ -12,14 +12,26 @@ import { ConfidenceSliderDemo } from "../_components/demos/ConfidenceSliderDemo"
 import { MarkupDialogDemo } from "../_components/demos/MarkupDialogDemo";
 import { AreaUnitChipDemo } from "../_components/demos/AreaUnitChipDemo";
 import { ViewerAnatomyDiagram } from "../_components/demos/ViewerAnatomyDiagram";
+import { CanvasRenderGateDiagram } from "../_components/demos/CanvasRenderGateDiagram";
+import { StoreSliceHookMap } from "../_components/demos/StoreSliceHookMap";
 
 export function Section02Viewer() {
   return (
     <Section id="viewer" eyebrow="User Guide" title="Inside the Viewer">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: the viewer looks like a dense PDF review tool. Sidebar
+        on the left with page thumbnails. Big canvas in the middle showing the
+        current page with interactive overlays for markup, measurements, YOLO
+        detections, and search hits. A toolbar across the top picks the current
+        mode. Panels on the right slide in for each feature &mdash; text, CSI,
+        chat, takeoff, schedules, keynotes. Everything is one click away.
+      </div>
+
       <p>
         The viewer lives at <InlineCode>/project/[id]</InlineCode> and is the
         primary surface for every user-facing feature in BP. It is a single React
-        tree driven by a Zustand store with ~15 slice selectors, backed by a
+        tree driven by a Zustand store with 17 slice selectors, backed by a
         client-side pdf.js rasterizer for the canvas and a series of overlay
         layers for annotations, markups, YOLO detections, keynotes, parse
         regions, and search highlights. Everything you do inside a project flows
@@ -210,6 +222,56 @@ export function Section02Viewer() {
             <InlineCode>DrawingPreviewLayer</InlineCode> &mdash; the rubber-band preview while the user is drawing a new markup.
           </li>
         </ul>
+      </SubSection>
+
+      <SubSection title="State management: the 17 slice hooks">
+        <p>
+          The viewer&apos;s state lives in a single Zustand store at{" "}
+          <InlineCode>src/stores/viewerStore.ts</InlineCode> (1,986 lines). The
+          store is large but access is scoped through seventeen{" "}
+          <em>slice hooks</em> &mdash; each hook returns a narrow set of fields
+          memoized by <InlineCode>useShallow</InlineCode>, so components only
+          re-render on changes to their own slice.
+        </p>
+        <Figure
+          kind="live"
+          caption="17 slice hooks fan out from useViewerStore. Line numbers are from the current viewerStore.ts."
+          size="full"
+        >
+          <StoreSliceHookMap />
+        </Figure>
+        <Callout variant="tip" title="Rule of thumb for new UI">
+          Before adding a new visibility flag or filter, grep the store for an
+          existing slice that fits. Binding a new panel to an existing slice
+          means two-way sync with the toolbar and ViewAllPanel eye icons is
+          automatic &mdash; no drift risk. Adding a parallel state field
+          usually re-discovers a bug that was already fixed once.
+        </Callout>
+      </SubSection>
+
+      <SubSection title="The canvas render gate (drift hazard)">
+        <p>
+          <InlineCode>src/components/viewer/AnnotationOverlay.tsx</InlineCode>{" "}
+          is the center of the drawing logic &mdash; 2,581 lines that handle
+          every canvas mode, hit testing, bucket fill commit, split-area,
+          vertex edit, polygon drawing, symbol search, markup, calibration,
+          and keynote/table parse region selection. The file has one structural
+          trap that bit the group-tool fix on 2026-04-19 and keeps coming back:
+          <strong> adding a new mode requires touching four places.</strong>
+        </p>
+        <Figure
+          kind="live"
+          caption="Canvas render gate — four coupled conditions in AnnotationOverlay.tsx. Missing any one produces a different silent regression."
+          size="full"
+        >
+          <CanvasRenderGateDiagram />
+        </Figure>
+        <p>
+          The companion architecture doc at{" "}
+          <InlineCode>featureRoadMap/BPArchitecture_422.md</InlineCode>{" "}
+          contains the full mode table and exact line numbers if you&apos;re
+          about to add a new tool.
+        </p>
       </SubSection>
 
       <SubSection title="Scale calibration and measurement units">

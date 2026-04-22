@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Landing } from "./_components/Landing";
 import { TocSidebar, type TocEntry } from "./_components/TocSidebar";
 import {
+  Section00Walkthrough,
   Section01Overview,
   Section02Viewer,
   Section03Preprocessing,
@@ -16,10 +17,12 @@ import {
   Section09LlmAndTools,
   Section10Admin,
   Section11Architecture,
-  Section12ApiReference,
+  Section12ForLlms,
+  Section13ApiReference,
 } from "./sections";
 
 const TOC: TocEntry[] = [
+  { id: "walkthrough", label: "Walkthrough", group: "Start Here" },
   { id: "overview", label: "Overview", group: "Intro" },
   { id: "viewer", label: "The Viewer", group: "User Guide" },
   { id: "preprocessing", label: "Pre-Processing", group: "Engines" },
@@ -31,6 +34,7 @@ const TOC: TocEntry[] = [
   { id: "llm-and-tools", label: "LLM & Tools", group: "Engines" },
   { id: "admin", label: "Admin Dashboard", group: "Operations" },
   { id: "architecture", label: "Architecture", group: "Operations" },
+  { id: "for-llms", label: "How BP Works — for LLMs", group: "Meta" },
   { id: "api-reference", label: "API Reference", group: "Operations" },
 ];
 
@@ -83,6 +87,7 @@ export default function DocsPage() {
         {/* Main content */}
         <main className="flex-1 min-w-0 px-6 lg:px-10 py-8 max-w-4xl mx-auto lg:mx-0">
           <Landing />
+          <Section00Walkthrough />
           <Section01Overview />
           <Section02Viewer />
           <Section03Preprocessing />
@@ -94,7 +99,8 @@ export default function DocsPage() {
           <Section09LlmAndTools />
           <Section10Admin />
           <Section11Architecture />
-          <Section12ApiReference />
+          <Section12ForLlms />
+          <Section13ApiReference />
 
           <footer className="mt-16 pt-8 border-t border-[var(--border)] text-[11px] text-[var(--muted)]">
             <p>
@@ -103,6 +109,8 @@ export default function DocsPage() {
               every section is a standalone TSX file, and every visual is a real
               React component (live demo or inline SVG diagram) under{" "}
               <code className="font-mono">src/app/docs/_components/demos/</code>.
+              The companion deep-dive for Claude / other LLMs is{" "}
+              <code className="font-mono">featureRoadMap/BPArchitecture_422.md</code>.
             </p>
           </footer>
         </main>

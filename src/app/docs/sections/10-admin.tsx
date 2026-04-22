@@ -7,6 +7,16 @@ import { TableEl } from "../_components/TableEl";
 export function Section10Admin() {
   return (
     <Section id="admin" eyebrow="Operations" title="Admin Dashboard">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: the admin dashboard is the tuning shop. You get 14
+        tabs, one for each subsystem &mdash; users, companies, AI models, CSI
+        config, heuristics, LLM context, pipeline knobs, feature flags. Every
+        dial that controls how the pipeline behaves for your company is in
+        here, not behind a wizard. Built for technical users who want to see
+        everything.
+      </div>
+
       <p>
         The admin dashboard at <InlineCode>/admin</InlineCode> is where every
         company-level tuning knob lives: YOLO model management, CSI detection

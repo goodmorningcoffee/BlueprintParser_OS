@@ -13,6 +13,16 @@ import { CsiTierExplainer } from "../_components/demos/CsiTierExplainer";
 export function Section04CsiEngine() {
   return (
     <Section id="csi-engine" eyebrow="Engines" title="CSI as a Token-Efficient Blueprint Encoding">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: CSI MasterFormat is the construction industry&apos;s
+        Dewey Decimal system. Every spec section has a 6-digit code like{" "}
+        &quot;08 14 00 = Wood Doors&quot;. BP detects these codes on every page,
+        uses them to summarize what&apos;s on the sheet, and builds a project-
+        wide graph showing how trades connect. An LLM can navigate a 200-page
+        set through that graph without ever reading most of the OCR.
+      </div>
+
       <p>
         The hardest thing about putting a construction project in front of an
         LLM is the raw token cost. A typical 200-page drawing set runs to

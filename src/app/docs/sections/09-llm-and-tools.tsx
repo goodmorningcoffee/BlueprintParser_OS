@@ -13,6 +13,17 @@ import { SectionPrioritySliders } from "../_components/demos/SectionPrioritySlid
 export function Section09LlmAndTools() {
   return (
     <Section id="llm-and-tools" eyebrow="Engines" title="The LLM Loop: Tool-Making, Agentic Rounds, Context Budgets">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: you can chat with your project. The model can&apos;t
+        read the whole PDF directly &mdash; it&apos;s too big &mdash; so BP
+        gives it 20 tools that query pre-computed structured data (CSI codes,
+        schedules, detections, text search). The model calls tools in rounds,
+        up to ten times, until it can answer. Which tools it has, what order it
+        prefers them in, and how much context it starts with are all tunable
+        per company.
+      </div>
+
       <p>
         BP&apos;s LLM integration is the payoff for everything in sections 3–8.
         The preprocessing pipeline builds structured data, CSI encodes it
