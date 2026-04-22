@@ -27,11 +27,13 @@ export async function PATCH(req: Request) {
       return apiError("Missing projectId, pageNumber, or intelligence", 400);
     }
 
-    const access = await resolveProjectAccess({ dbId: projectId });
+    const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
     if (access.error) return access.error;
-    const { project: proj } = access;
+    const { project: proj, scope } = access;
 
-    if (proj.isDemo) {
+    // Admin/root of the owning company can write to demo projects; all others
+    // blocked. Scope is already computed by resolveProjectAccess.
+    if (proj.isDemo && scope !== "admin" && scope !== "root") {
       return apiError("Demo projects are read-only", 403);
     }
 

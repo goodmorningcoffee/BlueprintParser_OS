@@ -84,11 +84,14 @@ export async function POST(req: Request) {
       );
     }
 
-    const access = await resolveProjectAccess({ dbId: projectId });
+    const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
     if (access.error) return access.error;
-    const { project } = access;
+    const { project, scope } = access;
 
-    if (project.isDemo) {
+    // Admin/root users of the owning company can write to demo projects; all
+    // others are blocked. Matches the carve-out pattern in `resolveProjectAccess`
+    // — scope is already computed by that helper.
+    if (project.isDemo && scope !== "admin" && scope !== "root") {
       return apiError("Demo projects are read-only", 403);
     }
 
