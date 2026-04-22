@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, pages, annotations, takeoffItems, companies } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
+import { findWordsInBbox, wordsToText } from "@/lib/ocr-utils";
+import type { TextractPageData } from "@/types";
 import {
   buildYoloSummary,
   buildTextAnnotationsSection,
@@ -69,14 +71,34 @@ export async function POST(req: Request) {
     sections.push({ id: "yolo-counts", header: "OBJECT DETECTIONS (YOLO)", content: yoloResult.text, priority: 1 });
   }
 
-  // User annotations
+  // User annotations — mirrors the live chat shape in scoped.ts: bbox + OCR
+  // text inside each markup so the admin preview shows what the LLM actually sees.
   const userAnns = await db.select().from(annotations)
     .where(and(eq(annotations.projectId, project.id), eq(annotations.source, "user")));
 
   if (userAnns.length > 0) {
+    const annotatedPageNumbers = Array.from(new Set(userAnns.map((a) => a.pageNumber)));
+    const pageRows = await db
+      .select({ pageNumber: pages.pageNumber, textractData: pages.textractData })
+      .from(pages)
+      .where(and(eq(pages.projectId, project.id), inArray(pages.pageNumber, annotatedPageNumbers)));
+    const textractByPage: Record<number, TextractPageData | null> = {};
+    for (const row of pageRows) textractByPage[row.pageNumber] = row.textractData;
+
+    const MAX_OCR_CHARS = 300;
+    const b3 = (v: number) => v.toFixed(3);
     let text = "";
     for (const a of userAnns) {
-      text += `Page ${a.pageNumber}: "${a.name}"${a.note ? `: ${a.note}` : ""}\n`;
+      const words = textractByPage[a.pageNumber]?.words ?? [];
+      const wordsInside = findWordsInBbox(words, [a.minX, a.minY, a.maxX, a.maxY]);
+      text += `Page ${a.pageNumber}: "${a.name}" [bbox ${b3(a.minX)},${b3(a.minY)} → ${b3(a.maxX)},${b3(a.maxY)}]`;
+      if (a.note) text += ` — note: ${a.note}`;
+      if (wordsInside.length > 0) {
+        const ocr = wordsToText(wordsInside).replace(/\n/g, " / ");
+        const snippet = ocr.length > MAX_OCR_CHARS ? ocr.slice(0, MAX_OCR_CHARS) + "…" : ocr;
+        text += ` — OCR in region: "${snippet}"`;
+      }
+      text += "\n";
     }
     sections.push({ id: "user-annotations", header: "USER ANNOTATIONS", content: text, priority: 2 });
   }

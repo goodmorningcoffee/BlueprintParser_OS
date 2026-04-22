@@ -233,6 +233,22 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
         </div>
       )}
 
+      {/* Embedded-mode Cancel / Clear Template row — the standalone panel's ×
+          button serves as cancel but ParsePanel owns the header in embedded
+          mode, so surface the action here when a template has been captured
+          or a search is in flight. */}
+      {embedded && state !== "idle" && (
+        <div className="px-3 py-1 border-b border-[var(--border)] flex justify-end">
+          <button
+            onClick={() => { abortRef.current?.abort(); clearSymbolSearch(); }}
+            className="text-[10px] px-2 py-0.5 rounded border border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+            title="Clear template + stop any in-flight search"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {/* Template preview */}
       {templateImageUrl && (
         <div className="px-3 pt-2 flex items-start gap-2">
@@ -275,19 +291,41 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
         </div>
       )}
 
-      {/* State: IDLE — prompt to draw */}
+      {/* State: IDLE — explicit Start button engages the crosshair draw mode.
+          Old standalone toolbar flow activated draw mode on panel open; the
+          embedded variant inside ParsePanel didn't, leaving users with no
+          affordance to begin. An explicit button avoids the useEffect-
+          auto-activate landmine where switching to this tab just to view
+          saved results would re-engage draw mode. */}
       {state === "idle" && (
-        <div className="px-3 py-6 text-center">
-          <div className="text-xs text-[var(--muted)] mb-1">
-            Draw a bounding box around the
+        <div className="px-3 py-6 text-center space-y-3">
+          <div>
+            <div className="text-xs text-[var(--muted)] mb-1">
+              Draw a bounding box around the
+            </div>
+            <div className="text-xs text-cyan-400 font-medium">
+              symbol you want to find.
+            </div>
           </div>
-          <div className="text-xs text-cyan-400 font-medium">
-            symbol you want to find.
-          </div>
-          <div className="text-[10px] text-[var(--muted)] mt-3">
-            Click and drag on the blueprint to select.
-          </div>
-          <div className="text-[9px] text-amber-400/60 mt-4 leading-relaxed border border-amber-500/20 rounded px-2 py-1.5 bg-amber-500/5">
+          {symbolSearchActive ? (
+            <div className="text-[10px] text-cyan-300 bg-cyan-500/10 border border-cyan-500/40 rounded px-2 py-1.5">
+              Crosshair active — click and drag on the blueprint to capture a
+              template.
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                const s = useViewerStore.getState();
+                s.setSymbolSearchActive(true);
+                s.setMode("pointer");
+              }}
+              className="w-full text-xs font-medium px-3 py-1.5 rounded bg-cyan-600 text-white hover:bg-cyan-500"
+            >
+              Start &mdash; Draw Template
+            </button>
+          )}
+          <div className="text-[9px] text-amber-400/60 leading-relaxed border border-amber-500/20 rounded px-2 py-1.5 bg-amber-500/5">
             Hint: Symbol Search looks for exact visual matches of the selected
             symbol. It works best when symbols are consistent in size and style
             across pages. Rotated, scaled, or stylistically different versions

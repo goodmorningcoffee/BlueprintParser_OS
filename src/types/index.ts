@@ -763,6 +763,15 @@ export interface YoloTag {
    *  assignable. UI code can read optional confidenceTier / dropReason /
    *  signals / score fields for tier badges and audit review. */
   instances: ScoredMatch[];
+  /** Optional scope + strictness snapshot from the Map Tags call that
+   *  produced this tag. Captured so TagBrowseBar can explain why the
+   *  browse surface is showing fewer instances than the raw page count
+   *  would suggest — "strictness=strict dropped 12 low-tier matches",
+   *  "scope: A-* only", etc. Absent on legacy / pre-2026-04-21 tags. */
+  mapScope?: {
+    drawingNumberPrefixes?: string[];
+    strictness?: "strict" | "balanced" | "lenient";
+  };
 }
 
 export interface YoloTagInstance {

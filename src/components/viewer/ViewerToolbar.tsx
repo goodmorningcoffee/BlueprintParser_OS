@@ -439,6 +439,12 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       {/* Spacer — pushes right buttons to edge */}
       <div className="flex-1" />
 
+      {/* Flush-group: View All · Tools · YOLO · Parse · QTO — these five
+          primary panel toggles sit with no gap between them to save
+          horizontal space per user directive. The gap-2 on the parent
+          toolbar flex is overridden via `flex` (no gap) on this wrapper.
+          Stacked-group container to the right keeps its own border + gap. */}
+      <div className="flex">
       {/* View All — unified tree + macro-visibility control. Positioned
           left of YOLO so it reads as the "everything" entry point. */}
       <button
@@ -452,6 +458,23 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
       >
         View All
       </button>
+
+      {/* Tools — D4 container: CSI + Text + Page Intelligence
+          (replaces the former standalone Text/CSI buttons and the "Page
+          Intelligence" menu entry) */}
+      <HelpTooltip id="tools-button">
+        <button
+          onClick={toggleToolsPanel}
+          className={`px-2 py-1 text-xs rounded border ${
+            showToolsPanel
+              ? "border-green-400/60 text-green-300 bg-green-400/12"
+              : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
+          }`}
+          title="Tools — CSI codes, Text annotations, Page Intelligence"
+        >
+          Tools
+        </button>
+      </HelpTooltip>
 
       {/* YOLO detections panel + per-model dropdown */}
       {hasYoloAnnotations && (
@@ -542,23 +565,6 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </button>
       </HelpTooltip>
 
-      {/* Tools — D4 container: CSI + Text + Page Intelligence
-          (replaces the former standalone Text/CSI buttons and the "Page
-          Intelligence" menu entry) */}
-      <HelpTooltip id="tools-button">
-        <button
-          onClick={toggleToolsPanel}
-          className={`px-2 py-1 text-xs rounded border ${
-            showToolsPanel
-              ? "border-green-400/60 text-green-300 bg-green-400/12"
-              : "border-[var(--muted)]/30 text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/50"
-          }`}
-          title="Tools — CSI codes, Text annotations, Page Intelligence"
-        >
-          Tools
-        </button>
-      </HelpTooltip>
-
       {/* QTO */}
       <HelpTooltip id="qto-button">
         <button
@@ -572,6 +578,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
           QTO
         </button>
       </HelpTooltip>
+      </div>
 
       {/* ─── Stacked panel group — saves horizontal space ─── */}
       {/* Three 2-line buttons in a bordered container, same visual pattern as the */}
