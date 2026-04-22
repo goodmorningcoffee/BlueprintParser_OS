@@ -4,11 +4,20 @@ import { InlineCode } from "../_components/InlineCode";
 import { Callout } from "../_components/Callout";
 import { ApiEndpointList } from "../_components/demos/ApiEndpointList";
 
-export function Section12ApiReference() {
+export function Section13ApiReference() {
   return (
     <Section id="api-reference" eyebrow="Operations" title="API Reference">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: everything the viewer does &mdash; uploading a
+        project, running YOLO, chatting with the LLM, exporting a takeoff
+        &mdash; goes through an HTTP endpoint here. This page lists every one,
+        grouped by domain, so you can find where in the code each button talks
+        to the server.
+      </div>
+
       <p>
-        BP exposes roughly 80 HTTP endpoints from Next.js API routes. This
+        BP exposes roughly 91 HTTP endpoints from Next.js API routes. This
         reference groups them by domain, with a one-line description for each.
         Click a method/path row to expand parameters and examples where provided.
         This is not an OpenAPI spec &mdash; for machine-readable schemas,{" "}

@@ -7,6 +7,17 @@ import { DeploymentTierTable } from "../_components/demos/DeploymentTierTable";
 export function Section01Overview() {
   return (
     <Section id="overview" eyebrow="Intro" title="What BlueprintParser Is">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: BP reads a construction drawing set the same way a
+        junior estimator would &mdash; it looks at each page, recognizes the
+        text, identifies which part of the project it&apos;s about, finds the
+        schedules and callouts, and produces a structured summary. Then it
+        gives you a viewer to review everything and a chat window to ask
+        questions. Nothing leaves the LLM&apos;s context without a tool call
+        that cites a page or a row; every number is traceable.
+      </div>
+
       <p>
         BlueprintParser (BP) is an open-source, self-hostable platform that turns
         construction PDFs into structured, LLM-queryable data. You upload a

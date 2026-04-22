@@ -11,6 +11,16 @@ import { TerraformFileList } from "../_components/demos/TerraformFileList";
 export function Section11Architecture() {
   return (
     <Section id="architecture" eyebrow="Operations" title="System Architecture">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: BP runs as a single Next.js app on AWS ECS Fargate,
+        with a PostgreSQL database, an S3 bucket for page images, and a
+        SageMaker GPU job for YOLO when you kick it off. On a laptop you can
+        run the same code with just PostgreSQL and a cheap LLM key &mdash;
+        Textract, S3, and SageMaker are all optional. The whole AWS stack is
+        in Terraform; redeploying is one script.
+      </div>
+
       <p>
         This section is a tour of where BP actually runs on AWS and how the
         pieces fit together. It is intentionally not a deployment tutorial

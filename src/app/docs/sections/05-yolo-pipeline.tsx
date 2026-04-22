@@ -12,6 +12,16 @@ import { YoloRunFlowDiagram } from "../_components/demos/YoloRunFlowDiagram";
 export function Section05YoloPipeline() {
   return (
     <Section id="yolo-pipeline" eyebrow="Engines" title="YOLO Object Detection — Run, Load, Display">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: YOLO is the object-detection model that finds the
+        visual shapes on a drawing &mdash; doors, windows, tables, title blocks,
+        tag circles. It&apos;s optional and gated behind admin controls because
+        it runs on a GPU instance and costs real money. Once it&apos;s run,
+        every downstream feature (Auto-QTO, Map Tags, the spatial heatmap)
+        gets sharper.
+      </div>
+
       <Callout variant="warn" title="YOLO runs only from Admin → AI Models">
         The viewer&apos;s <InlineCode>YOLO</InlineCode> toolbar button{" "}
         <strong>only shows and hides already-loaded detections</strong>. It does
