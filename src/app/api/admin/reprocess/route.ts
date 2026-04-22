@@ -14,7 +14,9 @@ import { classifyTextRegions } from "@/lib/text-region-classifier";
 import { writeClassifierDebugBundle } from "@/lib/text-region-classifier-debug";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
+import { classifyPageRegions } from "@/lib/composite-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
+import type { ClassifiedTable } from "@/types";
 import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
 import type { TextractPageData, TextAnnotation, TextAnnotationResult, CsiCode } from "@/types";
 import { logger } from "@/lib/logger";
@@ -394,7 +396,10 @@ export async function POST(req: Request) {
       }
 
       if (scope === "intelligence") {
-        // Intelligence-only reprocess: re-run page analysis + project analysis on existing data
+        // Intelligence-only reprocess: re-run page analysis + project analysis on existing data.
+        // Pulls existing YOLO annotations from the `annotations` table (no SageMaker
+        // re-run). If YOLO data exists for a page, it's passed to runHeuristicEngine
+        // and classifyPageRegions — mirrors /api/yolo/load post-processing.
         for (const project of allProjects) {
           const projectPages = await db
             .select({
@@ -405,12 +410,52 @@ export async function POST(req: Request) {
               rawText: pages.rawText,
               csiCodes: pages.csiCodes,
               textAnnotations: pages.textAnnotations,
+              parsedRegions: pages.pageIntelligence,
             })
             .from(pages)
             .where(eq(pages.projectId, project.id))
             .orderBy(pages.pageNumber);
 
-          send({ type: "project", name: project.name, pages: projectPages.length });
+          // Fetch all existing YOLO annotations for this project, group by page.
+          // No SageMaker invocation here — we only read what's already in the DB.
+          const yoloAnns = await db
+            .select({
+              name: annotations.name,
+              minX: annotations.minX,
+              minY: annotations.minY,
+              maxX: annotations.maxX,
+              maxY: annotations.maxY,
+              pageNumber: annotations.pageNumber,
+              data: annotations.data,
+            })
+            .from(annotations)
+            .where(
+              and(eq(annotations.projectId, project.id), eq(annotations.source, "yolo")),
+            );
+          const yoloByPage = new Map<
+            number,
+            Array<{ name: string; minX: number; minY: number; maxX: number; maxY: number; confidence: number; modelName?: string }>
+          >();
+          for (const a of yoloAnns) {
+            if (!yoloByPage.has(a.pageNumber)) yoloByPage.set(a.pageNumber, []);
+            const data = a.data as { confidence?: number; modelName?: string } | null;
+            yoloByPage.get(a.pageNumber)!.push({
+              name: a.name,
+              minX: a.minX,
+              minY: a.minY,
+              maxX: a.maxX,
+              maxY: a.maxY,
+              confidence: data?.confidence ?? 0,
+              modelName: data?.modelName,
+            });
+          }
+
+          send({
+            type: "project",
+            name: project.name,
+            pages: projectPages.length,
+            yoloPages: yoloByPage.size,
+          });
 
           const rules = getEffectiveRules(companyHeuristics);
 
@@ -442,9 +487,11 @@ export async function POST(req: Request) {
               });
               if (textRegions.length > 0) pageIntelligence.textRegions = textRegions;
 
-              // Heuristic engine (text-only, no YOLO in this pass)
+              // Heuristic engine — YOLO-aware if annotations exist on this page
+              const pageYolo = yoloByPage.get(page.pageNumber);
               const inferences = runHeuristicEngine(rules, {
                 rawText: page.rawText || "",
+                yoloDetections: pageYolo,
                 textRegions: textRegions.length > 0 ? textRegions : undefined,
                 csiCodes,
                 pageNumber: page.pageNumber,
@@ -457,8 +504,45 @@ export async function POST(req: Request) {
                 if (classified.length > 0) pageIntelligence.classifiedTables = classified;
               }
 
-              // CSI spatial map
-              const spatialMap = computeCsiSpatialMap(page.pageNumber, textAnns, undefined, pageIntelligence.classifiedTables as any);
+              // Composite page region classifier — fires only if YOLO data exists.
+              // Mirrors /api/yolo/load:269-295 so the intelligence reprocess keeps
+              // classifiedRegions in sync with the current YOLO state.
+              if (pageYolo && pageYolo.length > 0) {
+                try {
+                  const regions = classifyPageRegions({
+                    pageNumber: page.pageNumber,
+                    yoloAnnotations: pageYolo.map((d) => ({
+                      name: d.name,
+                      bbox: [d.minX, d.minY, d.maxX, d.maxY],
+                      modelName: d.modelName,
+                    })),
+                    textRegions: textRegions as Parameters<typeof classifyPageRegions>[0]["textRegions"],
+                    parsedRegions: (page.parsedRegions as any)?.parsedRegions,
+                    legacyClassifiedTables: pageIntelligence.classifiedTables as ClassifiedTable[] | undefined,
+                  });
+                  const hasRegions = regions.tables.length > 0 || regions.titleBlocks.length > 0 || regions.drawings.length > 0;
+                  if (hasRegions) pageIntelligence.classifiedRegions = regions;
+                } catch (err) {
+                  logger.error(`[reprocess-intel] classifyPageRegions failed for page ${page.pageNumber}:`, err);
+                }
+              }
+
+              // CSI spatial map — feeds YOLO tags + classifiedTables into the heatmap
+              const spatialMap = computeCsiSpatialMap(
+                page.pageNumber,
+                textAnns,
+                pageYolo
+                  ? pageYolo.map((d) => ({
+                      name: d.name,
+                      minX: d.minX,
+                      minY: d.minY,
+                      maxX: d.maxX,
+                      maxY: d.maxY,
+                      confidence: d.confidence,
+                    }))
+                  : undefined,
+                pageIntelligence.classifiedTables as any,
+              );
               if (spatialMap) pageIntelligence.csiSpatialMap = spatialMap;
 
               await db.update(pages).set({ pageIntelligence }).where(eq(pages.id, page.id));
