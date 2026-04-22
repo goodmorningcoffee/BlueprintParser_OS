@@ -38,6 +38,343 @@ export function Section02Viewer() {
         through this view.
       </p>
 
+      <SubSection title="Feature tree — brute-force inventory">
+        <p>
+          Every feature under the Viewer, nested by the DOM/panel hierarchy it
+          renders into. One-line description under each. If a feature has sub-modes
+          or tabs, those are indented under the parent. This is deliberately
+          exhaustive; skim for the shape, read for the specifics.
+        </p>
+        <ul className="list-disc pl-5 space-y-1.5 text-[13px]">
+          <li>
+            <strong>Canvas core</strong>
+            <ul className="list-[circle] pl-5 pt-1 space-y-1">
+              <li>
+                <InlineCode>PDFPage.tsx</InlineCode> pdf.js rasterizer
+                <div className="text-[var(--muted)]">Renders the current page as a bitmap at the user&apos;s zoom scale; caches the last 8 rendered pages as ImageBitmaps for instant tab-back.</div>
+              </li>
+              <li>
+                Zoom / Fit / Pan controls
+                <div className="text-[var(--muted)]">+/&minus; buttons, Fit-to-window, wheel-zoom in Move mode, drag-to-pan in Move mode.</div>
+              </li>
+              <li>
+                Thumbnail sidebar
+                <div className="text-[var(--muted)]">Collapsible left-side page list with page-name + drawing-number labels; click to jump, scrolls synchronously with the main canvas.</div>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <strong>Modes</strong> (mutually exclusive, keyboard-bound)
+            <ul className="list-[circle] pl-5 pt-1 space-y-1">
+              <li>
+                Pointer (<InlineCode>A</InlineCode>)
+                <div className="text-[var(--muted)]">Click-to-select overlays; double-click opens edit dialogs for markups, annotations, parsed regions.</div>
+              </li>
+              <li>
+                Move / Pan (<InlineCode>V</InlineCode>)
+                <div className="text-[var(--muted)]">Click-drag pans the canvas, wheel zooms. No overlay interaction.</div>
+              </li>
+              <li>
+                Markup
+                <div className="text-[var(--muted)]">Draw rectangle, polygon, or freehand stroke. Opens MarkupDialog on finish for name + note + color pick from 20-color palette.</div>
+              </li>
+              <li>
+                Group / multi-select
+                <div className="text-[var(--muted)]">Shift-click-add plus empty-canvas lasso; applies bulk ops (delete, recolor, category change) across selection.</div>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <strong>Canvas overlay layers</strong> (stable z-order, normalized 0&ndash;1 coordinates)
+            <ul className="list-[circle] pl-5 pt-1 space-y-1">
+              <li>
+                <InlineCode>SearchHighlightOverlay</InlineCode>
+                <div className="text-[var(--muted)]">Yellow boxes around <InlineCode>tsvector</InlineCode> search hits from the toolbar text-search.</div>
+              </li>
+              <li>
+                <InlineCode>TextAnnotationOverlay</InlineCode>
+                <div className="text-[var(--muted)]">Boxes around detected phones, equipment tags, room names, abbreviations (37+ annotation types).</div>
+              </li>
+              <li>
+                <InlineCode>KeynoteOverlay</InlineCode>
+                <div className="text-[var(--muted)]">Keynote shape detections (circles, hexagons, diamonds) with inner-text OCR; gated by the <InlineCode>showKeynotes</InlineCode> toggle.</div>
+              </li>
+              <li>
+                <InlineCode>AnnotationOverlay</InlineCode>
+                <div className="text-[var(--muted)]">The master layer &mdash; YOLO detections, user markups, takeoff items, shape-parse output, symbol-search results. Click-to-select, drag-to-move, vertex-edit on polygons. Also hosts the draw-rect state machine for Parse flows.</div>
+              </li>
+              <li>
+                <InlineCode>ParseRegionLayer</InlineCode>
+                <div className="text-[var(--muted)]">Saved ParsedRegion outlines + grid preview, color-coded by type (keynote amber, notes blue, spec violet, schedule pink). Also renders the shared <InlineCode>parseDraftRegion</InlineCode> dashed preview while a user is actively parsing.</div>
+              </li>
+              <li>
+                <InlineCode>GuidedParseOverlay</InlineCode>
+                <div className="text-[var(--muted)]">Draggable row + column boundary lines rendered during a Guided Parse (keynote and notes share this via a prop-based API).</div>
+              </li>
+              <li>
+                <InlineCode>FastManualParseOverlay</InlineCode>
+                <div className="text-[var(--muted)]">Stage 4 Notes primitive &mdash; double-click snaps to Textract LINE, derives columns from line margins. Pending rework into <InlineCode>ParagraphOverlay</InlineCode> (paragraph-level hit-test + adjustable BB + Cmd+C/V template paste).</div>
+              </li>
+              <li>
+                <InlineCode>DrawingPreviewLayer</InlineCode>
+                <div className="text-[var(--muted)]">Rubber-band preview while the user is dragging to draw a new markup or bbox.</div>
+              </li>
+              <li>
+                <InlineCode>ParsedTableCellOverlay</InlineCode>
+                <div className="text-[var(--muted)]">TATR cell-structure overlay for parsed tables; click-a-cell to search by its text, double-click to toggle highlight.</div>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <strong>Toolbar</strong>
+            <ul className="list-[circle] pl-5 pt-1 space-y-1">
+              <li>
+                Back-to-dashboard + click-to-rename project name
+                <div className="text-[var(--muted)]">Inline edit on the project name, persists to <InlineCode>projects.name</InlineCode>.</div>
+              </li>
+              <li>
+                Zoom controls (&minus; / % / +) + Fit
+                <div className="text-[var(--muted)]">Symmetric bracketed zoom; Fit recalculates for the current page dimensions.</div>
+              </li>
+              <li>
+                Mode toggle (Pointer / Pan / Markup)
+                <div className="text-[var(--muted)]">3-state button; keyboard shortcuts A, V.</div>
+              </li>
+              <li>
+                Symbol Search button
+                <div className="text-[var(--muted)]">Draw a template bbox to find all instances; exposes Lite / Power / Custom presets for confidence thresholds.</div>
+              </li>
+              <li>
+                Menu dropdown
+                <div className="text-[var(--muted)]">Labeling wizard (YOLO training export), Settings, Page Intelligence toggle, Admin link, Help tips toggle, Export PDF (disabled placeholder).</div>
+              </li>
+              <li>
+                Text search
+                <div className="text-[var(--muted)]">Full-text search over OCR via Postgres <InlineCode>tsvector</InlineCode>; highlights on canvas + lists hits in Text panel.</div>
+              </li>
+              <li>
+                Trade filter / CSI code filter
+                <div className="text-[var(--muted)]">Filter the CSI Network Graph, View All, and QTO lists by trade or specific CSI division.</div>
+              </li>
+              <li>
+                YOLO toggle (+ per-model confidence sliders)
+                <div className="text-[var(--muted)]">Shows when any YOLO annotation is loaded. Dropdown chevron opens per-model sliders (yolo_medium / yolo_primitive / yolo_precise).</div>
+              </li>
+              <li>
+                Six panel toggles
+                <div className="text-[var(--muted)]">Text / CSI / LLM Chat / QTO / Schedules/Tables / Keynotes (+ Specs/Notes in the D2 panel orchestrator).</div>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <strong>Right-side panels</strong> (toggleable, stackable)
+            <ul className="list-[circle] pl-5 pt-1 space-y-1">
+              <li>
+                Text Panel (<InlineCode>TextPanel.tsx</InlineCode>)
+                <div className="text-[var(--muted)]">OCR text viewer, searchable, per-word Textract confidence, click-to-jump-to-canvas-position.</div>
+              </li>
+              <li>
+                CSI Panel (<InlineCode>CsiPanel.tsx</InlineCode>)
+                <div className="text-[var(--muted)]">Detected CSI MasterFormat codes grouped by division; toggle between page-scope and project-scope; click a code to highlight triggers on canvas.</div>
+              </li>
+              <li>
+                LLM Chat Panel (<InlineCode>ChatPanel.tsx</InlineCode>)
+                <div className="text-[var(--muted)]">Project- or page-scoped chat, streams via SSE; has 20 tools (search, read-page, highlight, zoom, list-schedules, count-takeoff, etc.).</div>
+              </li>
+              <li>
+                QTO Panel (<InlineCode>TakeoffPanel.tsx</InlineCode>) &mdash; quantity takeoff
+                <ul className="list-[square] pl-5 pt-0.5 space-y-0.5">
+                  <li>
+                    Count tab
+                    <div className="text-[var(--muted)]">Click-to-count with color-coded markers; auto-deduplicates via YOLO tag bindings where available.</div>
+                  </li>
+                  <li>
+                    Area tab (+ Scale Calibration + Bucket Fill + Split Area)
+                    <div className="text-[var(--muted)]">Polygon draw or bucket-fill flood with text-as-wall barrier detection; Scale Calibration is a 2-point known-dimension flow; Split Area slices a saved polygon.</div>
+                  </li>
+                  <li>
+                    Linear tab
+                    <div className="text-[var(--muted)]">Polyline length; same scale-calibration model as Area.</div>
+                  </li>
+                  <li>
+                    Auto-QTO tab
+                    <div className="text-[var(--muted)]">Suggests pages with likely schedules (ensemble-driven after Stage 2b); &ldquo;Find &amp; Parse Doors Schedule&rdquo; style shortcuts auto-trigger Table Parse.</div>
+                  </li>
+                  <li>
+                    All tab
+                    <div className="text-[var(--muted)]">Flat list of every committed takeoff item, exportable to CSV.</div>
+                  </li>
+                </ul>
+              </li>
+              <li>
+                Schedules/Tables Panel (<InlineCode>TableParsePanel.tsx</InlineCode>)
+                <ul className="list-[square] pl-5 pt-0.5 space-y-0.5">
+                  <li>
+                    Auto Parse
+                    <div className="text-[var(--muted)]">Multi-method merger: OCR-positions, Textract TABLES, OpenCV lines, img2table. Returns a consolidated grid + confidence.</div>
+                  </li>
+                  <li>
+                    Guided Parse
+                    <div className="text-[var(--muted)]">User draws region, server proposes row/col boundaries, user drags to adjust, client extracts cells.</div>
+                  </li>
+                  <li>
+                    Manual Parse
+                    <div className="text-[var(--muted)]">User draws column BBs + row BBs; grid extraction runs client-side via word-center hit-test.</div>
+                  </li>
+                  <li>
+                    Compare / Edit
+                    <div className="text-[var(--muted)]">Side-by-side method outputs; edit cell text and re-save.</div>
+                  </li>
+                  <li>
+                    Map Tags section
+                    <div className="text-[var(--muted)]">Bind tag column of a parsed table to YOLO tag instances; auto-infers scope + pattern.</div>
+                  </li>
+                </ul>
+              </li>
+              <li>
+                Specs/Notes Panel (<InlineCode>SpecsNotesPanel.tsx</InlineCode>) &mdash; D2 orchestrator
+                <ul className="list-[square] pl-5 pt-0.5 space-y-0.5">
+                  <li>
+                    Spec Parse tab
+                    <div className="text-[var(--muted)]">Stage 5 scope, currently stubbed. Will target full-page vertical-column spec layouts (PART / SECTION / GENERAL NOTES dense prose).</div>
+                  </li>
+                  <li>
+                    Notes Parse tab (<InlineCode>NotesPanel.tsx</InlineCode>)
+                    <ul className="list-[disc] pl-5 pt-0.5 space-y-0.5">
+                      <li>
+                        Index
+                        <div className="text-[var(--muted)]">Project-wide table of detected note regions from <InlineCode>summaries.notesRegions</InlineCode>; row click jumps to page and opens Parser pre-filled with the region bbox.</div>
+                      </li>
+                      <li>
+                        Classifier
+                        <div className="text-[var(--muted)]">Per-page Accept / Edit / Reject cards for Layer-1 classified textRegions (notes-numbered + notes-key-value). Accept one-click-promotes via <InlineCode>/api/regions/promote</InlineCode>; Reject persists to <InlineCode>rejectedTextRegionIds</InlineCode> with stale-ID cleanup.</div>
+                      </li>
+                      <li>
+                        Parser &mdash; Auto sub-mode
+                        <div className="text-[var(--muted)]">Server runs <InlineCode>parseNotesFromRegion</InlineCode> (numbered-first, K:V fallback) + CSI detection; client shows dashed preview on canvas.</div>
+                      </li>
+                      <li>
+                        Parser &mdash; Guided sub-mode
+                        <div className="text-[var(--muted)]">Propose row/col boundaries, user drags on GuidedParseOverlay, client extracts grid.</div>
+                      </li>
+                      <li>
+                        Parser &mdash; Fast-manual sub-mode (pending rework)
+                        <div className="text-[var(--muted)]">Double-click Textract LINE to snap columns. Known-broken on dense multi-line paragraphs; scheduled for redesign as <InlineCode>ParagraphOverlay</InlineCode> primitive.</div>
+                      </li>
+                      <li>
+                        Parser &mdash; Manual sub-mode
+                        <div className="text-[var(--muted)]">Draw column BBs + row BBs; grid extracted client-side via word-center hit-test. The always-works fallback.</div>
+                      </li>
+                    </ul>
+                  </li>
+                  <li>
+                    Keynotes tab (<InlineCode>KeynotePanel.tsx</InlineCode>)
+                    <ul className="list-[disc] pl-5 pt-0.5 space-y-0.5">
+                      <li>
+                        All Keynotes
+                        <div className="text-[var(--muted)]">Flat list of every parsed keynote table across the project; CSV export.</div>
+                      </li>
+                      <li>
+                        Auto / Guided / Manual / Compare
+                        <div className="text-[var(--muted)]">Same sub-mode taxonomy as Table Parse but scoped to bubble-keyed keynote grids.</div>
+                      </li>
+                    </ul>
+                  </li>
+                </ul>
+              </li>
+              <li>
+                Page Intelligence Panel (<InlineCode>PageIntelligencePanel.tsx</InlineCode>)
+                <div className="text-[var(--muted)]">Read-only dump of <InlineCode>pageIntelligence</InlineCode> for the current page &mdash; classification, crossRefs, textRegions, noteBlocks, heuristicInferences, ensembleRegions. Debug/inspection surface.</div>
+              </li>
+              <li>
+                View All Panel (<InlineCode>ViewAllPanel.tsx</InlineCode>)
+                <div className="text-[var(--muted)]">Project-wide list with per-entity eye toggles (master-eye memento); surfaces schedules, parsed tables, keynotes, notes, specs, YOLO tags, CSI codes. Clickable-graph substrate for future LLM-side reasoning.</div>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <strong>Bottom Annotation Panel</strong>
+            <div className="text-[var(--muted)]">Horizontal summary row grouping Markups, YOLO detections, and takeoff items by source; filter chips per category.</div>
+          </li>
+          <li>
+            <strong>Dialogs / modals</strong>
+            <ul className="list-[circle] pl-5 pt-1 space-y-1">
+              <li>
+                Markup dialog
+                <div className="text-[var(--muted)]">Name + note + color on markup save.</div>
+              </li>
+              <li>
+                Bucket Fill Assign dialog
+                <div className="text-[var(--muted)]">Assign a filled region to an Area item + color; surfaces HTTP errors inline.</div>
+              </li>
+              <li>
+                Scale Calibration dialog
+                <div className="text-[var(--muted)]">Two-point calibration with known real-world distance + unit selector (ft, in, m, mm).</div>
+              </li>
+              <li>
+                Symbol Search config
+                <div className="text-[var(--muted)]">Confidence presets (Lite / Power / Custom) + per-project defaults.</div>
+              </li>
+              <li>
+                Export CSV modal
+                <div className="text-[var(--muted)]">Keynote / Schedule / Notes export with column selection.</div>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <strong>Standalone tools</strong> (trigger from toolbar or panels)
+            <ul className="list-[circle] pl-5 pt-1 space-y-1">
+              <li>
+                Symbol Search
+                <div className="text-[var(--muted)]">Draw a bbox around any symbol on the page; CV matcher finds every other instance across the project.</div>
+              </li>
+              <li>
+                Bucket Fill
+                <div className="text-[var(--muted)]">Flood-fill area computation from a click point; text-as-wall paradigm with 1k/2k/3k/4k resolution slider; assigns to Area item with error surfacing.</div>
+              </li>
+              <li>
+                Split Area
+                <div className="text-[var(--muted)]">Slice a saved polygon with a user-drawn line into two children.</div>
+              </li>
+              <li>
+                Shape Parse
+                <div className="text-[var(--muted)]">Python/OpenCV keynote-shape detector (circles, hexagons, diamonds, pills, squares). Runs at upload; results live in <InlineCode>pages.keynotes</InlineCode>.</div>
+              </li>
+              <li>
+                Scale Calibration
+                <div className="text-[var(--muted)]">Per-page; stored in <InlineCode>scaleCalibrations[pageNumber]</InlineCode>. Required before any Area/Linear takeoff produces real-world units.</div>
+              </li>
+            </ul>
+          </li>
+          <li>
+            <strong>ParsedRegion outputs</strong> (write path from Viewer into the graph)
+            <ul className="list-[circle] pl-5 pt-1 space-y-1">
+              <li>
+                <InlineCode>type: &quot;schedule&quot;</InlineCode>
+                <div className="text-[var(--muted)]">Tabular grid from Schedules/Tables panel.</div>
+              </li>
+              <li>
+                <InlineCode>type: &quot;keynote&quot;</InlineCode>
+                <div className="text-[var(--muted)]">Key &rarr; Description grid from the Keynotes tab.</div>
+              </li>
+              <li>
+                <InlineCode>type: &quot;notes&quot;</InlineCode>
+                <div className="text-[var(--muted)]">Notes-numbered or notes-key-value grid from Notes Parse.</div>
+              </li>
+              <li>
+                <InlineCode>type: &quot;spec&quot;</InlineCode> (Stage 5 planned)
+                <div className="text-[var(--muted)]">Section-header &rarr; body list from Spec Parse.</div>
+              </li>
+              <li>
+                <InlineCode>type: &quot;legend&quot;</InlineCode>
+                <div className="text-[var(--muted)]">Symbol legend variant; shares NotesData shape.</div>
+              </li>
+            </ul>
+            <div className="text-[var(--muted)] pt-1">All types commit through the generic <InlineCode>POST /api/regions/promote</InlineCode> route. Server merges CSI tags into <InlineCode>pages.csiCodes</InlineCode> via <InlineCode>mergeCsiCodes</InlineCode> and refreshes <InlineCode>projectIntelligence.summaries</InlineCode> after the transaction commits.</div>
+          </li>
+        </ul>
+      </SubSection>
+
       <SubSection title="Anatomy">
         <p>
           Top: the toolbar. Left: a collapsible page sidebar with thumbnails.

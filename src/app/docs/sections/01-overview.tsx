@@ -36,25 +36,82 @@ export function Section01Overview() {
         project to become spatially aware as well as textually.
       </p>
 
-      <SubSection title="Who it is for">
+      <SubSection title="Feature map: engines + viewer">
         <p>
-          The primary audience is <strong>estimators, project managers, and
-          construction technology builders</strong> who are tired of manually
-          extracting quantities from PDF drawing sets and want to put an LLM in the
-          loop without giving up the ability to inspect, correct, and override the
-          model&apos;s work. Secondary audiences include <strong>applied
-          researchers</strong> building pipelines around Textract, YOLO, and LLM
-          tool-use for document intelligence, and <strong>open-source
-          contributors</strong> who want a reference implementation of a multi-stage
-          construction-document preprocessing pipeline.
+          BP is organized as a set of <strong>engines</strong> that produce structured
+          data and a single <strong>Viewer</strong> that consumes it, with a
+          <strong> Graph/Output layer</strong> that feeds everything back to the LLM
+          and the Admin dashboard. Data flows upload &rarr; Preprocessing Engine
+          &rarr; (optional) YOLO Post-Pipeline &rarr; Viewer surfaces (display +
+          user parsing) &rarr; ParsedRegions &rarr; Graph/Output &rarr; LLM chat and
+          downstream tools. Every stage persists to <InlineCode>pageIntelligence</InlineCode> or{" "}
+          <InlineCode>projectIntelligence</InlineCode>; nothing is ephemeral.
         </p>
-        <p>
-          BP is deliberately technically dense. The viewer is built for people who
-          know what a cross-reference, a keynote, and a finish schedule are. The
-          admin dashboard exposes company-level pipeline tuning (CSI confidence
-          thresholds, heuristic rule overrides, LLM context presets, per-page
-          concurrency) rather than hiding it behind defaults. If you want a turnkey
-          SaaS takeoff tool, BP is not that &mdash; it is a platform to build one on.
+        <ul className="list-disc pl-5 space-y-1 text-[13px]">
+          <li>
+            <strong>Preprocessing Engine</strong> (upload-time, always runs per page):
+            rasterize at 300 DPI &rarr; Textract OCR (LAYOUT + TABLES) &rarr; drawing-number
+            extraction &rarr; CSI code detection (3-tier matching) &rarr; text annotations
+            (phones, equipment tags, abbreviations, 37+ types) &rarr; shape parse (keynote
+            symbols via Python/OpenCV) &rarr; page intelligence analyze (classification,
+            cross-refs, noteBlocks) &rarr; text-region classify (6-stage composite: LINE
+            consumption, column-aware proposal, whitespace-rect discovery, Union-Find merge,
+            per-region analysis, decision tree) &rarr; heuristic engine (9 rules, text-only
+            mode) &rarr; table classifier &rarr; CSI spatial map (9&times;9 grid with title-block
+            + right-margin zones).
+          </li>
+          <li>
+            <strong>YOLO Post-Pipeline</strong> (admin-triggered, optional): SageMaker
+            Processing job on g4dn.xlarge &rarr; YOLO annotations ingested &rarr; re-run
+            heuristic engine with YOLO data &rarr; re-classify tables &rarr; composite
+            region classifier (<InlineCode>classifiedRegions</InlineCode>) &rarr; YOLO
+            density heatmap (text_box + vertical_area + horizontal_area aggregated on
+            a 16&times;16 grid) &rarr; ensemble reducer (cross-signal agreement, suppresses
+            keyword-only false positives) &rarr; auto-table-detector (emits{" "}
+            <InlineCode>AutoTableProposal[]</InlineCode>, read-only until user commits).
+          </li>
+          <li>
+            <strong>Viewer</strong> (user surface, <InlineCode>/project/[id]</InlineCode>):
+            canvas with pdf.js rasterizer + nine overlay layers, a dense toolbar,
+            three mutually-exclusive modes (pointer/move/markup), a stack of toggleable
+            right-side panels (Text, CSI, LLM Chat, QTO, Schedules/Tables, Keynotes,
+            Specs/Notes, Page Intelligence, View All), a bottom Annotation Panel, and
+            user-driven parsing tools (Table Parse, Keynote Parse, Notes Parse, Spec Parse
+            [planned], Symbol Search, Bucket Fill, Shape Parse, Split Area, Scale
+            Calibration). Section 02 enumerates the full tree.
+          </li>
+          <li>
+            <strong>Graph / Output Layer</strong> (downstream consumers): every
+            user-committed ParsedRegion promotes via <InlineCode>/api/regions/promote</InlineCode>{" "}
+            into <InlineCode>pageIntelligence.parsedRegions</InlineCode>; CSI tags merge
+            into <InlineCode>pages.csiCodes</InlineCode> via idempotent{" "}
+            <InlineCode>mergeCsiCodes</InlineCode>;{" "}
+            <InlineCode>computeProjectSummaries</InlineCode> rebuilds{" "}
+            <InlineCode>projectIntelligence.summaries</InlineCode> (schedules, notesRegions,
+            specRegions, parsedTables, yoloTags). The <InlineCode>context-builder</InlineCode>{" "}
+            assembles a budget-allocated LLM payload from all of the above; the CSI
+            network graph + hub pages are derived once per project and surfaced in chat
+            and the View All panel.
+          </li>
+          <li>
+            <strong>Admin Dashboard</strong>: Pipeline config (toggle stages,
+            concurrency, per-company heuristic overrides), Heuristics tab (DSL editor for
+            rules), AI Models tab (register YOLO models, trigger runs), LLM Config (provider
+            + context-budget allocations across 19 sections), Overview (reprocess
+            controls + Lambda CV job status). Every viewer feature has a corresponding
+            admin tuning surface.
+          </li>
+        </ul>
+        <p className="pt-2">
+          <strong>How they connect</strong>: Preprocessing runs once per upload and
+          populates JSONB blobs on <InlineCode>pages</InlineCode>. YOLO Post-Pipeline
+          augments those blobs on admin trigger. The Viewer reads them into a Zustand
+          store (17 slice hooks) and renders overlays; user parsing tools write back
+          to the same blobs via the generic <InlineCode>/api/regions/promote</InlineCode>{" "}
+          commit route. The Graph/Output layer re-derives summaries on every commit and
+          serves them to Chat and the Admin dashboard. The whole stack is one database
+          shape with one write path per mutation, which is why every number in the UI
+          traces back to a pixel on a page.
         </p>
       </SubSection>
 
