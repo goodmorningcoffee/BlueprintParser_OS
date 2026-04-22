@@ -10,12 +10,22 @@ interface HeuristicRule {
   enabled: boolean;
   modelId?: number;
   modelName?: string;
+  // YOLO side
   yoloRequired: string[];
   yoloBoosters: string[];
-  textKeywords: string[];
+  yoloRequiredMinConfidence?: number;
+  yoloAvailabilityMode?: "require" | "degrade" | "ignore";
+  // Text side — 2026-04-24 DSL. `textKeywords` is legacy (kept optional for
+  // back-compat reads). Edits write to the new split fields.
+  textKeywords?: string[];
+  textKeywordsRequired?: string[];
+  textKeywordsBoosters?: string[];
+  textKeywordsMode?: "any-required" | "all-required";
+  // Spatial / CSI
   overlapRequired: boolean;
   textRegionType?: string;
   csiDivisionsRequired?: string[];
+  // Output
   outputLabel: string;
   outputCsiCode?: string;
   minConfidence: number;
@@ -189,7 +199,10 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
         enabled: true,
         yoloRequired: [],
         yoloBoosters: [],
-        textKeywords: [],
+        yoloAvailabilityMode: "require",
+        textKeywordsRequired: [],
+        textKeywordsBoosters: [],
+        textKeywordsMode: "any-required",
         overlapRequired: false,
         outputLabel: "custom-label",
         minConfidence: 0.5,
@@ -429,14 +442,21 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
                         YOLO: {y}
                       </span>
                     ))}
-                    {rule.textKeywords.slice(0, 3).map((k) => (
-                      <span key={k} className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-300">
+                    {(rule.textKeywordsRequired ?? rule.textKeywords ?? []).slice(0, 3).map((k) => (
+                      <span key={`req-${k}`} className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-300" title="Required">
                         {k}
                       </span>
                     ))}
-                    {rule.textKeywords.length > 3 && (
-                      <span className="text-[9px] text-[var(--muted)]">+{rule.textKeywords.length - 3} more</span>
+                    {(rule.textKeywordsRequired ?? rule.textKeywords ?? []).length > 3 && (
+                      <span className="text-[9px] text-[var(--muted)]">
+                        +{(rule.textKeywordsRequired ?? rule.textKeywords ?? []).length - 3} more
+                      </span>
                     )}
+                    {(rule.textKeywordsBoosters ?? []).slice(0, 3).map((k) => (
+                      <span key={`boost-${k}`} className="text-[9px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-300" title="Booster">
+                        +{k}
+                      </span>
+                    ))}
                     {(rule.csiDivisionsRequired || []).map((d) => (
                       <span key={d} className="text-[9px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono">
                         Div {d}
@@ -482,20 +502,75 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
                     </div>
                   )}
 
-                  {/* Text Keywords */}
+                  {/* Required Text Keywords */}
                   <div>
                     <label className="text-[10px] text-[var(--muted)] block mb-1">
-                      Text Keywords (comma-separated, ALL must appear in page text)
+                      Required Keywords (comma-separated)
                     </label>
                     <input
                       type="text"
-                      value={rule.textKeywords.join(", ")}
+                      value={(rule.textKeywordsRequired ?? rule.textKeywords ?? []).join(", ")}
                       onChange={(e) =>
-                        updateRule(rule.id, { textKeywords: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })
+                        updateRule(rule.id, {
+                          textKeywordsRequired: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+                        })
                       }
                       placeholder="e.g. DOOR, SCHEDULE"
                       className="w-full px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-emerald-400/50"
                     />
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[9px] text-[var(--muted)]">Match mode:</span>
+                      <select
+                        value={rule.textKeywordsMode ?? "any-required"}
+                        onChange={(e) =>
+                          updateRule(rule.id, {
+                            textKeywordsMode: e.target.value as "any-required" | "all-required",
+                          })
+                        }
+                        className="text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-0.5 text-[var(--fg)]"
+                      >
+                        <option value="any-required">any (OR)</option>
+                        <option value="all-required">all (AND)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Booster Keywords */}
+                  <div>
+                    <label className="text-[10px] text-[var(--muted)] block mb-1">
+                      Booster Keywords (comma-separated, each match adds +0.05 confidence)
+                    </label>
+                    <input
+                      type="text"
+                      value={(rule.textKeywordsBoosters ?? []).join(", ")}
+                      onChange={(e) =>
+                        updateRule(rule.id, {
+                          textKeywordsBoosters: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+                        })
+                      }
+                      placeholder="e.g. HOLLOW METAL, FIRE-RATED"
+                      className="w-full px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none focus:border-amber-400/50"
+                    />
+                  </div>
+
+                  {/* YOLO Availability Mode */}
+                  <div>
+                    <label className="text-[10px] text-[var(--muted)] block mb-1">
+                      YOLO Availability Mode — how to behave when YOLO data is missing
+                    </label>
+                    <select
+                      value={rule.yoloAvailabilityMode ?? "require"}
+                      onChange={(e) =>
+                        updateRule(rule.id, {
+                          yoloAvailabilityMode: e.target.value as "require" | "degrade" | "ignore",
+                        })
+                      }
+                      className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none"
+                    >
+                      <option value="require">require — skip if YOLO absent (default)</option>
+                      <option value="degrade">degrade — fire at 0.6× with advisory</option>
+                      <option value="ignore">ignore — treat yoloRequired as boosters</option>
+                    </select>
                   </div>
 
                   {/* YOLO Model + Classes */}
@@ -646,11 +721,12 @@ export default function HeuristicsTab({ reprocessing, reprocessLog, onReprocess 
                         className="px-2 py-1 text-xs bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none"
                       >
                         <option value="">Any</option>
-                        <option value="table-like">table-like</option>
-                        <option value="notes-block">notes-block</option>
-                        <option value="spec-text">spec-text</option>
-                        <option value="key-value">key-value</option>
+                        <option value="schedule-table">schedule-table</option>
+                        <option value="notes-numbered">notes-numbered</option>
+                        <option value="notes-key-value">notes-key-value</option>
+                        <option value="spec-dense-columns">spec-dense-columns</option>
                         <option value="paragraph">paragraph</option>
+                        <option value="unknown">unknown</option>
                       </select>
                     </div>
                     <label className="flex items-center gap-2 cursor-pointer mt-4">
