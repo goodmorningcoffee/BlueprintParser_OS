@@ -96,7 +96,12 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   // Optional colBoundaries / rowBoundaries capture the user's Manual-mode
   // column/row BBs so the rendered grid lines match exact placements
   // instead of falling back to uniform boundaries derived from header count.
-  const saveKeynoteToIntelligence = useCallback((keys: { key: string; description: string }[], tableName?: string, csiTags?: { code: string; description: string }[]) => {
+  const saveKeynoteToIntelligence = useCallback((
+    keys: { key: string; description: string }[],
+    tableName?: string,
+    csiTags?: { code: string; description: string }[],
+    persistToDb: boolean = true,
+  ) => {
     const storeState = useViewerStore.getState();
     const currentIntel = storeState.pageIntelligence[pageNumber] || {};
     const existingRegions = (currentIntel as any)?.parsedRegions || [];
@@ -145,7 +150,21 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       ...currentIntel,
       parsedRegions: [...existingRegions, newRegion],
     });
-  }, [pageNumber, keynoteParseRegion, setPageIntelligence]);
+
+    if (!persistToDb) return;
+    refreshPageCsiSpatialMap(pageNumber);
+    // Persist to DB (fire-and-forget) — skip for demo mode
+    if (projectId && !storeState.isDemo) {
+      const updatedIntel = useViewerStore.getState().pageIntelligence[pageNumber];
+      fetch("/api/pages/intelligence", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, pageNumber, intelligence: updatedIntel }),
+      }).then((r) => {
+        if (!r.ok) r.json().then((d) => console.error("[save-keynote-intel] Failed:", r.status, d)).catch(() => {});
+      }).catch((e) => console.error("[save-keynote-intel] Network error:", e));
+    }
+  }, [pageNumber, keynoteParseRegion, setPageIntelligence, projectId]);
 
   const [autoParsing, setAutoParsing] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
