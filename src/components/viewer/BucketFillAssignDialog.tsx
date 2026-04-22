@@ -32,6 +32,10 @@ export default function BucketFillAssignDialog({
   const [formName, setFormName] = useState("");
   const [formColor, setFormColor] = useState(TWENTY_COLORS[areaItems.length % TWENTY_COLORS.length]);
   const [creating, setCreating] = useState(false);
+  // Visible error state — replaces the silent console.error in the catch
+  // block. User reported "click Create → nothing happens" on failures where
+  // projectId was temporarily unset or the /api/takeoff-items POST errored.
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Position near polygon centroid, clamped to viewport
   const verts = pendingPolygon.vertices;
@@ -44,6 +48,14 @@ export default function BucketFillAssignDialog({
   async function handleCreateAndAssign() {
     const name = formName.trim();
     if (!name) return;
+    setErrorMsg(null);
+    // Guard: non-demo requires a hydrated projectId. If the user somehow
+    // triggered this dialog before project metadata loaded, surface a
+    // retryable message instead of firing a POST that will 400.
+    if (!isDemo && !projectId) {
+      setErrorMsg("Project not ready yet — try again in a moment");
+      return;
+    }
     setCreating(true);
     try {
       let item: ClientTakeoffItem;
@@ -63,13 +75,22 @@ export default function BucketFillAssignDialog({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ projectId, name, shape: "polygon", color: formColor }),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try {
+            const body = await res.json();
+            if (body?.error) detail = body.error;
+          } catch { /* non-JSON body */ }
+          throw new Error(detail);
+        }
         item = await res.json();
       }
       addTakeoffItem(item);
       commitBucketFillToItem(item);
     } catch (err) {
       console.error("Failed to create area item:", err);
+      const msg = err instanceof Error ? err.message : "Failed to create item";
+      setErrorMsg(msg);
       setCreating(false);
     }
   }
@@ -194,6 +215,11 @@ export default function BucketFillAssignDialog({
           >
             {creating ? "Creating..." : "Create & Assign"}
           </button>
+          {errorMsg && (
+            <div style={{ fontSize: 10, color: "#ef4444", marginTop: 4, lineHeight: 1.3 }}>
+              {errorMsg}
+            </div>
+          )}
         </div>
       ) : (
         <button

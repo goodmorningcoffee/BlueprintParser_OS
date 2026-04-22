@@ -55,6 +55,12 @@ export async function POST(req: Request) {
   // impossible threshold into the picker logic. Clamp to sane bounds at the
   // boundary so no downstream code has to assume input validity.
   const clampedLeakThreshold = Math.max(0.05, Math.min(0.95, leakThreshold));
+  // Client worker accepts negative tolerance (expanded 2026-04-22 for user
+  // thin-line sensitivity). The server fallback's Python script predates
+  // that expansion and may not handle negative values gracefully. Clamp to
+  // 0 at the server boundary so the Python path gets the tightest-positive
+  // equivalent. Server fallback is rare (only fires on worker failure).
+  const clampedTolerance = Math.max(0, tolerance);
 
   const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
   if (access.error) return access.error;
@@ -93,7 +99,7 @@ export async function POST(req: Request) {
       pageNumber,
       seedX: x,
       seedY: y,
-      tolerance,
+      tolerance: clampedTolerance,
       dilatePx: dilate,
       simplifyEpsilon,
       leakThreshold: clampedLeakThreshold,
