@@ -2,6 +2,7 @@
 
 import { useViewerStore, usePanels } from "@/stores/viewerStore";
 import KeynotePanel from "./KeynotePanel";
+import NotesPanel from "./NotesPanel";
 
 /**
  * SpecsNotesPanel — D2 orchestrator (new 2026-04-21).
@@ -69,7 +70,7 @@ export default function SpecsNotesPanel() {
       {/* Content */}
       <div className="flex-1 overflow-hidden flex flex-col">
         {specsNotesTab === "spec-parse" && <StubTab label="Spec Parse" />}
-        {specsNotesTab === "notes-parse" && <StubTab label="Notes Parse" />}
+        {specsNotesTab === "notes-parse" && <NotesPanel embedded />}
         {specsNotesTab === "keynotes" && <KeynotePanel embedded />}
       </div>
     </div>

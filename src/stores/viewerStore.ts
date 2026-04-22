@@ -498,6 +498,27 @@ interface ViewerState {
   parseDraftRegion: ParsedRegion | null;
   setParseDraftRegion: (r: ParsedRegion | null) => void;
 
+  /** Stage 4: gate for PDFPage's NotesFastManualOverlaySlot. Toggled by
+   *  NotesParser when the user enters/leaves the Fast-manual sub-mode. */
+  notesFastManualActive: boolean;
+  setNotesFastManualActive: (active: boolean) => void;
+
+  /** Stage 4: FastManualParseOverlay writes its cumulative grid here on
+   *  every double-click. NotesParser mirrors into local `preview` state
+   *  via useEffect when mode === "fast-manual". Cleared on mode change. */
+  notesFastManualGrid: {
+    headers: string[];
+    rows: Record<string, string>[];
+    colBoundaries?: number[];
+    rowBoundaries?: number[];
+  } | null;
+  setNotesFastManualGrid: (g: {
+    headers: string[];
+    rows: Record<string, string>[];
+    colBoundaries?: number[];
+    rowBoundaries?: number[];
+  } | null) => void;
+
   // ─── Spec Parse (Stage 3 scaffold — consumed by Stage 5 UI) ────
   specParseStep: "idle" | "select-region" | "define-sections" | "review";
   setSpecParseStep: (step: "idle" | "select-region" | "define-sections" | "review") => void;
@@ -1394,6 +1415,11 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   parseDraftRegion: null,
   setParseDraftRegion: (parseDraftRegion) => set({ parseDraftRegion }),
 
+  notesFastManualActive: false,
+  setNotesFastManualActive: (notesFastManualActive) => set({ notesFastManualActive }),
+  notesFastManualGrid: null,
+  setNotesFastManualGrid: (notesFastManualGrid) => set({ notesFastManualGrid }),
+
   // ─── Spec Parse (Stage 3 scaffold) ──────────────────────
   specParseStep: "idle",
   setSpecParseStep: (specParseStep) =>
@@ -1719,6 +1745,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       specParseRegion: null,
       guidedSpecSectionBBs: [],
       parseDraftRegion: null,
+      notesFastManualActive: false,
+      notesFastManualGrid: null,
       yoloTags: [],
       activeYoloTagId: null,
       yoloTagVisibility: {},
