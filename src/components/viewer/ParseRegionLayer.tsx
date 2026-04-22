@@ -40,6 +40,7 @@ export default memo(function ParseRegionLayer({
   const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
   const hiddenParsedRegionIds = useViewerStore((s) => s.hiddenParsedRegionIds);
   const parsedRegionColorMode = useViewerStore((s) => s.parsedRegionColorMode);
+  const parseDraftRegion = useViewerStore((s) => s.parseDraftRegion);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -152,7 +153,15 @@ export default memo(function ParseRegionLayer({
       for (const region of intel.parsedRegions) {
         if (!region.bbox) continue;
         if (region.id && hiddenParsedRegionIds.has(region.id)) continue;
-        const color = region.data?.color || (region.type === "keynote" ? "#f59e0b" : "#e879a0");
+        // Stage 3 color palette: keynote=amber, notes=blue, spec=violet,
+        // legend/schedule/default=pink. Explicit region.data.color override still wins.
+        const defaultColor = (
+          region.type === "keynote" ? "#f59e0b" :
+          region.type === "notes" ? "#60a5fa" :
+          region.type === "spec" ? "#a78bfa" :
+          "#e879a0"
+        );
+        const color = region.data?.color || defaultColor;
         const opacityPct = region.data?.opacity ?? 20;
         const [minX, minY, maxX, maxY] = region.bbox;
         const x = minX * width, y = minY * height;
@@ -245,10 +254,76 @@ export default memo(function ParseRegionLayer({
         }
       }
     }
+
+    // ── Draft region preview (Stage 4: in-flight Parser preview) ─────
+    if (parseDraftRegion?.bbox) {
+      const region = parseDraftRegion;
+      const typeColor =
+        region.type === "keynote" ? "#f59e0b" :
+        region.type === "notes" ? "#60a5fa" :
+        region.type === "spec" ? "#a78bfa" :
+        "#e879a0";
+      const [minX, minY, maxX, maxY] = region.bbox;
+      const dx = minX * width, dy = minY * height;
+      const dw = (maxX - minX) * width, dh = (maxY - minY) * height;
+
+      ctx.fillStyle = typeColor + "1a";
+      ctx.strokeStyle = typeColor;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.fillRect(dx, dy, dw, dh);
+      ctx.strokeRect(dx, dy, dw, dh);
+      ctx.setLineDash([]);
+
+      const label = `${(region.data as { tableName?: string } | undefined)?.tableName ?? region.category ?? region.type} (draft)`;
+      ctx.font = "bold 10px sans-serif";
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = typeColor + "cc";
+      ctx.fillRect(dx, dy - 14, tw + 8, 14);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, dx + 4, dy - 3);
+
+      // Grid-line preview if the draft grid is populated
+      const data = region.data as {
+        headers?: string[];
+        rows?: Record<string, string>[];
+        colBoundaries?: number[];
+        rowBoundaries?: number[];
+      } | undefined;
+      const dColB = data?.colBoundaries;
+      const dRowB = data?.rowBoundaries;
+      if (data?.headers?.length && data.rows?.length && (dColB || dRowB)) {
+        ctx.strokeStyle = typeColor + "80";
+        ctx.lineWidth = 0.5;
+        ctx.setLineDash([3, 2]);
+        if (dColB) {
+          for (let ci = 1; ci < dColB.length - 1; ci++) {
+            const lx = dColB[ci] * width;
+            ctx.beginPath();
+            ctx.moveTo(lx, dy);
+            ctx.lineTo(lx, dy + dh);
+            ctx.stroke();
+          }
+        }
+        if (dRowB) {
+          for (const ry of dRowB) {
+            const ly = ry * height;
+            if (ly > dy && ly < dy + dh) {
+              ctx.beginPath();
+              ctx.moveTo(dx, ly);
+              ctx.lineTo(dx + dw, ly);
+              ctx.stroke();
+            }
+          }
+        }
+        ctx.setLineDash([]);
+      }
+    }
   }, [width, height, showParsedRegions,
     showTableParsePanel, tableParseRegion, tableParseColumnBBs, tableParseRowBBs,
     showKeynoteParsePanel, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs,
-    pageNumber, pageIntelligence, hiddenParsedRegionIds, parsedRegionColorMode]);
+    pageNumber, pageIntelligence, hiddenParsedRegionIds, parsedRegionColorMode,
+    parseDraftRegion]);
 
   const intel = pageIntelligence[pageNumber] as any;
   const hasSavedRegions = intel?.parsedRegions?.length > 0;
@@ -256,6 +331,7 @@ export default memo(function ParseRegionLayer({
     (showTableParsePanel && (tableParseRegion || tableParseColumnBBs.length > 0 || tableParseRowBBs.length > 0))
     || (showKeynoteParsePanel && (keynoteParseRegion || keynoteColumnBBs.length > 0 || keynoteRowBBs.length > 0))
     || hasSavedRegions
+    || !!parseDraftRegion
   );
 
   if (!hasContent) return null;

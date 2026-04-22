@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyTextRegions } from "@/lib/text-region-classifier";
+import { classifyTextRegions, parseNotesFromRegion } from "@/lib/text-region-classifier";
 import type { TextractPageData, TextractLine, TextractWord, CsiCode } from "@/types";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -256,5 +256,37 @@ describe("classifyTextRegions — Stage 1 composite classifier", () => {
     for (const r of regions) {
       expect(legacyNames.has(r.type)).toBe(false);
     }
+  });
+});
+
+describe("parseNotesFromRegion — Stage 4 Parser wrapper", () => {
+  it("returns Key/Note grid for a numbered-notes bbox", () => {
+    const data = fixtureNotesNumbered();
+    const regionBbox: [number, number, number, number] = [0.05, 0.05, 0.5, 0.35];
+    const grid = parseNotesFromRegion(data, regionBbox);
+    expect(grid).toBeDefined();
+    expect(grid?.headers).toEqual(["Key", "Note"]);
+    expect(grid?.rows.length).toBeGreaterThanOrEqual(5);
+    expect(grid?.rows[0].Key).toBe("1");
+    expect(grid?.rows[0].Note).toContain("All dimensions");
+  });
+
+  it("computes colBoundaries with three entries (left, keyColRight, right)", () => {
+    const data = fixtureNotesNumbered();
+    const regionBbox: [number, number, number, number] = [0.05, 0.05, 0.5, 0.35];
+    const grid = parseNotesFromRegion(data, regionBbox);
+    expect(grid?.colBoundaries).toBeDefined();
+    expect(grid!.colBoundaries!.length).toBe(3);
+    const [left, mid, right] = grid!.colBoundaries!;
+    expect(left).toBeCloseTo(0.05);
+    expect(right).toBeCloseTo(0.55);
+    expect(mid).toBeGreaterThan(left);
+    expect(mid).toBeLessThan(right);
+  });
+
+  it("returns undefined when no lines fall inside the bbox", () => {
+    const data = fixtureNotesNumbered();
+    const regionBbox: [number, number, number, number] = [0.9, 0.9, 0.05, 0.05];
+    expect(parseNotesFromRegion(data, regionBbox)).toBeUndefined();
   });
 });

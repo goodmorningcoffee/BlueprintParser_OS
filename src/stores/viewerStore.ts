@@ -19,6 +19,7 @@ import type {
   QtoWorkflow,
   ProjectSummaries,
   AnnotationGroup,
+  ParsedRegion,
 } from "@/types";
 
 interface TagScanResults {
@@ -475,6 +476,36 @@ interface ViewerState {
   activeKeynoteHighlight: { pageNumber: number; key: string } | null;
   setActiveKeynoteHighlight: (h: { pageNumber: number; key: string } | null) => void;
   resetKeynoteParse: () => void;
+
+  // ─── Notes Parse (Stage 3 scaffold — consumed by Stage 4 UI) ───
+  notesParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
+  setNotesParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
+  notesParseRegion: [number, number, number, number] | null;
+  setNotesParseRegion: (bbox: [number, number, number, number] | null) => void;
+  notesType: "general" | "rcp" | "demo" | "key" | "spec-note" | "other" | null;
+  setNotesType: (t: "general" | "rcp" | "demo" | "key" | "spec-note" | "other" | null) => void;
+  guidedNotesRows: [number, number, number, number][];
+  addGuidedNotesRow: (bb: [number, number, number, number]) => void;
+  guidedNotesCols: [number, number, number, number][];
+  addGuidedNotesCol: (bb: [number, number, number, number]) => void;
+  resetNotesParse: () => void;
+
+  // ─── Shared parse draft (Stage 4) ──────────────────────
+  /** Transient in-progress ParsedRegion rendered by ParseRegionLayer with a
+   *  dashed stroke + reduced opacity. Written by any Parser (Notes today,
+   *  Spec/Keynote later) during Auto/Guided/Fast-manual/Manual preview;
+   *  cleared on commit or reset. Not persisted. */
+  parseDraftRegion: ParsedRegion | null;
+  setParseDraftRegion: (r: ParsedRegion | null) => void;
+
+  // ─── Spec Parse (Stage 3 scaffold — consumed by Stage 5 UI) ────
+  specParseStep: "idle" | "select-region" | "define-sections" | "review";
+  setSpecParseStep: (step: "idle" | "select-region" | "define-sections" | "review") => void;
+  specParseRegion: [number, number, number, number] | null;
+  setSpecParseRegion: (bbox: [number, number, number, number] | null) => void;
+  guidedSpecSectionBBs: [number, number, number, number][];
+  addGuidedSpecSectionBB: (bb: [number, number, number, number]) => void;
+  resetSpecParse: () => void;
 
   // ─── YOLO Tags ─────────────────────────────────────────
   yoloTags: YoloTag[];
@@ -1334,6 +1365,55 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     keynoteYoloClass: null,
   }),
 
+  // ─── Notes Parse (Stage 3 scaffold) ─────────────────────
+  notesParseStep: "idle",
+  setNotesParseStep: (notesParseStep) =>
+    set((s) => ({
+      notesParseStep,
+      ...(s.notesParseStep === "idle" && notesParseStep !== "idle"
+        ? { mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarrierMode: false, splitAreaActive: false, symbolSearchActive: false }
+        : {}),
+    })),
+  notesParseRegion: null,
+  setNotesParseRegion: (notesParseRegion) => set({ notesParseRegion }),
+  notesType: null,
+  setNotesType: (notesType) => set({ notesType }),
+  guidedNotesRows: [],
+  addGuidedNotesRow: (bb) => set((s) => ({ guidedNotesRows: [...s.guidedNotesRows, bb] })),
+  guidedNotesCols: [],
+  addGuidedNotesCol: (bb) => set((s) => ({ guidedNotesCols: [...s.guidedNotesCols, bb] })),
+  resetNotesParse: () => set({
+    notesParseStep: "idle",
+    notesParseRegion: null,
+    notesType: null,
+    guidedNotesRows: [],
+    guidedNotesCols: [],
+    parseDraftRegion: null,
+  }),
+
+  parseDraftRegion: null,
+  setParseDraftRegion: (parseDraftRegion) => set({ parseDraftRegion }),
+
+  // ─── Spec Parse (Stage 3 scaffold) ──────────────────────
+  specParseStep: "idle",
+  setSpecParseStep: (specParseStep) =>
+    set((s) => ({
+      specParseStep,
+      ...(s.specParseStep === "idle" && specParseStep !== "idle"
+        ? { mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarrierMode: false, splitAreaActive: false, symbolSearchActive: false }
+        : {}),
+    })),
+  specParseRegion: null,
+  setSpecParseRegion: (specParseRegion) => set({ specParseRegion }),
+  guidedSpecSectionBBs: [],
+  addGuidedSpecSectionBB: (bb) => set((s) => ({ guidedSpecSectionBBs: [...s.guidedSpecSectionBBs, bb] })),
+  resetSpecParse: () => set({
+    specParseStep: "idle",
+    specParseRegion: null,
+    guidedSpecSectionBBs: [],
+    parseDraftRegion: null,
+  }),
+
   yoloTags: [],
   setYoloTags: (yoloTags) => set({ yoloTags }), // hydration only — no DB save
   addYoloTag: (tag) => {
@@ -1518,6 +1598,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     s.setMode("move");          // clears bucket/split/symbol-active/polygon/tempPan
     s.resetTableParse();
     s.resetKeynoteParse();
+    s.resetNotesParse();
+    s.resetSpecParse();
     s.resetGuidedParse();
     s.clearSymbolSearch();
   },
@@ -1627,6 +1709,16 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       keynoteYoloClass: null,
       parsedKeynoteData: null,
       activeKeynoteHighlight: null,
+      // Stage 3 scaffold — reset on project change so slices don't leak across projects
+      notesParseStep: "idle",
+      notesParseRegion: null,
+      notesType: null,
+      guidedNotesRows: [],
+      guidedNotesCols: [],
+      specParseStep: "idle",
+      specParseRegion: null,
+      guidedSpecSectionBBs: [],
+      parseDraftRegion: null,
       yoloTags: [],
       activeYoloTagId: null,
       yoloTagVisibility: {},

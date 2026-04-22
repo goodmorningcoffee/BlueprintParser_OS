@@ -1,9 +1,20 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, memo } from "react";
-import { useKeynoteParse } from "@/stores/viewerStore";
 
 interface GuidedParseOverlayProps {
+  /** Whether the overlay should render (gate set by the calling panel). */
+  active: boolean;
+  /** Outer region bbox in normalized 0-1 coordinates, or null when nothing drawn. */
+  region: [number, number, number, number] | null;
+  /** Y-coordinate positions for row boundaries, normalized 0-1. */
+  rows: number[];
+  /** X-coordinate positions for column boundaries, normalized 0-1. */
+  cols: number[];
+  /** Row setter — called on drag or double-click-to-add. */
+  setRows: (rows: number[]) => void;
+  /** Column setter — called on drag or double-click-to-add. */
+  setCols: (cols: number[]) => void;
   width: number;
   height: number;
   cssScale: number;
@@ -26,20 +37,17 @@ type DragTarget =
  * lets the user drag them to adjust (or double-click to add new ones).
  */
 export default memo(function GuidedParseOverlay({
+  active,
+  region,
+  rows,
+  cols,
+  setRows,
+  setCols,
   width,
   height,
   cssScale,
 }: GuidedParseOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  const {
-    guidedParseActive: active,
-    guidedParseRegion: region,
-    guidedParseRows: rows,
-    guidedParseCols: cols,
-    setGuidedParseRows: setRows,
-    setGuidedParseCols: setCols,
-  } = useKeynoteParse();
 
   // Local drag state -- not in the store because it's transient
   const [dragging, setDragging] = useState<DragTarget>(null);

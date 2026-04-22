@@ -21,6 +21,22 @@ interface PipelineConfig {
     enabled: boolean;
     templates: any[];
   };
+  /** Stage 2c: auto-table-detector opt-in + tuning. */
+  autoDetect?: {
+    tables?: boolean;
+    minProbability?: number;
+    categoryFilter?: string[];
+  };
+  /** Stage 2b: ensemble reducer advanced tuning (enable/disable via disabledSteps["ensemble"]). */
+  ensemble?: {
+    config?: {
+      minDistinctVotes?: number;
+      iouThreshold?: number;
+      containThreshold?: number;
+      probabilityThreshold?: number;
+      sourceWeights?: Record<string, number>;
+    };
+  };
 }
 
 const UPLOAD_STEPS = [
@@ -38,6 +54,9 @@ const POST_YOLO_STEPS = [
   { id: "heuristic-yolo", name: "Heuristic Engine (YOLO-augmented)", description: "Re-run rules with YOLO spatial signals", configTab: "heuristics", alwaysOn: false },
   { id: "table-reclassify", name: "Table Reclassification", description: "Re-classify with YOLO-enriched heuristics", configTab: null, alwaysOn: false },
   { id: "yolo-csi-merge", name: "YOLO CSI Code Merge", description: "Add CSI codes from YOLO model class config to pages", configTab: null, alwaysOn: false },
+  { id: "yolo-heatmap", name: "YOLO Density Heatmap (Stage 2a)", description: "Aggregate text_box + vertical_area + horizontal_area density into confident-region bboxes", configTab: null, alwaysOn: false },
+  { id: "ensemble", name: "Ensemble Reducer (Stage 2b)", description: "Cross-signal table detection — suppresses keyword-only false positives by requiring ≥2 distinct vote sources", configTab: null, alwaysOn: false },
+  { id: "auto-table-detect", name: "Auto-Table Detect (Stage 2c)", description: "Emit AutoTableProposal[] from ensembleRegions for downstream auto-parse. Opt-in — disabled by default.", configTab: null, alwaysOn: false },
 ];
 
 const ALWAYS_ON_STEPS = [
@@ -283,6 +302,60 @@ export default function PipelineTab({ reprocessing, reprocessLog, onReprocess, p
                 </div>
               ) : (
                 <div className="text-[9px] text-[var(--muted)]/50 mt-0.5">No YOLO model configured</div>
+              )}
+            </div>
+          </div>
+
+          {/* Stage 2c: Auto-Table Detect — opt-in */}
+          <div className={`flex items-center gap-3 px-3 py-2 rounded border transition-colors ${
+            config.autoDetect?.tables
+              ? "border-emerald-500/20 bg-emerald-500/5"
+              : "border-[var(--border)] opacity-60"
+          }`}>
+            <button
+              onClick={() => {
+                const updated = {
+                  ...config,
+                  autoDetect: {
+                    ...(config.autoDetect || {}),
+                    tables: !config.autoDetect?.tables,
+                  },
+                };
+                setConfig(updated);
+                saveConfig(updated);
+              }}
+              className={`w-8 text-center text-[10px] font-medium rounded py-0.5 ${
+                config.autoDetect?.tables ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--border)] text-[var(--muted)]"
+              }`}
+            >
+              {config.autoDetect?.tables ? "ON" : "OFF"}
+            </button>
+            <div className="flex-1">
+              <div className="text-xs font-medium text-[var(--fg)]">Auto-Table Detect (Stage 2c)</div>
+              <div className="text-[10px] text-[var(--muted)]">
+                Emit <code>AutoTableProposal[]</code> from ensembleRegions for downstream auto-parse. Requires ensemble reducer enabled. Opt-in.
+              </div>
+              {config.autoDetect?.tables && (
+                <div className="mt-1 flex items-center gap-2">
+                  <label className="text-[9px] text-[var(--muted)]">Min probability</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    max="1"
+                    value={config.autoDetect?.minProbability ?? 0.65}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      const updated = {
+                        ...config,
+                        autoDetect: { ...(config.autoDetect || {}), minProbability: isFinite(v) ? v : 0.65 },
+                      };
+                      setConfig(updated);
+                      saveConfig(updated);
+                    }}
+                    className="w-16 text-[10px] bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-0.5 text-[var(--fg)]"
+                  />
+                </div>
               )}
             </div>
           </div>

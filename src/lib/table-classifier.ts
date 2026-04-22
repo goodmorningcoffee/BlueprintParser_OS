@@ -22,6 +22,7 @@ import type {
   BboxLTWH,
 } from "@/types";
 import { migrateTextRegions } from "@/lib/text-region-migrate";
+import { isWholeWordMatch } from "@/lib/text-match-utils";
 
 // ═══════════════════════════════════════════════════════════════════
 // Category Keyword Patterns
@@ -109,8 +110,10 @@ function scoreRegionForCategory(
 ): { score: number; evidence: string[] } {
   let score = 0;
   const evidence: string[] = [];
-  const upperHeader = (region.headerText || "").toUpperCase();
-  const upperText = (region.containedText || "").toUpperCase();
+  const header = region.headerText || "";
+  const body = region.containedText || "";
+  const inHeaderOrBody = (kw: string) =>
+    isWholeWordMatch(header, kw) || isWholeWordMatch(body, kw);
 
   // Region type match
   if (pattern.requiredRegionType) {
@@ -123,11 +126,9 @@ function scoreRegionForCategory(
     }
   }
 
-  // Required keywords (ALL must match)
+  // Required keywords (ALL must match as whole words — no INDOOR/OUTDOOR partials)
   if (pattern.keywords.length > 0) {
-    const allFound = pattern.keywords.every(kw =>
-      upperHeader.includes(kw) || upperText.includes(kw)
-    );
+    const allFound = pattern.keywords.every(inHeaderOrBody);
     if (allFound) {
       score += 0.2;
       evidence.push(`Keywords: ${pattern.keywords.join(", ")}`);
@@ -136,14 +137,11 @@ function scoreRegionForCategory(
     }
   }
 
-  // Any keywords (at least one must match)
+  // Any keywords (at least one must match as whole word)
   if (pattern.keywordsAny && pattern.keywordsAny.length > 0) {
-    const found = pattern.keywordsAny.filter(kw =>
-      upperHeader.includes(kw) || upperText.includes(kw)
-    );
+    const found = pattern.keywordsAny.filter(inHeaderOrBody);
     if (found.length > 0) {
-      // Header match is stronger than body text match
-      const inHeader = found.some(kw => upperHeader.includes(kw));
+      const inHeader = found.some((kw) => isWholeWordMatch(header, kw));
       score += inHeader ? 0.25 : 0.15;
       evidence.push(`Keyword${inHeader ? " (header)" : ""}: ${found[0]}`);
     }

@@ -5,6 +5,8 @@
  * No Node.js imports (no fs, path, etc.)
  */
 
+import type { CsiCode } from "@/types";
+
 /**
  * Normalize a CSI code input to canonical space-separated format.
  * Accepts: "8", "08", "080000", "08 00 00", "08-00-00", "08.00.00", "023321", etc.
@@ -28,3 +30,36 @@ export function normalizeCsiCodes(input: string): string[] {
 
 /** CSI code input placeholder text */
 export const CSI_INPUT_PLACEHOLDER = "e.g. 08, 08 11 16, 080000";
+
+/**
+ * Idempotently merge a list of incoming CSI tags into an existing CsiCode[].
+ *
+ * Used server-side by `/api/pages/intelligence` (PATCH) and `/api/regions/promote`
+ * (POST) so both endpoints write consistent page-level csiCodes after a
+ * ParsedRegion is accepted or promoted.
+ *
+ * Incoming tags may arrive with only `{code, description}` (from a parsed grid's
+ * CSI detection output). Missing `division` is derived from the first two
+ * characters of the code; missing `trade` defaults to empty string.
+ *
+ * Behavior: dedupes by `code` — codes already present in `existing` are never
+ * overwritten. Safe to call repeatedly with the same inputs.
+ */
+export function mergeCsiCodes(
+  existing: CsiCode[],
+  incoming: ReadonlyArray<{ code: string; description: string; division?: string; trade?: string }>,
+): CsiCode[] {
+  const seen = new Set(existing.map((c) => c.code));
+  const merged: CsiCode[] = [...existing];
+  for (const tag of incoming) {
+    if (!tag.code || seen.has(tag.code)) continue;
+    seen.add(tag.code);
+    merged.push({
+      code: tag.code,
+      description: tag.description,
+      division: tag.division ?? tag.code.substring(0, 2),
+      trade: tag.trade ?? "",
+    });
+  }
+  return merged;
+}
