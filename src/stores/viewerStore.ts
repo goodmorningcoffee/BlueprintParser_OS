@@ -415,6 +415,7 @@ interface ViewerState {
   setTableParseColumnNames: (names: string[]) => void;
   tableParseRowBBs: [number, number, number, number][]; // user-drawn row BBs
   addTableParseRowBB: (bb: [number, number, number, number]) => void;
+  setTableParseRowBBs: (bbs: [number, number, number, number][]) => void;
   resetTableParse: () => void;
   tableParseTab: "all" | "auto" | "guided" | "manual" | "compare";
   setTableParseTab: (tab: "all" | "auto" | "guided" | "manual" | "compare") => void;
@@ -556,8 +557,23 @@ interface ViewerState {
   setGuidedParseCols: (cols: number[]) => void;
   resetGuidedParse: () => void;
 
+  // Universal tool-state tear-down — compose of setMode("move") +
+  // resetTableParse + resetKeynoteParse + resetGuidedParse + clearSymbolSearch.
+  // Called from parent-panel toggles on close and from cancel buttons.
+  resetAllTools: () => void;
+
   // ─── Reset ─────────────────────────────────────────────
   resetProjectData: () => void;
+}
+
+// Identity tuple for YoloTag dedup on write. Two tags with the same
+// (source, tagText uppercased, scope, yoloClass) are treated as the same
+// logical mapping — a re-map replaces the prior entry instead of appending.
+// Prevents the tag-browse stale-count bug where re-mapping with different
+// strictness/scope left multiple YoloTag rows and find(...) returned the
+// oldest one.
+function makeYoloTagKey(t: YoloTag): string {
+  return `${t.source}::${t.tagText.toUpperCase()}::${t.scope}::${t.yoloClass}`;
 }
 
 // Debounced save for YOLO tags — persists to projectIntelligence.yoloTags via PUT
@@ -823,7 +839,17 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     set((s) => ({ showDetections: !s.showDetections })),
   showDetectionPanel: false,
   toggleDetectionPanel: () =>
-    set((s) => ({ showDetectionPanel: !s.showDetectionPanel })),
+    set((s) => {
+      const closing = s.showDetectionPanel;
+      // Cascade tool-state teardown only when no other panel is still hosting
+      // the same tools. Parse panel embeds DetectionPanel via lockedTab and
+      // shares the Shape Parse / Template Parse store state; resetting while
+      // Parse is open would clobber an active draft the user can still see.
+      if (closing && !s.showParsePanel) {
+        queueMicrotask(() => get().resetAllTools());
+      }
+      return { showDetectionPanel: !s.showDetectionPanel };
+    }),
   showViewAllPanel: false,
   toggleViewAllPanel: () =>
     set((s) => ({ showViewAllPanel: !s.showViewAllPanel })),
@@ -1114,7 +1140,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   toggleTableParsePanel: () =>
     set((s) => ({
       showTableParsePanel: !s.showTableParsePanel,
-      // Reset all parse state when closing
+      // Reset all parse state when closing. guidedParse* fields live on the
+      // store but share the Table/Keynote Guided tab — clear them too so the
+      // pink region overlay doesn't survive a close/reopen.
       ...(!s.showTableParsePanel ? {} : {
         tableParseStep: "idle" as const,
         tableParseRegion: null,
@@ -1124,6 +1152,10 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
         tableParseColumnNames: [],
         tableParseRowBBs: [],
         tableParseTab: "all" as const,
+        guidedParseActive: false,
+        guidedParseRegion: null,
+        guidedParseRows: [],
+        guidedParseCols: [],
         mode: "move" as const,
       }),
     })),
@@ -1169,6 +1201,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   tableParseRowBBs: [],
   addTableParseRowBB: (bb) =>
     set((s) => ({ tableParseRowBBs: [...s.tableParseRowBBs, bb] })),
+  setTableParseRowBBs: (tableParseRowBBs) => set({ tableParseRowBBs }),
   resetTableParse: () =>
     set({
       tableParseStep: "idle",
@@ -1207,7 +1240,16 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   // embedded, so the underlying logic is reused rather than duplicated.
   showParsePanel: false,
   toggleParsePanel: () =>
-    set((s) => ({ showParsePanel: !s.showParsePanel })),
+    set((s) => {
+      const closing = s.showParsePanel;
+      // Cascade teardown only when the standalone YOLO (DetectionPanel) isn't
+      // still open — closing one panel shouldn't clobber a Shape Parse draft
+      // the user is actively working in the other.
+      if (closing && !s.showDetectionPanel) {
+        queueMicrotask(() => get().resetAllTools());
+      }
+      return { showParsePanel: !s.showParsePanel };
+    }),
   parsePanelTab: "shape",
   setParsePanelTab: (parsePanelTab) => set({ parsePanelTab }),
 
@@ -1224,7 +1266,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   toggleKeynoteParsePanel: () =>
     set((s) => ({
       showKeynoteParsePanel: !s.showKeynoteParsePanel,
-      // Reset all parse state when closing
+      // Reset all parse state when closing. Keynote's Guided tab shares the
+      // guidedParse* store fields — clear them so pink region overlay doesn't
+      // survive across panel close/reopen.
       ...(!s.showKeynoteParsePanel ? {} : {
         keynoteParseStep: "idle" as const,
         keynoteParseRegion: null,
@@ -1232,6 +1276,10 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
         keynoteRowBBs: [],
         keynoteYoloClass: null,
         keynoteParseTab: "all" as const,
+        guidedParseActive: false,
+        guidedParseRegion: null,
+        guidedParseRows: [],
+        guidedParseCols: [],
         mode: "move" as const,
       }),
     })),
@@ -1272,12 +1320,22 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   yoloTags: [],
   setYoloTags: (yoloTags) => set({ yoloTags }), // hydration only — no DB save
   addYoloTag: (tag) => {
-    set((s) => ({ yoloTags: [...s.yoloTags, tag] }));
+    set((s) => {
+      const merged = new Map<string, YoloTag>();
+      for (const t of s.yoloTags) merged.set(makeYoloTagKey(t), t);
+      merged.set(makeYoloTagKey(tag), tag);
+      return { yoloTags: Array.from(merged.values()) };
+    });
     _debounceSaveYoloTags();
   },
   addYoloTagsBulk: (tags) => {
     if (tags.length === 0) return;
-    set((s) => ({ yoloTags: [...s.yoloTags, ...tags] }));
+    set((s) => {
+      const merged = new Map<string, YoloTag>();
+      for (const t of s.yoloTags) merged.set(makeYoloTagKey(t), t);
+      for (const t of tags) merged.set(makeYoloTagKey(t), t); // incoming overrides + intra-batch last-wins
+      return { yoloTags: Array.from(merged.values()) };
+    });
     _debounceSaveYoloTags();
   },
   removeYoloTag: (id) => {
@@ -1315,7 +1373,21 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   tagBrowseIndex: 0,
   tagBrowseNavigate: (tagId, index) => set((s) => {
     const tag = s.yoloTags.find((t) => t.id === tagId);
-    if (!tag || tag.instances.length === 0) return s;
+    if (!tag) return s;
+    // 0-instance tags used to early-return silently, leaving the click handler
+    // with no visible effect — user thought "didn't work for all rows" when
+    // really the map-tags call found zero matches for that tag under the
+    // current scope/strictness. Surface the tag in TagBrowseBar anyway so the
+    // "No instances (scope: A-*, strictness: strict)" hint renders and the
+    // user gets signal instead of silence.
+    if (tag.instances.length === 0) {
+      return {
+        tagBrowseId: tagId,
+        tagBrowseIndex: 0,
+        activeYoloTagId: tagId,
+        llmHighlight: null,
+      };
+    }
     const idx = ((index % tag.instances.length) + tag.instances.length) % tag.instances.length;
     const inst = tag.instances[idx];
     return {
@@ -1406,6 +1478,22 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setGuidedParseRows: (guidedParseRows) => set({ guidedParseRows }),
   setGuidedParseCols: (guidedParseCols) => set({ guidedParseCols }),
   resetGuidedParse: () => set({ guidedParseActive: false, guidedParseRegion: null, guidedParseRows: [], guidedParseCols: [] }),
+
+  // Universal tool-state tear-down. Composes the reset primitives instead of
+  // inlining field lists so each subsystem stays the owner of its own cleanup
+  // shape. Called from parent-panel toggles (Parse, Detection, Table, Keynote)
+  // on close, and from cancel buttons inside parse panels. Explicitly does NOT
+  // touch: selectedAnnotationIds, annotationGroups, llmHighlight, showKeynotes
+  // overlay, chat, annotations, takeoffs, parsedKeynoteData. Those survive
+  // panel close so the user's saved work and multi-select state persist.
+  resetAllTools: () => {
+    const s = get();
+    s.setMode("move");          // clears bucket/split/symbol-active/polygon/tempPan
+    s.resetTableParse();
+    s.resetKeynoteParse();
+    s.resetGuidedParse();
+    s.clearSymbolSearch();
+  },
 
   _drawing: false,
   _drawStart: { x: 0, y: 0 },
@@ -1693,6 +1781,7 @@ export const useTableParse = () =>
     addTableParseColumnBB: s.addTableParseColumnBB,
     tableParseRowBBs: s.tableParseRowBBs,
     addTableParseRowBB: s.addTableParseRowBB,
+    setTableParseRowBBs: s.setTableParseRowBBs,
     tableParseColumnNames: s.tableParseColumnNames,
     setTableParseColumnNames: s.setTableParseColumnNames,
     tableParseTab: s.tableParseTab,

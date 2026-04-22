@@ -77,6 +77,50 @@ export default memo(function ParsedTableItem({
   const hiddenParsedRegionIds = useViewerStore((s) => s.hiddenParsedRegionIds);
   const isRegionHidden = table.region?.id ? hiddenParsedRegionIds.has(table.region.id) : false;
   const isFocused = focusedParsedRegionId != null && focusedParsedRegionId === table.region?.id;
+  const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
+  const [detectingCells, setDetectingCells] = useState(false);
+  const [detectCellsError, setDetectCellsError] = useState<string | null>(null);
+  const cellsDetectedHere = tableCellStructure?.pageNumber === table.pageNum;
+
+  const handleDetectCells = useCallback(async () => {
+    const store = useViewerStore.getState();
+    // Clicking while cells are visible on this page clears them — mirrors
+    // AutoParseTab's DetectCellStructureButton toggle behavior.
+    if (cellsDetectedHere) {
+      store.setTableCellStructure(null);
+      return;
+    }
+    if (!publicId || !table.region?.bbox) return;
+    setDetectingCells(true);
+    setDetectCellsError(null);
+    store.setPage(table.pageNum);
+    try {
+      const resp = await fetch("/api/table-structure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: publicId,
+          pageNumber: table.pageNum,
+          regionBbox: table.region.bbox,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) {
+        setDetectCellsError(data.error || `HTTP ${resp.status}`);
+        return;
+      }
+      // setTableCellStructure auto-enables showTableCellStructure
+      store.setTableCellStructure({
+        cells: (data.cells || []).map((c: any) => ({ ...c, text: c.text || "", highlighted: false })),
+        pageNumber: table.pageNum,
+        regionBbox: table.region.bbox,
+      });
+    } catch (err: any) {
+      setDetectCellsError(err?.message || "Failed to detect cells");
+    } finally {
+      setDetectingCells(false);
+    }
+  }, [cellsDetectedHere, publicId, table.pageNum, table.region?.bbox]);
 
   // Auto-expand and scroll into view when focused from double-click on canvas
   useEffect(() => {
@@ -394,32 +438,57 @@ export default memo(function ParsedTableItem({
           )}
           {/* Action buttons */}
           {!showMapTags && (
-            <div className="flex gap-1 mt-1">
-              <button
-                onClick={() => {
-                  const store = useViewerStore.getState();
-                  store.setTableParsedGrid({
-                    headers: table.region.data?.headers || [],
-                    rows: table.region.data?.rows || [],
-                    tagColumn: table.region.data?.tagColumn,
-                    tableName: table.name,
-                  });
-                  store.setTableParseRegion(table.region.bbox || null);
-                  store.setPage(table.pageNum);
-                  store.toggleTableCompareModal();
-                }}
-                className="flex-1 text-[9px] px-2 py-1 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
-              >
-                View / Edit
-              </button>
-              <button
-                onClick={() => { setShowMapTags(true); setMapTagColumn(tagKey); }}
-                className="flex-1 text-[9px] px-2 py-1 rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
-              >
-                {yoloTags.some((t: any) => t.source === "schedule" && rowTags.some((rt: any) => rt.tag === t.tagText))
-                  ? "Re-Map Tags" : "Map Tags"}
-              </button>
-            </div>
+            <>
+              <div className="flex gap-1 mt-1">
+                <button
+                  onClick={() => {
+                    const store = useViewerStore.getState();
+                    store.setTableParsedGrid({
+                      headers: table.region.data?.headers || [],
+                      rows: table.region.data?.rows || [],
+                      tagColumn: table.region.data?.tagColumn,
+                      tableName: table.name,
+                    });
+                    store.setTableParseRegion(table.region.bbox || null);
+                    store.setPage(table.pageNum);
+                    store.toggleTableCompareModal();
+                  }}
+                  className="flex-1 text-[9px] px-2 py-1 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
+                >
+                  View / Edit
+                </button>
+                <button
+                  onClick={() => { setShowMapTags(true); setMapTagColumn(tagKey); }}
+                  className="flex-1 text-[9px] px-2 py-1 rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                >
+                  {yoloTags.some((t: any) => t.source === "schedule" && rowTags.some((rt: any) => rt.tag === t.tagText))
+                    ? "Re-Map Tags" : "Map Tags"}
+                </button>
+                <button
+                  onClick={handleDetectCells}
+                  disabled={detectingCells || !table.region?.bbox}
+                  className={`flex-1 text-[9px] px-2 py-1 rounded border disabled:opacity-40 ${
+                    cellsDetectedHere
+                      ? "border-cyan-500/60 text-cyan-300 bg-cyan-500/15 hover:bg-cyan-500/25"
+                      : "border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                  }`}
+                  title={cellsDetectedHere
+                    ? "Cells detected — click to clear"
+                    : "Run TATR cell detection on this region (single-click a cell to search by its text)"}
+                >
+                  {detectingCells
+                    ? "Detecting..."
+                    : cellsDetectedHere
+                      ? `Cells (${tableCellStructure!.cells.length}) ✕`
+                      : "Detect Cells"}
+                </button>
+              </div>
+              {detectCellsError && (
+                <div className="text-[9px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1 mt-1">
+                  {detectCellsError}
+                </div>
+              )}
+            </>
           )}
           {showMapTags && (
             <div className="border border-cyan-500/30 rounded px-2 py-2 space-y-1.5 bg-cyan-500/5 mt-1">

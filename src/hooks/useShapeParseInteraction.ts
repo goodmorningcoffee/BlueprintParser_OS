@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useViewerStore, useNavigation, usePageData } from "@/stores/viewerStore";
 
 export interface UseShapeParseInteractionOpts {
@@ -25,6 +25,26 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   const [region, setRegion] = useState<[number, number, number, number] | null>(null);
   const [drawing, setDrawing] = useState(false);
 
+  // Tear down local hook state when the user switches projects. resetProjectData
+  // in viewerStore clears the shared store fields (tableParseStep,
+  // symbolSearchActive, etc.) but cannot reach React useState owned by this
+  // hook, so DetectionPanel staying mounted across a project switch caused the
+  // prior project's drawn BB + drawing flag to bleed into the next project.
+  // Comparing the previous projectId via a ref scopes the effect strictly to
+  // project transitions (not initial mount) to avoid resetting while the user
+  // is still mid-draw on first open.
+  const prevProjectIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (prevProjectIdRef.current !== null && prevProjectIdRef.current !== projectId) {
+      setRegion(null);
+      setDrawing(false);
+      setLoading(false);
+      setError(null);
+      setWarnings([]);
+    }
+    prevProjectIdRef.current = projectId ?? null;
+  }, [projectId]);
+
   // When the Shape tab is active and the user draws a region via the shared
   // select-region mode, consume the tableParseRegion so it doesn't bleed into
   // the Table tab. drawing stays true so the BB button stays green until the
@@ -34,6 +54,18 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
     setRegion(tableParseRegion as [number, number, number, number]);
     setTableParseRegion(null);
   }, [detectionTab, drawing, tableParseRegion, setTableParseRegion]);
+
+  // When the user leaves the Shape tab with draw-mode still engaged, release
+  // the shared tableParseStep so the Table Parse tab doesn't inherit a
+  // "select-region" step it never entered.
+  useEffect(() => {
+    if (detectionTab !== "shape" && drawing) {
+      setDrawing(false);
+      setRegion(null);
+      setTableParseStep("idle");
+      setMode("move");
+    }
+  }, [detectionTab, drawing, setTableParseStep, setMode]);
 
   const startRegionDraw = useCallback(() => {
     // Click-to-toggle: if already engaged (drawing mode OR region already

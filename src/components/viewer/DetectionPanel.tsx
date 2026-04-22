@@ -180,10 +180,14 @@ export default function DetectionPanel({
         </div>
       )}
 
-      {/* Tab bar — hidden when a specific tab is locked by the parent. */}
+      {/* Tab bar — hidden when a specific tab is locked by the parent.
+          When standalone (!embedded), only the Models tab is shown; Tags and
+          Shape live in ParsePanel now. Content blocks below are still gated
+          on `detectionTab === "..."` which defaults to "models" — safe since
+          the user can't select tags/shape from here any more. */}
       {!lockedTab && (
         <div className="flex border-b border-[var(--border)]">
-          {(["models", "tags", "shape"] as const).map((tab) => (
+          {(embedded ? (["models", "tags", "shape"] as const) : (["models"] as const)).map((tab) => (
             <button key={tab} onClick={() => setDetectionTab(tab)}
               className={`flex-1 px-3 py-1.5 text-[11px] font-medium capitalize ${
                 detectionTab === tab
