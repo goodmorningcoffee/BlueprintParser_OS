@@ -310,6 +310,14 @@ interface ViewerState {
   setBucketFillTolerance: (n: number) => void;
   bucketFillDilatePx: number;
   setBucketFillDilatePx: (n: number) => void;
+  /** Resolution knob for the bucket-fill worker — passed directly as
+   *  `maxDimension` into `clientBucketFill`. Snap values: 1000 (instant,
+   *  downscales heavily on high-DPI plans so thin walls vanish), 2000, 3000,
+   *  4000 (near-native PDF.js canvas resolution, preserves 1-pixel walls,
+   *  ~150-250ms worst case on big room fills). Session-scoped; resets to
+   *  1000 on project switch. */
+  bucketFillResolution: 1000 | 2000 | 3000 | 4000;
+  setBucketFillResolution: (r: 1000 | 2000 | 3000 | 4000) => void;
   bucketFillPendingPolygon: {
     vertices: { x: number; y: number }[];
     /** Inner holes (courtyards) excluded from the net area calc. Rendered as
@@ -1023,6 +1031,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setBucketFillTolerance: (bucketFillTolerance) => set({ bucketFillTolerance }),
   bucketFillDilatePx: 3,
   setBucketFillDilatePx: (bucketFillDilatePx) => set({ bucketFillDilatePx }),
+  bucketFillResolution: 1000,
+  setBucketFillResolution: (bucketFillResolution) => set({ bucketFillResolution }),
   bucketFillPendingPolygon: null,
   setBucketFillPendingPolygon: (bucketFillPendingPolygon) => set({ bucketFillPendingPolygon }),
   commitBucketFillToItem: (item) => {
@@ -1636,6 +1646,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       symbolSearchSourcePage: null,
       symbolSearchConfig: { multiScale: true, useSiftFallback: true, searchPages: null, scaleMin: 0.8, scaleMax: 1.5, nmsThreshold: 0.3, maxMatchesPerPage: 50 },
       symbolSearchPreset: "lite" as const,
+      bucketFillResolution: 1000 as const,
       guidedParseActive: false,
       guidedParseRegion: null,
       guidedParseRows: [],

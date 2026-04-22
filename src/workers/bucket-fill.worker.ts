@@ -3,13 +3,15 @@
  *
  * MS-Paint model: one pass, no retry, no leak heuristic. Stops only at dark
  * pixels after morphological closing. Barriers are the user-facing control
- * for sealing unintended leaks.
+ * for sealing unintended leaks. Text is treated as walls — the flood stops
+ * at letter boundaries the same way it stops at real line-art walls. (If a
+ * future feature needs to account for text-inside-room area, it adds back
+ * real-world area of fully-enclosed text bboxes after the flood.)
  *
  * Pipeline: receive ImageBitmap → downscale + grayscale (GPU filter) → Otsu
- * threshold + binarize → morph close (user dilation knob) → burn user barriers +
- * polygon exclusions → erase OCR text bboxes to white (so the flood sweeps
- * through text like MS Paint would) → flood fill → trace outer border → trace
- * enclosed holes → Douglas-Peucker simplify → normalize → return.
+ * threshold + binarize → morph close (user dilation knob) → burn user barriers
+ * + polygon exclusions → flood fill → trace outer border → trace enclosed
+ * holes → Douglas-Peucker simplify → normalize → return.
  *
  * Target: <400ms for a typical blueprint page.
  */
@@ -483,15 +485,11 @@ function processFill(req: BucketFillRequest): BucketFillResult {
     fillPolygonOnBinary(closed, w, h, pe.vertices);
   }
 
-  // 6. Erase OCR text — text pixels inside a room are dark and would stop the
-  //    flood even though they're not walls. Burn them to white (passable) so
-  //    the flood sweeps through them like MS Paint would.
-  if (req.textBboxes) {
-    for (const tb of req.textBboxes) eraseBboxToWhite(closed, w, h, tb);
-  }
-
-  // 7. Flood fill — one pass, no retry, no leak rejection. Stops only at dark
-  //    pixels after everything above has been applied.
+  // 6. Flood fill — one pass, no retry, no leak rejection. Stops only at dark
+  //    pixels after everything above has been applied. Text is a dark region
+  //    like any other; the flood stops at letter boundaries. Text bboxes are
+  //    preserved on the request payload for a future Tier 2 pass that adds
+  //    enclosed-text area back to the reported sqft.
   const filled = floodFill(closed, w, h, seedPx, seedPy);
 
   // 8. Count filled pixels. filled[i]==1 means reached by flood; holes stay 0,
