@@ -27,7 +27,7 @@ const UPLOAD_STEPS = [
   { id: "csi-detection", name: "CSI Code Detection", description: "Detect CSI MasterFormat codes from OCR text", configTab: "csi", alwaysOn: false },
   { id: "text-annotations", name: "Text Annotations", description: "Detect phone, email, equipment tags, abbreviations", configTab: "text-annotations", alwaysOn: false },
   { id: "page-intelligence", name: "Page Intelligence", description: "Classify pages, detect cross-references, note blocks", configTab: null, alwaysOn: false },
-  { id: "text-regions", name: "Text Region Classification", description: "Identify table-like, notes, spec, key-value regions from OCR", configTab: null, alwaysOn: false },
+  { id: "text-regions", name: "Text Region Classification", description: "Identify schedule tables, notes, spec columns, K:V legends from OCR", configTab: null, alwaysOn: false },
   { id: "heuristic-engine", name: "Heuristic Engine (text-only)", description: "Rule-based inference: schedule detection, symbol legends, notes", configTab: "heuristics", alwaysOn: false },
   { id: "table-classification", name: "Table Classification", description: "Combine text regions + heuristics to classify schedules", configTab: null, alwaysOn: false },
   { id: "csi-spatial", name: "CSI Spatial Mapping", description: "Heatmap: which page zones contain which CSI codes", configTab: null, alwaysOn: false },

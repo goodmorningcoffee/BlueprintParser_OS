@@ -67,10 +67,25 @@ export const companies = pgTable("companies", {
       name: string;
       source: "built-in" | "custom";
       enabled: boolean;
+      modelId?: number;
+      modelName?: string;
+      // YOLO side
       yoloRequired: string[];
       yoloBoosters: string[];
-      textKeywords: string[];
+      yoloRequiredMinConfidence?: number;
+      yoloAvailabilityMode?: "require" | "degrade" | "ignore";
+      // Text side — new split (2026-04-24 DSL). Legacy `textKeywords` is kept
+      // optional so pre-migration DB rows still typecheck; getEffectiveRules()
+      // normalizes on read via migrateRule() in heuristic-rule-migrate.ts.
+      textKeywords?: string[];
+      textKeywordsRequired?: string[];
+      textKeywordsBoosters?: string[];
+      textKeywordsMode?: "any-required" | "all-required";
+      // Spatial / CSI
       overlapRequired: boolean;
+      textRegionType?: string;
+      csiDivisionsRequired?: string[];
+      // Output
       outputLabel: string;
       outputCsiCode?: string;
       minConfidence: number;

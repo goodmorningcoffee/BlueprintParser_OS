@@ -21,6 +21,7 @@ import type {
   CsiCode,
   BboxLTWH,
 } from "@/types";
+import { migrateTextRegions } from "@/lib/text-region-migrate";
 
 // ═══════════════════════════════════════════════════════════════════
 // Category Keyword Patterns
@@ -40,14 +41,14 @@ const CATEGORY_PATTERNS: CategoryPattern[] = [
     category: "keynote-table",
     keywords: [],
     keywordsAny: ["KEYNOTE", "KEYNOTES", "KEY NOTES", "KEY NOTE"],
-    requiredRegionType: "key-value",
+    requiredRegionType: "notes-key-value",
     isPageSpecific: true,
   },
   {
     category: "door-schedule",
     keywords: ["DOOR"],
     keywordsAny: ["SCHEDULE"],
-    requiredRegionType: "table-like",
+    requiredRegionType: "schedule-table",
     csiDivisionAffinity: ["08"],
     isPageSpecific: false,
   },
@@ -55,7 +56,7 @@ const CATEGORY_PATTERNS: CategoryPattern[] = [
     category: "finish-schedule",
     keywords: ["FINISH"],
     keywordsAny: ["SCHEDULE"],
-    requiredRegionType: "table-like",
+    requiredRegionType: "schedule-table",
     csiDivisionAffinity: ["09"],
     isPageSpecific: false,
   },
@@ -63,28 +64,28 @@ const CATEGORY_PATTERNS: CategoryPattern[] = [
     category: "symbol-legend",
     keywords: [],
     keywordsAny: ["LEGEND", "SYMBOL LEGEND", "SYMBOLS"],
-    requiredRegionType: "key-value",
+    requiredRegionType: "notes-key-value",
     isPageSpecific: true,
   },
   {
     category: "material-schedule",
     keywords: [],
     keywordsAny: ["SCHEDULE", "EQUIPMENT SCHEDULE", "PLUMBING SCHEDULE", "MECHANICAL SCHEDULE"],
-    requiredRegionType: "table-like",
+    requiredRegionType: "schedule-table",
     isPageSpecific: false,
   },
   {
     category: "general-notes",
     keywords: [],
     keywordsAny: ["GENERAL NOTES", "GENERAL NOTE", "DRAWING NOTES", "SHEET NOTES"],
-    requiredRegionType: "notes-block",
+    requiredRegionType: "notes-numbered",
     isPageSpecific: false,
   },
   {
     category: "spec-text",
     keywords: [],
     keywordsAny: ["SPECIFICATION", "SPECIFICATIONS"],
-    requiredRegionType: "spec-text",
+    requiredRegionType: "spec-dense-columns",
     isPageSpecific: false,
   },
 ];
@@ -197,9 +198,13 @@ function scoreRegionForCategory(
  * Returns ClassifiedTable[] (extends TextRegion with category + evidence).
  */
 export function classifyTables(input: ClassificationInput): ClassifiedTable[] {
-  const { textRegions, heuristicInferences, csiCodes, pageNumber } = input;
+  // Legacy-shape textRegions from pre-2026-04-24 DB pages arrive with old type
+  // strings ("table-like", "notes-block", ...); migrate in-place so CATEGORY_PATTERNS
+  // see unified names. Idempotent on already-new input.
+  const textRegions = migrateTextRegions(input.textRegions) ?? [];
+  const { heuristicInferences, csiCodes, pageNumber } = input;
 
-  if (!textRegions || textRegions.length === 0) return [];
+  if (textRegions.length === 0) return [];
 
   const inferences = heuristicInferences || [];
   const codes = csiCodes || [];

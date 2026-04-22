@@ -11,6 +11,7 @@ import { analyzePageIntelligence } from "@/lib/page-analysis";
 import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { downloadFromS3, uploadToS3 } from "@/lib/s3";
 import { classifyTextRegions } from "@/lib/text-region-classifier";
+import { writeClassifierDebugBundle } from "@/lib/text-region-classifier-debug";
 import { getEffectiveRules, runHeuristicEngine } from "@/lib/heuristic-engine";
 import { classifyTables } from "@/lib/table-classifier";
 import { computeCsiSpatialMap } from "@/lib/csi-spatial";
@@ -30,6 +31,7 @@ import { logger } from "@/lib/logger";
 export async function POST(req: Request) {
   const url = new URL(req.url);
   const scope = url.searchParams.get("scope"); // "intelligence" or null (full)
+  const debugClassifier = url.searchParams.get("debug") === "1"; // emit Stage 1 classifier trace
   const { session, error } = await requireAdmin();
   if (error) return error;
 
@@ -427,8 +429,17 @@ export async function POST(req: Request) {
                 pageIntelligence = { ...intel };
               }
 
-              // Text region classification
-              const textRegions = classifyTextRegions(textractData, csiCodes);
+              // Text region classification (with optional debug bundle to S3)
+              const debugWrites: Promise<void>[] = [];
+              const textRegions = classifyTextRegions(textractData, csiCodes, {
+                debug: debugClassifier,
+                pageNumber: page.pageNumber,
+                onDebug: (bundle) => {
+                  debugWrites.push(
+                    writeClassifierDebugBundle(project.dataUrl, page.pageNumber, bundle),
+                  );
+                },
+              });
               if (textRegions.length > 0) pageIntelligence.textRegions = textRegions;
 
               // Heuristic engine (text-only, no YOLO in this pass)
@@ -451,6 +462,10 @@ export async function POST(req: Request) {
               if (spatialMap) pageIntelligence.csiSpatialMap = spatialMap;
 
               await db.update(pages).set({ pageIntelligence }).where(eq(pages.id, page.id));
+              // Flush classifier debug writes (if any). Errors inside the writer
+              // are already logged; allSettled keeps a single write failure from
+              // aborting the loop.
+              if (debugWrites.length > 0) await Promise.allSettled(debugWrites);
               updatedPages++;
             } catch (err) {
               logger.error(`[reprocess-intel] Page ${page.pageNumber} failed:`, err);

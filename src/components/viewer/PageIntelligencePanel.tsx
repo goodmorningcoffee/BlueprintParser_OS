@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useNavigation, usePageData, usePanels } from "@/stores/viewerStore";
+import { migrateTextRegions } from "@/lib/text-region-migrate";
 
 /**
  * `embedded`: when true the outer panel chrome (fixed width, border, shadow,
@@ -360,18 +361,20 @@ export default function PageIntelligencePanel({ embedded = false }: { embedded?:
               </Section>
             )}
 
-            {/* Text Regions (non-paragraph only) */}
-            {intel.textRegions?.filter((r: any) => r.type !== "paragraph").length > 0 && (
-              <Section
-                title={`Text Regions (${intel.textRegions.filter((r: any) => r.type !== "paragraph").length})`}
-                sectionKey="regions"
-                expanded={expandedSections}
-                onToggle={toggleSection}
-              >
-                <div className="space-y-1">
-                  {intel.textRegions
-                    .filter((r: any) => r.type !== "paragraph")
-                    .map((r: any, i: number) => (
+            {/* Text Regions (non-paragraph only) — legacy type strings migrated on display */}
+            {(() => {
+              const migratedRegions = migrateTextRegions(intel.textRegions) ?? [];
+              const nonParagraph = migratedRegions.filter((r) => r.type !== "paragraph");
+              if (nonParagraph.length === 0) return null;
+              return (
+                <Section
+                  title={`Text Regions (${nonParagraph.length})`}
+                  sectionKey="regions"
+                  expanded={expandedSections}
+                  onToggle={toggleSection}
+                >
+                  <div className="space-y-1">
+                    {nonParagraph.map((r, i) => (
                       <div key={i} className="text-[11px]">
                         <span className="text-[var(--accent)] font-mono">{r.type}</span>
                         <span className="text-[var(--muted)]">
@@ -379,9 +382,9 @@ export default function PageIntelligencePanel({ embedded = false }: { embedded?:
                           {r.headerText ? `, "${r.headerText}"` : ""}
                           {r.columnCount ? `, ${r.columnCount} cols` : ""}
                         </span>
-                        {r.csiTags?.length > 0 && (
+                        {r.csiTags && r.csiTags.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-0.5">
-                            {r.csiTags.map((c: any, j: number) => (
+                            {r.csiTags.map((c, j) => (
                               <span key={j} className="text-[9px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono">
                                 CSI {c.code}
                               </span>
@@ -390,9 +393,10 @@ export default function PageIntelligencePanel({ embedded = false }: { embedded?:
                         )}
                       </div>
                     ))}
-                </div>
-              </Section>
-            )}
+                  </div>
+                </Section>
+              );
+            })()}
           </>
         )}
       </div>
