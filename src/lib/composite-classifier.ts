@@ -45,6 +45,7 @@ import {
   bboxCenterMinMax,
   ltwh2minmax,
 } from "@/lib/bbox-utils";
+import { migrateTextRegions } from "@/lib/text-region-migrate";
 
 // ═══════════════════════════════════════════════════════════════════
 // Constants
@@ -147,7 +148,14 @@ export interface ClassifyPageRegionsInput {
 export function classifyPageRegions(
   input: ClassifyPageRegionsInput,
 ): ClassifiedPageRegions {
-  const { pageNumber, yoloAnnotations, textRegions, parsedRegions, legacyClassifiedTables } = input;
+  const { pageNumber, yoloAnnotations, parsedRegions } = input;
+  // Legacy-shape textRegions + legacyClassifiedTables carry old type strings
+  // from pre-2026-04-24 pages; normalize here so downstream string comparisons
+  // (e.g., `lt.type !== "schedule-table"`) see unified names.
+  const textRegions = migrateTextRegions(input.textRegions);
+  const legacyClassifiedTables = migrateTextRegions(
+    input.legacyClassifiedTables,
+  ) as ClassifiedTable[] | undefined;
 
   // Group yolo annotations by class name for O(1) lookup
   const byClass = new Map<string, YoloRegionInput[]>();
@@ -214,10 +222,12 @@ export function classifyPageRegions(
     mergeOrInsert(tables, region);
   }
 
-  // Legacy classifiedTables agreement — only table-like, not notes/spec
+  // Legacy classifiedTables agreement — only schedule-table, not notes/spec
+  // Accepts both new-shape "schedule-table" and legacy "table-like" via
+  // migrateTextRegion wrap applied at classifyPageRegions entry (see Task 12).
   for (const lt of legacyClassifiedTables ?? []) {
     if (lt.pageNumber !== pageNumber) continue;
-    if (lt.type !== "table-like") continue;
+    if (lt.type !== "schedule-table") continue;
     const region: ClassifiedRegion = {
       kind: "table",
       bbox: ltwh2minmax(lt.bbox),

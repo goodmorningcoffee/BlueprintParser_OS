@@ -22,6 +22,8 @@ import type {
 } from "@/types";
 import { bboxCenterLTWH, bboxContainsPoint, bboxAreaLTWH, wordsToText } from "@/lib/ocr-utils";
 import { logger } from "@/lib/logger";
+import { migrateRule, type LegacyHeuristicRule } from "@/lib/heuristic-rule-migrate";
+import { migrateTextRegions } from "@/lib/text-region-migrate";
 
 // ═══════════════════════════════════════════════════════════════════
 // Rule Types
@@ -43,13 +45,36 @@ export interface HeuristicRule {
   enabled: boolean;
   modelId?: number;              // optional association with a specific YOLO model
   modelName?: string;
+
+  // ─── YOLO side ──────────────────────────────────────────
   yoloRequired: string[];
   yoloBoosters: string[];
-  textKeywords: string[];
+  /** Per-rule floor for YOLO confidence. Reserved for future use — current
+   *  evaluator treats YOLO presence binary. */
+  yoloRequiredMinConfidence?: number;
+  /**
+   * What to do when `yoloRequired` classes are missing from the page.
+   * - "require": rule doesn't fire (matches pre-2026-04-24 behavior).
+   * - "degrade": rule fires at 0.6× score with `YOLO unavailable` evidence.
+   * - "ignore":  rule treats yoloRequired as pure boosters.
+   * Default `"require"` preserves legacy behavior.
+   */
+  yoloAvailabilityMode: "require" | "degrade" | "ignore";
+
+  // ─── Text side ──────────────────────────────────────────
+  /** At least one (or all, per `textKeywordsMode`) must match. */
+  textKeywordsRequired: string[];
+  /** Each match adds +0.05 to score. No gating. */
+  textKeywordsBoosters: string[];
+  textKeywordsMode: "any-required" | "all-required";
+
+  // ─── Spatial / CSI ──────────────────────────────────────
   overlapRequired: boolean;
   spatialConditions?: SpatialCondition[];
   textRegionType?: string;       // match against TextRegion.type if present
   csiDivisionsRequired?: string[]; // CSI divisions that must be present (first 2 digits, e.g. ["08", "09"])
+
+  // ─── Output ─────────────────────────────────────────────
   outputLabel: string;
   outputCsiCode?: string;
   minConfidence: number;
@@ -76,12 +101,15 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     enabled: true,
     yoloRequired: ["horizontal_area"],
     yoloBoosters: ["table", "grid"],
-    textKeywords: ["KEYNOTE", "KEYNOTES", "KEY NOTES", "LEGEND"],
+    yoloAvailabilityMode: "require",
+    textKeywordsRequired: ["KEYNOTE", "KEYNOTES", "KEY NOTES", "LEGEND"],
+    textKeywordsBoosters: [],
+    textKeywordsMode: "any-required",
     overlapRequired: true,
     spatialConditions: [
       { operator: "contains", classA: "horizontal_area", classB: "oval", minInstances: 3, axis: "vertical" },
     ],
-    textRegionType: "key-value",
+    textRegionType: "notes-key-value",
     outputLabel: "keynote-table",
     minConfidence: 0.5,
   },
@@ -92,9 +120,12 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     enabled: true,
     yoloRequired: ["table"],
     yoloBoosters: ["grid", "horizontal_area"],
-    textKeywords: ["DOOR", "SCHEDULE"],
+    yoloAvailabilityMode: "require",
+    textKeywordsRequired: ["DOOR", "SCHEDULE"],
+    textKeywordsBoosters: [],
+    textKeywordsMode: "all-required",
     overlapRequired: true,
-    textRegionType: "table-like",
+    textRegionType: "schedule-table",
     outputLabel: "door-schedule",
     outputCsiCode: "08 11 16",
     minConfidence: 0.5,
@@ -106,9 +137,12 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     enabled: true,
     yoloRequired: ["table"],
     yoloBoosters: ["grid", "horizontal_area"],
-    textKeywords: ["FINISH", "SCHEDULE"],
+    yoloAvailabilityMode: "require",
+    textKeywordsRequired: ["FINISH", "SCHEDULE"],
+    textKeywordsBoosters: [],
+    textKeywordsMode: "all-required",
     overlapRequired: true,
-    textRegionType: "table-like",
+    textRegionType: "schedule-table",
     outputLabel: "finish-schedule",
     outputCsiCode: "09 00 00",
     minConfidence: 0.5,
@@ -120,12 +154,15 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     enabled: true,
     yoloRequired: ["horizontal_area"],
     yoloBoosters: ["table", "symbol_legend"],
-    textKeywords: ["LEGEND", "SYMBOL"],
+    yoloAvailabilityMode: "require",
+    textKeywordsRequired: ["LEGEND", "SYMBOL"],
+    textKeywordsBoosters: [],
+    textKeywordsMode: "any-required",
     overlapRequired: true,
     spatialConditions: [
       { operator: "contains", classA: "horizontal_area", classB: "*", minInstances: 3, axis: "vertical" },
     ],
-    textRegionType: "key-value",
+    textRegionType: "notes-key-value",
     outputLabel: "symbol-legend",
     minConfidence: 0.5,
   },
@@ -136,9 +173,12 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     enabled: true,
     yoloRequired: [],
     yoloBoosters: ["text_box", "vertical_area"],
-    textKeywords: ["GENERAL NOTES", "GENERAL NOTE", "NOTES:"],
+    yoloAvailabilityMode: "require",
+    textKeywordsRequired: ["GENERAL NOTES", "GENERAL NOTE", "NOTES:"],
+    textKeywordsBoosters: [],
+    textKeywordsMode: "any-required",
     overlapRequired: false,
-    textRegionType: "notes-block",
+    textRegionType: "notes-numbered",
     outputLabel: "general-notes",
     minConfidence: 0.4,
   },
@@ -149,9 +189,12 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     enabled: true,
     yoloRequired: ["table"],
     yoloBoosters: ["grid", "horizontal_area"],
-    textKeywords: ["SCHEDULE"],
+    yoloAvailabilityMode: "require",
+    textKeywordsRequired: ["SCHEDULE"],
+    textKeywordsBoosters: [],
+    textKeywordsMode: "any-required",
     overlapRequired: true,
-    textRegionType: "table-like",
+    textRegionType: "schedule-table",
     outputLabel: "material-schedule",
     minConfidence: 0.5,
   },
@@ -162,7 +205,10 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     enabled: true,
     yoloRequired: ["table"],
     yoloBoosters: ["horizontal_area"],
-    textKeywords: [],
+    yoloAvailabilityMode: "require",
+    textKeywordsRequired: [],
+    textKeywordsBoosters: [],
+    textKeywordsMode: "any-required",
     overlapRequired: false,
     spatialConditions: [
       { operator: "overlaps", classA: "table", classB: "horizontal_area" },
@@ -177,7 +223,10 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     enabled: true,
     yoloRequired: ["horizontal_area"],
     yoloBoosters: [],
-    textKeywords: ["SECTION"],
+    yoloAvailabilityMode: "require",
+    textKeywordsRequired: ["SECTION"],
+    textKeywordsBoosters: [],
+    textKeywordsMode: "any-required",
     overlapRequired: false,
     outputLabel: "section-cut",
     minConfidence: 0.5,
@@ -189,7 +238,10 @@ export const BUILT_IN_RULES: HeuristicRule[] = [
     enabled: true,
     yoloRequired: [],
     yoloBoosters: [],
-    textKeywords: ["TYPICAL", "TYP"],
+    yoloAvailabilityMode: "require",
+    textKeywordsRequired: ["TYPICAL", "TYP"],
+    textKeywordsBoosters: [],
+    textKeywordsMode: "any-required",
     overlapRequired: false,
     outputLabel: "typical-plan",
     minConfidence: 0.4,
@@ -370,27 +422,35 @@ function scoreRule(rule: HeuristicRule, ctx: PageContext): { score: number; evid
     }
   }
 
-  // Text keywords: all must be found
-  if (rule.textKeywords.length > 0) {
-    const allFound = rule.textKeywords.every(kw => upperText.includes(kw.toUpperCase()));
-    if (allFound) {
+  // Required text keywords: mode-aware match ("all-required" or "any-required").
+  // Bails if required text is missing AND this is a text-only rule (no YOLO gate).
+  if (rule.textKeywordsRequired.length > 0) {
+    const upperKeywords = rule.textKeywordsRequired.map(kw => kw.toUpperCase());
+    const match = rule.textKeywordsMode === "all-required"
+      ? upperKeywords.every(kw => upperText.includes(kw))
+      : upperKeywords.some(kw => upperText.includes(kw));
+    if (match) {
       score += 0.25;
-      evidence.push(`Keywords: ${rule.textKeywords.join(", ")}`);
+      evidence.push(`Required keywords: ${rule.textKeywordsRequired.join(", ")}`);
 
       // Overlap boost: keywords inside a YOLO bbox
       if (rule.overlapRequired && ctx.yoloDetections) {
-        // Check if any keyword text is spatially inside a YOLO detection
-        // (simplified: if YOLO classes are present and keywords found, assume overlap)
         if (rule.yoloRequired.some(cls => yoloByClass.has(cls))) {
           score += 0.15;
           evidence.push("Keywords overlap YOLO region");
         }
       }
-    } else {
-      // Keywords not found — significant penalty for keyword-dependent rules
-      if (rule.textKeywords.length > 0 && rule.yoloRequired.length === 0) {
-        return { score: 0, evidence: [] };
-      }
+    } else if (rule.yoloRequired.length === 0) {
+      // Keyword-only rule with no match — doesn't apply
+      return { score: 0, evidence: [] };
+    }
+  }
+
+  // Booster keywords: each present adds +0.05, no gating
+  for (const kw of rule.textKeywordsBoosters) {
+    if (upperText.includes(kw.toUpperCase())) {
+      score += 0.05;
+      evidence.push(`Booster keyword: ${kw}`);
     }
   }
 
@@ -437,14 +497,24 @@ function scoreRule(rule: HeuristicRule, ctx: PageContext): { score: number; evid
 /**
  * Get the effective rule set: merge built-in defaults with company config overrides.
  * Company config can enable/disable, modify, or add custom rules.
+ *
+ * Incoming `companyHeuristics` may carry the legacy shape (pre-2026-04-24:
+ * `textKeywords` instead of `textKeywordsRequired`/`textKeywordsBoosters`,
+ * no `yoloAvailabilityMode`). `migrateRule` normalizes each entry in-memory
+ * before merging — company DB JSONB is untouched.
  */
-export function getEffectiveRules(companyHeuristics?: HeuristicRule[]): HeuristicRule[] {
+export function getEffectiveRules(
+  companyHeuristics?: HeuristicRule[] | LegacyHeuristicRule[],
+): HeuristicRule[] {
   if (!companyHeuristics || companyHeuristics.length === 0) {
     return BUILT_IN_RULES.filter(r => r.enabled);
   }
 
+  // Normalize legacy-shape rules before merging
+  const migrated = companyHeuristics.map(migrateRule);
+
   // Company config overrides built-in rules by ID
-  const configById = new Map(companyHeuristics.map(r => [r.id, r]));
+  const configById = new Map(migrated.map(r => [r.id, r]));
   const rules: HeuristicRule[] = [];
 
   // Apply overrides to built-in rules
@@ -469,49 +539,86 @@ export function getEffectiveRules(companyHeuristics?: HeuristicRule[]): Heuristi
 /**
  * Run the heuristic engine on a page.
  * Works in two modes:
- * - Text-only: yoloDetections is undefined, only keyword/textRegion rules fire
- * - YOLO-augmented: full spatial + keyword rules
+ * - Text-only: yoloDetections is undefined. Rules with `yoloRequired` branch
+ *   on `yoloAvailabilityMode`: "require" skips, "degrade" fires × 0.6 with
+ *   an advisory evidence tag, "ignore" treats yoloRequired as boosters.
+ * - YOLO-augmented: full spatial + keyword rules; availability mode is a no-op.
+ *
+ * `ctx.textRegions` is migrated in-place (new schema) so rules targeting
+ * `textRegionType: "notes-numbered"` match legacy `notes-block`-labeled pages
+ * until reprocess rewrites them.
  */
 export function runHeuristicEngine(
   rules: HeuristicRule[],
   ctx: PageContext,
 ): HeuristicInference[] {
+  const normalizedCtx: PageContext = {
+    ...ctx,
+    textRegions: migrateTextRegions(ctx.textRegions),
+  };
   const inferences: HeuristicInference[] = [];
 
   for (const rule of rules) {
-    // Skip rules requiring YOLO if no YOLO data
-    if (!ctx.yoloDetections && rule.yoloRequired.length > 0) continue;
-
     try {
-      const { score, evidence } = scoreRule(rule, ctx);
-      if (score >= rule.minConfidence && evidence.length > 0) {
-        // Find approximate bbox from the most relevant YOLO detection
-        let bbox: BboxLTWH | undefined;
-        if (ctx.yoloDetections && rule.yoloRequired.length > 0) {
-          const relevantClass = rule.yoloRequired[0];
-          const det = ctx.yoloDetections.find(d => d.name === relevantClass);
-          if (det) {
-            bbox = [det.minX, det.minY, det.maxX - det.minX, det.maxY - det.minY];
-          }
-        }
+      const yoloMissing = !normalizedCtx.yoloDetections && rule.yoloRequired.length > 0;
+      let score: number;
+      let evidence: string[];
 
-        // Infer CSI tags
-        let csiTags: CsiCode[] | undefined;
-        if (rule.outputCsiCode && ctx.csiCodes) {
-          const match = ctx.csiCodes.find(c => c.code === rule.outputCsiCode);
-          if (match) csiTags = [match];
+      if (yoloMissing) {
+        const mode = rule.yoloAvailabilityMode ?? "require";
+        if (mode === "require") continue; // preserves pre-2026-04-24 skip
+        // Re-score treating yoloRequired as extra boosters (pure text-only eval).
+        const promoted: HeuristicRule = {
+          ...rule,
+          yoloRequired: [],
+          yoloBoosters: [...rule.yoloBoosters, ...rule.yoloRequired],
+        };
+        const result = scoreRule(promoted, normalizedCtx);
+        if (result.score === 0) continue;
+        if (mode === "degrade") {
+          score = result.score * 0.6;
+          evidence = [
+            ...result.evidence,
+            `YOLO unavailable: ${rule.yoloRequired.join(", ")} (degraded to text-only)`,
+          ];
+        } else { // "ignore"
+          score = result.score;
+          evidence = result.evidence;
         }
-
-        inferences.push({
-          ruleId: rule.id,
-          ruleName: rule.name,
-          label: rule.outputLabel,
-          confidence: Math.min(score, 0.99),
-          evidence,
-          bbox,
-          csiTags,
-        });
+      } else {
+        const result = scoreRule(rule, normalizedCtx);
+        score = result.score;
+        evidence = result.evidence;
       }
+
+      if (score < rule.minConfidence || evidence.length === 0) continue;
+
+      // Find approximate bbox from the most relevant YOLO detection
+      let bbox: BboxLTWH | undefined;
+      if (normalizedCtx.yoloDetections && rule.yoloRequired.length > 0) {
+        const relevantClass = rule.yoloRequired[0];
+        const det = normalizedCtx.yoloDetections.find(d => d.name === relevantClass);
+        if (det) {
+          bbox = [det.minX, det.minY, det.maxX - det.minX, det.maxY - det.minY];
+        }
+      }
+
+      // Infer CSI tags
+      let csiTags: CsiCode[] | undefined;
+      if (rule.outputCsiCode && normalizedCtx.csiCodes) {
+        const match = normalizedCtx.csiCodes.find(c => c.code === rule.outputCsiCode);
+        if (match) csiTags = [match];
+      }
+
+      inferences.push({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        label: rule.outputLabel,
+        confidence: Math.min(score, 0.99),
+        evidence,
+        bbox,
+        csiTags,
+      });
     } catch (err) {
       logger.error(`[heuristic-engine] rule "${rule.id}" failed:`, err);
     }

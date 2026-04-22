@@ -415,7 +415,20 @@ export interface NoteBlock {
 
 // ─── Text Region types (OCR-based classification) ──────────
 
-export type TextRegionType = "table-like" | "notes-block" | "spec-text" | "key-value" | "paragraph";
+export type TextRegionType =
+  | "notes-numbered"        // vertical list of N. or (N) keyed paragraphs
+  | "notes-key-value"       // multi-column KEY → VALUE legends / abbreviations
+  | "spec-dense-columns"    // narrow multi-column flowing spec text
+  | "schedule-table"        // 3+ structured columns
+  | "paragraph"             // free-form prose
+  | "unknown";              // low-confidence fallback
+
+/** Legacy type strings present on pages processed before 2026-04-24.
+ *  Consumers that read `pageIntelligence.textRegions` from DB should route
+ *  through `migrateTextRegion` from `text-region-migrate.ts` so legacy data
+ *  transparently upgrades at read time. */
+export type LegacyTextRegionType =
+  | "table-like" | "notes-block" | "spec-text" | "key-value";
 
 export interface TextRegion {
   id: string;
@@ -424,10 +437,25 @@ export interface TextRegion {
   confidence: number;
   csiTags?: CsiCode[];
   wordCount: number;
+  lineCount?: number;
   columnCount?: number;
   rowCount?: number;
   hasNumberedItems?: boolean;
   headerText?: string;
+  /** Hierarchical tier matches from `note-keyword-tiers.ts`. Metadata only —
+   *  does NOT override `type`. A `schedule-table` can have `tier1: "LEGEND"`. */
+  classifiedLabels?: {
+    tier1?: string;
+    tier2?: string;
+    trade?: string;
+  };
+  /** Optional structured extraction for K:V / numbered-list patterns. */
+  grid?: {
+    headers: string[];
+    rows: Record<string, string>[];
+    rowBoundaries?: number[];
+    colBoundaries?: number[];
+  };
   containedText?: string;
 }
 

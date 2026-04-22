@@ -6,6 +6,7 @@
  */
 
 import { classifyZone, DEFAULT_GRID } from "@/lib/csi-spatial";
+import { migrateTextRegionType, migrateTextRegions } from "@/lib/text-region-migrate";
 
 export const DEFAULT_CONTEXT_BUDGET = 24000; // ~6000 tokens
 
@@ -352,10 +353,16 @@ export function buildPageIntelligenceSection(pageIntelligence: any, pageNumber: 
     summaryLines.push(`${totalNotes} general note(s) in ${blocks.length} block(s) on Page ${pageNumber}`);
   }
 
-  // Text regions / classified tables (priority 6 — after notes, before spatial)
+  // Text regions / classified tables (priority 6 — after notes, before spatial).
+  // Migrate legacy (pre-2026-04-24) type strings so the LLM sees unified names.
+  // classifiedTables extend TextRegion — migrate `.type` in-place to preserve
+  // category/evidence fields.
   if (pageIntelligence.textRegions?.length > 0 || pageIntelligence.classifiedTables?.length > 0) {
-    const tables = pageIntelligence.classifiedTables || [];
-    const regions = pageIntelligence.textRegions || [];
+    const tables: any[] = (pageIntelligence.classifiedTables || []).map((t: any) => ({
+      ...t,
+      type: migrateTextRegionType(t.type) ?? t.type,
+    }));
+    const regions = migrateTextRegions(pageIntelligence.textRegions) || [];
 
     let text = "";
     // Show classified tables first (higher value)
