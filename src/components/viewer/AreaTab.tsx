@@ -398,6 +398,8 @@ export default memo(function AreaTab() {
   const setBucketFillTolerance = useViewerStore((s) => s.setBucketFillTolerance);
   const bucketFillDilatePx = useViewerStore((s) => s.bucketFillDilatePx);
   const setBucketFillDilatePx = useViewerStore((s) => s.setBucketFillDilatePx);
+  const bucketFillResolution = useViewerStore((s) => s.bucketFillResolution);
+  const setBucketFillResolution = useViewerStore((s) => s.setBucketFillResolution);
   const splitAreaActive = useViewerStore((s) => s.splitAreaActive);
   const setSplitAreaActive = useViewerStore((s) => s.setSplitAreaActive);
 
@@ -487,6 +489,37 @@ export default memo(function AreaTab() {
               {bucketFillBarrierMode
                 ? "Click two points to draw a barrier line across a doorway"
                 : "Click inside a room to detect its boundary"}
+            </div>
+            {/* Resolution slider — 4 snap values (1000/2000/3000/4000 px).
+                Lower = instant but thin walls vanish on high-DPI plans.
+                Higher = preserves 1-pixel walls, ~150-250ms pause at 4000
+                on big room fills. Dominant knob for preventing overflow;
+                tolerance/dilation are secondary. */}
+            <div className="space-y-0.5">
+              <div
+                className="flex items-center gap-1.5"
+                title="Max pixel dimension the worker floods on. 1000 = instant but walls under ~3px vanish on high-DPI plans. 2000/3000 = intermediate. 4000 = near-native PDF.js canvas resolution, preserves 1-pixel walls at ~150-250ms cost on big fills."
+              >
+                <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Resolution</span>
+                <input
+                  type="range"
+                  min={1000}
+                  max={4000}
+                  step={1000}
+                  value={bucketFillResolution}
+                  onChange={(e) => setBucketFillResolution(Number(e.target.value) as 1000 | 2000 | 3000 | 4000)}
+                  className="flex-1 h-1 accent-pink-400"
+                />
+                <span className="w-9 text-[10px] text-right font-mono text-[var(--muted)]">
+                  {bucketFillResolution >= 1000 ? `${bucketFillResolution / 1000}k` : bucketFillResolution}
+                </span>
+              </div>
+              <div className="text-[9px] text-[var(--muted)]/80 leading-tight">
+                {bucketFillResolution === 1000 && "Instant. May leak on high-DPI plans."}
+                {bucketFillResolution === 2000 && "Balanced. Catches most thin-wall leaks."}
+                {bucketFillResolution === 3000 && "Near-native resolution. Small pause."}
+                {bucketFillResolution === 4000 && "Native resolution. Preserves 1-pixel walls."}
+              </div>
             </div>
             <div className="space-y-1">
               <div className="text-[9px] text-[var(--muted)]/80 px-0.5 leading-tight">
