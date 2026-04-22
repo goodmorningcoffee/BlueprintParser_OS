@@ -20,12 +20,26 @@ export default function TagBrowseBar() {
   if (!tagBrowseId) return null;
 
   const tag = yoloTags.find((t) => t.id === tagBrowseId);
-  if (!tag || tag.instances.length === 0) return null;
+  if (!tag) return null;
 
   const total = tag.instances.length;
   const current = tagBrowseIndex + 1;
   const inst = tag.instances[tagBrowseIndex];
-  const pageName = pageNames[inst?.pageNumber] || `pg ${inst?.pageNumber}`;
+  const pageName = inst ? (pageNames[inst.pageNumber] || `pg ${inst.pageNumber}`) : "";
+  // Pretty-printed scope hint so the user can see why the mapped-count on the
+  // parse panel might disagree with what they can navigate. Absent on legacy
+  // tags that predate 2026-04-21.
+  const mapScope = tag.mapScope;
+  const scopeLabel = mapScope
+    ? [
+        mapScope.drawingNumberPrefixes?.length
+          ? `scope: ${mapScope.drawingNumberPrefixes.map((p) => p === "" ? "unnumbered" : `${p}-*`).join(", ")}`
+          : null,
+        mapScope.strictness && mapScope.strictness !== "balanced"
+          ? `strictness: ${mapScope.strictness}`
+          : null,
+      ].filter(Boolean).join(" · ")
+    : "";
 
   const navigate = (delta: number) => {
     useViewerStore.getState().tagBrowseNavigate(tagBrowseId, tagBrowseIndex + delta);
@@ -41,6 +55,31 @@ export default function TagBrowseBar() {
     setEditValue(tag.tagText);
     setEditing(true);
   };
+
+  // Zero-instance tag: render a compact "no instances" hint instead of full
+  // navigation UI. Covers the E3 bug symptom where user clicks a mapped tag
+  // and sees nothing happen — now they see "0 of 0 · scope: A-*" with a
+  // close button.
+  if (total === 0) {
+    return (
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 rounded-lg border border-amber-500/40 bg-[#1a1a2e]/95 backdrop-blur-sm shadow-xl">
+        <span className="text-xs font-mono font-medium text-cyan-300">{tag.tagText}</span>
+        <span className="text-[10px] text-amber-300">No instances found</span>
+        {scopeLabel && (
+          <span className="text-[9px] text-[var(--muted)]" title="Scope / strictness applied at Map Tags time">
+            ({scopeLabel})
+          </span>
+        )}
+        <button
+          onClick={close}
+          className="text-sm text-[var(--muted)] hover:text-red-400 ml-1"
+          title="Close (Esc)"
+        >
+          &times;
+        </button>
+      </div>
+    );
+  }
 
   const saveEdit = () => {
     const trimmed = editValue.trim();
@@ -138,8 +177,16 @@ export default function TagBrowseBar() {
         &#9654;
       </button>
 
-      {/* Page info + close */}
+      {/* Page info + scope badge (when map-time scope differs from defaults) */}
       <span className="text-[10px] text-[var(--muted)]">{pageName}</span>
+      {scopeLabel && (
+        <span
+          className="text-[9px] text-[var(--muted)]/80 border border-[var(--border)] rounded px-1 py-0.5"
+          title="Scope / strictness applied at Map Tags time"
+        >
+          {scopeLabel}
+        </span>
+      )}
       <button
         onClick={close}
         className="text-sm text-[var(--muted)] hover:text-red-400 ml-1"

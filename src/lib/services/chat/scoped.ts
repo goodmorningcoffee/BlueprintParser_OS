@@ -14,6 +14,7 @@ import { eq, and, desc, inArray } from "drizzle-orm";
 import { resolveLLMConfig } from "@/lib/llm/resolve";
 import { streamChatResponse } from "@/lib/llm/stream";
 import { mapWordsToRegions, buildSpatialContext } from "@/lib/spatial";
+import { findWordsInBbox, wordsToText } from "@/lib/ocr-utils";
 import {
   buildSystemPrompt,
   buildYoloSummary,
@@ -114,21 +115,48 @@ export async function handleScopedChat(params: ScopedChatParams) {
   }
 
   // --- User markups (priority 2 — user-created, high relevance) ---
+  //
+  // Markup is dual-purpose: a human sticky-note AND a region-definition the LLM
+  // can reason about. We emit the bbox coordinates plus the OCR text inside the
+  // box so the model can answer "what did the user flag in this region?". See
+  // project_markup_dual_purpose_llm_region.md for the design rationale.
   if (userAnnotations.length > 0) {
     const byPage: Record<number, typeof userAnnotations> = {};
     for (const a of userAnnotations) {
       if (!byPage[a.pageNumber]) byPage[a.pageNumber] = [];
       byPage[a.pageNumber].push(a);
     }
+    // Fetch Textract data for just the pages that actually have user markups
+    // — avoids loading the column for pages we won't use.
+    const annotatedPageNumbers = Object.keys(byPage).map(Number);
+    const pageRows = await db
+      .select({ pageNumber: pages.pageNumber, textractData: pages.textractData })
+      .from(pages)
+      .where(and(eq(pages.projectId, project.id), inArray(pages.pageNumber, annotatedPageNumbers)));
+    const textractByPage: Record<number, TextractPageData | null> = {};
+    for (const row of pageRows) textractByPage[row.pageNumber] = row.textractData;
+
+    const MAX_OCR_CHARS = 300;
     let markupText = "";
     for (const [pg, anns] of Object.entries(byPage).sort(([a], [b]) => Number(a) - Number(b))) {
+      const pn = Number(pg);
+      const words = textractByPage[pn]?.words ?? [];
       markupText += `Page ${pg}:\n`;
       for (const a of anns) {
-        markupText += `  "${a.name}"${a.note ? `: ${a.note}` : ""}\n`;
+        const b3 = (v: number) => v.toFixed(3);
+        markupText += `  "${a.name}" [bbox ${b3(a.minX)},${b3(a.minY)} → ${b3(a.maxX)},${b3(a.maxY)}]`;
+        if (a.note) markupText += ` — note: ${a.note}`;
+        const wordsInside = findWordsInBbox(words, [a.minX, a.minY, a.maxX, a.maxY]);
+        if (wordsInside.length > 0) {
+          const ocr = wordsToText(wordsInside).replace(/\n/g, " / ");
+          const snippet = ocr.length > MAX_OCR_CHARS ? ocr.slice(0, MAX_OCR_CHARS) + "…" : ocr;
+          markupText += ` — OCR in region: "${snippet}"`;
+        }
+        markupText += "\n";
       }
     }
     sections.push({ header: "USER ANNOTATIONS", content: markupText, priority: 2 });
-    dataSummary.push(`${userAnnotations.length} user markup annotation(s) with notes`);
+    dataSummary.push(`${userAnnotations.length} user markup annotation(s) with bbox + OCR-in-region`);
   }
 
   // --- Takeoff notes (priority 3 — short, user-created) ---

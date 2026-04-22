@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useViewerStore, useTableParse, useNavigation, usePageData } from "@/stores/viewerStore";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 
@@ -41,10 +41,37 @@ export default function ManualParseTab({
     tableParseRegion,
     tableParsedGrid, setTableParsedGrid,
     tableParseColumnBBs, addTableParseColumnBB,
-    tableParseRowBBs, addTableParseRowBB,
+    tableParseRowBBs, addTableParseRowBB, setTableParseRowBBs,
     tableParseColumnNames, setTableParseColumnNames,
     resetTableParse,
   } = useTableParse();
+
+  // Snapshot of tableParseRowBBs before a "Repeat Down" mass-add — lets the
+  // user unwind the entire batch as one step (visible Undo button + Cmd-Z).
+  // Cleared automatically on panel unmount; scoped to this component.
+  const [rowBBsBackup, setRowBBsBackup] = useState<[number, number, number, number][] | null>(null);
+
+  const restoreRowBBs = useCallback(() => {
+    if (!rowBBsBackup) return;
+    setTableParseRowBBs(rowBBsBackup);
+    setRowBBsBackup(null);
+  }, [rowBBsBackup, setTableParseRowBBs]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta || e.key !== "z" || e.shiftKey) return;
+      // Don't steal undo from text inputs.
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+      if (!rowBBsBackup) return;
+      e.preventDefault();
+      restoreRowBBs();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [rowBBsBackup, restoreRowBBs]);
 
   const pageTextract = textractData[pageNumber];
 
@@ -68,6 +95,9 @@ export default function ManualParseTab({
   const repeatRowDown = useCallback(
     (rowBB: [number, number, number, number]) => {
       if (!tableParseRegion) return;
+      // Snapshot before the batch append so Cmd-Z / Undo Repeat can unwind
+      // the entire tiling as one step (not cell-by-cell).
+      setRowBBsBackup(tableParseRowBBs);
       const rowHeight = rowBB[3] - rowBB[1];
       const regionBottom = tableParseRegion[3];
       let y = rowBB[3];
@@ -76,6 +106,22 @@ export default function ManualParseTab({
         addTableParseRowBB([rowBB[0], y, rowBB[2], bottom]);
         y = bottom;
       }
+    },
+    [tableParseRegion, addTableParseRowBB, tableParseRowBBs]
+  );
+
+  // Add exactly one row below the last BB. Lets the user inspect each
+  // addition and correct any drift before continuing — preferred over
+  // Repeat Down on long tables where fixed-step tiling accumulates error.
+  const repeatRowOnce = useCallback(
+    (rowBB: [number, number, number, number]) => {
+      if (!tableParseRegion) return;
+      const rowHeight = rowBB[3] - rowBB[1];
+      const regionBottom = tableParseRegion[3];
+      const y = rowBB[3];
+      if (y + rowHeight * 0.5 >= regionBottom) return;
+      const bottom = Math.min(y + rowHeight, regionBottom);
+      addTableParseRowBB([rowBB[0], y, rowBB[2], bottom]);
     },
     [tableParseRegion, addTableParseRowBB]
   );
@@ -256,12 +302,31 @@ export default function ManualParseTab({
             <div className="space-y-1">
               <div className="flex items-center justify-between px-1">
                 <span className="text-[10px] text-[var(--muted)]">{tableParseRowBBs.length} rows</span>
-                <button
-                  onClick={() => repeatRowDown(tableParseRowBBs[tableParseRowBBs.length - 1])}
-                  className="text-[9px] text-purple-300 hover:text-purple-200"
-                >
-                  Repeat Down &darr;
-                </button>
+                <div className="flex items-center gap-2">
+                  {rowBBsBackup && (
+                    <button
+                      onClick={restoreRowBBs}
+                      className="text-[9px] text-amber-300 hover:text-amber-200"
+                      title="Undo the last Repeat Down batch (Cmd-Z)"
+                    >
+                      Undo Repeat
+                    </button>
+                  )}
+                  <button
+                    onClick={() => repeatRowOnce(tableParseRowBBs[tableParseRowBBs.length - 1])}
+                    className="text-[9px] text-purple-300 hover:text-purple-200"
+                    title="Add one row below the last — drift-free alternative to Repeat Down"
+                  >
+                    +1 Row &darr;
+                  </button>
+                  <button
+                    onClick={() => repeatRowDown(tableParseRowBBs[tableParseRowBBs.length - 1])}
+                    className="text-[9px] text-purple-300 hover:text-purple-200"
+                    title="Tile rows down to the region bottom at the current row's height"
+                  >
+                    Repeat Down &darr;
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -283,7 +348,7 @@ export default function ManualParseTab({
 
       {/* Reset */}
       <button
-        onClick={() => resetTableParse()}
+        onClick={() => { resetTableParse(); setRowBBsBackup(null); }}
         className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] mt-2"
       >
         Reset All

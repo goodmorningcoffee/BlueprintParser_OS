@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useRef } from "react";
 import { useViewerStore, useSummaries, useProject } from "@/stores/viewerStore";
 import HelpTooltip from "./HelpTooltip";
 import KeynoteItem from "./KeynoteItem";
@@ -61,6 +61,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const activeKeynoteHighlight = useViewerStore((s) => s.activeKeynoteHighlight);
   const setActiveKeynoteHighlight = useViewerStore((s) => s.setActiveKeynoteHighlight);
   const resetKeynoteParse = useViewerStore((s) => s.resetKeynoteParse);
+  const resetAllTools = useViewerStore((s) => s.resetAllTools);
   const projectId = useViewerStore((s) => s.projectId);
   const addYoloTagsBulk = useViewerStore((s) => s.addYoloTagsBulk);
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
@@ -81,10 +82,45 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const setGuidedParseCols = useViewerStore((s) => s.setGuidedParseCols);
   const resetGuidedParse = useViewerStore((s) => s.resetGuidedParse);
 
-  // Save parsed keynotes to pageIntelligence so All Keynotes tab persists across panel close
+  // Guards against double-click save stacking. Same pattern as TableParsePanel —
+  // Manual + Auto both call this helper; Guided bypasses it and writes inline.
+  // The ref prevents re-entry during the async map-tags fetch that follows.
+  const isSavingRef = useRef(false);
+
+  // Save parsed keynotes to pageIntelligence so All Keynotes tab persists
+  // across panel close. Writes the full grid shape (headers + rows +
+  // tagColumn + tableName) so ParseRegionLayer renders row/column grid lines
+  // over the saved region, matching the Table Parse behavior. The legacy
+  // `keynotes: [{key, description}]` field is retained for backward compat
+  // with existing saved regions read via keynoteDataToGrid().
+  // Optional colBoundaries / rowBoundaries capture the user's Manual-mode
+  // column/row BBs so the rendered grid lines match exact placements
+  // instead of falling back to uniform boundaries derived from header count.
   const saveKeynoteToIntelligence = useCallback((keys: { key: string; description: string }[], tableName?: string, csiTags?: { code: string; description: string }[]) => {
-    const currentIntel = useViewerStore.getState().pageIntelligence[pageNumber] || {};
+    const storeState = useViewerStore.getState();
+    const currentIntel = storeState.pageIntelligence[pageNumber] || {};
     const existingRegions = (currentIntel as any)?.parsedRegions || [];
+    const headers = ["Key", "Description"];
+    const rows = keys.map((k) => ({ Key: k.key, Description: k.description }));
+
+    // If user drew Manual-mode column BBs, derive column boundaries from them
+    // (normalized 0-1 X positions). Draws all verticals at BB edges so the
+    // rendered grid matches the user's hand-drawn layout exactly.
+    const colBBs = storeState.keynoteColumnBBs;
+    const rowBBs = storeState.keynoteRowBBs;
+    let colBoundaries: number[] | undefined;
+    let rowBoundaries: number[] | undefined;
+    if (colBBs.length > 0) {
+      const cb: number[] = [colBBs[0][0]];
+      for (const bb of colBBs) cb.push(bb[2]);
+      colBoundaries = cb;
+    }
+    if (rowBBs.length > 0) {
+      const rb: number[] = [rowBBs[0][1]];
+      for (const bb of rowBBs) rb.push(bb[3]);
+      rowBoundaries = rb;
+    }
+
     const newRegion = {
       id: `parsed-kn-${Date.now()}`,
       type: "keynote" as const,
@@ -93,8 +129,16 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       confidence: 0.9,
       csiTags: csiTags || [],
       data: {
-        keynotes: keys.map(k => ({ key: k.key, description: k.description })),
+        headers,
+        rows,
+        tagColumn: "Key",
+        tableName: tableName || "Keynotes",
+        rowCount: rows.length,
+        columnCount: headers.length,
+        keynotes: keys.map((k) => ({ key: k.key, description: k.description })),
         isPageSpecific: true,
+        ...(colBoundaries ? { colBoundaries } : {}),
+        ...(rowBoundaries ? { rowBoundaries } : {}),
       },
     };
     setPageIntelligence(pageNumber, {
@@ -268,6 +312,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
   // ─── Parse keynotes from column/row intersections ───────
   const parseKeynotes = useCallback(async () => {
+    if (isSavingRef.current) return;
     const pageTextract = textractData[pageNumber];
     if (!pageTextract?.words || keynoteColumnBBs.length < 2 || keynoteRowBBs.length === 0) return;
 
@@ -303,26 +348,35 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     }
 
     if (keys.length > 0) {
-      addParsedKeynote({
-        pageNumber,
-        keys,
-        yoloClass: keynoteYoloClass ? `${keynoteYoloClass.model}:${keynoteYoloClass.className}` : undefined,
-        tableName: `Keynotes p.${pageNumber}`,
-      });
-      saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`);
-      await mapKeynoteKeysToYoloTags({
-        keys,
-        yoloClass: keynoteYoloClass?.className,
-        yoloModel: keynoteYoloClass?.model,
-        pageNumber,
-      });
-      setKeynoteParseStep("review");
-      useViewerStore.getState().setMode("move");
+      isSavingRef.current = true;
+      try {
+        addParsedKeynote({
+          pageNumber,
+          keys,
+          yoloClass: keynoteYoloClass ? `${keynoteYoloClass.model}:${keynoteYoloClass.className}` : undefined,
+          tableName: `Keynotes p.${pageNumber}`,
+        });
+        saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`);
+        await mapKeynoteKeysToYoloTags({
+          keys,
+          yoloClass: keynoteYoloClass?.className,
+          yoloModel: keynoteYoloClass?.model,
+          pageNumber,
+        });
+        // Revert to idle so the Save button vanishes and the user can start
+        // a new parse without stacking duplicates on the previous region.
+        resetKeynoteParse();
+        useViewerStore.getState().setMode("move");
+      } finally {
+        isSavingRef.current = false;
+      }
     }
-  }, [textractData, pageNumber, keynoteColumnBBs, keynoteRowBBs, keynoteYoloClass, addParsedKeynote, mapKeynoteKeysToYoloTags, setKeynoteParseStep]);
+  }, [textractData, pageNumber, keynoteColumnBBs, keynoteRowBBs, keynoteYoloClass, addParsedKeynote, saveKeynoteToIntelligence, mapKeynoteKeysToYoloTags, resetKeynoteParse]);
 
   // ─── Auto parse via API ─────────────────────────────────
   const autoParseKeynote = useCallback(async (bbox: [number, number, number, number]) => {
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
     setAutoParsing(true);
     try {
       const resp = await fetch("/api/table-parse", {
@@ -346,7 +400,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`, result.csiTags || []);
           // Auto-parse doesn't pick a YOLO class, so we map as text-only.
           await mapKeynoteKeysToYoloTags({ keys, pageNumber });
-          setKeynoteParseStep("review");
+          resetKeynoteParse();
           useViewerStore.getState().setMode("move");
         }
       }
@@ -354,8 +408,9 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       console.error("[keynote auto-parse] Failed:", err);
     } finally {
       setAutoParsing(false);
+      isSavingRef.current = false;
     }
-  }, [projectId, pageNumber, addParsedKeynote, mapKeynoteKeysToYoloTags, setKeynoteParseStep]);
+  }, [projectId, pageNumber, addParsedKeynote, saveKeynoteToIntelligence, mapKeynoteKeysToYoloTags, resetKeynoteParse]);
 
   // ─── Guided parse: propose grid ─────────────────────────
   const [guidedLoading, setGuidedLoading] = useState(false);
@@ -402,11 +457,14 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
   // ─── Guided parse: parse from grid ─────────────────────
   const parseFromGuidedGrid = useCallback(async () => {
+    if (isSavingRef.current) return;
     const pageTextract = useViewerStore.getState().textractData[pageNumber];
     if (!pageTextract?.words || guidedParseRows.length < 2 || guidedParseCols.length < 2) return;
 
     const result = extractCellsFromGrid(pageTextract.words, guidedParseRows, guidedParseCols);
     if (result.rows.length === 0) return;
+
+    isSavingRef.current = true;
 
     // Detect CSI
     let csiTags: { code: string; description: string }[] = [];
@@ -474,11 +532,14 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       }).catch((e) => console.error("[save-keynote-intel] Network error:", e));
     }
 
-    // Reset guided state
+    // Reset guided + keynote state so the Save button vanishes and the tab
+    // reverts to idle. Clearing isSavingRef last so the guard only lifts once
+    // the UI has reverted.
     resetGuidedParse();
-    setKeynoteParseStep("review");
+    resetKeynoteParse();
     useViewerStore.getState().setMode("move");
-  }, [pageNumber, projectId, guidedParseRows, guidedParseCols, guidedParseRegion, resetGuidedParse, addParsedKeynote, mapKeynoteKeysToYoloTags, setKeynoteParseStep]);
+    isSavingRef.current = false;
+  }, [pageNumber, projectId, guidedParseRows, guidedParseCols, guidedParseRegion, resetGuidedParse, resetKeynoteParse, addParsedKeynote, mapKeynoteKeysToYoloTags]);
 
   // ─── Repeat row down ───────────────────────────────────
   const repeatRowDown = useCallback((rowBB: [number, number, number, number]) => {
@@ -519,8 +580,31 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
             >
               {showParsedRegions ? "\u25CF" : "\u25CB"}
             </button>
+            {keynoteParseStep !== "idle" && (
+              <button
+                onClick={resetAllTools}
+                className="text-[10px] px-2 py-0.5 rounded border border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+                title="Cancel the current parse (clears BBs + region, stays on this tab)"
+              >
+                Cancel
+              </button>
+            )}
             <button onClick={toggleKeynoteParsePanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">&times;</button>
           </div>
+        </div>
+      )}
+
+      {/* Embedded-mode Cancel row — parent orchestrator owns the header+close
+          button, so surface Cancel here when a parse is mid-flight. */}
+      {embedded && keynoteParseStep !== "idle" && (
+        <div className="px-3 py-1 border-b border-[var(--border)] flex justify-end">
+          <button
+            onClick={resetAllTools}
+            className="text-[10px] px-2 py-0.5 rounded border border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+            title="Cancel the current parse (clears BBs + region, stays on this tab)"
+          >
+            Cancel
+          </button>
         </div>
       )}
 

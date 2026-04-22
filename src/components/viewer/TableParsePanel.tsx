@@ -27,6 +27,8 @@ export default function TableParsePanel() {
   const tableParsedGrid = useViewerStore((s) => s.tableParsedGrid);
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
   const resetTableParse = useViewerStore((s) => s.resetTableParse);
+  const resetAllTools = useViewerStore((s) => s.resetAllTools);
+  const tableParseStep = useViewerStore((s) => s.tableParseStep);
   const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
   const toggleTableCompareModal = useViewerStore((s) => s.toggleTableCompareModal);
   const setPage = useViewerStore((s) => s.setPage);
@@ -46,6 +48,13 @@ export default function TableParsePanel() {
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
 
   const [showExportModal, setShowExportModal] = useState(false);
+  // Guards against double-click save stacking duplicates. Ref (not state) so
+  // the guard doesn't trigger renders but still blocks re-entry during the
+  // async /api/csi/detect + /api/pages/intelligence round-trip. The visible
+  // "Save button vanishes after success" UX is handled by resetTableParse()
+  // at the end of the happy path — tableParsedGrid goes null, which unmounts
+  // the review-step Save button.
+  const isSavingRef = useRef(false);
 
   // ─── Shared state for Map Tags (used by Auto + Manual tabs) ───
   const [tagYoloClass, setTagYoloClass] = useState<{ model: string; className: string } | null>(null);
@@ -109,54 +118,73 @@ export default function TableParsePanel() {
   // of the "parsed tables disappear on re-entry" bug: when PATCH returned an
   // error (stale session, payload too large, etc.), local state had the
   // region but the DB never did, so next load hydrated without it.
+  //
+  // Post-success: resets all parse + Map Tags state and reverts the tab to
+  // its idle step, so double-click saves can't stack N identical rows and the
+  // user lands back at "pick a parse mode" ready to start the next one.
   const detectCsiAndPersist = useCallback(async (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] }) => {
-    if (!grid.csiTags || grid.csiTags.length === 0) {
-      try {
-        const resp = await fetch("/api/csi/detect", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ headers: grid.headers, rows: grid.rows }),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          grid.csiTags = data.csiTags || [];
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    try {
+      if (!grid.csiTags || grid.csiTags.length === 0) {
+        try {
+          const resp = await fetch("/api/csi/detect", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ headers: grid.headers, rows: grid.rows }),
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            grid.csiTags = data.csiTags || [];
+          }
+        } catch { /* CSI detection is best-effort */ }
+      }
+      saveParsedToIntelligence(grid);
+      refreshPageCsiSpatialMap(pageNumber);
+      const { projectId: pid, isDemo } = useViewerStore.getState();
+      if (pid && !isDemo) {
+        const currentIntel = useViewerStore.getState().pageIntelligence[pageNumber];
+        let resp: Response;
+        try {
+          resp = await fetch("/api/pages/intelligence", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectId: pid, pageNumber, intelligence: currentIntel }),
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Network error";
+          console.error("[save-intelligence] Network error:", err);
+          throw new Error(`Could not save parsed table: ${msg}`);
         }
-      } catch { /* CSI detection is best-effort */ }
-    }
-    saveParsedToIntelligence(grid);
-    refreshPageCsiSpatialMap(pageNumber);
-    const { projectId: pid, isDemo } = useViewerStore.getState();
-    if (!pid || isDemo) return;
 
-    const currentIntel = useViewerStore.getState().pageIntelligence[pageNumber];
-    let resp: Response;
-    try {
-      resp = await fetch("/api/pages/intelligence", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: pid, pageNumber, intelligence: currentIntel }),
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Network error";
-      console.error("[save-intelligence] Network error:", err);
-      throw new Error(`Could not save parsed table: ${msg}`);
-    }
+        if (!resp.ok) {
+          let detail = `HTTP ${resp.status}`;
+          try {
+            const errBody = await resp.json();
+            if (errBody?.error) detail = errBody.error;
+          } catch { /* non-json body */ }
+          console.error("[save-intelligence] Failed:", resp.status, detail);
+          throw new Error(`Could not save parsed table: ${detail}`);
+        }
 
-    if (!resp.ok) {
-      let detail = `HTTP ${resp.status}`;
-      try {
-        const errBody = await resp.json();
-        if (errBody?.error) detail = errBody.error;
-      } catch { /* non-json body */ }
-      console.error("[save-intelligence] Failed:", resp.status, detail);
-      throw new Error(`Could not save parsed table: ${detail}`);
-    }
+        try {
+          const data = await resp.json();
+          if (data?.summaries) useViewerStore.getState().setSummaries(data.summaries);
+        } catch { /* response parse is best-effort — save succeeded */ }
+      }
 
-    try {
-      const data = await resp.json();
-      if (data?.summaries) useViewerStore.getState().setSummaries(data.summaries);
-    } catch { /* response parse is best-effort — save succeeded */ }
-  }, [pageNumber, saveParsedToIntelligence]);
+      // Success: revert the tab to its idle step so another parse can start
+      // fresh. Without this, the user sees the same post-parse review UI and
+      // clicking Save again inserts a second identical parsedRegion.
+      resetTableParse();
+      setTagMappingDone(false);
+      setTagMappingCount(0);
+      setLastDropCounts(null);
+      setTagYoloClass(null);
+    } finally {
+      isSavingRef.current = false;
+    }
+  }, [pageNumber, saveParsedToIntelligence, resetTableParse]);
 
   // ─── Shared memos ─────────────────────────────────────────
   const autoDetectedTables = useMemo(() => {
@@ -263,6 +291,12 @@ export default function TableParsePanel() {
           scope: "project",
           description: descByTag.get(t) || "",
           instances: results[t],
+          // Snapshot scope + strictness so the browse UI can explain why
+          // some mapped tags have fewer instances than the user expected.
+          mapScope: {
+            ...(drawingNumberPrefixes.length > 0 ? { drawingNumberPrefixes: [...drawingNumberPrefixes] } : {}),
+            strictness: mapTagsStrictness,
+          },
         }));
       addYoloTagsBulk(newTags);
       setTagMappingCount(newTags.length);
@@ -389,6 +423,15 @@ export default function TableParsePanel() {
                 </button>
               ))}
             </div>
+          )}
+          {tableParseStep !== "idle" && (
+            <button
+              onClick={resetAllTools}
+              className="text-[10px] px-2 py-0.5 rounded border border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+              title="Cancel the current parse (clears BBs + region, stays on this tab)"
+            >
+              Cancel
+            </button>
           )}
           <button onClick={toggleTableParsePanel} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none">
             &times;
