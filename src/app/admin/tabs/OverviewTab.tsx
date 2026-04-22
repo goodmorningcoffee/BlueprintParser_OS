@@ -55,7 +55,7 @@ const STAGES: ReprocessStage[] = [
   {
     label: "Intelligence",
     url: "/api/admin/reprocess?scope=intelligence",
-    description: "Re-running page classification, heuristics, table classification, CSI spatial maps, project analysis",
+    description: "Re-running page classification, heuristics (YOLO-aware if annotations already exist), table + composite region classification, CSI spatial maps, project analysis",
   },
 ];
 
@@ -134,8 +134,13 @@ export default function OverviewTab({ invites, unseenInvites, showInvites, onMar
             } else if (msg.type === "start") {
               setLog(prev => [...prev, `  ${msg.projects} project(s)`]);
             } else if (msg.type === "project") {
-              const extra = msg.yoloTitleBlocks !== undefined ? ` (${msg.yoloTitleBlocks} YOLO title blocks)` : "";
-              setLog(prev => [...prev, `  ${msg.name}: ${msg.pages} pages${extra}`]);
+              const tb = msg.yoloTitleBlocks !== undefined ? ` (${msg.yoloTitleBlocks} YOLO title blocks)` : "";
+              const yp = msg.yoloPages !== undefined
+                ? msg.yoloPages > 0
+                  ? ` (${msg.yoloPages} pages w/ existing YOLO)`
+                  : " (no YOLO data)"
+                : "";
+              setLog(prev => [...prev, `  ${msg.name}: ${msg.pages} pages${tb}${yp}`]);
             } else if (msg.type === "progress") {
               setLog(prev => [...prev, `    ${msg.updated} updated, ${msg.skipped || 0} skipped`]);
             } else if (msg.type === "project-analysis") {
@@ -178,7 +183,7 @@ export default function OverviewTab({ invites, unseenInvites, showInvites, onMar
           <h3 className="text-sm font-semibold text-[var(--fg)]">Re-run All Processes</h3>
           <p className="text-[10px] text-[var(--muted)] mt-1">
             Sequentially re-runs all processing pipelines on existing data: page naming, text annotations + CSI detection, and intelligence analysis.
-            Does not re-run YOLO models — run those separately from the AI Models tab.
+            Existing YOLO annotations are automatically picked up by the intelligence stage (heuristic engine + composite region classifier). To refresh YOLO detections themselves, run the model from the AI Models tab.
           </p>
         </div>
 

@@ -13,6 +13,7 @@ export default function PageIntelligenceTab({ reprocessing, reprocessLog, onRepr
   const [intelLog, setIntelLog] = useState<string[]>([]);
   const [reprocessingNames, setReprocessingNames] = useState(false);
   const [namesLog, setNamesLog] = useState<string[]>([]);
+  const [debugClassifier, setDebugClassifier] = useState(false);
 
   async function reprocessPageNames() {
     setReprocessingNames(true);
@@ -62,9 +63,16 @@ export default function PageIntelligenceTab({ reprocessing, reprocessLog, onRepr
 
   async function reprocessIntelligence() {
     setReprocessingIntel(true);
-    setIntelLog(["Starting intelligence reprocessing..."]);
+    setIntelLog([
+      debugClassifier
+        ? "Starting intelligence reprocessing (classifier debug mode on — bundles written to S3)..."
+        : "Starting intelligence reprocessing...",
+    ]);
     try {
-      const res = await fetch("/api/admin/reprocess?scope=intelligence", { method: "POST" });
+      const url = debugClassifier
+        ? "/api/admin/reprocess?scope=intelligence&debug=1"
+        : "/api/admin/reprocess?scope=intelligence";
+      const res = await fetch(url, { method: "POST" });
       if (res.ok && res.body) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -80,7 +88,14 @@ export default function PageIntelligenceTab({ reprocessing, reprocessLog, onRepr
             try {
               const msg = JSON.parse(line);
               if (msg.type === "start") setIntelLog(prev => [...prev, `Processing ${msg.projects} project(s)...`]);
-              else if (msg.type === "project") setIntelLog(prev => [...prev, `Project: ${msg.name} (${msg.pages} pages)`]);
+              else if (msg.type === "project") {
+                const yolo = msg.yoloPages !== undefined
+                  ? msg.yoloPages > 0
+                    ? ` — ${msg.yoloPages} pages w/ existing YOLO`
+                    : " — no YOLO data"
+                  : "";
+                setIntelLog(prev => [...prev, `Project: ${msg.name} (${msg.pages} pages)${yolo}`]);
+              }
               else if (msg.type === "progress") setIntelLog(prev => [...prev, `  ${msg.updated}/${msg.total} pages updated`]);
               else if (msg.type === "project-analysis") setIntelLog(prev => [...prev, `  Project analysis complete`]);
               else if (msg.type === "done") setIntelLog(prev => [...prev, `Done: ${msg.updated} pages updated across ${msg.projects || "all"} projects`]);
@@ -120,9 +135,10 @@ export default function PageIntelligenceTab({ reprocessing, reprocessLog, onRepr
               <li>Page classification (discipline + drawing type)</li>
               <li>Cross-reference detection</li>
               <li>Note block detection</li>
-              <li>Text region classification</li>
-              <li>Heuristic engine inferences</li>
+              <li>Text region classification (Stage 1 composite, 2026-04-24)</li>
+              <li>Heuristic engine (YOLO-aware if annotations already exist)</li>
               <li>Table/schedule classification</li>
+              <li>Composite region classifier (tables / title blocks / drawings — fires only when YOLO data is present)</li>
               <li>CSI spatial heatmap</li>
             </ul>
           </div>
@@ -155,6 +171,21 @@ export default function PageIntelligenceTab({ reprocessing, reprocessLog, onRepr
         >
           {reprocessingIntel ? "Reprocessing Intelligence..." : "Reprocess Intelligence (All Projects)"}
         </button>
+        <label className="flex items-center gap-2 text-xs text-[var(--muted)] cursor-pointer">
+          <input
+            type="checkbox"
+            checked={debugClassifier}
+            onChange={(e) => setDebugClassifier(e.target.checked)}
+            disabled={reprocessingIntel}
+            className="accent-cyan-500"
+          />
+          <span>
+            Classifier debug — write Stage A–F traces to{" "}
+            <code className="text-[10px] bg-[var(--surface)] px-1 rounded">
+              &#123;projectDataUrl&#125;/debug/classifier/page_NNNN.json
+            </code>
+          </span>
+        </label>
         <button
           onClick={onReprocess}
           disabled={reprocessing || reprocessingIntel}
