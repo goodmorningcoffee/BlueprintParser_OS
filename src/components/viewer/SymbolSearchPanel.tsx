@@ -28,7 +28,21 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
     setSymbolSearchActive,
     symbolSearchConfig,
     setSymbolSearchConfig,
+    symbolSearchPreset,
+    setSymbolSearchPreset,
   } = useSymbolSearch();
+
+  // Derive the displayed preset state from the live config values. When the
+  // user hand-tunes advanced sliders (scaleMin / scaleMax / NMS), the config
+  // drifts away from either preset — show "custom" so the UI doesn't lie
+  // about being on Lite or Power. Clicking Lite or Power in the toggle
+  // snaps the three values back to that preset's bundle.
+  const derivedPreset: "lite" | "power" | "custom" = (() => {
+    const { scaleMin, scaleMax, nmsThreshold } = symbolSearchConfig;
+    if (scaleMin === 0.5 && scaleMax === 2.0 && nmsThreshold === 0.2) return "power";
+    if (scaleMin === 0.8 && scaleMax === 1.5 && nmsThreshold === 0.3) return "lite";
+    return "custom";
+  })();
   const { pageNames } = useProject();
   const { pageNumber, setPage } = useNavigation();
 
@@ -337,6 +351,56 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
       {/* State: CONFIGURE — show options before running */}
       {state === "configure" && (
         <div className="px-3 py-2 space-y-2 border-t border-[var(--border)]">
+          {/* Lite / Power preset toggle — bundles scale range + NMS into a
+              single quick-pick. Advanced sliders below still allow
+              fine-tuning; when they drift from either preset, the label
+              shows "Custom" and the active pill is de-highlighted. */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-[var(--muted)]">Preset</span>
+              {derivedPreset === "custom" && (
+                <span
+                  className="text-[9px] text-amber-400/80"
+                  title="Advanced sliders have been hand-tuned away from both presets. Click Lite or Power to snap back."
+                >
+                  Custom
+                </span>
+              )}
+            </div>
+            <div className="flex border border-[var(--border)] rounded overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setSymbolSearchPreset("lite")}
+                className={`flex-1 text-[10px] font-medium py-1 transition-colors ${
+                  derivedPreset === "lite"
+                    ? "bg-cyan-500/20 text-cyan-300"
+                    : "text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+                }`}
+                title="Scales 0.8–1.5, tighter NMS. Fast."
+              >
+                Lite
+              </button>
+              <button
+                type="button"
+                onClick={() => setSymbolSearchPreset("power")}
+                className={`flex-1 text-[10px] font-medium py-1 border-l border-[var(--border)] transition-colors ${
+                  derivedPreset === "power"
+                    ? "bg-fuchsia-500/20 text-fuchsia-300"
+                    : "text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)]"
+                }`}
+                title="Scales 0.5–2.0, looser NMS. Finds more size variants — ~2× runtime per page."
+              >
+                Power
+              </button>
+            </div>
+            <div className="text-[9px] text-[var(--muted)]/80 leading-tight">
+              {derivedPreset === "power"
+                ? "Power: scales 0.5–2.0, looser duplicate suppression. Slower per page, higher recall."
+                : derivedPreset === "lite"
+                  ? "Lite: scales 0.8–1.5, tight NMS. Fast default."
+                  : "Custom config — pick Lite or Power to reset."}
+            </div>
+          </div>
           {/* Confidence threshold */}
           <div className="space-y-1">
             <div className="flex items-center justify-between">

@@ -489,27 +489,31 @@ export default memo(function AreaTab() {
                 : "Click inside a room to detect its boundary"}
             </div>
             <div className="space-y-1">
-              <div
-                className="flex items-center gap-1.5"
-                title="How aggressively the fill pushes past faint pixels. Lower = stops at every subtle line (tight rooms). Higher = ignores small gaps and extends further."
-              >
-                <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Tolerance</span>
-                <input type="range" min={5} max={80} step={1}
-                  value={bucketFillTolerance}
-                  onChange={(e) => setBucketFillTolerance(Number(e.target.value))}
-                  className="flex-1 h-1 accent-cyan-400" />
-                <span className="w-5 text-[10px] text-right font-mono text-[var(--muted)]">{bucketFillTolerance}</span>
+              <div className="text-[9px] text-[var(--muted)]/80 px-0.5 leading-tight">
+                Lower = tighter fill (more sensitive to thin lines).
+                Higher = looser (fills through noisy pixels).
               </div>
               <div
                 className="flex items-center gap-1.5"
-                title="Padding added to walls before filling, in pixels. Higher values close small gaps in line art (like 1–2px gaps at door frames). Set to 0 for very clean blueprints."
+                title="How aggressively the fill pushes past faint pixels. Negative = extreme strictness (nearly every pixel becomes a wall). 0 = tighter than default. 30 = pure Otsu (default). Higher = ignores small gaps and extends further."
+              >
+                <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Tolerance</span>
+                <input type="range" min={-20} max={80} step={1}
+                  value={bucketFillTolerance}
+                  onChange={(e) => setBucketFillTolerance(Number(e.target.value))}
+                  className="flex-1 h-1 accent-cyan-400" />
+                <span className="w-7 text-[10px] text-right font-mono text-[var(--muted)]">{bucketFillTolerance}</span>
+              </div>
+              <div
+                className="flex items-center gap-1.5"
+                title="Gap-closing radius in pixels, applied to walls before flooding. 0 = no gap-closing, respects every single pixel. 1–10 = seal gaps of that many pixels (helps when line art has 1–2px breaks at door frames)."
               >
                 <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Dilation</span>
                 <input type="range" min={0} max={10} step={1}
                   value={bucketFillDilatePx}
                   onChange={(e) => setBucketFillDilatePx(Number(e.target.value))}
                   className="flex-1 h-1 accent-cyan-400" />
-                <span className="w-5 text-[10px] text-right font-mono text-[var(--muted)]">{bucketFillDilatePx}</span>
+                <span className="w-7 text-[10px] text-right font-mono text-[var(--muted)]">{bucketFillDilatePx}</span>
               </div>
             </div>
           </div>

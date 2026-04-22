@@ -534,6 +534,13 @@ interface ViewerState {
   setSymbolSearchSourcePage: (page: number | null) => void;
   symbolSearchConfig: { multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null; scaleMin: number; scaleMax: number; nmsThreshold: number; maxMatchesPerPage: number };
   setSymbolSearchConfig: (patch: Partial<{ multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null; scaleMin: number; scaleMax: number; nmsThreshold: number; maxMatchesPerPage: number }>) => void;
+  /** Preset bundling scaleMin/scaleMax/nmsThreshold. "lite" is fast default
+   *  (0.8-1.5, NMS 0.3). "power" widens recall (0.5-2.0, NMS 0.2) at ~2x
+   *  per-page runtime. UI shows a third derived "custom" state when the
+   *  advanced sliders have been hand-tuned to values that don't match
+   *  either preset — see SymbolSearchPanel for the derivation. */
+  symbolSearchPreset: "lite" | "power";
+  setSymbolSearchPreset: (preset: "lite" | "power") => void;
   clearSymbolSearch: () => void;
 
   // ─── Drawing State (used by DrawingPreviewLayer, NOT subscribed by AnnotationOverlay) ──
@@ -1455,6 +1462,16 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   },
   setSymbolSearchConfig: (patch: Partial<{ multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null; scaleMin: number; scaleMax: number; nmsThreshold: number; maxMatchesPerPage: number }>) =>
     set((s) => ({ symbolSearchConfig: { ...s.symbolSearchConfig, ...patch } })),
+  symbolSearchPreset: "lite",
+  setSymbolSearchPreset: (preset) => {
+    const config = preset === "power"
+      ? { scaleMin: 0.5, scaleMax: 2.0, nmsThreshold: 0.2 }
+      : { scaleMin: 0.8, scaleMax: 1.5, nmsThreshold: 0.3 };
+    set((s) => ({
+      symbolSearchPreset: preset,
+      symbolSearchConfig: { ...s.symbolSearchConfig, ...config },
+    }));
+  },
   clearSymbolSearch: () =>
     set({
       symbolSearchActive: false,
@@ -1618,6 +1635,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       symbolSearchTemplateBbox: null,
       symbolSearchSourcePage: null,
       symbolSearchConfig: { multiScale: true, useSiftFallback: true, searchPages: null, scaleMin: 0.8, scaleMax: 1.5, nmsThreshold: 0.3, maxMatchesPerPage: 50 },
+      symbolSearchPreset: "lite" as const,
       guidedParseActive: false,
       guidedParseRegion: null,
       guidedParseRows: [],
@@ -1755,6 +1773,8 @@ export const useSymbolSearch = () =>
     clearSymbolSearch: s.clearSymbolSearch,
     symbolSearchConfig: s.symbolSearchConfig,
     setSymbolSearchConfig: s.setSymbolSearchConfig,
+    symbolSearchPreset: s.symbolSearchPreset,
+    setSymbolSearchPreset: s.setSymbolSearchPreset,
   })));
 
 /** Chat state */

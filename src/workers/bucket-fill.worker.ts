@@ -463,8 +463,12 @@ function processFill(req: BucketFillRequest): BucketFillResult {
 
   // 3. Morphological close — the user's Dilation knob controls how aggressive
   // this is (closes small gaps in line art like 1–2px door-frame breaks).
-  const radius = Math.max(1, Math.ceil(req.dilation / 2));
-  const closed = morphClose(bin, w, h, radius);
+  // Dilation=0 truly skips morphClose, preserving every dark pixel as a wall
+  // (the old `Math.max(1, ...)` clamp forced a 1-pixel kernel that was a
+  // near-noop but still ran — users wanted an explicit "no smoothing" mode
+  // for plans with thin-wall mullions where morphology bridged real gaps).
+  const radius = req.dilation <= 0 ? 0 : Math.ceil(req.dilation / 2);
+  const closed = radius > 0 ? morphClose(bin, w, h, radius) : bin;
 
   // 4. Burn user-drawn barrier lines (explicit door seals).
   for (const b of req.barriers) {

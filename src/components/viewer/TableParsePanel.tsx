@@ -382,6 +382,16 @@ export default function TableParsePanel() {
     });
   }, [summaries, pageIntelligence, pageNumber]);
 
+  // Update the active parsed grid's tagColumn. Used by MapTagsSection's new
+  // tag-column picker — auto-detection is a heuristic that misses when the
+  // description column happens to match the tag regex. Letting the user
+  // override is a prerequisite for any downstream tooling that expects
+  // tag-authoritative data (Discrepancy Engine, find-occurrences, etc.).
+  const handleTagColumnChange = useCallback((col: string) => {
+    if (!tableParsedGrid) return;
+    setTableParsedGrid({ ...tableParsedGrid, tagColumn: col });
+  }, [tableParsedGrid, setTableParsedGrid]);
+
   // ─── Shared Map Tags props ────────────────────────────────
   const mapTagsProps = {
     tagYoloClass, setTagYoloClass, handleMapTags,
@@ -390,6 +400,8 @@ export default function TableParsePanel() {
     mapTagsStrictness, setMapTagsStrictness,
     drawingNumberPrefixes, setDrawingNumberPrefixes,
     availablePrefixes, lastDropCounts,
+    // 2026-04-22 — user-overridable tag column picker
+    onTagColumnChange: handleTagColumnChange,
   };
 
   // ─── Render ───────────────────────────────────────────────
