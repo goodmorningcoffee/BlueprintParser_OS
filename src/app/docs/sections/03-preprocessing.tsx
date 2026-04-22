@@ -9,6 +9,16 @@ import { PipelineFlowDiagram } from "../_components/demos/PipelineFlowDiagram";
 export function Section03Preprocessing() {
   return (
     <Section id="preprocessing" eyebrow="Engines" title="From PDF to Structured Data">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: when you upload a PDF, BP opens it, splits it into
+        pages, reads every word with OCR, and runs a sequence of small analyses
+        &mdash; what kind of drawing is this, what&apos;s in the title block,
+        what CSI codes appear, are there tables &mdash; and stores the result
+        in a compact JSON per page. A 200-page set finishes in roughly 5 to 10
+        minutes on the default Fargate tier.
+      </div>
+
       <p>
         The preprocessing pipeline is the load-bearing part of BP. Everything the
         viewer, the LLM, and the takeoff engine depend on &mdash; CSI codes,

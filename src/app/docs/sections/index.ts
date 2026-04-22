@@ -1,3 +1,4 @@
+export { Section00Walkthrough } from "./00-walkthrough";
 export { Section01Overview } from "./01-overview";
 export { Section02Viewer } from "./02-viewer";
 export { Section03Preprocessing } from "./03-preprocessing";
@@ -9,4 +10,5 @@ export { Section08BucketFill } from "./08-bucket-fill";
 export { Section09LlmAndTools } from "./09-llm-and-tools";
 export { Section10Admin } from "./10-admin";
 export { Section11Architecture } from "./11-architecture";
-export { Section12ApiReference } from "./12-api-reference";
+export { Section12ForLlms } from "./12-for-llms";
+export { Section13ApiReference } from "./13-api-reference";

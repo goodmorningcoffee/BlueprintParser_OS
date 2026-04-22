@@ -5,8 +5,37 @@ interface FeatureCard {
   title: string;
   href: string;
   desc: string;
+  accent?: string;
   icon: React.ReactNode;
 }
+
+const QUICKSTART: FeatureCard = {
+  title: "New here? Start with the Walkthrough",
+  href: "#walkthrough",
+  desc: "Five steps from upload to exported numbers. No jargon, no code. ~3 minutes to read.",
+  accent: "emerald",
+  icon: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M 9 8 L 16 12 L 9 16 Z" fill="currentColor" />
+    </svg>
+  ),
+};
+
+const LLM_CARD: FeatureCard = {
+  title: "Using an LLM to read this code?",
+  href: "#for-llms",
+  desc: "Dedicated section packs the mental model, glossary, file:line landmarks, selection heuristics, and the signal-valve state into one place.",
+  accent: "sky",
+  icon: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <circle cx="8.5" cy="12" r="1.2" fill="currentColor" />
+      <circle cx="15.5" cy="12" r="1.2" fill="currentColor" />
+      <path d="M 8 16 Q 12 18 16 16" />
+    </svg>
+  ),
+};
 
 const CARDS: FeatureCard[] = [
   {
@@ -102,7 +131,24 @@ export function Landing() {
           LLM-queryable data &mdash; with a human-in-the-loop viewer, automated
           takeoff, and on-demand YOLO object detection on top.
         </p>
+
+        {/* Plain-English lead — short paragraph for non-tech readers */}
+        <div className="mt-4 max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1">
+          In plain English: drop in a drawing set, BP reads every page, finds the
+          schedules and callouts, lets a YOLO model locate doors / windows / tags
+          on the floor plans, and a chat-enabled LLM answers questions like
+          &quot;how many doors on the second floor&quot; by looking at the
+          structured data it just built. You stay in the loop: every number
+          clicks back to the pixels it came from.
+        </div>
+
         <div className="flex flex-wrap gap-2 mt-5">
+          <a
+            href="#walkthrough"
+            className="px-3 py-1.5 text-sm rounded border border-emerald-400/60 text-emerald-300 hover:bg-emerald-500/10"
+          >
+            5-minute walkthrough →
+          </a>
           <a
             href="#overview"
             className="px-3 py-1.5 text-sm rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)]/10"
@@ -126,9 +172,50 @@ export function Landing() {
         </div>
       </div>
 
+      {/* Prominent entry-point cards — Walkthrough for humans, For-LLMs for machines */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-10">
+        {[QUICKSTART, LLM_CARD].map((card) => {
+          const accentBorder =
+            card.accent === "emerald"
+              ? "border-emerald-400/50 hover:border-emerald-400/80 hover:bg-emerald-500/10"
+              : "border-sky-400/50 hover:border-sky-400/80 hover:bg-sky-500/10";
+          const accentIconBox =
+            card.accent === "emerald"
+              ? "border-emerald-400/40 text-emerald-300"
+              : "border-sky-400/40 text-sky-300";
+          return (
+            <a
+              key={card.title}
+              href={card.href}
+              className={`group block rounded-lg border bg-[var(--surface)]/30 p-5 transition-colors ${accentBorder}`}
+            >
+              <div className="flex items-start gap-4">
+                <div className={`w-11 h-11 rounded-md border flex items-center justify-center shrink-0 ${accentIconBox}`}>
+                  {card.icon}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[var(--fg)] font-semibold text-[16px] mb-1">
+                    {card.title}
+                  </div>
+                  <div className="text-[13px] text-[var(--fg)]/85 leading-snug">
+                    {card.desc}
+                  </div>
+                </div>
+              </div>
+            </a>
+          );
+        })}
+      </div>
+
       {/* Architecture diagram */}
       <div className="mb-10 border border-[var(--border)] rounded-lg bg-[var(--surface)]/30 p-4">
         <ArchitectureSvgDiagram />
+        <div className="mt-3 text-[12px] text-[var(--muted)] italic leading-relaxed">
+          The BP runtime on AWS. ECS Fargate serves the Next.js app and runs the
+          preprocessing worker; SageMaker runs YOLO on-demand; S3 + CloudFront
+          store and serve page images; RDS PostgreSQL holds structured results.
+          Local / development uses the same code with AWS services disabled.
+        </div>
       </div>
 
       {/* Feature highlight cards */}

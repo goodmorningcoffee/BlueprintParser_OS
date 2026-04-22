@@ -8,10 +8,21 @@ import { TableParseTabsDemo } from "../_components/demos/TableParseTabsDemo";
 import { GuidedSlidersDemo } from "../_components/demos/GuidedSlidersDemo";
 import { MapTagsDemoShell } from "../_components/demos/MapTagsDemoShell";
 import { MapTagsBindingDiagram } from "../_components/demos/MapTagsBindingDiagram";
+import { TagMappingTypesDiagram } from "../_components/demos/TagMappingTypesDiagram";
 
 export function Section06TablesAndTags() {
   return (
     <Section id="tables-and-tags" eyebrow="Engines" title="Parsing Schedules and Mapping Tags">
+      {/* Plain-English lead */}
+      <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
+        In plain English: a door schedule has one row per unique door type
+        (&quot;D-01 = solid wood, 90-min fire rated&quot;) and the floor plans
+        have circles with &quot;D-01&quot; written inside them, one for each
+        physical door. Counting the circles = counting the doors. BP parses
+        the schedule into a grid, finds every circle containing each tag, and
+        gives you the count.
+      </div>
+
       <p>
         Schedules &mdash; door schedules, finish schedules, equipment lists,
         plumbing fixture schedules, electrical panel schedules &mdash; are where
@@ -160,6 +171,36 @@ export function Section06TablesAndTags() {
         >
           <MapTagsBindingDiagram />
         </Figure>
+      </SubSection>
+
+      <SubSection title="The 5 tag-matching strategies">
+        <p>
+          Under the hood, <InlineCode>findOccurrences()</InlineCode> in{" "}
+          <InlineCode>src/lib/tag-mapping/find-occurrences.ts</InlineCode>{" "}
+          dispatches on <InlineCode>item.itemType</InlineCode> to one of five
+          matchers. Auto-QTO almost always picks{" "}
+          <InlineCode>yolo-object-with-tag-shape</InlineCode> (type 4); the
+          other four support composite-classifier, manual QTO, and future
+          workflows. Each matcher produces raw hits; a shared scorer composes
+          pattern match, region weight, scope, and fuzziness into a single
+          confidence score and tier.
+        </p>
+        <Figure
+          kind="live"
+          caption="Five matcher types with illustrative glyphs. The dispatch is in find-occurrences.ts; the scoring is shared across all 5."
+          size="full"
+        >
+          <TagMappingTypesDiagram />
+        </Figure>
+        <Callout variant="warn" title="Signal-valve state (for LLM readers)">
+          Two scoring signals &mdash; <InlineCode>shapeContainBoost</InlineCode>{" "}
+          and <InlineCode>objectAdjacencyBoost</InlineCode> &mdash; are
+          hardcoded to zero in the current orchestrator (L141-142). A third,
+          <InlineCode>windowMatch</InlineCode>, is hardcoded true (L131). These
+          are placeholders for the future Discrepancy Engine; BP today cannot
+          detect &quot;the schedule says 12 doors but only 11 are on plans&quot;
+          as a high-confidence signal. See Section 12 for the full story.
+        </Callout>
       </SubSection>
 
       <SubSection title="Output shape">
