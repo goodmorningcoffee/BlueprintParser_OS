@@ -7,6 +7,7 @@ import { parseNotesFromRegion } from "@/lib/text-region-classifier";
 import { detectCsiFromGrid } from "@/lib/csi-detect";
 import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
+import { PARSED_REGION_DEFAULT_CONFIDENCE } from "@/lib/spatial-constants";
 import type {
   TextractPageData,
   PageIntelligence,
@@ -183,7 +184,7 @@ export async function POST(req: Request) {
         type,
         category: overrides?.category ?? inferCategory(type, regionData),
         bbox: regionBbox,
-        confidence: 0.85,
+        confidence: PARSED_REGION_DEFAULT_CONFIDENCE,
         source: "user",
         csiTags: regionCsiTags,
         data: regionData as NotesData,

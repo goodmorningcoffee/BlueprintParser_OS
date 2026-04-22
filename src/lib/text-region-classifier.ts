@@ -72,6 +72,8 @@ import {
   CLASSIFIER_MIN_REGION_WORDS,
   CLASSIFIER_WHITESPACE_SKIP_WORD_COUNT,
   DEFAULT_TITLE_BLOCK_REGION,
+  NOTES_KEY_COLUMN_GAP,
+  KV_MIN_GAP_RATIO,
 } from "@/lib/spatial-constants";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -556,7 +558,7 @@ function bindKeyValueGrid(
     }
 
     const lineWidth = lf.right - lf.left;
-    const meaningful = splitIdx > 0 && maxGap > lineWidth * 0.05;
+    const meaningful = splitIdx > 0 && maxGap > lineWidth * KV_MIN_GAP_RATIO;
 
     if (meaningful) {
       const key = sorted.slice(0, splitIdx).map((w) => w.text).join(" ").trim();
@@ -857,8 +859,7 @@ export function parseNotesFromRegion(
     let colBoundaries: number[] | undefined;
     if (numberedFirstWordRights.length > 0) {
       const keyColRight = median(numberedFirstWordRights);
-      const gap = 0.005;
-      colBoundaries = [rx, Math.min(keyColRight + gap, rRight - 0.001), rRight];
+      colBoundaries = [rx, Math.min(keyColRight + NOTES_KEY_COLUMN_GAP, rRight - 0.001), rRight];
     }
     return {
       headers: numbered.headers,

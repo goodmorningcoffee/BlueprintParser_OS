@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BboxLTWH, TextractLine } from "@/types";
 
 interface FastManualGrid {
@@ -61,16 +61,19 @@ export default memo(function FastManualParseOverlay({
     onGridChange(null);
   }, [regionBbox, active]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Derived filtered lines (inside the region)
-  const linesInRegion = regionBbox
-    ? textractLines.filter((line) => {
-        if (!line.bbox || line.bbox.length < 4) return false;
-        const [x0, y0, x1, y1] = regionBbox;
-        const cx = line.bbox[0] + line.bbox[2] / 2;
-        const cy = line.bbox[1] + line.bbox[3] / 2;
-        return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
-      })
-    : [];
+  // Derived filtered lines (inside the region). Memoized so the filter
+  // doesn't re-run on every render — with 200+ page-lines, the wasted
+  // work compounds across hover/drag rerenders from parent components.
+  const linesInRegion = useMemo(() => {
+    if (!regionBbox) return [] as TextractLine[];
+    const [x0, y0, x1, y1] = regionBbox;
+    return textractLines.filter((line) => {
+      if (!line.bbox || line.bbox.length < 4) return false;
+      const cx = line.bbox[0] + line.bbox[2] / 2;
+      const cy = line.bbox[1] + line.bbox[3] / 2;
+      return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
+    });
+  }, [textractLines, regionBbox]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
