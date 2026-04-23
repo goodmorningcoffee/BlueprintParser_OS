@@ -87,7 +87,6 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
   const active = useViewerStore((s) => s.paragraphOverlayActive);
   const specParseRegion = useViewerStore((s) => s.specParseRegion);
   const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
-  const notesType = useViewerStore((s) => s.notesType);
   const textractData = useViewerStore((s) => s.textractData[props.pageNumber]);
   const pageIntel = useViewerStore((s) => s.pageIntelligence[props.pageNumber]);
   const paragraphBatch = useViewerStore((s) => s.paragraphBatch);
@@ -102,13 +101,11 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
   // Phase 2.6 will unify into a single `parseRegion` slot.
   const outerBbox = specParseRegion ?? notesParseRegion;
   const isSpec = !!specParseRegion;
-  const regionKind: ParagraphRegionKind = isSpec
-    ? "spec-dense-columns"
-    : notesType === "key"
-      ? "notes-key-value"
-      : notesType === "general"
-        ? "notes-general"
-        : "notes-numbered";
+  // Notes default to the numbered binder since it's the most common shape on
+  // arch drawings. Per-paragraph rowText is still editable in ParagraphOverlay,
+  // and Step 5 (parallel MethodResult refactor) will re-introduce an
+  // algorithmic regionKind selector driven by the winning method.
+  const regionKind: ParagraphRegionKind = isSpec ? "spec-dense-columns" : "notes-numbered";
 
   const allLines = textractData?.lines ?? [];
   const textRegions = (pageIntel as { textRegions?: import("@/types").TextRegion[] } | undefined)?.textRegions ?? [];

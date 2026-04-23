@@ -17,15 +17,6 @@ interface PreviewGrid {
   csiTags?: { code: string; description: string }[];
 }
 
-const NOTE_TYPE_OPTIONS: NotesData["noteType"][] = [
-  "general",
-  "rcp",
-  "demo",
-  "key",
-  "spec-note",
-  "other",
-];
-
 /**
  * NotesParser — Stage 4 commit tool with 4 sub-modes.
  *
@@ -52,8 +43,6 @@ export default function NotesParser() {
   const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
   const setNotesParseRegion = useViewerStore((s) => s.setNotesParseRegion);
   const setNotesParseStep = useViewerStore((s) => s.setNotesParseStep);
-  const notesType = useViewerStore((s) => s.notesType);
-  const setNotesType = useViewerStore((s) => s.setNotesType);
 
   const guidedNotesRows = useViewerStore((s) => s.guidedNotesRows);
   const guidedNotesCols = useViewerStore((s) => s.guidedNotesCols);
@@ -294,27 +283,21 @@ export default function NotesParser() {
     setError(null);
     try {
       const unionBbox = unionBboxes(paragraphBatch.map((p) => p.bbox));
-      const isKV = notesType === "key";
-      const headers = isKV ? ["Key", "Value"] : ["Key", "Note"];
-      const rows = paragraphBatch.map((p) => {
-        const firstCol = headers[0];
-        const secondCol = headers[1];
-        return {
-          [firstCol]: p.rowText[firstCol] ?? p.rowText.Key ?? "",
-          [secondCol]: p.rowText[secondCol] ?? p.rowText.Note ?? p.rowText.Value ?? "",
-        };
-      });
+      const headers = ["Key", "Note"];
+      const rows = paragraphBatch.map((p) => ({
+        Key: p.rowText.Key ?? "",
+        Note: p.rowText.Note ?? p.rowText.Value ?? "",
+      }));
       const rowBoundaries = paragraphBatch.map((p) => p.bbox[1]);
       rowBoundaries.push(paragraphBatch[paragraphBatch.length - 1].bbox[3]);
       const data: NotesData = {
         headers,
         rows,
         tagColumn: headers[0],
-        tableName: `${noteTypeLabel(notesType)} p.${pageNumber} — ${paragraphBatch.length} paragraph${paragraphBatch.length === 1 ? "" : "s"}`,
+        tableName: `Notes p.${pageNumber} — ${paragraphBatch.length} paragraph${paragraphBatch.length === 1 ? "" : "s"}`,
         rowCount: rows.length,
         columnCount: headers.length,
         rowBoundaries,
-        noteType: notesType ?? "other",
       };
       const res = await fetch("/api/regions/promote", {
         method: "POST",
@@ -326,7 +309,7 @@ export default function NotesParser() {
           overrides: {
             bbox: unionBbox,
             data,
-            category: `notes-${notesType ?? "other"}`,
+            category: "notes",
           },
         }),
       });
@@ -359,12 +342,11 @@ export default function NotesParser() {
         headers: preview.headers,
         rows: preview.rows,
         tagColumn: preview.headers[0],
-        tableName: `${noteTypeLabel(notesType)} p.${pageNumber}`,
+        tableName: `Notes p.${pageNumber}`,
         rowCount: preview.rows.length,
         columnCount: preview.headers.length,
         rowBoundaries: preview.rowBoundaries,
         colBoundaries: preview.colBoundaries,
-        noteType: notesType ?? "other",
       };
       const res = await fetch("/api/regions/promote", {
         method: "POST",
@@ -376,7 +358,7 @@ export default function NotesParser() {
           overrides: {
             bbox: notesParseRegion,
             data,
-            category: `notes-${notesType ?? "other"}`,
+            category: "notes",
             csiTags: preview.csiTags ?? [],
           },
         }),
@@ -461,22 +443,6 @@ export default function NotesParser() {
               Redraw
             </button>
           )}
-        </div>
-
-        {/* Note-type dropdown (always visible) */}
-        <div className="flex items-center gap-1.5">
-          <label className="text-[10px] text-[var(--muted)]">Type:</label>
-          <select
-            value={notesType ?? "other"}
-            onChange={(e) => setNotesType(e.target.value as "general" | "rcp" | "demo" | "key" | "spec-note" | "other")}
-            className="flex-1 text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] text-[var(--fg)]"
-          >
-            {NOTE_TYPE_OPTIONS.map((t) => (
-              <option key={t} value={t}>
-                {noteTypeLabel(t)}
-              </option>
-            ))}
-          </select>
         </div>
 
         {/* Sub-mode body */}
@@ -689,20 +655,3 @@ export default function NotesParser() {
   );
 }
 
-function noteTypeLabel(t: NotesData["noteType"] | null | undefined): string {
-  switch (t) {
-    case "general":
-      return "General Notes";
-    case "rcp":
-      return "RCP Notes";
-    case "demo":
-      return "Demo Notes";
-    case "key":
-      return "Key Notes";
-    case "spec-note":
-      return "Spec Notes";
-    case "other":
-    default:
-      return "Other Notes";
-  }
-}
