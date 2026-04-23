@@ -1,7 +1,7 @@
 import type { TextractLine, BboxLTWH } from "@/types";
 
 /**
- * Detect spec section headers. Covers the common blueprint spec patterns:
+ * Detect spec/notes section headers. Covers:
  *   PART 1 - GENERAL / PART 2 – PRODUCTS / PART 3 — EXECUTION
  *   SECTION 03 30 00 / SECTION 09 29 00.13
  *   SPECIFICATIONS (single-header boilerplate variant)
@@ -9,10 +9,18 @@ import type { TextractLine, BboxLTWH } from "@/types";
  *   1.01, 2.02 sub-section numbering (looser — only when embedded in a
  *         spec-like region that already has at least one strong header)
  *
+ * Drawing-notes category headers (new, Step 3 extension):
+ *   BUILDING DEPARTMENT NOTES / RENOVATION NOTES / DEMOLITION NOTES /
+ *   FIRE PROTECTION NOTES / RCP NOTES / CEILING NOTES / etc.
+ *   Generic shape: {ALL-CAPS WORDS} NOTES?
+ *   Also ABBREVIATIONS / LEGEND / SYMBOLS for legend blocks.
+ *
  * Kept case-insensitive. Regex anchored at the start of the trimmed line
  * so narrative sentences mentioning "part 1" mid-line don't false-trigger.
+ * The category-prefix pattern is constrained (3–40 caps chars) so random
+ * ALL-CAPS sentences don't match.
  */
-const RE_STRONG_HEADER = /^\s*(PART\s+\d+\b|SECTION\s+\d{2,}(?:\s+\d{2,}){0,2}|SPECIFICATIONS?\b|GENERAL\s+(?:CONSTRUCTION\s+)?NOTES?\b)/i;
+const RE_STRONG_HEADER = /^\s*(PART\s+\d+\b|SECTION\s+\d{2,}(?:\s+\d{2,}){0,2}|SPECIFICATIONS?\b|(?:[A-Z][A-Z&]{0,15}(?:\s+[A-Z][A-Z&]{0,15}){0,3}\s+)?(?:GENERAL\s+(?:CONSTRUCTION\s+)?)?NOTES?\b|ABBREVIATIONS?\b|LEGEND\b|SYMBOLS?\b)/i;
 const RE_SUB_SECTION = /^\s*(\d{1,2}\.\d{1,2})(?:\s|$)/;
 
 export interface SpecSection {

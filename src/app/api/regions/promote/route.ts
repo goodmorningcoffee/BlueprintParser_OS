@@ -205,9 +205,6 @@ export async function POST(req: Request) {
             columnCount: grid.headers.length,
             colBoundaries: grid.colBoundaries,
             rowBoundaries: grid.rowBoundaries,
-            ...(type === "notes"
-              ? { noteType: inferNoteTypeFromTier2(textRegion.classifiedLabels?.tier2) }
-              : {}),
           };
         }
       } else {
@@ -278,13 +275,3 @@ function defaultTableName(type: ParsedRegionType, pageNumber: number): string {
   return `${label} p.${pageNumber}`;
 }
 
-function inferNoteTypeFromTier2(tier2?: string): NotesData["noteType"] {
-  if (!tier2) return "other";
-  const upper = tier2.toUpperCase();
-  if (upper.includes("GENERAL")) return "general";
-  if (upper.includes("RCP") || upper.includes("CEILING")) return "rcp";
-  if (upper.includes("DEMO")) return "demo";
-  if (upper.includes("KEY")) return "key";
-  if (upper.includes("PART 1") || upper.includes("PART 2") || upper.includes("SECTION")) return "spec-note";
-  return "other";
-}

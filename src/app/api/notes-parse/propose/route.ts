@@ -29,10 +29,11 @@ import { logger } from "@/lib/logger";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { projectId, pageNumber, regionBbox } = body as {
+    const { projectId, pageNumber, regionBbox, autoSplitColumns } = body as {
       projectId: number;
       pageNumber: number;
       regionBbox: [number, number, number, number];
+      autoSplitColumns?: boolean;
     };
 
     if (!projectId || !pageNumber || !regionBbox || regionBbox.length !== 4) {
@@ -64,7 +65,9 @@ export async function POST(req: Request) {
     const textractData = pageRow.textractData as TextractPageData;
     const ltwhBbox: BboxLTWH = [x0, y0, x1 - x0, y1 - y0];
 
-    const grid = parseNotesFromRegion(textractData, ltwhBbox);
+    const grid = parseNotesFromRegion(textractData, ltwhBbox, {
+      autoSplitColumns: autoSplitColumns ?? true,
+    });
     if (!grid) {
       return NextResponse.json({ proposedRows: [], proposedCols: [] });
     }

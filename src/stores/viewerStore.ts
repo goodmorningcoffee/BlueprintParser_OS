@@ -499,8 +499,6 @@ interface ViewerState {
   setNotesParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
   notesParseRegion: [number, number, number, number] | null;
   setNotesParseRegion: (bbox: [number, number, number, number] | null) => void;
-  notesType: "general" | "rcp" | "demo" | "key" | "spec-note" | "other" | null;
-  setNotesType: (t: "general" | "rcp" | "demo" | "key" | "spec-note" | "other" | null) => void;
   guidedNotesRows: [number, number, number, number][];
   addGuidedNotesRow: (bb: [number, number, number, number]) => void;
   guidedNotesCols: [number, number, number, number][];
@@ -1429,8 +1427,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     })),
   notesParseRegion: null,
   setNotesParseRegion: (notesParseRegion) => set({ notesParseRegion }),
-  notesType: null,
-  setNotesType: (notesType) => set({ notesType }),
   guidedNotesRows: [],
   addGuidedNotesRow: (bb) => set((s) => ({ guidedNotesRows: [...s.guidedNotesRows, bb] })),
   guidedNotesCols: [],
@@ -1438,7 +1434,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   resetNotesParse: () => set({
     notesParseStep: "idle",
     notesParseRegion: null,
-    notesType: null,
     guidedNotesRows: [],
     guidedNotesCols: [],
     parseDraftRegion: null,
@@ -1792,7 +1787,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       // Stage 3 scaffold — reset on project change so slices don't leak across projects
       notesParseStep: "idle",
       notesParseRegion: null,
-      notesType: null,
       guidedNotesRows: [],
       guidedNotesCols: [],
       specParseStep: "idle",

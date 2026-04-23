@@ -35,7 +35,6 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
   const intel = useViewerStore((s) => s.pageIntelligence[pageNumber]) as PageIntelligence | undefined;
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
   const setNotesParseRegion = useViewerStore((s) => s.setNotesParseRegion);
-  const setNotesType = useViewerStore((s) => s.setNotesType);
   const [rowStates, setRowStates] = useState<Record<string, RowAction>>({});
   const [errorByRow, setErrorByRow] = useState<Record<string, string>>({});
 
@@ -123,7 +122,6 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
     // textRegion.bbox is LTWH; viewer stores parse regions as MinMax.
     const [l, t, w, h] = tr.bbox;
     setNotesParseRegion([l, t, l + w, t + h]);
-    setNotesType(inferNoteType(tr.classifiedLabels?.tier2));
     onEditInParser();
   };
 
@@ -288,15 +286,3 @@ function Chip({
   );
 }
 
-function inferNoteType(
-  tier2?: string,
-): "general" | "rcp" | "demo" | "key" | "spec-note" | "other" | null {
-  if (!tier2) return null;
-  const upper = tier2.toUpperCase();
-  if (upper.includes("GENERAL")) return "general";
-  if (upper.includes("RCP") || upper.includes("CEILING")) return "rcp";
-  if (upper.includes("DEMO")) return "demo";
-  if (upper.includes("KEY")) return "key";
-  if (upper.includes("PART 1") || upper.includes("PART 2") || upper.includes("SECTION")) return "spec-note";
-  return "other";
-}
