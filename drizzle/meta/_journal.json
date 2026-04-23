@@ -197,6 +197,13 @@
       "when": 1777800000000,
       "tag": "0027_add_project_staging_manifest",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1778400000000,
+      "tag": "0028_admin_logs",
+      "breakpoints": true
     }
   ]
 }
