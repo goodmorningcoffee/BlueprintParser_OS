@@ -76,7 +76,13 @@ export default function DemoProjectPage() {
       resetProjectData();
       setIsDemo(true);
       useViewerStore.getState().setConfidenceThreshold(0);
-      useViewerStore.setState({ helpMode: false, showTips: false });
+      useViewerStore.setState({
+        helpMode: false,
+        showTips: false,
+        showChatPanel: false,
+        showTableParsePanel: true,
+        tableParseTab: "auto",
+      });
 
       // ─── Fetch metadata + initial chunk in parallel ───
       const [res, chunkRes] = await Promise.all([
