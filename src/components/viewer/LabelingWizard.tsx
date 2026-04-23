@@ -53,17 +53,19 @@ export default function LabelingWizard({ onClose, projectName, isDemo }: Labelin
     }
   }, []);
 
-  // For demo users: fetch existing sessions + credentials on mount
+  // For demo users: fetch existing sessions on mount. The public credentials
+  // endpoint was removed as a pre-launch security fix (it leaked Label Studio
+  // admin creds to any visitor). Demo users see sessions but must sign up
+  // for their own labeling flow — admins hit the auth'd
+  // `/api/labeling/credentials` variant after login.
   useEffect(() => {
     if (!isDemo) return;
     setLoadingSessions(true);
-    Promise.all([
-      fetch(`/api/demo/labeling/sessions?projectId=${publicId}`).then((r) => r.ok ? r.json() : []),
-      fetch("/api/demo/labeling/credentials").then((r) => r.ok ? r.json() : null),
-    ]).then(([sessionsData, creds]) => {
-      setStoredSessions(sessionsData);
-      setStoredCreds(creds);
-    }).catch(() => {}).finally(() => setLoadingSessions(false));
+    fetch(`/api/demo/labeling/sessions?projectId=${publicId}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((sessionsData) => setStoredSessions(sessionsData))
+      .catch(() => {})
+      .finally(() => setLoadingSessions(false));
   }, [isDemo, publicId]);
 
   async function handleCreate() {

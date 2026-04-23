@@ -19,6 +19,13 @@ resource "aws_lambda_function" "beaver_cv_pipeline" {
   memory_size   = 2048
   architectures = ["x86_64"]
 
+  # Hard safety cap on fanout cost. At 200 concurrent invocations and the
+  # default 1 page = 1 Lambda batching in lib/lambda-cv.ts (kept at 1 to
+  # avoid historical SIGKILLs at 2 GB on big 300 DPI pages), this bounds
+  # worst-case cost to ~200 × $0.0000166667/GB-s × 2 GB × 120 s = ~$0.80
+  # per burst. Reasonable ceiling for a public demo.
+  reserved_concurrent_executions = 200
+
   ephemeral_storage {
     size = 1024
   }

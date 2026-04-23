@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-utils";
+import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { db } from "@/lib/db";
 import { projects, labelingSessions } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
@@ -37,6 +38,13 @@ export async function POST(req: Request) {
 
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+
+  // Runtime kill-switch — admin can disable labeling on demo projects via
+  // the Demo Features panel. Full admin ownership bypasses intentionally.
+  if (project.isDemo && !session.user.isRootAdmin) {
+    const gate = await assertDemoFeatureEnabled(project.companyId, "labeling");
+    if (gate) return gate;
   }
 
   // Rate limit: max 10 labeling sessions per company per day (admin bypasses)

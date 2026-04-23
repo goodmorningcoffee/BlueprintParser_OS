@@ -8,6 +8,7 @@
  */
 
 import { resolveProjectAccess, apiError } from "@/lib/api-utils";
+import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -63,6 +64,11 @@ export async function POST(req: Request) {
   const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
   if (access.error) return access.error;
   const { project } = access;
+
+  if (project.isDemo) {
+    const gate = await assertDemoFeatureEnabled(project.companyId, "symbolSearch");
+    if (gate) return gate;
+  }
 
   if (!project.dataUrl) {
     return apiError("Project not found", 404);

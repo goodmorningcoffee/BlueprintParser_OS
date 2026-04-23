@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-utils";
+import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { db } from "@/lib/db";
 import { projects, models, modelAccess, processingJobs } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -55,6 +56,13 @@ export async function POST(req: Request) {
 
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+
+  // Runtime kill-switch — admin can disable YOLO on demo projects via the
+  // Demo Features panel. Root admin bypass intentional for infra ops.
+  if (project.isDemo && !session.user.isRootAdmin) {
+    const gate = await assertDemoFeatureEnabled(project.companyId, "yoloRun");
+    if (gate) return gate;
   }
 
   // Get model
