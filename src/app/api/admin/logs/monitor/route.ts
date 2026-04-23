@@ -6,6 +6,7 @@ import {
   DescribeAlarmsCommand,
 } from "@aws-sdk/client-cloudwatch";
 import { BudgetsClient, DescribeBudgetsCommand } from "@aws-sdk/client-budgets";
+import { cachedQuery } from "@/lib/admin-logs/query-cache";
 import { logger } from "@/lib/logger";
 
 /**
@@ -41,8 +42,13 @@ export async function GET() {
   const lambdaFn = "blueprintparser-cv-pipeline";
 
   try {
-    // Parallel fetch across all four CloudWatch queries + budget + alarms.
-    const [metricResp, alarmsResp, budgetResp] = await Promise.all([
+    // Parallel fetch across all four CloudWatch queries + budget + alarms,
+    // memoized for 60s. Admin tab refresh / background poll within the TTL
+    // window is instant.
+    const [metricResp, alarmsResp, budgetResp] = await cachedQuery(
+      "monitor",
+      60_000,
+      () => Promise.all([
       cw().send(new GetMetricDataCommand({
         StartTime: hourAgo,
         EndTime: now,
@@ -93,7 +99,8 @@ export async function GET() {
       ACCOUNT
         ? budgets().send(new DescribeBudgetsCommand({ AccountId: ACCOUNT }))
         : Promise.resolve({ Budgets: [] as Array<{ BudgetName?: string; BudgetLimit?: { Amount?: string }; CalculatedSpend?: { ActualSpend?: { Amount?: string }; ForecastedSpend?: { Amount?: string } } }> }),
-    ]);
+      ]),
+    );
 
     const seriesOf = (id: string): DataPoint[] => {
       const res = metricResp.MetricDataResults?.find((r) => r.Id === id);

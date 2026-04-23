@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRootAdmin } from "@/lib/api-utils";
 import { runInsightsQuery, type InsightsWindow } from "@/lib/admin-logs/cw-logs";
 import { labelFor } from "@/lib/admin-logs/feature-map";
+import { cachedQuery } from "@/lib/admin-logs/query-cache";
 import { logger } from "@/lib/logger";
 
 /**
@@ -32,7 +33,13 @@ export async function GET(req: Request) {
   `;
 
   try {
-    const rows = await runInsightsQuery(queryString, { range }, { limit: 200 });
+    // Cache the raw Insights rows for 60s — same inputs => same query =>
+    // same result, and Insights is the expensive bit (~2–5s per call).
+    const rows = await cachedQuery(
+      `engagement:${range}`,
+      60_000,
+      () => runInsightsQuery(queryString, { range }, { limit: 200 }),
+    );
 
     let unmappedHits = 0;
     const mapped: Array<{ feature: string; method: string; path: string; hits: number; uniqueUsers: number }> = [];
