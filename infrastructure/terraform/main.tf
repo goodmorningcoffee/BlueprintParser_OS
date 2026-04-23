@@ -14,12 +14,15 @@ terraform {
 
   # NOTE: Terraform backend config doesn't support variables.
   # Update these values to match your AWS setup before running terraform init.
+  # DO NOT COMMIT these real bucket/table names to a public repo. Before a
+  # public push, revert to CHANGEME- placeholders and use a partial-config
+  # overlay or -backend-config= flags to inject real values.
   backend "s3" {
-    bucket         = "CHANGEME-terraform-state"
+    bucket         = "beaver-terraform-state-100328509916"
     key            = "infrastructure/terraform.tfstate"
     region         = "us-east-1"
     encrypt        = true
-    dynamodb_table = "CHANGEME-terraform-locks"
+    dynamodb_table = "beaver-terraform-locks"
   }
 }
 

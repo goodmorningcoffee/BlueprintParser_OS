@@ -7,11 +7,11 @@
 ###############################################################################
 
 resource "aws_db_subnet_group" "beaver" {
-  name       = "blueprintparser-db-subnet-group"
+  name       = "beaver-db-subnet-group"
   subnet_ids = aws_subnet.private[*].id
 
   tags = {
-    Name = "blueprintparser-db-subnet-group"
+    Name = "beaver-db-subnet-group"
   }
 }
 
@@ -20,7 +20,7 @@ resource "aws_db_subnet_group" "beaver" {
 ###############################################################################
 
 resource "aws_security_group" "beaver_rds" {
-  name        = "blueprintparser-rds-sg"
+  name        = "beaver-rds-sg"
   description = "Security group for Beaver RDS PostgreSQL"
   vpc_id      = aws_vpc.beaver.id
 
@@ -40,7 +40,7 @@ resource "aws_security_group" "beaver_rds" {
   }
 
   tags = {
-    Name = "blueprintparser-rds-sg"
+    Name = "beaver-rds-sg"
   }
 }
 
@@ -49,7 +49,7 @@ resource "aws_security_group" "beaver_rds" {
 ###############################################################################
 
 resource "aws_db_instance" "beaver" {
-  identifier = "blueprintparser-db"
+  identifier = "beaver-db"
 
   engine         = "postgres"
   engine_version = "16"
@@ -74,7 +74,7 @@ resource "aws_db_instance" "beaver" {
 
   deletion_protection       = true
   skip_final_snapshot       = false
-  final_snapshot_identifier = "blueprintparser-db-final-snapshot"
+  final_snapshot_identifier = "beaver-db-final-snapshot"
 
   performance_insights_enabled          = true
   performance_insights_retention_period = 7
@@ -82,7 +82,7 @@ resource "aws_db_instance" "beaver" {
   parameter_group_name = aws_db_parameter_group.beaver.name
 
   tags = {
-    Name = "blueprintparser-db"
+    Name = "beaver-db"
   }
 }
 
@@ -91,7 +91,7 @@ resource "aws_db_instance" "beaver" {
 ###############################################################################
 
 resource "aws_db_parameter_group" "beaver" {
-  name   = "blueprintparser-pg16-params"
+  name   = "beaver-pg16-params"
   family = "postgres16"
 
   parameter {
@@ -106,6 +106,6 @@ resource "aws_db_parameter_group" "beaver" {
   }
 
   tags = {
-    Name = "blueprintparser-pg16-params"
+    Name = "beaver-pg16-params"
   }
 }

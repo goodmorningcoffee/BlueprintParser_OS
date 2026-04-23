@@ -7,7 +7,7 @@
 ###############################################################################
 
 resource "aws_iam_role" "beaver_ecs_execution_role" {
-  name = "blueprintparser-ecs-execution-role"
+  name = "beaver-ecs-execution-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -29,7 +29,7 @@ resource "aws_iam_role_policy_attachment" "beaver_ecs_execution_base" {
 }
 
 resource "aws_iam_role_policy" "beaver_ecs_execution_secrets" {
-  name = "blueprintparser-ecs-secrets-access"
+  name = "beaver-ecs-secrets-access"
   role = aws_iam_role.beaver_ecs_execution_role.id
 
   policy = jsonencode({
@@ -60,7 +60,7 @@ resource "aws_iam_role_policy" "beaver_ecs_execution_secrets" {
 ###############################################################################
 
 resource "aws_iam_role" "beaver_ecs_task_role" {
-  name = "blueprintparser-ecs-task-role"
+  name = "beaver-ecs-task-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -77,7 +77,7 @@ resource "aws_iam_role" "beaver_ecs_task_role" {
 }
 
 resource "aws_iam_role_policy" "beaver_ecs_task_s3" {
-  name = "blueprintparser-ecs-task-s3"
+  name = "beaver-ecs-task-s3"
   role = aws_iam_role.beaver_ecs_task_role.id
 
   policy = jsonencode({
@@ -101,7 +101,7 @@ resource "aws_iam_role_policy" "beaver_ecs_task_s3" {
 }
 
 resource "aws_iam_role_policy" "beaver_ecs_task_stepfunctions" {
-  name = "blueprintparser-ecs-task-stepfunctions"
+  name = "beaver-ecs-task-stepfunctions"
   role = aws_iam_role.beaver_ecs_task_role.id
 
   policy = jsonencode({
@@ -121,7 +121,7 @@ resource "aws_iam_role_policy" "beaver_ecs_task_stepfunctions" {
 }
 
 resource "aws_iam_role_policy" "beaver_ecs_task_ssm" {
-  name = "blueprintparser-ecs-task-ssm"
+  name = "beaver-ecs-task-ssm"
   role = aws_iam_role.beaver_ecs_task_role.id
 
   policy = jsonencode({
@@ -142,7 +142,7 @@ resource "aws_iam_role_policy" "beaver_ecs_task_ssm" {
 }
 
 resource "aws_iam_role_policy" "beaver_ecs_task_textract" {
-  name = "blueprintparser-ecs-task-textract"
+  name = "beaver-ecs-task-textract"
   role = aws_iam_role.beaver_ecs_task_role.id
 
   policy = jsonencode({
@@ -161,7 +161,7 @@ resource "aws_iam_role_policy" "beaver_ecs_task_textract" {
 }
 
 resource "aws_iam_role_policy" "beaver_ecs_task_sagemaker" {
-  name = "blueprintparser-ecs-task-sagemaker"
+  name = "beaver-ecs-task-sagemaker"
   role = aws_iam_role.beaver_ecs_task_role.id
 
   policy = jsonencode({
@@ -191,7 +191,7 @@ resource "aws_iam_role_policy" "beaver_ecs_task_sagemaker" {
 }
 
 resource "aws_iam_role_policy" "beaver_ecs_task_lambda" {
-  name = "blueprintparser-ecs-task-lambda-invoke"
+  name = "beaver-ecs-task-lambda-invoke"
   role = aws_iam_role.beaver_ecs_task_role.id
 
   policy = jsonencode({
@@ -211,7 +211,7 @@ resource "aws_iam_role_policy" "beaver_ecs_task_lambda" {
 ###############################################################################
 
 resource "aws_iam_role" "beaver_sagemaker_role" {
-  name = "blueprintparser-sagemaker-role"
+  name = "beaver-sagemaker-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -233,7 +233,7 @@ resource "aws_iam_role_policy_attachment" "beaver_sagemaker_full" {
 }
 
 resource "aws_iam_role_policy" "beaver_sagemaker_s3" {
-  name = "blueprintparser-sagemaker-s3"
+  name = "beaver-sagemaker-s3"
   role = aws_iam_role.beaver_sagemaker_role.id
 
   policy = jsonencode({
@@ -256,7 +256,7 @@ resource "aws_iam_role_policy" "beaver_sagemaker_s3" {
 }
 
 resource "aws_iam_role_policy" "beaver_sagemaker_ecr" {
-  name = "blueprintparser-sagemaker-ecr"
+  name = "beaver-sagemaker-ecr"
   role = aws_iam_role.beaver_sagemaker_role.id
 
   policy = jsonencode({
@@ -280,7 +280,7 @@ resource "aws_iam_role_policy" "beaver_sagemaker_ecr" {
 ###############################################################################
 
 resource "aws_iam_role" "beaver_step_functions_role" {
-  name = "blueprintparser-step-functions-role"
+  name = "beaver-step-functions-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -297,7 +297,7 @@ resource "aws_iam_role" "beaver_step_functions_role" {
 }
 
 resource "aws_iam_role_policy" "beaver_sfn_ecs" {
-  name = "blueprintparser-sfn-ecs"
+  name = "beaver-sfn-ecs"
   role = aws_iam_role.beaver_step_functions_role.id
 
   policy = jsonencode({
@@ -341,7 +341,7 @@ resource "aws_iam_role_policy" "beaver_sfn_ecs" {
 }
 
 resource "aws_iam_role_policy" "beaver_sfn_sagemaker" {
-  name = "blueprintparser-sfn-sagemaker"
+  name = "beaver-sfn-sagemaker"
   role = aws_iam_role.beaver_step_functions_role.id
 
   policy = jsonencode({
@@ -373,7 +373,7 @@ resource "aws_iam_role_policy" "beaver_sfn_sagemaker" {
 }
 
 resource "aws_iam_role_policy" "beaver_sfn_s3" {
-  name = "blueprintparser-sfn-s3"
+  name = "beaver-sfn-s3"
   role = aws_iam_role.beaver_step_functions_role.id
 
   policy = jsonencode({
@@ -394,7 +394,7 @@ resource "aws_iam_role_policy" "beaver_sfn_s3" {
 }
 
 resource "aws_iam_role_policy" "beaver_sfn_logs" {
-  name = "blueprintparser-sfn-logs"
+  name = "beaver-sfn-logs"
   role = aws_iam_role.beaver_step_functions_role.id
 
   policy = jsonencode({

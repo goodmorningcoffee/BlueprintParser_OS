@@ -3,7 +3,7 @@
 ###############################################################################
 
 resource "aws_ecr_repository" "beaver_app" {
-  name                 = "blueprintparser-app"
+  name                 = "beaver-app"
   image_tag_mutability = "MUTABLE"
   force_delete         = false
 
@@ -16,12 +16,12 @@ resource "aws_ecr_repository" "beaver_app" {
   }
 
   tags = {
-    Name = "blueprintparser-app"
+    Name = "beaver-app"
   }
 }
 
 resource "aws_ecr_repository" "beaver_cpu_pipeline" {
-  name                 = "blueprintparser-cpu-pipeline"
+  name                 = "beaver-cpu-pipeline"
   image_tag_mutability = "MUTABLE"
   force_delete         = false
 
@@ -34,12 +34,12 @@ resource "aws_ecr_repository" "beaver_cpu_pipeline" {
   }
 
   tags = {
-    Name = "blueprintparser-cpu-pipeline"
+    Name = "beaver-cpu-pipeline"
   }
 }
 
 resource "aws_ecr_repository" "beaver_yolo_pipeline" {
-  name                 = "blueprintparser-yolo-pipeline"
+  name                 = "beaver-yolo-pipeline"
   image_tag_mutability = "MUTABLE"
   force_delete         = false
 
@@ -52,12 +52,12 @@ resource "aws_ecr_repository" "beaver_yolo_pipeline" {
   }
 
   tags = {
-    Name = "blueprintparser-yolo-pipeline"
+    Name = "beaver-yolo-pipeline"
   }
 }
 
 resource "aws_ecr_repository" "beaver_cv_lambda" {
-  name                 = "blueprintparser-cv-lambda"
+  name                 = "beaver-cv-lambda"
   image_tag_mutability = "MUTABLE"
   force_delete         = false
 
@@ -70,7 +70,7 @@ resource "aws_ecr_repository" "beaver_cv_lambda" {
   }
 
   tags = {
-    Name = "blueprintparser-cv-lambda"
+    Name = "beaver-cv-lambda"
   }
 }
 
