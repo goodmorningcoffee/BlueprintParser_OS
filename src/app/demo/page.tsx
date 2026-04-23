@@ -23,7 +23,7 @@ export default function DemoPage() {
   const [activeCsiFilter, setActiveCsiFilter] = useState<string | null>(null);
   const [showCsi, setShowCsi] = useState(false);
 
-  const [chatOpen, setChatOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [chatLoading, setChatLoading] = useState(false);

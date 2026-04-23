@@ -206,6 +206,48 @@ resource "aws_iam_role_policy" "beaver_ecs_task_lambda" {
   })
 }
 
+# Read-only observability perms used by the Root_Admin Logs tab backend
+# routes (engagement/visitors/monitor). Queries CloudWatch Logs Insights
+# over the ECS app log group, plus metric + alarm + budget reads.
+resource "aws_iam_role_policy" "beaver_ecs_task_observability" {
+  name = "beaver-ecs-task-observability"
+  role = aws_iam_role.beaver_ecs_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:StartQuery",
+          "logs:StopQuery",
+          "logs:GetQueryResults",
+          "logs:DescribeLogStreams",
+          "logs:DescribeLogGroups",
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:GetMetricData",
+          "cloudwatch:DescribeAlarms",
+          "cloudwatch:ListMetrics",
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "budgets:DescribeBudgets",
+          "budgets:ViewBudget",
+        ]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
 ###############################################################################
 # SageMaker Role
 ###############################################################################
