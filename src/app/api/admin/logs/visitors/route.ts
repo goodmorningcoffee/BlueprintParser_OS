@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRootAdmin } from "@/lib/api-utils";
 import { runInsightsQuery, oldestLogTimestampMs, type InsightsWindow } from "@/lib/admin-logs/cw-logs";
+import { cachedQuery } from "@/lib/admin-logs/query-cache";
 import { db } from "@/lib/db";
 import { manualIpBans } from "@/lib/db/schema";
 import { logger } from "@/lib/logger";
@@ -43,8 +44,16 @@ export async function GET(req: Request) {
   `;
 
   try {
+    // Cache ONLY the Insights query (expensive, deterministic for a given
+    // range). Leave manualBans + oldestLogTimestampMs uncached so ban/unban
+    // actions take effect on the next Visitors refresh without a cache
+    // invalidation dance.
     const [rows, manualBans, oldestMs] = await Promise.all([
-      runInsightsQuery(queryString, { range }, { limit: 100 }),
+      cachedQuery(
+        `visitors:${range}`,
+        60_000,
+        () => runInsightsQuery(queryString, { range }, { limit: 100 }),
+      ),
       db.select().from(manualIpBans),
       oldestLogTimestampMs(),
     ]);
