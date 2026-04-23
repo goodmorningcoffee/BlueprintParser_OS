@@ -36,6 +36,13 @@ infrastructure/terraform/terraform.tfvars
 infrastructure/terraform/.terraform/
 infrastructure/terraform/*.tfstate*
 infrastructure/terraform/.terraform.lock.hcl
+# main.tf's backend "s3" block holds the real state bucket name + DynamoDB
+# lock table when used locally. Committed version must have CHANGEME-
+# placeholders — so we gitignore this file entirely to prevent accidental
+# leak into the public OS repo. If you need to commit changes to other parts
+# of main.tf, force-add it with CHANGEME- placeholders restored, then put
+# the real backend values back afterwards.
+infrastructure/terraform/main.tf
 
 # YOLO models (large binary files)
 models/
