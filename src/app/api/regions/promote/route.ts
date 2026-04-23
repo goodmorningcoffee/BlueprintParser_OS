@@ -4,7 +4,8 @@ import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { parseNotesFromRegion } from "@/lib/text-region-classifier";
-import { detectCsiFromGrid } from "@/lib/csi-detect";
+import { bindSpecSectionsInRegion } from "@/lib/specnote-parser";
+import { detectCsiFromGrid, detectCsiCodes } from "@/lib/csi-detect";
 import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import { PARSED_REGION_DEFAULT_CONFIDENCE } from "@/lib/spatial-constants";
@@ -16,6 +17,7 @@ import type {
   CsiCode,
   TextRegion,
   NotesData,
+  SpecData,
 } from "@/types";
 import { logger } from "@/lib/logger";
 
@@ -129,53 +131,85 @@ export async function POST(req: Request) {
           );
         }
 
-        let grid:
-          | { headers: string[]; rows: Record<string, string>[]; rowBoundaries?: number[]; colBoundaries?: number[] }
-          | undefined;
-
-        if (textRegion.grid && textRegion.grid.headers.length > 0 && textRegion.grid.rows.length > 0) {
-          grid = {
-            headers: textRegion.grid.headers,
-            rows: textRegion.grid.rows,
-            rowBoundaries: textRegion.grid.rowBoundaries,
-            colBoundaries: textRegion.grid.colBoundaries,
-          };
-        } else if (type === "notes" && pageRow.textractData) {
-          const td = pageRow.textractData as TextractPageData;
-          grid = parseNotesFromRegion(td, textRegion.bbox);
-        }
-
-        if (!grid) {
-          throw new Error(
-            "Could not bind grid from textRegion — try the Parser Manual mode instead",
-          );
-        }
-
-        if (regionCsiTags.length === 0) {
-          try {
-            regionCsiTags = detectCsiFromGrid(grid.headers, grid.rows);
-          } catch (err) {
-            logger.warn("[regions/promote] CSI detect failed (non-fatal):", err);
-          }
-        }
-
         // textRegion.bbox is LTWH; ParsedRegion.bbox stored as MinMax (matches keynote/table convention)
         const [tL, tT, tW, tH] = textRegion.bbox;
         regionBbox = [tL, tT, tL + tW, tT + tH];
 
-        regionData = {
-          headers: grid.headers,
-          rows: grid.rows,
-          tagColumn: grid.headers[0],
-          tableName: textRegion.headerText ?? defaultTableName(type, pageNumber),
-          rowCount: grid.rows.length,
-          columnCount: grid.headers.length,
-          colBoundaries: grid.colBoundaries,
-          rowBoundaries: grid.rowBoundaries,
-          ...(type === "notes"
-            ? { noteType: inferNoteTypeFromTier2(textRegion.classifiedLabels?.tier2) }
-            : {}),
-        };
+        if (type === "spec") {
+          // Spec branch: section-keyed data, not grid-shape. TextRegion.grid
+          // is never pre-populated for spec-dense-columns, so we always
+          // run the server-side binder.
+          if (!pageRow.textractData) {
+            throw new Error("Page has no OCR data for spec binding");
+          }
+          const td = pageRow.textractData as TextractPageData;
+          const bound = bindSpecSectionsInRegion(td.lines, textRegion.bbox);
+          if (!bound) {
+            throw new Error(
+              "Could not detect spec section headers in region — try the Parser Manual mode instead",
+            );
+          }
+          if (regionCsiTags.length === 0) {
+            try {
+              const bodyText = bound.sections
+                .map((s) => `${s.sectionHeader}\n${s.body}`)
+                .join("\n\n");
+              regionCsiTags = detectCsiCodes(bodyText);
+            } catch (err) {
+              logger.warn("[regions/promote] CSI detect failed (non-fatal):", err);
+            }
+          }
+          regionData = {
+            sections: bound.sections,
+            tableName: textRegion.headerText ?? defaultTableName(type, pageNumber),
+            csiTags: regionCsiTags,
+          } satisfies SpecData;
+        } else {
+          // Grid-shape branch: notes / schedule / keynote / legend
+          let grid:
+            | { headers: string[]; rows: Record<string, string>[]; rowBoundaries?: number[]; colBoundaries?: number[] }
+            | undefined;
+
+          if (textRegion.grid && textRegion.grid.headers.length > 0 && textRegion.grid.rows.length > 0) {
+            grid = {
+              headers: textRegion.grid.headers,
+              rows: textRegion.grid.rows,
+              rowBoundaries: textRegion.grid.rowBoundaries,
+              colBoundaries: textRegion.grid.colBoundaries,
+            };
+          } else if (type === "notes" && pageRow.textractData) {
+            const td = pageRow.textractData as TextractPageData;
+            grid = parseNotesFromRegion(td, textRegion.bbox);
+          }
+
+          if (!grid) {
+            throw new Error(
+              "Could not bind grid from textRegion — try the Parser Manual mode instead",
+            );
+          }
+
+          if (regionCsiTags.length === 0) {
+            try {
+              regionCsiTags = detectCsiFromGrid(grid.headers, grid.rows);
+            } catch (err) {
+              logger.warn("[regions/promote] CSI detect failed (non-fatal):", err);
+            }
+          }
+
+          regionData = {
+            headers: grid.headers,
+            rows: grid.rows,
+            tagColumn: grid.headers[0],
+            tableName: textRegion.headerText ?? defaultTableName(type, pageNumber),
+            rowCount: grid.rows.length,
+            columnCount: grid.headers.length,
+            colBoundaries: grid.colBoundaries,
+            rowBoundaries: grid.rowBoundaries,
+            ...(type === "notes"
+              ? { noteType: inferNoteTypeFromTier2(textRegion.classifiedLabels?.tier2) }
+              : {}),
+          };
+        }
       } else {
         // Parser Save path — client supplies bbox + data directly
         regionBbox = overrides!.bbox!;
@@ -190,7 +224,7 @@ export async function POST(req: Request) {
         confidence: PARSED_REGION_DEFAULT_CONFIDENCE,
         source: "user",
         csiTags: regionCsiTags,
-        data: regionData as NotesData,
+        data: regionData as ParsedRegion["data"],
       };
       if (sourceTextRegionId) {
         parsedRegion.sourceTextRegionId = sourceTextRegionId;

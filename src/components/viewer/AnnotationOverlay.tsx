@@ -1605,11 +1605,13 @@ export default memo(function AnnotationOverlay({
         return;
       }
 
-      // Table or keynote or notes parse drawing mode
+      // Table or keynote or notes or spec parse drawing mode
       const notesStep = useViewerStore.getState().notesParseStep;
+      const specStep = useViewerStore.getState().specParseStep;
       if (tableParseStep === "select-region" || tableParseStep === "define-column" || tableParseStep === "define-row"
           || keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row"
-          || notesStep === "select-region" || notesStep === "define-column" || notesStep === "define-row") {
+          || notesStep === "select-region" || notesStep === "define-column" || notesStep === "define-row"
+          || specStep === "select-region") {
         e.stopPropagation();
         setSelectedId(null);
         setDrawing(true);
@@ -2217,6 +2219,15 @@ export default memo(function AnnotationOverlay({
     }
     if (notesStep === "define-row") {
       useViewerStore.getState().addGuidedNotesRow([minX, minY, maxX, maxY]);
+      return;
+    }
+
+    // Spec parse BBs (Stage 5)
+    const specStep = useViewerStore.getState().specParseStep;
+    if (specStep === "select-region") {
+      useViewerStore.getState().setSpecParseRegion([minX, minY, maxX, maxY]);
+      useViewerStore.getState().setSpecParseStep("idle");
+      useViewerStore.getState().setMode("move");
       return;
     }
 

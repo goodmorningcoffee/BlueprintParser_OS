@@ -72,9 +72,16 @@ import {
   CLASSIFIER_MIN_REGION_WORDS,
   CLASSIFIER_WHITESPACE_SKIP_WORD_COUNT,
   DEFAULT_TITLE_BLOCK_REGION,
-  NOTES_KEY_COLUMN_GAP,
-  KV_MIN_GAP_RATIO,
 } from "@/lib/spatial-constants";
+import {
+  buildLineFeatures,
+  median,
+  RE_NUMBERED_ITEM,
+  type LineFeature,
+} from "@/lib/specnote-parser/shared";
+import { bindNumberedGrid } from "@/lib/specnote-parser/bind-numbered";
+import { bindKeyValueGrid } from "@/lib/specnote-parser/bind-key-value";
+export { parseNotesFromRegion, type ParsedNotesGrid } from "@/lib/specnote-parser/parse-notes";
 
 // ═══════════════════════════════════════════════════════════════════
 // Debug bundle
@@ -118,7 +125,6 @@ export interface ClassifierDebugBundle {
 
 /** OCR-tolerant numbered-item marker at line start. Accepts:
  *  "1." "(1)" "1)" "1:" "1 ." and whitespace variants. */
-const RE_NUMBERED_ITEM = /^\s*\(?(\d{1,3})\s*[.):]\s*/;
 
 /** Spec section-header marker ("PART 1 — GENERAL", "SECTION 03 10 00"). */
 const RE_SPEC_SECTION = /\b(PART\s*\d|SECTION\s*\d{2})\b/;
@@ -126,50 +132,6 @@ const RE_SPEC_SECTION = /\b(PART\s*\d|SECTION\s*\d{2})\b/;
 // ═══════════════════════════════════════════════════════════════════
 // Line features
 // ═══════════════════════════════════════════════════════════════════
-
-interface LineFeature {
-  line: TextractLine;
-  /** Normalized Y-top. */
-  top: number;
-  /** Normalized Y-bottom. */
-  bottom: number;
-  /** Normalized X-left. */
-  left: number;
-  /** Normalized X-right. */
-  right: number;
-  /** Height in normalized coordinates (proxy for font size). */
-  height: number;
-  /** First word text (for numbered-item regex). */
-  firstWord: string;
-  /** Full LINE text, uppercased for keyword scans. */
-  upperText: string;
-}
-
-function buildLineFeatures(lines: readonly TextractLine[]): LineFeature[] {
-  const features: LineFeature[] = [];
-  for (const line of lines) {
-    if (!line.words || line.words.length === 0) continue;
-    if (!line.text || line.text.trim().length === 0) continue;
-    features.push({
-      line,
-      top: line.bbox[1],
-      bottom: line.bbox[1] + line.bbox[3],
-      left: line.bbox[0],
-      right: line.bbox[0] + line.bbox[2],
-      height: line.bbox[3],
-      firstWord: line.words[0].text,
-      upperText: line.text.toUpperCase(),
-    });
-  }
-  return features;
-}
-
-function median(values: readonly number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
 
 function xRangesOverlap(a: LineFeature, b: LineFeature): boolean {
   return !(a.right < b.left || b.right < a.left);
@@ -478,124 +440,6 @@ function isInsideTitleBlock(bbox: BboxLTWH): boolean {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Grid binding for notes-numbered regions
-// ═══════════════════════════════════════════════════════════════════
-
-function bindNumberedGrid(
-  lines: readonly LineFeature[],
-): { headers: string[]; rows: Record<string, string>[]; rowBoundaries?: number[] } | undefined {
-  const rows: Record<string, string>[] = [];
-  const rowBoundaries: number[] = [];
-  let current: { key: string; parts: string[]; top: number } | undefined;
-
-  const ysorted = [...lines].sort((a, b) => a.top - b.top);
-  for (const line of ysorted) {
-    const match = RE_NUMBERED_ITEM.exec(line.firstWord);
-    if (match) {
-      if (current) {
-        rows.push({ Key: current.key, Note: current.parts.join(" ").trim() });
-        rowBoundaries.push(current.top);
-      }
-      const key = match[1];
-      const afterKey = line.line.text.replace(/^\s*\(?\d{1,3}\s*[.):]\s*/, "").trim();
-      current = { key, parts: afterKey ? [afterKey] : [], top: line.top };
-    } else if (current) {
-      current.parts.push(line.line.text.trim());
-    }
-  }
-  if (current) {
-    rows.push({ Key: current.key, Note: current.parts.join(" ").trim() });
-    rowBoundaries.push(current.top);
-  }
-
-  if (rows.length === 0) return undefined;
-  return {
-    headers: ["Key", "Note"],
-    rows,
-    rowBoundaries,
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Grid binding for notes-key-value regions
-// ═══════════════════════════════════════════════════════════════════
-
-/**
- * Per-line K:V binding. Splits each line at its largest inter-word X-gap
- * (must exceed 5% of the line width to qualify), emitting {Key, Value} rows.
- * Lines with no meaningful gap drop the whole text into Key with empty Value.
- *
- * Derives colBoundaries from median split X across lines so the downstream
- * ParsedRegion grid renders cleanly on canvas.
- */
-function bindKeyValueGrid(
-  lines: readonly LineFeature[],
-): { headers: string[]; rows: Record<string, string>[]; rowBoundaries?: number[]; colBoundaries?: number[] } | undefined {
-  if (lines.length === 0) return undefined;
-  const ysorted = [...lines].sort((a, b) => a.top - b.top);
-
-  const rows: Record<string, string>[] = [];
-  const rowBoundaries: number[] = [];
-  const splitXs: number[] = [];
-  let regionLeft = Infinity;
-  let regionRight = -Infinity;
-
-  for (const lf of ysorted) {
-    const words = lf.line.words;
-    if (!words || words.length === 0) continue;
-    const sorted = [...words].sort((a, b) => a.bbox[0] - b.bbox[0]);
-
-    let maxGap = 0;
-    let splitIdx = -1;
-    for (let i = 1; i < sorted.length; i++) {
-      const prevRight = sorted[i - 1].bbox[0] + sorted[i - 1].bbox[2];
-      const curLeft = sorted[i].bbox[0];
-      const gap = curLeft - prevRight;
-      if (gap > maxGap) {
-        maxGap = gap;
-        splitIdx = i;
-      }
-    }
-
-    const lineWidth = lf.right - lf.left;
-    const meaningful = splitIdx > 0 && maxGap > lineWidth * KV_MIN_GAP_RATIO;
-
-    if (meaningful) {
-      const key = sorted.slice(0, splitIdx).map((w) => w.text).join(" ").trim();
-      const value = sorted.slice(splitIdx).map((w) => w.text).join(" ").trim();
-      if (key.length > 0 && key.length <= KV_RIGHT_COL_MAX_LEN) {
-        rows.push({ Key: key, Value: value });
-        const splitX = (sorted[splitIdx - 1].bbox[0] + sorted[splitIdx - 1].bbox[2] + sorted[splitIdx].bbox[0]) / 2;
-        splitXs.push(splitX);
-      } else {
-        rows.push({ Key: key, Value: value });
-      }
-    } else {
-      rows.push({ Key: lf.line.text.trim(), Value: "" });
-    }
-
-    rowBoundaries.push(lf.top);
-    regionLeft = Math.min(regionLeft, lf.left);
-    regionRight = Math.max(regionRight, lf.right);
-  }
-
-  if (rows.length === 0) return undefined;
-
-  let colBoundaries: number[] | undefined;
-  if (splitXs.length > 0 && isFinite(regionLeft) && isFinite(regionRight)) {
-    const medianSplit = median(splitXs);
-    colBoundaries = [regionLeft, medianSplit, regionRight];
-  }
-
-  return {
-    headers: ["Key", "Value"],
-    rows,
-    rowBoundaries,
-    colBoundaries,
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════════
 // CSI tag inference (ported from pre-rewrite classifier)
 // ═══════════════════════════════════════════════════════════════════
 
@@ -803,73 +647,7 @@ export function classifyTextRegions(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Stage 4 — Exposed notes-parse wrapper
+// Stage 4 — notes-parse wrapper is now re-exported from
+// `@/lib/specnote-parser/parse-notes` (see top of file). Keeping the
+// re-export preserves all existing external import paths.
 // ═══════════════════════════════════════════════════════════════════
-
-export interface ParsedNotesGrid {
-  headers: string[];
-  rows: Record<string, string>[];
-  rowBoundaries?: number[];
-  colBoundaries?: number[];
-}
-
-/**
- * Parse a user-drawn bbox region into a notes-numbered grid.
- *
- * Composes the private `buildLineFeatures` + `bindNumberedGrid` pipeline
- * and computes column boundaries from the numeric-Key column width so
- * Stage 4 Parser surfaces (Auto + Guided + Classifier Accept fallback)
- * can render a preview grid or commit a ParsedRegion.
- *
- * Returns `undefined` when no numbered-item rows are detected; the
- * notes-key-value pattern is deferred (no K:V binder ships in Stage 1a).
- */
-export function parseNotesFromRegion(
-  textractData: TextractPageData,
-  regionBbox: BboxLTWH,
-): ParsedNotesGrid | undefined {
-  if (!textractData?.lines || textractData.lines.length === 0) return undefined;
-
-  const [rx, ry, rw, rh] = regionBbox;
-  const rRight = rx + rw;
-  const rBottom = ry + rh;
-
-  const linesInRegion = textractData.lines.filter((line) => {
-    if (!line.bbox || line.bbox.length < 4) return false;
-    const cx = line.bbox[0] + line.bbox[2] / 2;
-    const cy = line.bbox[1] + line.bbox[3] / 2;
-    return cx >= rx && cx <= rRight && cy >= ry && cy <= rBottom;
-  });
-
-  if (linesInRegion.length === 0) return undefined;
-
-  const features = buildLineFeatures(linesInRegion);
-  if (features.length === 0) return undefined;
-
-  // Try notes-numbered first; fall back to K:V if the region has no numeric keys.
-  const numbered = bindNumberedGrid(features);
-  if (numbered) {
-    const numberedFirstWordRights: number[] = [];
-    for (const f of features) {
-      if (!RE_NUMBERED_ITEM.test(f.firstWord)) continue;
-      const firstWord = f.line.words?.[0];
-      if (!firstWord?.bbox || firstWord.bbox.length < 4) continue;
-      numberedFirstWordRights.push(firstWord.bbox[0] + firstWord.bbox[2]);
-    }
-    let colBoundaries: number[] | undefined;
-    if (numberedFirstWordRights.length > 0) {
-      const keyColRight = median(numberedFirstWordRights);
-      colBoundaries = [rx, Math.min(keyColRight + NOTES_KEY_COLUMN_GAP, rRight - 0.001), rRight];
-    }
-    return {
-      headers: numbered.headers,
-      rows: numbered.rows,
-      rowBoundaries: numbered.rowBoundaries,
-      colBoundaries,
-    };
-  }
-
-  const kv = bindKeyValueGrid(features);
-  if (kv) return kv;
-  return undefined;
-}
