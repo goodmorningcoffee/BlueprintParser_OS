@@ -27,7 +27,6 @@ export default function NotesIndex({ onOpenParser }: NotesIndexProps) {
   const summaries = useViewerStore((s) => s.summaries);
   const setPage = useViewerStore((s) => s.setPage);
   const setNotesParseRegion = useViewerStore((s) => s.setNotesParseRegion);
-  const setNotesType = useViewerStore((s) => s.setNotesType);
   const [filter, setFilter] = useState("");
 
   const rows = useMemo(() => {
@@ -79,7 +78,6 @@ export default function NotesIndex({ onOpenParser }: NotesIndexProps) {
     } else {
       setNotesParseRegion(null);
     }
-    setNotesType(inferNoteType(r.tier2));
     onOpenParser();
   };
 
@@ -161,15 +159,3 @@ function TierChip({
   );
 }
 
-function inferNoteType(
-  tier2?: string,
-): "general" | "rcp" | "demo" | "key" | "spec-note" | "other" | null {
-  if (!tier2) return null;
-  const upper = tier2.toUpperCase();
-  if (upper.includes("GENERAL")) return "general";
-  if (upper.includes("RCP") || upper.includes("CEILING")) return "rcp";
-  if (upper.includes("DEMO")) return "demo";
-  if (upper.includes("KEY")) return "key";
-  if (upper.includes("PART 1") || upper.includes("PART 2") || upper.includes("SECTION")) return "spec-note";
-  return "other";
-}

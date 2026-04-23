@@ -13,6 +13,12 @@ export interface LineFeature {
 
 export const RE_NUMBERED_ITEM = /^\s*\(?(\d{1,3})\s*[.):]\s*/;
 
+// Additive regexes used only by the new binders. RE_NUMBERED_ITEM is kept
+// unchanged because text-region-classifier.ts uses it in the numberedCount
+// heuristic, and widening it here would silently change classifier scores.
+export const RE_LETTERED_ITEM = /^\s*\(?([A-Za-z])\s*[.):]\s*/;
+export const RE_TAG_PREFIX = /^\s*([A-Z]{1,3}[-.]?\d{1,3}[A-Z]?)[\s.:)]/;
+
 export function buildLineFeatures(lines: readonly TextractLine[]): LineFeature[] {
   const features: LineFeature[] = [];
   for (const line of lines) {

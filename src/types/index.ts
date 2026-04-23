@@ -700,7 +700,6 @@ export interface NotesData {
   columnCount?: number;
   colBoundaries?: number[];
   rowBoundaries?: number[];
-  noteType?: "general" | "rcp" | "demo" | "key" | "spec-note" | "other";
 
   // Legacy — kept optional so back-compat reads don't crash
   title?: string;
