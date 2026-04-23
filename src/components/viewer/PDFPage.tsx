@@ -9,6 +9,8 @@ import KeynoteOverlay from "./KeynoteOverlay";
 import AnnotationOverlay from "./AnnotationOverlay";
 import GuidedParseOverlay from "./GuidedParseOverlay";
 import FastManualParseOverlay from "./FastManualParseOverlay";
+import ParagraphOverlay, { type ParagraphRegionKind } from "./ParagraphOverlay";
+import { CLUSTER_Y_TOLERANCE_FACTOR } from "@/lib/spatial-constants";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import ParseRegionLayer from "./ParseRegionLayer";
 import ParsedTableCellOverlay from "./ParsedTableCellOverlay";
@@ -69,6 +71,71 @@ const NotesFastManualOverlaySlot = memo(function NotesFastManualOverlaySlot(prop
       textractLines={lines}
       regionBbox={notesParseRegion}
       onGridChange={setNotesFastManualGrid}
+      width={props.width}
+      height={props.height}
+      cssScale={props.cssScale}
+    />
+  );
+});
+
+const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
+  pageNumber: number;
+  width: number;
+  height: number;
+  cssScale: number;
+}) {
+  const active = useViewerStore((s) => s.paragraphOverlayActive);
+  const specParseRegion = useViewerStore((s) => s.specParseRegion);
+  const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
+  const notesType = useViewerStore((s) => s.notesType);
+  const textractData = useViewerStore((s) => s.textractData[props.pageNumber]);
+  const pageIntel = useViewerStore((s) => s.pageIntelligence[props.pageNumber]);
+  const paragraphBatch = useViewerStore((s) => s.paragraphBatch);
+  const paragraphClipboard = useViewerStore((s) => s.paragraphClipboard);
+  const upsertPendingParagraph = useViewerStore((s) => s.upsertPendingParagraph);
+  const removePendingParagraph = useViewerStore((s) => s.removePendingParagraph);
+  const setParagraphClipboard = useViewerStore((s) => s.setParagraphClipboard);
+  const resetNotesParse = useViewerStore((s) => s.resetNotesParse);
+  const resetSpecParse = useViewerStore((s) => s.resetSpecParse);
+
+  // Phase 2.5 temporary: prefer spec region when present, else notes region.
+  // Phase 2.6 will unify into a single `parseRegion` slot.
+  const outerBbox = specParseRegion ?? notesParseRegion;
+  const isSpec = !!specParseRegion;
+  const regionKind: ParagraphRegionKind = isSpec
+    ? "spec-dense-columns"
+    : notesType === "key"
+      ? "notes-key-value"
+      : notesType === "general"
+        ? "notes-general"
+        : "notes-numbered";
+
+  const allLines = textractData?.lines ?? [];
+  const textRegions = (pageIntel as { textRegions?: import("@/types").TextRegion[] } | undefined)?.textRegions ?? [];
+
+  // Loose y-gap tolerance for specs (dense paragraph blocks); tighter for notes (short items).
+  // Matches the classifier's line-height-factor default scaled for each family.
+  const yGapTolerance = isSpec ? CLUSTER_Y_TOLERANCE_FACTOR * 0.035 * 8 : CLUSTER_Y_TOLERANCE_FACTOR * 0.025 * 4;
+
+  const onExit = useCallback(() => {
+    if (isSpec) resetSpecParse();
+    else resetNotesParse();
+  }, [isSpec, resetSpecParse, resetNotesParse]);
+
+  return (
+    <ParagraphOverlay
+      active={active}
+      outerBbox={outerBbox}
+      textRegions={textRegions}
+      allLines={allLines}
+      yGapTolerance={yGapTolerance}
+      regionKind={regionKind}
+      paragraphBatch={paragraphBatch}
+      paragraphClipboard={paragraphClipboard}
+      onParagraphUpsert={upsertPendingParagraph}
+      onParagraphRemove={removePendingParagraph}
+      onClipboardCapture={setParagraphClipboard}
+      onExit={onExit}
       width={props.width}
       height={props.height}
       cssScale={props.cssScale}
@@ -423,6 +490,12 @@ export default memo(function PDFPage({
         cssScale={cssScale}
       />
       <NotesFastManualOverlaySlot
+        pageNumber={pageNumber}
+        width={pageSize.width}
+        height={pageSize.height}
+        cssScale={cssScale}
+      />
+      <ParagraphOverlaySlot
         pageNumber={pageNumber}
         width={pageSize.width}
         height={pageSize.height}

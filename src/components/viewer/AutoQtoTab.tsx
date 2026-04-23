@@ -6,6 +6,7 @@ import type { QtoWorkflow, QtoLineItem, QtoFlag, QtoItemType } from "@/types";
 import type { ScoredMatch, DropReason } from "@/lib/tag-mapping";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
 import { escCsv } from "@/lib/table-parse-utils";
+import { computeScheduleDetections } from "@/lib/auto-qto/schedule-detections";
 import TakeoffCsvModal from "./TakeoffCsvModal";
 
 /** Step progression (used for progress bar + step labels) */
@@ -103,65 +104,10 @@ export default function AutoQtoTab() {
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [loadingScheduleKey, setLoadingScheduleKey] = useState<string | null>(null);
 
-  // Find pages with detected schedules for each material type.
-  // Preference order (Stage 2b — cross-signal agreement wins):
-  //   1. ensembleRegions (loaded pageIntelligence) — suppresses keyword-only
-  //      false positives. Authoritative source when present.
-  //   2. summaries.schedules catalog — pre-computed, spans all pages; still
-  //      built from classifiedTables, so carries legacy false positives until
-  //      summaries are rebuilt post-reprocess.
-  //   3. classifiedTables fallback — only if nothing above exists.
-  const scheduleDetections = useMemo(() => {
-    const detections: Record<string, { pageNum: number; name: string; confidence: number }[]> = {};
-
-    // Tier 1: ensembleRegions per loaded page
-    let usedEnsemble = false;
-    for (const [pn, intel] of Object.entries(pageIntelligence)) {
-      const pi = intel as any;
-      if (pi?.ensembleRegions?.length > 0) {
-        usedEnsemble = true;
-        for (const er of pi.ensembleRegions) {
-          if (!er.category) continue;
-          if (!detections[er.category]) detections[er.category] = [];
-          detections[er.category].push({
-            pageNum: Number(pn),
-            name: pageNames[Number(pn)] || `Page ${pn}`,
-            confidence: er.tableProbability,
-          });
-        }
-      }
-    }
-    if (usedEnsemble) return detections;
-
-    // Tier 2: summaries catalog
-    if (summaries?.schedules) {
-      for (const s of summaries.schedules) {
-        if (!detections[s.category]) detections[s.category] = [];
-        detections[s.category].push({
-          pageNum: s.pageNum,
-          name: pageNames[s.pageNum] || s.name,
-          confidence: s.confidence,
-        });
-      }
-      return detections;
-    }
-
-    // Tier 3: classifiedTables fallback
-    for (const [pn, intel] of Object.entries(pageIntelligence)) {
-      const pi = intel as any;
-      if (pi?.classifiedTables) {
-        for (const t of pi.classifiedTables) {
-          if (!detections[t.category]) detections[t.category] = [];
-          detections[t.category].push({
-            pageNum: Number(pn),
-            name: pageNames[Number(pn)] || `Page ${pn}`,
-            confidence: t.confidence,
-          });
-        }
-      }
-    }
-    return detections;
-  }, [summaries, pageIntelligence, pageNames]);
+  const scheduleDetections = useMemo(
+    () => computeScheduleDetections(pageIntelligence as any, summaries?.schedules, pageNames),
+    [summaries, pageIntelligence, pageNames],
+  );
 
   // Find already-parsed schedules — merge pageIntelligence (user-parsed, has full data) + summaries (pre-computed, all pages)
   const parsedSchedules = useMemo(() => {

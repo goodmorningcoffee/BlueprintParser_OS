@@ -4,9 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
+import { unionBboxes } from "@/lib/specnote-parser";
 import type { BboxLTWH, NotesData, PageIntelligence, ParsedRegion } from "@/types";
 
-type NotesSubMode = "auto" | "guided" | "fast-manual" | "manual";
+type NotesSubMode = "auto" | "guided" | "paragraph" | "fast-manual" | "manual";
 
 interface PreviewGrid {
   headers: string[];
@@ -59,6 +60,12 @@ export default function NotesParser() {
   const resetNotesParse = useViewerStore((s) => s.resetNotesParse);
 
   const setParseDraftRegion = useViewerStore((s) => s.setParseDraftRegion);
+
+  const paragraphBatch = useViewerStore((s) => s.paragraphBatch);
+  const setParagraphBatch = useViewerStore((s) => s.setParagraphBatch);
+  const removePendingParagraph = useViewerStore((s) => s.removePendingParagraph);
+  const upsertPendingParagraph = useViewerStore((s) => s.upsertPendingParagraph);
+  const setParagraphOverlayActive = useViewerStore((s) => s.setParagraphOverlayActive);
 
   const [mode, setMode] = useState<NotesSubMode>("auto");
   const [preview, setPreview] = useState<PreviewGrid | null>(null);
@@ -134,6 +141,12 @@ export default function NotesParser() {
       s.setNotesFastManualGrid(null);
     };
   }, [mode, notesParseRegion]);
+
+  // Toggle ParagraphOverlay activation on paragraph sub-mode entry/exit.
+  useEffect(() => {
+    setParagraphOverlayActive(mode === "paragraph" && !!notesParseRegion);
+    return () => setParagraphOverlayActive(false);
+  }, [mode, notesParseRegion, setParagraphOverlayActive]);
 
   // Mirror the Fast-manual overlay's grid into local preview so the standard
   // preview panel + Save path work identically across all four sub-modes.
@@ -261,7 +274,82 @@ export default function NotesParser() {
     };
   };
 
+  const handleRepeatPlusOne = () => {
+    if (paragraphBatch.length === 0) return;
+    const last = paragraphBatch[paragraphBatch.length - 1];
+    const [x0, y0, x1, y1] = last.bbox;
+    const h = y1 - y0;
+    upsertPendingParagraph({
+      id: `para-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      bbox: [x0, y1, x1, y1 + h],
+      lines: [],
+      rowText: { Key: "", Note: "" },
+    });
+  };
+
+  const saveFromParagraphBatch = async () => {
+    if (!projectId || !notesParseRegion || paragraphBatch.length === 0 || isSavingRef.current) return;
+    isSavingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const unionBbox = unionBboxes(paragraphBatch.map((p) => p.bbox));
+      const isKV = notesType === "key";
+      const headers = isKV ? ["Key", "Value"] : ["Key", "Note"];
+      const rows = paragraphBatch.map((p) => {
+        const firstCol = headers[0];
+        const secondCol = headers[1];
+        return {
+          [firstCol]: p.rowText[firstCol] ?? p.rowText.Key ?? "",
+          [secondCol]: p.rowText[secondCol] ?? p.rowText.Note ?? p.rowText.Value ?? "",
+        };
+      });
+      const rowBoundaries = paragraphBatch.map((p) => p.bbox[1]);
+      rowBoundaries.push(paragraphBatch[paragraphBatch.length - 1].bbox[3]);
+      const data: NotesData = {
+        headers,
+        rows,
+        tagColumn: headers[0],
+        tableName: `${noteTypeLabel(notesType)} p.${pageNumber} — ${paragraphBatch.length} paragraph${paragraphBatch.length === 1 ? "" : "s"}`,
+        rowCount: rows.length,
+        columnCount: headers.length,
+        rowBoundaries,
+        noteType: notesType ?? "other",
+      };
+      const res = await fetch("/api/regions/promote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          pageNumber,
+          type: "notes",
+          overrides: {
+            bbox: unionBbox,
+            data,
+            category: `notes-${notesType ?? "other"}`,
+          },
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Save failed" }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const payload = (await res.json()) as { updatedIntelligence: PageIntelligence };
+      setPageIntelligence(pageNumber, payload.updatedIntelligence);
+      refreshPageCsiSpatialMap(pageNumber);
+      setParagraphBatch([]);
+      resetNotesParse();
+      setPreview(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      isSavingRef.current = false;
+      setSaving(false);
+    }
+  };
+
   const handleSave = async () => {
+    if (mode === "paragraph") return saveFromParagraphBatch();
     if (!projectId || !notesParseRegion || !preview || isSavingRef.current) return;
     isSavingRef.current = true;
     setSaving(true);
@@ -328,7 +416,7 @@ export default function NotesParser() {
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Sub-mode tab bar */}
       <div className="flex border-b border-[var(--border)]">
-        {(["auto", "guided", "fast-manual", "manual"] as const).map((m) => (
+        {(["auto", "guided", "paragraph", "fast-manual", "manual"] as const).map((m) => (
           <button
             key={m}
             onClick={() => {
@@ -342,7 +430,7 @@ export default function NotesParser() {
                 : "text-[var(--muted)] hover:text-[var(--fg)]"
             }`}
           >
-            {m === "auto" ? "Auto" : m === "guided" ? "Guided" : m === "fast-manual" ? "Fast-manual" : "Manual"}
+            {m === "auto" ? "Auto" : m === "guided" ? "Guided" : m === "paragraph" ? "Paragraph" : m === "fast-manual" ? "Fast-manual" : "Manual"}
           </button>
         ))}
       </div>
@@ -432,6 +520,59 @@ export default function NotesParser() {
             <div className="text-[9px] text-[var(--muted)]/70 italic">
               After propose, drag/double-click the overlay lines to adjust, then extract.
             </div>
+          </div>
+        )}
+
+        {mode === "paragraph" && (
+          <div className="space-y-1.5">
+            <div className="text-[9px] text-[var(--muted)]/70 italic leading-snug">
+              Hover a paragraph to preview, double-click to commit. First-word
+              numeric becomes the Key (numbered lists) or largest-gap split
+              becomes Key/Value (legends). Drag edge handles to adjust. Cmd+C
+              / Cmd+V copies column boundaries across paragraphs. Press Delete
+              to remove a focused paragraph.
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleRepeatPlusOne}
+                disabled={paragraphBatch.length === 0}
+                title="Clone the last paragraph's bbox one row down"
+                className="flex-1 text-[10px] px-2 py-1 rounded border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 disabled:opacity-40"
+              >
+                Repeat +1 single
+              </button>
+              <button
+                onClick={() => setParagraphBatch([])}
+                disabled={paragraphBatch.length === 0}
+                className="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-red-400 disabled:opacity-40"
+              >
+                Discard
+              </button>
+            </div>
+            <div className="text-[9.5px] text-[var(--muted)]">
+              {paragraphBatch.length} paragraph{paragraphBatch.length === 1 ? "" : "s"} in batch
+            </div>
+            {paragraphBatch.length > 0 && (
+              <ul className="space-y-1 max-h-32 overflow-y-auto text-[9px] font-mono">
+                {paragraphBatch.map((p, i) => (
+                  <li key={p.id} className="flex items-start gap-1 px-1 py-0.5 rounded bg-[var(--surface-2)]/50">
+                    <span className="text-blue-300 font-semibold shrink-0">#{i + 1}</span>
+                    <span className="flex-1 truncate text-[var(--fg)]/80">
+                      {p.rowText.Key || "(no key)"}
+                      {p.rowText.Note ? ` · ${p.rowText.Note.slice(0, 48)}${p.rowText.Note.length > 48 ? "…" : ""}` : ""}
+                      {p.rowText.Value ? ` · ${p.rowText.Value.slice(0, 48)}${p.rowText.Value.length > 48 ? "…" : ""}` : ""}
+                    </span>
+                    <button
+                      onClick={() => removePendingParagraph(p.id)}
+                      className="text-red-400/70 hover:text-red-400 shrink-0"
+                      title="Remove"
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 
@@ -538,7 +679,7 @@ export default function NotesParser() {
         </button>
         <button
           onClick={handleSave}
-          disabled={!preview || saving}
+          disabled={saving || (mode === "paragraph" ? paragraphBatch.length === 0 : !preview)}
           className="flex-1 text-[10px] px-2 py-1 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40"
         >
           {saving ? "Saving…" : "Save Notes"}

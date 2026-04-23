@@ -3,6 +3,7 @@
 import { useViewerStore, usePanels } from "@/stores/viewerStore";
 import KeynotePanel from "./KeynotePanel";
 import NotesPanel from "./NotesPanel";
+import SpecPanel from "./SpecPanel";
 
 /**
  * SpecsNotesPanel — D2 orchestrator (new 2026-04-21).
@@ -69,7 +70,7 @@ export default function SpecsNotesPanel() {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden flex flex-col">
-        {specsNotesTab === "spec-parse" && <StubTab label="Spec Parse" />}
+        {specsNotesTab === "spec-parse" && <SpecPanel embedded />}
         {specsNotesTab === "notes-parse" && <NotesPanel embedded />}
         {specsNotesTab === "keynotes" && <KeynotePanel embedded />}
       </div>
@@ -77,16 +78,3 @@ export default function SpecsNotesPanel() {
   );
 }
 
-function StubTab({ label }: { label: string }) {
-  return (
-    <div className="flex-1 flex items-center justify-center px-6 py-8 text-center">
-      <div>
-        <div className="text-[11px] text-[var(--muted)] mb-1">{label}</div>
-        <div className="text-[10px] text-[var(--muted)]/70">
-          Coming soon — part of the Specs/Notes mapping hierarchy:
-          <br />project → page → grid region → notes box → tagged paragraph.
-        </div>
-      </div>
-    </div>
-  );
-}

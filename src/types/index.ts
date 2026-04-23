@@ -811,6 +811,11 @@ export interface SpecSummaryEntry {
   confidence: number;
   wordCount?: number;
   csiTags?: CsiCode[];
+  /** Stage 5 parallel to NotesSummaryEntry: bbox (LTWH) + regionId so
+   *  SpecNoteIndex row click can seed `parseRegion` directly and pre-target
+   *  the specific textRegion for Classifier Accept. */
+  bbox?: BboxLTWH;
+  regionId?: string;
 }
 
 export interface ScheduleSummaryEntry {

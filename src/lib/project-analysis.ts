@@ -418,6 +418,8 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
             confidence: r.confidence,
             wordCount: r.wordCount,
             csiTags: r.csiTags,
+            bbox: r.bbox,
+            regionId: r.id,
           });
         }
       }
