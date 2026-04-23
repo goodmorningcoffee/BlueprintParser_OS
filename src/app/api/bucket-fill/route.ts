@@ -8,6 +8,7 @@
  */
 
 import { resolveProjectAccess, apiError } from "@/lib/api-utils";
+import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { downloadFromS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
 import { writeFile, rm, mkdtemp } from "fs/promises";
@@ -65,6 +66,11 @@ export async function POST(req: Request) {
   const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
   if (access.error) return access.error;
   const { project } = access;
+
+  if (project.isDemo) {
+    const gate = await assertDemoFeatureEnabled(project.companyId, "bucketFill");
+    if (gate) return gate;
+  }
 
   if (!project.dataUrl) {
     return apiError("Project not found", 404);

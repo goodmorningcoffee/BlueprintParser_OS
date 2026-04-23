@@ -4,7 +4,10 @@ import * as schema from "./schema";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 25,
+  // 15 per task × ECS max 8 tasks = 120 max connections, leaves headroom
+  // under the db.t4g.medium default ~100 before RDS connection exhaustion.
+  // Pre-Reddit-launch trim from 25.
+  max: 15,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
   ssl:

@@ -20,6 +20,7 @@ import {
 } from "@/lib/tag-mapping";
 import { detectCsiCodes } from "@/lib/csi-detect";
 import { detectTagPatterns } from "@/lib/tag-patterns";
+import { logger } from "@/lib/logger";
 import type { ClientAnnotation, TextractPageData } from "@/types";
 
 // BP_TOOLS lives in ./tools-defs so client bundles don't pull in db/fs via this module.
@@ -34,6 +35,10 @@ export interface ToolContext {
   publicId: string;
   companyId: number;
   pageNumber?: number; // current page for page-scoped context
+  /** Calling user's DB id. Undefined for anonymous demo chats. Audited on
+   *  every LLM mutation so abusive prompt-injection-driven writes can be
+   *  attributed post-hoc. */
+  userId?: number;
 }
 
 export async function executeToolCall(
@@ -514,6 +519,13 @@ async function execGetOcrTextInRegion(pageNumber: number, bbox: Record<string, n
 }
 
 async function execCreateMarkup(input: Record<string, unknown>, ctx: ToolContext) {
+  logger.info("[LLM-mutation]", {
+    tool: "createMarkup",
+    userId: ctx.userId,
+    companyId: ctx.companyId,
+    projectId: ctx.projectId,
+    args: input,
+  });
   const [inserted] = await db
     .insert(annotations)
     .values({
@@ -534,6 +546,13 @@ async function execCreateMarkup(input: Record<string, unknown>, ctx: ToolContext
 }
 
 async function execAddNoteToAnnotation(annotationId: number, note: string, ctx: ToolContext) {
+  logger.info("[LLM-mutation]", {
+    tool: "addNoteToAnnotation",
+    userId: ctx.userId,
+    companyId: ctx.companyId,
+    projectId: ctx.projectId,
+    args: { annotationId, note },
+  });
   // Verify annotation belongs to this project
   const [ann] = await db
     .select({ id: annotations.id, note: annotations.note, projectId: annotations.projectId })
@@ -552,6 +571,13 @@ async function execAddNoteToAnnotation(annotationId: number, note: string, ctx: 
 }
 
 async function execBatchAddNotes(input: Record<string, unknown>, ctx: ToolContext) {
+  logger.info("[LLM-mutation]", {
+    tool: "batchAddNotes",
+    userId: ctx.userId,
+    companyId: ctx.companyId,
+    projectId: ctx.projectId,
+    args: input,
+  });
   const note = input.note as string;
   if (!note?.trim()) return { error: "Note text required" };
 

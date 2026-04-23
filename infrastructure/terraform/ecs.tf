@@ -327,7 +327,7 @@ resource "aws_appautoscaling_policy" "beaver_cpu" {
     }
     target_value       = 70.0
     scale_in_cooldown  = 300
-    scale_out_cooldown = 60
+    scale_out_cooldown = 20
   }
 }
 
@@ -344,7 +344,7 @@ resource "aws_appautoscaling_policy" "beaver_memory" {
     }
     target_value       = 80.0
     scale_in_cooldown  = 300
-    scale_out_cooldown = 60
+    scale_out_cooldown = 20
   }
 }
 
