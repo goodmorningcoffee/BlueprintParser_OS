@@ -252,9 +252,9 @@ export async function middleware(request: NextRequest) {
   };
 
   // Manual IP ban — Root_Admin explicitly banned this IP via the Logs tab.
-  // Cache is process-local with 60s refresh so per-request cost is a single
-  // Set.has(). Returns before any route handling.
-  if (await isManuallyBanned(ip)) {
+  // Cache is process-local with background setInterval refresh, so this
+  // call is a synchronous O(1) Set.has(). No DB touch, no await.
+  if (isManuallyBanned(ip)) {
     return finalize(new NextResponse(
       JSON.stringify({ error: "Access blocked." }),
       {

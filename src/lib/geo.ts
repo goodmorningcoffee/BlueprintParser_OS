@@ -66,3 +66,9 @@ export async function lookupCountry(ip: string | null | undefined): Promise<stri
     return "??";
   }
 }
+
+// Preload the MaxMind reader at module-import time so the first request after
+// an ECS cold-start doesn't pay ~100ms loading the 3 MB .mmdb file on its
+// [visit] log emission. `getReader()` catches its own errors and logs a
+// warning if the .mmdb is missing — void-discarding the promise is safe.
+void getReader();
