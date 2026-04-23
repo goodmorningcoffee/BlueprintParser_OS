@@ -20,7 +20,24 @@ import type {
   ProjectSummaries,
   AnnotationGroup,
   ParsedRegion,
+  TextractLine,
 } from "@/types";
+
+/** Stage 5 Phase 2.5 — a paragraph committed by the user via ParagraphOverlay.
+ *  Lives in a batch until Save Spec / Save Note promotes it to a ParsedRegion. */
+export interface PendingParagraph {
+  id: string;
+  bbox: [number, number, number, number];
+  lines: TextractLine[];
+  rowText: Record<string, string>;
+  colBoundaries?: number[];
+}
+
+/** Stage 5 Phase 2.5 — Cmd+C clipboard shape shared across parsers. */
+export interface ParagraphTemplate {
+  colBoundaries: number[];
+  headers: string[];
+}
 
 interface TagScanResults {
   yoloClass: string;
@@ -527,6 +544,21 @@ interface ViewerState {
   guidedSpecSectionBBs: [number, number, number, number][];
   addGuidedSpecSectionBB: (bb: [number, number, number, number]) => void;
   resetSpecParse: () => void;
+
+  // ─── Paragraph Overlay (Stage 5 Phase 2.5) ─────────────
+  /** Gate for PDFPage's ParagraphOverlaySlot. Toggled by Phase 2.6
+   *  ParagraphMode.tsx when the user enters/leaves that sub-mode. */
+  paragraphOverlayActive: boolean;
+  setParagraphOverlayActive: (active: boolean) => void;
+  /** User-committed paragraphs accumulated until Save. */
+  paragraphBatch: PendingParagraph[];
+  setParagraphBatch: (batch: PendingParagraph[]) => void;
+  upsertPendingParagraph: (p: PendingParagraph) => void;
+  removePendingParagraph: (id: string) => void;
+  /** Shared Cmd+C/V clipboard. Persists across parser-mode switches +
+   *  tool exits; cleared only by resetProjectData. */
+  paragraphClipboard: ParagraphTemplate | null;
+  setParagraphClipboard: (t: ParagraphTemplate | null) => void;
 
   // ─── YOLO Tags ─────────────────────────────────────────
   yoloTags: YoloTag[];
@@ -1410,6 +1442,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     guidedNotesRows: [],
     guidedNotesCols: [],
     parseDraftRegion: null,
+    paragraphOverlayActive: false,
+    paragraphBatch: [],
   }),
 
   parseDraftRegion: null,
@@ -1438,7 +1472,27 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     specParseRegion: null,
     guidedSpecSectionBBs: [],
     parseDraftRegion: null,
+    paragraphOverlayActive: false,
+    paragraphBatch: [],
   }),
+
+  // ─── Paragraph Overlay (Stage 5 Phase 2.5) ────────────
+  paragraphOverlayActive: false,
+  setParagraphOverlayActive: (paragraphOverlayActive) => set({ paragraphOverlayActive }),
+  paragraphBatch: [],
+  setParagraphBatch: (paragraphBatch) => set({ paragraphBatch }),
+  upsertPendingParagraph: (p) => set((s) => {
+    const idx = s.paragraphBatch.findIndex((x) => x.id === p.id);
+    if (idx === -1) return { paragraphBatch: [...s.paragraphBatch, p] };
+    const next = s.paragraphBatch.slice();
+    next[idx] = p;
+    return { paragraphBatch: next };
+  }),
+  removePendingParagraph: (id) => set((s) => ({
+    paragraphBatch: s.paragraphBatch.filter((p) => p.id !== id),
+  })),
+  paragraphClipboard: null,
+  setParagraphClipboard: (paragraphClipboard) => set({ paragraphClipboard }),
 
   yoloTags: [],
   setYoloTags: (yoloTags) => set({ yoloTags }), // hydration only — no DB save
@@ -1747,6 +1801,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       parseDraftRegion: null,
       notesFastManualActive: false,
       notesFastManualGrid: null,
+      paragraphOverlayActive: false,
+      paragraphBatch: [],
+      paragraphClipboard: null,
       yoloTags: [],
       activeYoloTagId: null,
       yoloTagVisibility: {},

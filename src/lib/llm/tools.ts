@@ -256,6 +256,8 @@ async function execGetAnnotations(input: Record<string, unknown>, ctx: ToolConte
     return {
       totalCount: filtered.length,
       summary: Object.entries(byClass).map(([cls, d]) => ({ class: cls, count: d.count, pages: [...d.pages].sort((a, b) => a - b) })),
+      bboxOmittedForBrevity: true,
+      hint: "Re-call with a narrower filter (pageNumber or className) to receive bbox coordinates.",
     };
   }
 
@@ -263,6 +265,7 @@ async function execGetAnnotations(input: Record<string, unknown>, ctx: ToolConte
     totalCount: filtered.length,
     annotations: filtered.map((a) => ({
       id: a.id, pageNumber: a.pageNumber, class: a.name, source: a.source,
+      bbox: [a.minX, a.minY, a.maxX, a.maxY] as [number, number, number, number],
       confidence: (a.data as any)?.confidence, note: a.note,
       csiCodes: (a.data as any)?.csiCodes,
     })),
