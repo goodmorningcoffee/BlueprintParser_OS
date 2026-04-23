@@ -17,6 +17,7 @@ import UsersTab from "./tabs/UsersTab";
 import CompaniesUsersTab from "./tabs/CompaniesUsersTab";
 import AiRbacTab from "./tabs/AiRbacTab";
 import SettingsTab from "./tabs/SettingsTab";
+import LogsTab from "./tabs/LogsTab";
 import PipelineTab from "./tabs/PipelineTab";
 import LlmContextTab from "./tabs/LlmContextTab";
 
@@ -59,6 +60,9 @@ export default function AdminPage() {
   const pollingRef = useRef<Record<string, NodeJS.Timeout>>({});
   const [invites, setInvites] = useState<Array<{ id: number; email: string; name: string | null; company: string | null; seen: boolean; createdAt: string }>>([]);
   const [unseenInvites, setUnseenInvites] = useState(0);
+  // Abuse-event alert badge for the Logs tab. Polls every 60s when the admin
+  // page is open. Root_Admin only — others never see the Logs tab anyway.
+  const [unseenAbuseEvents, setUnseenAbuseEvents] = useState(0);
   const [showInvites, setShowInvites] = useState(false);
   const [yoloStatus, setYoloStatus] = useState<Record<string, Record<string, number>>>({});
   const pollKey = (pid: string, mid: number) => `${pid}:${mid}`;
@@ -83,6 +87,24 @@ export default function AdminPage() {
     };
   }, []);
 
+  // Root_Admin: poll abuse event count every 60s so the Logs tab badge stays
+  // fresh without continuous queries. Only runs for root admins — regular
+  // admins don't see the Logs tab so no poll is needed for them.
+  useEffect(() => {
+    if (!session?.user?.isRootAdmin) return;
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/admin/logs/alert-count");
+        if (res.ok) {
+          const data = await res.json();
+          setUnseenAbuseEvents(data.unseen ?? 0);
+        }
+      } catch { /* silent */ }
+    };
+    const id = setInterval(poll, 60_000);
+    return () => clearInterval(id);
+  }, [session?.user?.isRootAdmin]);
+
   async function loadData() {
     const [projRes, userRes, modelRes] = await Promise.all([
       fetch("/api/projects"),
@@ -104,6 +126,18 @@ export default function AdminPage() {
         setUnseenInvites(data.unseenCount);
       }
     } catch { /* table may not exist yet */ }
+
+    // Root_Admin: fetch unseen abuse event count for the Logs tab badge.
+    // Silent failure — non-root accounts get 403 here which we ignore.
+    if (session?.user?.isRootAdmin) {
+      try {
+        const res = await fetch("/api/admin/logs/alert-count");
+        if (res.ok) {
+          const data = await res.json();
+          setUnseenAbuseEvents(data.unseen ?? 0);
+        }
+      } catch { /* table may not exist yet */ }
+    }
 
     try {
       const yoloRes = await fetch("/api/admin/yolo-status");
@@ -528,7 +562,7 @@ export default function AdminPage() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get("tab") as AdminTab;
-      if (tab && ["overview", "projects", "ai-models", "ai-rbac", "pipeline", "llm-context", "text-annotations", "csi", "heuristics", "page-intelligence", "companies", "users", "settings"].includes(tab)) return tab;
+      if (tab && ["overview", "projects", "ai-models", "ai-rbac", "pipeline", "llm-context", "text-annotations", "csi", "heuristics", "page-intelligence", "companies", "users", "settings", "logs"].includes(tab)) return tab;
     }
     return "overview";
   });
@@ -600,7 +634,10 @@ export default function AdminPage() {
         <AdminTabs
           active={activeTab}
           onChange={handleTabChange}
-          badges={unseenInvites > 0 ? { overview: unseenInvites } : undefined}
+          badges={{
+            ...(unseenInvites > 0 ? { overview: unseenInvites } : {}),
+            ...(unseenAbuseEvents > 0 ? { logs: unseenAbuseEvents } : {}),
+          }}
           isRootAdmin={session?.user?.isRootAdmin}
         />
 
@@ -724,6 +761,10 @@ export default function AdminPage() {
 
         {activeTab === "settings" && (
           <SettingsTab />
+        )}
+
+        {activeTab === "logs" && session?.user?.isRootAdmin && (
+          <LogsTab />
         )}
       </main>
     </div>

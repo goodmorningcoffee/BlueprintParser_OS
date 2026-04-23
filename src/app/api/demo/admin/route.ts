@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, annotations, models, users, companies } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { projects, annotations, models, companies } from "@/lib/db/schema";
+import { and, eq, sql } from "drizzle-orm";
 
 // 3 mock YOLO models for demo
 const MOCK_MODELS = [
@@ -54,8 +54,20 @@ const MOCK_MODELS = [
 
 /**
  * GET /api/demo/admin
- * Returns a read-only bundle of admin data for the company that owns demo projects.
- * Public — no auth required.
+ * Returns a read-only, demo-scoped admin bundle. Public — no auth required.
+ *
+ * Scrubbed for Reddit launch. Before this pass, the endpoint returned ALL
+ * projects, models, users, and the full pipelineConfig JSONB for the
+ * company that owns the demo projects — even real/private ones. Now it
+ * returns only:
+ *   - Projects: where isDemo === true
+ *   - Models: minimal shape (id + name) to support yoloStatus lookups; real
+ *     configs, keywords, CSI codes stay private
+ *   - Users: NOT returned
+ *   - yoloStatus: scoped to demo projects via SQL
+ *   - pipelineConfig: only the `demo.*` subsection (feature toggle state),
+ *     so the UI can still respect admin flips — CSI/heuristics/pipeline
+ *     tuning stay private
  */
 export async function GET() {
   // Find company from first demo project
@@ -71,26 +83,42 @@ export async function GET() {
 
   const companyId = demoProject.companyId;
 
-  const [projectList, realModels, userList, yoloRows, companyRow] = await Promise.all([
-    db.select({ id: projects.publicId, name: projects.name, numPages: projects.numPages, status: projects.status, isDemo: projects.isDemo })
-      .from(projects).where(eq(projects.companyId, companyId)),
-    db.select().from(models).where(eq(models.companyId, companyId)),
-    db.select({ id: users.publicId, username: users.username, email: users.email, role: users.role, canRunModels: users.canRunModels })
-      .from(users).where(eq(users.companyId, companyId)),
+  const [projectList, realModels, yoloRows, companyRow] = await Promise.all([
+    db
+      .select({
+        id: projects.publicId,
+        name: projects.name,
+        numPages: projects.numPages,
+        status: projects.status,
+        isDemo: projects.isDemo,
+      })
+      .from(projects)
+      .where(and(eq(projects.companyId, companyId), eq(projects.isDemo, true))),
+    db
+      .select({ id: models.id, name: models.name, type: models.type, isDefault: models.isDefault })
+      .from(models)
+      .where(eq(models.companyId, companyId)),
     db.execute(sql`
       SELECT p.public_id AS project_id, (a.data->>'modelId')::int AS model_id, (a.data->>'modelName') AS model_name, COUNT(a.id)::int AS detection_count
       FROM annotations a JOIN projects p ON a.project_id = p.id
-      WHERE a.source = 'yolo' AND p.company_id = ${companyId}
+      WHERE a.source = 'yolo' AND p.company_id = ${companyId} AND p.is_demo = true
       GROUP BY p.public_id, (a.data->>'modelId')::int, (a.data->>'modelName')
     `),
     db.select({ pipelineConfig: companies.pipelineConfig }).from(companies).where(eq(companies.id, companyId)).limit(1),
   ]);
 
-  // Merge real models + mock models (only add mocks if they don't already exist by name)
+  // Real model list reduced to {id, name, type, isDefault} — no config,
+  // classes, or keyword metadata leaks publicly. Mock models already
+  // hardcoded for the demo UI shell.
   const realModelNames = new Set(realModels.map((m) => m.name));
   const allModels = [
-    ...realModels.map((m) => ({ id: m.id, name: m.name, type: m.type, config: m.config, isDefault: m.isDefault })),
-    ...MOCK_MODELS.filter((m) => !realModelNames.has(m.name)),
+    ...realModels,
+    ...MOCK_MODELS.filter((m) => !realModelNames.has(m.name)).map((m) => ({
+      id: m.id,
+      name: m.name,
+      type: m.type,
+      isDefault: m.isDefault,
+    })),
   ];
 
   const yoloStatus: Record<string, Record<string, number>> = {};
@@ -101,12 +129,14 @@ export async function GET() {
 
   const toggles = { sagemakerEnabled: true, quotaEnabled: false, hasPassword: true };
 
+  const fullConfig = (companyRow[0]?.pipelineConfig ?? {}) as { demo?: Record<string, unknown> };
+  const scrubbedConfig = { demo: fullConfig.demo ?? {} };
+
   return NextResponse.json({
     projects: projectList,
     models: allModels,
-    users: userList.map((u) => ({ ...u, email: u.email?.replace(/@.*/, "@***") })), // mask emails
     yoloStatus,
     toggles,
-    pipelineConfig: companyRow[0]?.pipelineConfig || {},
+    pipelineConfig: scrubbedConfig,
   });
 }

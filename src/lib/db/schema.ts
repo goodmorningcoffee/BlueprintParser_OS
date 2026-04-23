@@ -428,6 +428,47 @@ export const auditLog = pgTable(
   (table) => [index("idx_audit_action").on(table.action)]
 );
 
+// ─── Admin Logs — abuse events + manual IP bans ─────────────
+//
+// abuseEvents: high-signal row per rate-limit breach, auto-ban, failed login,
+// 404-scan burst, or deprecated-route hit. Read by the Root_Admin Logs tab's
+// Security panel. `seen_at IS NULL` drives the tab's alert badge pulse.
+// Expected volume <1k rows/day even under active abuse; safely unindexed
+// beyond the two maintained indexes.
+export const abuseEvents = pgTable(
+  "abuse_events",
+  {
+    id: serial("id").primaryKey(),
+    eventType: varchar("event_type", { length: 40 }).notNull(),
+    ip: varchar("ip", { length: 45 }).notNull(),
+    country: varchar("country", { length: 2 }),
+    path: varchar("path", { length: 255 }),
+    userAgent: varchar("user_agent", { length: 500 }),
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    seenAt: timestamp("seen_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("idx_abuse_events_created").on(table.createdAt),
+    index("idx_abuse_events_unseen").on(table.seenAt),
+  ],
+);
+
+// manualIpBans: explicit Root_Admin-initiated bans (distinct from the Phase 3
+// in-memory auto-ban `banStore`). Middleware reads with 60s in-memory cache to
+// avoid per-request DB hits.
+export const manualIpBans = pgTable(
+  "manual_ip_bans",
+  {
+    id: serial("id").primaryKey(),
+    ip: varchar("ip", { length: 45 }).notNull().unique(),
+    reason: varchar("reason", { length: 500 }),
+    bannedByUserId: integer("banned_by_user_id"),
+    bannedUntil: timestamp("banned_until", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+);
+
 // ─── Invite Requests ────────────────────────────────────────
 export const inviteRequests = pgTable("invite_requests", {
   id: serial("id").primaryKey(),

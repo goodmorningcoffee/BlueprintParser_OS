@@ -26,6 +26,27 @@ export async function POST(req: Request) {
     );
   }
 
+  // SECURITY: validate that `dataUrl` is inside the caller's own company
+  // prefix. Before this check, an authenticated user could POST any
+  // S3 key (including other tenants' prefixes), later DELETE the project,
+  // and wipe the victim's files via `deleteProjectFiles(project.dataUrl)`.
+  // generateProjectPath() format is `${company.dataKey}/${randomHex}`, so
+  // we enforce that pattern here.
+  const [callerCompany] = await db
+    .select({ dataKey: companies.dataKey })
+    .from(companies)
+    .where(eq(companies.id, session.user.companyId))
+    .limit(1);
+  if (!callerCompany) {
+    return NextResponse.json({ error: "Company not found" }, { status: 404 });
+  }
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith(`${callerCompany.dataKey}/`)) {
+    return NextResponse.json(
+      { error: "Invalid dataUrl — must be inside your company prefix (use /api/s3/staging-credentials to obtain one)" },
+      { status: 400 },
+    );
+  }
+
   // Check upload quota
   const quota = await checkUploadQuota(session.user.companyId, session.user.role);
   if (!quota.allowed) {

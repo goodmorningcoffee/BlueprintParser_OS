@@ -77,17 +77,25 @@ export default function TextPanel({ embedded = false }: { embedded?: boolean } =
 // ─── OCR Tab ──────────────────────────────────────────────────
 
 function OcrTab({ pageData, searchQuery, pageNumber }: { pageData: any; searchQuery: string; pageNumber: number }) {
-  const lines = useMemo(() => {
+  // Each line returns { text, highlighted, isHtml } — `isHtml === true` means
+  // the `text` field is pre-escaped HTML containing <mark> tags; the render
+  // path below uses `dangerouslySetInnerHTML` for those. When no search query
+  // is active, we return raw text and the render path renders as a text node.
+  // This closes the OCR-XSS path where an uploaded PDF's OCR text could
+  // become executable markup in the viewer.
+  const lines = useMemo<{ text: string; highlighted: boolean; isHtml: boolean }[]>(() => {
     if (!pageData?.lines) return [];
     const queryTerms = searchQuery.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
     return pageData.lines.map((line: any) => {
-      if (queryTerms.length === 0) return { text: line.text, highlighted: false };
+      if (queryTerms.length === 0) {
+        return { text: line.text, highlighted: false, isHtml: false };
+      }
       let html = escapeHtml(line.text);
       for (const term of queryTerms) {
         const regex = new RegExp(`(${escapeRegex(term)})`, "gi");
         html = html.replace(regex, "<mark>$1</mark>");
       }
-      return { text: html, highlighted: html !== line.text };
+      return { text: html, highlighted: html !== escapeHtml(line.text), isHtml: true };
     });
   }, [pageData, searchQuery]);
 
@@ -121,9 +129,23 @@ function OcrTab({ pageData, searchQuery, pageNumber }: { pageData: any; searchQu
         </HelpTooltip>
       </div>
       <div className="p-3 text-sm leading-relaxed font-mono">
-        {lines.map((line: any, i: number) => (
-          <p key={i} className="mb-1 break-words" dangerouslySetInnerHTML={{ __html: line.text }} />
-        ))}
+        {lines.map((line, i) =>
+          line.isHtml ? (
+            // Search-highlight path: `text` is pre-escaped HTML with <mark>
+            // tags (see useMemo above). Safe to inject.
+            <p
+              key={i}
+              className="mb-1 break-words"
+              dangerouslySetInnerHTML={{ __html: line.text }}
+            />
+          ) : (
+            // No-search path: render raw line text as a text node so OCR
+            // markup like <script> stays literal rather than executing.
+            <p key={i} className="mb-1 break-words">
+              {line.text}
+            </p>
+          ),
+        )}
       </div>
     </>
   );

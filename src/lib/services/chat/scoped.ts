@@ -422,6 +422,7 @@ async function handleToolUseChat(
     publicId: project.publicId,
     companyId: project.companyId,
     pageNumber,
+    userId: session?.user.dbId,
   };
 
   // Load domain knowledge

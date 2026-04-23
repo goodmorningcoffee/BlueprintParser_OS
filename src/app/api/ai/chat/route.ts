@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { resolveProjectAccess, apiError } from "@/lib/api-utils";
+import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { db } from "@/lib/db";
 import { chatMessages } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
@@ -34,6 +35,11 @@ export async function POST(req: Request) {
   if (access.error) return access.error;
   const { project } = access;
   const isDemo = access.scope === "demo";
+
+  if (isDemo) {
+    const gate = await assertDemoFeatureEnabled(project.companyId, "chat");
+    if (gate) return gate;
+  }
 
   // Quota check
   if (isDemo) {

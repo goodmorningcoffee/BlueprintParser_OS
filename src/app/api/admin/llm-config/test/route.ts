@@ -21,12 +21,12 @@ export async function POST(req: Request) {
   try {
     const client = createLLMClient(provider, apiKey || "", baseUrl);
 
-    // Tiny request to test connectivity — max_tokens: 5 to minimize cost
-    let gotResponse = false;
-    const timeout = setTimeout(() => {
-      if (!gotResponse) throw new Error("Timeout");
-    }, 10000);
-
+    // Tiny request to test connectivity — max_tokens: 5 to minimize cost.
+    // SECURITY: the timeout is expressed via Promise.race rather than
+    // `setTimeout(() => throw)`. A throw inside a timer callback escapes
+    // the async/await chain and becomes an uncaughtException that crashes
+    // the entire Node process (here: the whole ECS task). One misconfigured
+    // admin test could have taken the app down.
     const stream = client.streamChat({
       model,
       messages: [{ role: "user", content: "Say OK" }],
@@ -34,11 +34,26 @@ export async function POST(req: Request) {
       temperature: 0,
     });
 
-    for await (const chunk of stream) {
-      gotResponse = true;
-      break; // Just need the first chunk to confirm it works
+    const TIMEOUT_MS = 10_000;
+    const firstChunk = await Promise.race<{ kind: "ok" } | { kind: "timeout" }>([
+      (async () => {
+        for await (const _chunk of stream) {
+          return { kind: "ok" } as const;
+        }
+        return { kind: "ok" } as const;
+      })(),
+      new Promise<{ kind: "timeout" }>((resolve) =>
+        setTimeout(() => resolve({ kind: "timeout" }), TIMEOUT_MS),
+      ),
+    ]);
+
+    if (firstChunk.kind === "timeout") {
+      return NextResponse.json({
+        success: false,
+        error: "Timeout waiting for LLM response",
+        responseTime: Date.now() - start,
+      });
     }
-    clearTimeout(timeout);
 
     const responseTime = Date.now() - start;
     return NextResponse.json({ success: true, responseTime });

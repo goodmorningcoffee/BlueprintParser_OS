@@ -12,6 +12,18 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "alert_email" {
+  description = "Email address for CloudWatch alarm + AWS Budget notifications. Required for pre-Reddit-launch alerting."
+  type        = string
+  default     = ""
+}
+
+variable "monthly_budget_usd" {
+  description = "AWS Budget monthly cap in USD. Triggers SNS alerts at 50/80/100%. Set to 0 to disable."
+  type        = number
+  default     = 500
+}
+
 variable "environment" {
   description = "Deployment environment (staging, production)"
   type        = string
@@ -56,19 +68,19 @@ variable "acm_certificate_arn" {
 variable "ecs_desired_count" {
   description = "Desired number of ECS tasks"
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "ecs_min_count" {
   description = "Minimum number of ECS tasks for auto-scaling"
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "ecs_max_count" {
   description = "Maximum number of ECS tasks for auto-scaling"
   type        = number
-  default     = 4
+  default     = 8
 }
 
 variable "ecs_cpu" {

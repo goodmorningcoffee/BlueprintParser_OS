@@ -26,6 +26,7 @@ const DEMO_FEATURES = [
   { key: "keynoteParse", label: "Keynote Parse", description: "Keynote guided parse with YOLO tag mapping", defaultOn: true },
   { key: "takeoff", label: "Quantity Takeoff", description: "Count markers, area polygons, calibration, CSV export", defaultOn: true },
   { key: "symbolSearch", label: "Symbol Search", description: "Template matching to find repeated symbols", defaultOn: true },
+  { key: "bucketFill", label: "Bucket Fill", description: "Room polygon auto-detection for takeoff (CPU-heavy)", defaultOn: true },
   { key: "chat", label: "LLM Chat", description: "AI chat with structured blueprint context (uses Groq quota)", defaultOn: true },
   { key: "yoloRun", label: "Run YOLO Models", description: "Trigger SageMaker GPU inference ($0.75/hr) — expensive", defaultOn: false },
   { key: "labeling", label: "Labeling Wizard", description: "Label Studio integration for training data", defaultOn: false },
