@@ -11,7 +11,7 @@
 ###############################################################################
 
 resource "aws_lambda_function" "beaver_cv_pipeline" {
-  function_name = "blueprintparser-cv-pipeline"
+  function_name = "beaver-cv-pipeline"
   role          = aws_iam_role.beaver_lambda_cv_role.arn
   package_type  = "Image"
   image_uri     = "${aws_ecr_repository.beaver_cv_lambda.repository_url}:latest"
@@ -37,7 +37,7 @@ resource "aws_lambda_function" "beaver_cv_pipeline" {
   }
 
   tags = {
-    Name = "blueprintparser-cv-pipeline"
+    Name = "beaver-cv-pipeline"
   }
 
   depends_on = [aws_cloudwatch_log_group.cv_lambda]
@@ -57,7 +57,7 @@ resource "aws_cloudwatch_log_group" "cv_lambda" {
 ###############################################################################
 
 resource "aws_iam_role" "beaver_lambda_cv_role" {
-  name = "blueprintparser-cv-lambda-role"
+  name = "beaver-cv-lambda-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -79,7 +79,7 @@ resource "aws_iam_role_policy_attachment" "beaver_lambda_cv_logs" {
 }
 
 resource "aws_iam_role_policy" "beaver_lambda_cv_s3" {
-  name = "blueprintparser-cv-lambda-s3"
+  name = "beaver-cv-lambda-s3"
   role = aws_iam_role.beaver_lambda_cv_role.id
 
   policy = jsonencode({

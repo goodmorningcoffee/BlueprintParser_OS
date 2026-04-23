@@ -8,7 +8,7 @@ resource "aws_vpc" "beaver" {
   enable_dns_hostnames = true
 
   tags = {
-    Name = "blueprintparser-vpc"
+    Name = "beaver-vpc"
   }
 }
 
@@ -20,7 +20,7 @@ resource "aws_internet_gateway" "beaver" {
   vpc_id = aws_vpc.beaver.id
 
   tags = {
-    Name = "blueprintparser-igw"
+    Name = "beaver-igw"
   }
 }
 
@@ -37,7 +37,7 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "blueprintparser-public-${count.index + 1}"
+    Name = "beaver-public-${count.index + 1}"
     Tier = "public"
   }
 }
@@ -54,7 +54,7 @@ resource "aws_subnet" "private" {
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = {
-    Name = "blueprintparser-private-${count.index + 1}"
+    Name = "beaver-private-${count.index + 1}"
     Tier = "private"
   }
 }
@@ -67,7 +67,7 @@ resource "aws_eip" "nat" {
   domain = "vpc"
 
   tags = {
-    Name = "blueprintparser-nat-eip"
+    Name = "beaver-nat-eip"
   }
 }
 
@@ -76,7 +76,7 @@ resource "aws_nat_gateway" "beaver" {
   subnet_id     = aws_subnet.public[0].id
 
   tags = {
-    Name = "blueprintparser-nat"
+    Name = "beaver-nat"
   }
 
   depends_on = [aws_internet_gateway.beaver]
@@ -90,7 +90,7 @@ resource "aws_route_table" "public" {
   vpc_id = aws_vpc.beaver.id
 
   tags = {
-    Name = "blueprintparser-public-rt"
+    Name = "beaver-public-rt"
   }
 }
 
@@ -115,7 +115,7 @@ resource "aws_route_table" "private" {
   vpc_id = aws_vpc.beaver.id
 
   tags = {
-    Name = "blueprintparser-private-rt"
+    Name = "beaver-private-rt"
   }
 }
 
