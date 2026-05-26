@@ -20,6 +20,8 @@ Open-source AI-powered blueprint tool.
   - Backend tooling that makes construction documents machine-readable
   - YOLO object-detection models detect shapes and spatial zones.
   - OCR all text
+  - CSI tagging: tag all CSI codes in the drawings
+  - OpenCV tools for extracting basic shapes
 
 ### Current YOLO Classes
 
