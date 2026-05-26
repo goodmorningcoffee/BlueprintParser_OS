@@ -3,7 +3,7 @@
 **Live demo**: https://app.blueprintparser.com/demo  
 **BP Docs**: https://app.blueprintparser.com/docs
 
-Open-source AI-powered blueprint tool.
+BlueprintParser is a Next.js web app and a blueprint parsing engine.
 
 ---
 
