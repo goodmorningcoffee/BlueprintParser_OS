@@ -17,11 +17,13 @@ Open-source AI-powered blueprint tool.
   - BP tools can be operated by agents
   - Agents can query blueprints and provide more accurate answers with citations
 - Blueprint parsing engine  
-  - Backend tooling that makes construction documents machine-readable
-  - YOLO object-detection models detect shapes and spatial zones.
-  - OCR all text
+  - Backend tooling that makes PDF CDs machine readable
+  - YOLO object detection models detect shapes and spatial zones.
+  - Rasterize PDF and OCR all text
   - CSI tagging: tag all CSI codes in the drawings
-  - OpenCV tools for extracting basic shapes
+  - OpenCV tools for extracting shapes and visual information
+  - Auto name Sheets / Drawing numbers
+  - Network graph engine: build nodes and edges between sheets in a project and between projects in a portfolio.  
 
 ### Current YOLO Classes
 There are two general categories: "discrete and spatial" classes.  
@@ -29,18 +31,22 @@ There are two general categories: "discrete and spatial" classes.
 #### Discrete Classes
 Examples:
 - `door_single`
-- `rectangle`
 - `square`
+- `schedule_table`
 
 #### Spatial Classes
 Examples:
 - `title_block`
 - `drawings`
-- `schedule_table`
-- `grid`
-- `text_box`
+- `text_block`
 
-YOLO acts as the "eyes" for LLMs and agents, enabling them to "see" into the drawings.  
+Spatial classes define regions of the drawings, and help with localization and corroboration.  Since we use OCR, we also have the pixel coordinates of all text, which we can map against the YOLO outputs.
+For instance, when extracting the drawing number, we can check if the drawing number is located inside a title_block region.  
+Or, when looking for the door schedule, BP knows to look for the sheet where the words "door schedule" occur inside a "schedule_table" region, and can double check the title_block for coraberating text like "door and window schedule".  
+BP uses spatial data to build CSI-heatmaps, which show the distribution of CSI codes on a sheet.  YOLO spatial data enables us to differentiate between a cluster of CSI codes that are occuring in a text_block vs the drawings vs inside a schedule vs the title_block.  YOLO spatial classes are baby steps towards building a visual-reasoning engine for blueprints.
+
+YOLO acts as the "eyes" for LLMs and agents, enabling them to "see" into the drawings. 
+
 
 ## NOTE on YOLO Models
 
