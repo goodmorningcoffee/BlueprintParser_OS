@@ -84,7 +84,7 @@ Its not enough to rely on LLMs, it's necesary to give them tools that empower th
 - Expand agent tool use  
   - Enable an agent to do a full QTO using BP's tools.  With better tool use, agents can more effectively navigate the plans, answer more complex questions with citations derived from the drawings, and actually interact with blueprints.  
 
-- Eventually rebuild the frontend entirely, its full of bugs and the UI is janky.
+- Eventually rebuild the frontend entirely, it's full of bugs and the UI is janky.
 
 ---
 
@@ -93,7 +93,7 @@ Its not enough to rely on LLMs, it's necesary to give them tools that empower th
 The YOLO models used in the demo were hand-labeled and trained by myself.  
 - 500+ hours of manual labeling
 - More than $3,000 in AWS compute
-- 
+
 The trained weights and training datasets are not included in this repository.
 BlueprintParser is designed so users can upload and use their own object-detection models.
 
