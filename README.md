@@ -67,11 +67,9 @@ This is part of the foundation for:
 
 ## Project Goal
 
-It started with trying to build a free quantity takeoff tool.  
+It started with trying to build a free quantity takeoff tool, expanded with extracting schedules/tables to excel, and eventually evolved into a LLM harness for blueprints.
 
-Then I wanted to build a free "schedule/table to excel" extractor.  
-
-Which evolved into an LLM harness for blueprints.  
+Its not enough to rely on LLMs, it's necesary to give them tools that empower them to do more with blueprints.  
 
 ---
 
