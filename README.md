@@ -67,9 +67,11 @@ This is part of the foundation for:
 
 ## Project Goal
 
-This project originally started as an experiment to see if I could build an AI-QTO tool.
+It started with trying to build a free quantity takeoff tool.  
 
-Over time, it evolved into a broader LLM harness for blueprints and construction documents.
+Then I wanted to build a free "schedule/table to excel" extractor.  
+
+Which evolved into an LLM harness for blueprints.  
 
 ---
 
@@ -80,12 +82,11 @@ Over time, it evolved into a broader LLM harness for blueprints and construction
   - Usable by tools like Claude Cowork/Code, Codex and agent harnesses.  
 
 - Build a lightweight frontend optimized for LLM/"chat with the drawings".  
-  - The parsing pipeline and context engine already make it possible for LLMs to ingest CDs with hundreds of sheets.  
 
 - Expand agent tool use  
   - Enable an agent to do a full QTO using BP's tools.  With better tool use, agents can more effectively navigate the plans, answer more complex questions with citations derived from the drawings, and actually interact with blueprints.  
 
-- Eventually rebuild the frontend entirely, its full of bugs and the UI is janky.  
+- Eventually rebuild the frontend entirely, its full of bugs and the UI is janky.
 
 ---
 
