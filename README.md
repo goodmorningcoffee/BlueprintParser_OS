@@ -1,31 +1,129 @@
 # BlueprintParser
 
-**Live demo**: [blueprintparser.com/demo](https://app.blueprintparser.com/demo)
-**BP Docs**: [blueprintparser.com/docs](https://app.blueprintparser.com/docs)
+**Live demo**: https://app.blueprintparser.com/demo  
+**BP Docs**: https://app.blueprintparser.com/docs
 
-Open-source AI powered Blueprint tool:
+Open-source AI-powered blueprint tool.
 
-   •manual and ai-QTO.   ea, ln, and sqft.  create your own ai-QTO workflows using your own models.  
-   •extract schedules/tables from PDF to Excel/CSV. 
-   •LLM chat with the entire project without blowing up context.  BP has an LLM context engine that uses multiple methods for creating dense, token efficient "embeddings" of blueprints.
-   •Agent tool use:  BP can be operated by agents (Work in progress).  Agents can use BPs tools to query blueprints, and provide much more accurate answers that include citations.
-   •Blueprint Parsing engine:  the backend tools that make CDs machine readable.  Notably, it uses YOLO object detection models to visually parse 23 classes which include both "spatial" and "discrete" classes.  Discrete objects are things like "door_single", "rectangle", and "square", while "spatial" classes include "title_block", "drawings", "schedule_table", "grid", "text_box" and more.  YOLO acts as the "eyes" for LLMs and agents, enabling them to see into the drawings.  YOLO outputs bounding boxes which provide spatial data to LLMs.  YOLO outputs are also used in the auto-QTO tool, and in many others including the "tag-parsing" tool which maps tags in schedules and keynotes to all occurences of them in the drawings.  Tag-parsing maps both the tag shape and the text contents of the tag.  More work has to be done but this is the foundation for creating hyperlinks between sheets, auto-qto, and expanding an LLM's ability to "percieve" blueprints beyond just text. 
+---
 
-The goal of this project started as an experiment to see if I could build an ai-QTO tool, and expanded into an LLM harness for blueprints.
-Future goals include:
-   •rebuilding a headless version of the BP parsing engine that is front-end agnostic.  Somethign that can be used by Claude Cowork and other tools.
-   •rebuild a lightweight frontend that is optimised for LLM chat.  The "Blueprintparsing pipeline" and specifically the "context engine" make it possible for LLMs to ingest CDs that are hundreds of pages.  
-   •expand agent tool use. The goal is to get it to do a QTO using all the tools available on BP.  Could BP be an agentic harness for blueprints? 
-   •eventually rebuild the frontend.  there are bugs, clunky UI/UX, and more. 
+## Features
 
-NOTE on YOLO:  I hand labeled and trained the YOLO models used in the demo.  It took me over 500 labor hours to hand label the training data, and more than $3,000 in compute to train the models on AWS.  I used YOLO v8.  The model weights and training data are not included in this repo.  BP is setup so that the user can upload their own object-detection models.  
+- Manual and AI-assisted QTO  
+  - EA, LN, and SQFT takeoffs
+  - Create custom AI-QTO workflows using your own models
 
-Happy to chat about data labeling blueprints or training YOLO models if you're considering this path.
+- Extract schedules/tables from PDF to Excel/CSV
 
-I think there are at least 200 "classes" that once a YOLO model is trained on, would enable someone to build an "ai QTO engine" that could cover 80% or 90% of all "each" takeoffs, across all the relevant trades.  If someone wants to create a "comprehensive" object-detection for blueprints, the number of classes quickly exceeds 400.  And this is just for object detection, one would still need to train segmentation and classification models.  
+- LLM chat with entire projects without blowing up context  
+  - BP includes a context engine that uses multiple methods for creating dense, token-efficient blueprint embeddings
 
-If we want to build a multi-modal system or VLM foundation model for blueprints, then we need to solve the "drawing" problem.  LLMs cant see and drawings encode visually.  BlueprintParser is a small step towards in this direction, and hopefully will contribute towards building whatever these next systems are.
+- Agent tool use *(work in progress)*  
+  - BP tools can be operated by agents
+  - Agents can query blueprints and provide more accurate answers with citations
 
+- Blueprint parsing engine  
+  - Backend tooling that makes construction documents machine-readable
+  - Uses YOLO object detection models to visually parse 23 classes
+
+### Current YOLO Classes
+
+#### Discrete Classes
+Examples:
+- `door_single`
+- `rectangle`
+- `square`
+
+#### Spatial Classes
+Examples:
+- `title_block`
+- `drawings`
+- `schedule_table`
+- `grid`
+- `text_box`
+
+YOLO acts as the "eyes" for LLMs and agents, enabling them to perceive drawings visually rather than only through OCR/text extraction.
+
+YOLO outputs:
+- Bounding boxes with spatial data
+- Inputs for auto-QTO workflows
+- Inputs for tag parsing tools
+- Inputs for agent reasoning pipelines
+
+The tag parsing system maps:
+- Tag geometry/shapes
+- Tag text contents
+- Schedule references
+- Keynote references
+- Occurrences across sheets
+
+This is part of the foundation for:
+- Hyperlinking sheets together
+- Automated QTO
+- Multi-sheet reasoning
+- Expanding LLM blueprint perception beyond text alone
+
+---
+
+## Project Goal
+
+This project originally started as an experiment to see if I could build an AI-QTO tool.
+
+Over time, it evolved into a broader LLM harness for blueprints and construction documents.
+
+---
+
+## Future Goals
+
+- Rebuild a headless version of the BP parsing engine  
+  - Frontend agnostic
+  - Usable by tools like Claude Cowork/Code, Codex and agent harnesses.  
+
+- Build a lightweight frontend optimized for LLM/"chat with the drawings".  
+  - The parsing pipeline and context engine already make it possible for LLMs to ingest CDs with hundreds of sheets.  
+
+- Expand agent tool use  
+  - Enable an agent to do a full QTO using BP's tools.  With better tool use, agents can more effectively navigate the plans, answer more complex questions with citations derived from the drawings, and actually interact with blueprints.  
+
+- Eventually rebuild the frontend entirely, its full of bugs and the UI is janky.  
+
+---
+
+## NOTE on YOLO Models
+
+The YOLO models used in the demo were hand-labeled and trained by myself.  
+- 500+ hours of manual labeling
+- More than $3,000 in AWS compute
+- 
+The trained weights and training datasets are not included in this repository.
+BlueprintParser is designed so users can upload and use their own object-detection models.
+
+---
+
+## Thoughts on Blueprint AI
+
+I believe there are at least ~200 blueprint object classes that, if trained properly, could enable an AI-QTO engine capable of handling 80–90% of "each" takeoffs across trades.
+A truly comprehensive blueprint object-detection system exceeds 400 classes.
+
+And that only covers:
+- Object detection
+
+It does **not** include:
+- Segmentation models
+- Classification systems
+- Relationship mapping
+- Spatial reasoning
+- Symbol ontology
+- Cross-sheet graphing
+
+---
+
+## Why This Matters
+
+If we want to build multimodal systems or true VLM/foundation models for blueprints, we need to solve the drawing problem.
+LLMs fundamentally struggle with drawings because construction documents encode meaning visually.
+
+BlueprintParser is a small step in that direction, and hopefully contributes toward the development of models that can truly understand blueprints.
 
 ---
 
