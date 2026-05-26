@@ -85,14 +85,14 @@ Its not enough to rely on LLMs, it's necesary to give them tools that empower th
 
 ---
 
-## Thoughts on Blueprint AI
+## Training Data requirements
 
-I believe there are at least ~200 blueprint object classes that, if trained properly, could enable an AI-QTO engine capable of handling 80–90% of "each" takeoffs across trades.
-A truly comprehensive blueprint object-detection system would likely exceed 400 classes.
+I believe there are at least ~200 blueprint object classes that, if trained properly, could enable an AI-QTO engine to handle 80–90% of "each" takeoffs across trades.
+A truly comprehensive blueprint object-detection system would likely exceed 400 classes.  To label this many classes, it would take 50-100+ annotators working full time for 6-12 months, require hundreds of thousands of bid grade CDs, a robust annotator workforce management system, and lots of data labeling and ML ops.  
 
-And that only covers object detection, and doesnt include segmentation, classification, labeling for LLM fine tuning, etc.
+Then, we have to do this again for image segmentation (surface area), classification, for fine tuning LLMs, and much more.  
 
-There is still a massive, unsolved data labeling challenge ahead of us.
+There is a tremendous data labeling challenge ahead of the AEC industry.
 
 ---
 
