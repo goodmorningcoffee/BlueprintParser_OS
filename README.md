@@ -2,7 +2,7 @@
 
 **Live demo**: [blueprintparser.com/demo](https://app.blueprintparser.com/demo)
 **BP Docs**: [blueprintparser.com/docs](https://app.blueprintparser.com/docs)
-```
+
 Open-source AI powered Blueprint tool:
 
    •manual and ai-QTO.   ea, ln, and sqft.  create your own ai-QTO workflows using your own models.  
@@ -25,7 +25,7 @@ Happy to chat about data labeling blueprints or training YOLO models if you're c
 I think there are at least 200 "classes" that once a YOLO model is trained on, would enable someone to build an "ai QTO engine" that could cover 80% or 90% of all "each" takeoffs, across all the relevant trades.  If someone wants to create a "comprehensive" object-detection for blueprints, the number of classes quickly exceeds 400.  And this is just for object detection, one would still need to train segmentation and classification models.  
 
 If we want to build a multi-modal system or VLM foundation model for blueprints, then we need to solve the "drawing" problem.  LLMs cant see and drawings encode visually.  BlueprintParser is a small step towards in this direction, and hopefully will contribute towards building whatever these next systems are.
-```
+
 
 ---
 
