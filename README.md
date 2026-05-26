@@ -10,7 +10,8 @@ Open-source Blueprint parsing engine and PDF/blueprint webapp:
 •Agent tool use:  BP can be operated by agents (Work in progress).  Agents can use BPs tools to query blueprints, and provide much more accurate answers that include citations.
 •Blueprint Parsing engine:  the backend tools that make CDs machine readable.  Notably, it uses YOLO object detection models to visually parse 23 classes which include both "spatial" and "discrete" classes.  Discrete objects are things like "door_single", "rectangle", and "square", while "spatial" classes include "title_block", "drawings", "schedule_table", "grid", "text_box" and more.  YOLO acts as the "eyes" for LLMs and agents, enabling them to see into the drawings.  YOLO outputs bounding boxes which provide spatial data to LLMs.  YOLO outputs are also used in the auto-QTO tool, and in many others including the "tag-parsing" tool which maps tags in schedules and keynotes to all occurences of them in the drawings.  Tag-parsing maps both the tag shape and the text contents of the tag.  More work has to be done but this is the foundation for creating hyperlinks between sheets, auto-qto, and expanding an LLM's ability to "percieve" blueprints beyond just text. 
 
-The goal of this project is evolving, but it started with trying to make a free QTO tool, and expanded into an entire "blueprint harness" for LLMs.  
+The goal of this project started as an experiment to see if I could build an ai-QTO tool, and expanded into an LLM harness for blueprints.
+
 Future goals include:
    •rebuilding a headless version of the BP parsing engine that is front-end agnostic.  Somethign that can be used by Claude Cowork and other tools.
    •rebuild a lightweight frontend that is optimised for LLM chat.  The "Blueprintparsing pipeline" and specifically the "context engine" make it possible for LLMs to ingest CDs that are hundreds of pages.  
