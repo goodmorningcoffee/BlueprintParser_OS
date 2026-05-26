@@ -24,7 +24,7 @@ Open-source AI-powered blueprint tool.
   - OpenCV tools for extracting basic shapes
 
 ### Current YOLO Classes
-There are two general categories, "discrete and spatial" classes.  
+There are two general categories: "discrete and spatial" classes.  
 
 #### Discrete Classes
 Examples:
@@ -41,7 +41,6 @@ Examples:
 - `text_box`
 
 YOLO acts as the "eyes" for LLMs and agents, enabling them to "see" into the drawings.  
-They also enable auto-QTO, and other 
 
 ## NOTE on YOLO Models
 
