@@ -667,4 +667,12 @@ Works without AWS credentials — PDF viewing, annotations, QTO, search all func
 
 ## License
 
-MIT
+BlueprintParser is source-available software.
+
+Free for:
+- Personal use
+- Research
+- Education
+- Internal evaluation
+
+Commercial use requires a separate written license.
