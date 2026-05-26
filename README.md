@@ -42,7 +42,7 @@ Examples:
 - `grid`
 - `text_box`
 
-YOLO acts as the "eyes" for LLMs and agents, enabling them to perceive drawings visually rather than only through OCR/text extraction.
+YOLO acts as the "eyes" for LLMs and agents, enabling them to "see" into the drawings.  
 
 YOLO outputs:
 - Bounding boxes with spatial data
