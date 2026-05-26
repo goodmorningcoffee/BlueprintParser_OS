@@ -23,7 +23,9 @@ BlueprintParser is a Next.js web app and a blueprint parsing engine.
   - CSI tagging: tag all CSI codes in the drawings
   - OpenCV tools for extracting shapes and visual information
   - Auto name Sheets / Drawing numbers
-  - Network graph engine: build nodes and edges between sheets in a project and between projects in a portfolio.  
+  - Network graph engine: build nodes and edges between sheets in a project and between projects in a portfolio.
+
+ See all features and more in the BlueprintParser docs, link up top.
 
 ### Current YOLO Classes
 There are two general categories: "discrete and spatial" classes.  
