@@ -68,7 +68,7 @@ Its not enough to rely on LLMs, it's necesary to give them tools that empower th
 
 ---
 
-## Future Goals
+## Future Goals as of May, 2026
 
 - Rebuild a headless version of the BP parsing engine  
   - Frontend agnostic
