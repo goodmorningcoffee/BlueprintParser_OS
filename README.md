@@ -10,21 +10,16 @@ Open-source AI-powered blueprint tool.
 ## Features
 
 - Manual and AI-assisted QTO  
-  - EA, LN, and SQFT takeoffs
-  - Create custom AI-QTO workflows using your own models
-
 - Extract schedules/tables from PDF to Excel/CSV
-
 - LLM chat with entire projects without blowing up context  
   - BP includes a context engine that uses multiple methods for creating dense, token-efficient blueprint embeddings
-
 - Agent tool use *(work in progress)*  
   - BP tools can be operated by agents
   - Agents can query blueprints and provide more accurate answers with citations
-
 - Blueprint parsing engine  
   - Backend tooling that makes construction documents machine-readable
-  - Uses YOLO object detection models to visually parse 23 classes
+  - YOLO object-detection models detect shapes and spatial zones.
+  - OCR all text
 
 ### Current YOLO Classes
 
@@ -43,25 +38,17 @@ Examples:
 - `text_box`
 
 YOLO acts as the "eyes" for LLMs and agents, enabling them to "see" into the drawings.  
+They also enable auto-QTO, and other 
 
-YOLO outputs:
-- Bounding boxes with spatial data
-- Inputs for auto-QTO workflows
-- Inputs for tag parsing tools
-- Inputs for agent reasoning pipelines
+## NOTE on YOLO Models
 
-The tag parsing system maps:
-- Tag geometry/shapes
-- Tag text contents
-- Schedule references
-- Keynote references
-- Occurrences across sheets
+The YOLO models used in the demo were hand-labeled and trained by myself.  
+- 500+ hours of manual labeling
+- More than $3,000 in AWS compute
 
-This is part of the foundation for:
-- Hyperlinking sheets together
-- Automated QTO
-- Multi-sheet reasoning
-- Expanding LLM blueprint perception beyond text alone
+The trained weights and training datasets are not included in this repository.
+BlueprintParser is designed so users can upload and use their own object-detection models.
+
 
 ---
 
@@ -85,17 +72,6 @@ Its not enough to rely on LLMs, it's necesary to give them tools that empower th
   - Enable an agent to do a full QTO using BP's tools.  With better tool use, agents can more effectively navigate the plans, answer more complex questions with citations derived from the drawings, and actually interact with blueprints.  
 
 - Eventually rebuild the frontend entirely, it's full of bugs and the UI is janky.
-
----
-
-## NOTE on YOLO Models
-
-The YOLO models used in the demo were hand-labeled and trained by myself.  
-- 500+ hours of manual labeling
-- More than $3,000 in AWS compute
-
-The trained weights and training datasets are not included in this repository.
-BlueprintParser is designed so users can upload and use their own object-detection models.
 
 ---
 
