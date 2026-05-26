@@ -1,8 +1,14 @@
 # BlueprintParser
 
-Open-source AI-powered construction blueprint analysis platform. Upload PDF blueprints → auto-extract text (OCR) → detect objects (YOLO) → classify pages/tables/keynotes → detect CSI codes → spatial mapping → multi-provider LLM chat → Quantity Takeoff. Self-hostable, multi-tenant, designed for construction estimators.
-
 **Live demo**: [blueprintparser.com/demo](https://app.blueprintparser.com/demo)
+
+Open-source Blueprint parsing engine and PDF/blueprint webapp:  
+•manual and ai-QTO.   ea, ln, and sqft.  create your own ai-QTO workflows using your own models.  
+•extract schedules/tables from PDF to Excel/CSV. 
+•LLM chat with the entire project without blowing up context.  BP has an LLM context engine that uses multiple methods for creating dense, token efficient "embeddings" of blueprints.
+•Agent tool use:  BP can be operated by agents (Work in progress).  
+
+Upload PDF blueprints → auto-extract text (OCR) → detect objects (YOLO) → classify pages/tables/keynotes → detect CSI codes → spatial mapping → multi-provider LLM chat → Quantity Takeoff. Self-hostable, multi-tenant, designed for construction estimators.
 
 ---
 
