@@ -102,18 +102,11 @@ BlueprintParser is designed so users can upload and use their own object-detecti
 ## Thoughts on Blueprint AI
 
 I believe there are at least ~200 blueprint object classes that, if trained properly, could enable an AI-QTO engine capable of handling 80–90% of "each" takeoffs across trades.
-A truly comprehensive blueprint object-detection system exceeds 400 classes.
+A truly comprehensive blueprint object-detection system would likely exceed 400 classes.
 
-And that only covers:
-- Object detection
+And that only covers object detection, and doesnt include segmentation, classification, labeling for LLM fine tuning, etc.
 
-It does **not** include:
-- Segmentation models
-- Classification systems
-- Relationship mapping
-- Spatial reasoning
-- Symbol ontology
-- Cross-sheet graphing
+There is still a massive, unsolved data labeling challenge ahead of us.
 
 ---
 
