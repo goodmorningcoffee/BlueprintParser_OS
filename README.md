@@ -111,7 +111,7 @@ The setup wizard prompts for: database URL, auth secrets, LLM API keys (Groq/Ant
 
 ## Processing Pipeline (6-System Cascade)
 
-The processing pipeline transforms raw PDF pixels into structured, LLM-consumable intelligence through six interconnected systems. Each system adds signal while reducing noise, outputting confidence scores rather than binary decisions.
+The processing pipeline transforms PDFs into 'structured data' through six interconnected systems. Upstream system's outputs feed as inputs into downstream systems.  The final processed outputs are machine readable, and context optimised for LLMs.  
 
 ### System Overview
 
