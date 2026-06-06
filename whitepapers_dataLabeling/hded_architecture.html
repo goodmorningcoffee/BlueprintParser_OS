@@ -1,0 +1,2148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HDED Architecture - Hierarchical Dense Ensemble Detector</title>
+<style>
+  :root {
+    --bg-primary: #0d1117;
+    --bg-card: #161b22;
+    --bg-card-alt: #1c2333;
+    --bg-code: #0d1117;
+    --border: #30363d;
+    --border-light: #3d444d;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --text-muted: #6e7681;
+    --blue: #58a6ff;
+    --blue-dim: #1f3a5f;
+    --aqua: #3ddbd9;
+    --aqua-dim: #0a3d3c;
+    --orange: #f0883e;
+    --orange-dim: #4a2a0a;
+    --green: #3fb950;
+    --green-dim: #1a4a25;
+    --purple: #bc8cff;
+    --purple-dim: #2d1f4e;
+    --red: #f85149;
+    --yellow: #d29922;
+    --teal: #26c6da;
+    --sidebar-width: 260px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 80px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.7;
+    display: flex;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: var(--sidebar-width);
+    height: 100vh;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    z-index: 100;
+    padding: 20px 0;
+  }
+
+  .sidebar-title {
+    padding: 0 20px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+
+  .sidebar a {
+    display: block;
+    padding: 6px 20px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 13px;
+    border-left: 2px solid transparent;
+    transition: all 0.2s;
+  }
+
+  .sidebar a:hover {
+    color: var(--text-primary);
+    background: rgba(88, 166, 255, 0.05);
+  }
+
+  .sidebar a.active {
+    color: var(--blue);
+    border-left-color: var(--blue);
+    background: rgba(88, 166, 255, 0.08);
+  }
+
+  .sidebar a.indent {
+    padding-left: 36px;
+    font-size: 12px;
+  }
+
+  .sidebar a.section-header {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-top: 12px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Main Content */
+  .main {
+    margin-left: var(--sidebar-width);
+    flex: 1;
+    max-width: 1100px;
+    padding: 0 48px 120px;
+  }
+
+  /* Hero */
+  .hero {
+    padding: 80px 0 60px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 48px;
+  }
+
+  .hero h1 {
+    font-size: 42px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--blue), var(--aqua));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 12px;
+  }
+
+  .hero .subtitle {
+    font-size: 20px;
+    color: var(--text-secondary);
+    max-width: 700px;
+    margin-bottom: 28px;
+  }
+
+  .hero-stats {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+
+  .stat-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 24px;
+    min-width: 160px;
+  }
+
+  .stat-box .value {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--aqua);
+  }
+
+  .stat-box .label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Sections */
+  section {
+    margin-bottom: 64px;
+  }
+
+  h2 {
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    padding-top: 24px;
+  }
+
+  h2 .num {
+    color: var(--orange);
+    font-weight: 400;
+    margin-right: 8px;
+  }
+
+  h3 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--blue);
+    margin: 32px 0 12px;
+  }
+
+  h4 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--aqua);
+    margin: 24px 0 8px;
+  }
+
+  .section-desc {
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+    font-size: 15px;
+  }
+
+  p {
+    margin-bottom: 14px;
+    color: var(--text-primary);
+    font-size: 15px;
+  }
+
+  /* Diagram Container */
+  .diagram-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+
+  .diagram-wrap svg {
+    display: block;
+    margin: 0 auto;
+  }
+
+  .diagram-caption {
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 12px;
+    font-style: italic;
+  }
+
+  /* Code blocks */
+  code {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+    font-size: 13px;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: var(--orange);
+  }
+
+  pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 16px 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text-primary);
+  }
+
+  .kw { color: var(--purple); }
+  .fn { color: var(--blue); }
+  .cm { color: var(--text-muted); }
+  .st { color: var(--green); }
+  .nu { color: var(--orange); }
+  .op { color: var(--red); }
+
+  /* Info boxes */
+  .info-box {
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 16px 0;
+    border-left: 3px solid;
+  }
+
+  .info-box.thesis {
+    background: rgba(61, 219, 217, 0.06);
+    border-color: var(--aqua);
+  }
+
+  .info-box.formula {
+    background: rgba(188, 140, 255, 0.06);
+    border-color: var(--purple);
+    font-family: 'SF Mono', monospace;
+  }
+
+  .info-box.note {
+    background: rgba(240, 136, 62, 0.06);
+    border-color: var(--orange);
+  }
+
+  .info-box.key {
+    background: rgba(88, 166, 255, 0.06);
+    border-color: var(--blue);
+  }
+
+  .info-box strong {
+    color: var(--text-primary);
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+
+  th {
+    background: var(--bg-card-alt);
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 2px solid var(--border);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+
+  tr:hover td {
+    background: rgba(88, 166, 255, 0.03);
+  }
+
+  /* Grid layouts */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin: 20px 0;
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+  }
+
+  .card h4 {
+    margin-top: 0;
+  }
+
+  .card p {
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+
+  /* Stage badges */
+  .stage-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  .stage-badge.ingest { background: var(--blue-dim); color: var(--blue); }
+  .stage-badge.tile { background: var(--aqua-dim); color: var(--aqua); }
+  .stage-badge.detect { background: var(--orange-dim); color: var(--orange); }
+  .stage-badge.ensemble { background: var(--purple-dim); color: var(--purple); }
+  .stage-badge.fusion { background: var(--green-dim); color: var(--green); }
+  .stage-badge.output { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+
+  /* Flow list */
+  .flow-list {
+    list-style: none;
+    padding: 0;
+    margin: 16px 0;
+  }
+
+  .flow-list li {
+    position: relative;
+    padding: 12px 16px 12px 40px;
+    margin-bottom: 2px;
+    font-size: 14px;
+    color: var(--text-secondary);
+    border-left: 2px solid var(--border);
+    margin-left: 12px;
+  }
+
+  .flow-list li::before {
+    content: attr(data-step);
+    position: absolute;
+    left: -14px;
+    top: 10px;
+    width: 24px;
+    height: 24px;
+    background: var(--bg-card);
+    border: 2px solid var(--blue);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--blue);
+  }
+
+  .flow-list li:last-child {
+    border-left-color: transparent;
+  }
+
+  ul, ol {
+    margin: 8px 0 14px 24px;
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+
+  li { margin-bottom: 4px; }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; padding: 0 20px 80px; }
+  }
+
+  /* SVG text defaults */
+  svg text {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+
+  .math {
+    font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+    color: var(--purple);
+    font-size: 15px;
+  }
+
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 48px 0;
+  }
+</style>
+</head>
+<body>
+
+<!-- Sidebar Navigation -->
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-title">HDED Architecture</div>
+
+  <a href="#hero" class="section-header">Overview</a>
+  <a href="#thesis" class="indent">Core Thesis</a>
+  <a href="#system-overview" class="section-header">System Overview</a>
+  <a href="#high-level-diagram" class="indent">Architecture Map</a>
+  <a href="#pipeline" class="section-header">Detection Pipeline</a>
+  <a href="#stage-ingest" class="indent">Stage 1: Ingest</a>
+  <a href="#stage-tile" class="indent">Stage 2: Tile</a>
+  <a href="#stage-detect" class="indent">Stage 3: Detect</a>
+  <a href="#stage-classify" class="indent">Stage 3b/3c: Classify</a>
+  <a href="#stage-ensemble" class="indent">Stage 4: Ensemble</a>
+  <a href="#stage-fusion" class="indent">Stage 5: Fusion</a>
+  <a href="#stage-output" class="indent">Stage 6: Output</a>
+  <a href="#detection-types" class="indent">Detection Hierarchy</a>
+  <a href="#aws" class="section-header">AWS Infrastructure</a>
+  <a href="#aws-diagram" class="indent">Infrastructure Map</a>
+  <a href="#s3-buckets" class="indent">S3 Buckets</a>
+  <a href="#iam-roles" class="indent">IAM Roles</a>
+  <a href="#sagemaker" class="section-header">SageMaker</a>
+  <a href="#fleet-distribution" class="indent">Multi-Fleet GPUs</a>
+  <a href="#sagemaker-entrypoint" class="indent">GPU Entrypoint</a>
+  <a href="#aggregation" class="indent">Result Aggregation</a>
+  <a href="#docker" class="section-header">Docker Stack</a>
+  <a href="#docker-diagram" class="indent">Container Map</a>
+  <a href="#label-studio" class="indent">Label Studio</a>
+  <a href="#webapp" class="section-header">Web Application</a>
+  <a href="#routes" class="indent">API Routes</a>
+  <a href="#services" class="indent">Service Layer</a>
+  <a href="#auth" class="indent">Auth System</a>
+  <a href="#active-learning" class="section-header">Active Learning</a>
+  <a href="#bootstrap" class="indent">Classifier Bootstrap</a>
+  <a href="#config" class="section-header">Configuration</a>
+  <a href="#admin" class="section-header">Admin Tools</a>
+</nav>
+
+<!-- Main Content -->
+<div class="main">
+
+  <!-- Hero -->
+  <header class="hero" id="hero">
+    <h1>HDED</h1>
+    <div class="subtitle">
+      Hierarchical Dense Ensemble Detector &mdash; a brute-force blueprint detection
+      and data labeling platform built for small teams with optional GPU scaling via AWS SageMaker.
+    </div>
+    <div class="hero-stats">
+      <div class="stat-box">
+        <div class="value">820</div>
+        <div class="label">Tiles per sheet (4 zoom levels)</div>
+      </div>
+      <div class="stat-box">
+        <div class="value">3</div>
+        <div class="label">YOLO detector models</div>
+      </div>
+      <div class="stat-box">
+        <div class="value">6</div>
+        <div class="label">Pipeline stages</div>
+      </div>
+      <div class="stat-box">
+        <div class="value">~10</div>
+        <div class="label">Max concurrent users</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Core Thesis -->
+  <section id="thesis">
+    <h2><span class="num">0.</span> The Brute-Force Thesis</h2>
+    <div class="info-box thesis">
+      <strong>False-positive filtering is classification (easy). False-negative recovery is search (hard).</strong><br><br>
+      Over-detect with maximum recall using multiple YOLO models at multiple zoom levels, generating thousands of candidate detections per blueprint sheet. Then let ensemble scoring, weighted box fusion, and optional classifiers filter the noise down to high-confidence results. Humans in Label Studio correct what remains. The corrected labels feed back into classifier training, closing the active learning loop.
+    </div>
+    <p>
+      This thesis drives every architectural decision in HDED. The pipeline is intentionally redundant &mdash; three models, four zoom levels, and an ensemble that rewards agreement &mdash; because recovering a missed detection later is far harder than filtering a false positive now.
+    </p>
+  </section>
+
+  <hr class="divider">
+
+  <!-- System Overview -->
+  <section id="system-overview">
+    <h2><span class="num">1.</span> System Overview</h2>
+    <p class="section-desc">
+      HDED runs on a single EC2 instance as the control plane, with optional SageMaker Processing for GPU-accelerated inference. The web application, Label Studio instances, and PostgreSQL all run as Docker containers behind a Caddy reverse proxy.
+    </p>
+
+    <div class="diagram-wrap" id="high-level-diagram">
+      <svg viewBox="0 0 1100 720" width="100%" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#58a6ff"/>
+          </marker>
+          <marker id="arrow-aqua" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#3ddbd9"/>
+          </marker>
+          <marker id="arrow-orange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#f0883e"/>
+          </marker>
+          <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#3fb950"/>
+          </marker>
+          <marker id="arrow-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#bc8cff"/>
+          </marker>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1100" height="720" fill="#0d1117" rx="8"/>
+
+        <!-- User/Browser -->
+        <rect x="20" y="280" width="120" height="100" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="80" y="318" text-anchor="middle" fill="#58a6ff" font-size="22">&#x1F4BB;</text>
+        <text x="80" y="345" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">User</text>
+        <text x="80" y="362" text-anchor="middle" fill="#8b949e" font-size="10">Browser / CLI</text>
+
+        <!-- EC2 Instance Box -->
+        <rect x="180" y="30" width="400" height="660" rx="10" fill="none" stroke="#f0883e" stroke-width="1.5" stroke-dasharray="6,3"/>
+        <text x="200" y="56" fill="#f0883e" font-size="12" font-weight="600">EC2 Instance (t3.medium)</text>
+        <text x="200" y="72" fill="#6e7681" font-size="10">Docker Compose Stack</text>
+
+        <!-- Caddy -->
+        <rect x="210" y="90" width="350" height="44" rx="6" fill="#1c2333" stroke="#3fb950" stroke-width="1"/>
+        <text x="385" y="116" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="600">Caddy Reverse Proxy</text>
+        <text x="310" y="116" fill="#6e7681" font-size="10">:443 HTTPS</text>
+
+        <!-- FastAPI App -->
+        <rect x="210" y="152" width="350" height="80" rx="6" fill="#1c2333" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="385" y="178" text-anchor="middle" fill="#58a6ff" font-size="14" font-weight="600">FastAPI Application</text>
+        <text x="385" y="196" text-anchor="middle" fill="#8b949e" font-size="10">Port 8000 &bull; Routes / Services / Templates</text>
+        <text x="385" y="212" text-anchor="middle" fill="#6e7681" font-size="10">Pipeline Runner &bull; SageMaker Service &bull; LS Service</text>
+
+        <!-- Label Studio Containers -->
+        <rect x="210" y="250" width="168" height="110" rx="6" fill="#1c2333" stroke="#3ddbd9" stroke-width="1"/>
+        <text x="294" y="276" text-anchor="middle" fill="#3ddbd9" font-size="12" font-weight="600">Label Studio x4</text>
+        <text x="294" y="294" text-anchor="middle" fill="#8b949e" font-size="10">ls-admin :18081</text>
+        <text x="294" y="308" text-anchor="middle" fill="#8b949e" font-size="10">ls-avocado :18082</text>
+        <text x="294" y="322" text-anchor="middle" fill="#8b949e" font-size="10">ls-banana :18083</text>
+        <text x="294" y="336" text-anchor="middle" fill="#8b949e" font-size="10">ls-cheesecake :18084</text>
+
+        <!-- PostgreSQL -->
+        <rect x="392" y="250" width="168" height="62" rx="6" fill="#1c2333" stroke="#bc8cff" stroke-width="1"/>
+        <text x="476" y="276" text-anchor="middle" fill="#bc8cff" font-size="12" font-weight="600">PostgreSQL 15</text>
+        <text x="476" y="294" text-anchor="middle" fill="#8b949e" font-size="10">4 LS databases :5432</text>
+
+        <!-- SQLite -->
+        <rect x="392" y="326" width="168" height="34" rx="6" fill="#1c2333" stroke="#d29922" stroke-width="1"/>
+        <text x="476" y="348" text-anchor="middle" fill="#d29922" font-size="11" font-weight="600">SQLite (users, toggles)</text>
+
+        <!-- Pipeline Engine -->
+        <rect x="210" y="380" width="350" height="70" rx="6" fill="#1c2333" stroke="#f0883e" stroke-width="1"/>
+        <text x="385" y="406" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">Detection Pipeline Engine</text>
+        <text x="385" y="422" text-anchor="middle" fill="#8b949e" font-size="10">Ingest &rarr; Tile &rarr; Detect &rarr; Ensemble &rarr; Fusion &rarr; Output</text>
+        <text x="385" y="438" text-anchor="middle" fill="#6e7681" font-size="10">ThreadPoolExecutor (4 workers) | Local GPU or SageMaker</text>
+
+        <!-- Master / SageMaker Orchestrator -->
+        <rect x="210" y="468" width="350" height="56" rx="6" fill="#1c2333" stroke="#f0883e" stroke-width="1"/>
+        <text x="385" y="490" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">SageMaker Orchestrator</text>
+        <text x="385" y="508" text-anchor="middle" fill="#8b949e" font-size="10">Launcher &bull; Aggregator &bull; Fleet Distribution</text>
+
+        <!-- Admin CLI -->
+        <rect x="210" y="542" width="168" height="50" rx="6" fill="#1c2333" stroke="#d29922" stroke-width="1"/>
+        <text x="294" y="564" text-anchor="middle" fill="#d29922" font-size="11" font-weight="600">Admin CLI (TUI)</text>
+        <text x="294" y="578" text-anchor="middle" fill="#6e7681" font-size="10">Rich interactive menu</text>
+
+        <!-- Classifier Bootstrap -->
+        <rect x="392" y="542" width="168" height="50" rx="6" fill="#1c2333" stroke="#3fb950" stroke-width="1"/>
+        <text x="476" y="564" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Classifier Bootstrap</text>
+        <text x="476" y="578" text-anchor="middle" fill="#6e7681" font-size="10">Scan, Assemble, Train</text>
+
+        <!-- Jobs Dir -->
+        <rect x="210" y="610" width="168" height="44" rx="6" fill="#1c2333" stroke="#6e7681" stroke-width="1"/>
+        <text x="294" y="630" text-anchor="middle" fill="#8b949e" font-size="11">hded_jobs/ (results)</text>
+        <text x="294" y="644" text-anchor="middle" fill="#6e7681" font-size="10">PNG, JSON, CSV, LS JSON</text>
+
+        <!-- Models Dir -->
+        <rect x="392" y="610" width="168" height="44" rx="6" fill="#1c2333" stroke="#6e7681" stroke-width="1"/>
+        <text x="476" y="630" text-anchor="middle" fill="#8b949e" font-size="11">models/ (YOLO .pt)</text>
+        <text x="476" y="644" text-anchor="middle" fill="#6e7681" font-size="10">precise, medium, primitive</text>
+
+        <!-- AWS Cloud Box -->
+        <rect x="630" y="30" width="450" height="660" rx="10" fill="none" stroke="#f0883e" stroke-width="1.5" stroke-dasharray="6,3"/>
+        <text x="650" y="56" fill="#f0883e" font-size="12" font-weight="600">AWS Cloud</text>
+
+        <!-- S3 Buckets -->
+        <rect x="660" y="80" width="190" height="140" rx="6" fill="#1c2333" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="755" y="106" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="600">S3 Buckets</text>
+        <rect x="676" y="116" width="158" height="26" rx="4" fill="#1a4a25" stroke="none"/>
+        <text x="755" y="134" text-anchor="middle" fill="#3fb950" font-size="11">{prefix}-raw (30d TTL)</text>
+        <rect x="676" y="148" width="158" height="26" rx="4" fill="#1a4a25" stroke="none"/>
+        <text x="755" y="166" text-anchor="middle" fill="#3fb950" font-size="11">{prefix}-models (persist)</text>
+        <rect x="676" y="180" width="158" height="26" rx="4" fill="#1a4a25" stroke="none"/>
+        <text x="755" y="198" text-anchor="middle" fill="#3fb950" font-size="11">{prefix}-results (90d TTL)</text>
+
+        <!-- ECR -->
+        <rect x="870" y="80" width="190" height="66" rx="6" fill="#1c2333" stroke="#f0883e" stroke-width="1"/>
+        <text x="965" y="106" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">ECR</text>
+        <text x="965" y="124" text-anchor="middle" fill="#8b949e" font-size="10">hded-pipeline:latest</text>
+        <text x="965" y="138" text-anchor="middle" fill="#6e7681" font-size="10">SageMaker container image</text>
+
+        <!-- SageMaker Processing -->
+        <rect x="660" y="250" width="400" height="260" rx="8" fill="#1c2333" stroke="#bc8cff" stroke-width="1.5"/>
+        <text x="860" y="278" text-anchor="middle" fill="#bc8cff" font-size="14" font-weight="600">SageMaker Processing (Multi-Fleet GPU)</text>
+
+        <!-- Fleet boxes -->
+        <rect x="680" y="295" width="170" height="56" rx="4" fill="#2d1f4e" stroke="#bc8cff" stroke-width="0.5"/>
+        <text x="765" y="315" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">g5.12xlarge Fleet</text>
+        <text x="765" y="332" text-anchor="middle" fill="#8b949e" font-size="10">5 inst &times; 4 A10G = 20 GPU</text>
+        <text x="765" y="345" text-anchor="middle" fill="#6e7681" font-size="9">2.0x T4 speed</text>
+
+        <rect x="680" y="360" width="170" height="56" rx="4" fill="#2d1f4e" stroke="#bc8cff" stroke-width="0.5"/>
+        <text x="765" y="380" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">g5.48xlarge Fleet</text>
+        <text x="765" y="397" text-anchor="middle" fill="#8b949e" font-size="10">5 inst &times; 8 A10G = 40 GPU</text>
+        <text x="765" y="410" text-anchor="middle" fill="#6e7681" font-size="9">2.0x T4 speed</text>
+
+        <rect x="870" y="295" width="170" height="56" rx="4" fill="#2d1f4e" stroke="#bc8cff" stroke-width="0.5"/>
+        <text x="955" y="315" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">g4dn.xlarge Fleet</text>
+        <text x="955" y="332" text-anchor="middle" fill="#8b949e" font-size="10">1-40 inst &times; 1 T4 each</text>
+        <text x="955" y="345" text-anchor="middle" fill="#6e7681" font-size="9">Dynamic scaling, cheapest</text>
+
+        <rect x="870" y="360" width="170" height="56" rx="4" fill="#2d1f4e" stroke="#bc8cff" stroke-width="0.5"/>
+        <text x="955" y="380" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">g5.24xlarge Fleet</text>
+        <text x="955" y="397" text-anchor="middle" fill="#8b949e" font-size="10">7 inst &times; 4 A10G = 28 GPU</text>
+        <text x="955" y="410" text-anchor="middle" fill="#6e7681" font-size="9">2.0x T4 speed</text>
+
+        <!-- Tier labels -->
+        <rect x="680" y="430" width="360" height="60" rx="4" fill="none" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="690" y="448" fill="#d29922" font-size="10" font-weight="600">GPU Tiers:</text>
+        <text x="690" y="464" fill="#8b949e" font-size="10">scroogemcduck: 40x g4dn (budget)</text>
+        <text x="690" y="478" fill="#8b949e" font-size="10">evensteven: g5.12xl + g4dn (balanced) &bull; idgaf: all fleets (fastest)</text>
+
+        <!-- IAM Roles -->
+        <rect x="660" y="540" width="190" height="80" rx="6" fill="#1c2333" stroke="#d29922" stroke-width="1"/>
+        <text x="755" y="566" text-anchor="middle" fill="#d29922" font-size="12" font-weight="600">IAM Roles</text>
+        <text x="755" y="584" text-anchor="middle" fill="#8b949e" font-size="10">HdedSageMakerRole</text>
+        <text x="755" y="598" text-anchor="middle" fill="#8b949e" font-size="10">HdedEC2Role + Profile</text>
+
+        <!-- CloudWatch -->
+        <rect x="870" y="540" width="190" height="54" rx="6" fill="#1c2333" stroke="#6e7681" stroke-width="1"/>
+        <text x="965" y="566" text-anchor="middle" fill="#8b949e" font-size="12" font-weight="600">CloudWatch Logs</text>
+        <text x="965" y="582" text-anchor="middle" fill="#6e7681" font-size="10">SageMaker job monitoring</text>
+
+        <!-- ARROWS -->
+        <!-- User -> Caddy -->
+        <line x1="140" y1="320" x2="205" y2="112" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+        <text x="156" y="210" fill="#58a6ff" font-size="9" transform="rotate(-60,156,210)">HTTPS</text>
+
+        <!-- Caddy -> App -->
+        <line x1="385" y1="134" x2="385" y2="148" stroke="#3fb950" stroke-width="1" marker-end="url(#arrow-green)"/>
+
+        <!-- App -> Pipeline -->
+        <line x1="385" y1="232" x2="385" y2="376" stroke="#58a6ff" stroke-width="1" marker-end="url(#arrow-blue)"/>
+
+        <!-- App -> LS -->
+        <line x1="294" y1="232" x2="294" y2="246" stroke="#3ddbd9" stroke-width="1" marker-end="url(#arrow-aqua)"/>
+
+        <!-- LS -> Postgres -->
+        <line x1="378" y1="290" x2="388" y2="270" stroke="#bc8cff" stroke-width="1" marker-end="url(#arrow-purple)"/>
+
+        <!-- Pipeline -> SageMaker Orchestrator -->
+        <line x1="385" y1="450" x2="385" y2="464" stroke="#f0883e" stroke-width="1" marker-end="url(#arrow-orange)"/>
+
+        <!-- Orchestrator -> S3 -->
+        <line x1="560" y1="490" x2="656" y2="170" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arrow-green)" stroke-dasharray="4,3"/>
+        <text x="590" y="335" fill="#3fb950" font-size="9" transform="rotate(-65,590,335)">Upload sheets</text>
+
+        <!-- Orchestrator -> SageMaker -->
+        <line x1="560" y1="505" x2="656" y2="380" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#arrow-purple)" stroke-dasharray="4,3"/>
+        <text x="600" y="455" fill="#bc8cff" font-size="9" transform="rotate(-40,600,455)">Launch jobs</text>
+
+        <!-- SageMaker -> S3 results -->
+        <line x1="720" y1="250" x2="720" y2="224" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arrow-green)" stroke-dasharray="4,3"/>
+        <text x="680" y="240" fill="#3fb950" font-size="9">Results</text>
+
+        <!-- S3 -> SageMaker (models) -->
+        <line x1="790" y1="220" x2="830" y2="295" stroke="#f0883e" stroke-width="1" marker-end="url(#arrow-orange)" stroke-dasharray="4,3"/>
+        <text x="825" y="258" fill="#f0883e" font-size="9">Models</text>
+
+        <!-- ECR -> SageMaker -->
+        <line x1="965" y1="146" x2="965" y2="250" stroke="#f0883e" stroke-width="1" marker-end="url(#arrow-orange)" stroke-dasharray="4,3"/>
+        <text x="975" y="200" fill="#f0883e" font-size="9">Image</text>
+
+        <!-- SageMaker -> CloudWatch -->
+        <line x1="965" y1="510" x2="965" y2="536" stroke="#6e7681" stroke-width="1" marker-end="url(#arrow-blue)" stroke-dasharray="3,3"/>
+
+      </svg>
+      <div class="diagram-caption">Figure 1: High-level HDED system architecture &mdash; EC2 control plane with Docker stack + AWS SageMaker GPU compute</div>
+    </div>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4 style="color:var(--blue)">Control Plane (EC2)</h4>
+        <p>A single EC2 instance (t3.medium or larger) runs the FastAPI web application, 4 Label Studio containers, PostgreSQL, and Caddy reverse proxy. It handles uploads, rasterization, result aggregation, and serves the UI. For local-only mode, it also runs the detection pipeline directly.</p>
+      </div>
+      <div class="card">
+        <h4 style="color:var(--purple)">GPU Compute (SageMaker)</h4>
+        <p>SageMaker Processing jobs distribute tile-level YOLO inference across multi-fleet GPU instances. Pages are sharded proportional to GPU power. Results are written to S3 and aggregated back on the control plane. Optional &mdash; the system works with local GPU or even CPU.</p>
+      </div>
+      <div class="card">
+        <h4 style="color:var(--green)">Storage (S3)</h4>
+        <p>Three S3 buckets with lifecycle policies: <code>raw</code> (30-day expiry) for uploaded images and tiles, <code>models</code> (persistent) for YOLO weights and config, <code>results</code> (90-day expiry) for per-sheet detections and annotated outputs.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- Detection Pipeline -->
+  <section id="pipeline">
+    <h2><span class="num">2.</span> Detection Pipeline</h2>
+    <p class="section-desc">
+      The core of HDED is a 6-stage detection pipeline defined in <code>pipeline/hded/orchestrator.py</code>. It processes a single blueprint sheet end-to-end, transforming a raw image into a set of deduplicated, confidence-scored detections with full provenance tracking.
+    </p>
+
+    <!-- Pipeline Flow Diagram -->
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 1000 1480" width="100%" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="p-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#58a6ff"/>
+          </marker>
+          <marker id="p-arrow-aqua" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#3ddbd9"/>
+          </marker>
+          <marker id="p-arrow-orange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#f0883e"/>
+          </marker>
+          <marker id="p-arrow-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#bc8cff"/>
+          </marker>
+          <marker id="p-arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#3fb950"/>
+          </marker>
+          <marker id="p-arrow-dim" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#6e7681"/>
+          </marker>
+        </defs>
+
+        <rect width="1000" height="1480" fill="#0d1117" rx="8"/>
+
+        <!-- Title -->
+        <text x="500" y="35" text-anchor="middle" fill="#e6edf3" font-size="16" font-weight="700">Detection Pipeline Flow (per sheet)</text>
+        <text x="500" y="55" text-anchor="middle" fill="#6e7681" font-size="11">pipeline/hded/orchestrator.py &rarr; process_sheet()</text>
+
+        <!-- Input -->
+        <rect x="350" y="75" width="300" height="50" rx="8" fill="#1c2333" stroke="#6e7681" stroke-width="1.5"/>
+        <text x="500" y="100" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="600">Input: Raw Image (PDF page / PNG)</text>
+        <text x="500" y="116" text-anchor="middle" fill="#6e7681" font-size="10">Rasterized at 300 DPI via PyMuPDF</text>
+
+        <line x1="500" y1="125" x2="500" y2="150" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#p-arrow)"/>
+
+        <!-- Stage 1: Ingest -->
+        <rect x="200" y="150" width="600" height="80" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
+        <rect x="200" y="150" width="600" height="28" rx="8" fill="#1f3a5f"/>
+        <rect x="200" y="166" width="600" height="12" fill="#1f3a5f"/>
+        <text x="220" y="170" fill="#58a6ff" font-size="13" font-weight="700">STAGE 1: INGEST</text>
+        <text x="620" y="170" fill="#6e7681" font-size="10">stages/ingest.py &rarr; validate_sheet()</text>
+        <text x="220" y="198" fill="#8b949e" font-size="11">&bull; Validate dimensions (min 500px per axis)</text>
+        <text x="220" y="215" fill="#8b949e" font-size="11">&bull; Convert grayscale/RGBA &rarr; 3-channel BGR &bull; Assign unique sheet_id &bull; Output: SheetMeta</text>
+
+        <line x1="500" y1="230" x2="500" y2="260" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#p-arrow)"/>
+
+        <!-- Stage 2: Tile -->
+        <rect x="200" y="260" width="600" height="100" rx="8" fill="#161b22" stroke="#3ddbd9" stroke-width="2"/>
+        <rect x="200" y="260" width="600" height="28" rx="8" fill="#0a3d3c"/>
+        <rect x="200" y="276" width="600" height="12" fill="#0a3d3c"/>
+        <text x="220" y="280" fill="#3ddbd9" font-size="13" font-weight="700">STAGE 2: TILE</text>
+        <text x="620" y="280" fill="#6e7681" font-size="10">stages/tile.py &rarr; tile_sheet()</text>
+        <text x="220" y="308" fill="#8b949e" font-size="11">&bull; Recursive 3&times;3 grid at 4 zoom levels (configurable)</text>
+        <text x="220" y="325" fill="#8b949e" font-size="11">&bull; L0: 1 tile (full) &rarr; L1: 9 &rarr; L2: 81 &rarr; L3: 729 = 820 total tiles</text>
+        <text x="220" y="342" fill="#8b949e" font-size="11">&bull; Each tile: raw numpy crop + x/y origin offsets + tile_id (e.g. "L2_R5_C3")</text>
+
+        <!-- Side note: Tile math -->
+        <rect x="820" y="270" width="170" height="76" rx="6" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="830" y="290" fill="#3ddbd9" font-size="10" font-weight="600">Tile Math</text>
+        <text x="830" y="306" fill="#6e7681" font-size="10">Level k = 3^k tiles</text>
+        <text x="830" y="320" fill="#6e7681" font-size="10">Total = &sum;3^k (k=0..3)</text>
+        <text x="830" y="334" fill="#6e7681" font-size="10">= 1+9+81+729 = 820</text>
+
+        <line x1="500" y1="360" x2="500" y2="390" stroke="#3ddbd9" stroke-width="1.5" marker-end="url(#p-arrow-aqua)"/>
+
+        <!-- Stage 3: Detect -->
+        <rect x="200" y="390" width="600" height="120" rx="8" fill="#161b22" stroke="#f0883e" stroke-width="2"/>
+        <rect x="200" y="390" width="600" height="28" rx="8" fill="#4a2a0a"/>
+        <rect x="200" y="406" width="600" height="12" fill="#4a2a0a"/>
+        <text x="220" y="410" fill="#f0883e" font-size="13" font-weight="700">STAGE 3: DETECT</text>
+        <text x="620" y="410" fill="#6e7681" font-size="10">stages/detect.py &rarr; detect_all_models()</text>
+        <text x="220" y="440" fill="#8b949e" font-size="11">&bull; Batch-by-model strategy: load model, run all applicable tiles, unload</text>
+        <text x="220" y="457" fill="#8b949e" font-size="11">&bull; 3 YOLO detectors: precise (levels 1,2,3), medium (0,1,2), primitive (2,3)</text>
+        <text x="220" y="474" fill="#8b949e" font-size="11">&bull; Batch size 16 tiles per predict() call &bull; No pre-resize (Ultralytics letterboxes)</text>
+        <text x="220" y="491" fill="#8b949e" font-size="11">&bull; Output: ~10K RawDetections (tile-local xyxy + conf + class_name + tile_id)</text>
+
+        <!-- Model boxes -->
+        <rect x="820" y="395" width="170" height="106" rx="6" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="830" y="415" fill="#f0883e" font-size="10" font-weight="600">3 Detector Models</text>
+        <rect x="830" y="425" width="150" height="20" rx="3" fill="#4a2a0a"/>
+        <text x="905" y="440" text-anchor="middle" fill="#f0883e" font-size="10">yolo_precise.pt</text>
+        <rect x="830" y="450" width="150" height="20" rx="3" fill="#4a2a0a"/>
+        <text x="905" y="465" text-anchor="middle" fill="#f0883e" font-size="10">yolo_medium.pt</text>
+        <rect x="830" y="475" width="150" height="20" rx="3" fill="#4a2a0a"/>
+        <text x="905" y="490" text-anchor="middle" fill="#f0883e" font-size="10">yolo_primitive.pt</text>
+
+        <line x1="500" y1="510" x2="500" y2="540" stroke="#f0883e" stroke-width="1.5" marker-end="url(#p-arrow-orange)"/>
+
+        <!-- Stage 3b/3c: Classifiers (optional) -->
+        <rect x="200" y="540" width="600" height="100" rx="8" fill="#161b22" stroke="#6e7681" stroke-width="1.5" stroke-dasharray="5,3"/>
+        <rect x="200" y="540" width="600" height="28" rx="8" fill="#1c2333"/>
+        <rect x="200" y="556" width="600" height="12" fill="#1c2333"/>
+        <text x="220" y="560" fill="#8b949e" font-size="13" font-weight="700">STAGE 3b/3c: CLASSIFY (Optional)</text>
+        <text x="680" y="560" fill="#6e7681" font-size="10">classify_tiles + classify_outputs</text>
+        <text x="220" y="588" fill="#8b949e" font-size="11">&bull; 3b: Tile classifiers &mdash; binary has_target/no_target per tile &rarr; s_tile_cls signal</text>
+        <text x="220" y="605" fill="#8b949e" font-size="11">&bull; 3c: Output classifiers &mdash; per-detection crop classification &rarr; s_cls signal</text>
+        <text x="220" y="622" fill="#8b949e" font-size="11">&bull; Object filter: net_rejection = (1 - cls_prob) &times; (1 - det_conf) &gt; 0.65 &rarr; reject</text>
+
+        <!-- Side note: optional -->
+        <rect x="820" y="560" width="170" height="36" rx="6" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="905" y="583" text-anchor="middle" fill="#6e7681" font-size="10">Trained via bootstrap loop</text>
+
+        <line x1="500" y1="640" x2="500" y2="670" stroke="#6e7681" stroke-width="1.5" marker-end="url(#p-arrow-dim)"/>
+
+        <!-- Remap (between classify and ensemble) -->
+        <rect x="300" y="670" width="400" height="55" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
+        <text x="500" y="694" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="600">REMAP: Tile-Local &rarr; Source-Image Coords</text>
+        <text x="500" y="712" text-anchor="middle" fill="#6e7681" font-size="10">x_src = x_tile + tile.x_origin &bull; Normalize to [0,1] for WBF</text>
+
+        <line x1="500" y1="725" x2="500" y2="755" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#p-arrow)"/>
+
+        <!-- Stage 4: Ensemble -->
+        <rect x="200" y="755" width="600" height="160" rx="8" fill="#161b22" stroke="#bc8cff" stroke-width="2"/>
+        <rect x="200" y="755" width="600" height="28" rx="8" fill="#2d1f4e"/>
+        <rect x="200" y="771" width="600" height="12" fill="#2d1f4e"/>
+        <text x="220" y="775" fill="#bc8cff" font-size="13" font-weight="700">STAGE 4: ENSEMBLE SCORING</text>
+        <text x="620" y="775" fill="#6e7681" font-size="10">stages/ensemble.py &rarr; score_all()</text>
+
+        <!-- S_det -->
+        <rect x="220" y="800" width="270" height="95" rx="6" fill="#0d1117" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="235" y="820" fill="#bc8cff" font-size="11" font-weight="600">S_det (Cross-Model Agreement)</text>
+        <text x="235" y="838" fill="#8b949e" font-size="10">Noisy-OR across overlapping detections</text>
+        <text x="235" y="854" fill="#8b949e" font-size="10">from different models (IoU &gt; 0.20)</text>
+        <text x="235" y="874" fill="#bc8cff" font-size="11" font-family="monospace">S_det = 1 - &prod;(1 - conf_i)</text>
+
+        <!-- S_scale -->
+        <rect x="510" y="800" width="270" height="95" rx="6" fill="#0d1117" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="525" y="820" fill="#bc8cff" font-size="11" font-weight="600">S_scale (Cross-Zoom Consistency)</text>
+        <text x="525" y="838" fill="#8b949e" font-size="10">Count how many tile levels [0-3]</text>
+        <text x="525" y="854" fill="#8b949e" font-size="10">have overlapping detections</text>
+        <text x="525" y="874" fill="#bc8cff" font-size="11" font-family="monospace">S_scale = k_hits / levels</text>
+
+        <!-- Composite -->
+        <text x="220" y="905" fill="#e6edf3" font-size="11" font-weight="600">Composite: C = 0.60 &times; S_det + 0.40 &times; S_scale</text>
+
+        <!-- Side: routing -->
+        <rect x="820" y="775" width="170" height="90" rx="6" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="830" y="795" fill="#bc8cff" font-size="10" font-weight="600">Confidence Routing</text>
+        <rect x="835" y="805" width="12" height="12" rx="2" fill="#3fb950"/>
+        <text x="855" y="815" fill="#8b949e" font-size="10">C &ge; 0.85 &rarr; HIGH</text>
+        <rect x="835" y="823" width="12" height="12" rx="2" fill="#d29922"/>
+        <text x="855" y="833" fill="#8b949e" font-size="10">C &ge; 0.50 &rarr; MEDIUM</text>
+        <rect x="835" y="841" width="12" height="12" rx="2" fill="#f85149"/>
+        <text x="855" y="851" fill="#8b949e" font-size="10">C &lt; 0.50 &rarr; LOW (drop)</text>
+
+        <line x1="500" y1="915" x2="500" y2="945" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#p-arrow-purple)"/>
+
+        <!-- Stage 5: Fusion -->
+        <rect x="200" y="945" width="600" height="140" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="2"/>
+        <rect x="200" y="945" width="600" height="28" rx="8" fill="#1a4a25"/>
+        <rect x="200" y="961" width="600" height="12" fill="#1a4a25"/>
+        <text x="220" y="965" fill="#3fb950" font-size="13" font-weight="700">STAGE 5: FUSION</text>
+        <text x="620" y="965" fill="#6e7681" font-size="10">stages/fusion.py &rarr; fuse_all()</text>
+
+        <!-- Sub-stages -->
+        <rect x="220" y="985" width="180" height="44" rx="4" fill="#0d1117" stroke="#3fb950" stroke-width="0.5"/>
+        <text x="310" y="1005" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">5b: WBF Merge</text>
+        <text x="310" y="1020" text-anchor="middle" fill="#6e7681" font-size="9">IoU threshold 0.30</text>
+
+        <line x1="400" y1="1007" x2="420" y2="1007" stroke="#3fb950" stroke-width="1" marker-end="url(#p-arrow-green)"/>
+
+        <rect x="420" y="985" width="180" height="44" rx="4" fill="#0d1117" stroke="#3fb950" stroke-width="0.5"/>
+        <text x="510" y="1005" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">5c: Echo Dedup</text>
+        <text x="510" y="1020" text-anchor="middle" fill="#6e7681" font-size="9">50px center distance</text>
+
+        <line x1="600" y1="1007" x2="620" y2="1007" stroke="#3fb950" stroke-width="1" marker-end="url(#p-arrow-green)"/>
+
+        <rect x="620" y="985" width="160" height="44" rx="4" fill="#0d1117" stroke="#3fb950" stroke-width="0.5"/>
+        <text x="700" y="1005" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">5d: Threshold</text>
+        <text x="700" y="1020" text-anchor="middle" fill="#6e7681" font-size="9">min conf 0.40</text>
+
+        <text x="220" y="1052" fill="#8b949e" font-size="11">&bull; Weighted Box Fusion averages overlapping boxes (better coords than NMS)</text>
+        <text x="220" y="1069" fill="#8b949e" font-size="11">&bull; Level weights: [0.5, 0.8, 1.0, 1.2] &mdash; deeper tiles weighted higher</text>
+
+        <line x1="500" y1="1085" x2="500" y2="1115" stroke="#3fb950" stroke-width="1.5" marker-end="url(#p-arrow-green)"/>
+
+        <!-- Stage 6: Output -->
+        <rect x="200" y="1115" width="600" height="100" rx="8" fill="#161b22" stroke="#d29922" stroke-width="2"/>
+        <rect x="200" y="1115" width="600" height="28" rx="8" fill="rgba(210,153,34,0.15)"/>
+        <rect x="200" y="1131" width="600" height="12" fill="rgba(210,153,34,0.15)"/>
+        <text x="220" y="1135" fill="#d29922" font-size="13" font-weight="700">STAGE 6: OUTPUT</text>
+        <text x="620" y="1135" fill="#6e7681" font-size="10">stages/output.py</text>
+        <text x="220" y="1160" fill="#8b949e" font-size="11">&bull; Draw bounding boxes + labels on annotated PNG copy</text>
+        <text x="220" y="1177" fill="#8b949e" font-size="11">&bull; Generate JSON (per-detection data) + CSV (tabular) + LS JSON (pre-annotations)</text>
+        <text x="220" y="1194" fill="#8b949e" font-size="11">&bull; Summary: total detections, HIGH/MEDIUM/LOW counts, stage timings</text>
+
+        <!-- Output boxes -->
+        <line x1="500" y1="1215" x2="500" y2="1240" stroke="#d29922" stroke-width="1.5" marker-end="url(#p-arrow-orange)"/>
+
+        <rect x="140" y="1248" width="130" height="36" rx="6" fill="#1c2333" stroke="#3fb950" stroke-width="1"/>
+        <text x="205" y="1271" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Annotated PNG</text>
+
+        <rect x="290" y="1248" width="130" height="36" rx="6" fill="#1c2333" stroke="#58a6ff" stroke-width="1"/>
+        <text x="355" y="1271" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">JSON Results</text>
+
+        <rect x="440" y="1248" width="130" height="36" rx="6" fill="#1c2333" stroke="#f0883e" stroke-width="1"/>
+        <text x="505" y="1271" text-anchor="middle" fill="#f0883e" font-size="11" font-weight="600">CSV Export</text>
+
+        <rect x="590" y="1248" width="150" height="36" rx="6" fill="#1c2333" stroke="#3ddbd9" stroke-width="1"/>
+        <text x="665" y="1271" text-anchor="middle" fill="#3ddbd9" font-size="11" font-weight="600">Label Studio JSON</text>
+
+        <line x1="500" y1="1240" x2="205" y2="1248" stroke="#d29922" stroke-width="1"/>
+        <line x1="500" y1="1240" x2="355" y2="1248" stroke="#d29922" stroke-width="1"/>
+        <line x1="500" y1="1240" x2="505" y2="1248" stroke="#d29922" stroke-width="1"/>
+        <line x1="500" y1="1240" x2="665" y2="1248" stroke="#d29922" stroke-width="1"/>
+
+        <!-- Arrow to LS -->
+        <rect x="590" y="1310" width="150" height="36" rx="6" fill="#1c2333" stroke="#3ddbd9" stroke-width="1.5"/>
+        <text x="665" y="1333" text-anchor="middle" fill="#3ddbd9" font-size="11" font-weight="600">Label Studio UI</text>
+        <line x1="665" y1="1284" x2="665" y2="1306" stroke="#3ddbd9" stroke-width="1.5" marker-end="url(#p-arrow-aqua)"/>
+
+        <!-- Active learning arrow back to top -->
+        <line x1="590" y1="1328" x2="100" y2="1328" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="5,3"/>
+        <line x1="100" y1="1328" x2="100" y2="415" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="5,3"/>
+        <line x1="100" y1="415" x2="196" y2="415" stroke="#3fb950" stroke-width="1.5" marker-end="url(#p-arrow-green)" stroke-dasharray="5,3"/>
+        <text x="60" y="870" fill="#3fb950" font-size="10" font-weight="600" transform="rotate(-90,60,870)">Active Learning: corrected labels retrain models</text>
+
+        <!-- Detection count annotations -->
+        <rect x="820" y="650" width="170" height="72" rx="6" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="830" y="670" fill="#e6edf3" font-size="10" font-weight="600">Typical Detection Flow</text>
+        <text x="830" y="686" fill="#6e7681" font-size="10">~10,000 raw detections</text>
+        <text x="830" y="700" fill="#6e7681" font-size="10">&rarr; ~500 after ensemble</text>
+        <text x="830" y="714" fill="#6e7681" font-size="10">&rarr; ~20-200 after fusion</text>
+      </svg>
+      <div class="diagram-caption">Figure 2: Detailed 6-stage detection pipeline flow &mdash; from raw image to deduplicated detections</div>
+    </div>
+
+    <!-- Stage Details -->
+    <h3 id="stage-ingest"><span class="stage-badge ingest">Stage 1</span> Ingest</h3>
+    <p>
+      The ingest stage (<code>pipeline/hded/stages/ingest.py</code>) validates the input image. Minimum dimensions are 500px on each axis.
+      Grayscale and RGBA images are converted to 3-channel BGR (OpenCV's native format). A unique <code>sheet_id</code> is assigned
+      and a <code>SheetMeta</code> dataclass is returned containing width, height, DPI, and source filename.
+    </p>
+    <p>
+      For PDF inputs, rasterization happens upstream in <code>pipeline/shared/pdf.py</code> using PyMuPDF (fitz) at 300 DPI.
+      Large PDFs are streamed page-by-page to avoid memory exhaustion. Page filters (Canny edge density &gt; 2% and PyMuPDF text coverage &lt; 50%)
+      skip pages that are blank or text-heavy (title pages, indices).
+    </p>
+
+    <h3 id="stage-tile"><span class="stage-badge tile">Stage 2</span> Tile</h3>
+    <p>
+      The tiling stage (<code>pipeline/hded/stages/tile.py</code> + <code>pipeline/shared/tiling.py</code>) recursively divides the image into a 3&times;3 grid
+      at each zoom level. With the default 4 levels, this produces 1 + 9 + 81 + 729 = <strong>820 tiles</strong> per sheet.
+    </p>
+    <div class="info-box note">
+      <strong>Why multi-level tiling?</strong> YOLO models are trained at fixed input resolutions (e.g., 640&times;640). A door on a full blueprint
+      (6000&times;8000px) occupies very few pixels. By tiling at multiple zoom levels, the same door appears at different scales, increasing
+      the chance that at least one model detects it at its optimal resolution. The ensemble then rewards detections that appear consistently
+      across zoom levels.
+    </div>
+    <p>
+      Each <code>Tile</code> object carries the raw numpy crop (H, W, 3), its x/y origin offsets relative to the source image,
+      and a tile_id like <code>L2_R5_C3</code> (level 2, row 5, column 3). <strong>Critically, tiles are not resized before inference</strong> &mdash;
+      Ultralytics handles letterbox resizing internally.
+    </p>
+
+    <h3 id="stage-detect"><span class="stage-badge detect">Stage 3</span> Detect</h3>
+    <p>
+      Detection (<code>pipeline/hded/stages/detect.py</code>) uses a <strong>batch-by-model strategy</strong>: load one YOLO model into GPU memory,
+      run all its applicable tiles through it in batches of 16, then unload and move to the next model. This is optimal because model
+      loading (~2s) is the bottleneck, not inference (~5ms/tile).
+    </p>
+
+    <table>
+      <tr><th>Model</th><th>Applicable Levels</th><th>Tiles Run</th><th>Specialization</th></tr>
+      <tr><td><code>yolo_precise</code></td><td>1, 2, 3</td><td>819</td><td>High precision, trained on clean crops</td></tr>
+      <tr><td><code>yolo_medium</code></td><td>0, 1, 2</td><td>91</td><td>Medium zoom, broader context</td></tr>
+      <tr><td><code>yolo_primitive</code></td><td>2, 3</td><td>810</td><td>Aggressive recall, more false positives</td></tr>
+    </table>
+
+    <p>
+      Each model produces <code>RawDetection</code> objects containing tile-local xyxy coordinates, confidence score, predicted class name,
+      and the source tile_id. Across all models and tiles, a single sheet typically generates <strong>~10,000 raw detections</strong>.
+    </p>
+
+    <h3 id="stage-classify"><span class="stage-badge detect">Stage 3b/3c</span> Classify (Optional)</h3>
+    <p>
+      Two optional classifier stages can run after detection to add scoring signals:
+    </p>
+    <ul>
+      <li><strong>Stage 3b &mdash; Tile Classifiers</strong> (<code>stages/classify_tiles.py</code>): Binary classification of entire tiles (has_target vs. no_target). Produces <code>s_tile_cls</code> signal for ensemble.</li>
+      <li><strong>Stage 3c &mdash; Output Classifiers</strong> (<code>stages/classify_outputs.py</code>): Per-detection crop classification (e.g., is_door vs. not_door). Produces <code>s_cls</code> signal for ensemble.</li>
+    </ul>
+    <p>
+      An <strong>object filter</strong> (<code>stages/object_filter.py</code>) runs after classification, rejecting detections where
+      <code>net_rejection = (1 - cls_door_prob) &times; (1 - detector_conf) &gt; 0.65</code>. These classifiers are trained via the bootstrap loop
+      and improve over time as more human corrections accumulate.
+    </p>
+
+    <h3 id="stage-ensemble"><span class="stage-badge ensemble">Stage 4</span> Ensemble Scoring</h3>
+    <p>
+      Ensemble scoring (<code>pipeline/hded/stages/ensemble.py</code>) computes a composite confidence for each detection
+      using two independent signals:
+    </p>
+
+    <div class="info-box formula">
+      <strong>S_det (Cross-Model Agreement) &mdash; Noisy-OR:</strong><br>
+      For each detection, find overlapping boxes from OTHER models (IoU &gt; 0.20).<br>
+      <span class="math">S_det = 1 - &prod;(1 - conf_i)</span><br>
+      <span style="color:var(--text-secondary)">Probability that at least one detector is correct. Example: Model A (0.80) + Model B (0.70) &rarr; S_det = 1 - (0.2 &times; 0.3) = 0.94</span>
+    </div>
+
+    <div class="info-box formula">
+      <strong>S_scale (Cross-Zoom Consistency):</strong><br>
+      Count how many tile levels [0-3] have overlapping detections at this location.<br>
+      <span class="math">S_scale = k_levels_with_hits / total_levels</span><br>
+      <span style="color:var(--text-secondary)">Example: Door found at L1 and L2 only &rarr; S_scale = 2/4 = 0.50</span>
+    </div>
+
+    <div class="info-box formula">
+      <strong>Composite Confidence:</strong><br>
+      <span class="math">C = w_det &times; S_det + w_scale &times; S_scale</span><br>
+      <span style="color:var(--text-secondary)">Default weights: w_det = 0.60, w_scale = 0.40. Optional: + w_cls &times; S_cls + w_tile_cls &times; S_tile_cls</span>
+    </div>
+
+    <p>
+      Detections are routed based on composite score: <strong>HIGH</strong> (C &ge; 0.85, auto-confirmed),
+      <strong>MEDIUM</strong> (C &ge; 0.50, flagged for human review), or <strong>LOW</strong> (C &lt; 0.50, discarded before fusion).
+    </p>
+
+    <h3 id="stage-fusion"><span class="stage-badge fusion">Stage 5</span> Fusion</h3>
+    <p>
+      Fusion (<code>pipeline/hded/stages/fusion.py</code>) merges overlapping detections into final bounding boxes through three substeps:
+    </p>
+    <ol>
+      <li><strong>5b: Weighted Box Fusion (WBF)</strong> &mdash; Groups overlapping boxes by IoU threshold (0.30) and averages their coordinates, weighted by confidence. Unlike NMS which picks the best box, WBF produces more accurate coordinates by averaging. Each tile level is treated as a separate "model" for WBF, with level weights [0.5, 0.8, 1.0, 1.2].</li>
+      <li><strong>5c: Echo Dedup</strong> &mdash; WBF occasionally produces near-duplicates. This pass merges boxes within 50px center-to-center distance, keeping the higher-confidence box.</li>
+      <li><strong>5d: Threshold Filter</strong> &mdash; Removes fused boxes below the <code>final_confidence_threshold</code> (default 0.40).</li>
+    </ol>
+    <p>
+      The result is typically <strong>20&ndash;200 FinalDetections</strong> per sheet, each with source-image pixel coordinates,
+      fused confidence, class name, route label (HIGH/MEDIUM), and provenance (list of contributing tile_ids).
+    </p>
+
+    <h3 id="stage-output"><span class="stage-badge output">Stage 6</span> Output</h3>
+    <p>
+      The output stage generates four file formats from the final detections:
+    </p>
+    <ul>
+      <li><strong>Annotated PNG</strong> &mdash; Source image with bounding boxes and labels drawn using OpenCV</li>
+      <li><strong>JSON</strong> &mdash; Machine-readable per-detection data (coordinates, confidence, class, provenance)</li>
+      <li><strong>CSV</strong> &mdash; Tabular format for spreadsheet analysis</li>
+      <li><strong>Label Studio JSON</strong> &mdash; Pre-annotation format with percentage coordinates (0-100) for direct import into LS projects</li>
+    </ul>
+
+    <!-- Detection Type Hierarchy -->
+    <h3 id="detection-types">Detection Type Hierarchy</h3>
+    <p>Detections evolve through four distinct types as they flow through the pipeline (<code>pipeline/types.py</code>):</p>
+
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 900 200" width="100%" xmlns="http://www.w3.org/2000/svg">
+        <rect width="900" height="200" fill="#0d1117" rx="8"/>
+
+        <rect x="20" y="60" width="180" height="80" rx="6" fill="#161b22" stroke="#f0883e" stroke-width="1.5"/>
+        <text x="110" y="88" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">RawDetection</text>
+        <text x="110" y="106" text-anchor="middle" fill="#6e7681" font-size="10">tile-local xyxy</text>
+        <text x="110" y="120" text-anchor="middle" fill="#6e7681" font-size="10">conf, class, tile_id</text>
+
+        <line x1="200" y1="100" x2="230" y2="100" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#p-arrow)"/>
+        <text x="215" y="92" text-anchor="middle" fill="#58a6ff" font-size="9">remap</text>
+
+        <rect x="230" y="60" width="190" height="80" rx="6" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="325" y="88" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="600">RemappedDetection</text>
+        <text x="325" y="106" text-anchor="middle" fill="#6e7681" font-size="10">source-image xyxy</text>
+        <text x="325" y="120" text-anchor="middle" fill="#6e7681" font-size="10">+ [0,1] normalized</text>
+
+        <line x1="420" y1="100" x2="460" y2="100" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#p-arrow-purple)"/>
+        <text x="440" y="92" text-anchor="middle" fill="#bc8cff" font-size="9">score</text>
+
+        <rect x="460" y="60" width="190" height="80" rx="6" fill="#161b22" stroke="#bc8cff" stroke-width="1.5"/>
+        <text x="555" y="88" text-anchor="middle" fill="#bc8cff" font-size="12" font-weight="600">ScoredDetection</text>
+        <text x="555" y="106" text-anchor="middle" fill="#6e7681" font-size="10">+ s_det, s_scale</text>
+        <text x="555" y="120" text-anchor="middle" fill="#6e7681" font-size="10">composite_conf, route</text>
+
+        <line x1="650" y1="100" x2="690" y2="100" stroke="#3fb950" stroke-width="1.5" marker-end="url(#p-arrow-green)"/>
+        <text x="670" y="92" text-anchor="middle" fill="#3fb950" font-size="9">fuse</text>
+
+        <rect x="690" y="60" width="190" height="80" rx="6" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="785" y="88" text-anchor="middle" fill="#3fb950" font-size="12" font-weight="600">FinalDetection</text>
+        <text x="785" y="106" text-anchor="middle" fill="#6e7681" font-size="10">fused coords + conf</text>
+        <text x="785" y="120" text-anchor="middle" fill="#6e7681" font-size="10">class, route, provenance</text>
+      </svg>
+      <div class="diagram-caption">Figure 3: Detection type hierarchy &mdash; data evolves through four stages</div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- AWS Infrastructure -->
+  <section id="aws">
+    <h2><span class="num">3.</span> AWS Infrastructure</h2>
+    <p class="section-desc">
+      HDED's AWS infrastructure is provisioned via <code>setup_aws.sh</code> (idempotent bash script). No Terraform or CloudFormation &mdash;
+      the system is simple enough for a single-script setup. The infrastructure consists of S3 for data staging, ECR for container images,
+      SageMaker for GPU compute, IAM for access control, and CloudWatch for logging.
+    </p>
+
+    <div class="diagram-wrap" id="aws-diagram">
+      <svg viewBox="0 0 1000 580" width="100%" xmlns="http://www.w3.org/2000/svg">
+        <rect width="1000" height="580" fill="#0d1117" rx="8"/>
+        <text x="500" y="30" text-anchor="middle" fill="#e6edf3" font-size="15" font-weight="700">AWS Infrastructure &amp; Data Flow</text>
+
+        <!-- EC2 -->
+        <rect x="30" y="60" width="220" height="300" rx="8" fill="#161b22" stroke="#f0883e" stroke-width="1.5"/>
+        <text x="140" y="85" text-anchor="middle" fill="#f0883e" font-size="13" font-weight="600">EC2 (Control Plane)</text>
+        <text x="140" y="100" text-anchor="middle" fill="#6e7681" font-size="10">t3.medium | EBS-backed</text>
+
+        <rect x="45" y="115" width="190" height="30" rx="4" fill="#1c2333" stroke="#58a6ff" stroke-width="0.5"/>
+        <text x="140" y="135" text-anchor="middle" fill="#58a6ff" font-size="10">FastAPI App (:8000)</text>
+
+        <rect x="45" y="152" width="190" height="30" rx="4" fill="#1c2333" stroke="#3ddbd9" stroke-width="0.5"/>
+        <text x="140" y="172" text-anchor="middle" fill="#3ddbd9" font-size="10">Label Studio x4</text>
+
+        <rect x="45" y="189" width="190" height="30" rx="4" fill="#1c2333" stroke="#f0883e" stroke-width="0.5"/>
+        <text x="140" y="209" text-anchor="middle" fill="#f0883e" font-size="10">SageMaker Orchestrator</text>
+
+        <rect x="45" y="226" width="190" height="30" rx="4" fill="#1c2333" stroke="#3fb950" stroke-width="0.5"/>
+        <text x="140" y="246" text-anchor="middle" fill="#3fb950" font-size="10">Caddy (HTTPS :443)</text>
+
+        <rect x="45" y="263" width="90" height="30" rx="4" fill="#1c2333" stroke="#bc8cff" stroke-width="0.5"/>
+        <text x="90" y="283" text-anchor="middle" fill="#bc8cff" font-size="10">Postgres</text>
+
+        <rect x="145" y="263" width="90" height="30" rx="4" fill="#1c2333" stroke="#d29922" stroke-width="0.5"/>
+        <text x="190" y="283" text-anchor="middle" fill="#d29922" font-size="10">SQLite</text>
+
+        <rect x="45" y="310" width="190" height="30" rx="4" fill="#1c2333" stroke="#6e7681" stroke-width="0.5"/>
+        <text x="140" y="330" text-anchor="middle" fill="#8b949e" font-size="10">hded_jobs/ + models/</text>
+
+        <!-- S3 Raw -->
+        <rect x="320" y="60" width="180" height="130" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="410" y="85" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="600">S3: {prefix}-raw</text>
+        <text x="410" y="102" text-anchor="middle" fill="#6e7681" font-size="10">30-day lifecycle expiry</text>
+        <text x="330" y="125" fill="#8b949e" font-size="10">{job_id}/source.pdf</text>
+        <text x="330" y="140" fill="#8b949e" font-size="10">{job_id}/sheets/*.png</text>
+        <text x="330" y="155" fill="#8b949e" font-size="10">{job_id}/tiles/__L*_R*_C*.png</text>
+        <text x="330" y="170" fill="#8b949e" font-size="10">{job_id}/fleet_{tag}/*.png</text>
+
+        <!-- S3 Models -->
+        <rect x="320" y="210" width="180" height="100" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="410" y="235" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="600">S3: {prefix}-models</text>
+        <text x="410" y="252" text-anchor="middle" fill="#6e7681" font-size="10">Persistent (no expiry)</text>
+        <text x="330" y="275" fill="#8b949e" font-size="10">yolo_precise.pt</text>
+        <text x="330" y="290" fill="#8b949e" font-size="10">yolo_medium.pt, _primitive.pt</text>
+        <text x="330" y="305" fill="#8b949e" font-size="10">config.yaml</text>
+
+        <!-- S3 Results -->
+        <rect x="320" y="330" width="180" height="110" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="410" y="355" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="600">S3: {prefix}-results</text>
+        <text x="410" y="372" text-anchor="middle" fill="#6e7681" font-size="10">90-day lifecycle expiry</text>
+        <text x="330" y="395" fill="#8b949e" font-size="10">{job_id}/sheet_*_detections.json</text>
+        <text x="330" y="410" fill="#8b949e" font-size="10">{job_id}/sheet_*_annotated.png</text>
+        <text x="330" y="425" fill="#8b949e" font-size="10">{job_id}/sheet_*_labelstudio.json</text>
+
+        <!-- ECR -->
+        <rect x="320" y="460" width="180" height="60" rx="8" fill="#161b22" stroke="#f0883e" stroke-width="1"/>
+        <text x="410" y="488" text-anchor="middle" fill="#f0883e" font-size="12" font-weight="600">ECR Repository</text>
+        <text x="410" y="505" text-anchor="middle" fill="#6e7681" font-size="10">hded-pipeline:latest</text>
+
+        <!-- SageMaker Fleet -->
+        <rect x="570" y="60" width="410" height="330" rx="8" fill="#161b22" stroke="#bc8cff" stroke-width="1.5"/>
+        <text x="775" y="85" text-anchor="middle" fill="#bc8cff" font-size="14" font-weight="700">SageMaker Processing</text>
+        <text x="775" y="102" text-anchor="middle" fill="#6e7681" font-size="10">ShardedByS3Key distribution | Max 2 concurrent jobs</text>
+
+        <!-- Individual fleets -->
+        <rect x="590" y="115" width="180" height="60" rx="6" fill="#2d1f4e" stroke="#bc8cff" stroke-width="0.5"/>
+        <text x="680" y="140" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">g5.48xlarge</text>
+        <text x="680" y="156" text-anchor="middle" fill="#8b949e" font-size="10">5 inst | 8 A10G | 2.0x speed</text>
+
+        <rect x="790" y="115" width="180" height="60" rx="6" fill="#2d1f4e" stroke="#bc8cff" stroke-width="0.5"/>
+        <text x="880" y="140" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">g5.24xlarge</text>
+        <text x="880" y="156" text-anchor="middle" fill="#8b949e" font-size="10">7 inst | 4 A10G | 2.0x speed</text>
+
+        <rect x="590" y="185" width="180" height="60" rx="6" fill="#2d1f4e" stroke="#bc8cff" stroke-width="0.5"/>
+        <text x="680" y="210" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">g5.12xlarge</text>
+        <text x="680" y="226" text-anchor="middle" fill="#8b949e" font-size="10">5 inst | 4 A10G | 2.0x speed</text>
+
+        <rect x="790" y="185" width="180" height="60" rx="6" fill="#2d1f4e" stroke="#bc8cff" stroke-width="0.5"/>
+        <text x="880" y="210" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">g4dn.xlarge</text>
+        <text x="880" y="226" text-anchor="middle" fill="#8b949e" font-size="10">1-40 inst | 1 T4 | dynamic</text>
+
+        <!-- Entrypoint -->
+        <rect x="590" y="260" width="380" height="55" rx="6" fill="#0d1117" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="780" y="282" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">sagemaker_entrypoint.py</text>
+        <text x="780" y="298" text-anchor="middle" fill="#6e7681" font-size="10">/opt/ml/processing/input/images/ &rarr; YOLO detect &rarr; /opt/ml/processing/output/</text>
+
+        <!-- Tier table -->
+        <rect x="590" y="325" width="380" height="52" rx="6" fill="#0d1117" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="600" y="343" fill="#d29922" font-size="10" font-weight="600">Tiers</text>
+        <text x="660" y="343" fill="#8b949e" font-size="10">scroogemcduck: g4dn only</text>
+        <text x="600" y="360" fill="#8b949e" font-size="10">evensteven: g5.12xl + g4dn</text>
+        <text x="790" y="360" fill="#8b949e" font-size="10">idgaf: all 4 fleets</text>
+
+        <!-- IAM -->
+        <rect x="570" y="410" width="200" height="80" rx="8" fill="#161b22" stroke="#d29922" stroke-width="1"/>
+        <text x="670" y="435" text-anchor="middle" fill="#d29922" font-size="12" font-weight="600">IAM Roles</text>
+        <text x="670" y="456" text-anchor="middle" fill="#8b949e" font-size="10">HdedSageMakerRole</text>
+        <text x="670" y="471" text-anchor="middle" fill="#8b949e" font-size="10">HdedEC2Role + Profile</text>
+
+        <!-- CloudWatch -->
+        <rect x="790" y="410" width="190" height="60" rx="8" fill="#161b22" stroke="#6e7681" stroke-width="1"/>
+        <text x="885" y="435" text-anchor="middle" fill="#8b949e" font-size="12" font-weight="600">CloudWatch Logs</text>
+        <text x="885" y="455" text-anchor="middle" fill="#6e7681" font-size="10">Job stdout/stderr</text>
+
+        <!-- DATA FLOW ARROWS -->
+        <!-- EC2 -> S3 Raw (upload sheets) -->
+        <line x1="250" y1="130" x2="316" y2="100" stroke="#3fb950" stroke-width="1.5" marker-end="url(#p-arrow-green)"/>
+        <text x="266" y="108" fill="#3fb950" font-size="8">1. Upload</text>
+
+        <!-- S3 Raw -> SageMaker (input) -->
+        <line x1="500" y1="120" x2="566" y2="140" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#p-arrow-purple)"/>
+        <text x="526" y="120" fill="#bc8cff" font-size="8">2. Input</text>
+
+        <!-- S3 Models -> SageMaker (models) -->
+        <line x1="500" y1="260" x2="586" y2="230" stroke="#f0883e" stroke-width="1.5" marker-end="url(#p-arrow-orange)"/>
+        <text x="536" y="250" fill="#f0883e" font-size="8">Models</text>
+
+        <!-- SageMaker -> S3 Results -->
+        <line x1="620" y1="390" x2="500" y2="370" stroke="#3fb950" stroke-width="1.5" marker-end="url(#p-arrow-green)"/>
+        <text x="554" y="372" fill="#3fb950" font-size="8">3. Results</text>
+
+        <!-- S3 Results -> EC2 (aggregate) -->
+        <line x1="320" y1="400" x2="250" y2="330" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#p-arrow)"/>
+        <text x="274" y="370" fill="#58a6ff" font-size="8">4. Aggregate</text>
+
+        <!-- ECR -> SageMaker -->
+        <line x1="500" y1="490" x2="630" y2="380" stroke="#f0883e" stroke-width="1" marker-end="url(#p-arrow-orange)" stroke-dasharray="4,3"/>
+        <text x="556" y="438" fill="#f0883e" font-size="8" transform="rotate(-40,556,438)">Docker image</text>
+
+        <!-- IAM -> SageMaker -->
+        <line x1="670" y1="410" x2="680" y2="390" stroke="#d29922" stroke-width="1" stroke-dasharray="3,3"/>
+
+        <!-- SageMaker -> CloudWatch -->
+        <line x1="830" y1="377" x2="860" y2="406" stroke="#6e7681" stroke-width="1" stroke-dasharray="3,3"/>
+      </svg>
+      <div class="diagram-caption">Figure 4: AWS infrastructure and data flow &mdash; EC2 uploads to S3, SageMaker processes on GPU, results aggregate back</div>
+    </div>
+
+    <h3 id="s3-buckets">S3 Bucket Architecture</h3>
+    <table>
+      <tr><th>Bucket</th><th>Lifecycle</th><th>Contents</th><th>Access</th></tr>
+      <tr>
+        <td><code>{prefix}-raw</code></td>
+        <td>30-day expiry</td>
+        <td>Uploaded PDFs, rasterized PNGs, pre-tiled images, fleet distribution copies, tile manifests</td>
+        <td>EC2 (write), SageMaker (read)</td>
+      </tr>
+      <tr>
+        <td><code>{prefix}-models</code></td>
+        <td>Persistent</td>
+        <td>YOLO .pt weight files, config.yaml, registry metadata</td>
+        <td>EC2 (read/write), SageMaker (read, FullyReplicated)</td>
+      </tr>
+      <tr>
+        <td><code>{prefix}-results</code></td>
+        <td>90-day expiry</td>
+        <td>Per-sheet detection JSONs, annotated PNGs, Label Studio JSONs, CSVs</td>
+        <td>SageMaker (write, EndOfJob), EC2 (read)</td>
+      </tr>
+    </table>
+
+    <h3 id="iam-roles">IAM Roles</h3>
+    <div class="card-grid">
+      <div class="card">
+        <h4 style="color:var(--yellow)">HdedSageMakerRole</h4>
+        <p>Attached to SageMaker Processing jobs. Grants S3 GetObject/PutObject/ListBucket on <code>hded-*</code> buckets, ECR image pull (GetDownloadUrlForLayer, BatchGetImage), and CloudWatch log creation.</p>
+      </div>
+      <div class="card">
+        <h4 style="color:var(--yellow)">HdedEC2Role + Profile</h4>
+        <p>Instance profile for EC2 control plane. Grants full S3 access to <code>hded-*</code> buckets, SageMaker job management (Create/Describe/Stop/List ProcessingJobs), IAM PassRole for the SageMaker execution role, and ECR push/pull.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- SageMaker Deep Dive -->
+  <section id="sagemaker">
+    <h2><span class="num">4.</span> SageMaker Multi-Fleet GPU Processing</h2>
+    <p class="section-desc">
+      When the user selects a GPU tier, the SageMaker orchestrator (<code>master/launcher.py</code>) distributes pages across
+      multiple GPU fleets proportional to their compute power. This is the system's primary scaling mechanism.
+    </p>
+
+    <h3 id="fleet-distribution">Fleet Distribution Algorithm</h3>
+    <div class="info-box key">
+      <strong>Power-proportional distribution:</strong> Each fleet has a <code>speed_vs_t4</code> multiplier.
+      GPU power = <code>instance_count &times; gpus_per_instance &times; speed_vs_t4</code>.
+      Pages are assigned to each fleet proportional to its fraction of total GPU power.
+      Dynamic fleets (g4dn) scale 1:1 with assigned pages. Fixed fleets always use their full instance count if they receive any pages.
+      Small jobs (&le;3 pages) bypass multi-fleet and use a single g5.12xlarge to avoid unnecessary fleet spinup.
+    </div>
+
+    <table>
+      <tr><th>Fleet</th><th>Instance Type</th><th>GPUs</th><th>GPU Type</th><th>Speed vs T4</th><th>Max Instances</th><th>Scaling</th></tr>
+      <tr><td>g5-48xl</td><td>ml.g5.48xlarge</td><td>8</td><td>A10G</td><td>2.0x</td><td>5</td><td>Fixed</td></tr>
+      <tr><td>g5-24xl</td><td>ml.g5.24xlarge</td><td>4</td><td>A10G</td><td>2.0x</td><td>7</td><td>Fixed</td></tr>
+      <tr><td>g5-12xl</td><td>ml.g5.12xlarge</td><td>4</td><td>A10G</td><td>2.0x</td><td>5</td><td>Fixed</td></tr>
+      <tr><td>g4dn-xl</td><td>ml.g4dn.xlarge</td><td>1</td><td>T4</td><td>1.0x</td><td>40</td><td>Dynamic</td></tr>
+    </table>
+
+    <h4>GPU Tier Presets</h4>
+    <div class="card-grid">
+      <div class="card" style="border-color:var(--green)">
+        <h4 style="color:var(--green)">scroogemcduck (Budget)</h4>
+        <p>40&times; g4dn.xlarge only. Cheapest option &mdash; massive parallelism with T4 GPUs. Good for large batch jobs where time is less critical than cost.</p>
+      </div>
+      <div class="card" style="border-color:var(--yellow)">
+        <h4 style="color:var(--yellow)">evensteven (Balanced)</h4>
+        <p>5&times; g5.12xlarge + 20&times; g4dn.xlarge. Mixes fast A10G instances with budget T4s. Best for medium workloads &mdash; gets results faster than budget without the premium price.</p>
+      </div>
+      <div class="card" style="border-color:var(--red)">
+        <h4 style="color:var(--red)">idgaf (Full Fleet)</h4>
+        <p>All 4 fleets: g5-48xl, g5-24xl, g5-12xl, g4dn. Maximum throughput. For rush jobs where time matters more than cost. Can spin up 50+ GPU instances simultaneously.</p>
+      </div>
+    </div>
+
+    <h3 id="sagemaker-entrypoint">SageMaker Entrypoint</h3>
+    <p>
+      Each SageMaker Processing instance runs <code>master/sagemaker_entrypoint.py</code> inside the Docker image from ECR.
+      SageMaker handles input distribution via <code>ShardedByS3Key</code> &mdash; each instance gets a disjoint subset of the S3 keys.
+      Models are distributed via <code>FullyReplicated</code> &mdash; every instance gets all model weights.
+    </p>
+    <pre><code><span class="cm"># SageMaker fixed paths</span>
+<span class="st">/opt/ml/processing/input/images/</span>   <span class="cm"># Sharded: each instance gets subset</span>
+<span class="st">/opt/ml/processing/input/models/</span>   <span class="cm"># Replicated: all weights + config</span>
+<span class="st">/opt/ml/processing/output/</span>         <span class="cm"># Uploaded to S3 at EndOfJob</span></code></pre>
+    <p>
+      Two inference modes: <strong>page mode</strong> (receives full sheets, tiles + detects internally) and <strong>tile mode</strong>
+      (receives pre-tiled images, runs YOLO detect only). Tile mode is identified by filename pattern <code>*__L*_R*_C*.png</code>.
+      Tile mode is the current default, as the control plane pre-tiles to enable finer-grained sharding.
+    </p>
+
+    <h3 id="aggregation">Result Aggregation</h3>
+    <p>
+      After all SageMaker jobs complete, <code>master/aggregator.py</code> runs on the control plane:
+    </p>
+    <ol>
+      <li>Download <code>tile_manifest.json</code> from S3 raw bucket (sheet dimensions + tile coordinate maps)</li>
+      <li>Download all <code>*_detections.json</code> from S3 results bucket across all fleets</li>
+      <li>Group detections by sheet stem</li>
+      <li>For each sheet: parse RawDetections, remap tile-local &rarr; source coordinates, run ensemble + fusion</li>
+      <li>Generate output files (annotated PNG, JSON, CSV, Label Studio JSON)</li>
+      <li>Save to local <code>hded_jobs/</code> directory + optionally re-upload to S3</li>
+    </ol>
+    <div class="info-box note">
+      <strong>Retry logic:</strong> If SageMaker can't provision the requested instance count (ResourceLimitExceeded),
+      the launcher reduces count by 5 and retries with a modified job name suffix (<code>-c{count}</code>).
+      This continues until count reaches 0, at which point it raises a RuntimeError.
+      A semaphore (max 2) prevents more than 2 concurrent SageMaker jobs from being submitted.
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- Docker Stack -->
+  <section id="docker">
+    <h2><span class="num">5.</span> Docker Architecture</h2>
+    <p class="section-desc">
+      The HDED application stack runs as a set of Docker containers managed by docker-compose.
+      Four compose files can be layered for different deployment configurations.
+    </p>
+
+    <div class="diagram-wrap" id="docker-diagram">
+      <svg viewBox="0 0 950 520" width="100%" xmlns="http://www.w3.org/2000/svg">
+        <rect width="950" height="520" fill="#0d1117" rx="8"/>
+        <text x="475" y="30" text-anchor="middle" fill="#e6edf3" font-size="15" font-weight="700">Docker Compose Stack</text>
+
+        <!-- Docker network boundary -->
+        <rect x="20" y="50" width="910" height="450" rx="10" fill="none" stroke="#3d444d" stroke-width="1" stroke-dasharray="5,3"/>
+        <text x="35" y="70" fill="#6e7681" font-size="10">Docker bridge network (default)</text>
+
+        <!-- Caddy -->
+        <rect x="40" y="85" width="870" height="55" rx="6" fill="#1c2333" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="475" y="108" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="600">Caddy Reverse Proxy</text>
+        <text x="475" y="126" text-anchor="middle" fill="#6e7681" font-size="10">:80/:443 &rarr; app:8000 | Auto Let's Encrypt HTTPS | 400MB request body limit | gzip</text>
+        <text x="860" y="108" text-anchor="end" fill="#3d444d" font-size="10">docker-compose.prod.yml</text>
+
+        <!-- FastAPI App -->
+        <rect x="40" y="158" width="430" height="100" rx="6" fill="#1c2333" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="255" y="183" text-anchor="middle" fill="#58a6ff" font-size="14" font-weight="600">HDED Application (FastAPI)</text>
+        <text x="255" y="200" text-anchor="middle" fill="#8b949e" font-size="10">Port 8000 | Python 3.12 slim | Uvicorn ASGI</text>
+        <text x="255" y="217" text-anchor="middle" fill="#6e7681" font-size="10">Volumes: ./hded_jobs, ./config.yaml, ./gpu_limits.yaml, ./models/</text>
+        <text x="255" y="234" text-anchor="middle" fill="#6e7681" font-size="10">Routes &bull; Services &bull; Pipeline &bull; Templates (Jinja2 vim-themed)</text>
+        <text x="430" y="183" text-anchor="end" fill="#3d444d" font-size="10">docker-compose.yml</text>
+
+        <!-- SQLite inside app -->
+        <rect x="390" y="240" width="70" height="12" rx="3" fill="#4a2a0a"/>
+        <text x="425" y="250" text-anchor="middle" fill="#d29922" font-size="8">SQLite</text>
+
+        <!-- LS containers -->
+        <rect x="40" y="278" width="210" height="200" rx="6" fill="#1c2333" stroke="#3ddbd9" stroke-width="1.5"/>
+        <text x="145" y="300" text-anchor="middle" fill="#3ddbd9" font-size="13" font-weight="600">Label Studio x4</text>
+        <text x="145" y="316" text-anchor="middle" fill="#6e7681" font-size="10">docker-compose.ls.yml</text>
+
+        <rect x="55" y="330" width="180" height="28" rx="4" fill="#0a3d3c" stroke="#3ddbd9" stroke-width="0.5"/>
+        <text x="145" y="349" text-anchor="middle" fill="#3ddbd9" font-size="10">ls-admin :18081 (DB: ls_admin)</text>
+
+        <rect x="55" y="364" width="180" height="28" rx="4" fill="#0a3d3c" stroke="#3ddbd9" stroke-width="0.5"/>
+        <text x="145" y="383" text-anchor="middle" fill="#3ddbd9" font-size="10">ls-avocado :18082</text>
+
+        <rect x="55" y="398" width="180" height="28" rx="4" fill="#0a3d3c" stroke="#3ddbd9" stroke-width="0.5"/>
+        <text x="145" y="417" text-anchor="middle" fill="#3ddbd9" font-size="10">ls-banana :18083</text>
+
+        <rect x="55" y="432" width="180" height="28" rx="4" fill="#0a3d3c" stroke="#3ddbd9" stroke-width="0.5"/>
+        <text x="145" y="451" text-anchor="middle" fill="#3ddbd9" font-size="10">ls-cheesecake :18084</text>
+
+        <!-- PostgreSQL -->
+        <rect x="270" y="278" width="200" height="100" rx="6" fill="#1c2333" stroke="#bc8cff" stroke-width="1.5"/>
+        <text x="370" y="303" text-anchor="middle" fill="#bc8cff" font-size="13" font-weight="600">PostgreSQL 15</text>
+        <text x="370" y="320" text-anchor="middle" fill="#6e7681" font-size="10">:5432 | alpine image</text>
+        <text x="370" y="340" text-anchor="middle" fill="#8b949e" font-size="10">4 databases:</text>
+        <text x="370" y="356" text-anchor="middle" fill="#6e7681" font-size="10">ls_admin, ls_avocado,</text>
+        <text x="370" y="370" text-anchor="middle" fill="#6e7681" font-size="10">ls_banana, ls_cheesecake</text>
+
+        <!-- Volumes -->
+        <rect x="270" y="396" width="200" height="82" rx="6" fill="#161b22" stroke="#6e7681" stroke-width="1"/>
+        <text x="370" y="418" text-anchor="middle" fill="#8b949e" font-size="12" font-weight="600">Docker Volumes</text>
+        <text x="280" y="438" fill="#6e7681" font-size="10">pg_data (PostgreSQL)</text>
+        <text x="280" y="454" fill="#6e7681" font-size="10">ls_data x4 (LS uploads)</text>
+        <text x="280" y="470" fill="#6e7681" font-size="10">hded_jobs/ (bind mount)</text>
+
+        <!-- Compose files legend -->
+        <rect x="500" y="278" width="410" height="200" rx="6" fill="#161b22" stroke="#3d444d" stroke-width="1"/>
+        <text x="515" y="303" fill="#e6edf3" font-size="12" font-weight="600">Compose File Layers</text>
+
+        <rect x="515" y="315" width="14" height="14" rx="2" fill="#58a6ff"/>
+        <text x="538" y="327" fill="#8b949e" font-size="11"><tspan font-weight="600" fill="#e6edf3">docker-compose.yml</tspan> &mdash; Base: app + LS + Postgres</text>
+
+        <rect x="515" y="345" width="14" height="14" rx="2" fill="#3ddbd9"/>
+        <text x="538" y="357" fill="#8b949e" font-size="11"><tspan font-weight="600" fill="#e6edf3">docker-compose.ls.yml</tspan> &mdash; 4x LS containers</text>
+
+        <rect x="515" y="375" width="14" height="14" rx="2" fill="#3fb950"/>
+        <text x="538" y="387" fill="#8b949e" font-size="11"><tspan font-weight="600" fill="#e6edf3">docker-compose.prod.yml</tspan> &mdash; Caddy HTTPS overlay</text>
+
+        <rect x="515" y="405" width="14" height="14" rx="2" fill="#f0883e"/>
+        <text x="538" y="417" fill="#8b949e" font-size="11"><tspan font-weight="600" fill="#e6edf3">docker-compose.gpu.yml</tspan> &mdash; NVIDIA GPU runtime</text>
+
+        <text x="515" y="450" fill="#6e7681" font-size="10">Production launch:</text>
+        <text x="515" y="466" fill="#8b949e" font-size="10" font-family="monospace">docker compose -f docker-compose.yml \</text>
+        <text x="515" y="478" fill="#8b949e" font-size="10" font-family="monospace">  -f docker-compose.ls.yml -f docker-compose.prod.yml up -d</text>
+
+        <!-- Connection arrows -->
+        <line x1="145" y1="258" x2="145" y2="274" stroke="#3ddbd9" stroke-width="1" stroke-dasharray="3,2"/>
+        <line x1="250" y1="350" x2="266" y2="340" stroke="#bc8cff" stroke-width="1" stroke-dasharray="3,2"/>
+      </svg>
+      <div class="diagram-caption">Figure 5: Docker Compose stack &mdash; layered compose files for different deployment configurations</div>
+    </div>
+
+    <h3 id="label-studio">Label Studio Integration</h3>
+    <p>
+      HDED runs <strong>4 independent Label Studio containers</strong>, each assigned to a specific user via the admin panel.
+      Each container has its own PostgreSQL database, ensuring complete isolation. The multi-database PostgreSQL is initialized
+      via <code>init-multi-db.sh</code> which creates all four databases on first run.
+    </p>
+    <p>
+      When the user clicks "Open in Label Studio" from the results page, the app performs a <strong>server-side auto-login</strong>:
+      it authenticates with the user's assigned LS container using stored credentials, obtains session cookies, and redirects
+      the browser to the pre-populated project. This avoids requiring users to log into LS separately.
+    </p>
+    <h4>Pre-Annotation Workflow</h4>
+    <ol>
+      <li>Pipeline generates Label Studio JSON with <code>rectanglelabels</code> predictions</li>
+      <li>Coordinates converted: source-pixel xyxy &rarr; LS percentages (0-100)</li>
+      <li>App creates LS project via API, uploads original PNG + preview image</li>
+      <li>Imports predictions as pre-annotations (capped at configurable <code>max_predictions</code>)</li>
+      <li>User corrects in LS: move/resize/delete boxes, add missed detections</li>
+      <li>Export as YOLO format &rarr; feed into classifier bootstrap</li>
+    </ol>
+  </section>
+
+  <hr class="divider">
+
+  <!-- Web Application -->
+  <section id="webapp">
+    <h2><span class="num">6.</span> Web Application Architecture</h2>
+    <p class="section-desc">
+      The web application is a FastAPI service with Jinja2 templates, SQLite for user/toggle state, and an in-memory
+      job tracker for real-time progress. The UI uses a vim-themed design with HTMX for dynamic updates.
+    </p>
+
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 900 380" width="100%" xmlns="http://www.w3.org/2000/svg">
+        <rect width="900" height="380" fill="#0d1117" rx="8"/>
+        <text x="450" y="28" text-anchor="middle" fill="#e6edf3" font-size="15" font-weight="700">FastAPI Application Architecture</text>
+
+        <!-- Request flow -->
+        <text x="30" y="60" fill="#6e7681" font-size="11">Request Flow:</text>
+
+        <!-- Browser -->
+        <rect x="30" y="75" width="100" height="40" rx="6" fill="#1c2333" stroke="#58a6ff" stroke-width="1"/>
+        <text x="80" y="100" text-anchor="middle" fill="#58a6ff" font-size="11">Browser</text>
+
+        <line x1="130" y1="95" x2="155" y2="95" stroke="#58a6ff" stroke-width="1" marker-end="url(#p-arrow)"/>
+
+        <!-- Auth Middleware -->
+        <rect x="158" y="75" width="105" height="40" rx="6" fill="#1c2333" stroke="#d29922" stroke-width="1"/>
+        <text x="210" y="96" text-anchor="middle" fill="#d29922" font-size="10" font-weight="600">Auth Middleware</text>
+        <text x="210" y="108" text-anchor="middle" fill="#6e7681" font-size="8">cookie &rarr; User</text>
+
+        <line x1="263" y1="95" x2="288" y2="95" stroke="#d29922" stroke-width="1" marker-end="url(#p-arrow-orange)"/>
+
+        <!-- Routes -->
+        <rect x="291" y="68" width="130" height="54" rx="6" fill="#1c2333" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="356" y="88" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">Routes (thin)</text>
+        <text x="356" y="104" text-anchor="middle" fill="#6e7681" font-size="9">Parse request, call service</text>
+        <text x="356" y="114" text-anchor="middle" fill="#6e7681" font-size="9">Return HTML or JSON</text>
+
+        <line x1="421" y1="95" x2="448" y2="95" stroke="#58a6ff" stroke-width="1" marker-end="url(#p-arrow)"/>
+
+        <!-- Services -->
+        <rect x="451" y="68" width="140" height="54" rx="6" fill="#1c2333" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="521" y="88" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Services (logic)</text>
+        <text x="521" y="104" text-anchor="middle" fill="#6e7681" font-size="9">Business logic, validation</text>
+        <text x="521" y="114" text-anchor="middle" fill="#6e7681" font-size="9">No HTTP dependencies</text>
+
+        <line x1="591" y1="95" x2="618" y2="95" stroke="#3fb950" stroke-width="1" marker-end="url(#p-arrow-green)"/>
+
+        <!-- Pipeline -->
+        <rect x="621" y="68" width="130" height="54" rx="6" fill="#1c2333" stroke="#f0883e" stroke-width="1.5"/>
+        <text x="686" y="88" text-anchor="middle" fill="#f0883e" font-size="11" font-weight="600">Pipeline Engine</text>
+        <text x="686" y="104" text-anchor="middle" fill="#6e7681" font-size="9">Detection stages</text>
+        <text x="686" y="114" text-anchor="middle" fill="#6e7681" font-size="9">No web dependencies</text>
+
+        <line x1="751" y1="95" x2="778" y2="95" stroke="#f0883e" stroke-width="1" marker-end="url(#p-arrow-orange)"/>
+
+        <!-- AWS -->
+        <rect x="781" y="75" width="100" height="40" rx="6" fill="#1c2333" stroke="#bc8cff" stroke-width="1"/>
+        <text x="831" y="100" text-anchor="middle" fill="#bc8cff" font-size="11">AWS APIs</text>
+
+        <!-- Route breakdown -->
+        <text x="30" y="160" fill="#e6edf3" font-size="12" font-weight="600">Route Modules (app/routes/):</text>
+
+        <rect x="30" y="172" width="160" height="70" rx="4" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="40" y="190" fill="#58a6ff" font-size="10" font-weight="600">auth_routes.py</text>
+        <text x="40" y="204" fill="#6e7681" font-size="9">/login, /logout, /signup</text>
+        <text x="40" y="216" fill="#6e7681" font-size="9">/demo, /account/*</text>
+        <text x="40" y="228" fill="#6e7681" font-size="9">/request-access</text>
+
+        <rect x="200" y="172" width="160" height="70" rx="4" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="210" y="190" fill="#58a6ff" font-size="10" font-weight="600">upload.py</text>
+        <text x="210" y="204" fill="#6e7681" font-size="9">GET / (upload form)</text>
+        <text x="210" y="216" fill="#6e7681" font-size="9">POST /upload (HTML)</text>
+        <text x="210" y="228" fill="#6e7681" font-size="9">POST /api/upload (JSON)</text>
+
+        <rect x="370" y="172" width="160" height="70" rx="4" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="380" y="190" fill="#58a6ff" font-size="10" font-weight="600">hded.py</text>
+        <text x="380" y="204" fill="#6e7681" font-size="9">/jobs/{o}/{id}/status</text>
+        <text x="380" y="216" fill="#6e7681" font-size="9">/jobs/{o}/{id}/results</text>
+        <text x="380" y="228" fill="#6e7681" font-size="9">/projects, /api/jobs</text>
+
+        <rect x="540" y="172" width="160" height="70" rx="4" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="550" y="190" fill="#58a6ff" font-size="10" font-weight="600">labelstudio.py</text>
+        <text x="550" y="204" fill="#6e7681" font-size="9">/ls-auto-login</text>
+        <text x="550" y="216" fill="#6e7681" font-size="9">/webhook/ls</text>
+        <text x="550" y="228" fill="#6e7681" font-size="9">/api/ls/status, /push</text>
+
+        <rect x="710" y="172" width="170" height="70" rx="4" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="720" y="190" fill="#58a6ff" font-size="10" font-weight="600">admin.py + api.py</text>
+        <text x="720" y="204" fill="#6e7681" font-size="9">/admin (control panel)</text>
+        <text x="720" y="216" fill="#6e7681" font-size="9">/api/models, /gpu/status</text>
+        <text x="720" y="228" fill="#6e7681" font-size="9">/api/sagemaker/*, /config</text>
+
+        <!-- Service breakdown -->
+        <text x="30" y="275" fill="#e6edf3" font-size="12" font-weight="600">Service Modules (app/services/):</text>
+
+        <rect x="30" y="288" width="160" height="72" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="0.5"/>
+        <text x="40" y="306" fill="#3fb950" font-size="10" font-weight="600">pipeline_runner.py</text>
+        <text x="40" y="320" fill="#6e7681" font-size="9">Orchestrates detection</text>
+        <text x="40" y="332" fill="#6e7681" font-size="9">PDF rasterization</text>
+        <text x="40" y="344" fill="#6e7681" font-size="9">3-tier config fallback</text>
+
+        <rect x="200" y="288" width="160" height="72" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="0.5"/>
+        <text x="210" y="306" fill="#3fb950" font-size="10" font-weight="600">sagemaker_service.py</text>
+        <text x="210" y="320" fill="#6e7681" font-size="9">Fleet distribution</text>
+        <text x="210" y="332" fill="#6e7681" font-size="9">Job launch + poll</text>
+        <text x="210" y="344" fill="#6e7681" font-size="9">Semaphore (max 2)</text>
+
+        <rect x="370" y="288" width="160" height="72" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="0.5"/>
+        <text x="380" y="306" fill="#3fb950" font-size="10" font-weight="600">ls_service.py</text>
+        <text x="380" y="320" fill="#6e7681" font-size="9">LS auto-auth (multi-strategy)</text>
+        <text x="380" y="332" fill="#6e7681" font-size="9">Project creation</text>
+        <text x="380" y="344" fill="#6e7681" font-size="9">Pre-annotation import</text>
+
+        <rect x="540" y="288" width="160" height="72" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="0.5"/>
+        <text x="550" y="306" fill="#3fb950" font-size="10" font-weight="600">upload_service.py</text>
+        <text x="550" y="320" fill="#6e7681" font-size="9">File validation</text>
+        <text x="550" y="332" fill="#6e7681" font-size="9">Job creation</text>
+        <text x="550" y="344" fill="#6e7681" font-size="9">Rate limiting</text>
+
+        <rect x="710" y="288" width="170" height="72" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="0.5"/>
+        <text x="720" y="306" fill="#3fb950" font-size="10" font-weight="600">admin_service.py</text>
+        <text x="720" y="320" fill="#6e7681" font-size="9">Config read/write/validate</text>
+        <text x="720" y="332" fill="#6e7681" font-size="9">User config overrides</text>
+        <text x="720" y="344" fill="#6e7681" font-size="9">Access request management</text>
+      </svg>
+      <div class="diagram-caption">Figure 6: FastAPI application architecture &mdash; layered design with thin routes, service logic, and pipeline engine</div>
+    </div>
+
+    <h3 id="routes">Key API Endpoints</h3>
+    <table>
+      <tr><th>Endpoint</th><th>Method</th><th>Purpose</th></tr>
+      <tr><td><code>/</code></td><td>GET</td><td>Upload form (file selector + GPU tier)</td></tr>
+      <tr><td><code>/upload</code></td><td>POST</td><td>Submit file for processing (HTML form redirect)</td></tr>
+      <tr><td><code>/api/upload</code></td><td>POST</td><td>Submit file for processing (JSON response for agents)</td></tr>
+      <tr><td><code>/jobs/{owner}/{id}/status</code></td><td>GET</td><td>Job progress page (HTMX polling every 3s)</td></tr>
+      <tr><td><code>/jobs/{owner}/{id}/results</code></td><td>GET</td><td>Results page with per-sheet cards</td></tr>
+      <tr><td><code>/api/jobs/{owner}/{id}/status</code></td><td>GET</td><td>Job status (JSON, polled by frontend)</td></tr>
+      <tr><td><code>/jobs/{owner}/{id}/create-ls</code></td><td>POST</td><td>Push results to Label Studio as pre-annotated project</td></tr>
+      <tr><td><code>/ls-auto-login</code></td><td>GET</td><td>Server-side LS auth + redirect to project</td></tr>
+      <tr><td><code>/admin</code></td><td>GET</td><td>Admin control panel (users, toggles, models, config)</td></tr>
+      <tr><td><code>/api/health</code></td><td>GET</td><td>Health check</td></tr>
+      <tr><td><code>/api/gpu/status</code></td><td>GET</td><td>GPU availability info</td></tr>
+      <tr><td><code>/api/sagemaker/status</code></td><td>GET</td><td>SageMaker configuration + fleet info</td></tr>
+      <tr><td><code>/api/models</code></td><td>GET</td><td>List available YOLO models</td></tr>
+    </table>
+
+    <h3 id="services">Service Layer Design</h3>
+    <p>
+      The application follows a strict <strong>route &rarr; service &rarr; pipeline</strong> separation. Routes are thin HTTP handlers
+      that parse requests and call service methods. Services contain all business logic (validation, rate limiting, orchestration).
+      The pipeline engine (<code>pipeline/</code>) has zero HTTP dependencies and can be invoked from CLI, tests, or SageMaker entrypoints.
+    </p>
+    <div class="info-box key">
+      <strong>API-first design:</strong> Every feature has a JSON API endpoint alongside its HTML route. Business logic lives in service
+      modules, never in route handlers. This enables the agentic annotator vision &mdash; AI agents using API endpoints for autonomous
+      data labeling.
+    </div>
+
+    <h3 id="auth">Authentication System</h3>
+    <p>
+      Cookie-based session authentication with HMAC-signed tokens. Token format: <code>v2:{user_id}:{timestamp}:{signature}</code>.
+      7-day TTL. Middleware extracts the user from the session cookie on every request and caches it on <code>request.state</code>.
+    </p>
+    <p>
+      Role-based authorization: <strong>member</strong> (standard), <strong>admin</strong> (user/config management),
+      <strong>root_admin</strong> (everything including other admin management). The <code>can_run_models</code> permission gate
+      controls who can submit detection jobs. Demo user is a special read-only account with pre-computed results.
+    </p>
+  </section>
+
+  <hr class="divider">
+
+  <!-- Active Learning -->
+  <section id="active-learning">
+    <h2><span class="num">7.</span> Active Learning Loop</h2>
+    <p class="section-desc">
+      HDED's active learning loop closes the gap between detection and training. Human corrections in Label Studio
+      feed back into classifier training via the bootstrap pipeline, continuously improving model accuracy.
+    </p>
+
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 800 600" width="100%" xmlns="http://www.w3.org/2000/svg">
+        <rect width="800" height="600" fill="#0d1117" rx="8"/>
+        <text x="400" y="30" text-anchor="middle" fill="#e6edf3" font-size="15" font-weight="700">Active Learning Loop</text>
+
+        <!-- Center: Label Studio -->
+        <rect x="280" y="230" width="240" height="80" rx="10" fill="#1c2333" stroke="#3ddbd9" stroke-width="2"/>
+        <text x="400" y="262" text-anchor="middle" fill="#3ddbd9" font-size="16" font-weight="700">Label Studio</text>
+        <text x="400" y="282" text-anchor="middle" fill="#8b949e" font-size="11">Human annotation + correction</text>
+        <text x="400" y="298" text-anchor="middle" fill="#6e7681" font-size="10">Pre-populated with HDED detections</text>
+
+        <!-- Top: Upload + Detect -->
+        <rect x="280" y="60" width="240" height="70" rx="8" fill="#1c2333" stroke="#f0883e" stroke-width="1.5"/>
+        <text x="400" y="88" text-anchor="middle" fill="#f0883e" font-size="13" font-weight="600">1. Upload + Detect</text>
+        <text x="400" y="108" text-anchor="middle" fill="#8b949e" font-size="10">PDF &rarr; 6-stage pipeline &rarr; detections</text>
+        <text x="400" y="122" text-anchor="middle" fill="#6e7681" font-size="10">Maximum recall, accept false positives</text>
+
+        <!-- Right: Export -->
+        <rect x="580" y="230" width="180" height="80" rx="8" fill="#1c2333" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="670" y="258" text-anchor="middle" fill="#58a6ff" font-size="13" font-weight="600">3. Export</text>
+        <text x="670" y="278" text-anchor="middle" fill="#8b949e" font-size="10">Corrected annotations</text>
+        <text x="670" y="293" text-anchor="middle" fill="#6e7681" font-size="10">YOLO format labels</text>
+
+        <!-- Bottom: Bootstrap -->
+        <rect x="260" y="420" width="280" height="120" rx="8" fill="#1c2333" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="400" y="448" text-anchor="middle" fill="#3fb950" font-size="13" font-weight="600">4. Classifier Bootstrap</text>
+        <text x="280" y="472" fill="#8b949e" font-size="10">Mode 1: Scan labels &rarr; extract positive crops</text>
+        <text x="280" y="488" fill="#8b949e" font-size="10">Mode 2: Scan images &rarr; extract negative crops</text>
+        <text x="280" y="504" fill="#8b949e" font-size="10">Mode 3: Assemble train/val (max neg ratio 2.5x)</text>
+        <text x="280" y="520" fill="#8b949e" font-size="10">Mode 4: Train YOLO classifier &rarr; new .pt weights</text>
+
+        <!-- Left: Deploy -->
+        <rect x="40" y="230" width="180" height="80" rx="8" fill="#1c2333" stroke="#bc8cff" stroke-width="1.5"/>
+        <text x="130" y="258" text-anchor="middle" fill="#bc8cff" font-size="13" font-weight="600">5. Deploy Model</text>
+        <text x="130" y="278" text-anchor="middle" fill="#8b949e" font-size="10">Update config.yaml with</text>
+        <text x="130" y="293" text-anchor="middle" fill="#6e7681" font-size="10">new classifier weights</text>
+
+        <!-- Arrows forming the loop -->
+        <!-- 1 -> 2 (detect to LS) -->
+        <line x1="400" y1="130" x2="400" y2="226" stroke="#f0883e" stroke-width="2" marker-end="url(#p-arrow-orange)"/>
+        <text x="415" y="178" fill="#f0883e" font-size="10">Pre-annotate</text>
+
+        <!-- 2 -> 3 (LS to export) -->
+        <line x1="520" y1="270" x2="576" y2="270" stroke="#58a6ff" stroke-width="2" marker-end="url(#p-arrow)"/>
+        <text x="548" y="262" fill="#58a6ff" font-size="10">Correct</text>
+
+        <!-- 3 -> 4 (export to bootstrap) -->
+        <path d="M670 310 L670 480 L544 480" stroke="#3fb950" stroke-width="2" fill="none" marker-end="url(#p-arrow-green)"/>
+        <text x="680" y="400" fill="#3fb950" font-size="10">Feed labels</text>
+
+        <!-- 4 -> 5 (bootstrap to deploy) -->
+        <path d="M260 480 L130 480 L130 314" stroke="#bc8cff" stroke-width="2" fill="none" marker-end="url(#p-arrow-purple)"/>
+        <text x="140" y="400" fill="#bc8cff" font-size="10">New weights</text>
+
+        <!-- 5 -> 1 (deploy back to detect) -->
+        <path d="M130 230 L130 95 L276 95" stroke="#f0883e" stroke-width="2" fill="none" marker-end="url(#p-arrow-orange)"/>
+        <text x="140" y="165" fill="#f0883e" font-size="10">Improved model</text>
+
+        <!-- Iteration label -->
+        <rect x="310" y="360" width="180" height="30" rx="15" fill="#1a4a25" stroke="#3fb950" stroke-width="1"/>
+        <text x="400" y="380" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Repeat until converged</text>
+      </svg>
+      <div class="diagram-caption">Figure 7: Active learning loop &mdash; human corrections improve model accuracy over iterations</div>
+    </div>
+
+    <h3 id="bootstrap">Classifier Bootstrap Pipeline</h3>
+    <p>
+      The classifier bootstrap (<code>pipeline/classifier/</code>) is a 4-mode pipeline that transforms human corrections
+      into training data for YOLO classifiers:
+    </p>
+
+    <h4>Mode 1: Scan Labels (<code>scan_labels.py</code>)</h4>
+    <p>
+      Mines existing YOLO training data (exported from Label Studio). Extracts positive crops from bounding box annotations.
+      Groups detections by model agreement: 3 models agree (HIGH confidence), 2 agree (MEDIUM), 1 only (hard negative), 0 (random negative).
+    </p>
+
+    <h4>Mode 2: Scan Images (<code>scan_images.py</code>)</h4>
+    <p>
+      Runs the HDED detection pipeline on a set of images and extracts crops around each detection.
+      Uses <code>model_runner.py</code> to invoke YOLO inference and <code>crop_utils.py</code> to extract padded crops.
+      Generates both positive and negative training examples based on detection confidence and model agreement.
+    </p>
+
+    <h4>Mode 3: Assemble (<code>assemble.py</code>)</h4>
+    <p>
+      Creates a balanced train/val split from the scanned crops. Enforces a maximum negative-to-positive ratio of 2.5x
+      to prevent class imbalance. Performs stratified splitting to ensure both classes are represented proportionally
+      in training and validation sets.
+    </p>
+
+    <h4>Mode 4: Train (<code>train.py</code>)</h4>
+    <p>
+      Trains a YOLO classifier (<code>yolo-cls</code>) on the assembled dataset. Outputs <code>best.pt</code> weights
+      that can be added to <code>config.yaml</code> as a tile classifier or output classifier.
+      Once deployed, the new classifier contributes <code>s_cls</code> or <code>s_tile_cls</code> signals to ensemble scoring,
+      reducing false positives in subsequent pipeline runs.
+    </p>
+  </section>
+
+  <hr class="divider">
+
+  <!-- Configuration -->
+  <section id="config">
+    <h2><span class="num">8.</span> Configuration System</h2>
+    <p class="section-desc">
+      HDED uses a unified dataclass-based configuration system (<code>pipeline/config.py</code>) loaded from YAML files.
+      A 3-tier fallback ensures per-user customization without duplicating global settings.
+    </p>
+
+    <h4>Config Loading Priority</h4>
+    <ol>
+      <li><strong>User config</strong>: <code>user_configs/{username}.yaml</code> &mdash; per-user overrides set via /ml_config</li>
+      <li><strong>Demo config</strong>: <code>config_demo.yaml</code> &mdash; used in demo mode (synthetic detections, no models needed)</li>
+      <li><strong>Global config</strong>: <code>config.yaml</code> &mdash; default for all users (~320 lines)</li>
+    </ol>
+
+    <h4>Key Configuration Sections</h4>
+    <table>
+      <tr><th>Section</th><th>Key Parameters</th><th>Purpose</th></tr>
+      <tr>
+        <td><code>pipeline</code></td>
+        <td>tile_levels (4), batch_size (16), pdf_dpi (300), device (auto)</td>
+        <td>Core pipeline behavior</td>
+      </tr>
+      <tr>
+        <td><code>page_filters</code></td>
+        <td>canny_edge_threshold (2%), text_coverage_threshold (50%)</td>
+        <td>Skip blank/text-heavy pages</td>
+      </tr>
+      <tr>
+        <td><code>models[].detectors</code></td>
+        <td>weights_path, target_classes, confidence_threshold, applicable_levels</td>
+        <td>YOLO detector configuration</td>
+      </tr>
+      <tr>
+        <td><code>ensemble</code></td>
+        <td>s_det_weight (0.60), s_scale_weight (0.40), route thresholds</td>
+        <td>Ensemble scoring weights</td>
+      </tr>
+      <tr>
+        <td><code>fusion</code></td>
+        <td>wbf_iou_threshold (0.30), level_weights, dedup_distance (50px), final_confidence (0.40)</td>
+        <td>WBF merge + dedup parameters</td>
+      </tr>
+      <tr>
+        <td><code>output</code></td>
+        <td>save_annotated_png, save_json, save_csv, max_ls_predictions</td>
+        <td>Output file generation</td>
+      </tr>
+    </table>
+
+    <h4>GPU Rate Limits (<code>gpu_limits.yaml</code>)</h4>
+    <p>
+      Separate from the pipeline config, this file controls SageMaker access:
+    </p>
+    <pre><code><span class="kw">sagemaker_enabled</span>: <span class="nu">false</span>          <span class="cm"># Admin kill switch (also toggleable in DB)</span>
+<span class="kw">max_jobs_per_user_per_day</span>: <span class="nu">3</span>    <span class="cm"># Rate limit</span>
+<span class="kw">max_pages_per_job</span>: <span class="nu">5</span>            <span class="cm"># Page cap</span>
+<span class="kw">default_tier</span>: <span class="st">scroogemcduck</span>     <span class="cm"># Default GPU tier</span>
+<span class="kw">allowed_tiers</span>:                  <span class="cm"># Which tiers users can select</span>
+  - <span class="st">scroogemcduck</span>
+  - <span class="st">evensteven</span></code></pre>
+    <div class="info-box note">
+      <strong>Dual toggle mechanism:</strong> SageMaker has two independent enable switches &mdash; the <code>sagemaker_enabled</code> YAML
+      kill switch (managed via CLI) and a database toggle (managed via admin UI). Both must be enabled for SageMaker jobs to launch.
+      This prevents accidental GPU spend from either the code path or the admin interface alone.
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- Admin Tools -->
+  <section id="admin">
+    <h2><span class="num">9.</span> Admin Tools</h2>
+    <p class="section-desc">
+      HDED includes both a web-based admin panel and a Rich TUI-based CLI for system administration.
+    </p>
+
+    <h4>Web Admin Panel (<code>/admin</code>)</h4>
+    <ul>
+      <li><strong>Users</strong> &mdash; Create, edit, delete users. Assign roles (member/admin), LS container ports, can_run_models permission</li>
+      <li><strong>Toggles</strong> &mdash; Enable/disable: signup_open, demo_enabled, sagemaker_enabled</li>
+      <li><strong>Models</strong> &mdash; List available .pt files, upload new model checkpoints</li>
+      <li><strong>Pipeline Settings</strong> &mdash; Tile levels, ensemble/fusion toggles, voided classes, confidence thresholds</li>
+      <li><strong>Config Editor</strong> &mdash; Raw YAML editor with syntax highlighting for full config.yaml editing</li>
+      <li><strong>Access Requests</strong> &mdash; Review and approve pending signup requests</li>
+    </ul>
+
+    <h4>Admin CLI (<code>python -m admin_cli</code>)</h4>
+    <p>
+      Interactive Rich TUI menu with color output and scriptable argparse interface for automation:
+    </p>
+    <pre><code><span class="cm"># Interactive mode</span>
+<span class="fn">python -m admin_cli</span>
+
+<span class="cm"># Scripted commands</span>
+<span class="fn">python -m admin_cli</span> users list
+<span class="fn">python -m admin_cli</span> users add Durian <span class="st">--password "pass"</span> <span class="st">--role admin</span>
+<span class="fn">python -m admin_cli</span> limits show
+<span class="fn">python -m admin_cli</span> limits set max_pages_per_job <span class="nu">10</span></code></pre>
+    <p>
+      The CLI covers: user management, service start/stop/health, model management, config editing, rate limit tuning,
+      SageMaker kill switch, access request approvals, and job browsing.
+    </p>
+  </section>
+
+  <hr class="divider">
+
+  <!-- End-to-End Data Flow -->
+  <section>
+    <h2><span class="num">10.</span> End-to-End Data Flow Summary</h2>
+    <p class="section-desc">
+      The complete journey of a blueprint from upload to trained model improvement:
+    </p>
+
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 980 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+        <rect width="980" height="300" fill="#0d1117" rx="8"/>
+
+        <!-- Row 1: Main flow -->
+        <rect x="20" y="40" width="100" height="60" rx="6" fill="#1c2333" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="70" y="65" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">Upload</text>
+        <text x="70" y="80" text-anchor="middle" fill="#6e7681" font-size="9">PDF/PNG</text>
+
+        <line x1="120" y1="70" x2="140" y2="70" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#p-arrow)"/>
+
+        <rect x="143" y="40" width="100" height="60" rx="6" fill="#1c2333" stroke="#f0883e" stroke-width="1.5"/>
+        <text x="193" y="65" text-anchor="middle" fill="#f0883e" font-size="11" font-weight="600">Rasterize</text>
+        <text x="193" y="80" text-anchor="middle" fill="#6e7681" font-size="9">300 DPI</text>
+
+        <line x1="243" y1="70" x2="263" y2="70" stroke="#f0883e" stroke-width="1.5" marker-end="url(#p-arrow-orange)"/>
+
+        <rect x="266" y="40" width="100" height="60" rx="6" fill="#1c2333" stroke="#3ddbd9" stroke-width="1.5"/>
+        <text x="316" y="65" text-anchor="middle" fill="#3ddbd9" font-size="11" font-weight="600">Tile</text>
+        <text x="316" y="80" text-anchor="middle" fill="#6e7681" font-size="9">820 tiles</text>
+
+        <line x1="366" y1="70" x2="386" y2="70" stroke="#3ddbd9" stroke-width="1.5" marker-end="url(#p-arrow-aqua)"/>
+
+        <rect x="389" y="30" width="100" height="80" rx="6" fill="#1c2333" stroke="#bc8cff" stroke-width="1.5"/>
+        <text x="439" y="55" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">Detect</text>
+        <text x="439" y="72" text-anchor="middle" fill="#6e7681" font-size="9">3 YOLO models</text>
+        <text x="439" y="86" text-anchor="middle" fill="#6e7681" font-size="9">~10K detections</text>
+        <text x="439" y="100" text-anchor="middle" fill="#6e7681" font-size="8">Local GPU or SageMaker</text>
+
+        <line x1="489" y1="70" x2="509" y2="70" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#p-arrow-purple)"/>
+
+        <rect x="512" y="40" width="100" height="60" rx="6" fill="#1c2333" stroke="#bc8cff" stroke-width="1.5"/>
+        <text x="562" y="60" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">Ensemble</text>
+        <text x="562" y="76" text-anchor="middle" fill="#6e7681" font-size="9">Noisy-OR +</text>
+        <text x="562" y="88" text-anchor="middle" fill="#6e7681" font-size="9">cross-scale</text>
+
+        <line x1="612" y1="70" x2="632" y2="70" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#p-arrow-purple)"/>
+
+        <rect x="635" y="40" width="100" height="60" rx="6" fill="#1c2333" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="685" y="60" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Fusion</text>
+        <text x="685" y="76" text-anchor="middle" fill="#6e7681" font-size="9">WBF + dedup</text>
+        <text x="685" y="88" text-anchor="middle" fill="#6e7681" font-size="9">20-200 final</text>
+
+        <line x1="735" y1="70" x2="755" y2="70" stroke="#3fb950" stroke-width="1.5" marker-end="url(#p-arrow-green)"/>
+
+        <rect x="758" y="40" width="100" height="60" rx="6" fill="#1c2333" stroke="#d29922" stroke-width="1.5"/>
+        <text x="808" y="60" text-anchor="middle" fill="#d29922" font-size="11" font-weight="600">Output</text>
+        <text x="808" y="76" text-anchor="middle" fill="#6e7681" font-size="9">PNG, JSON,</text>
+        <text x="808" y="88" text-anchor="middle" fill="#6e7681" font-size="9">CSV, LS JSON</text>
+
+        <line x1="858" y1="70" x2="878" y2="70" stroke="#d29922" stroke-width="1.5" marker-end="url(#p-arrow-orange)"/>
+
+        <rect x="881" y="40" width="80" height="60" rx="6" fill="#1c2333" stroke="#3ddbd9" stroke-width="1.5"/>
+        <text x="921" y="65" text-anchor="middle" fill="#3ddbd9" font-size="11" font-weight="600">Label</text>
+        <text x="921" y="80" text-anchor="middle" fill="#3ddbd9" font-size="9">Studio</text>
+
+        <!-- Row 2: Feedback loop -->
+        <line x1="921" y1="100" x2="921" y2="145" stroke="#3ddbd9" stroke-width="1.5" marker-end="url(#p-arrow-aqua)"/>
+
+        <rect x="830" y="148" width="170" height="50" rx="6" fill="#1c2333" stroke="#58a6ff" stroke-width="1"/>
+        <text x="915" y="170" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="600">Human Correction</text>
+        <text x="915" y="186" text-anchor="middle" fill="#6e7681" font-size="9">Add, remove, adjust boxes</text>
+
+        <line x1="830" y1="173" x2="740" y2="173" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#p-arrow)"/>
+
+        <rect x="560" y="148" width="180" height="50" rx="6" fill="#1c2333" stroke="#3fb950" stroke-width="1"/>
+        <text x="650" y="170" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Export YOLO Labels</text>
+        <text x="650" y="186" text-anchor="middle" fill="#6e7681" font-size="9">Corrected annotations</text>
+
+        <line x1="560" y1="173" x2="470" y2="173" stroke="#3fb950" stroke-width="1.5" marker-end="url(#p-arrow-green)"/>
+
+        <rect x="280" y="148" width="190" height="50" rx="6" fill="#1c2333" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="375" y="170" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="600">Classifier Bootstrap</text>
+        <text x="375" y="186" text-anchor="middle" fill="#6e7681" font-size="9">Scan, assemble, train</text>
+
+        <line x1="280" y1="173" x2="190" y2="173" stroke="#3fb950" stroke-width="1.5" marker-end="url(#p-arrow-green)"/>
+
+        <rect x="40" y="148" width="150" height="50" rx="6" fill="#1c2333" stroke="#bc8cff" stroke-width="1.5"/>
+        <text x="115" y="170" text-anchor="middle" fill="#bc8cff" font-size="11" font-weight="600">New Model .pt</text>
+        <text x="115" y="186" text-anchor="middle" fill="#6e7681" font-size="9">Deploy to config.yaml</text>
+
+        <!-- Arrow back up to detect -->
+        <path d="M 115 148 L 115 130 L 20 130 L 20 20 L 439 20 L 439 26" stroke="#bc8cff" stroke-width="1.5" fill="none" marker-end="url(#p-arrow-purple)" stroke-dasharray="5,3"/>
+        <text x="230" y="15" fill="#bc8cff" font-size="9" font-weight="600">ACTIVE LEARNING: improved model &rarr; fewer false positives next cycle</text>
+
+        <!-- Bottom labels -->
+        <text x="490" y="240" text-anchor="middle" fill="#6e7681" font-size="11">Each iteration improves precision while maintaining recall</text>
+
+        <!-- Stats -->
+        <rect x="120" y="255" width="180" height="30" rx="6" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="210" y="275" text-anchor="middle" fill="#8b949e" font-size="10">Cycle 1: ~60% precision</text>
+
+        <rect x="400" y="255" width="180" height="30" rx="6" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="490" y="275" text-anchor="middle" fill="#8b949e" font-size="10">Cycle 3: ~85% precision</text>
+
+        <rect x="680" y="255" width="180" height="30" rx="6" fill="#161b22" stroke="#3d444d" stroke-width="0.5"/>
+        <text x="770" y="275" text-anchor="middle" fill="#8b949e" font-size="10">Converged: ~95% precision</text>
+
+        <line x1="300" y1="270" x2="396" y2="270" stroke="#3fb950" stroke-width="1" marker-end="url(#p-arrow-green)"/>
+        <line x1="580" y1="270" x2="676" y2="270" stroke="#3fb950" stroke-width="1" marker-end="url(#p-arrow-green)"/>
+      </svg>
+      <div class="diagram-caption">Figure 8: End-to-end data flow &mdash; upload through detection, annotation, correction, and model improvement</div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- File Structure -->
+  <section>
+    <h2><span class="num">11.</span> Key File Reference</h2>
+    <table>
+      <tr><th>File</th><th>Purpose</th></tr>
+      <tr><td><code>pipeline/hded/orchestrator.py</code></td><td>Main pipeline entry point, stage orchestration (process_sheet)</td></tr>
+      <tr><td><code>pipeline/types.py</code></td><td>Detection data types: Raw, Remapped, Scored, Final</td></tr>
+      <tr><td><code>pipeline/config.py</code></td><td>Unified dataclass configuration from YAML</td></tr>
+      <tr><td><code>pipeline/hded/stages/detect.py</code></td><td>YOLO batch inference (batch-by-model strategy)</td></tr>
+      <tr><td><code>pipeline/hded/stages/ensemble.py</code></td><td>Noisy-OR cross-model + cross-scale scoring</td></tr>
+      <tr><td><code>pipeline/hded/stages/fusion.py</code></td><td>Weighted Box Fusion + echo dedup + threshold</td></tr>
+      <tr><td><code>pipeline/shared/tiling.py</code></td><td>Recursive 3x3 grid math</td></tr>
+      <tr><td><code>app/main.py</code></td><td>FastAPI app factory, middleware, route registration</td></tr>
+      <tr><td><code>app/services/pipeline_runner.py</code></td><td>Orchestrates end-to-end detection from web layer</td></tr>
+      <tr><td><code>app/services/sagemaker_service.py</code></td><td>SageMaker fleet distribution and job management</td></tr>
+      <tr><td><code>app/services/ls_service.py</code></td><td>Label Studio session management + project creation</td></tr>
+      <tr><td><code>master/launcher.py</code></td><td>Rasterize, S3 upload, distribute pages, launch SageMaker</td></tr>
+      <tr><td><code>master/aggregator.py</code></td><td>Download S3 results, reassemble tiles, generate outputs</td></tr>
+      <tr><td><code>master/sagemaker_entrypoint.py</code></td><td>GPU container entry point (page mode + tile mode)</td></tr>
+      <tr><td><code>pipeline/classifier/</code></td><td>Bootstrap pipeline: scan_labels, scan_images, assemble, train</td></tr>
+      <tr><td><code>admin_cli/</code></td><td>Rich TUI + argparse CLI for system administration</td></tr>
+      <tr><td><code>config.yaml</code></td><td>Global pipeline configuration (~320 lines)</td></tr>
+      <tr><td><code>gpu_limits.yaml</code></td><td>SageMaker rate limits + tier presets</td></tr>
+      <tr><td><code>docker-compose.yml</code></td><td>Base stack: app + LS + Postgres</td></tr>
+      <tr><td><code>docker-compose.ls.yml</code></td><td>Multi-user Label Studio (4 containers)</td></tr>
+      <tr><td><code>docker-compose.prod.yml</code></td><td>Production overlay: Caddy HTTPS</td></tr>
+      <tr><td><code>setup_aws.sh</code></td><td>One-shot AWS infrastructure provisioning</td></tr>
+      <tr><td><code>deploy.sh</code></td><td>Deploy to EC2 (web + SageMaker image)</td></tr>
+    </table>
+  </section>
+
+  <hr class="divider">
+
+  <!-- Deployment Reference -->
+  <section>
+    <h2><span class="num">12.</span> Deployment Modes</h2>
+    <table>
+      <tr><th>Aspect</th><th>Local (Docker Desktop)</th><th>AWS (EC2 + SageMaker)</th></tr>
+      <tr><td>Control Plane</td><td>Laptop / local machine</td><td>EC2 t3.medium</td></tr>
+      <tr><td>GPU Processing</td><td>Local GPU (optional, CPU fallback)</td><td>SageMaker multi-fleet (up to 50+ instances)</td></tr>
+      <tr><td>S3 Usage</td><td>None (all local filesystem)</td><td>3 buckets: raw, models, results</td></tr>
+      <tr><td>Label Studio</td><td>1 container (shared)</td><td>4 containers (per-user isolated)</td></tr>
+      <tr><td>Database</td><td>SQLite only</td><td>SQLite + PostgreSQL (for LS)</td></tr>
+      <tr><td>HTTPS</td><td>None (localhost)</td><td>Caddy auto-HTTPS (Let's Encrypt)</td></tr>
+      <tr><td>Scaling</td><td>Single machine only</td><td>Elastic GPU instances</td></tr>
+    </table>
+
+    <h4>Quick Start (Local)</h4>
+    <pre><code><span class="fn">docker compose</span> -f docker-compose.yml -f docker-compose.ls.yml up -d
+<span class="cm"># App at http://localhost:8000, LS at :18081-18084</span></code></pre>
+
+    <h4>Production Deploy (AWS)</h4>
+    <pre><code><span class="cm"># 1. One-time infrastructure setup</span>
+<span class="fn">bash</span> setup_aws.sh
+
+<span class="cm"># 2. Interactive configuration</span>
+<span class="fn">bash</span> setup.sh
+
+<span class="cm"># 3. Upload models to S3</span>
+<span class="fn">aws s3 cp</span> models/yolo_*.pt s3://$HDED_MODELS_BUCKET/
+
+<span class="cm"># 4. Deploy to EC2 (builds SageMaker image + syncs code)</span>
+<span class="fn">./deploy.sh</span> --all
+
+<span class="cm"># 5. Stop everything (preserves EBS)</span>
+<span class="fn">./stop.sh</span> --aws</code></pre>
+  </section>
+
+  <div style="text-align:center; padding:60px 0 20px; color:var(--text-muted); font-size:13px;">
+    HDED Architecture Documentation &mdash; Generated from codebase analysis of <code>hded_classifier_2/</code>
+  </div>
+
+</div>
+
+<!-- Sidebar Active State Script -->
+<script>
+(function() {
+  const links = document.querySelectorAll('.sidebar a[href^="#"]');
+  const sections = [];
+
+  links.forEach(link => {
+    const id = link.getAttribute('href').slice(1);
+    const el = document.getElementById(id);
+    if (el) sections.push({ el, link });
+  });
+
+  function updateActive() {
+    let current = sections[0];
+    const scrollY = window.scrollY + 100;
+
+    for (const s of sections) {
+      if (s.el.offsetTop <= scrollY) current = s;
+    }
+
+    links.forEach(l => l.classList.remove('active'));
+    if (current) current.link.classList.add('active');
+  }
+
+  window.addEventListener('scroll', updateActive, { passive: true });
+  updateActive();
+})();
+</script>
+
+</body>
+</html>
