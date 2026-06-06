@@ -1,8 +1,106 @@
 # BlueprintParser
 
-Open-source AI-powered construction blueprint analysis platform. Upload PDF blueprints → auto-extract text (OCR) → detect objects (YOLO) → classify pages/tables/keynotes → detect CSI codes → spatial mapping → multi-provider LLM chat → Quantity Takeoff. Self-hostable, multi-tenant, designed for construction estimators.
+**Live demo**: https://app.blueprintparser.com/demo  
+**BP Docs**: https://app.blueprintparser.com/docs
 
-**Live demo**: [blueprintparser.com/demo](https://app.blueprintparser.com/demo)
+BlueprintParser is a Next.js web app and a blueprint parsing engine.
+
+---
+
+## Features
+
+- Manual and AI-assisted QTO  
+- Extract schedules/tables from PDF to Excel/CSV
+- LLM chat with entire projects without blowing up context  
+  - BP includes a context engine that uses multiple methods for creating dense, token-efficient blueprint embeddings
+- Agent tool use *(work in progress)*  
+  - BP tools can be operated by agents
+  - Agents can query blueprints and provide more accurate answers with citations
+- Blueprint parsing engine  
+  - Backend tooling that makes PDF CDs machine readable
+  - YOLO object detection models detect shapes and spatial zones.
+  - Rasterize PDF and OCR all text
+  - CSI tagging: tag all CSI codes in the drawings
+  - OpenCV tools for extracting shapes and visual information
+  - Auto name Sheets / Drawing numbers
+  - Network graph engine: build nodes and edges between sheets in a project and between projects in a portfolio.
+
+ See all features and more in the BlueprintParser docs, link up top.
+
+### Current YOLO Classes
+There are two general categories: "discrete and spatial" classes.  
+
+#### Discrete Classes
+Examples:
+- `door_single`
+- `square`
+- `schedule_table`
+
+#### Spatial Classes
+Examples:
+- `title_block`
+- `drawings`
+- `text_block`
+
+Spatial classes define regions of the drawings, and help with localization and corroboration.  Since we use OCR, we also have the pixel coordinates of all text, which we can map against the YOLO outputs.
+For instance, when extracting the drawing number, we can check if the drawing number is located inside a title_block region.  
+Or, when looking for the door schedule, BP knows to look for the sheet where the words "door schedule" occur inside a "schedule_table" region, and can double check the title_block for coraberating text like "door and window schedule".  
+BP uses spatial data to build CSI-heatmaps, which show the distribution of CSI codes on a sheet.  YOLO spatial data enables us to differentiate between a cluster of CSI codes that are occuring in a text_block vs the drawings vs inside a schedule vs the title_block.  YOLO spatial classes are baby steps towards building a visual-reasoning engine for blueprints.
+
+YOLO acts as the "eyes" for LLMs and agents, enabling them to "see" into the drawings. 
+
+
+## NOTE on YOLO Models
+
+The YOLO models used in the demo were hand-labeled and trained by myself.  
+- 500+ hours of manual labeling
+- More than $3,000 in AWS compute
+
+The trained weights and training datasets are not included in this repository.
+BlueprintParser is designed so users can upload and use their own object-detection models.
+
+
+---
+
+## Project Goal
+
+It started with trying to build a free quantity takeoff tool, expanded with extracting schedules/tables to excel, and eventually evolved into a LLM harness for blueprints.
+
+Its not enough to rely on LLMs, it's necesary to give them tools that empower them to do more with blueprints.  
+
+---
+
+## Future Goals as of May, 2026
+
+- Rebuild a headless version of the BP parsing engine  
+  - Frontend agnostic
+  - Usable by tools like Claude Cowork/Code, Codex and agent harnesses.  
+
+- Build a lightweight frontend optimized for LLM/"chat with the drawings".  
+
+- Expand agent tool use  
+  - Enable an agent to do a full QTO using BP's tools.  With better tool use, agents can more effectively navigate the plans, answer more complex questions with citations derived from the drawings, and actually interact with blueprints.  
+
+- Eventually rebuild the frontend entirely, it's full of bugs and the UI is janky.
+
+---
+
+## Training Data requirements for YOLO
+
+I believe there are at least ~200 blueprint object classes that, if trained properly, could enable an AI-QTO engine to handle 80–90% of "each" takeoffs across trades.
+A truly comprehensive blueprint object-detection system would likely exceed 400 classes.  To label this many classes, it would take 50-100+ annotators working full time for 6-12 months, require hundreds of thousands of bid grade CDs, a robust annotator workforce management system, and lots of data labeling and ML ops.  Factor in hosting cost for that many annotators and the compute for training the models, the capital to build this dataset could be a 6 or 7 figure investment.
+
+Then, we have to do this again for image segmentation (surface area), classification, for fine tuning LLMs, and much more.  
+
+There is a tremendous data labeling challenge ahead of the AEC industry.
+
+---
+
+## Why This Matters
+
+We have to solve the "drawing problem" if the AEC industry wants to one day, build its own VLM  or foundation models.  Spatial reasoning is a must.  To get there will require a massive and sustained data labeling campaign, that likely will require coordination between unlikely partners to succeed.  
+
+BlueprintParser is a small step in that direction, and hopefully contributes toward the development of an open source ai community in AEC and specifically for Estimators.  
 
 ---
 
@@ -111,7 +209,7 @@ The setup wizard prompts for: database URL, auth secrets, LLM API keys (Groq/Ant
 
 ## Processing Pipeline (6-System Cascade)
 
-The processing pipeline transforms raw PDF pixels into structured, LLM-consumable intelligence through six interconnected systems. Each system adds signal while reducing noise, outputting confidence scores rather than binary decisions.
+The processing pipeline transforms PDFs into 'structured data' through six interconnected systems. Upstream system's outputs feed as inputs into downstream systems.  The final processed outputs are machine readable, and context optimised for LLMs.  
 
 ### System Overview
 
@@ -554,17 +652,12 @@ Works without AWS credentials — PDF viewing, annotations, QTO, search all func
 
 ## License
 
-**FSL-1.1-MIT** (Functional Source License, Version 1.1, MIT Future License) — see [LICENSE](./LICENSE) for full text.
+BlueprintParser is source-available software.
 
-**What you can do:**
-- Use, modify, redistribute the Software for any **Permitted Purpose** — including personal use, internal business use within your company, non-commercial education, and non-commercial research.
-- Provide professional services around the Software to licensees who are using it within these terms.
+Free for:
+- Personal use
+- Research
+- Education
+- Internal evaluation
 
-**What you cannot do:**
-- **Competing Use**: you cannot make the Software available to others as a commercial product or service that substitutes for it or offers the same or substantially similar functionality.
-
-**MIT Future License:** on the second anniversary of each released version, that version automatically becomes available under the MIT License — so the license is time-limited, not permanent.
-
-Reference: <https://fsl.software>
-
-> Not legal advice. If you are unsure whether your intended use is permitted, consult a lawyer.
+Commercial use requires a separate written license.
