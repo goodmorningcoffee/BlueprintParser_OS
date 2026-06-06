@@ -59,12 +59,14 @@ export async function POST(req: Request) {
     const body = await req.json();
     const {
       projectId,
+      publicId,
       pageNumber,
       type,
       sourceTextRegionId,
       overrides,
     } = body as {
-      projectId: number;
+      projectId?: number;        // dbId (legacy callers)
+      publicId?: string;         // preferred — every route can resolve it, root-admin-safe
       pageNumber: number;
       type: ParsedRegionType;
       sourceTextRegionId?: string;
@@ -73,11 +75,12 @@ export async function POST(req: Request) {
         data?: Record<string, unknown>;
         category?: string;
         csiTags?: CsiCode[];
+        regionId?: string;       // stable id → upsert (re-parse REPLACES instead of duplicating)
       };
     };
 
-    if (!projectId || !pageNumber || !type) {
-      return apiError("Missing projectId, pageNumber, or type", 400);
+    if ((!projectId && !publicId) || !pageNumber || !type) {
+      return apiError("Missing projectId/publicId, pageNumber, or type", 400);
     }
     if (!sourceTextRegionId && !(overrides?.data && overrides?.bbox)) {
       return apiError(
@@ -86,7 +89,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
+    const access = await resolveProjectAccess(
+      publicId ? { publicId } : { dbId: projectId! },
+      { allowDemo: true },
+    );
     if (access.error) return access.error;
     const { project, scope } = access;
 
@@ -213,8 +219,12 @@ export async function POST(req: Request) {
         regionData = overrides!.data!;
       }
 
+      // Stable id enables upsert: when the client passes the same
+      // overrides.regionId (e.g. re-parsing the same drawn region), REPLACE the
+      // prior ParsedRegion instead of appending a duplicate. Absent → fresh id.
+      const regionId = overrides?.regionId ?? `parsed-${Date.now()}`;
       const parsedRegion: ParsedRegion = {
-        id: `parsed-${Date.now()}`,
+        id: regionId,
         type,
         category: overrides?.category ?? inferCategory(type, regionData),
         bbox: regionBbox,
@@ -228,9 +238,13 @@ export async function POST(req: Request) {
       }
 
       const existingRegions = currentIntel.parsedRegions ?? [];
+      const existingIdx = existingRegions.findIndex((r) => r.id === regionId);
+      const nextRegions = existingIdx >= 0
+        ? existingRegions.map((r, i) => (i === existingIdx ? parsedRegion : r))
+        : [...existingRegions, parsedRegion];
       const updatedIntelligence: PageIntelligence = {
         ...currentIntel,
-        parsedRegions: [...existingRegions, parsedRegion],
+        parsedRegions: nextRegions,
       };
       const newCsi = mergeCsiCodes(existingCsi, regionCsiTags);
 
@@ -247,7 +261,7 @@ export async function POST(req: Request) {
 
     let summaries = null;
     try {
-      summaries = await computeProjectSummaries(projectId);
+      summaries = await computeProjectSummaries(access.project.id);
     } catch (err) {
       logger.warn("[regions/promote] Summary recompute failed (non-fatal):", err);
     }

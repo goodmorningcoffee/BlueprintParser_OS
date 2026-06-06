@@ -36,23 +36,38 @@ function Sparkline({ data, color = "var(--accent)" }: { data: DataPoint[]; color
   );
 }
 
+interface ToolUsageRow { feature: string; hits: number; uniqueUsers: number }
+
 export default function LogsMonitor() {
   const [data, setData] = useState<MonitorResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [toolUsage, setToolUsage] = useState<ToolUsageRow[]>([]);
+  const [showUnused, setShowUnused] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/logs/monitor`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
+      // Parallel fetch: monitor (critical) + tool usage (non-critical, silent-fail).
+      // Tool usage hits the existing engagement endpoint with ?all=1 for the
+      // zero-filled mapped-features view.
+      const [monitorRes, toolRes] = await Promise.all([
+        fetch(`/api/admin/logs/monitor`),
+        fetch(`/api/admin/logs/engagement?range=24h&all=1`).catch(() => null),
+      ]);
+      if (!monitorRes.ok) {
+        const err = await monitorRes.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${monitorRes.status}`);
       }
-      setData(await res.json());
+      setData(await monitorRes.json());
       setLastRefresh(new Date());
+
+      if (toolRes && toolRes.ok) {
+        const toolData = await toolRes.json();
+        setToolUsage(toolData.allMapped ?? []);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load monitor");
     } finally {
@@ -61,6 +76,10 @@ export default function LogsMonitor() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const usedTools = toolUsage.filter((t) => t.hits > 0);
+  const unusedTools = toolUsage.filter((t) => t.hits === 0);
+  const maxHits = Math.max(...usedTools.map((t) => t.hits), 1);
 
   const alarmColor = (state: string) =>
     state === "ALARM" ? "bg-red-500/20 text-red-300 border-red-500/40"
@@ -136,6 +155,65 @@ export default function LogsMonitor() {
               </div>
             )}
           </div>
+
+          {/* Tool usage (last 24h) */}
+          {toolUsage.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <div className="text-xs text-[var(--muted)]">Tool usage — last 24h</div>
+                  <div className="text-[10px] text-[var(--muted)]/80">
+                    {usedTools.length} of {toolUsage.length} tools used. Every mapped API call is logged via CloudWatch.
+                  </div>
+                </div>
+                {unusedTools.length > 0 && (
+                  <button
+                    onClick={() => setShowUnused((v) => !v)}
+                    className="text-[10px] px-2 py-0.5 rounded border border-[var(--border)] hover:border-[var(--accent)] text-[var(--muted)] hover:text-[var(--fg)]"
+                  >
+                    {showUnused ? "Hide" : "Show"} unused ({unusedTools.length})
+                  </button>
+                )}
+              </div>
+              <div className="rounded border border-[var(--border)] overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-[var(--surface-2)]/50 text-[var(--muted)] text-[10px]">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">Tool</th>
+                      <th className="px-2 py-1.5 text-right w-20">Calls</th>
+                      <th className="px-2 py-1.5 text-right w-20">Users</th>
+                      <th className="px-2 py-1.5 w-1/3"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usedTools.map((t) => (
+                      <tr key={t.feature} className="border-t border-[var(--border)]">
+                        <td className="px-2 py-1 text-[var(--fg)]">{t.feature}</td>
+                        <td className="px-2 py-1 text-right font-mono">{t.hits.toLocaleString()}</td>
+                        <td className="px-2 py-1 text-right font-mono">{t.uniqueUsers.toLocaleString()}</td>
+                        <td className="px-2 py-1">
+                          <div className="h-1.5 bg-[var(--surface-2)] rounded overflow-hidden">
+                            <div
+                              className="h-full bg-[var(--accent)]/60"
+                              style={{ width: `${(t.hits / maxHits) * 100}%` }}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {showUnused && unusedTools.map((t) => (
+                      <tr key={t.feature} className="border-t border-[var(--border)] opacity-50">
+                        <td className="px-2 py-1 text-[var(--muted)]">{t.feature}</td>
+                        <td className="px-2 py-1 text-right font-mono text-[var(--muted)]">0</td>
+                        <td className="px-2 py-1 text-right font-mono text-[var(--muted)]">0</td>
+                        <td className="px-2 py-1"></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Alarms row */}
           <div>

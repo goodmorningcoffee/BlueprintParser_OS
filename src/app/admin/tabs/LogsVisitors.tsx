@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { LogsRange } from "./LogsTab";
 
 interface VisitorRow {
@@ -23,6 +23,54 @@ interface VisitorsResponse {
   retentionWarning: { daysUntilRollover: number } | null;
 }
 
+type SortKey = "ip" | "country" | "requests" | "uniquePaths" | "durationMs" | "lastSeen" | "authed" | "userAgent";
+type SortDir = "asc" | "desc";
+
+function sortValue(row: VisitorRow, key: SortKey): string | number | null {
+  switch (key) {
+    case "ip": return row.ip;
+    case "country": return row.country;
+    case "requests": return row.requests;
+    case "uniquePaths": return row.uniquePaths;
+    case "durationMs": return row.durationMs;
+    case "lastSeen": return row.lastSeen ? new Date(row.lastSeen).getTime() : null;
+    case "authed": return row.authed ? 1 : 0;
+    case "userAgent": return row.userAgent;
+  }
+}
+
+function fmtRelative(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`;
+  if (ms < 3600_000) return `${Math.round(ms / 60_000)}m ago`;
+  if (ms < 24 * 3600_000) return `${Math.round(ms / 3600_000)}h ago`;
+  return `${Math.round(ms / (24 * 3600_000))}d ago`;
+}
+
+function SortTh({
+  label, col, align, sortKey, sortDir, onClick,
+}: {
+  label: string;
+  col: SortKey;
+  align: "left" | "right";
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onClick: (k: SortKey) => void;
+}) {
+  const active = sortKey === col;
+  const arrow = active ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+  return (
+    <th className={`px-2 py-2 text-${align}`}>
+      <button
+        onClick={() => onClick(col)}
+        className={`hover:text-[var(--fg)] ${active ? "text-[var(--fg)] font-medium" : ""}`}
+      >
+        {label}{arrow}
+      </button>
+    </th>
+  );
+}
+
 export default function LogsVisitors({ range }: { range: LogsRange }) {
   const [data, setData] = useState<VisitorsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -31,6 +79,29 @@ export default function LogsVisitors({ range }: { range: LogsRange }) {
   const [banModal, setBanModal] = useState<{ ip: string; country: string } | null>(null);
   const [banReason, setBanReason] = useState("");
   const [banSubmitting, setBanSubmitting] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>("requests");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const toggleSort = (key: SortKey) => {
+    if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir(key === "ip" || key === "country" || key === "userAgent" ? "asc" : "desc"); }
+  };
+
+  const sortedVisitors = useMemo(() => {
+    if (!data) return [];
+    const rows = [...data.visitors];
+    const dir = sortDir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      const av = sortValue(a, sortKey);
+      const bv = sortValue(b, sortKey);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "string" && typeof bv === "string") return av.localeCompare(bv) * dir;
+      return ((av as number) - (bv as number)) * dir;
+    });
+    return rows;
+  }, [data, sortKey, sortDir]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -132,7 +203,7 @@ export default function LogsVisitors({ range }: { range: LogsRange }) {
         <div>
           <h3 className="text-sm font-medium text-[var(--fg)]">Visitors ({data?.visitors.length ?? 0})</h3>
           <p className="text-xs text-[var(--muted)]">
-            Sorted by request count. Top row = most engaged visitor this window.
+            Click a column header to sort. Default: most requests first.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -159,31 +230,35 @@ export default function LogsVisitors({ range }: { range: LogsRange }) {
           <table className="w-full text-xs">
             <thead className="bg-[var(--surface-2)]/50 text-[var(--muted)] sticky top-0">
               <tr>
-                <th className="px-2 py-2 text-left">IP</th>
-                <th className="px-2 py-2 text-left">Country</th>
-                <th className="px-2 py-2 text-right">Requests</th>
-                <th className="px-2 py-2 text-right">Paths</th>
-                <th className="px-2 py-2 text-right">Duration</th>
-                <th className="px-2 py-2 text-left">Authed?</th>
-                <th className="px-2 py-2 text-left">User agent</th>
+                <SortTh label="IP" col="ip" align="left" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortTh label="Country" col="country" align="left" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortTh label="Requests" col="requests" align="right" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortTh label="Paths" col="uniquePaths" align="right" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortTh label="Duration" col="durationMs" align="right" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortTh label="Last seen" col="lastSeen" align="left" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortTh label="Authed?" col="authed" align="left" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                <SortTh label="User agent" col="userAgent" align="left" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                 <th className="px-2 py-2 text-left">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {data.visitors.length === 0 && (
+              {sortedVisitors.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-2 py-8 text-center text-[var(--muted)] italic">
+                  <td colSpan={9} className="px-2 py-8 text-center text-[var(--muted)] italic">
                     No visitors in this window yet.
                   </td>
                 </tr>
               )}
-              {data.visitors.map((v) => (
+              {sortedVisitors.map((v) => (
                 <tr key={v.ip} className="border-t border-[var(--border)] hover:bg-[var(--surface-2)]/30">
                   <td className="px-2 py-1.5 font-mono">{v.ip}</td>
                   <td className="px-2 py-1.5">{v.country}</td>
                   <td className="px-2 py-1.5 text-right font-mono">{v.requests}</td>
                   <td className="px-2 py-1.5 text-right font-mono">{v.uniquePaths}</td>
                   <td className="px-2 py-1.5 text-right font-mono">{fmtDuration(v.durationMs)}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap text-[var(--muted)]" title={v.lastSeen ?? ""}>
+                    {v.lastSeen ? fmtRelative(v.lastSeen) : "—"}
+                  </td>
                   <td className="px-2 py-1.5">
                     {v.authed ? <span className="text-emerald-400">yes</span> : <span className="text-[var(--muted)]">no</span>}
                   </td>

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
+import { requireAuth, resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, qtoWorkflows } from "@/lib/db/schema";
 import { eq, and, desc } from "drizzle-orm";
@@ -37,22 +37,19 @@ export async function GET(req: Request) {
 
 /** POST /api/qto-workflows — create a new workflow */
 export async function POST(req: Request) {
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
   const { projectId, materialType, materialLabel } = await req.json();
   if (!projectId || !materialType) {
     return NextResponse.json({ error: "projectId and materialType required" }, { status: 400 });
   }
 
-  const [project] = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(and(eq(projects.publicId, projectId), eq(projects.companyId, session.user.companyId)))
-    .limit(1);
+  // projectId here is the project publicId. resolveProjectAccess authenticates,
+  // looks up the project, and bypasses the companyId check for root admins.
+  const access = await resolveProjectAccess({ publicId: projectId }, { allowDemo: true });
+  if (access.error) return access.error;
+  const { project, scope } = access;
 
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (project.isDemo && scope !== "admin" && scope !== "root") {
+    return NextResponse.json({ error: "Demo projects are read-only" }, { status: 403 });
   }
 
   try {

@@ -5,6 +5,7 @@ import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import { unionBboxes } from "@/lib/specnote-parser";
+import { promoteParsedRegion, canPersist, regionIdFor } from "@/lib/client-persist";
 import type { BboxLTWH, NotesData, PageIntelligence, ParsedRegion } from "@/types";
 
 type NotesSubMode = "auto" | "guided" | "paragraph" | "fast-manual" | "manual";
@@ -36,6 +37,8 @@ interface PreviewGrid {
  */
 export default function NotesParser() {
   const projectId = useViewerStore((s) => s.projectId);
+  const publicId = useViewerStore((s) => s.publicId);
+  const isDemo = useViewerStore((s) => s.isDemo);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
   const textractData = useViewerStore((s) => s.textractData[pageNumber]);
@@ -180,6 +183,9 @@ export default function NotesParser() {
         setPreview(null);
       } else {
         setPreview(payload);
+        // Auto-persist on parse completion so the note is saved without an
+        // explicit "Save Notes" click. Stable regionId → re-parse upserts.
+        void persistPreviewGrid(payload, notesParseRegion);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Parse failed");
@@ -277,7 +283,7 @@ export default function NotesParser() {
   };
 
   const saveFromParagraphBatch = async () => {
-    if (!projectId || !notesParseRegion || paragraphBatch.length === 0 || isSavingRef.current) return;
+    if (!canPersist(publicId, isDemo) || !notesParseRegion || paragraphBatch.length === 0 || isSavingRef.current) return;
     isSavingRef.current = true;
     setSaving(true);
     setError(null);
@@ -299,26 +305,16 @@ export default function NotesParser() {
         columnCount: headers.length,
         rowBoundaries,
       };
-      const res = await fetch("/api/regions/promote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId,
-          pageNumber,
-          type: "notes",
-          overrides: {
-            bbox: unionBbox,
-            data,
-            category: "notes",
-          },
-        }),
+      const payload = await promoteParsedRegion({
+        publicId,
+        pageNumber,
+        type: "notes",
+        regionId: regionIdFor(pageNumber, unionBbox),
+        bbox: unionBbox,
+        data: data as unknown as Record<string, unknown>,
+        category: "notes",
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Save failed" }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-      const payload = (await res.json()) as { updatedIntelligence: PageIntelligence };
-      setPageIntelligence(pageNumber, payload.updatedIntelligence);
+      setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
       refreshPageCsiSpatialMap(pageNumber);
       setParagraphBatch([]);
       resetNotesParse();
@@ -331,44 +327,40 @@ export default function NotesParser() {
     }
   };
 
-  const handleSave = async () => {
-    if (mode === "paragraph") return saveFromParagraphBatch();
-    if (!projectId || !notesParseRegion || !preview || isSavingRef.current) return;
+  // Promote a preview grid to a committed ParsedRegion. Shared by the auto-fire
+  // (on parse completion in Auto/Guided/Manual sub-modes) and the manual
+  // "Save Notes" button. Pass grid + region explicitly so the auto path doesn't
+  // race React state updates. Stable regionId → re-parse upserts (replaces).
+  const persistPreviewGrid = async (
+    grid: PreviewGrid,
+    region: [number, number, number, number],
+  ) => {
+    if (!canPersist(publicId, isDemo) || isSavingRef.current) return;
     isSavingRef.current = true;
     setSaving(true);
     setError(null);
     try {
       const data: NotesData = {
-        headers: preview.headers,
-        rows: preview.rows,
-        tagColumn: preview.headers[0],
+        headers: grid.headers,
+        rows: grid.rows,
+        tagColumn: grid.headers[0],
         tableName: `Notes p.${pageNumber}`,
-        rowCount: preview.rows.length,
-        columnCount: preview.headers.length,
-        rowBoundaries: preview.rowBoundaries,
-        colBoundaries: preview.colBoundaries,
+        rowCount: grid.rows.length,
+        columnCount: grid.headers.length,
+        rowBoundaries: grid.rowBoundaries,
+        colBoundaries: grid.colBoundaries,
       };
-      const res = await fetch("/api/regions/promote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId,
-          pageNumber,
-          type: "notes",
-          overrides: {
-            bbox: notesParseRegion,
-            data,
-            category: "notes",
-            csiTags: preview.csiTags ?? [],
-          },
-        }),
+      const payload = await promoteParsedRegion({
+        publicId,
+        pageNumber,
+        type: "notes",
+        regionId: regionIdFor(pageNumber, region),
+        bbox: region,
+        data: data as unknown as Record<string, unknown>,
+        category: "notes",
+        csiTags: grid.csiTags ?? [],
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Save failed" }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-      const payload = (await res.json()) as { updatedIntelligence: PageIntelligence };
-      setPageIntelligence(pageNumber, payload.updatedIntelligence);
+      setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
       refreshPageCsiSpatialMap(pageNumber);
       resetNotesParse();
       setPreview(null);
@@ -378,6 +370,12 @@ export default function NotesParser() {
       isSavingRef.current = false;
       setSaving(false);
     }
+  };
+
+  const handleSave = async () => {
+    if (mode === "paragraph") return saveFromParagraphBatch();
+    if (!notesParseRegion || !preview) return;
+    return persistPreviewGrid(preview, notesParseRegion);
   };
 
   const handleClear = () => {
@@ -476,7 +474,10 @@ export default function NotesParser() {
               onClick={() => {
                 const grid = buildGridFromGuided();
                 if (!grid) setError("Need at least 2 rows and 2 columns to build grid");
-                else setPreview(grid);
+                else {
+                  setPreview(grid);
+                  if (notesParseRegion) void persistPreviewGrid(grid, notesParseRegion);
+                }
               }}
               disabled={!regionReady}
               className="w-full text-[10px] px-2 py-1 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40"
@@ -591,7 +592,10 @@ export default function NotesParser() {
               onClick={() => {
                 const grid = buildGridFromManualBBs();
                 if (!grid) setError("Need at least 2 columns and 1 row drawn");
-                else setPreview(grid);
+                else {
+                  setPreview(grid);
+                  if (notesParseRegion) void persistPreviewGrid(grid, notesParseRegion);
+                }
               }}
               disabled={!regionReady}
               className="w-full text-[10px] px-2 py-1 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40"

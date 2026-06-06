@@ -9,6 +9,7 @@ import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength
 import { splitPolygonByLine, findSplittablePolygons } from "@/lib/polygon-split";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
+import { persistFetch, canPersist } from "@/lib/client-persist";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
@@ -861,25 +862,27 @@ export default memo(function AnnotationOverlay({
       data: polygonData as unknown as Record<string, unknown>,
     });
 
-    // Persist
-    if (!isDemo) {
-      fetch("/api/annotations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: publicId,
-          pageNumber,
-          name: activeItem.name,
-          bbox,
-          source: "takeoff",
-          data: polygonData,
-        }),
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((saved) => {
-          if (saved) updateAnnotation(tempId, { id: saved.id });
-        })
-        .catch(() => {});
+    // Persist — surface failures via the visible bucket-fill error banner
+    // instead of silently dropping the saved polygon.
+    if (canPersist(publicId, isDemo)) {
+      (async () => {
+        try {
+          const saved = await persistFetch("/api/annotations", {
+            projectId: publicId,
+            pageNumber,
+            name: activeItem.name,
+            bbox,
+            source: "takeoff",
+            data: polygonData,
+          }) as { id?: number } | null;
+          if (saved?.id) updateAnnotation(tempId, { id: saved.id });
+        } catch (err) {
+          useViewerStore.getState().setBucketFillError(
+            err instanceof Error ? `Failed to save area: ${err.message}` : "Failed to save area",
+          );
+          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+        }
+      })();
     }
 
     resetPolygonDrawing();
@@ -949,24 +952,25 @@ export default memo(function AnnotationOverlay({
         source: "takeoff",
         data: polygonData as unknown as Record<string, unknown>,
       });
-      if (!isDemo) {
-        fetch("/api/annotations", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectId: publicId,
-            pageNumber,
-            name: activeItem.name,
-            bbox,
-            source: "takeoff",
-            data: polygonData,
-          }),
-        })
-          .then((res) => (res.ok ? res.json() : null))
-          .then((saved) => {
-            if (saved) updateAnnotation(tempId, { id: saved.id });
-          })
-          .catch(() => {});
+      if (canPersist(publicId, isDemo)) {
+        (async () => {
+          try {
+            const saved = await persistFetch("/api/annotations", {
+              projectId: publicId,
+              pageNumber,
+              name: activeItem.name,
+              bbox,
+              source: "takeoff",
+              data: polygonData,
+            }) as { id?: number } | null;
+            if (saved?.id) updateAnnotation(tempId, { id: saved.id });
+          } catch (err) {
+            useViewerStore.getState().setBucketFillError(
+              err instanceof Error ? `Failed to save area: ${err.message}` : "Failed to save area",
+            );
+            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+          }
+        })();
       }
       setBucketFillPreview(null);
       return;
@@ -1050,31 +1054,34 @@ export default memo(function AnnotationOverlay({
       data: leftResult.data as unknown as Record<string, unknown>,
     });
 
-    // 3. Persist both to server (fire-and-forget with logging)
-    if (!isDemo && target.id > 0) {
-      fetch(`/api/annotations/${target.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bbox: leftResult.bbox, data: leftResult.data }),
-      }).catch((err) => console.error("Failed to persist left-half annotation:", err));
-    }
-
-    if (!isDemo) {
-      fetch("/api/annotations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: publicId,
-          pageNumber,
-          name: parentItem.name,
-          bbox: rightResult.bbox,
-          source: "takeoff",
-          data: rightResult.data,
-        }),
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((saved) => { if (saved) updateAnnotation(tempAnnId, { id: saved.id }); })
-        .catch((err) => console.error("Failed to persist right-half annotation:", err));
+    // 3. Persist both to server. Surface failures via the visible split-error
+    //    banner instead of console-only logging, so a dropped split is noticed.
+    if (canPersist(publicId, isDemo)) {
+      (async () => {
+        try {
+          if (target.id > 0) {
+            await persistFetch(
+              `/api/annotations/${target.id}`,
+              { bbox: leftResult.bbox, data: leftResult.data },
+              "PUT",
+            );
+          }
+          const saved = await persistFetch("/api/annotations", {
+            projectId: publicId,
+            pageNumber,
+            name: parentItem.name,
+            bbox: rightResult.bbox,
+            source: "takeoff",
+            data: rightResult.data,
+          }) as { id?: number } | null;
+          if (saved?.id) updateAnnotation(tempAnnId, { id: saved.id });
+        } catch (err) {
+          useViewerStore.getState().setSplitError(
+            err instanceof Error ? `Failed to save split: ${err.message}` : "Failed to save split",
+          );
+          setTimeout(() => useViewerStore.getState().setSplitError(null), 5000);
+        }
+      })();
     }
 
     // 4. Stay in split mode — clear preview + line, ready for next split. Escape exits.
@@ -1132,25 +1139,27 @@ export default memo(function AnnotationOverlay({
       data: polylineData as unknown as Record<string, unknown>,
     });
 
-    // Persist
-    if (!isDemo) {
-      fetch("/api/annotations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: publicId,
-          pageNumber,
-          name: activeItem.name,
-          bbox,
-          source: "takeoff",
-          data: polylineData,
-        }),
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((saved) => {
-          if (saved) updateAnnotation(tempId, { id: saved.id });
-        })
-        .catch(() => {});
+    // Persist — surface failures on the visible canvas error banner instead of
+    // silently dropping the saved line.
+    if (canPersist(publicId, isDemo)) {
+      (async () => {
+        try {
+          const saved = await persistFetch("/api/annotations", {
+            projectId: publicId,
+            pageNumber,
+            name: activeItem.name,
+            bbox,
+            source: "takeoff",
+            data: polylineData,
+          }) as { id?: number } | null;
+          if (saved?.id) updateAnnotation(tempId, { id: saved.id });
+        } catch (err) {
+          useViewerStore.getState().setBucketFillError(
+            err instanceof Error ? `Failed to save line: ${err.message}` : "Failed to save line",
+          );
+          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+        }
+      })();
     }
 
     resetPolygonDrawing();
@@ -1166,12 +1175,23 @@ export default memo(function AnnotationOverlay({
     // used when only `selectedId` is set (the legacy single-select path).
     const multiIds = [...multiSelect.selectedAnnotationIds];
     if (multiIds.length > 1) {
-      if (!isDemo && publicId) {
-        fetch(`/api/annotations/batch-delete`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId: publicId, annotationIds: multiIds }),
-        }).catch(() => {});
+      // Only persisted rows (positive ids) need a server delete; temp/optimistic
+      // ids (<= 0) were never saved, so skip them to avoid spurious 404 errors.
+      const persistedIds = multiIds.filter((id) => id > 0);
+      if (canPersist(publicId, isDemo) && persistedIds.length > 0) {
+        (async () => {
+          try {
+            await persistFetch(
+              `/api/annotations/batch-delete`,
+              { projectId: publicId, annotationIds: persistedIds },
+            );
+          } catch (err) {
+            useViewerStore.getState().setBucketFillError(
+              err instanceof Error ? `Failed to delete: ${err.message}` : "Failed to delete annotations",
+            );
+            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+          }
+        })();
       }
       for (const id of multiIds) removeAnnotation(id);
       multiSelect.clearSelection();
@@ -1179,8 +1199,18 @@ export default memo(function AnnotationOverlay({
       return;
     }
     if (selectedId === null) return;
-    if (!isDemo) {
-      fetch(`/api/annotations/${selectedId}`, { method: "DELETE" }).catch(() => {});
+    if (canPersist(publicId, isDemo) && selectedId > 0) {
+      const deleteId = selectedId;
+      (async () => {
+        try {
+          await persistFetch(`/api/annotations/${deleteId}`, undefined, "DELETE");
+        } catch (err) {
+          useViewerStore.getState().setBucketFillError(
+            err instanceof Error ? `Failed to delete: ${err.message}` : "Failed to delete annotation",
+          );
+          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+        }
+      })();
     }
     removeAnnotation(selectedId);
     setSelectedId(null);
@@ -1190,31 +1220,43 @@ export default memo(function AnnotationOverlay({
   /** Save the current position of the selected annotation to the API */
   const saveDragPosition = useCallback(() => {
     if (selectedId === null) return;
-    if (isDemo) return;
+    if (!canPersist(publicId, isDemo)) return;
+    if (selectedId <= 0) return; // skip tempIds (optimistic local-only)
     const ann = annotations.find((a) => a.id === selectedId);
     if (ann) {
-      fetch(`/api/annotations/${selectedId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bbox: ann.bbox }),
-      }).catch(() => {});
+      const annId = selectedId;
+      (async () => {
+        try {
+          await persistFetch(`/api/annotations/${annId}`, { bbox: ann.bbox }, "PUT");
+        } catch (err) {
+          useViewerStore.getState().setBucketFillError(
+            err instanceof Error ? `Failed to save move: ${err.message}` : "Failed to save move",
+          );
+          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+        }
+      })();
     }
-  }, [selectedId, annotations, isDemo]);
+  }, [selectedId, annotations, isDemo, publicId]);
 
   /** Persist a vertex edit: PUTs both bbox and data. Parallel to
    *  saveDragPosition which only sends bbox. Pattern cloned from the
    *  split-area persistence code at L941 which also sends both fields. */
   const saveVertexEdit = useCallback((annId: number) => {
-    if (isDemo) return;
+    if (!canPersist(publicId, isDemo)) return;
     if (annId <= 0) return; // skip tempIds (optimistic local-only)
     const ann = annotations.find((a) => a.id === annId);
     if (!ann) return;
-    fetch(`/api/annotations/${annId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bbox: ann.bbox, data: ann.data }),
-    }).catch(() => {});
-  }, [annotations, isDemo]);
+    (async () => {
+      try {
+        await persistFetch(`/api/annotations/${annId}`, { bbox: ann.bbox, data: ann.data }, "PUT");
+      } catch (err) {
+        useViewerStore.getState().setBucketFillError(
+          err instanceof Error ? `Failed to save edit: ${err.message}` : "Failed to save edit",
+        );
+        setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+      }
+    })();
+  }, [annotations, isDemo, publicId]);
 
   const HANDLE = 8; // corner handle size in pixels
 
@@ -1515,25 +1557,27 @@ export default memo(function AnnotationOverlay({
           data: markerData as unknown as Record<string, unknown>,
         });
 
-        // Persist
-        if (!isDemo) {
-          fetch("/api/annotations", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              projectId: publicId,
-              pageNumber,
-              name: activeItem.name,
-              bbox,
-              source: "takeoff",
-              data: markerData,
-            }),
-          })
-            .then((res) => res.ok ? res.json() : null)
-            .then((saved) => {
-              if (saved) updateAnnotation(tempId, { id: saved.id });
-            })
-            .catch(() => {});
+        // Persist — surface failures on the visible canvas error banner
+        // instead of silently dropping the saved marker.
+        if (canPersist(publicId, isDemo)) {
+          (async () => {
+            try {
+              const saved = await persistFetch("/api/annotations", {
+                projectId: publicId,
+                pageNumber,
+                name: activeItem.name,
+                bbox,
+                source: "takeoff",
+                data: markerData,
+              }) as { id?: number } | null;
+              if (saved?.id) updateAnnotation(tempId, { id: saved.id });
+            } catch (err) {
+              useViewerStore.getState().setBucketFillError(
+                err instanceof Error ? `Failed to save marker: ${err.message}` : "Failed to save marker",
+              );
+              setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+            }
+          })();
         }
 
         return;
@@ -2394,8 +2438,18 @@ export default memo(function AnnotationOverlay({
 
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        if (!isDemo) {
-          fetch(`/api/annotations/${selectedId}`, { method: "DELETE" }).catch(() => {});
+        if (canPersist(publicId, isDemo) && selectedId! > 0) {
+          const deleteId = selectedId!;
+          (async () => {
+            try {
+              await persistFetch(`/api/annotations/${deleteId}`, undefined, "DELETE");
+            } catch (err) {
+              useViewerStore.getState().setBucketFillError(
+                err instanceof Error ? `Failed to delete: ${err.message}` : "Failed to delete annotation",
+              );
+              setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+            }
+          })();
         }
         removeAnnotation(selectedId!);
         setSelectedId(null);
@@ -2411,7 +2465,7 @@ export default memo(function AnnotationOverlay({
 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [selectedId, dragging, removeAnnotation, saveDragPosition, isDemo]);
+  }, [selectedId, dragging, removeAnnotation, saveDragPosition, isDemo, publicId]);
 
   // Cancel in-progress drawing modes on page change, deselect
   useEffect(() => {
@@ -2487,12 +2541,22 @@ export default memo(function AnnotationOverlay({
         ? { ...(existing?.data ?? {}), csiCodes }
         : existing?.data;
       updateAnnotation(editingAnnotationId, { name, note, data: mergedData ?? null });
-      if (!isDemo) {
-        fetch(`/api/annotations/${editingAnnotationId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, note, ...(annotationData ? { data: mergedData } : {}) }),
-        }).catch(() => {});
+      if (canPersist(publicId, isDemo)) {
+        const editId = editingAnnotationId;
+        (async () => {
+          try {
+            await persistFetch(
+              `/api/annotations/${editId}`,
+              { name, note, ...(annotationData ? { data: mergedData } : {}) },
+              "PUT",
+            );
+          } catch (err) {
+            useViewerStore.getState().setBucketFillError(
+              err instanceof Error ? `Failed to save markup: ${err.message}` : "Failed to save markup",
+            );
+            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+          }
+        })();
       }
     } else {
       // Create new annotation
@@ -2507,24 +2571,25 @@ export default memo(function AnnotationOverlay({
         data: annotationData ?? null,
       });
 
-      if (!isDemo) {
-        fetch("/api/annotations", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectId: publicId,
-            pageNumber,
-            name,
-            note,
-            bbox: [minX, minY, maxX, maxY],
-            ...(annotationData ? { data: annotationData } : {}),
-          }),
-        })
-          .then((res) => res.ok ? res.json() : null)
-          .then((saved) => {
-            if (saved) updateAnnotation(tempId, { id: saved.id });
-          })
-          .catch(() => {});
+      if (canPersist(publicId, isDemo)) {
+        (async () => {
+          try {
+            const saved = await persistFetch("/api/annotations", {
+              projectId: publicId,
+              pageNumber,
+              name,
+              note,
+              bbox: [minX, minY, maxX, maxY],
+              ...(annotationData ? { data: annotationData } : {}),
+            }) as { id?: number } | null;
+            if (saved?.id) updateAnnotation(tempId, { id: saved.id });
+          } catch (err) {
+            useViewerStore.getState().setBucketFillError(
+              err instanceof Error ? `Failed to save markup: ${err.message}` : "Failed to save markup",
+            );
+            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+          }
+        })();
       }
     }
 

@@ -6,7 +6,7 @@ import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 
 interface GuidedParseTabProps {
-  detectCsiAndPersist: (grid: any) => Promise<void>;
+  detectCsiAndPersist: (grid: any, opts?: { resetAfter?: boolean }) => Promise<void>;
   yoloInTableRegion: { model: string; className: string; count: number }[];
   tagYoloClass: { model: string; className: string } | null;
   setTagYoloClass: (cls: { model: string; className: string } | null) => void;

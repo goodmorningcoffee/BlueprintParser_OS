@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import type { YoloTag } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 import type { MapTagsStrictness } from "./MapTagsSection";
@@ -167,88 +168,105 @@ export default memo(function ParsedTableItem({
     }
   };
 
-  const saveName = () => {
-    const trimmed = nameValue.trim();
-    if (trimmed && trimmed !== table.name) {
-      const store = useViewerStore.getState();
-      const intel = store.pageIntelligence[table.pageNum] || {};
-      const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
-        if (r.id !== table.region.id) return r;
-        return { ...r, data: { ...r.data, tableName: trimmed }, category: trimmed };
-      });
-      const updatedIntel = { ...intel, parsedRegions: regions };
-      store.setPageIntelligence(table.pageNum, updatedIntel);
+  const [editError, setEditError] = useState<string | null>(null);
 
-      // Persist to DB and refresh summaries
-      const { projectId, isDemo } = store;
-      if (projectId && !isDemo) {
-        fetch("/api/pages/intelligence", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId, pageNumber: table.pageNum, intelligence: updatedIntel }),
-        })
-          .then((r) => r.ok ? r.json() : null)
-          .then((data) => { if (data?.summaries) useViewerStore.getState().setSummaries(data.summaries); })
-          .catch(() => {});
-      }
-    }
+  // Persist an edited region through the transactional promote upsert (same
+  // regionId → REPLACE, never duplicate) instead of the old pages/intelligence
+  // blob-overwrite. Optimistically writes local intel for snappy UI, then
+  // adopts the server's authoritative intelligence + summaries. Gated on
+  // publicId (canPersist), NOT the numeric projectId (starts at 0, set late).
+  // Throws on failure so callers can surface it. `nextData` is the full new
+  // `data` object for the region; `category` optionally overrides it.
+  const persistRegionEdit = useCallback(async (
+    nextData: Record<string, any>,
+    category?: string,
+  ) => {
+    if (!table.region?.id) return;
+    const store = useViewerStore.getState();
+    const intel = store.pageIntelligence[table.pageNum] || {};
+    const regions = ((intel as any)?.parsedRegions || []).map((r: any) =>
+      r.id === table.region.id
+        ? { ...r, data: nextData, ...(category !== undefined ? { category } : {}) }
+        : r,
+    );
+    // Optimistic local write so the edit shows immediately.
+    store.setPageIntelligence(table.pageNum, { ...intel, parsedRegions: regions });
+
+    const { isDemo } = store;
+    if (!canPersist(publicId, isDemo)) return; // demo / no publicId: local-only
+    const bbox = (table.region.bbox ?? [0, 0, 1, 1]) as [number, number, number, number];
+    const result = await promoteParsedRegion({
+      publicId,
+      pageNumber: table.pageNum,
+      type: table.region.type === "keynote" ? "keynote" : "schedule",
+      regionId: table.region.id,
+      bbox,
+      data: nextData,
+      category,
+      csiTags: table.region.csiTags ?? [],
+    });
+    // Adopt server-authoritative intelligence + summaries.
+    useViewerStore.getState().setPageIntelligence(table.pageNum, result.updatedIntelligence as any);
+    if (result.summaries) useViewerStore.getState().setSummaries(result.summaries as any);
+  }, [publicId, table.pageNum, table.region]);
+
+  const saveName = async () => {
+    const trimmed = nameValue.trim();
     setEditingName(false);
+    if (!trimmed || trimmed === table.name) return;
+    setEditError(null);
+    try {
+      await persistRegionEdit(
+        { ...table.region.data, tableName: trimmed },
+        trimmed,
+      );
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Could not save table name");
+    }
   };
 
-  const saveColumnName = () => {
+  // RC5: column rename must PERSIST (previously only mutated local state, so
+  // renames silently vanished on refresh). Routes through the promote upsert.
+  const saveColumnName = async () => {
     if (editingColIdx === null) return;
     const newName = colEditValue.trim() || `Column ${editingColIdx + 1}`;
     const oldName = headers[editingColIdx];
-    if (newName === oldName) { setEditingColIdx(null); return; }
-
-    const store = useViewerStore.getState();
-    const intel = store.pageIntelligence[table.pageNum] || {};
-    const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
-      if (r.id !== table.region.id) return r;
-      const newHeaders = [...(r.data?.headers || [])];
-      newHeaders[editingColIdx] = newName;
-      const newRows = (r.data?.rows || []).map((row: Record<string, string>) => {
-        const updated: Record<string, string> = {};
-        for (const [k, v] of Object.entries(row)) {
-          updated[k === oldName ? newName : k] = v;
-        }
-        return updated;
-      });
-      const newTagCol = r.data?.tagColumn === oldName ? newName : r.data?.tagColumn;
-      return { ...r, data: { ...r.data, headers: newHeaders, rows: newRows, tagColumn: newTagCol } };
-    });
-    store.setPageIntelligence(table.pageNum, { ...intel, parsedRegions: regions });
     setEditingColIdx(null);
+    if (newName === oldName) return;
+
+    const data = table.region.data || {};
+    const newHeaders = [...(data.headers || [])];
+    newHeaders[editingColIdx] = newName;
+    const newRows = (data.rows || []).map((row: Record<string, string>) => {
+      const updated: Record<string, string> = {};
+      for (const [k, v] of Object.entries(row)) {
+        updated[k === oldName ? newName : k] = v;
+      }
+      return updated;
+    });
+    const newTagCol = data.tagColumn === oldName ? newName : data.tagColumn;
+    setEditError(null);
+    try {
+      await persistRegionEdit({ ...data, headers: newHeaders, rows: newRows, tagColumn: newTagCol });
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Could not save column name");
+    }
   };
 
-  const saveTableSettings = () => {
-    const store = useViewerStore.getState();
-    const intel = store.pageIntelligence[table.pageNum] || {};
-    const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
-      if (r.id !== table.region.id) return r;
-      return {
-        ...r,
-        data: {
-          ...r.data,
-          manualCsi: settingsCsi,
-          notes: settingsNotes,
-          color: settingsColor,
-          opacity: settingsOpacity,
-        },
-      };
-    });
-    const updatedIntel = { ...intel, parsedRegions: regions };
-    store.setPageIntelligence(table.pageNum, updatedIntel);
-    // Persist to DB
-    const { projectId, isDemo } = store;
-    if (projectId && !isDemo) {
-      fetch("/api/pages/intelligence", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, pageNumber: table.pageNum, intelligence: updatedIntel }),
-      }).catch(() => {});
-    }
+  const saveTableSettings = async () => {
     setShowSettings(false);
+    setEditError(null);
+    try {
+      await persistRegionEdit({
+        ...table.region.data,
+        manualCsi: settingsCsi,
+        notes: settingsNotes,
+        color: settingsColor,
+        opacity: settingsOpacity,
+      });
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Could not save table settings");
+    }
   };
 
   return (
@@ -329,6 +347,12 @@ export default memo(function ParsedTableItem({
         </button>
         <button onClick={onDelete} className="text-[10px] text-[var(--muted)] hover:text-red-400 shrink-0" title="Delete table">x</button>
       </div>
+
+      {editError && (
+        <div className="mx-2 mb-1 text-[9px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1">
+          {editError}
+        </div>
+      )}
 
       {/* Table settings panel (pencil toggle) */}
       {showSettings && (

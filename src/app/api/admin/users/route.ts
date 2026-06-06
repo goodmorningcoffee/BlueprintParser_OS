@@ -64,7 +64,8 @@ export async function POST(req: Request) {
   const { session, error } = await requireAdmin();
   if (error) return error;
 
-  const { username, email, password, role, companyId } = await req.json();
+  const { username, email: rawEmail, password, role, companyId } = await req.json();
+  const email = typeof rawEmail === "string" ? rawEmail.toLowerCase().trim() : "";
 
   if (!username || !email || !password) {
     return NextResponse.json({ error: "username, email, password required" }, { status: 400 });

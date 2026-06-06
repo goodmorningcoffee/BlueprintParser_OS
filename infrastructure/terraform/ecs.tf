@@ -300,6 +300,16 @@ resource "aws_ecs_service" "beaver_app" {
   deployment_minimum_healthy_percent = 100
 
   depends_on = [aws_lb_listener.beaver_https]
+
+  # deploy.sh (--force-new-deployment) and any out-of-band task-def registrations
+  # advance the service's task_definition revision outside Terraform. Without this,
+  # `terraform apply` reverts the service to the TF-managed revision (e.g. 19 -> 17),
+  # silently rolling back deploy-time changes. Ignoring task_definition lets the
+  # deploy pipeline own the running revision while Terraform still manages counts,
+  # networking, LB wiring, and deployment policy.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
 
 ###############################################################################

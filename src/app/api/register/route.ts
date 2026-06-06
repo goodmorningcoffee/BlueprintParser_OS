@@ -7,7 +7,8 @@ import { eq } from "drizzle-orm";
 import { audit } from "@/lib/audit";
 
 export async function POST(req: Request) {
-  const { username, email, password, accessKey } = await req.json();
+  const { username, email: rawEmail, password, accessKey } = await req.json();
+  const email = typeof rawEmail === "string" ? rawEmail.toLowerCase().trim() : "";
 
   if (!username || !email || !password || !accessKey) {
     return NextResponse.json(

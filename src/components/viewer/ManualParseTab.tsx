@@ -6,7 +6,7 @@ import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 
 interface ManualParseTabProps {
   yoloInTableRegion: { model: string; className: string; count: number }[];
-  detectCsiAndPersist: (grid: any) => Promise<void>;
+  detectCsiAndPersist: (grid: any, opts?: { resetAfter?: boolean }) => Promise<void>;
   tagYoloClass: { model: string; className: string } | null;
   setTagYoloClass: (cls: { model: string; className: string } | null) => void;
   handleMapTags: () => void;
@@ -50,6 +50,9 @@ export default function ManualParseTab({
   // user unwind the entire batch as one step (visible Undo button + Cmd-Z).
   // Cleared automatically on panel unmount; scoped to this component.
   const [rowBBsBackup, setRowBBsBackup] = useState<[number, number, number, number][] | null>(null);
+  // Surfaces auto-persist failures so a parsed-but-unsaved table is never lost
+  // silently (the parse used to fire-and-forget the DB write).
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const restoreRowBBs = useCallback(() => {
     if (!rowBBsBackup) return;
@@ -127,8 +130,9 @@ export default function ManualParseTab({
   );
 
   // ─── Parse from column × row intersections ────────────────
-  const parseFromIntersections = useCallback(() => {
+  const parseFromIntersections = useCallback(async () => {
     if (!pageTextract || tableParseColumnBBs.length === 0 || tableParseRowBBs.length === 0) return;
+    setSaveError(null);
 
     const words = pageTextract.words || [];
     const headers = tableParseColumnBBs.map((_: any, i: number) =>
@@ -182,9 +186,16 @@ export default function ManualParseTab({
     // Manual parse doesn't use the merger — clear source-picker meta so the
     // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
     useViewerStore.getState().setTableParseMeta(null);
-    detectCsiAndPersist(grid);
     setTableParseStep("review");
     useViewerStore.getState().setMode("move");
+    // Auto-persist immediately (no separate Save click). resetAfter:false keeps
+    // the parsed result + Map Tags review mounted. Await + surface failures so
+    // a parsed table is never silently lost (was previously fire-and-forget).
+    try {
+      await detectCsiAndPersist(grid, { resetAfter: false });
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed");
+    }
   }, [pageTextract, tableParseColumnBBs, tableParseRowBBs, tableParseColumnNames, setTableParsedGrid, setTableParseStep, detectCsiAndPersist]);
 
   return (
@@ -353,6 +364,12 @@ export default function ManualParseTab({
       >
         Reset All
       </button>
+
+      {saveError && (
+        <div className="text-[10px] text-red-400 px-2 py-1 rounded bg-red-500/10 border border-red-500/20">
+          {saveError}
+        </div>
+      )}
 
       {/* Show result if parsed */}
       {tableParsedGrid && tableParsedGrid.headers.length > 0 && (

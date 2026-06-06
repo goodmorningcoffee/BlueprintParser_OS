@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import type { YoloTag } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 import type { MapTagsStrictness } from "./MapTagsSection";
@@ -70,48 +71,70 @@ export default function KeynoteItem({
   const yoloTags = useViewerStore((s) => s.yoloTags);
   const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
   const isTagViewActive = region?.id ? !!activeTableTagViews[region.id] : false;
+  const [nameError, setNameError] = useState<string | null>(null);
 
-  const saveName = () => {
+  const saveName = async () => {
     const trimmed = nameValue.trim();
-    if (trimmed) {
-      const store = useViewerStore.getState();
-      const oldName = keynote.tableName;
-
-      // 1. Update parsedKeynoteData (find by identity, not index — array may be sorted differently)
-      const allKeynotes = store.parsedKeynoteData;
-      if (allKeynotes) {
-        const updated = allKeynotes.map((kn: any) => {
-          if (kn.pageNumber === keynote.pageNumber && kn.tableName === oldName) {
-            return { ...kn, tableName: trimmed };
-          }
-          return kn;
-        });
-        store.setParsedKeynoteData(updated as any);
-      }
-
-      // 2. Update matching parsedRegion in pageIntelligence
-      const intel = store.pageIntelligence[keynote.pageNumber] || {};
-      const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
-        if (r.type !== "keynote") return r;
-        if (r.data?.tableName === oldName || (!r.data?.tableName && r.category === "keynote-table")) {
-          return { ...r, data: { ...r.data, tableName: trimmed }, category: trimmed };
-        }
-        return r;
-      });
-      const updatedIntel = { ...intel, parsedRegions: regions };
-      store.setPageIntelligence(keynote.pageNumber, updatedIntel);
-
-      // 3. Persist to DB (fire-and-forget)
-      const { projectId, isDemo } = store;
-      if (projectId && !isDemo) {
-        fetch("/api/pages/intelligence", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId, pageNumber: keynote.pageNumber, intelligence: updatedIntel }),
-        }).catch(() => {});
-      }
-    }
     setEditingName(false);
+    if (!trimmed) return;
+    setNameError(null);
+    const store = useViewerStore.getState();
+    const oldName = keynote.tableName;
+
+    // 1. Update parsedKeynoteData (find by identity, not index — array may be sorted differently)
+    const allKeynotes = store.parsedKeynoteData;
+    if (allKeynotes) {
+      const updated = allKeynotes.map((kn: any) => {
+        if (kn.pageNumber === keynote.pageNumber && kn.tableName === oldName) {
+          return { ...kn, tableName: trimmed };
+        }
+        return kn;
+      });
+      store.setParsedKeynoteData(updated as any);
+    }
+
+    // 2. Update matching parsedRegion in pageIntelligence (optimistic local write)
+    const intel = store.pageIntelligence[keynote.pageNumber] || {};
+    let matchedId: string | null = null;
+    let matchedBbox: [number, number, number, number] | null = null;
+    let matchedCsiTags: any[] = [];
+    let matchedData: Record<string, any> | null = null;
+    const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
+      if (r.type !== "keynote") return r;
+      if (matchedId === null &&
+          (r.data?.tableName === oldName || (!r.data?.tableName && r.category === "keynote-table"))) {
+        matchedId = r.id;
+        matchedBbox = r.bbox || null;
+        matchedCsiTags = r.csiTags || [];
+        matchedData = { ...r.data, tableName: trimmed };
+        return { ...r, data: matchedData, category: trimmed };
+      }
+      return r;
+    });
+    store.setPageIntelligence(keynote.pageNumber, { ...intel, parsedRegions: regions });
+
+    // 3. Persist via the transactional promote upsert (same regionId → REPLACE)
+    // instead of the old blob-overwrite. Gated on publicId (canPersist), NOT
+    // numeric projectId. Surfaces failures instead of fire-and-forget.
+    if (!canPersist(publicId, store.isDemo) || matchedId === null || matchedBbox === null || matchedData === null) {
+      return; // demo / no publicId / no DB-backed region — local-only update above
+    }
+    try {
+      const result = await promoteParsedRegion({
+        publicId: publicId!,
+        pageNumber: keynote.pageNumber,
+        type: "keynote",
+        regionId: matchedId,
+        bbox: matchedBbox,
+        data: matchedData,
+        category: trimmed,
+        csiTags: matchedCsiTags,
+      });
+      useViewerStore.getState().setPageIntelligence(keynote.pageNumber, result.updatedIntelligence as any);
+      if (result.summaries) useViewerStore.getState().setSummaries(result.summaries as any);
+    } catch (err) {
+      setNameError(err instanceof Error ? err.message : "Could not save name");
+    }
   };
 
   const tagInstances = (key: string) => {
@@ -182,6 +205,12 @@ export default function KeynoteItem({
         )}
         <button onClick={onDelete} className="text-[10px] text-[var(--muted)] hover:text-red-400 shrink-0" title="Delete keynote table">x</button>
       </div>
+
+      {nameError && (
+        <div className="mx-2 mb-1 text-[9px] text-red-400 bg-red-500/10 border border-red-500/20 rounded px-2 py-1">
+          {nameError}
+        </div>
+      )}
 
       {expanded && (
         <div className="px-2 pb-2 space-y-0.5 border-t border-[var(--border)] mt-0.5 pt-1">

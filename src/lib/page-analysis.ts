@@ -24,6 +24,8 @@ import { logger } from "@/lib/logger";
 // Page Classification
 // ═══════════════════════════════════════════════════════════════════
 
+//these are brittle and require FIXING 
+
 const DISCIPLINE_MAP: Record<string, string> = {
   T: "Title/Cover", G: "General", C: "Civil", L: "Landscape",
   A: "Architectural", I: "Interior", ID: "Interior Design",

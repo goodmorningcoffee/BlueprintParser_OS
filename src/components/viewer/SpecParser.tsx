@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { unionBboxes } from "@/lib/specnote-parser";
+import { promoteParsedRegion, canPersist, regionIdFor } from "@/lib/client-persist";
 import type { CsiCode, PageIntelligence, ParsedRegion, SpecData } from "@/types";
 
 type SpecSubMode = "auto" | "paragraph" | "manual";
@@ -26,6 +27,8 @@ interface PreviewSpec {
  */
 export default function SpecParser() {
   const projectId = useViewerStore((s) => s.projectId);
+  const publicId = useViewerStore((s) => s.publicId);
+  const isDemo = useViewerStore((s) => s.isDemo);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
 
@@ -123,6 +126,9 @@ export default function SpecParser() {
         setPreview(null);
       } else {
         setPreview(payload);
+        // Auto-persist on parse completion so the spec is saved without an
+        // explicit "Save Spec" click. Stable regionId → re-parse upserts.
+        void persistPreview(payload, specParseRegion);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Parse failed");
@@ -131,38 +137,34 @@ export default function SpecParser() {
     }
   };
 
-  const saveFromPreview = async () => {
-    if (!projectId || !specParseRegion || !preview || isSavingRef.current) return;
+  // Promote the preview to a committed ParsedRegion. Shared by the auto-fire
+  // (on parse completion) and the manual "Save Spec" button. Pass the preview +
+  // region explicitly so the auto path doesn't race React state updates.
+  const persistPreview = async (
+    p: PreviewSpec,
+    region: [number, number, number, number],
+  ) => {
+    if (!canPersist(publicId, isDemo) || isSavingRef.current) return;
     isSavingRef.current = true;
     setSaving(true);
     setError(null);
     try {
       const data: SpecData = {
-        sections: preview.sections,
+        sections: p.sections,
         tableName: `Spec p.${pageNumber}`,
-        csiTags: preview.csiTags,
+        csiTags: p.csiTags,
       };
-      const res = await fetch("/api/regions/promote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId,
-          pageNumber,
-          type: "spec",
-          overrides: {
-            bbox: specParseRegion,
-            data,
-            category: "spec-dense-columns",
-            csiTags: preview.csiTags ?? [],
-          },
-        }),
+      const payload = await promoteParsedRegion({
+        publicId,
+        pageNumber,
+        type: "spec",
+        regionId: regionIdFor(pageNumber, region),
+        bbox: region,
+        data: data as unknown as Record<string, unknown>,
+        category: "spec-dense-columns",
+        csiTags: p.csiTags ?? [],
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Save failed" }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-      const payload = (await res.json()) as { updatedIntelligence: PageIntelligence };
-      setPageIntelligence(pageNumber, payload.updatedIntelligence);
+      setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
       refreshPageCsiSpatialMap(pageNumber);
       resetSpecParse();
       setPreview(null);
@@ -174,8 +176,13 @@ export default function SpecParser() {
     }
   };
 
+  const saveFromPreview = async () => {
+    if (!specParseRegion || !preview) return;
+    return persistPreview(preview, specParseRegion);
+  };
+
   const saveFromBatch = async () => {
-    if (!projectId || !specParseRegion || paragraphBatch.length === 0 || isSavingRef.current) return;
+    if (!canPersist(publicId, isDemo) || !specParseRegion || paragraphBatch.length === 0 || isSavingRef.current) return;
     isSavingRef.current = true;
     setSaving(true);
     setError(null);
@@ -188,26 +195,16 @@ export default function SpecParser() {
         })),
         tableName: `Spec p.${pageNumber} — ${paragraphBatch.length} section${paragraphBatch.length === 1 ? "" : "s"}`,
       };
-      const res = await fetch("/api/regions/promote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId,
-          pageNumber,
-          type: "spec",
-          overrides: {
-            bbox: unionBbox,
-            data,
-            category: "spec-dense-columns",
-          },
-        }),
+      const payload = await promoteParsedRegion({
+        publicId,
+        pageNumber,
+        type: "spec",
+        regionId: regionIdFor(pageNumber, unionBbox),
+        bbox: unionBbox,
+        data: data as unknown as Record<string, unknown>,
+        category: "spec-dense-columns",
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Save failed" }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-      const payload = (await res.json()) as { updatedIntelligence: PageIntelligence };
-      setPageIntelligence(pageNumber, payload.updatedIntelligence);
+      setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
       refreshPageCsiSpatialMap(pageNumber);
       setParagraphBatch([]);
       resetSpecParse();

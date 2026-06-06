@@ -17,17 +17,21 @@ import { logger } from "@/lib/logger";
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const { projectId, pageNumber, intelligence } = body as {
-      projectId: number;
+    const { projectId, publicId, pageNumber, intelligence } = body as {
+      projectId?: number;
+      publicId?: string;
       pageNumber: number;
       intelligence: Record<string, unknown>;
     };
 
-    if (!projectId || !pageNumber || !intelligence) {
-      return apiError("Missing projectId, pageNumber, or intelligence", 400);
+    if ((!projectId && !publicId) || !pageNumber || !intelligence) {
+      return apiError("Missing projectId/publicId, pageNumber, or intelligence", 400);
     }
 
-    const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
+    const access = await resolveProjectAccess(
+      publicId ? { publicId } : { dbId: projectId! },
+      { allowDemo: true },
+    );
     if (access.error) return access.error;
     const { project: proj, scope } = access;
 
@@ -45,7 +49,7 @@ export async function PATCH(req: Request) {
         csiCodes: pages.csiCodes,
       })
       .from(pages)
-      .where(and(eq(pages.projectId, projectId), eq(pages.pageNumber, pageNumber)))
+      .where(and(eq(pages.projectId, proj.id), eq(pages.pageNumber, pageNumber)))
       .limit(1);
 
     if (!pageRow) {
@@ -75,7 +79,7 @@ export async function PATCH(req: Request) {
     let summaries = null;
     if (intelligence.parsedRegions) {
       try {
-        summaries = await computeProjectSummaries(projectId);
+        summaries = await computeProjectSummaries(proj.id);
       } catch (e) {
         logger.error("[pages/intelligence] Summary recompute failed:", e);
       }
