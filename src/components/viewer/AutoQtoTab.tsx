@@ -7,6 +7,7 @@ import type { ScoredMatch, DropReason } from "@/lib/tag-mapping";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
 import { escCsv } from "@/lib/table-parse-utils";
 import { computeScheduleDetections } from "@/lib/auto-qto/schedule-detections";
+import { persistFetch, canPersist } from "@/lib/client-persist";
 import TakeoffCsvModal from "./TakeoffCsvModal";
 
 /** Step progression (used for progress bar + step labels) */
@@ -204,20 +205,15 @@ export default function AutoQtoTab() {
       return;
     }
 
+    if (!canPersist(publicId, isDemo)) return;
     setCreating(true);
     try {
-      const res = await fetch("/api/qto-workflows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: publicId, materialType, materialLabel }),
-      });
-      if (res.ok) {
-        const workflow = await res.json();
-        setActiveQtoWorkflow(workflow);
-        setQtoWorkflows([workflow, ...qtoWorkflows]);
-      }
+      const workflow = await persistFetch("/api/qto-workflows", { projectId: publicId, materialType, materialLabel });
+      setActiveQtoWorkflow(workflow as QtoWorkflow);
+      setQtoWorkflows([workflow as QtoWorkflow, ...qtoWorkflows]);
     } catch (err) {
       console.error("[auto-qto] Failed to create workflow:", err);
+      window.alert(`Failed to create workflow: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setCreating(false);
     }
@@ -233,18 +229,14 @@ export default function AutoQtoTab() {
     if (isDemo) return;
 
     try {
-      const res = await fetch(`/api/qto-workflows/${workflow.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      if (res.ok) {
-        const serverUpdated = await res.json();
+      const serverUpdated = await persistFetch(`/api/qto-workflows/${workflow.id}`, updates, "PUT") as QtoWorkflow | null;
+      if (serverUpdated) {
         setActiveQtoWorkflow(serverUpdated);
         setQtoWorkflows(qtoWorkflows.map((w) => w.id === serverUpdated.id ? serverUpdated : w));
       }
     } catch (err) {
       console.error("[auto-qto] Failed to update workflow:", err);
+      window.alert(`Failed to save workflow: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   }, [isDemo, qtoWorkflows, setActiveQtoWorkflow, setQtoWorkflows]);
 

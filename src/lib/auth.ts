@@ -94,7 +94,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
 
-        const email = credentials.email as string;
+        const email = (credentials.email as string).toLowerCase().trim();
         const password = credentials.password as string;
 
         // Check brute force lockout
@@ -199,8 +199,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async signIn({ user, account }) {
       // OAuth: create or link user on sign-in
       if (account?.provider === "google" && user.email) {
+        const oauthEmail = user.email.toLowerCase().trim();
         try {
-          const [existing] = await db.select().from(users).where(eq(users.email, user.email)).limit(1);
+          const [existing] = await db.select().from(users).where(eq(users.email, oauthEmail)).limit(1);
           if (existing) {
             // Link OAuth to existing account if not already linked
             if (!existing.oauthProvider) {
@@ -212,23 +213,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             return true;
           }
           // New user — auto-assign company by email domain
-          const domain = user.email.split("@")[1];
+          const domain = oauthEmail.split("@")[1];
           const [company] = await db.select().from(companies).where(eq(companies.emailDomain, domain)).limit(1);
           if (!company) {
             return "/login?error=no-company";
           }
           await db.insert(users).values({
-            email: user.email,
-            username: user.name || user.email.split("@")[0],
+            email: oauthEmail,
+            username: user.name || oauthEmail.split("@")[0],
             passwordHash: null,
             role: "member",
             companyId: company.id,
             oauthProvider: "google",
             oauthProviderId: account.providerAccountId,
           });
-          audit("user_registered", { details: { email: user.email, provider: "google", companyId: company.id } });
+          audit("user_registered", { details: { email: oauthEmail, provider: "google", companyId: company.id } });
           return true;
-        } catch (err) {
+        } catch {
           return "/login?error=oauth-error";
         }
       }
@@ -238,7 +239,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // OAuth sign-in: look up full user data from DB
       if (trigger === "signIn" && account?.provider === "google" && token.email) {
         try {
-          const [dbUser] = await db.select().from(users).where(eq(users.email, token.email as string)).limit(1);
+          const lookupEmail = (token.email as string).toLowerCase().trim();
+          const [dbUser] = await db.select().from(users).where(eq(users.email, lookupEmail)).limit(1);
           if (dbUser) {
             token.companyId = dbUser.companyId;
             token.dbId = dbUser.id;

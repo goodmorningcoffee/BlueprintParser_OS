@@ -6,6 +6,7 @@ import { TAKEOFF_SHAPES, TWENTY_COLORS } from "@/types";
 import type { TakeoffShape, ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { SHAPE_ICONS, TakeoffEditPanel } from "./TakeoffShared";
 import TakeoffGroupSection from "./TakeoffGroupSection";
+import { persistFetch, canPersist } from "@/lib/client-persist";
 
 export default memo(function CountTab() {
   const annotations = useViewerStore((s) => s.annotations);
@@ -106,14 +107,13 @@ export default memo(function CountTab() {
       return;
     }
     try {
-      const res = await fetch(`/api/takeoff-items/${item.id}`, { method: "DELETE" });
-      if (res.ok) {
-        removeTakeoffItem(item.id);
-        setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-        if (activeTakeoffItemId === item.id) setActiveTakeoffItemId(null);
-      }
+      await persistFetch(`/api/takeoff-items/${item.id}`, undefined, "DELETE");
+      removeTakeoffItem(item.id);
+      setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
+      if (activeTakeoffItemId === item.id) setActiveTakeoffItemId(null);
     } catch (err) {
       console.error("Failed to delete takeoff item:", err);
+      window.alert(`Failed to delete item: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   }
 
@@ -126,17 +126,12 @@ export default memo(function CountTab() {
       return;
     }
     try {
-      const res = await fetch(`/api/takeoff-items/${item.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName.trim() }),
-      });
-      if (res.ok) {
-        updateTakeoffItem(item.id, { name: newName.trim() });
-        setAnnotations(annotations.map((a) => a.source === "takeoff" && (a.data as any)?.takeoffItemId === item.id ? { ...a, name: newName.trim() } : a));
-      }
+      await persistFetch(`/api/takeoff-items/${item.id}`, { name: newName.trim() }, "PUT");
+      updateTakeoffItem(item.id, { name: newName.trim() });
+      setAnnotations(annotations.map((a) => a.source === "takeoff" && (a.data as any)?.takeoffItemId === item.id ? { ...a, name: newName.trim() } : a));
     } catch (err) {
       console.error("Failed to rename:", err);
+      window.alert(`Failed to rename item: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
     setEditingId(null);
   }
@@ -150,47 +145,48 @@ export default memo(function CountTab() {
       setNewGroupName(""); setShowGroupForm(false);
       return;
     }
+    if (!canPersist(publicId, isDemo)) return;
     try {
-      const res = await fetch("/api/takeoff-groups", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: publicId, name, kind: "count" }),
-      });
-      if (res.ok) {
-        const g = await res.json();
-        addTakeoffGroup(g);
-        setNewGroupName(""); setShowGroupForm(false);
-      }
-    } catch (err) { console.error("Failed to create group:", err); }
+      const g = await persistFetch("/api/takeoff-groups", { projectId: publicId, name, kind: "count" });
+      addTakeoffGroup(g as TakeoffGroup);
+      setNewGroupName(""); setShowGroupForm(false);
+    } catch (err) {
+      console.error("Failed to create group:", err);
+      window.alert(`Failed to create group: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
   }
 
   async function handleRenameGroup(id: number, name: string) {
     updateTakeoffGroup(id, { name });
     if (isDemo) return;
     try {
-      await fetch(`/api/takeoff-groups/${id}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-    } catch (err) { console.error("Failed to rename group:", err); }
+      await persistFetch(`/api/takeoff-groups/${id}`, { name }, "PUT");
+    } catch (err) {
+      console.error("Failed to rename group:", err);
+      window.alert(`Failed to rename group: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
   }
 
   async function handleDeleteGroup(id: number) {
     removeTakeoffGroup(id);
     if (isDemo) return;
     try {
-      await fetch(`/api/takeoff-groups/${id}`, { method: "DELETE" });
-    } catch (err) { console.error("Failed to delete group:", err); }
+      await persistFetch(`/api/takeoff-groups/${id}`, undefined, "DELETE");
+    } catch (err) {
+      console.error("Failed to delete group:", err);
+      window.alert(`Failed to delete group: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
   }
 
   const handleMoveItem = useCallback(async (itemId: number, targetGroupId: number | null) => {
     updateTakeoffItem(itemId, { groupId: targetGroupId });
     if (isDemo) return;
     try {
-      await fetch(`/api/takeoff-items/${itemId}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ groupId: targetGroupId }),
-      });
-    } catch (err) { console.error("Failed to move item:", err); }
+      await persistFetch(`/api/takeoff-items/${itemId}`, { groupId: targetGroupId }, "PUT");
+    } catch (err) {
+      console.error("Failed to move item:", err);
+      window.alert(`Failed to move item: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
   }, [isDemo, updateTakeoffItem]);
 
   const toggleCollapsed = (key: string) => setCollapsedGroups((s) => ({ ...s, [key]: !s[key] }));
@@ -264,7 +260,11 @@ export default memo(function CountTab() {
             onSave={async (updates) => {
               updateTakeoffItem(item.id, updates);
               if (!isDemo) {
-                await fetch(`/api/takeoff-items/${item.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
+                try {
+                  await persistFetch(`/api/takeoff-items/${item.id}`, updates, "PUT");
+                } catch (err) {
+                  window.alert(`Failed to save item: ${err instanceof Error ? err.message : "Unknown error"}`);
+                }
               }
             }}
             onLiveUpdate={(updates) => updateTakeoffItem(item.id, updates)}

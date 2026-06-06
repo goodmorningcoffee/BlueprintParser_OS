@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
+import { persistFetch, canPersist } from "@/lib/client-persist";
 import type { PageIntelligence, TextRegion } from "@/types";
 
 interface NotesClassifierProps {
@@ -29,6 +30,8 @@ type RowAction = "idle" | "promoting" | "rejecting";
  */
 export default function NotesClassifier({ onEditInParser }: NotesClassifierProps) {
   const projectId = useViewerStore((s) => s.projectId);
+  const publicId = useViewerStore((s) => s.publicId);
+  const isDemo = useViewerStore((s) => s.isDemo);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   // Scoped subscription: rerender only when this page's intel changes,
   // not when any page's intel changes.
@@ -44,8 +47,8 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
   // stale data to avoid unnecessary PATCH traffic.
   const prunedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!projectId || !intel?.textRegions || !intel.rejectedTextRegionIds?.length) return;
-    const key = `${projectId}:${pageNumber}`;
+    if (!canPersist(publicId, isDemo) || !intel?.textRegions || !intel.rejectedTextRegionIds?.length) return;
+    const key = `${publicId}:${pageNumber}`;
     if (prunedKeyRef.current === key) return;
     const activeIds = new Set(intel.textRegions.map((tr) => tr.id));
     const pruned = intel.rejectedTextRegionIds.filter((id) => activeIds.has(id));
@@ -53,15 +56,20 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
     prunedKeyRef.current = key;
     const updated: PageIntelligence = { ...intel, rejectedTextRegionIds: pruned };
     setPageIntelligence(pageNumber, updated);
-    fetch("/api/pages/intelligence", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, pageNumber, intelligence: updated }),
-    }).catch(() => {
-      // Non-fatal — next page visit will retry if stale IDs still present.
-      prunedKeyRef.current = null;
-    });
-  }, [projectId, pageNumber, intel, setPageIntelligence]);
+    // Surface failures instead of silently swallowing: persistFetch throws on
+    // !ok. On failure, reset the key so the next page visit retries the prune.
+    (async () => {
+      try {
+        await persistFetch(
+          "/api/pages/intelligence",
+          { publicId, pageNumber, intelligence: updated },
+          "PATCH",
+        );
+      } catch {
+        prunedKeyRef.current = null;
+      }
+    })();
+  }, [projectId, publicId, isDemo, pageNumber, intel, setPageIntelligence]);
 
   const visibleRegions = useMemo(() => {
     if (!intel?.textRegions) return [];
@@ -90,25 +98,16 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
     });
 
   const handleAccept = async (tr: TextRegion) => {
-    if (!projectId) return;
+    if (!canPersist(publicId, isDemo)) return;
     setRowState(tr.id, "promoting");
     setRowError(tr.id, null);
     try {
-      const res = await fetch("/api/regions/promote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId,
-          pageNumber,
-          type: "notes",
-          sourceTextRegionId: tr.id,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Promote failed" }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-      const payload = (await res.json()) as { updatedIntelligence: PageIntelligence };
+      const payload = (await persistFetch("/api/regions/promote", {
+        publicId,
+        pageNumber,
+        type: "notes",
+        sourceTextRegionId: tr.id,
+      })) as { updatedIntelligence: PageIntelligence };
       setPageIntelligence(pageNumber, payload.updatedIntelligence);
       refreshPageCsiSpatialMap(pageNumber);
     } catch (err) {
@@ -126,7 +125,7 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
   };
 
   const handleReject = async (tr: TextRegion) => {
-    if (!projectId || !intel) return;
+    if (!canPersist(publicId, isDemo) || !intel) return;
     setRowState(tr.id, "rejecting");
     setRowError(tr.id, null);
 
@@ -142,15 +141,12 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
     setPageIntelligence(pageNumber, updatedIntel);
 
     try {
-      const res = await fetch("/api/pages/intelligence", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, pageNumber, intelligence: updatedIntel }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Reject failed" }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
+      // persistFetch awaits + checks ok + throws — never silently swallows.
+      await persistFetch(
+        "/api/pages/intelligence",
+        { publicId, pageNumber, intelligence: updatedIntel },
+        "PATCH",
+      );
     } catch (err) {
       // Roll back the optimistic update
       setPageIntelligence(pageNumber, intel);

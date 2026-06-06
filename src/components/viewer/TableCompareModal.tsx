@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore } from "@/stores/viewerStore";
+import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import EditableGrid from "./EditableGrid";
 
 interface TableCompareModalProps {
@@ -40,6 +41,9 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
 
   // Active cell — owned by EditableGrid, mirrored here for image highlight rendering
   const [activeCell, setActiveCell] = useState<{ row: number; col: number } | null>(null);
+  // Surfaces a failed save so edits aren't silently dropped on close.
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savingDone, setSavingDone] = useState(false);
 
   // Initialize modal size on open
   useEffect(() => {
@@ -378,6 +382,107 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     });
   }, [tableParsedGrid, tableParseMeta, setTableParsedGrid]);
 
+  // Sync the edited grid back to pageIntelligence, then persist through the
+  // transactional promote upsert (same regionId → REPLACE, never the old
+  // blob-overwrite that clobbered sibling regions). Adopts the server's
+  // authoritative intelligence + summaries. Surfaces failures instead of the
+  // old fire-and-forget so edits aren't silently lost on close.
+  const handleDone = useCallback(async () => {
+    const grid = useViewerStore.getState().tableParsedGrid;
+    if (!grid) { toggleModal(); return; }
+    const store = useViewerStore.getState();
+    const intel = store.pageIntelligence[pageNumber] || {};
+
+    // Locate the region being edited (match by headers, else by row-count) so
+    // we can upsert it by its stable id.
+    let matchedId: string | null = null;
+    let matchedBbox: [number, number, number, number] | null = null;
+    let matchedType: "schedule" | "keynote" = "schedule";
+    let matchedCsiTags: any[] = [];
+    const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
+      if (r.type !== "schedule" && r.type !== "keynote") return r;
+      if (matchedId === null &&
+          (JSON.stringify(r.data?.headers) === JSON.stringify(grid.headers) ||
+           r.data?.rows?.length === grid.rows.length)) {
+        matchedId = r.id;
+        matchedBbox = r.bbox || null;
+        matchedType = r.type === "keynote" ? "keynote" : "schedule";
+        matchedCsiTags = r.csiTags || [];
+        return {
+          ...r,
+          data: {
+            ...r.data,
+            headers: grid.headers,
+            rows: grid.rows,
+            tagColumn: grid.tagColumn,
+            tableName: grid.tableName,
+            rowCount: grid.rows.length,
+            columnCount: grid.headers.length,
+          },
+        };
+      }
+      return r;
+    });
+    const updatedIntel = { ...intel, parsedRegions: regions };
+    // Optimistic local write so the grid edits show immediately.
+    store.setPageIntelligence(pageNumber, updatedIntel);
+
+    // Sync back to parsedKeynoteData if this was a keynote edit.
+    const knData = store.parsedKeynoteData;
+    if (knData && grid.tableName) {
+      const tagCol = grid.tagColumn || grid.headers[0];
+      const descCols = grid.headers.filter((h: string) => h !== tagCol);
+      const updated = knData.map((kn: any) => {
+        if (kn.pageNumber !== pageNumber) return kn;
+        if (kn.tableName !== grid.tableName) return kn;
+        return {
+          ...kn,
+          keys: grid.rows.map((row: Record<string, string>, ri: number) => {
+            const newKey = row[tagCol] || "";
+            const newDesc = descCols.map((h: string) => row[h] || "").join(" ").trim();
+            const existing = kn.keys?.find((k: any, ki: number) => ki === ri || k.key === newKey);
+            return {
+              key: newKey,
+              description: newDesc,
+              ...(existing?.csiCodes ? { csiCodes: existing.csiCodes } : {}),
+              ...(existing?.note ? { note: existing.note } : {}),
+            };
+          }),
+        };
+      });
+      store.setParsedKeynoteData(updated);
+    }
+
+    const { publicId, isDemo } = store;
+    if (!canPersist(publicId, isDemo) || matchedId === null || matchedBbox === null) {
+      // Demo / no publicId / no matching region — local-only write above.
+      toggleModal();
+      return;
+    }
+
+    setSaveError(null);
+    setSavingDone(true);
+    try {
+      const edited = (updatedIntel.parsedRegions as any[]).find((r) => r.id === matchedId);
+      const result = await promoteParsedRegion({
+        publicId,
+        pageNumber,
+        type: matchedType,
+        regionId: matchedId,
+        bbox: matchedBbox,
+        data: edited?.data ?? {},
+        csiTags: matchedCsiTags,
+      });
+      useViewerStore.getState().setPageIntelligence(pageNumber, result.updatedIntelligence as any);
+      if (result.summaries) useViewerStore.getState().setSummaries(result.summaries as any);
+      toggleModal();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Could not save edits");
+    } finally {
+      setSavingDone(false);
+    }
+  }, [pageNumber, toggleModal]);
+
   if (!tableParsedGrid || !tableParseRegion) return null;
 
   const headers = tableParsedGrid.headers;
@@ -557,78 +662,16 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
             <div className="text-[10px] text-[var(--muted)]">
               {mode === "side-by-side" ? "Click cell to edit. Double-click column header to rename." : "Blue overlay shows parsed text positions on original image."}
             </div>
+            {saveError && (
+              <div className="text-[10px] text-red-400">{saveError}</div>
+            )}
           </div>
           <button
-            onClick={() => {
-              // Sync edited grid back to pageIntelligence before closing
-              if (tableParsedGrid) {
-                const store = useViewerStore.getState();
-                const intel = store.pageIntelligence[pageNumber] || {};
-                const regions = ((intel as any)?.parsedRegions || []).map((r: any) => {
-                  if (r.type !== "schedule" && r.type !== "keynote") return r;
-                  // Match by comparing headers — update the first matching table on this page
-                  if (JSON.stringify(r.data?.headers) === JSON.stringify(tableParsedGrid.headers) ||
-                      r.data?.rows?.length === tableParsedGrid.rows.length) {
-                    return {
-                      ...r,
-                      data: {
-                        ...r.data,
-                        headers: tableParsedGrid.headers,
-                        rows: tableParsedGrid.rows,
-                        tagColumn: tableParsedGrid.tagColumn,
-                        tableName: tableParsedGrid.tableName,
-                        rowCount: tableParsedGrid.rows.length,
-                        columnCount: tableParsedGrid.headers.length,
-                      },
-                    };
-                  }
-                  return r;
-                });
-                const updatedIntel = { ...intel, parsedRegions: regions };
-                store.setPageIntelligence(pageNumber, updatedIntel);
-
-                // Sync back to parsedKeynoteData if this was a keynote edit
-                const knData = store.parsedKeynoteData;
-                if (knData && tableParsedGrid.tableName) {
-                  const tagCol = tableParsedGrid.tagColumn || tableParsedGrid.headers[0];
-                  const descCols = tableParsedGrid.headers.filter((h: string) => h !== tagCol);
-                  const updated = knData.map((kn: any) => {
-                    if (kn.pageNumber !== pageNumber) return kn;
-                    if (kn.tableName !== tableParsedGrid.tableName) return kn;
-                    return {
-                      ...kn,
-                      keys: tableParsedGrid.rows.map((row: Record<string, string>, ri: number) => {
-                        const newKey = row[tagCol] || "";
-                        const newDesc = descCols.map((h: string) => row[h] || "").join(" ").trim();
-                        // Preserve existing metadata (csiCodes, note) if key matches
-                        const existing = kn.keys?.find((k: any, ki: number) => ki === ri || k.key === newKey);
-                        return {
-                          key: newKey,
-                          description: newDesc,
-                          ...(existing?.csiCodes ? { csiCodes: existing.csiCodes } : {}),
-                          ...(existing?.note ? { note: existing.note } : {}),
-                        };
-                      }),
-                    };
-                  });
-                  store.setParsedKeynoteData(updated);
-                }
-
-                // Persist to DB (fire-and-forget)
-                const { projectId, isDemo } = store;
-                if (projectId && !isDemo) {
-                  fetch("/api/pages/intelligence", {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ projectId, pageNumber, intelligence: updatedIntel }),
-                  }).catch(() => {});
-                }
-              }
-              toggleModal();
-            }}
-            className="px-4 py-1.5 text-xs rounded bg-[var(--accent)] text-white hover:opacity-90"
+            onClick={handleDone}
+            disabled={savingDone}
+            className="px-4 py-1.5 text-xs rounded bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50"
           >
-            Done
+            {savingDone ? "Saving…" : "Done"}
           </button>
         </div>
 

@@ -469,6 +469,7 @@ export interface HeuristicInference {
   csiTags?: CsiCode[];
 }
 
+//there are more schedules to add like eletrical-schedule, hvac-schedule, etc.  for each trade
 export type ClassifiedTableCategory =
   | "keynote-table" | "material-schedule" | "symbol-legend"
   | "door-schedule" | "finish-schedule" | "general-notes"

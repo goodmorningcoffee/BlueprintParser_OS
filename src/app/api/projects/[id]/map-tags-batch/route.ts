@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { resolveProjectAccess } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { projects, pages, annotations } from "@/lib/db/schema";
+import { pages, annotations } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import {
   findOccurrences,
@@ -136,27 +136,13 @@ export async function POST(
       ? strictnessMode
       : "balanced";
 
-  // Auth
-  const session = await auth();
-  let project;
-  if (session?.user) {
-    const companyId = (session.user as { companyId?: number }).companyId;
-    [project] = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(and(eq(projects.publicId, id), eq(projects.companyId, companyId!)))
-      .limit(1);
-  } else {
-    [project] = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(and(eq(projects.publicId, id), eq(projects.isDemo, true)))
-      .limit(1);
-  }
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  // Auth + project lookup. `id` is the project publicId. resolveProjectAccess
+  // authenticates, looks up the project, allows demo access, and (unlike the
+  // prior company-scoped query) grants root admins access to any company's
+  // project. This route only reads, so demo scope is allowed through.
+  const access = await resolveProjectAccess({ publicId: id }, { allowDemo: true });
+  if (access.error) return access.error;
+  const { project } = access;
 
   // Load annotations + textract + pageIntelligence
   const allAnnotations = await db

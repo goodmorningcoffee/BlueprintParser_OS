@@ -40,7 +40,7 @@ interface AutoParseTabProps {
   existingParsed: any[];
   yoloInTableRegion: { model: string; className: string; count: number }[];
   loadExistingParsed: (parsed: any) => void;
-  detectCsiAndPersist: (grid: any) => Promise<void>;
+  detectCsiAndPersist: (grid: any, opts?: { resetAfter?: boolean }) => Promise<void>;
   tagYoloClass: { model: string; className: string } | null;
   setTagYoloClass: (cls: { model: string; className: string } | null) => void;
   handleMapTags: () => void;
@@ -217,7 +217,8 @@ export default function AutoParseTab({
         } else {
           useViewerStore.getState().setTableParseMeta(null);
         }
-        // Set tableParseRegion to merged bbox so TableCompareModal can crop the image
+        // Set tableParseRegion to merged bbox so TableCompareModal can crop the
+        // image AND so the auto-persist below derives a stable regionId from it.
         const allRegions = proposedRegions;
         setTableParseRegion([
           Math.min(...allRegions.map((r) => r[0])),
@@ -228,6 +229,18 @@ export default function AutoParseTab({
         setTableParseStep("review");
         useViewerStore.getState().setMode("move");
         setProposedRegions([]);
+        // Auto-persist on successful parse (no separate Save click required).
+        // Only when an actual table was detected — skip empty results so we
+        // don't write a blank region. Re-parsing the same drawn region upserts
+        // via the stable regionId, so this won't duplicate. detectCsiAndPersist
+        // resets the tab to idle on success.
+        if (mergedHeaders.length > 0 && mergedRows.length > 0) {
+          try {
+            await detectCsiAndPersist(grid, { resetAfter: false });
+          } catch (err) {
+            setAutoParseError(err instanceof Error ? err.message : "Save failed");
+          }
+        }
       } catch (err: any) {
         console.error("[auto-parse] Failed:", err);
         setAutoParseError(err.message || "Auto-parse failed");

@@ -7,6 +7,7 @@ import KeynoteItem from "./KeynoteItem";
 import CompareEditTab from "./CompareEditTab";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
+import { promoteParsedRegion, regionIdFor, canPersist } from "@/lib/client-persist";
 import ExportCsvModal from "./ExportCsvModal";
 import type { YoloTag, QtoItemType } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
@@ -96,7 +97,15 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   // Optional colBoundaries / rowBoundaries capture the user's Manual-mode
   // column/row BBs so the rendered grid lines match exact placements
   // instead of falling back to uniform boundaries derived from header count.
-  const saveKeynoteToIntelligence = useCallback((
+  // Saves parsed keynotes. Routes through the transactional /api/regions/promote
+  // (upsert) helper instead of the old pages/intelligence blob-overwrite, with a
+  // stable regionId derived from the keynote region bbox so re-parsing the same
+  // region REPLACES the prior region instead of stacking duplicates. THROWS on
+  // failure so callers surface it (was previously fire-and-forget → silent loss).
+  // Gated on publicId (canPersist), NOT the numeric projectId (starts at 0).
+  // After a successful DB write we adopt the server's authoritative
+  // intelligence + summaries (mirrors NotesParser).
+  const saveKeynoteToIntelligence = useCallback(async (
     keys: { key: string; description: string }[],
     tableName?: string,
     csiTags?: { code: string; description: string }[],
@@ -126,25 +135,29 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       rowBoundaries = rb;
     }
 
+    const bbox = (keynoteParseRegion || [0, 0, 1, 1]) as [number, number, number, number];
+    const regionId = regionIdFor(pageNumber, bbox);
+    const data = {
+      headers,
+      rows,
+      tagColumn: "Key",
+      tableName: tableName || "Keynotes",
+      rowCount: rows.length,
+      columnCount: headers.length,
+      keynotes: keys.map((k) => ({ key: k.key, description: k.description })),
+      isPageSpecific: true,
+      ...(colBoundaries ? { colBoundaries } : {}),
+      ...(rowBoundaries ? { rowBoundaries } : {}),
+    };
+    // Optimistic local write so the region renders immediately.
     const newRegion = {
-      id: `parsed-kn-${Date.now()}`,
+      id: regionId,
       type: "keynote" as const,
       category: "keynote-table",
-      bbox: keynoteParseRegion || [0, 0, 1, 1],
+      bbox,
       confidence: 0.9,
       csiTags: csiTags || [],
-      data: {
-        headers,
-        rows,
-        tagColumn: "Key",
-        tableName: tableName || "Keynotes",
-        rowCount: rows.length,
-        columnCount: headers.length,
-        keynotes: keys.map((k) => ({ key: k.key, description: k.description })),
-        isPageSpecific: true,
-        ...(colBoundaries ? { colBoundaries } : {}),
-        ...(rowBoundaries ? { rowBoundaries } : {}),
-      },
+      data,
     };
     setPageIntelligence(pageNumber, {
       ...currentIntel,
@@ -153,21 +166,28 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
     if (!persistToDb) return;
     refreshPageCsiSpatialMap(pageNumber);
-    // Persist to DB (fire-and-forget) — skip for demo mode
-    if (projectId && !storeState.isDemo) {
-      const updatedIntel = useViewerStore.getState().pageIntelligence[pageNumber];
-      fetch("/api/pages/intelligence", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, pageNumber, intelligence: updatedIntel }),
-      }).then((r) => {
-        if (!r.ok) r.json().then((d) => console.error("[save-keynote-intel] Failed:", r.status, d)).catch(() => {});
-      }).catch((e) => console.error("[save-keynote-intel] Network error:", e));
+    if (canPersist(publicId, storeState.isDemo)) {
+      const result = await promoteParsedRegion({
+        publicId,
+        pageNumber,
+        type: "keynote",
+        regionId,
+        bbox,
+        data,
+        category: "keynote-table",
+        csiTags: csiTags || [],
+      });
+      // Adopt the server's authoritative intelligence + summaries.
+      setPageIntelligence(pageNumber, result.updatedIntelligence as any);
+      if (result.summaries) useViewerStore.getState().setSummaries(result.summaries as any);
     }
-  }, [pageNumber, keynoteParseRegion, setPageIntelligence, projectId]);
+  }, [pageNumber, keynoteParseRegion, setPageIntelligence, publicId]);
 
   const [autoParsing, setAutoParsing] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+  // Surfaces keynote-save failures so a parsed keynote is never silently lost
+  // (these writes were previously fire-and-forget).
+  const [keynoteSaveError, setKeynoteSaveError] = useState<string | null>(null);
 
   const { summaries } = useSummaries();
 
@@ -368,6 +388,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
     if (keys.length > 0) {
       isSavingRef.current = true;
+      setKeynoteSaveError(null);
       try {
         addParsedKeynote({
           pageNumber,
@@ -375,7 +396,14 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           yoloClass: keynoteYoloClass ? `${keynoteYoloClass.model}:${keynoteYoloClass.className}` : undefined,
           tableName: `Keynotes p.${pageNumber}`,
         });
-        saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`);
+        // Auto-persist on parse. Await + surface failures so the keynote isn't
+        // silently lost; bail before reset so the user can retry on error.
+        try {
+          await saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`);
+        } catch (err) {
+          setKeynoteSaveError(err instanceof Error ? err.message : "Could not save keynotes");
+          return;
+        }
         await mapKeynoteKeysToYoloTags({
           keys,
           yoloClass: keynoteYoloClass?.className,
@@ -415,8 +443,16 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         })).filter((k: any) => k.key || k.description);
 
         if (keys.length > 0) {
+          setKeynoteSaveError(null);
           addParsedKeynote({ pageNumber, keys, tableName: `Keynotes p.${pageNumber}` });
-          saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`, result.csiTags || []);
+          // Auto-persist on parse. Await + surface failures; bail before reset
+          // on error so the user can retry.
+          try {
+            await saveKeynoteToIntelligence(keys, `Keynotes p.${pageNumber}`, result.csiTags || []);
+          } catch (err) {
+            setKeynoteSaveError(err instanceof Error ? err.message : "Could not save keynotes");
+            return;
+          }
           // Auto-parse doesn't pick a YOLO class, so we map as text-only.
           await mapKeynoteKeysToYoloTags({ keys, pageNumber });
           resetKeynoteParse();
@@ -425,6 +461,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       }
     } catch (err) {
       console.error("[keynote auto-parse] Failed:", err);
+      setKeynoteSaveError(err instanceof Error ? err.message : "Auto-parse failed");
     } finally {
       setAutoParsing(false);
       isSavingRef.current = false;
@@ -484,81 +521,99 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     if (result.rows.length === 0) return;
 
     isSavingRef.current = true;
+    setKeynoteSaveError(null);
 
-    // Detect CSI
-    let csiTags: { code: string; description: string }[] = [];
     try {
-      const csiResp = await fetch("/api/csi/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ headers: result.headers, rows: result.rows }),
-      });
-      if (csiResp.ok) {
-        const csiData = await csiResp.json();
-        csiTags = csiData.csiTags || [];
-      }
-    } catch { /* best-effort */ }
+      // Detect CSI
+      let csiTags: { code: string; description: string }[] = [];
+      try {
+        const csiResp = await fetch("/api/csi/detect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ headers: result.headers, rows: result.rows }),
+        });
+        if (csiResp.ok) {
+          const csiData = await csiResp.json();
+          csiTags = csiData.csiTags || [];
+        }
+      } catch { /* best-effort */ }
 
-    // Save as parsed keynote
-    const store = useViewerStore.getState();
-    const currentIntel = store.pageIntelligence[pageNumber] || {};
-    const existingRegions = (currentIntel as any)?.parsedRegions || [];
-    const newRegion = {
-      id: `parsed-${Date.now()}`,
-      type: "keynote" as const,
-      category: "keynote-table",
-      bbox: guidedParseRegion || [0, 0, 1, 1],
-      confidence: 0.85,
-      csiTags,
-      data: {
+      // Save as parsed keynote (optimistic local write).
+      const store = useViewerStore.getState();
+      const currentIntel = store.pageIntelligence[pageNumber] || {};
+      const existingRegions = (currentIntel as any)?.parsedRegions || [];
+      const bbox = (guidedParseRegion || [0, 0, 1, 1]) as [number, number, number, number];
+      const regionId = regionIdFor(pageNumber, bbox);
+      const data = {
         headers: result.headers,
         rows: result.rows,
         tagColumn: result.headers[0],
         tableName: "Keynotes",
         rowCount: result.rows.length,
         columnCount: result.headers.length,
-      },
-    };
-    store.setPageIntelligence(pageNumber, {
-      ...currentIntel,
-      parsedRegions: [...existingRegions, newRegion],
-    });
+      };
+      const newRegion = {
+        id: regionId,
+        type: "keynote" as const,
+        category: "keynote-table",
+        bbox,
+        confidence: 0.85,
+        csiTags,
+        data,
+      };
+      store.setPageIntelligence(pageNumber, {
+        ...currentIntel,
+        parsedRegions: [...existingRegions, newRegion],
+      });
 
-    // Also save as parsedKeynoteData for All Keynotes tab
-    const tagHeader = result.headers[0];
-    const descHeaders = result.headers.slice(1);
-    const keys = result.rows.map((row: any) => ({
-      key: (row[tagHeader] || "").trim(),
-      description: descHeaders.map((h: string) => row[h] || "").join(" ").trim(),
-    })).filter((k: any) => k.key || k.description);
-    if (keys.length > 0) {
-      addParsedKeynote({ pageNumber, keys, tableName: `Keynotes p.${pageNumber}` });
-      await mapKeynoteKeysToYoloTags({ keys, pageNumber });
+      // Also save as parsedKeynoteData for All Keynotes tab
+      const tagHeader = result.headers[0];
+      const descHeaders = result.headers.slice(1);
+      const keys = result.rows.map((row: any) => ({
+        key: (row[tagHeader] || "").trim(),
+        description: descHeaders.map((h: string) => row[h] || "").join(" ").trim(),
+      })).filter((k: any) => k.key || k.description);
+      if (keys.length > 0) {
+        addParsedKeynote({ pageNumber, keys, tableName: `Keynotes p.${pageNumber}` });
+      }
+
+      // Refresh spatial map
+      refreshPageCsiSpatialMap(pageNumber);
+
+      // Auto-persist on parse via the transactional promote upsert. Gated on
+      // publicId (canPersist), NOT numeric projectId. Throws on failure → we
+      // surface it and bail before reset so the user can retry.
+      if (canPersist(publicId, store.isDemo)) {
+        const promoteResult = await promoteParsedRegion({
+          publicId,
+          pageNumber,
+          type: "keynote",
+          regionId,
+          bbox,
+          data,
+          category: "keynote-table",
+          csiTags,
+        });
+        store.setPageIntelligence(pageNumber, promoteResult.updatedIntelligence as any);
+        if (promoteResult.summaries) store.setSummaries(promoteResult.summaries as any);
+      }
+
+      if (keys.length > 0) {
+        await mapKeynoteKeysToYoloTags({ keys, pageNumber });
+      }
+
+      // Reset guided + keynote state so the Save button vanishes and the tab
+      // reverts to idle.
+      resetGuidedParse();
+      resetKeynoteParse();
+      useViewerStore.getState().setMode("move");
+    } catch (err) {
+      setKeynoteSaveError(err instanceof Error ? err.message : "Could not save keynotes");
+    } finally {
+      // Clearing isSavingRef last so the guard only lifts once we're done.
+      isSavingRef.current = false;
     }
-
-    // Refresh spatial map
-    refreshPageCsiSpatialMap(pageNumber);
-
-    // Persist to DB (fire-and-forget) — skip for demo mode
-    if (projectId && !store.isDemo) {
-      const updatedIntel = store.pageIntelligence[pageNumber];
-      fetch("/api/pages/intelligence", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, pageNumber, intelligence: updatedIntel }),
-      }).then((r) => {
-        if (!r.ok) r.json().then((d) => console.error("[save-keynote-intel] Failed:", r.status, d)).catch(() => {});
-      }).catch((e) => console.error("[save-keynote-intel] Network error:", e));
-    }
-
-    // Reset guided + keynote state so the Save button vanishes and the tab
-    // reverts to idle. Clearing isSavingRef last so the guard only lifts once
-    // the UI has reverted.
-    resetGuidedParse();
-    resetKeynoteParse();
-    useViewerStore.getState().setMode("move");
-    isSavingRef.current = false;
-  }, [pageNumber, projectId, guidedParseRows, guidedParseCols, guidedParseRegion, resetGuidedParse, resetKeynoteParse, addParsedKeynote, mapKeynoteKeysToYoloTags]);
+  }, [pageNumber, publicId, guidedParseRows, guidedParseCols, guidedParseRegion, resetGuidedParse, resetKeynoteParse, addParsedKeynote, mapKeynoteKeysToYoloTags]);
 
   // ─── Repeat row down ───────────────────────────────────
   const repeatRowDown = useCallback((rowBB: [number, number, number, number]) => {
@@ -653,6 +708,12 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-2">
+        {keynoteSaveError && (
+          <div className="text-[10px] text-red-400 px-2 py-1.5 rounded bg-red-500/10 border border-red-500/20 flex items-start justify-between gap-2">
+            <span>{keynoteSaveError}</span>
+            <button onClick={() => setKeynoteSaveError(null)} className="text-red-400/70 hover:text-red-300 shrink-0">&times;</button>
+          </div>
+        )}
         {/* ════════ TAB: All Keynotes ════════ */}
         {keynoteParseTab === "all" && (
           <div className="space-y-1">

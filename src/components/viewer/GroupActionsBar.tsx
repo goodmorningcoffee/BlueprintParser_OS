@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useViewerStore, useSelection, useAnnotationGroups } from "@/stores/viewerStore";
 import MarkupDialog from "./MarkupDialog";
+import { persistFetch, canPersist } from "@/lib/client-persist";
 import type { AnnotationGroup } from "@/types";
 
 /**
@@ -53,23 +54,17 @@ export default function GroupActionsBar() {
   const selectedIds = [...selectedAnnotationIds];
 
   async function handleCreateGroup() {
-    if (!publicId || isDemo || !groupName.trim()) return;
+    if (!canPersist(publicId, isDemo) || !groupName.trim()) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/annotation-groups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: publicId,
-          name: groupName.trim(),
-          notes: groupNote.trim() || null,
-          csiCode: groupCsi.trim() || null,
-          color: groupColor,
-          annotationIds: selectedIds,
-        }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const data = await persistFetch("/api/annotation-groups", {
+        projectId: publicId,
+        name: groupName.trim(),
+        notes: groupNote.trim() || null,
+        csiCode: groupCsi.trim() || null,
+        color: groupColor,
+        annotationIds: selectedIds,
+      }) as { group?: AnnotationGroup };
       if (data.group) {
         upsertAnnotationGroup(data.group as AnnotationGroup);
         // Append the new memberships to the existing ones. hydrateGroupMemberships
@@ -90,21 +85,17 @@ export default function GroupActionsBar() {
       clearSelection();
     } catch (err) {
       console.error("[GroupActionsBar] Create group failed:", err);
+      window.alert(`Failed to create group: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setBusy(false);
     }
   }
 
   async function handleAddToExisting(groupId: number) {
-    if (!publicId || isDemo) return;
+    if (!canPersist(publicId, isDemo)) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/annotation-groups/${groupId}/members`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ annotationIds: selectedIds }),
-      });
-      if (!res.ok) throw new Error(await res.text());
+      await persistFetch(`/api/annotation-groups/${groupId}/members`, { annotationIds: selectedIds });
       // Rebuild membership indexes
       const pairs: { annotationId: number; groupId: number }[] = [];
       for (const [aidStr, groupSet] of Object.entries(annotationGroupMemberships)) {
@@ -121,6 +112,7 @@ export default function GroupActionsBar() {
       clearSelection();
     } catch (err) {
       console.error("[GroupActionsBar] Add to existing failed:", err);
+      window.alert(`Failed to add to group: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setBusy(false);
     }
@@ -140,45 +132,36 @@ export default function GroupActionsBar() {
     if (!editingGroup || !editName.trim()) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/annotation-groups/${editingGroup.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: editName.trim(),
-          notes: editNote.trim() || null,
-          csiCode: editCsi.trim() || null,
-          color: editColor,
-          isActive: editActive,
-        }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const data = await persistFetch(`/api/annotation-groups/${editingGroup.id}`, {
+        name: editName.trim(),
+        notes: editNote.trim() || null,
+        csiCode: editCsi.trim() || null,
+        color: editColor,
+        isActive: editActive,
+      }, "PUT") as { group?: AnnotationGroup };
       if (data.group) {
         upsertAnnotationGroup(data.group as AnnotationGroup);
       }
       setEditingGroup(null);
     } catch (err) {
       console.error("[GroupActionsBar] Edit group failed:", err);
+      window.alert(`Failed to save group: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setBusy(false);
     }
   }
 
   async function handleMassDelete() {
-    if (!publicId || isDemo) return;
+    if (!canPersist(publicId, isDemo)) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/annotations/batch-delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: publicId, annotationIds: selectedIds }),
-      });
-      if (!res.ok) throw new Error(await res.text());
+      await persistFetch("/api/annotations/batch-delete", { projectId: publicId, annotationIds: selectedIds });
       for (const id of selectedIds) removeAnnotation(id);
       clearSelection();
       setShowDeleteConfirm(false);
     } catch (err) {
       console.error("[GroupActionsBar] Mass delete failed:", err);
+      window.alert(`Failed to delete: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setBusy(false);
     }

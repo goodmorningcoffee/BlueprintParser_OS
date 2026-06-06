@@ -8,6 +8,7 @@ import GuidedParseTab from "./GuidedParseTab";
 import ManualParseTab from "./ManualParseTab";
 import CompareEditTab from "./CompareEditTab";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
+import { promoteParsedRegion, regionIdFor, canPersist } from "@/lib/client-persist";
 import ExportCsvModal from "./ExportCsvModal";
 import type { MapTagsStrictness } from "./MapTagsSection";
 import type { YoloTag, QtoItemType } from "@/types";
@@ -50,7 +51,7 @@ export default function TableParsePanel() {
   const [showExportModal, setShowExportModal] = useState(false);
   // Guards against double-click save stacking duplicates. Ref (not state) so
   // the guard doesn't trigger renders but still blocks re-entry during the
-  // async /api/csi/detect + /api/pages/intelligence round-trip. The visible
+  // async /api/csi/detect + /api/regions/promote round-trip. The visible
   // "Save button vanishes after success" UX is handled by resetTableParse()
   // at the end of the happy path — tableParsedGrid goes null, which unmounts
   // the review-step Save button.
@@ -112,17 +113,33 @@ export default function TableParsePanel() {
   }, [pageNumber, setPageIntelligence]);
 
   // ─── CSI detect + persist to DB ───────────────────────────
-  // Throws on DB PATCH failure so callers can surface the error to the user
-  // instead of showing a successful-looking in-memory save that won't survive
-  // project re-entry. The previous silent-catch variant was the root cause
-  // of the "parsed tables disappear on re-entry" bug: when PATCH returned an
-  // error (stale session, payload too large, etc.), local state had the
-  // region but the DB never did, so next load hydrated without it.
+  // Routes the parsed table through the transactional /api/regions/promote
+  // (upsert) helper instead of the old pages/intelligence blob-overwrite. A
+  // stable regionId (derived from the drawn region bbox) means re-parsing the
+  // same region REPLACES the prior ParsedRegion instead of stacking duplicates.
+  //
+  // Throws on DB failure so callers can surface the error to the user instead
+  // of showing a successful-looking in-memory save that won't survive project
+  // re-entry. The previous silent-catch / blob-overwrite variant was the root
+  // cause of the "parsed tables disappear on re-entry" bug and of sibling
+  // regions getting clobbered. Gating is on publicId (canPersist), NOT the
+  // numeric projectId which starts at 0 and is set late.
+  //
+  // After a successful save we adopt the server's authoritative
+  // updatedIntelligence + summaries (mirrors NotesParser) rather than trusting
+  // the optimistic local blob.
   //
   // Post-success: resets all parse + Map Tags state and reverts the tab to
   // its idle step, so double-click saves can't stack N identical rows and the
   // user lands back at "pick a parse mode" ready to start the next one.
-  const detectCsiAndPersist = useCallback(async (grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] }) => {
+  const detectCsiAndPersist = useCallback(async (
+    grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] },
+    opts?: { resetAfter?: boolean },
+  ) => {
+    // resetAfter (default true) reverts the tab to idle after a save — what the
+    // explicit Save button wants. Auto-persist-on-parse passes false so the
+    // review + Map Tags UI stays mounted for the user to continue working.
+    const resetAfter = opts?.resetAfter ?? true;
     if (isSavingRef.current) return;
     isSavingRef.current = true;
     try {
@@ -139,52 +156,54 @@ export default function TableParsePanel() {
           }
         } catch { /* CSI detection is best-effort */ }
       }
-      saveParsedToIntelligence(grid);
-      refreshPageCsiSpatialMap(pageNumber);
-      const { projectId: pid, isDemo } = useViewerStore.getState();
-      if (pid && !isDemo) {
-        const currentIntel = useViewerStore.getState().pageIntelligence[pageNumber];
-        let resp: Response;
-        try {
-          resp = await fetch("/api/pages/intelligence", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ projectId: pid, pageNumber, intelligence: currentIntel }),
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "Network error";
-          console.error("[save-intelligence] Network error:", err);
-          throw new Error(`Could not save parsed table: ${msg}`);
-        }
-
-        if (!resp.ok) {
-          let detail = `HTTP ${resp.status}`;
-          try {
-            const errBody = await resp.json();
-            if (errBody?.error) detail = errBody.error;
-          } catch { /* non-json body */ }
-          console.error("[save-intelligence] Failed:", resp.status, detail);
-          throw new Error(`Could not save parsed table: ${detail}`);
-        }
-
-        try {
-          const data = await resp.json();
-          if (data?.summaries) useViewerStore.getState().setSummaries(data.summaries);
-        } catch { /* response parse is best-effort — save succeeded */ }
+      const { publicId: pid, isDemo } = useViewerStore.getState();
+      if (canPersist(pid, isDemo)) {
+        // Use the drawn region bbox for a stable, re-parse-replaces regionId.
+        const bbox = (useViewerStore.getState().tableParseRegion ?? [0, 0, 1, 1]) as [number, number, number, number];
+        const result = await promoteParsedRegion({
+          publicId: pid,
+          pageNumber,
+          type: "schedule",
+          regionId: regionIdFor(pageNumber, bbox),
+          bbox,
+          data: {
+            headers: grid.headers,
+            rows: grid.rows,
+            tagColumn: grid.tagColumn,
+            tableName: grid.tableName,
+            rowCount: grid.rows.length,
+            columnCount: grid.headers.length,
+            ...(grid.colBoundaries ? { colBoundaries: grid.colBoundaries } : {}),
+            ...(grid.rowBoundaries ? { rowBoundaries: grid.rowBoundaries } : {}),
+          },
+          category: grid.tableName || undefined,
+          csiTags: grid.csiTags || [],
+        });
+        // Adopt the server's authoritative intelligence + summaries.
+        setPageIntelligence(pageNumber, result.updatedIntelligence as any);
+        if (result.summaries) useViewerStore.getState().setSummaries(result.summaries as any);
+        refreshPageCsiSpatialMap(pageNumber);
+      } else {
+        // Demo / no publicId: optimistic local-only save so the region renders.
+        saveParsedToIntelligence(grid);
+        refreshPageCsiSpatialMap(pageNumber);
       }
 
       // Success: revert the tab to its idle step so another parse can start
       // fresh. Without this, the user sees the same post-parse review UI and
-      // clicking Save again inserts a second identical parsedRegion.
-      resetTableParse();
-      setTagMappingDone(false);
-      setTagMappingCount(0);
-      setLastDropCounts(null);
-      setTagYoloClass(null);
+      // clicking Save again inserts a second identical parsedRegion. Skipped
+      // for auto-persist (resetAfter=false) so the review/Map Tags UI survives.
+      if (resetAfter) {
+        resetTableParse();
+        setTagMappingDone(false);
+        setTagMappingCount(0);
+        setLastDropCounts(null);
+        setTagYoloClass(null);
+      }
     } finally {
       isSavingRef.current = false;
     }
-  }, [pageNumber, saveParsedToIntelligence, resetTableParse]);
+  }, [pageNumber, saveParsedToIntelligence, resetTableParse, setPageIntelligence]);
 
   // ─── Shared memos ─────────────────────────────────────────
   const autoDetectedTables = useMemo(() => {

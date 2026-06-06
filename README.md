@@ -554,4 +554,17 @@ Works without AWS credentials — PDF viewing, annotations, QTO, search all func
 
 ## License
 
-MIT
+**FSL-1.1-MIT** (Functional Source License, Version 1.1, MIT Future License) — see [LICENSE](./LICENSE) for full text.
+
+**What you can do:**
+- Use, modify, redistribute the Software for any **Permitted Purpose** — including personal use, internal business use within your company, non-commercial education, and non-commercial research.
+- Provide professional services around the Software to licensees who are using it within these terms.
+
+**What you cannot do:**
+- **Competing Use**: you cannot make the Software available to others as a commercial product or service that substitutes for it or offers the same or substantially similar functionality.
+
+**MIT Future License:** on the second anniversary of each released version, that version automatically becomes available under the MIT License — so the license is time-limited, not permanent.
+
+Reference: <https://fsl.software>
+
+> Not legal advice. If you are unsure whether your intended use is permitted, consult a lawyer.
