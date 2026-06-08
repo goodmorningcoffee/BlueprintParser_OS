@@ -23,3 +23,24 @@ export async function sendPasswordResetEmail(to: string, resetUrl: string): Prom
     },
   }));
 }
+
+/**
+ * Generic best-effort alert email to a single recipient (e.g. ROOT_ADMIN_EMAIL).
+ * Reuses the shared SES client + FROM_EMAIL. Callers MUST wrap in try/catch so a
+ * mail failure never breaks the request flow. The plain-text part is derived
+ * from the HTML by stripping tags.
+ */
+export async function sendAlertEmail(to: string, subject: string, html: string): Promise<void> {
+  const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  await ses.send(new SendEmailCommand({
+    Source: FROM_EMAIL,
+    Destination: { ToAddresses: [to] },
+    Message: {
+      Subject: { Data: subject },
+      Body: {
+        Html: { Data: html },
+        Text: { Data: text },
+      },
+    },
+  }));
+}

@@ -204,6 +204,13 @@
       "when": 1778400000000,
       "tag": "0028_admin_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1779000000000,
+      "tag": "0029_add_usage_limits_and_ledger",
+      "breakpoints": true
     }
   ]
 }

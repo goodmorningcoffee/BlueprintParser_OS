@@ -14,7 +14,8 @@ export type AbuseEventType =
   | "SCAN_404_BURST"        // >5 404s from same IP in <60s
   | "DEPRECATED_ROUTE"      // Hit to a route removed for security (e.g. /api/demo/labeling/credentials)
   | "MANUAL_BAN"            // Root_Admin clicked "Ban this IP"
-  | "MANUAL_UNBAN";         // Root_Admin cleared a ban
+  | "MANUAL_UNBAN"          // Root_Admin cleared a ban
+  | "SAGEMAKER_CAP_HIT";    // YOLO run blocked by a company/user SageMaker page cap
 
 /**
  * Fire-and-forget abuse event insert. Mirrors `audit()` pattern at

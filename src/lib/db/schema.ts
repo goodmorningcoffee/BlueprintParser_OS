@@ -141,6 +141,14 @@ export const companies = pgTable("companies", {
     textract: boolean;
     labelStudio?: boolean;
   }>(),
+  // ─── Compute-usage caps (root_admin metering, 2026-06) ───
+  // Net per-company pools. SageMaker (GPU) is the real money gate; Textract is
+  // cheap and tracked for visibility. `usageWindowStart` is the counting anchor
+  // (null = since company creation); a "reset" advances it so used → 0.
+  sagemakerPageLimit: integer("sagemaker_page_limit").default(500).notNull(),
+  textractPageLimit: integer("textract_page_limit").default(10000).notNull(),
+  usageResetInterval: varchar("usage_reset_interval", { length: 50 }).default("manual").notNull(),
+  usageWindowStart: timestamp("usage_window_start", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
@@ -164,6 +172,10 @@ export const users = pgTable(
     companyId: integer("company_id")
       .notNull()
       .references(() => companies.id),
+    // Optional per-user SageMaker sub-cap. null = no personal cap (governed
+    // only by the company pool); usageWindowStart is this user's reset anchor.
+    sagemakerPageLimit: integer("sagemaker_page_limit"),
+    usageWindowStart: timestamp("usage_window_start", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
@@ -216,6 +228,33 @@ export const projects = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
   (table) => [index("idx_projects_company").on(table.companyId)]
+);
+
+// ─── Compute Usage Ledger ────────────────────────────────────
+// Append-only record of metered compute (SageMaker YOLO pages, Textract
+// pages, Lambda CV fan-out). Source of truth for the per-company / per-user
+// usage caps enforced in src/lib/compute-usage.ts and for the root_admin
+// Usage dashboard. One YOLO run inserts one row charging the project's full
+// page count. userId/projectId are nullable so system-attributed usage can
+// still be recorded.
+export const computeUsage = pgTable(
+  "compute_usage",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id),
+    userId: integer("user_id").references(() => users.id),
+    projectId: integer("project_id").references(() => projects.id),
+    resource: varchar("resource", { length: 50 }).notNull(), // 'sagemaker' | 'textract' | 'lambda_cv'
+    pages: integer("pages").notNull(),
+    jobId: varchar("job_id", { length: 255 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_compute_usage_company").on(table.companyId, table.resource, table.createdAt),
+    index("idx_compute_usage_user").on(table.userId, table.resource, table.createdAt),
+  ]
 );
 
 // ─── Pages ───────────────────────────────────────────────────

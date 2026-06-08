@@ -15,6 +15,7 @@ import PageIntelligenceTab from "./tabs/PageIntelligenceTab";
 import TableParseTab from "./tabs/TableParseTab";
 import UsersTab from "./tabs/UsersTab";
 import CompaniesUsersTab from "./tabs/CompaniesUsersTab";
+import UsageTab from "./tabs/UsageTab";
 import AiRbacTab from "./tabs/AiRbacTab";
 import SettingsTab from "./tabs/SettingsTab";
 import LogsTab from "./tabs/LogsTab";
@@ -562,7 +563,7 @@ export default function AdminPage() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get("tab") as AdminTab;
-      if (tab && ["overview", "projects", "ai-models", "ai-rbac", "pipeline", "llm-context", "text-annotations", "csi", "heuristics", "page-intelligence", "companies", "users", "settings", "logs"].includes(tab)) return tab;
+      if (tab && ["overview", "projects", "ai-models", "ai-rbac", "pipeline", "llm-context", "text-annotations", "csi", "heuristics", "page-intelligence", "table-parse", "companies", "usage", "users", "settings", "logs"].includes(tab)) return tab;
     }
     return "overview";
   });
@@ -745,6 +746,10 @@ export default function AdminPage() {
 
         {activeTab === "companies" && session?.user?.isRootAdmin && (
           <CompaniesUsersTab />
+        )}
+
+        {activeTab === "usage" && session?.user?.isRootAdmin && (
+          <UsageTab />
         )}
 
         {activeTab === "users" && (
