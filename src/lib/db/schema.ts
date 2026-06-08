@@ -244,8 +244,11 @@ export const computeUsage = pgTable(
     companyId: integer("company_id")
       .notNull()
       .references(() => companies.id),
-    userId: integer("user_id").references(() => users.id),
-    projectId: integer("project_id").references(() => projects.id),
+    // ON DELETE SET NULL: the ledger is append-only billing history — keep the
+    // row (companyId + pages) even if the user/project is later deleted, just
+    // drop the link. Without this, a referenced user/project can't be deleted.
+    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+    projectId: integer("project_id").references(() => projects.id, { onDelete: "set null" }),
     resource: varchar("resource", { length: 50 }).notNull(), // 'sagemaker' | 'textract' | 'lambda_cv'
     pages: integer("pages").notNull(),
     jobId: varchar("job_id", { length: 255 }),

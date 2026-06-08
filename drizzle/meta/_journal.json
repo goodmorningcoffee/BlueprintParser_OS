@@ -211,6 +211,13 @@
       "when": 1779000000000,
       "tag": "0029_add_usage_limits_and_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1779600000000,
+      "tag": "0030_compute_usage_fk_set_null",
+      "breakpoints": true
     }
   ]
 }

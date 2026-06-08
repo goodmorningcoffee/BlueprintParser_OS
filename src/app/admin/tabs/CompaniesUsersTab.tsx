@@ -60,6 +60,11 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
   const [resetAdminPw, setResetAdminPw] = useState("");
   const [resetBusy, setResetBusy] = useState(false);
   const [resetMessage, setResetMessage] = useState("");
+  // Delete-user state
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [deleteReassignTo, setDeleteReassignTo] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState("");
 
   const loadData = useCallback(async () => {
     if (demoMode) { setLoading(false); return; }
@@ -131,14 +136,28 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
     setAddingUser(false);
   };
 
-  const deleteUser = async (userId: string) => {
-    if (demoMode || !confirm("Delete this user?")) return;
-    const res = await fetch("/api/admin/users", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: userId }),
-    });
-    if (res.ok) loadData();
+  const deleteUser = async (userId: string, mode: "reassign" | "cascade", reassignTo?: string) => {
+    if (demoMode) return;
+    if (mode === "cascade" && !confirm("Permanently delete this user AND all their projects/blueprints? This cannot be undone.")) return;
+    setDeleteBusy(true);
+    setDeleteMessage("");
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: userId, mode, reassignTo }),
+      });
+      if (res.ok) {
+        setDeletingUserId(null);
+        loadData();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setDeleteMessage(err.error || "Delete failed");
+      }
+    } catch {
+      setDeleteMessage("Delete failed");
+    }
+    setDeleteBusy(false);
   };
 
   const resetPassword = async (userId: string) => {
@@ -294,9 +313,44 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
                             PW
                           </button>
                           {!user.isRootAdmin && (
-                            <button onClick={() => deleteUser(user.id)} className="text-red-400/60 hover:text-red-400 text-xs">&times;</button>
+                            <button onClick={() => { setDeletingUserId(deletingUserId === user.id ? null : user.id); setDeleteReassignTo(""); setDeleteMessage(""); }} className="text-red-400/60 hover:text-red-400 text-xs">&times;</button>
                           )}
                         </div>
+                        {deletingUserId === user.id && !user.isRootAdmin && (
+                          <div className="mx-2 mb-1 p-2 border border-red-500/30 rounded bg-red-500/5 space-y-1.5">
+                            <div className="text-[9px] text-red-400 font-medium">Delete {user.email} — what happens to their projects?</div>
+                            <select
+                              value={deleteReassignTo}
+                              onChange={(e) => setDeleteReassignTo(e.target.value)}
+                              className="w-full text-[10px] px-2 py-1 bg-[var(--bg)] border border-[var(--border)] rounded text-[var(--fg)] outline-none"
+                            >
+                              <option value="">Reassign projects to me (root admin)</option>
+                              {users
+                                .filter((cand) => cand.companyId === user.companyId && cand.id !== user.id && !cand.isRootAdmin)
+                                .map((cand) => (
+                                  <option key={cand.id} value={cand.id}>Reassign to {cand.username}</option>
+                                ))}
+                            </select>
+                            <div className="flex gap-1">
+                              <button
+                                disabled={deleteBusy}
+                                onClick={() => deleteUser(user.id, "reassign", deleteReassignTo || undefined)}
+                                className="flex-1 text-[10px] px-2 py-1 rounded bg-[var(--accent)] text-white disabled:opacity-40"
+                              >
+                                Reassign &amp; delete
+                              </button>
+                              <button
+                                disabled={deleteBusy}
+                                onClick={() => deleteUser(user.id, "cascade")}
+                                className="flex-1 text-[10px] px-2 py-1 rounded bg-red-600 text-white disabled:opacity-40"
+                                title="Permanently deletes the user AND all their projects/blueprints"
+                              >
+                                Delete everything
+                              </button>
+                            </div>
+                            {deleteMessage && <div className="text-[9px] text-red-400">{deleteMessage}</div>}
+                          </div>
+                        )}
                         {resettingUserId === user.id && (
                           <div className="mx-2 mb-1 p-2 border border-amber-500/30 rounded bg-amber-500/5 space-y-1.5">
                             <div className="text-[9px] text-amber-400 font-medium">Reset password for {user.email}</div>

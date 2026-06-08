@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-utils";
 import { db } from "@/lib/db";
-import { users, companies } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { users, companies, projects, annotations, chatMessages, modelAccess, appSettings, annotationGroups } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 import bcrypt from "bcrypt";
+import { deleteProjectFully } from "@/lib/project-delete";
+import { audit } from "@/lib/audit";
+import { logger } from "@/lib/logger";
 
 // GET - list users (root admin: all companies, regular admin: own company)
 export async function GET() {
@@ -149,14 +152,26 @@ export async function PUT(req: Request) {
   return NextResponse.json({ success: true });
 }
 
-// DELETE - remove a user
+// DELETE - remove a user.
+// Body: { id, mode?: 'reassign'|'cascade', reassignTo? }
+//  - 'reassign' (default): move the user's projects to `reassignTo` (a user
+//    publicId) or, if omitted, to the acting admin (the root admin, for the
+//    owner), then delete the user. Their blueprints are preserved.
+//  - 'cascade': permanently delete the user AND every project they authored
+//    (incl. S3 files). Destructive — the UI gates this behind a confirm.
+// Either way, soft-attribution rows (annotation/chat/etc. "who did this" links)
+// are nulled so the user row can be removed; compute_usage.user_id nulls via
+// ON DELETE SET NULL; sessions / api-keys / llm-configs cascade-delete.
 export async function DELETE(req: Request) {
   const { session, error } = await requireAdmin();
   if (error) return error;
 
-  const { id } = await req.json();
+  const { id, mode = "reassign", reassignTo } = await req.json();
   if (!id) {
     return NextResponse.json({ error: "User id required" }, { status: 400 });
+  }
+  if (mode !== "reassign" && mode !== "cascade") {
+    return NextResponse.json({ error: "mode must be 'reassign' or 'cascade'" }, { status: 400 });
   }
 
   const [target] = await db
@@ -182,6 +197,71 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "Cannot delete root admin" }, { status: 400 });
   }
 
-  await db.delete(users).where(eq(users.publicId, id));
-  return NextResponse.json({ success: true });
+  // Resolve the reassign target (reassign mode only).
+  let reassignTargetId = session.user.dbId; // default: the acting admin (root, for the owner)
+  if (mode === "reassign" && reassignTo) {
+    const [rt] = await db
+      .select({ id: users.id, companyId: users.companyId })
+      .from(users)
+      .where(eq(users.publicId, reassignTo))
+      .limit(1);
+    if (!rt) {
+      return NextResponse.json({ error: "Reassign target not found" }, { status: 400 });
+    }
+    // Keep projects in-company for regular admins.
+    if (!session.user.isRootAdmin && rt.companyId !== session.user.companyId) {
+      return NextResponse.json({ error: "Reassign target must be in your company" }, { status: 400 });
+    }
+    reassignTargetId = rt.id;
+  }
+  if (mode === "reassign" && reassignTargetId === target.id) {
+    return NextResponse.json({ error: "Cannot reassign projects to the user being deleted" }, { status: 400 });
+  }
+
+  try {
+    let projectCount = 0;
+    if (mode === "cascade") {
+      // Nuclear: delete every project the user authored (within tenancy), incl. S3.
+      const owned = await db
+        .select({ id: projects.id, dataUrl: projects.dataUrl, jobId: projects.jobId, name: projects.name })
+        .from(projects)
+        .where(
+          session.user.isRootAdmin
+            ? eq(projects.authorId, target.id)
+            : and(eq(projects.authorId, target.id), eq(projects.companyId, session.user.companyId))
+        );
+      projectCount = owned.length;
+      for (const p of owned) {
+        await deleteProjectFully(p);
+      }
+    } else {
+      // Reassign the user's projects so projects.author_id no longer references them.
+      const moved = await db
+        .update(projects)
+        .set({ authorId: reassignTargetId })
+        .where(eq(projects.authorId, target.id))
+        .returning({ id: projects.id });
+      projectCount = moved.length;
+    }
+
+    // Null soft-attribution FKs so the user row can be removed.
+    await db.update(annotations).set({ creatorId: null }).where(eq(annotations.creatorId, target.id));
+    await db.update(chatMessages).set({ userId: null }).where(eq(chatMessages.userId, target.id));
+    await db.update(modelAccess).set({ grantedBy: null }).where(eq(modelAccess.grantedBy, target.id));
+    await db.update(appSettings).set({ updatedBy: null }).where(eq(appSettings.updatedBy, target.id));
+    await db.update(annotationGroups).set({ createdBy: null }).where(eq(annotationGroups.createdBy, target.id));
+
+    await db.delete(users).where(eq(users.publicId, id));
+
+    audit("user_deleted", {
+      userId: session.user.dbId,
+      companyId: session.user.companyId,
+      details: { deletedUserId: id, mode, projectCount, reassignTargetId: mode === "reassign" ? reassignTargetId : undefined },
+    });
+
+    return NextResponse.json({ success: true, mode, projectCount });
+  } catch (err) {
+    logger.error("[user-delete] Failed", { id, mode, err });
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Failed to delete user" }, { status: 500 });
+  }
 }
