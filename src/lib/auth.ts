@@ -39,12 +39,15 @@ declare module "@auth/core/jwt" {
 }
 
 // ─── Brute force protection ──────────────────────────────────
-const loginAttempts = new Map<string, { count: number; lockedUntil: number }>();
+const loginAttempts = new Map<string, { count: number; lockedUntil: number; lastAttempt: number }>();
 
 setInterval(() => {
   const now = Date.now();
   for (const [key, val] of loginAttempts) {
-    if (val.lockedUntil < now && val.count === 0) loginAttempts.delete(key);
+    // Drop entries idle for 2h+ (lockout long expired, attacker gave up). We keep
+    // the failure count across an expired lockout so repeat offenders keep
+    // escalating — only true inactivity clears it.
+    if (now - val.lastAttempt > 2 * 60 * 60 * 1000) loginAttempts.delete(key);
   }
 }, 10 * 60 * 1000);
 
@@ -62,13 +65,22 @@ function checkBruteForce(email: string): string | null {
 
 function recordFailedLogin(email: string) {
   const key = email.toLowerCase();
-  const entry = loginAttempts.get(key) || { count: 0, lockedUntil: 0 };
+  const entry = loginAttempts.get(key) || { count: 0, lockedUntil: 0, lastAttempt: 0 };
   entry.count++;
+  entry.lastAttempt = Date.now();
 
-  if (entry.count >= 10) {
-    entry.lockedUntil = Date.now() + 60 * 60 * 1000; // 1 hour
-  } else if (entry.count >= 5) {
-    entry.lockedUntil = Date.now() + 15 * 60 * 1000; // 15 min
+  // After THRESHOLD wrong attempts, lock the account with an EXPONENTIALLY
+  // growing window: the base doubles for every STEP additional failures, capped.
+  // A successful login clears the counter. Only failed passwords reach here —
+  // normal sign-in/out never does.
+  const THRESHOLD = 5;
+  const STEP = 2;                // double every 2 extra failures
+  const BASE_MS = 60 * 1000;     // 1 min at the threshold
+  const CAP_MS = 60 * 60 * 1000; // cap at 1 hour
+  if (entry.count >= THRESHOLD) {
+    const over = entry.count - THRESHOLD;
+    const lockMs = Math.min(CAP_MS, BASE_MS * Math.pow(2, Math.floor(over / STEP)));
+    entry.lockedUntil = Date.now() + lockMs;
   }
 
   loginAttempts.set(key, entry);

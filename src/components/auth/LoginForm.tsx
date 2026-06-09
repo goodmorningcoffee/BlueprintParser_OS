@@ -17,17 +17,25 @@ export default function LoginForm() {
     setError("");
     setLoading(true);
 
-    const result = await signIn("credentials", {
-      email: email.toLowerCase().trim(),
-      password,
-      redirect: false,
-    });
+    try {
+      const result = await signIn("credentials", {
+        email: email.toLowerCase().trim(),
+        password,
+        redirect: false,
+      });
 
-    if (result?.error) {
-      setError("Invalid email or password");
+      if (result?.error) {
+        setError("Invalid email or password");
+      } else if (result?.ok) {
+        router.push("/home");
+      } else {
+        // Unexpected response (e.g. a rate-limit 429) — surface it, never hang.
+        setError("Sign-in is temporarily unavailable. Please wait a moment and try again.");
+      }
+    } catch {
+      setError("Sign-in is temporarily unavailable. Please wait a moment and try again.");
+    } finally {
       setLoading(false);
-    } else {
-      router.push("/home");
     }
   }
 

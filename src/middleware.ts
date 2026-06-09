@@ -135,7 +135,11 @@ const RATE_RULES: RateRule[] = [
   { pattern: "/api/register", method: "POST", limit: 3, windowMs: 15 * 60 * 1000, keyType: "ip" },
   { pattern: "/api/auth/forgot-password", method: "POST", limit: 3, windowMs: 15 * 60 * 1000, keyType: "ip" },
   { pattern: "/api/auth/reset-password", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "ip" },
-  { pattern: "/api/auth", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "ip" },
+  // NOTE: no blanket /api/auth POST limit. It counted SUCCESSFUL logins and
+  // sign-outs (a few sign-in/out cycles tripped 5/15min and 429'd the user).
+  // Password brute-force is handled correctly in src/lib/auth.ts authorize()
+  // (per-email failed-attempt lockout that only fires on WRONG passwords and
+  // resets on success); the general 120 req/min/IP cap below backstops floods.
 
   // Expensive operations - per user
   { pattern: "/api/ai/chat", method: "POST", limit: 30, windowMs: 60 * 60 * 1000, keyType: "user" },
