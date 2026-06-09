@@ -220,8 +220,10 @@ export async function DELETE(req: Request) {
 
   try {
     let projectCount = 0;
+
+    // Nuclear path touches S3 (irreversible), so it runs BEFORE the transaction;
+    // per-project deletion is best-effort/sequential.
     if (mode === "cascade") {
-      // Nuclear: delete every project the user authored (within tenancy), incl. S3.
       const owned = await db
         .select({ id: projects.id, dataUrl: projects.dataUrl, jobId: projects.jobId, name: projects.name })
         .from(projects)
@@ -234,24 +236,27 @@ export async function DELETE(req: Request) {
       for (const p of owned) {
         await deleteProjectFully(p);
       }
-    } else {
-      // Reassign the user's projects so projects.author_id no longer references them.
-      const moved = await db
-        .update(projects)
-        .set({ authorId: reassignTargetId })
-        .where(eq(projects.authorId, target.id))
-        .returning({ id: projects.id });
-      projectCount = moved.length;
     }
 
-    // Null soft-attribution FKs so the user row can be removed.
-    await db.update(annotations).set({ creatorId: null }).where(eq(annotations.creatorId, target.id));
-    await db.update(chatMessages).set({ userId: null }).where(eq(chatMessages.userId, target.id));
-    await db.update(modelAccess).set({ grantedBy: null }).where(eq(modelAccess.grantedBy, target.id));
-    await db.update(appSettings).set({ updatedBy: null }).where(eq(appSettings.updatedBy, target.id));
-    await db.update(annotationGroups).set({ createdBy: null }).where(eq(annotationGroups.createdBy, target.id));
-
-    await db.delete(users).where(eq(users.publicId, id));
+    // Atomic: reassign the user's projects (reassign mode) + null soft-attribution
+    // FKs + delete the user. All-or-nothing so a mid-sequence failure can't leave
+    // a half-deleted user.
+    await db.transaction(async (tx) => {
+      if (mode === "reassign") {
+        const moved = await tx
+          .update(projects)
+          .set({ authorId: reassignTargetId })
+          .where(eq(projects.authorId, target.id))
+          .returning({ id: projects.id });
+        projectCount = moved.length;
+      }
+      await tx.update(annotations).set({ creatorId: null }).where(eq(annotations.creatorId, target.id));
+      await tx.update(chatMessages).set({ userId: null }).where(eq(chatMessages.userId, target.id));
+      await tx.update(modelAccess).set({ grantedBy: null }).where(eq(modelAccess.grantedBy, target.id));
+      await tx.update(appSettings).set({ updatedBy: null }).where(eq(appSettings.updatedBy, target.id));
+      await tx.update(annotationGroups).set({ createdBy: null }).where(eq(annotationGroups.createdBy, target.id));
+      await tx.delete(users).where(eq(users.publicId, id));
+    });
 
     audit("user_deleted", {
       userId: session.user.dbId,

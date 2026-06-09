@@ -8,6 +8,7 @@ import {
   takeoffItems,
   takeoffGroups,
   labelingSessions,
+  qtoWorkflows,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { deleteProjectFiles } from "@/lib/s3";
@@ -57,6 +58,7 @@ export async function deleteProjectFully(project: DeletableProject): Promise<voi
   try { await db.delete(takeoffItems).where(eq(takeoffItems.projectId, project.id)); } catch { /* table may not exist yet */ }
   try { await db.delete(takeoffGroups).where(eq(takeoffGroups.projectId, project.id)); } catch { /* table may not exist yet */ }
   try { await db.delete(labelingSessions).where(eq(labelingSessions.projectId, project.id)); } catch { /* table may not exist yet */ }
+  try { await db.delete(qtoWorkflows).where(eq(qtoWorkflows.projectId, project.id)); } catch { /* table may not exist yet */ }
   await db.delete(processingJobs).where(eq(processingJobs.projectId, project.id));
   await db.delete(pages).where(eq(pages.projectId, project.id));
   await db.delete(projects).where(eq(projects.id, project.id));
