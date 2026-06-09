@@ -79,7 +79,7 @@ export async function reserveSagemakerPages(
       return {
         allowed: false,
         capHit: "company",
-        message: `Company SageMaker page limit reached (${companyUsed}/${company.limit} pages used; this run needs ${pagesToCharge}). Ask your root admin to raise the limit or reset the counter.`,
+        message: `YOLO limit reached for your company (${companyUsed}/${company.limit} pages used; this run needs ${pagesToCharge}). Request a limit increase from root_admin.`,
         companyUsed,
         companyLimit: company.limit,
         userUsed,
@@ -90,7 +90,7 @@ export async function reserveSagemakerPages(
       return {
         allowed: false,
         capHit: "user",
-        message: `Your personal SageMaker page limit reached (${userUsed}/${userLimit} pages used; this run needs ${pagesToCharge}). Ask your root admin to raise your limit.`,
+        message: `YOLO limit reached for your account (${userUsed}/${userLimit} pages used; this run needs ${pagesToCharge}). Request a limit increase from root_admin.`,
         companyUsed,
         companyLimit: company.limit,
         userUsed,

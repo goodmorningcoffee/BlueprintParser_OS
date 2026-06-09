@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/api-utils";
 import { assertDemoFeatureEnabled } from "@/lib/demo-features";
 import { db } from "@/lib/db";
 import { projects, models, modelAccess, processingJobs } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, or, isNull } from "drizzle-orm";
 import { startYoloJob } from "@/lib/yolo";
 import { s3Client, S3_BUCKET, uploadToS3 } from "@/lib/s3";
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
@@ -98,12 +98,18 @@ export async function POST(req: Request) {
   }
 
   // Verify model access: must be owned by company OR have an enabled model_access row
-  const companyId = (session.user as any).companyId;
+  const companyId = session.user.companyId;
   if (model.companyId !== companyId) {
+    // Accept a company-wide grant (user_id NULL) OR a grant to this specific user.
     const [access] = await db
       .select()
       .from(modelAccess)
-      .where(and(eq(modelAccess.modelId, modelId), eq(modelAccess.companyId, companyId), eq(modelAccess.enabled, true)))
+      .where(and(
+        eq(modelAccess.modelId, modelId),
+        eq(modelAccess.companyId, companyId),
+        eq(modelAccess.enabled, true),
+        or(isNull(modelAccess.userId), eq(modelAccess.userId, session.user.dbId))
+      ))
       .limit(1);
     if (!access) {
       return NextResponse.json({ error: "Model not found" }, { status: 404 });

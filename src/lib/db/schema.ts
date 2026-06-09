@@ -437,6 +437,9 @@ export const modelAccess = pgTable(
     companyId: integer("company_id")
       .notNull()
       .references(() => companies.id, { onDelete: "cascade" }),
+    // Per-user grant: NULL = the whole company may use the model (legacy
+    // behavior); set = only that one user (within companyId) may use it.
+    userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
     enabled: boolean("enabled").default(true).notNull(),
     grantedBy: integer("granted_by").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
@@ -444,6 +447,7 @@ export const modelAccess = pgTable(
   (table) => [
     index("idx_model_access_company").on(table.companyId),
     index("idx_model_access_model").on(table.modelId),
+    index("idx_model_access_user").on(table.userId),
   ]
 );
 
