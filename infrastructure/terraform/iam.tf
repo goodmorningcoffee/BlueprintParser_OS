@@ -95,6 +95,21 @@ resource "aws_iam_role_policy" "beaver_ecs_task_s3" {
           aws_s3_bucket.beaver_data.arn,
           "${aws_s3_bucket.beaver_data.arn}/*"
         ]
+      },
+      {
+        # WEIGHTS-2 backstop: the web tier never READS weights — it only writes
+        # models/<slug>/{config.yaml,classes.txt} (PutObject, not denied); only
+        # beaver-sagemaker-role reads model.pt to RUN. A presigned GET is signed
+        # by THIS role, so the CloudFront-principal bucket Deny does not cover it;
+        # this holds the invariant at the IAM layer even if the app is ever
+        # compromised or a future endpoint regresses. (weights-leak audit 1 + 5.)
+        Sid    = "DenyWebTierReadingModelWeights"
+        Effect = "Deny"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion"
+        ]
+        Resource = "${aws_s3_bucket.beaver_data.arn}/models/*"
       }
     ]
   })

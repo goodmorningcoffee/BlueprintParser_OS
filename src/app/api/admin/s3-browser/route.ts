@@ -36,11 +36,22 @@ export async function GET(req: Request) {
   const prefix = url.searchParams.get("prefix") || "";
   const download = url.searchParams.get("download");
 
-  // Validate prefix is within company scope
+  const target = download || prefix;
+
+  // Model weights live under models/ and are a root-managed asset. No tenant
+  // (company-admin or member) may list or download them through the app — this
+  // is the fail-closed backstop behind the s3Path redaction + CloudFront Deny
+  // (weights-leak audit, finding 2). root_admin (the trusted owner) is exempt.
+  if (!session.user.isRootAdmin && /^\/?models\//i.test(target)) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+
+  // Validate the target is within this company's data scope. Anchored match
+  // (dataKey + "/") and fail-closed: previously a falsy dataKey skipped the
+  // check entirely, and a bare startsWith let "ab" match "abc/...".
   const [company] = await db.select({ dataKey: companies.dataKey }).from(companies).where(eq(companies.id, session.user.companyId)).limit(1);
-  if (company?.dataKey) {
-    const target = download || prefix;
-    if (target && !target.startsWith(company.dataKey)) {
+  if (!session.user.isRootAdmin && target) {
+    if (!company?.dataKey || !target.startsWith(company.dataKey + "/")) {
       return NextResponse.json({ error: "Access denied: path outside company scope" }, { status: 403 });
     }
   }

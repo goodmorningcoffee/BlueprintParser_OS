@@ -230,6 +230,21 @@ resource "aws_s3_bucket_policy" "beaver_data" {
             "AWS:SourceArn" = aws_cloudfront_distribution.beaver.arn
           }
         }
+      },
+      {
+        # WEIGHTS-2 invariant: YOLO model weights must never be downloadable
+        # over the public CDN. SageMaker reads them server-side via its IAM
+        # role (a different principal), so model runs are unaffected; this only
+        # revokes CloudFront's ability to serve models/* to the public. An
+        # explicit Deny overrides the Allow above, so assets.<domain>/models/*
+        # returns 403.
+        Sid    = "DenyCloudFrontServingModelWeights"
+        Effect = "Deny"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.beaver_data.arn}/models/*"
       }
     ]
   })

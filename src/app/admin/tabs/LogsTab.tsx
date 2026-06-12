@@ -2,15 +2,17 @@
 
 import { useState } from "react";
 import LogsEngagement from "./LogsEngagement";
+import LogsAccounts from "./LogsAccounts";
 import LogsVisitors from "./LogsVisitors";
 import LogsSecurity from "./LogsSecurity";
 import LogsMonitor from "./LogsMonitor";
 
-export type LogsSubtab = "engagement" | "visitors" | "security" | "monitor";
+export type LogsSubtab = "engagement" | "accounts" | "visitors" | "security" | "monitor";
 export type LogsRange = "1h" | "24h" | "7d" | "30d";
 
 const SUBTABS: { id: LogsSubtab; label: string; hint: string }[] = [
   { id: "engagement", label: "Engagement", hint: "Top 10 features used — who loves BP" },
+  { id: "accounts", label: "Accounts", hint: "Per-user tool usage — which signed-in users use what" },
   { id: "visitors", label: "Visitors", hint: "IPs, countries, durations, ban actions" },
   { id: "security", label: "Security", hint: "Abuse events, banned IPs" },
   { id: "monitor", label: "Monitor", hint: "ECS / Lambda / RDS / budget" },
@@ -57,6 +59,7 @@ export default function LogsTab() {
 
       {/* Active subtab */}
       {active === "engagement" && <LogsEngagement range={range} />}
+      {active === "accounts" && <LogsAccounts range={range} />}
       {active === "visitors" && <LogsVisitors range={range} />}
       {active === "security" && <LogsSecurity />}
       {active === "monitor" && <LogsMonitor />}

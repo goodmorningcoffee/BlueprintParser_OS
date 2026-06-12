@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { lookupCountry } from "@/lib/geo";
 import { recordAbuseEvent } from "@/lib/admin-logs/record-abuse";
 import { isManuallyBanned } from "@/lib/admin-logs/manual-ban-cache";
+import { getToken } from "next-auth/jwt";
 
 /**
  * Run in Node.js runtime (Next 15+). Required so this module can import
@@ -236,9 +237,24 @@ export async function middleware(request: NextRequest) {
         }
       }
     }
-    // Fire-and-forget visit log — don't block the response on GeoIP lookup.
+    // Fire-and-forget visit log — don't block the response on GeoIP lookup or
+    // the JWT decode. Decoding the session token here (Node runtime) attaches
+    // the account identity to engagement data with zero added response latency.
+    // We log only the opaque userId/companyId — never email/PII — and the
+    // Logs → Accounts view resolves those to names server-side at query time.
+    // A decode failure (rotated secret, cookie mismatch) degrades gracefully to
+    // an anonymous visit; it never breaks the request.
     void (async () => {
-      const country = await lookupCountry(ip);
+      const [country, token] = await Promise.all([
+        lookupCountry(ip),
+        hasNextAuthSession
+          ? getToken({
+              req: request,
+              secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
+              secureCookie: process.env.NODE_ENV === "production",
+            }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
       logger.info("visit", {
         tag: "visit",
         ip,
@@ -250,6 +266,8 @@ export async function middleware(request: NextRequest) {
         latencyMs: Date.now() - startTs,
         userAgent,
         authed: hasNextAuthSession,
+        userId: typeof token?.dbId === "number" ? token.dbId : undefined,
+        companyId: typeof token?.companyId === "number" ? token.companyId : undefined,
       });
     })();
     return response;
