@@ -60,3 +60,4 @@ symbol-search-fix.md
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+test/fixtures/
