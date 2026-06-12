@@ -15,7 +15,25 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      # [P0.3] real postgres for the route characterization tests — same URL
+      # as the local scripts/test-db.sh cluster, so tests run identically.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bp_test
+          POSTGRES_PASSWORD: bp_test
+          POSTGRES_DB: bp_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U bp_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
+      # route tests must never silently skip in CI
+      BP_REQUIRE_TEST_DB: "1"
       # Dummy values so `next build` can evaluate server modules; nothing
       # connects at build time. Real values come from Secrets Manager at runtime.
       DATABASE_URL: postgres://ci:ci@localhost:5432/ci
