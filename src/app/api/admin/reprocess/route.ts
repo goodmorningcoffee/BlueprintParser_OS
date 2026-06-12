@@ -19,6 +19,7 @@ import { computeCsiSpatialMap } from "@/lib/csi-spatial";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
+import { carryNonComputedIntelligence } from "@/lib/intelligence-merge";
 import type { ClassifiedTable } from "@/types";
 
 /** YOLO classes aggregated by Layer 2 heatmap. Matches the "Notes agreement"
@@ -489,11 +490,16 @@ export async function POST(req: Request) {
             const textAnns = page.textAnnotations?.annotations || [];
 
             try {
+              // [refactor jun12 P0.5-G3] This used to start from {} and wholesale-write
+              // at the end of the loop — destroying user parsedRegions (and any other
+              // non-computed key) on every page of every project. Start from the
+              // existing intelligence with computed keys cleared instead; same merge
+              // semantics as yolo/load. See src/lib/intelligence-merge.ts.
+              let pageIntelligence: Record<string, unknown> = carryNonComputedIntelligence(page.parsedRegions);
               // Page intelligence: classification, cross-refs, note blocks
-              let pageIntelligence: Record<string, unknown> = {};
               const intel = analyzePageIntelligence(page.drawingNumber, textractData, csiCodes);
               if (intel.classification || intel.crossRefs || intel.noteBlocks) {
-                pageIntelligence = { ...intel };
+                pageIntelligence = { ...pageIntelligence, ...intel };
               }
 
               // Text region classification (with optional debug bundle to S3)
@@ -578,7 +584,13 @@ export async function POST(req: Request) {
                     classifiedTables: intel.classifiedTables,
                     classifiedRegionsTables: intel.classifiedRegions?.tables,
                     yoloHeatmap: intel.yoloHeatmap,
-                    parsedRegions: intel.parsedRegions,
+                    // [refactor jun12 G3b] was `intel.parsedRegions` — the freshly
+                    // rebuilt object never had that key, so parsed-region votes were
+                    // silently absent from every reprocess ensemble. Read from the
+                    // page's existing intelligence, same as the composite classifier.
+                    // (Post-G3 the carried-over key also lives on pageIntelligence,
+                    // but read the source of truth, not a side effect of the merge.)
+                    parsedRegions: (page.parsedRegions as any)?.parsedRegions,
                   });
                   if (votes.length > 0) {
                     const ensembleRegions = reduceRegionVotes(page.pageNumber, votes, ensembleConfig as any);
