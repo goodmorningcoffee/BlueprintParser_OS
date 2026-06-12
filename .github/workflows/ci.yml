@@ -1,0 +1,56 @@
+# [refactor jun12 P0.1] CI gate — first automation this repo has had.
+# Gates: typecheck, unit tests, production build. Lint runs NON-BLOCKING for
+# now: the repo carries 81 pre-existing eslint errors; converting lint to a
+# blocking gate is a ratchet item once the count hits 0 (tracked in the
+# refactor changelog). Node is PINNED to 20 to match Dockerfile (node:20-alpine);
+# vitest is known-broken under node 24 (ERR_INTERNAL_ASSERTION).
+# Deploys stay manual (deploy.sh, owner-run) — CI is the gate, not the trigger.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Dummy values so `next build` can evaluate server modules; nothing
+      # connects at build time. Real values come from Secrets Manager at runtime.
+      DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+      NEXTAUTH_SECRET: ci-dummy-secret-not-real
+      AUTH_SECRET: ci-dummy-secret-not-real
+      NEXTAUTH_URL: http://localhost:3000
+      S3_BUCKET: ci-dummy-bucket
+      CLOUDFRONT_DOMAIN: ci.invalid
+      AWS_REGION: us-east-1
+      STEP_FUNCTION_ARN: arn:aws:states:us-east-1:000000000000:stateMachine:ci-dummy
+      PROCESSING_WEBHOOK_SECRET: ci-dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: typecheck
+        run: npx tsc --noEmit
+      - name: unit tests
+        run: npm test
+      - name: build
+        run: npm run build
+
+  lint:
+    # Non-blocking until the 81 pre-existing errors are paid down (ratchet).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
