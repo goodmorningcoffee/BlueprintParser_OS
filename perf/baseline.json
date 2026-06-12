@@ -1,0 +1,16 @@
+{
+  "date": "2026-06-12",
+  "mode": "dev-turbopack-offline-stub",
+  "fixture": {
+    "pages": 100,
+    "approxMB": 62.6,
+    "underlays": "absent (404) — pure pdf.js canvas path"
+  },
+  "coldOpenWarmMs": 4044,
+  "nav20Ms": 7888,
+  "navProtocol": "per-step sidebar scroll + thumbnail click (virtualized list)",
+  "navPerPageMs": 394.4,
+  "zoom10Ms": 674,
+  "rafP95NavMs": 66.7,
+  "rafP95ZoomMs": 16.7
+}

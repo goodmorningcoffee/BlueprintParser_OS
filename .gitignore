@@ -61,3 +61,7 @@ symbol-search-fix.md
 *.tsbuildinfo
 next-env.d.ts
 test/fixtures/
+e2e/.state/
+perf/latest.json
+test-results/
+playwright-report/
