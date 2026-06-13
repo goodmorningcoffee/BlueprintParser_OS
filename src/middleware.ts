@@ -129,6 +129,12 @@ interface RateRule {
   limit: number;
   windowMs: number;
   keyType: "ip" | "user" | "ip+path";
+  // [refactor jun13 P0.5-G9] true = pathname must equal pattern exactly.
+  // Default (prefix match) is right for rules meant to cover a subtree
+  // (/api/demo*); it was wrong for /api/projects POST, which swallowed every
+  // POST under /api/projects/[id]/* — bulk map-tagging burned the 10/hr
+  // project-CREATE budget and 429'd mid-workflow.
+  exact?: boolean;
 }
 
 const RATE_RULES: RateRule[] = [
@@ -145,7 +151,7 @@ const RATE_RULES: RateRule[] = [
   // Expensive operations - per user
   { pattern: "/api/ai/chat", method: "POST", limit: 30, windowMs: 60 * 60 * 1000, keyType: "user" },
   { pattern: "/api/yolo/run", method: "POST", limit: 9999, windowMs: 60 * 60 * 1000, keyType: "user" },
-  { pattern: "/api/projects", method: "POST", limit: 10, windowMs: 60 * 60 * 1000, keyType: "user" },
+  { pattern: "/api/projects", method: "POST", limit: 10, windowMs: 60 * 60 * 1000, keyType: "user", exact: true },
   { pattern: "/api/s3/credentials", method: "POST", limit: 10, windowMs: 60 * 60 * 1000, keyType: "user" },
 
   // Moderate limits
@@ -166,6 +172,15 @@ const RATE_RULES: RateRule[] = [
   { pattern: "/api/demo", method: "GET", limit: 60, windowMs: 60 * 1000, keyType: "ip" },
   { pattern: "/api/demo/chat", method: "POST", limit: 10, windowMs: 60 * 1000, keyType: "ip" },
 ];
+
+// [refactor jun13 P0.5-G9] single matcher for both the rule lookup and the
+// "fall through to the general 120/min bucket" check — they previously
+// duplicated the predicate inline. Exported for unit tests only.
+export function findRateRule(pathname: string, method: string): RateRule | undefined {
+  return RATE_RULES.find(
+    (r) => (r.exact ? pathname === r.pattern : pathname.startsWith(r.pattern)) && method === r.method
+  );
+}
 
 // ─── Security headers ────────────────────────────────────────
 const SECURITY_HEADERS: Record<string, string> = {
@@ -403,9 +418,7 @@ export async function middleware(request: NextRequest) {
     }
 
     // Find matching rule
-    const rule = RATE_RULES.find(
-      (r) => pathname.startsWith(r.pattern) && method === r.method
-    );
+    const rule = findRateRule(pathname, method);
 
     if (rule) {
       // Build rate limit key
@@ -415,8 +428,14 @@ export async function middleware(request: NextRequest) {
       } else if (rule.keyType === "ip+path") {
         key = `rl:${pathname}:${ip}`;
       } else {
-        // "user" - use session cookie as proxy (can't decode JWT in edge middleware cheaply)
+        // "user" - use session cookie as proxy (can't decode JWT in edge middleware cheaply).
+        // [refactor jun13 P0.5-G9] v5 cookie names first — next-auth is pinned
+        // at 5.0.0-beta.30 (authjs.*); with only the v4 names every "user"
+        // rule silently fell back to keying by IP, so an office NAT shared
+        // one bucket and per-user limits weren't per-user at all.
         const sessionToken =
+          request.cookies.get("authjs.session-token")?.value ||
+          request.cookies.get("__Secure-authjs.session-token")?.value ||
           request.cookies.get("next-auth.session-token")?.value ||
           request.cookies.get("__Secure-next-auth.session-token")?.value ||
           ip;
@@ -441,7 +460,7 @@ export async function middleware(request: NextRequest) {
     }
 
     // General API rate limit: 120 req/min per IP
-    if (!RATE_RULES.some((r) => pathname.startsWith(r.pattern) && method === r.method)) {
+    if (!findRateRule(pathname, method)) {
       if (isRateLimited(`rl:api:${ip}`, 120, 60 * 1000)) {
         return finalize(new NextResponse(
           JSON.stringify({ error: "Too many requests." }),
