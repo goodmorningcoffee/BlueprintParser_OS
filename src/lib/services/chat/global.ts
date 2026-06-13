@@ -133,5 +133,8 @@ export async function handleGlobalChat(
     { role: "user", content: message },
   ];
 
-  return streamChatResponse(config, msgs, 0, null, session.user.dbId);
+  // [refactor jun13 P0.5-G2] null = global chat (was 0 → FK throw, history
+  // lost). The USER message is still not persisted for global chat — only
+  // the assistant reply via streamChatResponse; P2's query layer owns that.
+  return streamChatResponse(config, msgs, null, null, session.user.dbId);
 }

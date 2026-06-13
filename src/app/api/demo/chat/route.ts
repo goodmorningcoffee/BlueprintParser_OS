@@ -165,5 +165,7 @@ IMPORTANT: ONLY reference information that appears in the data below. Do not inv
     { role: "user", content: message },
   ];
 
-  return streamChatResponse(config, messages, demoProject?.id || 0, null, null);
+  // [refactor jun13 P0.5-G2] null when no demo project (was `|| 0` → the same
+  // FK-throw-after-stream class as global chat)
+  return streamChatResponse(config, messages, demoProject?.id ?? null, null, null);
 }

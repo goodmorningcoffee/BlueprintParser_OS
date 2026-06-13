@@ -366,9 +366,10 @@ export const chatMessages = pgTable(
   "chat_messages",
   {
     id: serial("id").primaryKey(),
-    projectId: integer("project_id")
-      .notNull()
-      .references(() => projects.id),
+    // [refactor jun13 P0.5-G2] nullable: NULL = global (cross-project) chat.
+    // Was NOT NULL; global chat passed projectId=0 → FK violation after the
+    // full response had streamed → assistant message silently never saved.
+    projectId: integer("project_id").references(() => projects.id),
     pageNumber: integer("page_number"), // NULL = project-wide chat
     role: varchar("role", { length: 20 }).notNull(), // 'user' | 'assistant'
     content: text("content").notNull(),

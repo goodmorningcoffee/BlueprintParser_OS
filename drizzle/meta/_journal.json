@@ -225,6 +225,13 @@
       "when": 1780200000000,
       "tag": "0031_model_access_per_user",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1781311102872,
+      "tag": "0032_chat_global_nullable_project",
+      "breakpoints": true
     }
   ]
 }

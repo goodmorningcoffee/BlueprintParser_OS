@@ -13,7 +13,11 @@ import { logger } from "@/lib/logger";
 export function streamChatResponse(
   config: ResolvedLLMConfig,
   messages: ChatMessage[],
-  projectId: number,
+  // [refactor jun13 P0.5-G2] null = global (cross-project) chat. Callers used
+  // to pass 0, which violated the NOT NULL FK *after* the response had fully
+  // streamed — the catch below then appended an error event to a good answer
+  // and the assistant message was never saved.
+  projectId: number | null,
   pageNumber: number | null,
   userId: number | null
 ): Response {
