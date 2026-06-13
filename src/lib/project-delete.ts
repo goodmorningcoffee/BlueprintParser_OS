@@ -22,10 +22,10 @@ export interface DeletableProject {
 }
 
 /**
- * Fully delete a project: stop any running Step Functions job, remove its S3
- * files, and delete every dependent DB row in FK order, then the project row.
- * compute_usage rows survive with project_id nulled (ON DELETE SET NULL, 0030)
- * since the ledger is append-only billing history.
+ * Fully delete a project: stop any running Step Functions job, delete every
+ * dependent DB row in FK order plus the project row in ONE transaction, then
+ * remove its S3 files. compute_usage rows survive with project_id nulled
+ * (ON DELETE SET NULL, 0030) since the ledger is append-only billing history.
  *
  * This is the single source of truth for "delete a project end to end" — used
  * by DELETE /api/projects/[id] and by the cascade path of user deletion. Keep
@@ -45,21 +45,37 @@ export async function deleteProjectFully(project: DeletableProject): Promise<voi
     }
   }
 
-  // Delete S3 files (PDF, thumbnails, page images, etc.)
+  // [refactor jun13 P0.5-G4] DB deletes first, in ONE transaction; S3 purge
+  // only after commit. The old order (S3 → unwrapped per-table deletes) could
+  // leave a live project row pointing at deleted files after any mid-sequence
+  // failure — a user-visible broken project. The failure mode now is the
+  // benign inverse: committed DB delete + failed S3 purge = orphaned objects,
+  // invisible to users, logged below for cleanup. This tx is the P1 reference
+  // pattern for service-layer writes.
+  //
+  // The old per-table try/catch ("table may not exist yet") is gone on
+  // purpose: inside a pg transaction any failed statement aborts the tx
+  // (25P02) so those catches could never help — and the schema is
+  // migration-managed now (test harness fresh-migrates 0000→latest).
+  await db.transaction(async (tx) => {
+    await tx.delete(chatMessages).where(eq(chatMessages.projectId, project.id));
+    await tx.delete(annotations).where(eq(annotations.projectId, project.id));
+    await tx.delete(takeoffItems).where(eq(takeoffItems.projectId, project.id));
+    await tx.delete(takeoffGroups).where(eq(takeoffGroups.projectId, project.id));
+    await tx.delete(labelingSessions).where(eq(labelingSessions.projectId, project.id));
+    await tx.delete(qtoWorkflows).where(eq(qtoWorkflows.projectId, project.id));
+    await tx.delete(processingJobs).where(eq(processingJobs.projectId, project.id));
+    await tx.delete(pages).where(eq(pages.projectId, project.id));
+    await tx.delete(projects).where(eq(projects.id, project.id));
+  });
+
+  // Delete S3 files (PDF, thumbnails, page images, etc.) — after commit
   try {
     await deleteProjectFiles(project.dataUrl);
   } catch (err) {
-    logger.error("[project-delete] Failed to delete S3 files:", err);
+    logger.error(
+      `[project-delete] DB rows deleted but S3 purge failed for ${project.dataUrl} — orphaned objects need manual cleanup:`,
+      err
+    );
   }
-
-  // Delete DB records in dependency order (all tables with FK to projects.id)
-  await db.delete(chatMessages).where(eq(chatMessages.projectId, project.id));
-  await db.delete(annotations).where(eq(annotations.projectId, project.id));
-  try { await db.delete(takeoffItems).where(eq(takeoffItems.projectId, project.id)); } catch { /* table may not exist yet */ }
-  try { await db.delete(takeoffGroups).where(eq(takeoffGroups.projectId, project.id)); } catch { /* table may not exist yet */ }
-  try { await db.delete(labelingSessions).where(eq(labelingSessions.projectId, project.id)); } catch { /* table may not exist yet */ }
-  try { await db.delete(qtoWorkflows).where(eq(qtoWorkflows.projectId, project.id)); } catch { /* table may not exist yet */ }
-  await db.delete(processingJobs).where(eq(processingJobs.projectId, project.id));
-  await db.delete(pages).where(eq(pages.projectId, project.id));
-  await db.delete(projects).where(eq(projects.id, project.id));
 }
