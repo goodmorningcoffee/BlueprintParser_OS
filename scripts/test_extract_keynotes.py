@@ -14,9 +14,15 @@ a future refactor reintroducing scale-based filtering fails loudly.
 Runs without tesseract: extract_keynotes gracefully disables OCR when
 pytesseract is missing, and these tests don't assert on recognized text.
 """
-import cv2
-import numpy as np
 import pytest
+
+# [refactor jun13 P0.5-G10] CV stack is a Lambda-image dep, not a devcontainer
+# guarantee — skip this whole file when cv2 is missing OR when it's the stub
+# that test_lambda_handler registers in cv2-less environments.
+cv2 = pytest.importorskip("cv2")
+if not hasattr(cv2, "imread"):
+    pytest.skip("cv2 is a stub (cv2-less environment)", allow_module_level=True)
+import numpy as np
 
 import extract_keynotes as ek
 from extract_keynotes import main, extract_from_image

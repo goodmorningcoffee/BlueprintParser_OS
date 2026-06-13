@@ -108,14 +108,31 @@ def process_pages(event, worker_fn):
         "errors": errors[:50],
     })
 
-    return {
-        "status": "success" if pages_failed == 0 else "partial",
+    # [refactor jun13 P0.5-G10] every-page-failed is a hard failure, not
+    # "partial" — the TS fan-out treats partial as usable, so an all-failed
+    # sweep used to surface as success-with-0-hits.
+    if pages_failed > 0 and pages_processed == 0:
+        status = "error"
+    elif pages_failed > 0:
+        status = "partial"
+    else:
+        status = "success"
+
+    ret = {
+        "status": status,
         "match_count": len(all_results),
         "warnings_count": len(all_warnings),
         "pages_processed": pages_processed,
         "pages_failed": pages_failed,
         "result_s3_key": result_key,
     }
+    if status == "error":
+        ret["error"] = (
+            f"All {pages_failed} pages failed; first: {errors[0]}"
+            if errors
+            else "All pages failed"
+        )
+    return ret
 
 
 def handler(event, context):
