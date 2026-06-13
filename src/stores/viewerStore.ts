@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { canPersist, persistFetch } from "@/lib/client-persist";
 import type {
   ClientAnnotation,
   ClientTakeoffItem,
@@ -1146,27 +1147,35 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       }],
       bucketFillPendingPolygon: null,
     }));
-    // Persist to server (non-demo)
+    // Persist to server. [refactor jun13 P0.5-G6] Was the last raw-fetch
+    // mutation in this store: gated on !isDemo only (publicId can still be ""
+    // before bootstrap → the request shipped projectId:"" and 404'd) and
+    // .catch(console.error) swallowed every failure — user saw the fill,
+    // server never had it. Now: demo stays local-only by design; otherwise
+    // gate on canPersist and surface failures via bucketFillError (rendered
+    // by DrawingPreviewLayer). Optimistic-state rollback is P2's job.
     if (!s.isDemo) {
-      fetch("/api/annotations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: s.publicId,
-          pageNumber: s.pageNumber,
-          name: item.name,
-          bbox: pending.bbox,
-          source: "takeoff",
-          data: polygonData,
-        }),
+      if (!canPersist(s.publicId, s.isDemo)) {
+        set({ bucketFillError: "Project not ready yet — bucket fill was NOT saved. Redraw once the viewer finishes loading." });
+        return;
+      }
+      persistFetch("/api/annotations", {
+        projectId: s.publicId,
+        pageNumber: s.pageNumber,
+        name: item.name,
+        bbox: pending.bbox,
+        source: "takeoff",
+        data: polygonData,
       })
-        .then((res) => (res.ok ? res.json() : null))
         .then((saved) => {
-          if (saved) set((prev) => ({
-            annotations: prev.annotations.map((a) => a.id === tempId ? { ...a, id: saved.id } : a),
+          const savedId = (saved as { id?: number } | null)?.id;
+          if (savedId) set((prev) => ({
+            annotations: prev.annotations.map((a) => a.id === tempId ? { ...a, id: savedId } : a),
           }));
         })
-        .catch((err) => console.error("Failed to persist bucket fill annotation:", err));
+        .catch((err: Error) =>
+          set({ bucketFillError: `Bucket fill drawn locally but NOT saved: ${err.message}` })
+        );
     }
   },
   splitAreaActive: false,
