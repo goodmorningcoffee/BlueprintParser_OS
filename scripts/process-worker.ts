@@ -36,7 +36,13 @@ async function main() {
       },
       body: JSON.stringify({
         projectId,
+        // [refactor jun13 P0.5-G1] pages stay empty (processProject already
+        // wrote them to the DB) but real counts ride along for logging. No
+        // `error` field on purpose: processing.ts wrote the real
+        // processingError; omitting it means the webhook leaves it untouched.
         pages: [],
+        pagesProcessed: result.pagesProcessed,
+        pageErrors: result.pageErrors,
         status:
           totalPages > 0 && result.pageErrors === totalPages
             ? "error"

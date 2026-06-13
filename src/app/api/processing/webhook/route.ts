@@ -20,6 +20,11 @@ interface WebhookPayload {
   status: "completed" | "error";
   error?: string;
   processingTime?: number;
+  // [refactor jun13 P0.5-G1] observability counts from the worker — pages
+  // themselves were already written to the DB by processProject(); these are
+  // logged, never persisted.
+  pagesProcessed?: number;
+  pageErrors?: number;
 }
 
 /**
@@ -109,17 +114,26 @@ export async function POST(req: Request) {
       }
     }
 
-    // Update project status
+    // [refactor jun13 P0.5-G1] JOB-CLOSE ONLY. processing.ts already wrote
+    // numPages (real PDF page count) and processingError (real partial-failure
+    // info) during ingest; this block used to clobber both on every success
+    // ping (numPages → payload.pages.length = 0, processingError → null).
+    // processingError is written only when the caller explicitly reports one.
     await db
       .update(projects)
       .set({
         status: payload.status,
-        processingError: payload.error || null,
         processingTime: payload.processingTime,
-        numPages: payload.pages.length,
         updatedAt: new Date(),
+        ...(payload.error !== undefined ? { processingError: payload.error } : {}),
       })
       .where(eq(projects.id, project.id));
+
+    if (payload.pagesProcessed !== undefined || payload.pageErrors !== undefined) {
+      logger.info(
+        `[webhook] project ${project.id} closed: ${payload.pagesProcessed ?? "?"} processed, ${payload.pageErrors ?? "?"} errors`
+      );
+    }
 
     // Update processing job if exists
     await db

@@ -2,12 +2,12 @@
 // [refactor jun12 P0.3] CHARACTERIZATION for POST /api/processing/webhook —
 // the ingest completion callback (worker → NAT → ALB → here).
 //
-// ⚠️ G1 IS DELIBERATELY FROZEN AS-IS HERE: the worker sends pages:[] and this
-// route unconditionally writes numPages = payload.pages.length (0) and
-// processingError = payload.error ?? null, clobbering what processing.ts
-// already wrote. The "numPages becomes 0" assertion below DOCUMENTS THE BUG;
-// P0.5-G1 (worker sends real counts / webhook stops writing those fields)
-// flips that assertion in the same commit as the fix.
+// [refactor jun13 P0.5-G1] FIXED + asserts flipped (were frozen-as-bug in
+// S002): the route is now JOB-CLOSE ONLY — status + processingTime +
+// processingError only when explicitly sent. It must never write numPages
+// (processing.ts wrote the real PDF page count during ingest) and never
+// null-clobber processingError (processing.ts wrote real partial-failure
+// info; the old `payload.error || null` erased it on every success ping).
 import { describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -73,22 +73,46 @@ describe.skipIf(!dbUp)("POST /api/processing/webhook — behavior", () => {
     expect(page.drawingNumber).toBe("A-501");
   });
 
-  it("[G1 FROZEN BUG] worker-style empty pages[] clobbers numPages to 0 and nulls processingError", async () => {
+  it("[G1 FIXED] worker job-close ping preserves numPages and processingError", async () => {
     const { project } = await createWorld({
       status: "processing",
       numPages: 47, // what processing.ts correctly wrote during ingest
       processingError: "3 pages failed OCR", // real partial-failure info
     });
-    // exactly what scripts/process-worker.ts sends today: pages: []
+    // what scripts/process-worker.ts sends post-G1: empty pages + real counts
     const res = await POST(
-      webhookReq({ projectId: project.id, pages: [], status: "completed", processingTime: 99 }),
+      webhookReq({
+        projectId: project.id,
+        pages: [],
+        pagesProcessed: 44,
+        pageErrors: 3,
+        status: "completed",
+        processingTime: 99,
+      }),
     );
     expect(res.status).toBe(200);
     const [row] = await db.select().from(projects).where(eq(projects.id, project.id));
     expect(row.status).toBe("completed");
     expect(row.processingTime).toBe(99);
-    // ── the bug, asserted on purpose (see file header) ──
-    expect(row.numPages).toBe(0); // ← P0.5-G1 flips this to 47
-    expect(row.processingError).toBeNull(); // ← and this to "3 pages failed OCR"
+    // ── the G1 contract: ingest-written truth survives the close ping ──
+    expect(row.numPages).toBe(47);
+    expect(row.processingError).toBe("3 pages failed OCR");
+  });
+
+  it("[G1] explicit error payload still records processingError and error status", async () => {
+    const { project } = await createWorld({ status: "processing", numPages: 12 });
+    const res = await POST(
+      webhookReq({
+        projectId: project.id,
+        pages: [],
+        status: "error",
+        error: "step function task crashed",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const [row] = await db.select().from(projects).where(eq(projects.id, project.id));
+    expect(row.status).toBe("error");
+    expect(row.processingError).toBe("step function task crashed");
+    expect(row.numPages).toBe(12); // never touched, even on the error path
   });
 });
