@@ -65,3 +65,4 @@ e2e/.state/
 perf/latest.json
 test-results/
 playwright-report/
+__pycache__/
