@@ -130,6 +130,21 @@ resource "aws_iam_role_policy" "beaver_ecs_task_stepfunctions" {
         Resource = [
           aws_sfn_state_machine.beaver_process_blueprint.arn
         ]
+      },
+      {
+        # [refactor jun13 P0.5-G8] project deletion stops the project's
+        # running execution (project-delete.ts StopExecutionCommand). Without
+        # this the call was AccessDenied since launch — swallowed by its
+        # catch-warn, so deleted projects kept processing and burning compute.
+        # Execution ARNs use :execution: in place of :stateMachine:.
+        Effect = "Allow"
+        Action = [
+          "states:StopExecution",
+          "states:DescribeExecution"
+        ]
+        Resource = [
+          "${replace(aws_sfn_state_machine.beaver_process_blueprint.arn, ":stateMachine:", ":execution:")}:*"
+        ]
       }
     ]
   })

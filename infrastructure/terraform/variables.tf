@@ -74,13 +74,18 @@ variable "ecs_desired_count" {
 variable "ecs_min_count" {
   description = "Minimum number of ECS tasks for auto-scaling"
   type        = number
-  default     = 2
+  # [refactor jun13 P0.5-G7] held at 1 alongside ecs_max_count — see below.
+  default     = 1
 }
 
 variable "ecs_max_count" {
   description = "Maximum number of ECS tasks for auto-scaling"
   type        = number
-  default     = 8
+  # [refactor jun13 P0.5-G7] capped at 1 until P5 moves rate-limit/abuse/
+  # failed-login state out of process memory (PG-backed). Each extra task is
+  # an independent in-memory store: limits multiply by task count and
+  # lockouts stop being consistent. Raise ONLY after P5 lands.
+  default     = 1
 }
 
 variable "ecs_cpu" {
