@@ -31,7 +31,15 @@ async function readFromS3(): Promise<ToggleState> {
     const body = await res.Body?.transformToString();
     if (body) return { ...DEFAULTS, ...JSON.parse(body) };
   } catch (err: any) {
-    if (err?.name !== "NoSuchKey") logger.warn("Failed to read toggles:", err?.message);
+    if (err?.name !== "NoSuchKey") {
+      logger.warn("Failed to read toggles:", err?.message);
+      // [refactor jun13 P0.5-G11] the SageMaker toggle is a SPEND gate —
+      // fail CLOSED on read errors so an S3 outage can't silently re-enable
+      // paid GPU inference the owner turned off. NoSuchKey = never
+      // configured = legitimate defaults. quotaEnabled stays default-true
+      // (its safe direction is "keep enforcing limits").
+      return { ...DEFAULTS, sagemakerEnabled: false };
+    }
   }
   return { ...DEFAULTS };
 }
