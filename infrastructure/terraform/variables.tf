@@ -68,7 +68,10 @@ variable "acm_certificate_arn" {
 variable "ecs_desired_count" {
   description = "Desired number of ECS tasks"
   type        = number
-  default     = 2
+  # [refactor jun16 P0-review G7-1] dropped 2 -> 1 to match ecs_min/max_count
+  # (also 1 since G7). A defaults-only apply previously requested desired_count=2
+  # while max_capacity=1 — an invalid desired>max state. Must stay <= ecs_max_count.
+  default     = 1
 }
 
 variable "ecs_min_count" {
