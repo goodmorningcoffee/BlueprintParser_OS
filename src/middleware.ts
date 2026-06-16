@@ -156,7 +156,13 @@ const RATE_RULES: RateRule[] = [
 
   // Moderate limits
   { pattern: "/api/takeoff-items", method: "POST", limit: 50, windowMs: 60 * 60 * 1000, keyType: "user" },
-  { pattern: "/api/annotations", method: "POST", limit: 200, windowMs: 60 * 60 * 1000, keyType: "user" },
+  // [refactor jun16 P0-review G9-1] bulk delete gets its own user-keyed budget
+  // and the create rule is exact. Previously "/api/annotations/batch-delete"
+  // POST prefix-matched the create rule and burned the 200/hr annotation-CREATE
+  // budget (same bug-class G9 fixed for /api/projects). Listed before the create
+  // rule so the matcher's .find() picks it for the batch path.
+  { pattern: "/api/annotations/batch-delete", method: "POST", limit: 100, windowMs: 60 * 60 * 1000, keyType: "user" },
+  { pattern: "/api/annotations", method: "POST", limit: 200, windowMs: 60 * 60 * 1000, keyType: "user", exact: true },
 
   // Invite requests - tight limit per IP
   { pattern: "/api/invite", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "ip" },

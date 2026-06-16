@@ -31,4 +31,23 @@ describe("findRateRule — G9 exact/prefix semantics", () => {
   it("method must match — project GETs are unthrottled by the POST rule", () => {
     expect(findRateRule("/api/projects", "GET")).toBeUndefined();
   });
+
+  // [refactor jun16 P0-review G9-1] the same exact/prefix bug-class as projects,
+  // found at /api/annotations: batch-delete POST used to burn the create budget.
+  it("annotation CREATE is exact 200/hr and no longer swallows its subtree", () => {
+    const create = findRateRule("/api/annotations", "POST");
+    expect(create!.limit).toBe(200);
+    expect(create!.exact).toBe(true);
+  });
+
+  it("annotation batch-delete has its own 100/hr rule, not the create bucket", () => {
+    const rule = findRateRule("/api/annotations/batch-delete", "POST");
+    expect(rule).toBeTruthy();
+    expect(rule!.limit).toBe(100);
+    expect(rule!.pattern).toBe("/api/annotations/batch-delete");
+  });
+
+  it("an unrelated /api/annotations subpath POST falls through to the backstop", () => {
+    expect(findRateRule("/api/annotations/123/whatever", "POST")).toBeUndefined();
+  });
 });
