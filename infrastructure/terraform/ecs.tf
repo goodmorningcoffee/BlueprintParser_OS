@@ -651,7 +651,7 @@ resource "aws_ecs_service" "beaver_label_studio" {
   name             = "beaver-label-studio"
   cluster          = aws_ecs_cluster.beaver.id
   task_definition  = aws_ecs_task_definition.beaver_label_studio.arn
-  desired_count    = 1
+  desired_count    = 0
   launch_type      = "FARGATE"
   platform_version = "1.4.0" # Required for EFS support
 
