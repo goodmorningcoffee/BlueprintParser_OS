@@ -2,8 +2,12 @@
 // [refactor jun13 P0.5-G4] Freezes deleteProjectFully's NEW ordering contract:
 // all DB rows go in one transaction FIRST, the S3 purge runs only after
 // commit, and an S3 failure never bubbles (worst case = orphaned objects,
-// logged). Full child-cascade coverage lives in the projects/[id] DELETE
-// route test; this file pins the ordering + error path at the service seam.
+// logged).
+// [refactor jun16 P0-review G4] Added the annotation_groups cascade assertion.
+// That child used to vanish only via a silent DB ON DELETE CASCADE and was
+// untested ANYWHERE (the projects/[id] route test seeds a lone annotation, no
+// groups). project-delete.ts now deletes it explicitly; this test pins it so a
+// future schema/FK change that breaks the teardown fails loudly here.
 import { describe, expect, inject, it, vi } from "vitest";
 
 const s3CallLog: { projectRowsAtCallTime: number; dataUrl: string }[] = [];
@@ -26,7 +30,14 @@ vi.mock("@/lib/s3", async (importOriginal) => {
 
 import { deleteProjectFully } from "@/lib/project-delete";
 import { db } from "@/lib/db";
-import { chatMessages, pages, projects } from "@/lib/db/schema";
+import {
+  annotations,
+  annotationGroups,
+  annotationGroupMembers,
+  chatMessages,
+  pages,
+  projects,
+} from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createWorld } from "@/test/harness";
 
@@ -58,5 +69,31 @@ describe.skipIf(!dbUp)("deleteProjectFully — G4 ordering contract", () => {
       s3ShouldThrow = false;
     }
     expect(await db.select().from(projects).where(eq(projects.id, project.id))).toHaveLength(0);
+  });
+
+  it("removes annotation_groups + their member links (the previously cascade-only path)", async () => {
+    const { user, project } = await createWorld();
+    // an annotation + a group + the M:N link between them
+    const [anno] = await db
+      .insert(annotations)
+      .values({ projectId: project.id, name: "A1", minX: 0, maxX: 1, minY: 0, maxY: 1, pageNumber: 1, creatorId: user.id })
+      .returning();
+    const [group] = await db
+      .insert(annotationGroups)
+      .values({ projectId: project.id, name: "Doors" })
+      .returning();
+    await db.insert(annotationGroupMembers).values({ annotationId: anno.id, groupId: group.id });
+
+    await deleteProjectFully({ id: project.id, dataUrl: project.dataUrl, jobId: null });
+
+    // annotation_groups: the one child that used to rely on a silent DB cascade
+    // — now deleted explicitly, asserted gone here.
+    expect(
+      await db.select().from(annotationGroups).where(eq(annotationGroups.projectId, project.id)),
+    ).toHaveLength(0);
+    // the junction has no direct project FK; it clears via its parents' cascade
+    expect(
+      await db.select().from(annotationGroupMembers).where(eq(annotationGroupMembers.groupId, group.id)),
+    ).toHaveLength(0);
   });
 });

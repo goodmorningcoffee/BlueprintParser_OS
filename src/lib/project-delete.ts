@@ -3,6 +3,7 @@ import {
   projects,
   pages,
   annotations,
+  annotationGroups,
   chatMessages,
   processingJobs,
   takeoffItems,
@@ -22,10 +23,27 @@ export interface DeletableProject {
 }
 
 /**
- * Fully delete a project: stop any running Step Functions job, delete every
- * dependent DB row in FK order plus the project row in ONE transaction, then
- * remove its S3 files. compute_usage rows survive with project_id nulled
- * (ON DELETE SET NULL, 0030) since the ledger is append-only billing history.
+ * Fully delete a project: stop any running Step Functions job, delete its
+ * dependent DB rows + the project row in ONE transaction, then remove its S3
+ * files (after commit).
+ *
+ * Deletion coverage — every table with an FK to projects.id:
+ *  - Explicitly deleted below: chat_messages, annotations, annotation_groups,
+ *    takeoff_items, takeoff_groups, labeling_sessions, qto_workflows,
+ *    processing_jobs, pages. Most are ON DELETE NO ACTION, so they MUST be
+ *    gone before the final DELETE projects or it aborts the tx.
+ *  - annotation_group_members (the M:N junction) has NO direct project FK; it
+ *    clears via ON DELETE CASCADE from BOTH parents (annotations.id and
+ *    annotation_groups.id), which we delete above — no explicit delete needed.
+ *  - compute_usage is intentionally NOT deleted: ON DELETE SET NULL (0030)
+ *    preserves the append-only billing ledger with project_id nulled.
+ *
+ * [refactor jun16 P0-review G4] annotation_groups is now deleted EXPLICITLY.
+ * It previously survived this sequence and only disappeared via its own
+ * project-level ON DELETE CASCADE (0025) — undocumented and untested. Deleting
+ * it here keeps this function (not the schema) the single, testable source of
+ * truth for teardown, so a future NO-ACTION child added-but-forgotten fails
+ * loudly in the cascade test rather than silently aborting prod deletes.
  *
  * This is the single source of truth for "delete a project end to end" — used
  * by DELETE /api/projects/[id] and by the cascade path of user deletion. Keep
@@ -60,6 +78,9 @@ export async function deleteProjectFully(project: DeletableProject): Promise<voi
   await db.transaction(async (tx) => {
     await tx.delete(chatMessages).where(eq(chatMessages.projectId, project.id));
     await tx.delete(annotations).where(eq(annotations.projectId, project.id));
+    // [refactor jun16 P0-review G4] explicit (was DB-cascade-only); members
+    // junction cascades off both annotations (above) and annotation_groups.
+    await tx.delete(annotationGroups).where(eq(annotationGroups.projectId, project.id));
     await tx.delete(takeoffItems).where(eq(takeoffItems.projectId, project.id));
     await tx.delete(takeoffGroups).where(eq(takeoffGroups.projectId, project.id));
     await tx.delete(labelingSessions).where(eq(labelingSessions.projectId, project.id));
