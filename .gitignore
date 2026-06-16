@@ -66,3 +66,7 @@ perf/latest.json
 test-results/
 playwright-report/
 __pycache__/
+
+# terraform saved-plans embed tfstate/secrets - never commit
+*.plan
+*.tfplan
