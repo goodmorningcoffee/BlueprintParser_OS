@@ -5,6 +5,9 @@ import { useViewerStore, useNavigation, usePanels, useProject, useDetection, use
 import { useShapeParseInteraction } from "@/hooks/useShapeParseInteraction";
 import { TWENTY_COLORS, SHAPE_COLORS } from "@/types";
 import type { ClientAnnotation, YoloTag, Shape } from "@/types";
+// [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
+// apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
+import { apiErrorMessage } from "@/lib/client-persist";
 import ClassGroupHeader from "./ClassGroupHeader";
 import HelpTooltip from "./HelpTooltip";
 import AnnotationListItem from "./AnnotationListItem";
@@ -857,7 +860,7 @@ export default function DetectionPanel({
                     });
                     if (!res.ok) {
                       const errBody = await res.json().catch(() => ({}));
-                      throw new Error(errBody.error || `HTTP ${res.status}`);
+                      throw new Error(apiErrorMessage(errBody) || `HTTP ${res.status}`);
                     }
                     const data = await res.json();
                     if (data.annotations) {
@@ -934,7 +937,7 @@ export default function DetectionPanel({
                       });
                       if (!res.ok) {
                         const errBody = await res.json().catch(() => ({}));
-                        throw new Error(errBody.error || `HTTP ${res.status}`);
+                        throw new Error(apiErrorMessage(errBody) || `HTTP ${res.status}`);
                       }
                       const data = await res.json();
                       if (data.annotations) {

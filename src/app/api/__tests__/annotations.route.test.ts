@@ -1,9 +1,10 @@
 // @vitest-environment node
 // [refactor jun12 P0.3] CHARACTERIZATION tests for POST /api/annotations.
-// These freeze TODAY'S behavior — including quirks (falsy pageNumber rejected,
-// per-endpoint envelope shapes). P1's shell conversion must keep these green;
-// the unified-envelope change is the one sanctioned diff (update tests + the
-// client call sites in the same commit, per plan 03 §P1.2).
+// These freeze TODAY'S behavior — including quirks (falsy pageNumber rejected).
+// [refactor jun17 P1.3] Envelope flipped to the shell's {error:{code,message}} as the
+// route migrated onto services/annotations.ts (the one sanctioned diff; client call sites
+// updated in the same commit, per plan 03 §P1.2). The malformed-JSON case now asserts the
+// shell's structured 400 instead of an unhandled throw.
 import { describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -69,7 +70,7 @@ describe.skipIf(!dbUp)("POST /api/annotations — single record", () => {
         await POST(makeReq("/api/annotations", { body: { projectId: project.publicId, ...c } })),
       );
       expect(status).toBe(400);
-      expect(body.error).toBe("projectId, pageNumber, name, and bbox required");
+      expect(body.error).toEqual({ code: "VALIDATION", message: "projectId, pageNumber, name, and bbox required" });
     }
   });
 
@@ -112,6 +113,19 @@ describe.skipIf(!dbUp)("POST /api/annotations — single record", () => {
     );
     expect([401, 404]).toContain(status); // freeze: never 2xx
     expect(await annotationsFor(project.id)).toHaveLength(0);
+  });
+
+  it("validate-before-auth: a signed-out request with a bad field still 400s (validation precedes auth)", async () => {
+    const { project } = await createWorld();
+    signedOut();
+    // Single mode validates required-fields + bbox BEFORE resolving auth, so a bad bbox 400s even
+    // with no session. A regression that moved auth ahead of validation (e.g. declarative
+    // project-auth) would 401 here instead — this freezes the recipe's core ordering invariant.
+    const { status, body } = await readJson(
+      await POST(makeReq("/api/annotations", { body: { projectId: project.publicId, pageNumber: 1, name: "x", bbox: [0.9, 0.9, 0.1, 0.1] } })),
+    );
+    expect(status).toBe(400);
+    expect(body.error.code).toBe("VALIDATION");
   });
 });
 
@@ -168,7 +182,7 @@ describe.skipIf(!dbUp)("POST /api/annotations — batch mode", () => {
       await POST(makeReq("/api/annotations", { body: { annotations: [{ pageNumber: 1, name: "a", bbox }] } })),
     );
     expect(noProject.status).toBe(400);
-    expect(noProject.body.error).toBe("projectId required");
+    expect(noProject.body.error).toEqual({ code: "VALIDATION", message: "projectId required" });
 
     const badOne = await readJson(
       await POST(makeReq("/api/annotations", {
@@ -185,14 +199,52 @@ describe.skipIf(!dbUp)("POST /api/annotations — batch mode", () => {
     expect(await annotationsFor(project.id)).toHaveLength(0); // nothing partially inserted
   });
 
-  it("malformed JSON body is currently an unhandled 500 class (P1 shell makes it 400) — freeze via throw", async () => {
+  it("malformed JSON body → 400 BAD_REQUEST (shell-handled; was an unhandled 500 pre-shell)", async () => {
     const { user } = await createWorld();
     asUser(user);
-    // [quirk frozen] route does `await req.json()` bare — invalid JSON throws.
-    // The shell conversion (P1) turns this into a structured 400; this
-    // assertion flips then, in the same commit.
-    await expect(
-      POST(new Request("http://test.local/api/annotations", { method: "POST", headers: { "content-type": "application/json" }, body: "{not json" })),
-    ).rejects.toThrow();
+    // Pre-shell the route did `await req.json()` bare and invalid JSON threw an unhandled 500.
+    // The shell's safeParseJsonBody now turns it into a structured 400 (this assertion flipped
+    // with the P1.3 migration, in the same commit).
+    const { status, body } = await readJson(
+      await POST(new Request("http://test.local/api/annotations", { method: "POST", headers: { "content-type": "application/json" }, body: "{not json" })),
+    );
+    expect(status).toBe(400);
+    expect(body.error).toEqual({ code: "BAD_REQUEST", message: "Invalid JSON body" });
+  });
+
+  it("batch validates bbox AFTER auth (asymmetry vs single): signed-out + bad bbox → 401", async () => {
+    const { project } = await createWorld();
+    signedOut();
+    // Batch mode resolves auth BEFORE the per-annotation bbox loop, so a signed-out batch with a
+    // bad bbox 401s (auth wins) — the inverse of single mode. A deliberately frozen quirk; a
+    // future change that unified the two paths' validation order would silently break this.
+    const { status } = await readJson(
+      await POST(makeReq("/api/annotations", { body: { projectId: project.publicId, annotations: [{ pageNumber: 1, name: "x", bbox: [0.9, 0.9, 0.1, 0.1] }] } })),
+    );
+    expect(status).toBe(401);
+  });
+
+  it("delete-before-insert rolls back when the insert fails — seeded rows survive (sanctioned tx; legacy lost them)", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    await POST(makeReq("/api/annotations", { body: { projectId: project.publicId, pageNumber: 1, name: "old-yolo", bbox, source: "yolo" } }));
+    expect(await annotationsFor(project.id)).toHaveLength(1);
+
+    // A batch that deletes the yolo/page-1 rows then inserts a row whose name exceeds the
+    // varchar(255) bound → the insert throws INSIDE the tx → the delete rolls back. Pre-tx the
+    // legacy ran delete + insert as separate statements, so the delete committed and the rows were
+    // LOST; the P1.3 tx (sanctioned scope-add) prevents that. This asserts the NEW behavior.
+    const { status } = await readJson(
+      await POST(makeReq("/api/annotations", {
+        body: {
+          projectId: project.publicId,
+          deleteSource: "yolo",
+          deletePageNumbers: [1],
+          annotations: [{ pageNumber: 1, name: "x".repeat(300), bbox, source: "yolo" }],
+        },
+      })),
+    );
+    expect(status).toBe(500); // generic INTERNAL (leak-free)
+    expect(await annotationsFor(project.id)).toHaveLength(1); // rollback: the original row survives
   });
 });

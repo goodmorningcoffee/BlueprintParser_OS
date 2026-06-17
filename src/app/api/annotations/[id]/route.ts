@@ -1,94 +1,19 @@
-import { NextResponse } from "next/server";
-import { checkProjectAccess, apiError } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { annotations, projects } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { detectCsiCodes } from "@/lib/csi-detect";
+// [refactor jun17 P1.3] Thin shell — behavior in services/annotations.ts. Indirect lookup
+// (annotation → its project), so the shell does NO auth; the service fetches the annotation
+// (404 if missing) then resolves access on its parent project. No id validation here (parseInt
+// NaN → pg cast → generic 500), matching the legacy route. DELETE declares no body schema so a
+// bodyless DELETE isn't rejected by zod (the shell still reads + ignores any body).
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { deleteAnnotation, updateAnnotation } from "@/server/services/annotations";
 
-async function verifyAnnotationAccess(annotationId: number) {
-  const [annotation] = await db
-    .select()
-    .from(annotations)
-    .where(eq(annotations.id, annotationId))
-    .limit(1);
-  if (!annotation) return { annotation: null, error: apiError("Not found", 404) };
+export const PUT = defineRoute({
+  auth: "none",
+  body: zLooseBody,
+  handler: ({ params, body }) => updateAnnotation(params.id, body),
+});
 
-  const [project] = await db
-    .select({ isDemo: projects.isDemo, companyId: projects.companyId })
-    .from(projects)
-    .where(eq(projects.id, annotation.projectId))
-    .limit(1);
-  if (!project) return { annotation: null, error: apiError("Not found", 404) };
-
-  const access = await checkProjectAccess(project);
-  if (access.error) return { annotation: null, error: access.error };
-
-  return { annotation, error: null };
-}
-
-export async function PUT(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params;
-
-  const { annotation, error } = await verifyAnnotationAccess(parseInt(id));
-  if (error) return error;
-  if (!annotation) return apiError("Not found", 404);
-
-  const body = await req.json();
-  const updates: Record<string, unknown> = {};
-
-  if (body.name !== undefined) updates.name = body.name;
-  if (body.note !== undefined) updates.note = body.note;
-  if (body.data !== undefined) updates.data = body.data;
-  if (body.bbox) {
-    updates.minX = body.bbox[0];
-    updates.minY = body.bbox[1];
-    updates.maxX = body.bbox[2];
-    updates.maxY = body.bbox[3];
-  }
-
-  // Auto-CSI-tag: detect CSI codes from note text and merge with manual codes
-  let autoCsiCodes: string[] = [];
-  const noteText = (body.note as string) || "";
-  if (noteText.trim()) {
-    const detected = detectCsiCodes(noteText);
-    autoCsiCodes = detected.map((c) => c.code);
-  }
-
-  if (autoCsiCodes.length > 0) {
-    // When the PUT is note-only (no `data` in request), seed from the
-    // existing row so detected codes merge in instead of being silently
-    // dropped. Manual codes always win — Set dedupe preserves them.
-    const data =
-      (updates.data as Record<string, unknown> | undefined) ??
-      (annotation.data as Record<string, unknown> | null) ??
-      {};
-    const manualCodes = (data.csiCodes as string[]) || [];
-    const merged = [...new Set([...manualCodes, ...autoCsiCodes])];
-    data.csiCodes = merged;
-    updates.data = data;
-  }
-
-  updates.updatedAt = new Date();
-
-  await db.update(annotations).set(updates).where(eq(annotations.id, annotation.id));
-
-  return NextResponse.json({ success: true, autoCsiCodes });
-}
-
-export async function DELETE(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params;
-
-  const { annotation, error } = await verifyAnnotationAccess(parseInt(id));
-  if (error) return error;
-  if (!annotation) return apiError("Not found", 404);
-
-  await db.delete(annotations).where(eq(annotations.id, annotation.id));
-
-  return NextResponse.json({ success: true });
-}
+export const DELETE = defineRoute({
+  auth: "none",
+  handler: ({ params }) => deleteAnnotation(params.id),
+});

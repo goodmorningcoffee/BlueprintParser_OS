@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { AreaUnit, ClientAnnotation, ScaleCalibrationData } from "@/types";
+// [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
+// apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
+import { apiErrorMessage } from "@/lib/client-persist";
 
 const AREA_UNITS: AreaUnit[] = ["ft", "in", "m", "cm"];
 
@@ -106,8 +109,8 @@ export default function CalibrationInput() {
         resetCalibration();
         setDistance("");
       } else {
-        const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        setError(errData.error || `Failed (${res.status})`);
+        const errData = await res.json().catch(() => null);
+        setError(apiErrorMessage(errData) || `Failed (${res.status})`);
       }
     } catch (err) {
       setError("Network error — could not save calibration");
