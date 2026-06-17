@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientTakeoffItem } from "@/types";
+import { apiErrorMessage } from "@/lib/client-persist";
 
 interface BucketFillAssignDialogProps {
   pendingPolygon: NonNullable<ReturnType<typeof useViewerStore.getState>["bucketFillPendingPolygon"]>;
@@ -78,8 +79,9 @@ export default function BucketFillAssignDialog({
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
           try {
-            const body = await res.json();
-            if (body?.error) detail = body.error;
+            // [refactor jun16 P1.2] read either error envelope (legacy string | {code,message}).
+            const msg = apiErrorMessage(await res.json());
+            if (msg) detail = msg;
           } catch { /* non-JSON body */ }
           throw new Error(detail);
         }

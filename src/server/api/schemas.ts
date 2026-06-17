@@ -14,6 +14,18 @@ import { z } from "zod";
  */
 export const zPublicId = z.string().uuid();
 
+/**
+ * [refactor jun16 P1.2] Any JSON object, passed through unvalidated.
+ *
+ * The shell consumes the request body (it must, to support body-key auth), so a handler can
+ * only see the body via `ctx.body` — i.e. there MUST be a `body` schema. Routes that do their
+ * own imperative field validation (to preserve exact legacy error messages and the
+ * validate-before-auth ordering the characterization tests freeze) declare `body: zLooseBody`
+ * and narrow the fields inside their service. Use a STRICT schema instead whenever the route
+ * has no such legacy-message/ordering constraint.
+ */
+export const zLooseBody = z.record(z.string(), z.unknown());
+
 /** 1-based page number. */
 export const zPageNumber = z.number().int().min(1);
 

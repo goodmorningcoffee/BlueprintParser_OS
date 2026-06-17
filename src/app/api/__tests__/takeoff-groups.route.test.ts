@@ -57,7 +57,10 @@ describe.skipIf(!dbUp)("POST /api/takeoff-groups", () => {
     expect((await readJson(await post({ projectId: "p", kind: "area" }))).status).toBe(400);
     const badKind = await readJson(await post({ projectId: "p", name: "x", kind: "volume" }));
     expect(badKind.status).toBe(400);
-    expect(badKind.body.error).toBe("invalid kind");
+    // [refactor jun16 P1.2] envelope flip — was `error: "invalid kind"` (bare string). Note
+    // validate-before-auth is preserved: kind is checked before the id, so the non-uuid "p"
+    // never reaches auth — "invalid kind" still wins (would be "Invalid project id" otherwise).
+    expect(badKind.body.error).toEqual({ code: "VALIDATION", message: "invalid kind" });
     // valid body + signed out → resolveProjectAccess → 401.
     // NOTE (quirk worth knowing, NOT asserted): resolveProjectAccess queries
     // the project BEFORE/with auth, and a non-uuid publicId makes postgres
@@ -72,7 +75,8 @@ describe.skipIf(!dbUp)("POST /api/takeoff-groups", () => {
     asUser(member);
     const denied = await readJson(await post({ projectId: project.publicId, name: "x", kind: "count" }));
     expect(denied.status).toBe(403);
-    expect(denied.body.error).toBe("Demo projects are read-only");
+    // [refactor jun16 P1.2] envelope flip — was `error: "Demo projects are read-only"`.
+    expect(denied.body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
 
     const admin = await createUser(company.id, { role: "admin" });
     asUser(admin);

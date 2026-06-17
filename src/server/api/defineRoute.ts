@@ -22,13 +22,13 @@ import { randomUUID, timingSafeEqual } from "crypto";
 import type { z } from "zod";
 import { auth } from "@/lib/auth";
 import {
-  resolveProjectAccess,
   type AuthSession,
   type ProjectAccessRow,
   type ProjectAccessScope,
 } from "@/lib/api-utils";
 import { logger } from "@/lib/logger";
-import { ApiError, errorResponse, type ErrorCode } from "./envelope";
+import { ApiError, errorResponse } from "./envelope";
+import { resolveProjectOrThrow } from "./access";
 import { zPublicId } from "./schemas";
 
 // ── auth spec ────────────────────────────────────────────────────────────────
@@ -164,21 +164,16 @@ async function resolveProject(
     lookup = { dbId: n };
   }
 
-  const res = await resolveProjectAccess(lookup, { allowDemo: spec.allowDemo });
-  if (res.error) {
-    // resolveProjectAccess returns a NextResponse (old {error:string} envelope); translate
-    // its status into the new envelope. 401 = unauth; 404 = missing OR cross-tenant (kept
-    // indistinguishable on purpose — no existence leak).
-    const status = res.error.status;
-    const code: ErrorCode = status === 401 ? "UNAUTHORIZED" : "NOT_FOUND";
-    throw new ApiError(code, status === 401 ? "Unauthorized" : "Not found");
-  }
+  // resolveProjectOrThrow maps the engine's old {error:string}/NextResponse failures into
+  // the new envelope (401→UNAUTHORIZED, else→NOT_FOUND; cross-tenant stays indistinguishable
+  // from missing — no existence leak). Shared with services that resolve access imperatively.
+  const { project, session, scope } = await resolveProjectOrThrow(lookup, { allowDemo: spec.allowDemo });
 
   // enforce the minimum AUTHED scope (demo bypasses — gated by allowDemo only)
-  if (res.scope !== "demo" && SCOPE_RANK[res.scope] < MIN_RANK[spec.min ?? "member"]) {
+  if (scope !== "demo" && SCOPE_RANK[scope] < MIN_RANK[spec.min ?? "member"]) {
     throw new ApiError("FORBIDDEN", "Forbidden");
   }
-  return { project: res.project, session: res.session, scope: res.scope };
+  return { project, session, scope };
 }
 
 function zodToApiError(error: z.ZodError): ApiError {

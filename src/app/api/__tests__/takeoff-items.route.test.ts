@@ -46,7 +46,8 @@ describe.skipIf(!dbUp)("/api/takeoff-items", () => {
     expect((await readJson(await post({ projectId: project.publicId, name: "x", shape: "circle" }))).status).toBe(400);
     const badShape = await readJson(await post({ projectId: project.publicId, name: "x", shape: "blob", color: "#fff" }));
     expect(badShape.status).toBe(400);
-    expect(badShape.body.error).toBe("Invalid shape");
+    // [refactor jun16 P1.2] envelope flip — was `error: "Invalid shape"` (bare string).
+    expect(badShape.body.error).toEqual({ code: "VALIDATION", message: "Invalid shape" });
     expect((await readJson(await post({ projectId: project.publicId, name: "x", shape: "circle", color: "#fff", groupId: 1.5 }))).status).toBe(400);
   });
 

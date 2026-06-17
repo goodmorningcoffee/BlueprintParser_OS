@@ -7,7 +7,7 @@ import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { ColorDot, TakeoffEditPanel } from "./TakeoffShared";
 import CalibrationInput from "./CalibrationInput";
 import TakeoffGroupSection from "./TakeoffGroupSection";
-import { persistFetch, canPersist } from "@/lib/client-persist";
+import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist";
 
 // ─── Scale status bar (reuse pattern from AreaTab) ──────────
 function ScaleStatus() {
@@ -143,8 +143,9 @@ export default memo(function LinearTab() {
         const item = await res.json();
         addTakeoffItem(item); setFormName(""); setShowForm(false); setFormError(null); setActiveTakeoffItemId(item.id);
       } else {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        setFormError(err.error || `Failed (${res.status})`);
+        // [refactor jun16 P1.2] read either error envelope (legacy string | {code,message}).
+        const err = await res.json().catch(() => null);
+        setFormError(apiErrorMessage(err) || `Failed (${res.status})`);
       }
     } catch (err) { setFormError("Network error"); console.error("Failed to create linear item:", err); }
     finally { setCreating(false); }

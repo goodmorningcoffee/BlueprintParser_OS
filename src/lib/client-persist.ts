@@ -20,6 +20,21 @@ export function canPersist(publicId: string | null | undefined, isDemo: boolean)
 }
 
 /**
+ * [refactor jun16 P1.2] Extract a human-readable message from an API error body, tolerant of
+ * BOTH envelopes the app serves DURING the P1 migration: the legacy `{ error: "msg" }` (bare
+ * string, un-migrated routes) and the route-shell's `{ error: { code, message } }`. Returns
+ * undefined when neither shape matches (caller falls back to a status string).
+ */
+export function apiErrorMessage(body: unknown): string | undefined {
+  const e = (body as { error?: unknown } | null | undefined)?.error;
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object" && typeof (e as { message?: unknown }).message === "string") {
+    return (e as { message: string }).message;
+  }
+  return undefined;
+}
+
+/**
  * Fetch that AWAITS, checks `res.ok`, and THROWS a useful Error on failure.
  * Returns parsed JSON (or null if the body isn't JSON). Never swallows errors.
  */
@@ -41,8 +56,8 @@ export async function persistFetch(
   if (!resp.ok) {
     let detail = `HTTP ${resp.status}`;
     try {
-      const j = await resp.json();
-      if (j?.error) detail = j.error;
+      const msg = apiErrorMessage(await resp.json());
+      if (msg) detail = msg;
     } catch {
       /* non-JSON error body */
     }
