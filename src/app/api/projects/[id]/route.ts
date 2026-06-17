@@ -1,197 +1,26 @@
-import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { projects, pages, chatMessages, takeoffItems, takeoffGroups } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
-import { getS3Url } from "@/lib/s3";
-import { deleteProjectFully } from "@/lib/project-delete";
-import { audit } from "@/lib/audit";
-import { logger } from "@/lib/logger";
+// [refactor jun17 P1.3] Thin shell — behavior in services/projects.ts. All three handlers are
+// auth:"session" + a MANUAL full-row lookup in the service (loadProjectWithRootBypass): the lightweight
+// resolveProjectAccess row omits projectIntelligence/address/jobId these handlers read, AND projects/[id]
+// allows root cross-company bypass (the mirror of qto-GET, which used a manual lookup to DENY it). The
+// shell's auth:"session" 401s signed-out callers before the lookup (401-before-404); a non-uuid id → clean
+// 400 via zPublicId inside the service (was a pg-uuid-cast 500). PUT body is zLooseBody (the service does
+// its own merge); DELETE takes no body and goes through the P0-G4 transactional deleteProjectFully.
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { deleteProject, getProject, updateProject } from "@/server/services/projects";
 
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
+export const GET = defineRoute({
+  auth: "session",
+  handler: ({ params, session }) => getProject(params.id, session!),
+});
 
-  const [project] = await db
-    .select()
-    .from(projects)
-    .where(
-      session.user.isRootAdmin
-        ? eq(projects.publicId, id)
-        : and(eq(projects.publicId, id), eq(projects.companyId, session.user.companyId))
-    )
-    .limit(1);
+export const PUT = defineRoute({
+  auth: "session",
+  body: zLooseBody,
+  handler: ({ params, body, session }) => updateProject(params.id, body, session!),
+});
 
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  // Fetch page list, takeoff items, takeoff groups, and chat history in parallel (all independent, need only project.id)
-  const [projectPages, projectTakeoffItems, projectTakeoffGroups, projectChats] = await Promise.all([
-    db.select({
-      pageNumber: pages.pageNumber,
-      name: pages.name,
-      drawingNumber: pages.drawingNumber,
-    })
-      .from(pages)
-      .where(eq(pages.projectId, project.id))
-      .orderBy(pages.pageNumber),
-    db.select()
-      .from(takeoffItems)
-      .where(eq(takeoffItems.projectId, project.id))
-      .orderBy(takeoffItems.sortOrder)
-      .catch(() => [] as any[]),
-    db.select()
-      .from(takeoffGroups)
-      .where(eq(takeoffGroups.projectId, project.id))
-      .orderBy(takeoffGroups.sortOrder)
-      .catch(() => [] as any[]),
-    db.select()
-      .from(chatMessages)
-      .where(eq(chatMessages.projectId, project.id))
-      .orderBy(chatMessages.createdAt),
-  ]);
-
-  // Build PDF URL server-side (has access to CLOUDFRONT_DOMAIN / S3_BUCKET env vars)
-  const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
-
-  // Extract summaries + graph from projectIntelligence (computed during processing)
-  const pi = project.projectIntelligence as Record<string, unknown> | null;
-  const summaries = (pi?.summaries as Record<string, unknown>) || null;
-  const projectIntelligence = pi || null;
-
-  const response = NextResponse.json({
-    id: project.publicId,
-    dbId: project.id,
-    name: project.name,
-    dataUrl: project.dataUrl,
-    pdfUrl,
-    numPages: project.numPages,
-    status: project.status,
-    address: project.address,
-    summaries,
-    projectIntelligence,
-    pages: projectPages.map((p) => ({
-      pageNumber: p.pageNumber,
-      name: p.name,
-      drawingNumber: p.drawingNumber,
-    })),
-    takeoffItems: projectTakeoffItems.map((t) => ({
-      id: t.id,
-      name: t.name,
-      shape: t.shape,
-      color: t.color,
-      size: t.size,
-      notes: t.notes,
-      sortOrder: t.sortOrder,
-      groupId: t.groupId,
-    })),
-    takeoffGroups: projectTakeoffGroups.map((g) => ({
-      id: g.id,
-      name: g.name,
-      kind: g.kind,
-      color: g.color,
-      csiCode: g.csiCode,
-      sortOrder: g.sortOrder,
-    })),
-    chatMessages: projectChats.map((c) => ({
-      id: c.id,
-      role: c.role,
-      content: c.content,
-      model: c.model,
-    })),
-  });
-  response.headers.set("Cache-Control", "private, max-age=60");
-  return response;
-}
-
-export async function PUT(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
-  const body = await req.json();
-
-  const [project] = await db
-    .select()
-    .from(projects)
-    .where(
-      session.user.isRootAdmin
-        ? eq(projects.publicId, id)
-        : and(eq(projects.publicId, id), eq(projects.companyId, session.user.companyId))
-    )
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const updates: Record<string, unknown> = {};
-  if (body.name !== undefined) updates.name = body.name;
-  if (body.address !== undefined) updates.address = body.address;
-
-  // Merge into projectIntelligence (preserving existing data)
-  if (body.classCsiOverrides !== undefined || body.yoloTags !== undefined) {
-    const existingPi = (project.projectIntelligence as Record<string, unknown>) || {};
-    const merged = { ...existingPi };
-    if (body.classCsiOverrides !== undefined) merged.classCsiOverrides = body.classCsiOverrides;
-    if (body.yoloTags !== undefined) merged.yoloTags = body.yoloTags;
-    updates.projectIntelligence = merged;
-  }
-
-  updates.updatedAt = new Date();
-
-  await db.update(projects).set(updates).where(eq(projects.id, project.id));
-
-  return NextResponse.json({ success: true });
-}
-
-export async function DELETE(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params;
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
-  const [project] = await db
-    .select()
-    .from(projects)
-    .where(
-      session.user.isRootAdmin
-        ? eq(projects.publicId, id)
-        : and(eq(projects.publicId, id), eq(projects.companyId, session.user.companyId))
-    )
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  try {
-    await deleteProjectFully({
-      id: project.id,
-      dataUrl: project.dataUrl,
-      jobId: project.jobId,
-      name: project.name,
-    });
-
-    audit("project_deleted", {
-      userId: session.user.dbId,
-      companyId: session.user.companyId,
-      details: { projectId: id, projectName: project.name },
-    });
-
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    logger.error("[project-delete] Failed to delete project", { id, err });
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Delete failed" }, { status: 500 });
-  }
-}
+export const DELETE = defineRoute({
+  auth: "session",
+  handler: ({ params, session }) => deleteProject(params.id, session!),
+});

@@ -5,6 +5,12 @@
 // merge semantics, and DELETE's full-cascade behavior (today's hand-rolled
 // child deletes — becomes a transactional service in P1, FK CASCADE in P4.2;
 // these tests are the spec those steps refactor against).
+//
+// [refactor jun17 P1.3 family 4/7] These routes are now thin defineRoute shells over
+// services/projects.ts (auth:"session" + manual full-row root-bypass lookup). The pre-existing
+// error cases below assert .status ONLY and survive the envelope flip unchanged; the new
+// "shell envelope + sanctioned diffs" block freezes: error bodies are now {error:{code,message}};
+// a non-uuid id is a clean 400 VALIDATION (was a pg-uuid-cast 500); 401 still precedes the id-parse.
 import { describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -14,7 +20,7 @@ vi.mock("@/lib/auth", async () => {
 
 import { DELETE, GET, PUT } from "@/app/api/projects/[id]/route";
 import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
+import { auditLog, projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
   annotationsFor,
@@ -30,6 +36,17 @@ import {
 } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
+
+// audit() is fire-and-forget (un-awaited insert), so poll briefly for the row this delete should write.
+async function pollAuditByProjectId(projectPublicId: string, tries = 30) {
+  for (let i = 0; i < tries; i++) {
+    const rows = await db.select().from(auditLog).where(eq(auditLog.action, "project_deleted"));
+    const row = rows.find((r) => (r.details as Record<string, unknown> | null)?.projectId === projectPublicId);
+    if (row) return row;
+    await new Promise((res) => setTimeout(res, 20));
+  }
+  return undefined;
+}
 
 describe.skipIf(!dbUp)("GET /api/projects/[id]", () => {
   it("returns the viewer-bootstrap payload shape", async () => {
@@ -138,6 +155,13 @@ describe.skipIf(!dbUp)("DELETE /api/projects/[id]", () => {
     expect(body).toEqual({ success: true });
     expect(await db.select().from(projects).where(eq(projects.id, project.id))).toHaveLength(0);
     expect(await annotationsFor(project.id)).toHaveLength(0);
+
+    // [refactor jun17 P1.3] the un-awaited audit records details.projectId as the publicId STRING
+    // (NOT the numeric project.id) — a regression to project.id would not type-error, so freeze it here.
+    const auditRow = await pollAuditByProjectId(project.publicId);
+    expect(auditRow, "audit row should be written for project_deleted").toBeDefined();
+    expect(typeof (auditRow!.details as Record<string, unknown>).projectId).toBe("string");
+    expect((auditRow!.details as Record<string, unknown>).projectId).toBe(project.publicId);
   }, 20000); // S3 cleanup attempt fails against dummy creds and is swallowed — allow for SDK retry latency
 
   it("cross-tenant DELETE is 404; project survives", async () => {
@@ -149,5 +173,44 @@ describe.skipIf(!dbUp)("DELETE /api/projects/[id]", () => {
     );
     expect(status).toBe(404);
     expect(await db.select().from(projects).where(eq(projects.id, project.id))).toHaveLength(1);
+  });
+});
+
+describe.skipIf(!dbUp)("/api/projects/[id] shell envelope + sanctioned diffs (P1.3)", () => {
+  it("non-uuid id → clean 400 VALIDATION (was a pg-uuid-cast 500), on GET/PUT/DELETE", async () => {
+    const { user } = await createWorld();
+    asUser(user);
+    // The shell's zPublicId pre-parse in loadProjectWithRootBypass rejects a non-uuid id BEFORE it reaches
+    // the pg uuid column — sanctioned diff (b). All three methods share the helper, so all three 400.
+    for (const [label, res] of [
+      ["GET", await GET(makeReq("x", { method: "GET" }), params({ id: "not-a-uuid" }))],
+      ["PUT", await PUT(makeReq("x", { method: "PUT", body: { name: "x" } }), params({ id: "not-a-uuid" }))],
+      ["DELETE", await DELETE(makeReq("x", { method: "DELETE" }), params({ id: "not-a-uuid" }))],
+    ] as const) {
+      const { status, body } = await readJson(res);
+      expect(status, label).toBe(400);
+      expect(body.error.code, label).toBe("VALIDATION");
+    }
+  });
+
+  it("401 precedes the id-parse: signed-out + garbage id → 401, not 400", async () => {
+    // auth:"session" runs at the shell's auth step (before the handler's zPublicId parse), so a signed-out
+    // caller gets 401 even with a non-uuid id — the frozen 401-before-everything ordering.
+    signedOut();
+    const { status, body } = await readJson(
+      await GET(makeReq("x", { method: "GET" }), params({ id: "still-not-a-uuid" })),
+    );
+    expect(status).toBe(401);
+    expect(body.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("error bodies are the unified envelope {error:{code,message}} (404 cross-tenant)", async () => {
+    const { project } = await createWorld();
+    asUser(await createUser((await createCompany()).id));
+    const { status, body } = await readJson(
+      await GET(makeReq("x", { method: "GET" }), params({ id: project.publicId })),
+    );
+    expect(status).toBe(404);
+    expect(body.error).toEqual({ code: "NOT_FOUND", message: "Not found" });
   });
 });

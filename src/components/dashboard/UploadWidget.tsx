@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { apiErrorMessage } from "@/lib/client-persist";
 
 interface UploadWidgetProps {
   onUploadComplete: () => void;
@@ -203,7 +204,9 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
       });
       if (!projectRes.ok) {
         const j = await projectRes.json().catch(() => ({}));
-        throw new Error(j.error || `Failed to create project (${projectRes.status})`);
+        // [refactor jun17 P1.3] /api/projects now returns {error:{code,message}}; apiErrorMessage reads
+        // both envelopes (legacy {error:str} + new) so the toast never shows "[object Object]".
+        throw new Error(apiErrorMessage(j) || `Failed to create project (${projectRes.status})`);
       }
 
       onUploadComplete();

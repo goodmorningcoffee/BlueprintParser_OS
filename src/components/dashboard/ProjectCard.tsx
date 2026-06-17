@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { apiErrorMessage } from "@/lib/client-persist";
 
 interface ProjectCardProps {
   id: string;
@@ -86,7 +87,9 @@ export default function ProjectCard({
         onDelete(id);
       } else {
         const data = await res.json().catch(() => ({}));
-        setDeleteError(data.error || `Failed (${res.status})`);
+        // [refactor jun17 P1.3] DELETE /api/projects/[id] now returns {error:{code,message}};
+        // apiErrorMessage reads both envelopes so the banner never shows "[object Object]".
+        setDeleteError(apiErrorMessage(data) || `Failed (${res.status})`);
         setConfirming(false);
       }
     } catch (err) {
