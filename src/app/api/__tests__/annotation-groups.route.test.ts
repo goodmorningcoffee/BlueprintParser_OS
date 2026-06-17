@@ -4,6 +4,11 @@
 // it's the P1 reference for what every multi-row write becomes. Also frozen:
 // the annotationIds tenancy check (can't group another project's annotations)
 // and GET's unauthenticated-demo read (allowDemo:true).
+//
+// [refactor jun17 P1.3] Envelope flipped to {error:{code,message}} as the family migrated
+// onto services/annotation-groups.ts (the ONE sanctioned diff). Only the tenancy-error read
+// below changes (.error → .error.message); every other assertion checks .status only. The
+// [id]/members paths get their own frozen file (annotation-groups-id.route.test.ts).
 import { describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -72,7 +77,7 @@ describe.skipIf(!dbUp)("/api/annotation-groups", () => {
       })),
     );
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("one or more annotationIds not found in this project");
+    expect(res.body.error.message).toBe("one or more annotationIds not found in this project");
     const hydrate = await readJson(await GET(makeReq(`/api/annotation-groups?projectId=${project.publicId}`, { method: "GET" })));
     expect(hydrate.body.groups).toHaveLength(0); // tx never ran
   });
