@@ -1,71 +1,22 @@
-import { NextResponse } from "next/server";
-import { requireAuth, resolveProjectAccess } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { projects, qtoWorkflows } from "@/lib/db/schema";
-import { eq, and, desc } from "drizzle-orm";
-import { logger } from "@/lib/logger";
+// [refactor jun17 P1.3] Thin shell — behavior in services/qto-workflows.ts. GET = session-gated
+// LIST scoped to the caller's company (manual companyId lookup in the service — NO root bypass, NO
+// demo carve-out, matching legacy requireAuth()+filtered query); the query schema also turns a
+// non-uuid projectId into a clean 400. POST = validate-before-auth create (auth:"none"; the service
+// validates fields → resolves access with allowDemo → demo write-gate 403 → inserts).
+import { z } from "zod";
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody, zPublicId } from "@/server/api/schemas";
+import { createQtoWorkflow, listQtoWorkflows } from "@/server/services/qto-workflows";
 
-/** GET /api/qto-workflows?projectId=<publicId> — list workflows for a project */
-export async function GET(req: Request) {
-  const { session, error } = await requireAuth();
-  if (error) return error;
+export const GET = defineRoute({
+  auth: "session",
+  query: z.object({ projectId: zPublicId }),
+  // session is non-null under auth:"session" (the shell throws UNAUTHORIZED before the handler runs).
+  handler: ({ query, session }) => listQtoWorkflows(query.projectId, session!),
+});
 
-  const url = new URL(req.url);
-  const projectId = url.searchParams.get("projectId");
-  if (!projectId) {
-    return NextResponse.json({ error: "projectId required" }, { status: 400 });
-  }
-
-  const [project] = await db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(and(eq(projects.publicId, projectId), eq(projects.companyId, session.user.companyId)))
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const workflows = await db
-    .select()
-    .from(qtoWorkflows)
-    .where(eq(qtoWorkflows.projectId, project.id))
-    .orderBy(desc(qtoWorkflows.createdAt));
-
-  return NextResponse.json(workflows);
-}
-
-/** POST /api/qto-workflows — create a new workflow */
-export async function POST(req: Request) {
-  const { projectId, materialType, materialLabel } = await req.json();
-  if (!projectId || !materialType) {
-    return NextResponse.json({ error: "projectId and materialType required" }, { status: 400 });
-  }
-
-  // projectId here is the project publicId. resolveProjectAccess authenticates,
-  // looks up the project, and bypasses the companyId check for root admins.
-  const access = await resolveProjectAccess({ publicId: projectId }, { allowDemo: true });
-  if (access.error) return access.error;
-  const { project, scope } = access;
-
-  if (project.isDemo && scope !== "admin" && scope !== "root") {
-    return NextResponse.json({ error: "Demo projects are read-only" }, { status: 403 });
-  }
-
-  try {
-    const [workflow] = await db
-      .insert(qtoWorkflows)
-      .values({
-        projectId: project.id,
-        materialType,
-        materialLabel: materialLabel || materialType,
-        step: "select-schedule",
-      })
-      .returning();
-
-    return NextResponse.json(workflow);
-  } catch (err) {
-    logger.error("[qto-workflows] Create failed:", err);
-    return NextResponse.json({ error: "Failed to create workflow" }, { status: 500 });
-  }
-}
+export const POST = defineRoute({
+  auth: "none",
+  body: zLooseBody,
+  handler: ({ body }) => createQtoWorkflow(body),
+});

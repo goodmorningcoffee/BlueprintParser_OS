@@ -1,126 +1,25 @@
-import { NextResponse } from "next/server";
-import { resolveProjectAccess } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { qtoWorkflows } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { logger } from "@/lib/logger";
+// [refactor jun17 P1.3] Thin shell — behavior in services/qto-workflows.ts. Indirect lookup
+// (workflow → its parent project): auth:"none"; the service fetches the workflow by Number(id)
+// (NO integer guard — legacy quirk; a non-numeric id → NaN → pg int-cast THROWS → the shell's
+// leak-free INTERNAL 500), 404 if missing, then resolves access on the parent project (no demo
+// bypass). PUT body is zLooseBody (the service does its own ordered field validation). NO demo
+// write-gate on [id] — an authenticated owning-company member/admin may PUT/DELETE.
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { deleteQtoWorkflow, getQtoWorkflow, updateQtoWorkflow } from "@/server/services/qto-workflows";
 
-/** GET /api/qto-workflows/[id] — get a workflow */
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params;
-  const [workflow] = await db
-    .select()
-    .from(qtoWorkflows)
-    .where(eq(qtoWorkflows.id, Number(id)))
-    .limit(1);
+export const GET = defineRoute({
+  auth: "none",
+  handler: ({ params }) => getQtoWorkflow(params.id),
+});
 
-  if (!workflow) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+export const PUT = defineRoute({
+  auth: "none",
+  body: zLooseBody,
+  handler: ({ params, body }) => updateQtoWorkflow(params.id, body),
+});
 
-  const access = await resolveProjectAccess({ dbId: workflow.projectId });
-  if (access.error) return access.error;
-
-  return NextResponse.json(workflow);
-}
-
-/** PUT /api/qto-workflows/[id] — update a workflow */
-export async function PUT(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params;
-  const [workflow] = await db
-    .select()
-    .from(qtoWorkflows)
-    .where(eq(qtoWorkflows.id, Number(id)))
-    .limit(1);
-
-  if (!workflow) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const access = await resolveProjectAccess({ dbId: workflow.projectId });
-  if (access.error) return access.error;
-
-  const body = await req.json();
-  const updates: Record<string, unknown> = {};
-
-  const VALID_STEPS = ["pick", "select-schedule", "confirm-tags", "map-tags", "review", "done"];
-  const MAX_JSONB_BYTES = 1_048_576; // 1 MB
-  const MAX_STRING_LEN = 1024;
-
-  if (body.step !== undefined) {
-    if (typeof body.step !== "string" || !VALID_STEPS.includes(body.step)) {
-      return NextResponse.json({ error: "invalid step" }, { status: 400 });
-    }
-    updates.step = body.step;
-  }
-  if (body.schedulePageNumber !== undefined) {
-    if (body.schedulePageNumber !== null && (!Number.isInteger(body.schedulePageNumber) || body.schedulePageNumber < 1)) {
-      return NextResponse.json({ error: "invalid schedulePageNumber" }, { status: 400 });
-    }
-    updates.schedulePageNumber = body.schedulePageNumber;
-  }
-  for (const key of ["parsedSchedule", "lineItems", "userEdits"] as const) {
-    if (body[key] !== undefined) {
-      if (body[key] !== null && JSON.stringify(body[key]).length > MAX_JSONB_BYTES) {
-        return NextResponse.json({ error: `${key} exceeds 1MB limit` }, { status: 400 });
-      }
-      updates[key] = body[key];
-    }
-  }
-  // SHIP 2: dropped yoloModelFilter + tagPattern (migration 0024);
-  // added itemType + tagShapeClass.
-  for (const key of ["yoloClassFilter", "materialLabel", "itemType", "tagShapeClass"] as const) {
-    if (body[key] !== undefined) {
-      if (body[key] !== null && (typeof body[key] !== "string" || body[key].length > MAX_STRING_LEN)) {
-        return NextResponse.json({ error: `invalid ${key}` }, { status: 400 });
-      }
-      updates[key] = body[key];
-    }
-  }
-  if (body.exportedAt !== undefined) updates.exportedAt = body.exportedAt;
-
-  updates.updatedAt = new Date();
-
-  try {
-    const [updated] = await db
-      .update(qtoWorkflows)
-      .set(updates)
-      .where(eq(qtoWorkflows.id, Number(id)))
-      .returning();
-
-    return NextResponse.json(updated);
-  } catch (err) {
-    logger.error("[qto-workflows] Update failed:", err);
-    return NextResponse.json({ error: "Update failed" }, { status: 500 });
-  }
-}
-
-/** DELETE /api/qto-workflows/[id] — delete a workflow */
-export async function DELETE(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await params;
-  const [workflow] = await db
-    .select()
-    .from(qtoWorkflows)
-    .where(eq(qtoWorkflows.id, Number(id)))
-    .limit(1);
-
-  if (!workflow) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const access = await resolveProjectAccess({ dbId: workflow.projectId });
-  if (access.error) return access.error;
-
-  await db.delete(qtoWorkflows).where(eq(qtoWorkflows.id, Number(id)));
-
-  return NextResponse.json({ success: true });
-}
+export const DELETE = defineRoute({
+  auth: "none",
+  handler: ({ params }) => deleteQtoWorkflow(params.id),
+});
