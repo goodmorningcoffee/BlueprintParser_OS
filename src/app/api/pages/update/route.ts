@@ -1,29 +1,13 @@
-import { NextResponse } from "next/server";
-import { resolveProjectAccess } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { pages } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+// [refactor jun17 P1.3] Thin shell — behavior in services/pages.ts (updatePageName).
+// POST = validate-before-auth rename (auth:"none"; the service validates fields → resolves access).
+// publicId-ONLY despite the body field being named `projectId` (the param-name lie): it carries a
+// publicId UUID string. NEW additive optional `publicId` field also accepted (dual-ID unification).
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { updatePageName } from "@/server/services/pages";
 
-export async function POST(req: Request) {
-  const { projectId, pageNumber, name } = await req.json();
-
-  if (!projectId || !pageNumber || !name) {
-    return NextResponse.json(
-      { error: "projectId, pageNumber, and name are required" },
-      { status: 400 }
-    );
-  }
-
-  const access = await resolveProjectAccess({ publicId: projectId });
-  if (access.error) return access.error;
-  const { project } = access;
-
-  await db
-    .update(pages)
-    .set({ name })
-    .where(
-      and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber))
-    );
-
-  return NextResponse.json({ success: true });
-}
+export const POST = defineRoute({
+  auth: "none",
+  body: zLooseBody,
+  handler: ({ body }) => updatePageName(body),
+});

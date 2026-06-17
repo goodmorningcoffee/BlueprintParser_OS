@@ -4,6 +4,10 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import { useViewerStore, useNavigation, usePageData, usePanels, useProject, useDetection, useTextAnnotationDisplay } from "@/stores/viewerStore";
 import { TEXT_ANNOTATION_COLORS } from "@/types";
 import type { TextAnnotation, AnnotationCategory, ClientAnnotation } from "@/types";
+// [refactor jun17 P1.3] dual-envelope tolerant error reader — the migrated pages/textract-rerun +
+// csi-recompute routes now return {error:{code,message}}; apiErrorMessage reads that AND the legacy
+// {error:string} (so it stays correct mid-migration).
+import { apiErrorMessage } from "@/lib/client-persist";
 import HelpTooltip from "./HelpTooltip";
 
 const CATEGORY_LABELS: Record<AnnotationCategory, string> = {
@@ -560,8 +564,8 @@ function TextractTab({ pageData, pageNumber }: { pageData: any; pageNumber: numb
         body: JSON.stringify({ projectId: projectDbId, pageNumber }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error || `HTTP ${res.status}`);
+        const body = await res.json().catch(() => ({}));
+        throw new Error(apiErrorMessage(body) || `HTTP ${res.status}`);
       }
       const data = await res.json();
       setResult({ durationMs: data.durationMs, stats: data.stats });
@@ -667,8 +671,8 @@ function CsiRecomputeSection({ pageNumber }: { pageNumber: number }) {
         body: JSON.stringify({ projectId: projectDbId, pageNumber }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error || `HTTP ${res.status}`);
+        const body = await res.json().catch(() => ({}));
+        throw new Error(apiErrorMessage(body) || `HTTP ${res.status}`);
       }
       const data = await res.json();
       setResult({ durationMs: data.durationMs, stats: data.stats });
