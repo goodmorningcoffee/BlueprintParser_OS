@@ -1,67 +1,16 @@
-import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
-import { sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+// [refactor jun17 P1.3 family 6/7] Thin shell — behavior in services/search.ts.
+// CROSS-PROJECT search. auth-FIRST: auth:"session" (the shell throws UNAUTHORIZED before the handler
+// runs, so a signed-out caller — even with a valid q — gets 401, matching legacy requireAuth-first
+// ordering), then the service validates q + scopes to session.user.companyId. There is no project
+// resolution and no 404 path (cross-company pages simply don't match the company_id filter).
+import { defineRoute } from "@/server/api/defineRoute";
+import { globalSearch } from "@/server/services/search";
 
-interface GlobalSearchResult {
-  projectId: string;
-  projectName: string;
-  matchCount: number;
-  pageCount: number;
-}
-
-/**
- * Cross-project full-text search.
- * Searches OCR text across all pages for the user's company, grouped by project.
- *
- * GET /api/search/global?q=<term>
- */
-export async function GET(req: Request) {
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
-  const url = new URL(req.url);
-  const query = url.searchParams.get("q")?.trim();
-
-  if (!query || query.length < 2) {
-    return NextResponse.json(
-      { error: "q (min 2 chars) required" },
-      { status: 400 }
-    );
-  }
-
-  const companyId = session.user.companyId;
-
-  const searchResults = await db.execute(sql`
-    SELECT
-      p.public_id AS project_id,
-      p.name AS project_name,
-      COUNT(pg.id)::int AS page_count,
-      SUM(
-        array_length(
-          regexp_split_to_array(
-            lower(pg.raw_text),
-            '\\s+'
-          ),
-          1
-        )
-      )::int AS total_words,
-      COUNT(pg.id)::int AS match_count
-    FROM pages pg
-    JOIN projects p ON pg.project_id = p.id
-    WHERE p.company_id = ${companyId}
-      AND p.status = 'completed'
-      AND pg.search_vector @@ plainto_tsquery('english', ${query})
-    GROUP BY p.id, p.public_id, p.name
-    ORDER BY match_count DESC
-  `);
-
-  const results: GlobalSearchResult[] = searchResults.rows.map((row: any) => ({
-    projectId: row.project_id as string,
-    projectName: row.project_name as string,
-    matchCount: row.match_count as number,
-    pageCount: row.page_count as number,
-  }));
-
-  return NextResponse.json({ query, results });
-}
+export const GET = defineRoute({
+  auth: "session",
+  // session is non-null under auth:"session" (the shell 401s before the handler).
+  handler: ({ req, session }) => {
+    const url = new URL(req.url);
+    return globalSearch(session!, url.searchParams.get("q"));
+  },
+});
