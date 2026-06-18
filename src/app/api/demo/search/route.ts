@@ -1,159 +1,77 @@
-import { NextResponse } from "next/server";
+// [refactor jun17 P1.4 demo fold] Thin shell — the public demo full-text search.
+//
+// The IN-PROJECT branch (projectId present) now shares the migrated services/search.ts `searchProjectPages`
+// (called with {allowDemo:true}); the demo route's duplicate in-project search logic AND its local
+// `stemMatch` copy are GONE (the exported one in search.ts is the single source of truth — char-frozen
+// identical in demo-search.route.test.ts before this change). Sanctioned diffs for the in-project branch:
+//   • envelope flips {error:string} → {error:{code,message}} (the shell does it; messages byte-exact);
+//   • a non-uuid projectId (was an unhandled pg uuid-cast throw) → clean 400 "Invalid project id" (zPublicId);
+//   • a signed-out caller on a NON-DEMO project goes 404 → 401 (allowDemo only rescues isDemo rows;
+//     resolveProjectAccess then requires auth for the non-demo row). Demo projects are unaffected (200).
+//   • an AUTHED owner/admin/root on a NON-DEMO project goes 404 → 200 — same root cause (allowDemo does
+//     not rescue the non-demo row, so resolveProjectAccess resolves their REAL access). Benign and
+//     UNREACHABLE in practice (useSearch.ts only sends a projectId when isDemo===true); a cross-company
+//     non-root caller still 404s (tenancy preserved). Locked in demo-search.route.test.ts so the
+//     sanctioned-diff set is provably complete (this is the last divergence — there are no others).
+//
+// The CROSS-PROJECT gallery branch (no projectId) has NO authed twin — globalSearch is auth:"session" +
+// company-scoped (and uses COUNT(pg.id), not the gallery's COUNT(DISTINCT)). It stays INLINE here for now;
+// folding it onto a public gallery endpoint (+ a replacement rate rule, the demo/page.tsx client switch,
+// and DELETING this mirror) is a separate, owner-gated step. The shared `q must be 2-200 chars` validation
+// (incl. the >200 cap that searchProjectPages does NOT have) lives here so both branches keep the
+// demo-specific message byte-exact, and fires before the branch exactly as the legacy route did.
+import { defineRoute } from "@/server/api/defineRoute";
+import { ApiError } from "@/server/api/envelope";
+import { searchProjectPages } from "@/server/services/search";
 import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import type { TextractPageData } from "@/types";
 
-interface SearchWordMatch {
-  text: string;
-  bbox: [number, number, number, number];
-}
+export const GET = defineRoute({
+  auth: "none",
+  handler: async ({ req }) => {
+    const url = new URL(req.url);
+    const projectPublicId = url.searchParams.get("projectId");
+    const query = url.searchParams.get("q")?.trim();
 
-interface SearchResult {
-  pageNumber: number;
-  pageName: string;
-  snippet: string;
-  rank: number;
-  matchCount: number;
-  wordMatches: SearchWordMatch[];
-}
-
-/**
- * Full-text search for demo projects (public, no auth).
- *
- * With projectId: in-project search (same format as /api/search, with wordMatches)
- * Without projectId: cross-project search (project-level counts)
- *
- * GET /api/demo/search?projectId=<publicId>&q=<term>
- * GET /api/demo/search?q=<term>
- */
-export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const projectPublicId = url.searchParams.get("projectId");
-  const query = url.searchParams.get("q")?.trim();
-
-  if (!query || query.length < 2 || query.length > 200) {
-    return NextResponse.json({ error: "q must be 2-200 chars" }, { status: 400 });
-  }
-
-  // In-project search (with wordMatches for highlighting)
-  if (projectPublicId) {
-    const [project] = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(and(eq(projects.publicId, projectPublicId), eq(projects.isDemo, true)))
-      .limit(1);
-
-    if (!project) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // Shared demo validation (both branches): the >200 cap is demo-specific (searchProjectPages has none).
+    if (!query || query.length < 2 || query.length > 200) {
+      throw new ApiError("VALIDATION", "q must be 2-200 chars");
     }
 
-    const phraseMatch = query.match(/^"(.+)"$/);
-    const isExactPhrase = !!phraseMatch;
-    const searchText = phraseMatch ? phraseMatch[1] : query;
-    const queryTerms = searchText.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+    // In-project: delegate to the shared service with allowDemo. searchProjectPages re-validates (no-op
+    // here), does the zPublicId 400 (non-uuid → "Invalid project id"), resolveProjectOrThrow(allowDemo:true)
+    // (demo → scope "demo" 200; non-demo/missing → 401/404), then the byte-identical search + wordMatches.
+    if (projectPublicId) {
+      return searchProjectPages(projectPublicId, query, { allowDemo: true });
+    }
 
-    const searchResults = await db.execute(
-      isExactPhrase
-        ? sql`
-            SELECT page_number, name, textract_data,
-              ts_headline('english', raw_text, phraseto_tsquery('english', ${searchText}),
-                'MaxWords=20, MinWords=10, StartSel=<mark>, StopSel=</mark>') as snippet,
-              ts_rank(search_vector, phraseto_tsquery('english', ${searchText})) as rank
-            FROM pages
-            WHERE project_id = ${project.id}
-              AND search_vector @@ phraseto_tsquery('english', ${searchText})
-            ORDER BY rank DESC
-          `
-        : sql`
-            SELECT page_number, name, textract_data,
-              ts_headline('english', raw_text, plainto_tsquery('english', ${searchText}),
-                'MaxWords=20, MinWords=10, StartSel=<mark>, StopSel=</mark>') as snippet,
-              ts_rank(search_vector, plainto_tsquery('english', ${searchText})) as rank
-            FROM pages
-            WHERE project_id = ${project.id}
-              AND search_vector @@ plainto_tsquery('english', ${searchText})
-            ORDER BY rank DESC
-          `
-    );
+    // Cross-project PUBLIC gallery (is_demo + completed). Relocated VERBATIM from the legacy no-projectId
+    // branch (only the NextResponse.json wrapper is dropped — the shell envelopes the returned object).
+    // QUIRK: COUNT(DISTINCT pg.id) === COUNT(pg.id) because pg.id is unique per joined row → pageCount
+    // always equals matchCount (the DISTINCT is a verbatim no-op). ORDER BY match_count DESC, no tie-break.
+    const searchResults = await db.execute(sql`
+      SELECT
+        p.public_id AS project_id,
+        p.name AS project_name,
+        COUNT(DISTINCT pg.id)::int AS page_count,
+        COUNT(pg.id)::int AS match_count
+      FROM pages pg
+      JOIN projects p ON pg.project_id = p.id
+      WHERE p.is_demo = true
+        AND p.status = 'completed'
+        AND pg.search_vector @@ plainto_tsquery('english', ${query})
+      GROUP BY p.id, p.public_id, p.name
+      ORDER BY match_count DESC
+    `);
 
-    const results: SearchResult[] = searchResults.rows.map((row: any) => {
-      const textractData = row.textract_data as TextractPageData | null;
-      const wordMatches: SearchWordMatch[] = [];
-
-      if (textractData?.words) {
-        if (isExactPhrase && queryTerms.length > 1) {
-          const words = textractData.words;
-          for (let i = 0; i <= words.length - queryTerms.length; i++) {
-            let allMatch = true;
-            for (let j = 0; j < queryTerms.length; j++) {
-              if (!stemMatch(words[i + j].text, queryTerms[j])) { allMatch = false; break; }
-            }
-            if (allMatch) {
-              for (let j = 0; j < queryTerms.length; j++) {
-                wordMatches.push({ text: words[i + j].text, bbox: words[i + j].bbox });
-              }
-            }
-          }
-        } else {
-          for (const word of textractData.words) {
-            if (queryTerms.some((term) => stemMatch(word.text, term))) {
-              wordMatches.push({ text: word.text, bbox: word.bbox });
-            }
-          }
-        }
-      }
-
-      return {
-        pageNumber: row.page_number as number,
-        pageName: (row.name as string) || `Page ${row.page_number}`,
-        snippet: (row.snippet as string) || "",
-        rank: row.rank as number,
-        matchCount: wordMatches.length,
-        wordMatches,
-      };
-    });
-
-    return NextResponse.json({ query, results });
-  }
-
-  // Cross-project search (no projectId)
-  const searchResults = await db.execute(sql`
-    SELECT
-      p.public_id AS project_id,
-      p.name AS project_name,
-      COUNT(DISTINCT pg.id)::int AS page_count,
-      COUNT(pg.id)::int AS match_count
-    FROM pages pg
-    JOIN projects p ON pg.project_id = p.id
-    WHERE p.is_demo = true
-      AND p.status = 'completed'
-      AND pg.search_vector @@ plainto_tsquery('english', ${query})
-    GROUP BY p.id, p.public_id, p.name
-    ORDER BY match_count DESC
-  `);
-
-  return NextResponse.json({
-    query,
-    results: searchResults.rows.map((row: any) => ({
-      projectId: row.project_id,
-      projectName: row.project_name,
-      matchCount: row.match_count,
-      pageCount: row.page_count,
-    })),
-  });
-}
-
-/**
- * Stem-aware word matching. PostgreSQL tsvector stems words (doors→door)
- * but Textract stores the original form. Prefix matching handles this:
- * "doors" matches "DOOR" (term starts with word), "door" matches "DOORS"
- * (word starts with term).
- */
-function stemMatch(wordText: string, term: string): boolean {
-  const w = wordText.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (w.length === 0) return false;
-  if (w.length <= 2 || term.length <= 2) return w === term;
-  return w.startsWith(term) || term.startsWith(w);
-}
+    return {
+      query,
+      results: searchResults.rows.map((row: any) => ({
+        projectId: row.project_id,
+        projectName: row.project_name,
+        matchCount: row.match_count,
+        pageCount: row.page_count,
+      })),
+    };
+  },
+});

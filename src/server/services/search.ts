@@ -69,13 +69,19 @@ interface GlobalSearchResult {
  *   2. zPublicId pre-parse — a non-uuid id → clean 400 "Invalid project id" (sanctioned diff B;
  *      legacy was a pg-uuid-cast 500). AFTER the field 400 so a missing/short q still wins (legacy
  *      ordering: the combined guard precedes the access call).
- *   3. resolveProjectOrThrow({publicId}) — NO allowDemo (frozen): demo signed-out → 401; root-bypass.
+ *   3. resolveProjectOrThrow({publicId}, {allowDemo}) — allowDemo is OPT-IN (default false). /api/search
+ *      passes nothing → its frozen NO-allowDemo posture is unchanged (demo signed-out → 401; root-bypass).
+ *      [refactor jun17 P1.4 demo fold] the /api/demo/search in-project branch passes {allowDemo:true} so an
+ *      unauthenticated caller on a demo project resolves to scope==="demo" instead of 401 — this is the
+ *      ONLY behavioral lever the demo fold needs (search has no demo-slim fields, so scope never changes
+ *      the result body). A non-demo/missing project still 404/401s exactly as before.
  *   4. the two tsvector branches + wordMatches build, byte-identical. Returns the TRIMMED q as
  *      `query` (FQ-1: incl. surrounding quotes in exact-phrase mode — NOT the unquoted searchText).
  */
 export async function searchProjectPages(
   projectPublicId: string | null,
   rawQuery: string | null,
+  options?: { allowDemo?: boolean },
 ): Promise<{ query: string; results: SearchResult[] }> {
   // `q?.trim()` byte-for-byte from legacy: a missing q (null) → undefined → !query branch.
   const query = rawQuery?.trim();
@@ -88,8 +94,11 @@ export async function searchProjectPages(
   const parsed = zPublicId.safeParse(projectPublicId);
   if (!parsed.success) throw new ApiError("VALIDATION", "Invalid project id");
 
-  // NO allowDemo (frozen) — demo projects are not publicly searchable via /api/search; root-bypasses.
-  const { project } = await resolveProjectOrThrow({ publicId: parsed.data });
+  // allowDemo opt-in (default false → /api/search unchanged: demo projects not publicly searchable there,
+  // root-bypasses). [refactor jun17 P1.4] the demo mirror passes {allowDemo:true} → demo project + signed
+  // out resolves to scope==="demo" (200), not 401; a non-demo project ignores allowDemo and still 401s
+  // signed-out (resolveProjectAccess's `isDemo && allowDemo` branch is false) — the demo fold's lone diff.
+  const { project } = await resolveProjectOrThrow({ publicId: parsed.data }, { allowDemo: options?.allowDemo });
 
   // Exact phrase mode: user wraps the query in double quotes.
   // "door schedule" → exact phrase (phraseto_tsquery, consecutive highlight)

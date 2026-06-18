@@ -4,12 +4,14 @@
 // branch (projectId present) onto the migrated services/search.ts searchProjectPages (with allowDemo);
 // the CROSS-PROJECT gallery branch (no projectId) has no authed twin and is deferred to a later session.
 //
-// THIS FILE (committed at the freeze step) asserts the CURRENT legacy behavior: the OLD `{error:string}`
-// envelope, legacy status codes, the demo-specific `q must be 2-200 chars` validation (incl. the >200
-// cap that searchProjectPages does NOT have), and the legacy in-project 404 for a non-demo/missing
-// project. The FOLD commit edits only the assertions tagged `// [P1.4 fold]` (envelope flip + the one
-// sanctioned status change: signed-out on a NON-DEMO project goes 404 → 401 under allowDemo, because
-// resolveProjectAccess's `isDemo && allowDemo` branch is false for a non-demo row → require-auth → 401).
+// This file now asserts the POST-FOLD behavior. The freeze commit captured the legacy behavior first
+// (OLD {error:string} envelope, the in-project 404 for a non-demo/missing project, the non-uuid throw);
+// the fold then changed exactly the assertions tagged `// [P1.4 fold]` (each notes its pre-fold value):
+// the NEW {error:{code,message}} envelope; the non-uuid uuid-cast throw → clean 400; and the one
+// sanctioned STATUS change — signed-out on a NON-DEMO project goes 404 → 401 under allowDemo, because
+// resolveProjectAccess's `isDemo && allowDemo` branch is false for a non-demo row → require-auth → 401.
+// The demo-specific `q must be 2-200 chars` validation (incl. the >200 cap searchProjectPages lacks) and
+// every in-project search quirk (stemMatch, exact-phrase, pageName fallback) are preserved byte-for-byte.
 //
 // tsvector NOTE (same as search.route.test.ts): pages.search_vector has NO db trigger — every searchable
 // page MUST be populated with `UPDATE pages SET search_vector = to_tsvector('english', raw_text)` after
@@ -22,6 +24,7 @@ vi.mock("@/lib/auth", async () => {
 });
 
 import { GET as demoSearchGET } from "@/app/api/demo/search/route";
+import { GET as searchGET } from "@/app/api/search/route";
 import {
   asUser,
   createCompany,
@@ -106,6 +109,13 @@ describe.skipIf(!dbUp)("/api/demo/search — in-project (projectId)", () => {
     const root = await readJson(await runDemo(`projectId=${project.publicId}&q=doors`));
     expect(root.status).toBe(200);
     expect(root.body.results).toEqual(hit.body.results);
+
+    // cross-company NON-root authed user on a DEMO project: demo is public → resolveProjectAccess returns
+    // their role-scope (member), 200 with the identical body (demo projects have no demo-slim fields).
+    asUser(await createUser((await createCompany()).id));
+    const crossDemo = await readJson(await runDemo(`projectId=${project.publicId}&q=doors`));
+    expect(crossDemo.status).toBe(200);
+    expect(crossDemo.body.results).toEqual(hit.body.results);
   });
 
   it("200 exact-phrase: quotes preserved in echo + consecutive run pushes; single-word-quoted → default branch", async () => {
@@ -175,7 +185,7 @@ describe.skipIf(!dbUp)("/api/demo/search — in-project (projectId)", () => {
 
     const missing = await readJson(await runDemo(`projectId=${project.publicId}`));
     expect(missing.status).toBe(400);
-    expect(missing.body.error).toBe("q must be 2-200 chars"); // [P1.4 fold] → {code:"VALIDATION", message:"q must be 2-200 chars"}
+    expect(missing.body.error).toEqual({ code: "VALIDATION", message: "q must be 2-200 chars" }); // [P1.4 fold] was: "q must be 2-200 chars" (string envelope)
 
     const oneChar = await readJson(await runDemo(`projectId=${project.publicId}&q=a`));
     expect(oneChar.status).toBe(400);
@@ -194,20 +204,58 @@ describe.skipIf(!dbUp)("/api/demo/search — in-project (projectId)", () => {
     // valid uuid, no such project → 404 both pre- and post-fold (resolveProjectAccess 404s before isDemo)
     const ghost = await readJson(await runDemo(`projectId=${randomUUID()}&q=door`));
     expect(ghost.status).toBe(404);
-    expect(ghost.body.error).toBe("Not found"); // [P1.4 fold] → {code:"NOT_FOUND", message:"Not found"}
+    expect(ghost.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.4 fold] was: "Not found" (string envelope)
 
     // a NON-DEMO project: legacy `WHERE isDemo=true` → no row → 404. [P1.4 fold] under allowDemo a
-    // non-demo row falls through resolveProjectAccess's require-auth branch → signed-out → 401.
+    // non-demo row falls through resolveProjectAccess's require-auth branch → signed-out → 401. (Demo
+    // projects are unaffected: they 200. This is the demo fold's lone sanctioned status change.)
     const { project: realProj } = await createWorld(); // isDemo=false
     const nonDemo = await readJson(await runDemo(`projectId=${realProj.publicId}&q=door`));
-    expect(nonDemo.status).toBe(404); // [P1.4 fold] → 401 UNAUTHORIZED
+    expect(nonDemo.status).toBe(401); // [P1.4 fold] was 404 (legacy WHERE isDemo=true → no row)
+    expect(nonDemo.body.error).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" });
   });
 
-  it("non-uuid projectId is unhandled today (pg uuid-cast throw) [P1.4 fold → clean 400 via zPublicId]", async () => {
+  it("NON-DEMO project, AUTHED: owner/root 404→200 [P1.4 fold benign divergence] = byte-identical to /api/search; cross-company non-root still 404", async () => {
+    // legacy `WHERE isDemo=true` → 404 for EVERY caller on a non-demo project (no auth() lookup at all).
+    // Post-fold, allowDemo only rescues isDemo rows, so a non-demo row falls through resolveProjectAccess's
+    // standard require-auth path: signed-out → 401 (above), but an authed OWNER / ROOT resolves their real
+    // access → 200. Benign + UNREACHABLE in practice (useSearch only sends a projectId when isDemo===true),
+    // locked here so the sanctioned-diff set is provably complete: the demo route delegates to the SAME
+    // searchProjectPages, so its body is byte-identical to /api/search for these callers.
+    const { user: owner, project: realProj } = await createWorld(); // isDemo=false
+    await seed(realProj.id, 1, "door schedule", { textractData: td([{ text: "DOOR", bbox: [0, 0, 0.1, 0.05] }]) });
+
+    asUser(owner);
+    const viaDemo = await readJson(await runDemo(`projectId=${realProj.publicId}&q=door`));
+    const viaMain = await readJson(await searchGET(makeReq(`/api/search?projectId=${realProj.publicId}&q=door`, { method: "GET" })));
+    expect(viaDemo.status).toBe(200); // [P1.4 fold] was 404 (legacy isDemo=true filter)
+    expect(viaMain.status).toBe(200);
+    expect(viaDemo.body).toEqual(viaMain.body); // delegates to the same service → identical body
+
+    // root admin from a DIFFERENT company → also 200 (resolveProjectAccess root-bypass)
+    asUser(await createUser((await createCompany()).id, { isRootAdmin: true, role: "admin" }));
+    const root = await readJson(await runDemo(`projectId=${realProj.publicId}&q=door`));
+    expect(root.status).toBe(200);
+
+    // cross-company NON-root authed → STILL 404 (tenancy invariant preserved on the mirror; no leak)
+    asUser(await createUser((await createCompany()).id));
+    const cross = await readJson(await runDemo(`projectId=${realProj.publicId}&q=door`));
+    expect(cross.status).toBe(404);
+    expect(cross.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" });
+  });
+
+  it("non-uuid projectId → clean 400 (sanctioned diff B; legacy was an unhandled pg uuid-cast throw)", async () => {
     signedOut();
-    // legacy feeds the raw string to the uuid column with no try/catch → the handler rejects.
-    await expect(runDemo(`projectId=not-a-uuid&q=door`)).rejects.toThrow();
-    // [P1.4 fold] post-fold: 400 {code:"VALIDATION", message:"Invalid project id"} (sanctioned diff B)
+    const bad = await readJson(await runDemo(`projectId=not-a-uuid&q=door`));
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
+    // [P1.4 fold] was: an unhandled throw (raw non-uuid fed to the pg uuid column, no try/catch)
+
+    // diff-B precedence: non-uuid projectId BUT missing q → the demo q-400 STILL wins (q validated first,
+    // before the projectId branch → searchProjectPages' zPublicId is never reached)
+    const badNoQ = await readJson(await runDemo(`projectId=not-a-uuid`));
+    expect(badNoQ.status).toBe(400);
+    expect(badNoQ.body.error).toEqual({ code: "VALIDATION", message: "q must be 2-200 chars" });
   });
 });
 
@@ -268,7 +316,7 @@ describe.skipIf(!dbUp)("/api/demo/search — cross-project gallery (no projectId
     signedOut();
     const missing = await readJson(await runDemo(``));
     expect(missing.status).toBe(400);
-    expect(missing.body.error).toBe("q must be 2-200 chars"); // [P1.4 fold] → {code:"VALIDATION", message:...}
+    expect(missing.body.error).toEqual({ code: "VALIDATION", message: "q must be 2-200 chars" }); // [P1.4 fold] was: string envelope
 
     const noMatch = await readJson(await runDemo(`q=${randomUUID().slice(0, 8)}zznomatch`));
     expect(noMatch.status).toBe(200);
