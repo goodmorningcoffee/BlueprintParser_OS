@@ -185,6 +185,96 @@ export async function getProject(idParam: string, session: AuthSession): Promise
   return response;
 }
 
+// ── GET /api/demo/projects/[id] ─────────────────────────────────────────────────────
+//
+/**
+ * PUBLIC demo project-by-id bootstrap. [refactor jun18 P1.4 demo fold] folded from the demo mirror route
+ * (app/api/demo/projects/[id]/route.ts), which is now a thin `defineRoute({auth:"none"})` shell.
+ *
+ * DELIBERATELY ISOLATED from getProject above — the two share NOTHING and must NOT be coupled by a future
+ * reader. getDemoProject has NO session, NO companyId scope, NO root-bypass; its SOLE gate is
+ * `WHERE isDemo = true` (a public read — every caller, signed-out / owner / cross-company, gets the same
+ * 200). loadProjectWithRootBypass must NOT be reused (it requires a session for companyId scoping and has
+ * no isDemo path). To keep the paths from drifting together: this returns ONLY the 11 demo fields — it must
+ * NEVER add getProject's authed-only `address`/`takeoffItems`/`takeoffGroups`/`chatMessages`, and must NEVER
+ * drop the demo-only `demoConfig`. It sets NO Cache-Control (the legacy demo route set none, UNLIKE
+ * getProject's `private, max-age=60`) — do not add one.
+ *
+ * Returns a NextResponse purely for byte-identical passthrough faithfulness to the legacy body (the shell
+ * forwards any Response before its kind gate — defineRoute.ts:248); a plain object would be enveloped
+ * identically. (NOT to "allow a Cache-Control header" — a CLEAN fold adds none.)
+ *
+ * Sanctioned diffs (the P1.3/P1.4 family recipe): (a) the 404 envelope flips {error:"Not found"} →
+ * {error:{code,message}} (the shell does it — the thrown notFound() is a NOT_FOUND ApiError); (b) a non-uuid
+ * id that legacy fed straight to the pg uuid column (no try/catch → unhandled throw) becomes a clean 400
+ * "Invalid project id" via zPublicId; (c) the legacy route had no try/catch on the main SELECT, so an
+ * unexpected DB error (raw 500) now routes to the shell's leak-free INTERNAL 500. The demoConfig try/catch
+ * below is NOT a leak block — it is a deliberate silent {} fallback — so it survives VERBATIM.
+ *
+ * Frozen quirks: demoConfig defaults to {} on a missing company / absent pipelineConfig.demo (and swallows
+ * ANY error from that lookup); `summaries` (pi.summaries) and the full `projectIntelligence` are separate
+ * `|| null` keys; the page list is lightweight {pageNumber,name,drawingNumber} ORDER BY pageNumber. The two
+ * follow-up reads stay SEQUENTIAL (page list, then the company lookup) — NOT parallelized (a non-sanctioned
+ * perf change; legacy ran them in order).
+ */
+export async function getDemoProject(idParam: string): Promise<Response> {
+  // sanctioned diff (b) — clean 400 instead of the legacy pg-uuid-cast throw.
+  const parsed = zPublicId.safeParse(idParam);
+  if (!parsed.success) throw new ApiError("VALIDATION", "Invalid project id");
+
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.publicId, parsed.data), eq(projects.isDemo, true)))
+    .limit(1);
+
+  // sanctioned diff (a) — the shell flips this NOT_FOUND ApiError to {error:{code,message}}
+  // (legacy returned {error:"Not found"} at 404).
+  if (!project) throw notFound();
+
+  // Lightweight page list (detail data comes via /pages?from=N&to=M). ORDER BY pageNumber.
+  const projectPages = await db
+    .select({ pageNumber: pages.pageNumber, name: pages.name, drawingNumber: pages.drawingNumber })
+    .from(pages)
+    .where(eq(pages.projectId, project.id))
+    .orderBy(pages.pageNumber);
+
+  const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
+
+  const pi = project.projectIntelligence as Record<string, unknown> | null;
+  const summaries = (pi?.summaries as Record<string, unknown>) || null;
+
+  // Company demo feature config. FROZEN: a deliberate silent-swallow {} fallback (NOT a leak block — it
+  // exposes no message) — kept verbatim so a missing company / DB blip yields demoConfig:{} rather than 500.
+  let demoConfig: Record<string, boolean> = {};
+  try {
+    const [company] = await db
+      .select({ pipelineConfig: companies.pipelineConfig })
+      .from(companies)
+      .where(eq(companies.id, project.companyId))
+      .limit(1);
+    demoConfig = (company?.pipelineConfig?.demo as Record<string, boolean>) || {};
+  } catch { /* ignore */ }
+
+  return NextResponse.json({
+    id: project.publicId,
+    dbId: project.id,
+    name: project.name,
+    dataUrl: project.dataUrl,
+    pdfUrl,
+    numPages: project.numPages,
+    status: project.status,
+    summaries,
+    projectIntelligence: pi || null,
+    demoConfig,
+    pages: projectPages.map((p) => ({
+      pageNumber: p.pageNumber,
+      name: p.name,
+      drawingNumber: p.drawingNumber,
+    })),
+  });
+}
+
 // ── PUT /api/projects/[id] ─────────────────────────────────────────────────────────
 //
 /**

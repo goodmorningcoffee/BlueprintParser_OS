@@ -2,10 +2,10 @@
 // [refactor jun18 P1.4 demo fold] CHARACTERIZATION for GET /api/demo/projects/[id] — the public
 // demo project-by-id bootstrap mirror. No char file existed for it, so this file IS the freeze.
 //
-// FREEZE-FIRST discipline (S016 pilot recipe): this commit asserts the CURRENT (legacy) behavior and
-// runs GREEN against the legacy route BEFORE the fold. The fold (next commit) makes the route a thin
-// defineRoute({auth:"none"}) shell delegating to a NEW services/projects.ts `getDemoProject`, and flips
-// ONLY the assertions tagged `// [P1.4 fold]` (each notes its pre-fold value):
+// FREEZE-FIRST discipline (S016 pilot recipe): the freeze commit asserted the CURRENT (legacy) behavior and
+// ran GREEN against the legacy route. This (the fold commit) makes the route a thin defineRoute({auth:"none"})
+// shell delegating to the NEW services/projects.ts `getDemoProject`, and flipped ONLY the assertions tagged
+// `// [P1.4 fold]` (each notes its pre-fold value):
 //   • error envelope {error:string} → {error:{code,message}} (the shell does it);
 //   • a non-uuid id (legacy fed it straight to the pg uuid column with NO try/catch → an unhandled
 //     throw) → a clean 400 "Invalid project id" (zPublicId).
@@ -34,6 +34,7 @@ import {
   readJson,
   signedOut,
 } from "@/test/harness";
+import { db } from "@/lib/db";
 import { randomUUID } from "crypto";
 
 const dbUp = inject("dbUp") as boolean;
@@ -69,22 +70,33 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]", () => {
     await createPage(project.id, 1, { name: "First", drawingNumber: "A-101" });
 
     signedOut(); // the typical public-demo caller — no auth required
-    const res = await readJson(await runDemo(project.publicId));
-    expect(res.status).toBe(200);
-    expect(res.body.id).toBe(project.publicId);
-    expect(res.body.dbId).toBe(project.id);
-    expect(res.body.name).toBe(project.name);
-    expect(res.body.dataUrl).toBe(project.dataUrl);
-    expect(res.body.pdfUrl).toContain(project.dataUrl); // getS3Url(dataUrl, "original.pdf")
-    expect(res.body.pdfUrl).toContain("original.pdf");
-    expect(res.body.numPages).toBe(2);
-    expect(res.body.status).toBe("completed");
-    expect(res.body.summaries).toEqual({ keep: true });
-    expect(res.body.projectIntelligence).toEqual(PI);
-    expect(res.body.demoConfig).toEqual({ someFlag: true });
-    expect(res.body.pages).toEqual([
+    const raw = await runDemo(project.publicId);
+    expect(raw.status).toBe(200);
+    // [P1.4 fold] the demo route sets NO Cache-Control (UNLIKE getProject's "private, max-age=60") — pinned
+    // negatively so a future reader can't accidentally couple getDemoProject to getProject's header.
+    expect(raw.headers.get("Cache-Control")).toBeNull();
+    const body = await raw.json();
+    expect(body.id).toBe(project.publicId);
+    expect(body.dbId).toBe(project.id);
+    expect(body.name).toBe(project.name);
+    expect(body.dataUrl).toBe(project.dataUrl);
+    expect(body.pdfUrl).toContain(project.dataUrl); // getS3Url(dataUrl, "original.pdf")
+    expect(body.pdfUrl).toContain("original.pdf");
+    expect(body.numPages).toBe(2);
+    expect(body.status).toBe("completed");
+    expect(body.summaries).toEqual({ keep: true });
+    expect(body.projectIntelligence).toEqual(PI);
+    expect(body.demoConfig).toEqual({ someFlag: true });
+    expect(body.pages).toEqual([
       { pageNumber: 1, name: "First", drawingNumber: "A-101" },
       { pageNumber: 2, name: "Second", drawingNumber: "A-102" },
+    ]);
+    // NEGATIVE shape pin: EXACTLY these 11 demo fields — getDemoProject must NEVER add getProject's
+    // authed-only address/takeoffItems/takeoffGroups/chatMessages (the isolation contract documented on the
+    // getDemoProject header in services/projects.ts), and must NEVER drop demoConfig.
+    expect(Object.keys(body).sort()).toEqual([
+      "dataUrl", "dbId", "demoConfig", "id", "name", "numPages",
+      "pages", "pdfUrl", "projectIntelligence", "status", "summaries",
     ]);
     expect(company.id).toBe(project.companyId);
   });
@@ -116,26 +128,37 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]", () => {
     const { project: realProj } = await createWorld(); // isDemo=false
     const nonDemo = await readJson(await runDemo(realProj.publicId));
     expect(nonDemo.status).toBe(404);
-    expect(nonDemo.body.error).toBe("Not found"); // [P1.4 fold] → {error:{code:"NOT_FOUND",message:"Not found"}}
+    expect(nonDemo.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.4 fold] was: "Not found" (string envelope)
 
     // valid uuid, no such project → 404
     const ghost = await readJson(await runDemo(randomUUID()));
     expect(ghost.status).toBe(404);
-    expect(ghost.body.error).toBe("Not found"); // [P1.4 fold] → {error:{code:"NOT_FOUND",message:"Not found"}}
+    expect(ghost.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.4 fold] was: "Not found" (string envelope)
   });
 
-  it("non-uuid id: legacy unhandled pg uuid-cast (defensive capture) [P1.4 fold → clean 400]", async () => {
+  it("non-uuid id → clean 400 (sanctioned diff b; legacy was an unhandled pg uuid-cast throw)", async () => {
     signedOut();
-    // Legacy has NO try/catch around the pg uuid-column SELECT, so a non-uuid id makes the cast throw.
-    // Capture EITHER a thrown exception OR a non-2xx Response (harness-dependent) — do NOT pre-assert a
-    // specific status. [P1.4 fold] this becomes a clean 400 "Invalid project id" via zPublicId.
-    let threwOrErrored = false;
-    try {
-      const res = await runDemo("not-a-uuid");
-      threwOrErrored = res.status >= 400;
-    } catch {
-      threwOrErrored = true;
-    }
-    expect(threwOrErrored).toBe(true);
+    const bad = await readJson(await runDemo("not-a-uuid"));
+    // [P1.4 fold] was: an unhandled throw (raw non-uuid fed to the pg uuid column, no try/catch). The freeze
+    // commit captured this defensively (thrown OR non-2xx); the fold makes it a clean 400 via zPublicId.
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
+  });
+
+  it("unexpected DB error → the shell's leak-free INTERNAL 500 (sanctioned diff c; legacy had no try/catch → raw 500)", async () => {
+    const { project } = await createDemoProject();
+    signedOut();
+    // getDemoProject's FIRST db call is the project SELECT; make it throw a leaky message. The shell's outer
+    // catch (defineRoute) turns any non-ApiError throw into {code:"INTERNAL",message:"Internal server error"}
+    // and logs the cause server-side — it must NOT appear in the response body. (Legacy had no try/catch, so
+    // this was a raw 500 that could leak a dev stack.)
+    const spy = vi.spyOn(db, "select").mockImplementationOnce(() => {
+      throw new Error("boom SECRET_LEAK_xyz");
+    });
+    const res = await readJson(await runDemo(project.publicId));
+    expect(res.status).toBe(500);
+    expect(res.body.error).toEqual({ code: "INTERNAL", message: "Internal server error" });
+    expect(JSON.stringify(res.body)).not.toContain("SECRET_LEAK_xyz"); // underlying cause never leaks
+    spy.mockRestore();
   });
 });
