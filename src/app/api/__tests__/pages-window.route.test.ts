@@ -71,13 +71,30 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
     for (const [f, t] of [[5, 2], [0, 5], [1, 52]] as const) {
       const { status, body } = await readJson(await GET(windowReq(project.publicId, f, t), params({ id: project.publicId })));
       expect(status).toBe(400);
-      expect(body.error).toBe("Invalid range. Max 50 pages per request.");
+      // [P1.5 fold] envelope flip {error:string} → {error:{code,message}}; message verbatim.
+      expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid range. Max 50 pages per request." });
     }
     const def = await readJson(
       await GET(makeReq(`/api/projects/${project.publicId}/pages`, { method: "GET" }), params({ id: project.publicId })),
     );
     expect(def.status).toBe(200);
     expect([def.body.from, def.body.to]).toEqual([1, 9]);
+  });
+
+  it("non-numeric from/to → 400 (parseInt NaN branch)", async () => {
+    // [P1.5 fold] new coverage of the isNaN branch. A present-but-non-numeric param does NOT hit the
+    // `|| "1"` default (the value is non-empty) → parseInt → NaN → 400. Legacy returned the same 400
+    // string body; status is stable, only the envelope flips.
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1);
+    asUser(user);
+    for (const q of ["from=abc&to=5", "from=1&to=xyz"]) {
+      const { status, body } = await readJson(
+        await GET(makeReq(`/api/projects/${project.publicId}/pages?${q}`, { method: "GET" }), params({ id: project.publicId })),
+      );
+      expect(status).toBe(400);
+      expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid range. Max 50 pages per request." });
+    }
   });
 
   it("annotation visibility: own + machine sources, NOT another member's hand-drawn", async () => {
@@ -118,7 +135,7 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
     signedOut();
     const { status, body } = await readJson(await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })));
     expect(status).toBe(401);
-    expect(body.error).toBe("Unauthorized"); // [P1.5 fold] → { code: "UNAUTHORIZED", message: "Unauthorized" }
+    expect(body.error).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" }); // [P1.5 fold]
   });
 
   it("range 400 fires BEFORE the auth 401 — validate-before-auth precedence (why the shell stays auth:\"none\")", async () => {
@@ -127,7 +144,7 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
     // invalid range while signed-out → 400 (range), NOT 401 (auth). Freezes the ordering.
     const { status, body } = await readJson(await GET(windowReq(project.publicId, 5, 2), params({ id: project.publicId })));
     expect(status).toBe(400);
-    expect(body.error).toBe("Invalid range. Max 50 pages per request."); // [P1.5 fold] → { code: "VALIDATION", message }
+    expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid range. Max 50 pages per request." }); // [P1.5 fold]
   });
 
   it("cross-company member → 404 (tenant isolation, no existence leak)", async () => {
@@ -138,7 +155,7 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
     asUser(intruder);
     const { status, body } = await readJson(await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })));
     expect(status).toBe(404);
-    expect(body.error).toBe("Not found"); // [P1.5 fold] → { code: "NOT_FOUND", message: "Not found" }
+    expect(body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold]
   });
 
   it("root admin sees another company's window — root bypass → 200", async () => {
@@ -160,13 +177,119 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
     expect(status).toBe(401); // no allowDemo → demo falls through to the require-auth 401
   });
 
-  it("non-uuid id → legacy pg-uuid-cast throw (S003 class)", async () => {
-    // [P1.5 fold] the shell's zPublicId turns this raw pg-cast 500 into a clean 400 VALIDATION
-    // "Invalid project id" (sanctioned diff C). Freeze form = the route currently THROWS.
+  it("non-uuid id → 400 VALIDATION (sanctioned diff C; legacy was a pg-uuid-cast 500)", async () => {
+    // [P1.5 fold] resolveByPublicId's zPublicId turns the raw pg-cast 500 into a clean 400. The range
+    // (1,8) is valid so the range gate passes first; the id is then rejected at the access step.
+    // Pre-fold the route THREW (frozen as rejects.toThrow in the freeze commit 0c4b180).
     const { user } = await createWorld();
     asUser(user);
-    await expect(
-      GET(windowReq("not-a-uuid", 1, 8), params({ id: "not-a-uuid" })),
-    ).rejects.toThrow();
+    const { status, body } = await readJson(
+      await GET(windowReq("not-a-uuid", 1, 8), params({ id: "not-a-uuid" })),
+    );
+    expect(status).toBe(400);
+    expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
+  });
+
+  // ── [refactor jun18 P1.5] DETECTOR freeze-tightening closers (wf_65e55f39-625) ────────────────
+  // The adversarial review found the original freeze loose in 5 spots (0 code defects). These pin
+  // the remaining sanctioned diff + frozen quirks so a future drift surfaces RED.
+
+  it("unexpected DB error → leak-free INTERNAL 500 (sanctioned diff B; legacy had NO try/catch → raw leaky 500)", async () => {
+    // The shell's outer catch (defineRoute.ts:253-263) logs the real cause server-side and returns a
+    // GENERIC body — the thrown err.message must NEVER reach the client. Mirrors the S018 closer.
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1);
+    asUser(user);
+    const spy = vi.spyOn(db, "select").mockImplementationOnce(() => {
+      throw new Error("boom: SECRET connection string leaked here");
+    });
+    try {
+      const { status, body } = await readJson(
+        await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })),
+      );
+      expect(status).toBe(500);
+      expect(body.error).toEqual({ code: "INTERNAL", message: "Internal server error" });
+      expect(JSON.stringify(body)).not.toContain("boom");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("page jsonb/text fields round-trip NON-null verbatim (|| null only coalesces the falsy case)", async () => {
+    const { user, project } = await createWorld();
+    const csi = [{ code: "09 51 00", description: "Acoustical Ceilings", division: "09", trade: "Finishes" }];
+    const ta = { lines: [{ text: "DETAIL", bbox: [0, 0, 1, 1] }] };
+    const pi = { parsedRegions: [{ id: "r1" }] };
+    await createPage(project.id, 1, {
+      drawingNumber: "A-101",
+      csiCodes: csi as any,
+      textAnnotations: ta as any,
+      pageIntelligence: pi as any,
+    });
+    asUser(user);
+    const { body } = await readJson(await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })));
+    expect(body.pages[0]).toEqual({
+      pageNumber: 1,
+      name: "Page 1",
+      drawingNumber: "A-101",
+      keynotes: null, // not seeded → raw passthrough of DB null
+      csiCodes: csi, // raw passthrough (no coalesce)
+      textAnnotations: ta, // truthy → || null keeps it
+      pageIntelligence: pi, // truthy → || null keeps it
+    });
+  });
+
+  it("annotation output: full 6-field shape, bbox order [minX,minY,maxX,maxY], raw note, data uses ?? null (not || null)", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1);
+    // binary-exact float4 values so the bbox round-trips without float precision drift.
+    const [full] = await db
+      .insert(annotations)
+      .values({
+        projectId: project.id, pageNumber: 1, creatorId: user.id, source: "user", name: "detail-a",
+        minX: 0.5, minY: 0.25, maxX: 0.75, maxY: 0.125, note: "see RCP", data: { tool: "rect" } as any,
+      })
+      .returning();
+    // data = falsy-but-present (false) → pins `?? null` (a `|| null` would wrongly drop it to null).
+    await db.insert(annotations).values({
+      projectId: project.id, pageNumber: 1, creatorId: user.id, source: "user", name: "falsy-data",
+      minX: 0, minY: 0, maxX: 0, maxY: 0, note: null, data: false as any,
+    });
+    asUser(user);
+    const { body } = await readJson(await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })));
+    const byName = Object.fromEntries(body.annotations.map((a: { name: string }) => [a.name, a]));
+    expect(byName["detail-a"]).toEqual({
+      id: full.id,
+      pageNumber: 1,
+      name: "detail-a",
+      bbox: [0.5, 0.25, 0.75, 0.125],
+      note: "see RCP",
+      source: "user",
+      data: { tool: "rect" },
+    });
+    expect(byName["falsy-data"].data).toBe(false); // ?? null keeps false
+    expect(byName["falsy-data"].note).toBeNull(); // raw note passthrough keeps null
+  });
+
+  it("accepts the INCLUSIVE range boundaries: from===to (single page) and to-from===50 (exactly the cap) → 200", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 3);
+    asUser(user);
+    const single = await readJson(await GET(windowReq(project.publicId, 3, 3), params({ id: project.publicId })));
+    expect(single.status).toBe(200);
+    expect(single.body.pages).toHaveLength(1);
+    const wide = await readJson(await GET(windowReq(project.publicId, 1, 51), params({ id: project.publicId })));
+    expect(wide.status).toBe(200); // to-from===50 is allowed (> 50 rejects)
+    expect([wide.body.from, wide.body.to]).toEqual([1, 51]);
+  });
+
+  it("orders pages ASCending by pageNumber regardless of insertion order", async () => {
+    const { user, project } = await createWorld();
+    // insert OUT of order so a dropped .orderBy(pageNumber) would surface as a RED test.
+    await createPage(project.id, 2);
+    await createPage(project.id, 1);
+    asUser(user);
+    const { body } = await readJson(await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })));
+    expect(body.pages.map((p: { pageNumber: number }) => p.pageNumber)).toEqual([1, 2]);
   });
 });

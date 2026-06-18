@@ -51,8 +51,8 @@
 
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { pages } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { pages, annotations } from "@/lib/db/schema";
+import { eq, and, gte, lte, or } from "drizzle-orm";
 import { ApiError } from "@/server/api/envelope";
 import { resolveProjectOrThrow } from "@/server/api/access";
 import { zPublicId } from "@/server/api/schemas";
@@ -62,7 +62,7 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 import { downloadFromS3 } from "@/lib/s3";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { logger } from "@/lib/logger";
-import type { CsiCode, TextractPageData } from "@/types";
+import type { CsiCode, TextractPageData, ClientAnnotation } from "@/types";
 
 // ── shared dual-ID resolvers ───────────────────────────────────────────────────────────────
 
@@ -234,6 +234,113 @@ export async function getPageTextract(req: Request) {
     { textractData: pageRow?.textractData || null },
     { headers: { "Cache-Control": "private, max-age=3600" } },
   );
+}
+
+// ── GET /api/projects/[id]/pages ───────────────────────────────────────────────────────────────────
+//
+/** [refactor jun18 P1.5] Chunk-window loader (the PDF-viewer hot path: useChunkLoader:78 ±window,
+ *  the dashboard bootstrap chunk from=1&to=15, AutoQtoTab). NOTE: this is a `projects/[id]` LEAF
+ *  sub-route, NOT one of the original five `pages/*` routes — but it lives HERE because pages.ts owns
+ *  the page family (the projects.ts header explicitly defers this leaf). publicId via the [id] path
+ *  param; NO allowDemo (the demo twin demo/projects/[id]/pages is the public read — folded LATER).
+ *
+ *  Like getPageTextract this returns a RAW NextResponse so the Cache-Control header survives the
+ *  shell's `result instanceof Response` passthrough (defineRoute.ts:248, before the kind check) — a
+ *  plain object would be json-enveloped and DROP the header (the viewer would lose its 5-min cache;
+ *  PERF-SACRED — do NOT "simplify" to a plain return). Frozen quirks (verbatim from legacy
+ *  projects/[id]/pages/route.ts): range validated BEFORE access (validate-before-auth → the route
+ *  shell MUST stay auth:"none", and NO zod query schema [it would coerce from/to + change the 400
+ *  message]); the two queries run in PARALLEL; the annotation visibility OR() (own + the 3
+ *  project-scoped machine sources, NOT another member's hand-drawn); the page query's 7 explicit
+ *  cols + orderBy; the annotations query's bare db.select() (all cols) then a 6-field map; the
+ *  ||null (falsy) coalesce on the two jsonb page cols vs the ??null (nullish) on data vs the raw
+ *  passthrough on note. Sanctioned diffs: A (error-envelope flip), B (leak-drop — legacy had ZERO
+ *  try/catch, so an unexpected DB error escaped as a raw leaky 500; now the shell's generic INTERNAL
+ *  500), C (non-uuid id → clean 400 via resolveByPublicId's zPublicId, was a pg-uuid-cast 500). The
+ *  200 body + Cache-Control are byte-identical. */
+export async function getPageWindow(req: Request, idParam: string): Promise<Response> {
+  const url = new URL(req.url);
+  const from = parseInt(url.searchParams.get("from") || "1", 10);
+  const to = parseInt(url.searchParams.get("to") || "9", 10);
+
+  // validate-before-auth — this 400 fires BEFORE the 401/404 (frozen; legacy ran the range check at
+  // route.ts:25-30, before resolveProjectAccess at :32). Message verbatim; only the envelope flips.
+  if (isNaN(from) || isNaN(to) || from < 1 || to < from || to - from > 50) {
+    throw new ApiError("VALIDATION", "Invalid range. Max 50 pages per request.");
+  }
+
+  // resolveByPublicId (NO allowDemo) replicates legacy resolveProjectAccess({publicId:id}) exactly
+  // (signed-out→401, cross-company→404, root cross-company→200 bypass, demo-signed-out→401) and adds
+  // ONLY sanctioned diff C (non-uuid→clean 400 via zPublicId). session is non-null on this path.
+  const { project, session } = await resolveByPublicId(idParam);
+
+  // Parallel — both queries need only project.id + the [from,to] page range (legacy Promise.all).
+  const [pageRows, rangeAnnotations] = await Promise.all([
+    db
+      .select({
+        pageNumber: pages.pageNumber,
+        name: pages.name,
+        drawingNumber: pages.drawingNumber,
+        keynotes: pages.keynotes,
+        csiCodes: pages.csiCodes,
+        textAnnotations: pages.textAnnotations,
+        pageIntelligence: pages.pageIntelligence,
+      })
+      .from(pages)
+      .where(
+        and(
+          eq(pages.projectId, project.id),
+          gte(pages.pageNumber, from),
+          lte(pages.pageNumber, to),
+        ),
+      )
+      .orderBy(pages.pageNumber),
+    db
+      .select()
+      .from(annotations)
+      .where(
+        and(
+          eq(annotations.projectId, project.id),
+          gte(annotations.pageNumber, from),
+          lte(annotations.pageNumber, to),
+          // Frozen visibility: a member sees THEIR OWN annotations plus the project-scoped machine
+          // sources (yolo/shape-parse/symbol-search) — but NOT another member's hand-drawn ones.
+          // session! is safe: no allowDemo → only the authed success path is reachable (non-null).
+          or(
+            eq(annotations.creatorId, session!.user.dbId),
+            eq(annotations.source, "yolo"),
+            eq(annotations.source, "shape-parse"),
+            eq(annotations.source, "symbol-search"),
+          ),
+        ),
+      ),
+  ]);
+
+  // Raw NextResponse → Cache-Control survives the shell passthrough. Body byte-identical to legacy.
+  const response = NextResponse.json({
+    from,
+    to,
+    pages: pageRows.map((p) => ({
+      pageNumber: p.pageNumber,
+      name: p.name,
+      drawingNumber: p.drawingNumber,
+      keynotes: p.keynotes,
+      csiCodes: p.csiCodes,
+      textAnnotations: p.textAnnotations || null,
+      pageIntelligence: p.pageIntelligence || null,
+    })),
+    annotations: rangeAnnotations.map((a) => ({
+      id: a.id,
+      pageNumber: a.pageNumber,
+      name: a.name,
+      bbox: [a.minX, a.minY, a.maxX, a.maxY],
+      note: a.note,
+      source: a.source as ClientAnnotation["source"],
+      data: a.data ?? null,
+    })),
+  });
+  response.headers.set("Cache-Control", "private, max-age=300, stale-while-revalidate=600");
+  return response;
 }
 
 // ── POST /api/pages/textract-rerun ───────────────────────────────────────────────────────────────
