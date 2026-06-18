@@ -61,6 +61,16 @@ interface GlobalSearchResult {
   pageCount: number;
 }
 
+// Cross-project demo-gallery result. Structurally identical to GlobalSearchResult, but kept SEPARATE
+// per the "do NOT unify" directive above — the two SQLs differ (gallery filters is_demo=true + public,
+// global filters company_id + auth-scoped) and must be free to drift independently.
+interface GallerySearchResult {
+  projectId: string;
+  projectName: string;
+  matchCount: number;
+  pageCount: number;
+}
+
 // ── GET /api/search?projectId=<publicId>&q=<term> ──────────────────────────────────────
 /**
  * Project-scoped full-text search. Order (frozen validate-before-auth):
@@ -243,6 +253,50 @@ export async function globalSearch(
   `);
 
   const results: GlobalSearchResult[] = searchResults.rows.map((row: any) => ({
+    projectId: row.project_id as string,
+    projectName: row.project_name as string,
+    matchCount: row.match_count as number,
+    pageCount: row.page_count as number,
+  }));
+
+  return { query, results };
+}
+
+// ── GET /api/demo/search (cross-project gallery branch, no projectId) ────────────────────
+/**
+ * Cross-project PUBLIC demo-gallery search — aggregates every is_demo + completed project whose pages
+ * match the query, ordered by match count. [refactor jun18 P1.4 demo fold] extracted VERBATIM from the
+ * inline SQL in /api/demo/search's no-projectId branch. Option B (owner-locked 2026-06-18): the public
+ * auth:"none" demo endpoint + its 60/min/IP rate rule STAY put; ONLY this internal SQL moves into the
+ * service layer (no new endpoint, no client switch, no mirror delete) — a zero-live-behavior-change
+ * de-duplication that makes demo/search a fully-thin shell (both branches now delegate here).
+ *
+ * `query` arrives PRE-TRIMMED + PRE-VALIDATED by the route (the demo-specific 2-200 char guard — incl.
+ * the >200 cap searchProjectPages lacks — fires there BEFORE the branch split), so this fn does NO
+ * re-validation and adds NO length cap. Frozen quirks (do NOT "fix"): COUNT(DISTINCT pg.id) === COUNT(pg.id)
+ * because pg.id is unique per joined row → pageCount always equals matchCount (the DISTINCT is a verbatim
+ * no-op); ORDER BY match_count DESC has no tie-breaker; the query is echoed back verbatim. NOT unified
+ * with globalSearch (different filters: is_demo + public here vs company_id + session there).
+ */
+export async function searchGallery(
+  query: string,
+): Promise<{ query: string; results: GallerySearchResult[] }> {
+  const searchResults = await db.execute(sql`
+    SELECT
+      p.public_id AS project_id,
+      p.name AS project_name,
+      COUNT(DISTINCT pg.id)::int AS page_count,
+      COUNT(pg.id)::int AS match_count
+    FROM pages pg
+    JOIN projects p ON pg.project_id = p.id
+    WHERE p.is_demo = true
+      AND p.status = 'completed'
+      AND pg.search_vector @@ plainto_tsquery('english', ${query})
+    GROUP BY p.id, p.public_id, p.name
+    ORDER BY match_count DESC
+  `);
+
+  const results: GallerySearchResult[] = searchResults.rows.map((row: any) => ({
     projectId: row.project_id as string,
     projectName: row.project_name as string,
     matchCount: row.match_count as number,

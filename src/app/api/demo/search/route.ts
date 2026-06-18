@@ -15,16 +15,15 @@
 //     sanctioned-diff set is provably complete (this is the last divergence — there are no others).
 //
 // The CROSS-PROJECT gallery branch (no projectId) has NO authed twin — globalSearch is auth:"session" +
-// company-scoped (and uses COUNT(pg.id), not the gallery's COUNT(DISTINCT)). It stays INLINE here for now;
-// folding it onto a public gallery endpoint (+ a replacement rate rule, the demo/page.tsx client switch,
-// and DELETING this mirror) is a separate, owner-gated step. The shared `q must be 2-200 chars` validation
+// company-scoped (and uses COUNT(pg.id), not the gallery's COUNT(DISTINCT)). [refactor jun18 P1.4] its SQL
+// now lives in services/search.ts `searchGallery` (internals-only de-dup, Option B); folding the public
+// ENDPOINT itself onto a gallery route (+ a replacement rate rule, the demo/page.tsx client switch, and
+// DELETING this mirror) is still a separate, owner-gated step. The shared `q must be 2-200 chars` validation
 // (incl. the >200 cap that searchProjectPages does NOT have) lives here so both branches keep the
 // demo-specific message byte-exact, and fires before the branch exactly as the legacy route did.
 import { defineRoute } from "@/server/api/defineRoute";
 import { ApiError } from "@/server/api/envelope";
-import { searchProjectPages } from "@/server/services/search";
-import { db } from "@/lib/db";
-import { sql } from "drizzle-orm";
+import { searchProjectPages, searchGallery } from "@/server/services/search";
 
 export const GET = defineRoute({
   auth: "none",
@@ -45,33 +44,9 @@ export const GET = defineRoute({
       return searchProjectPages(projectPublicId, query, { allowDemo: true });
     }
 
-    // Cross-project PUBLIC gallery (is_demo + completed). Relocated VERBATIM from the legacy no-projectId
-    // branch (only the NextResponse.json wrapper is dropped — the shell envelopes the returned object).
-    // QUIRK: COUNT(DISTINCT pg.id) === COUNT(pg.id) because pg.id is unique per joined row → pageCount
-    // always equals matchCount (the DISTINCT is a verbatim no-op). ORDER BY match_count DESC, no tie-break.
-    const searchResults = await db.execute(sql`
-      SELECT
-        p.public_id AS project_id,
-        p.name AS project_name,
-        COUNT(DISTINCT pg.id)::int AS page_count,
-        COUNT(pg.id)::int AS match_count
-      FROM pages pg
-      JOIN projects p ON pg.project_id = p.id
-      WHERE p.is_demo = true
-        AND p.status = 'completed'
-        AND pg.search_vector @@ plainto_tsquery('english', ${query})
-      GROUP BY p.id, p.public_id, p.name
-      ORDER BY match_count DESC
-    `);
-
-    return {
-      query,
-      results: searchResults.rows.map((row: any) => ({
-        projectId: row.project_id,
-        projectName: row.project_name,
-        matchCount: row.match_count,
-        pageCount: row.page_count,
-      })),
-    };
+    // Cross-project PUBLIC gallery (is_demo + completed). [refactor jun18 P1.4] the SQL + row-map now live
+    // in services/search.ts `searchGallery`; `query` is already trimmed + validated (2-200) above, so the
+    // branch delegates directly. The shell envelopes the returned plain object exactly as the inline code did.
+    return searchGallery(query);
   },
 });
