@@ -100,6 +100,16 @@ describe.skipIf(!dbUp)("GET /api/demo/projects (demo gallery list)", () => {
     expect(item.thumbnailUrl).toBeNull(); // non-completed → null
   });
 
+  it("200 numPages terminal `|| 0` fallback: no pages AND numPages column 0 → 0", async () => {
+    // DETECTOR completeness (F6): exercise the final `|| 0` — pageCounts[id]=0 (falsy) AND p.numPages=0 (falsy).
+    const { project: zero } = await makeDemoProject({ status: "processing", numPages: 0 });
+    signedOut();
+    const { body } = await readJson(await runList());
+    const item = only(body, [zero.publicId])[0];
+    expect(item).toBeDefined();
+    expect(item.numPages).toBe(0);
+  });
+
   it("excludes non-demo projects (the WHERE isDemo=true gate)", async () => {
     const { project: real } = await createWorld(); // isDemo=false
     const { project: demo } = await makeDemoProject({ status: "completed" });
@@ -129,15 +139,34 @@ describe.skipIf(!dbUp)("GET /api/demo/projects (demo gallery list)", () => {
     expect((await runList()).status).toBe(200);
   });
 
-  it("unexpected DB error: legacy GET() has no try/catch → the main SELECT throw rejects the handler", async () => {
+  it("unexpected DB error → leak-free INTERNAL 500 (sanctioned diff; legacy had no try/catch → raw throw)", async () => {
     signedOut();
-    // [P1.4 fold] FREEZE form — legacy has NO try/catch, so a throw on the main SELECT propagates (rejects).
-    // The fold routes it through the shell's outer catch → a leak-free {code:INTERNAL,message:"Internal
-    // server error"} 500 with the cause logged server-side, never in the body.
+    // [P1.4 fold] was: legacy GET() had NO try/catch, so a throw on the main SELECT rejected the handler.
+    // The fold routes it through the shell's outer catch → {code:INTERNAL,message:"Internal server error"}
+    // at 500, with the cause logged server-side and NEVER in the response body.
     const spy = vi.spyOn(db, "select").mockImplementationOnce(() => {
       throw new Error("boom SECRET_LEAK_xyz");
     });
-    await expect(runList()).rejects.toThrow("boom SECRET_LEAK_xyz");
+    const res = await readJson(await runList());
+    expect(res.status).toBe(500);
+    expect(res.body.error).toEqual({ code: "INTERNAL", message: "Internal server error" });
+    expect(JSON.stringify(res.body)).not.toContain("SECRET_LEAK_xyz"); // underlying cause never leaks
+    spy.mockRestore();
+  });
+
+  it("DB error in the N+1 COUNT loop ALSO → leak-free INTERNAL 500 (the sanctioned diff covers BOTH throw sites)", async () => {
+    // DETECTOR completeness: legacy GET() had NO try/catch ANYWHERE, so a throw in the N+1 db.execute COUNT
+    // loop (not just the main SELECT) was ALSO a raw 500. The fold routes BOTH sites through the same shell
+    // outer catch → identical leak-free INTERNAL 500. Seed ≥1 demo row so the loop actually runs.
+    await makeDemoProject({ status: "completed" });
+    signedOut();
+    const spy = vi.spyOn(db, "execute").mockImplementationOnce(() => {
+      throw new Error("count loop SECRET_LEAK_abc");
+    });
+    const res = await readJson(await runList());
+    expect(res.status).toBe(500);
+    expect(res.body.error).toEqual({ code: "INTERNAL", message: "Internal server error" });
+    expect(JSON.stringify(res.body)).not.toContain("SECRET_LEAK_abc");
     spy.mockRestore();
   });
 });

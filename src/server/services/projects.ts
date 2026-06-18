@@ -275,6 +275,50 @@ export async function getDemoProject(idParam: string): Promise<Response> {
   });
 }
 
+// ── GET /api/demo/projects ─────────────────────────────────────────────────────────
+//
+/**
+ * List the public demo gallery — every isDemo=true project, oldest-first. Returns a BARE ARRAY (the shell
+ * passes it through unwrapped) of EXACTLY 5 public fields per item: {id, name, numPages, status, thumbnailUrl}.
+ *
+ * DELIBERATELY ISOLATED from listProjects (the authed company/root list) — exactly as getDemoProject is from
+ * getProject: NO session param, NO companyId scope, NO root-bypass; the SOLE gate is WHERE isDemo=true (a
+ * public read). It must NEVER acquire a session param and must NEVER add listProjects's authed-only fields
+ * (companyId/companyName/pagesProcessed/dataUrl/isDemo/createdAt) onto this UNAUTHENTICATED endpoint — that
+ * would be a data-exposure regression (pinned NEGATIVELY in demo-projects.route.test.ts as exactly 5 keys).
+ *
+ * Frozen quirks (do NOT "fix"): the per-project page count uses an N+1 loop (one COUNT(*) per project), NOT
+ * listProjects's single GROUP BY — a known inefficiency kept VERBATIM (replacing it is a non-sanctioned perf
+ * change). `numPages` falsy-coalesces live-count → numPages column → 0; `thumbnailUrl` is non-null ONLY when
+ * status==="completed". NO try/catch (legacy had none) — an unexpected DB error becomes the shell's leak-free
+ * INTERNAL 500, which is the SOLE sanctioned diff vs the legacy raw 500.
+ */
+export async function listDemoProjects() {
+  const demoProjects = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.isDemo, true))
+    .orderBy(projects.createdAt);
+
+  // Actual page counts from the pages table — N+1 loop, FROZEN (do NOT collapse to listProjects's GROUP BY).
+  const pageCounts: Record<number, number> = {};
+  for (const proj of demoProjects) {
+    const result = await db.execute(sql`
+      SELECT COUNT(*)::int as cnt FROM pages WHERE project_id = ${proj.id}
+    `);
+    pageCounts[proj.id] = (result.rows[0] as { cnt?: number } | undefined)?.cnt || 0;
+  }
+
+  return demoProjects.map((p) => ({
+    id: p.publicId,
+    name: p.name,
+    numPages: pageCounts[p.id] || p.numPages || 0,
+    status: p.status,
+    thumbnailUrl:
+      p.status === "completed" ? getS3Url(p.dataUrl, "thumbnail.png") : null,
+  }));
+}
+
 // ── PUT /api/projects/[id] ─────────────────────────────────────────────────────────
 //
 /**
