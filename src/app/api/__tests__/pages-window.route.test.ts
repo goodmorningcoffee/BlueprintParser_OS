@@ -17,12 +17,14 @@ import { db } from "@/lib/db";
 import { annotations } from "@/lib/db/schema";
 import {
   asUser,
+  createCompany,
   createPage,
   createUser,
   createWorld,
   makeReq,
   params,
   readJson,
+  signedOut,
 } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
@@ -92,5 +94,79 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
     const names = body.annotations.map((a: { name: string }) => a.name).sort();
     expect(names).toEqual(["machine-symbol", "machine-yolo", "mine"]);
     expect(body.annotations[0].bbox).toHaveLength(4);
+  });
+
+  // ── [refactor jun18 P1.5] freeze-expansion before the getPageWindow fold ──────────────────
+  // The cases below freeze the AUTH surface + the Cache-Control header + the non-uuid quirk that
+  // the original P0.3 happy-path test did not cover. They assert CURRENT legacy behavior (run
+  // GREEN vs the legacy route in the freeze commit); the assertions tagged `[P1.5 fold]` flip to
+  // the {code,message} envelope (or 400) in the fold commit. The status codes + Cache-Control +
+  // 200 payload shape are STABLE across the fold (only sanctioned diffs A/B/C apply).
+
+  it("sets Cache-Control on the 200 — perf-relevant; must survive the shell via the raw-NextResponse passthrough", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1);
+    asUser(user);
+    const res = await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("private, max-age=300, stale-while-revalidate=600");
+  });
+
+  it("signed-out → 401 (this authed route passes NO allowDemo)", async () => {
+    const { project } = await createWorld();
+    await createPage(project.id, 1);
+    signedOut();
+    const { status, body } = await readJson(await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })));
+    expect(status).toBe(401);
+    expect(body.error).toBe("Unauthorized"); // [P1.5 fold] → { code: "UNAUTHORIZED", message: "Unauthorized" }
+  });
+
+  it("range 400 fires BEFORE the auth 401 — validate-before-auth precedence (why the shell stays auth:\"none\")", async () => {
+    const { project } = await createWorld();
+    signedOut();
+    // invalid range while signed-out → 400 (range), NOT 401 (auth). Freezes the ordering.
+    const { status, body } = await readJson(await GET(windowReq(project.publicId, 5, 2), params({ id: project.publicId })));
+    expect(status).toBe(400);
+    expect(body.error).toBe("Invalid range. Max 50 pages per request."); // [P1.5 fold] → { code: "VALIDATION", message }
+  });
+
+  it("cross-company member → 404 (tenant isolation, no existence leak)", async () => {
+    const { project } = await createWorld(); // company A
+    await createPage(project.id, 1);
+    const otherCo = await createCompany();
+    const intruder = await createUser(otherCo.id);
+    asUser(intruder);
+    const { status, body } = await readJson(await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })));
+    expect(status).toBe(404);
+    expect(body.error).toBe("Not found"); // [P1.5 fold] → { code: "NOT_FOUND", message: "Not found" }
+  });
+
+  it("root admin sees another company's window — root bypass → 200", async () => {
+    const { project } = await createWorld(); // company A
+    await createPage(project.id, 1);
+    const otherCo = await createCompany();
+    const root = await createUser(otherCo.id, { isRootAdmin: true });
+    asUser(root);
+    const { status, body } = await readJson(await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })));
+    expect(status).toBe(200);
+    expect(body.pages).toHaveLength(1);
+  });
+
+  it("demo project, signed-out → 401 (this route never serves demo publicly — that is the demo twin's job)", async () => {
+    const { project } = await createWorld({ isDemo: true });
+    await createPage(project.id, 1);
+    signedOut();
+    const { status } = await readJson(await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })));
+    expect(status).toBe(401); // no allowDemo → demo falls through to the require-auth 401
+  });
+
+  it("non-uuid id → legacy pg-uuid-cast throw (S003 class)", async () => {
+    // [P1.5 fold] the shell's zPublicId turns this raw pg-cast 500 into a clean 400 VALIDATION
+    // "Invalid project id" (sanctioned diff C). Freeze form = the route currently THROWS.
+    const { user } = await createWorld();
+    asUser(user);
+    await expect(
+      GET(windowReq("not-a-uuid", 1, 8), params({ id: "not-a-uuid" })),
+    ).rejects.toThrow();
   });
 });
