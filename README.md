@@ -45,7 +45,7 @@ Examples:
 Spatial classes define regions of the drawings, and help with localization and corroboration.  Since we use OCR, we also have the pixel coordinates of all text, which we can map against the YOLO outputs.
 For instance, when extracting the drawing number, we can check if the drawing number is located inside a title_block region.  
 Or, when looking for the door schedule, BP knows to look for the sheet where the words "door schedule" occur inside a "schedule_table" region, and can double check the title_block for coraberating text like "door and window schedule".  
-BP uses spatial data to build CSI-heatmaps, which show the distribution of CSI codes on a sheet.  YOLO spatial data enables us to differentiate between a cluster of CSI codes that are occuring in a text_block vs the drawings vs inside a schedule vs the title_block.  YOLO spatial classes are baby steps towards building a visual-reasoning engine for blueprints.
+BP builds "CSI-heatmaps", which show the spatial distribution of CSI codes on a sheet (each sheet is a caresean plane and each CSI is treated as a plot).  YOLO spatial data enables us to differentiate between a cluster of CSI codes that are occuring in a "text_block" vs the "drawings" vs inside a "schedule".  YOLO spatial classes are baby steps towards building a visual-reasoning engine for blueprints.  
 
 YOLO acts as the "eyes" for LLMs and agents, enabling them to "see" into the drawings. 
 
