@@ -3,13 +3,13 @@
 **Live demo**: https://app.blueprintparser.com/demo  
 **BP Docs**: https://app.blueprintparser.com/docs
 
-BlueprintParser is a Next.js web app and a blueprint parsing engine.
+BlueprintParser is a Next.js PDF-viewer [web app] and a blueprint parsing engine.
 
 ---
 
 ## Features
 
-- Manual and AI-assisted QTO  
+- Manual and AI-assisted quantity takeoffs 
 - Extract schedules/tables from PDF to Excel/CSV
 - LLM chat with entire projects without blowing up context  
   - BP includes a context engine that uses multiple methods for creating dense, token-efficient blueprint embeddings
