@@ -49,17 +49,6 @@ BP builds "CSI-heatmaps", which show the spatial distribution of CSI codes on a 
 
 YOLO acts as the "eyes" for LLMs and agents, enabling them to "see" into the drawings. 
 
-
-## NOTE on YOLO Models
-
-The YOLO models used in the demo were hand-labeled and trained by myself.  
-- 500+ hours of manual labeling
-- More than $3,000 in AWS compute
-
-The trained weights and training datasets are not included in this repository.
-BlueprintParser is designed so users can upload and use their own object-detection models.
-
-
 ---
 
 ## Project Goal
