@@ -3,12 +3,11 @@
 // THE FREEZE before the P1.5 migration onto services/pages.ts (getPageThumbnail). Frozen:
 //   • validate-before-auth: the page-number 400 fires BEFORE resolveProjectAccess (so the shell
 //     must stay auth:"none"; the service validates imperatively).
-//   • LEGACY MIXED error content types: the two route-LOCAL errors ("Invalid page number" 400,
-//     "Thumbnail not found" 404, "Not found" dataUrl-404) are PLAIN TEXT bodies via
-//     `new NextResponse(string)`; the ACCESS errors (401/404) are JSON {error:string} from
-//     api-utils. At fold time ALL become the {error:{code,message}} envelope (sanctioned diff A —
-//     incl. a text→JSON content-type change on the route-local three; sole consumer is an
-//     <img src> in PageSidebar.tsx:55 which never reads bodies).
+//   • LEGACY MIXED error content types (frozen at 472e170): route-LOCAL errors were PLAIN TEXT
+//     bodies via `new NextResponse(string)`; ACCESS errors were JSON {error:string}. The fold
+//     flipped ALL to the {error:{code,message}} envelope (sanctioned diff A — incl. a text→JSON
+//     content-type change on the route-local three; sole consumer is an <img src> in
+//     PageSidebar.tsx:55 which never reads bodies).
 //   • access = resolveProjectAccess({publicId}, {allowDemo:true}): demo projects are PUBLIC
 //     thumbnails (signed-out 200); unknown project → 404 BEFORE auth (engine order); non-demo
 //     signed-out → 401; cross-tenant non-root → 404; root cross-company → 200 bypass.
@@ -57,8 +56,6 @@ const thumb = (id: string, page: string) =>
     params({ id, page }),
   );
 
-const readText = async (res: Response) => ({ status: res.status, text: await res.text() });
-
 describe.skipIf(!dbUp)("GET /api/projects/[id]/thumbnail/[page]", () => {
   it("happy: raw PNG bytes + image/png + the aggressive Cache-Control; PADDED S3 key", async () => {
     const { user, project } = await createWorld();
@@ -81,12 +78,12 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/thumbnail/[page]", () => {
 
   it("invalid page (non-numeric / <1) → 400 BEFORE access (validate-before-auth, even signed-out)", async () => {
     signedOut();
-    // legacy: TEXT body via new NextResponse(string)
-    const nan = await readText(await thumb(randomUUID(), "abc"));
+    // [P1.5 fold] flipped: legacy was a TEXT body via new NextResponse(string) — now the envelope.
+    const nan = await readJson(await thumb(randomUUID(), "abc"));
     expect(nan.status).toBe(400); // fires before the 404/401 — unknown project + signed out
-    expect(nan.text).toBe("Invalid page number"); // [P1.5 fold] → JSON {error:{code:"VALIDATION",message:"Invalid page number"}}
+    expect(nan.body.error).toEqual({ code: "VALIDATION", message: "Invalid page number" });
 
-    expect((await readText(await thumb(randomUUID(), "0"))).status).toBe(400);
+    expect((await readJson(await thumb(randomUUID(), "0"))).status).toBe(400);
   });
 
   it("access matrix: demo signed-out 200 (allowDemo); non-demo signed-out 401; cross-tenant 404; root bypass 200; unknown 404-before-auth", async () => {
@@ -101,12 +98,12 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/thumbnail/[page]", () => {
     signedOut();
     const noAuth = await readJson(await thumb(world.project.publicId, "1"));
     expect(noAuth.status).toBe(401);
-    expect(noAuth.body.error).toBe("Unauthorized"); // [P1.5 fold] → {code:"UNAUTHORIZED",message:"Unauthorized"}
+    expect(noAuth.body.error).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" }); // [P1.5 fold] flipped
 
     asUser(await createUser((await createCompany()).id)); // cross-tenant member
     const cross = await readJson(await thumb(world.project.publicId, "1"));
     expect(cross.status).toBe(404);
-    expect(cross.body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(cross.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped
 
     asUser(await createUser((await createCompany()).id, { isRootAdmin: true })); // root bypass
     s3Mocks.downloadFromS3.mockResolvedValueOnce(png);
@@ -115,15 +112,29 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/thumbnail/[page]", () => {
     signedOut(); // unknown project → 404 BEFORE auth (resolveProjectAccess engine order)
     const unknown = await readJson(await thumb(randomUUID(), "1"));
     expect(unknown.status).toBe(404);
-    expect(unknown.body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(unknown.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped
+  });
+
+  // [DETECTOR closer SD-5] thumbnail's diff C + its gate ORDER: non-uuid → clean 400 (was the
+  // pg-cast 500), and a bad page STILL wins over the non-uuid (page gate first, frozen).
+  it("non-uuid id → 400 'Invalid project id' (diff C); page-400 wins when both are bad", async () => {
+    signedOut();
+    const c = await readJson(await thumb("not-a-uuid", "3"));
+    expect(c.status).toBe(400);
+    expect(c.body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
+
+    const both = await readJson(await thumb("not-a-uuid", "abc"));
+    expect(both.status).toBe(400);
+    expect(both.body.error).toEqual({ code: "VALIDATION", message: "Invalid page number" });
   });
 
   it("downloadFromS3 failure → 404 'Thumbnail not found' (the catch quirk — NOT a 500)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     s3Mocks.downloadFromS3.mockRejectedValueOnce(new Error("NoSuchKey"));
-    const { status, text } = await readText(await thumb(project.publicId, "1"));
+    // [P1.5 fold] flipped: legacy was a TEXT body — now the envelope. Still 404, never 500.
+    const { status, body } = await readJson(await thumb(project.publicId, "1"));
     expect(status).toBe(404);
-    expect(text).toBe("Thumbnail not found"); // [P1.5 fold] → JSON {error:{code:"NOT_FOUND",message:"Thumbnail not found"}}
+    expect(body.error).toEqual({ code: "NOT_FOUND", message: "Thumbnail not found" });
   });
 });

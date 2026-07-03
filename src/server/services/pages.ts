@@ -492,6 +492,66 @@ export async function getPageWindowDemo(req: Request, idParam: string) {
   };
 }
 
+// ── GET /api/projects/[id]/thumbnail/[page] ────────────────────────────────────────────────────────
+//
+/** [refactor jul3 P1.5] Page-thumbnail proxy (avoids public S3 bucket access from the browser).
+ *  A `projects/[id]` LEAF sub-route living here with the other page-image reads. Sole consumer is
+ *  an <img src> (PageSidebar.tsx:55) — bodies are never read client-side.
+ *
+ *  Returns a RAW NextResponse: the AGGRESSIVE Cache-Control (1h browser + 24h SWR) must survive
+ *  the shell's Response passthrough (the getPageTextract/getPageWindow precedent — a plain return
+ *  would json-envelope the PNG). Frozen: the page-number 400 fires BEFORE access
+ *  (validate-before-auth → shell auth:"none"); resolveProjectOrThrow({allowDemo:true}) keeps demo
+ *  thumbnails PUBLIC, unknown→404-before-auth, root bypass; the PADDED thumbnails/page_NNNN.png
+ *  key (the engine convention — contrast labeling's [LB-1]); a downloadFromS3 failure is a 404
+ *  "Thumbnail not found" (NOT a 500 — the legacy catch quirk).
+ *
+ *  Sanctioned diffs: A — legacy served the three route-LOCAL errors as PLAIN-TEXT bodies
+ *  (`new NextResponse("Invalid page number")` etc.) and the access errors as {error:string} JSON;
+ *  ALL are now the {error:{code,message}} envelope (a text→JSON content-type change on the local
+ *  three; no consumer reads bodies). C — non-uuid id → clean 400 (was the pg-cast 500), gated
+ *  AFTER the page-number 400. B — no other catch existed; unexpected throws now hit the shell's
+ *  generic INTERNAL 500. */
+export async function getPageThumbnail(idParam: string, pageParam: string): Promise<Response> {
+  const pageNum = parseInt(pageParam, 10);
+  // validate-before-auth (frozen precedence): the page 400 precedes every access outcome.
+  if (isNaN(pageNum) || pageNum < 1) {
+    throw new ApiError("VALIDATION", "Invalid page number");
+  }
+
+  // [diff C] non-uuid → clean 400, AFTER the page check.
+  const parsed = zPublicId.safeParse(idParam);
+  if (!parsed.success) {
+    throw new ApiError("VALIDATION", "Invalid project id");
+  }
+
+  // allowDemo: demo thumbnails are public; unknown → 404 before auth; root bypass (engine order).
+  const { project } = await resolveProjectOrThrow({ publicId: parsed.data }, { allowDemo: true });
+
+  if (!project.dataUrl) {
+    throw new ApiError("NOT_FOUND", "Not found");
+  }
+
+  // PADDED key — the engine's real convention (do NOT "align" with labeling's [LB-1] unpadded bug).
+  const s3Key = `${project.dataUrl}/thumbnails/page_${String(pageNum).padStart(4, "0")}.png`;
+
+  let buffer: Buffer;
+  try {
+    buffer = await downloadFromS3(s3Key);
+  } catch {
+    // Frozen quirk: a missing/failed thumbnail is a 404, never a 500.
+    throw new ApiError("NOT_FOUND", "Thumbnail not found");
+  }
+
+  // Raw NextResponse → both headers survive the shell passthrough (PERF-relevant caching).
+  return new NextResponse(new Uint8Array(buffer), {
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+    },
+  });
+}
+
 // ── POST /api/pages/textract-rerun ───────────────────────────────────────────────────────────────
 //
 /** Force-refresh the cached Textract result for one page (debug/diagnostic). dbId from the body

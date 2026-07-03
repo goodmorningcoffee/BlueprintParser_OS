@@ -57,7 +57,7 @@ describe.skipIf(!dbUp)("GET /api/projects/export-index", () => {
     signedOut();
     const { status, body } = await readJson(await idx());
     expect(status).toBe(401);
-    expect(body.error).toBe("Unauthorized"); // [P1.5 fold] → {code:"UNAUTHORIZED",message:"Unauthorized"}
+    expect(body.error).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" }); // [P1.5 fold] flipped
   });
 
   it("member: own-company only; coverage/richness computed; sorted richness DESC", async () => {

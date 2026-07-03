@@ -39,7 +39,7 @@ vi.mock("@/lib/s3", () => s3Mocks);
 
 import { GET } from "@/app/api/projects/[id]/export/route";
 import { db } from "@/lib/db";
-import { models } from "@/lib/db/schema";
+import { annotations, models } from "@/lib/db/schema";
 import {
   asUser,
   createCompany,
@@ -73,6 +73,24 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/export", () => {
       s3Path: "s3://m/yolo-v1",
       config: { classes: ["door"] } as never,
     });
+    // [DETECTOR closer SD-2] one real annotation so the 8-field map + bbox ORDER are value-pinned
+    // (the bundle is an external contract; [] alone would let a field drop/rename ship).
+    const [ann] = await db
+      .insert(annotations)
+      .values({
+        name: "det-1",
+        minX: 0.1,
+        minY: 0.2,
+        maxX: 0.3,
+        maxY: 0.4,
+        pageNumber: 1,
+        projectId: project.id,
+        threshold: 0.5,
+        source: "yolo",
+        data: { modelName: "yolo-v1" } as never,
+        note: "n1",
+      })
+      .returning();
     asUser(user);
     s3Mocks.getPresignedGetUrl.mockImplementation(async (key: string) => `https://signed.test/${key}`);
 
@@ -95,19 +113,53 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/export", () => {
       pdfKey: `${project.dataUrl}/original.pdf`,
       pdfUrl: `https://signed.test/${project.dataUrl}/original.pdf`,
     });
+    // [DETECTOR closer SD-3] exact root key set — an ADDED stray bundle key would ship unnoticed
+    expect(Object.keys(body).sort()).toEqual([
+      "annotations",
+      "assets",
+      "exportedAt",
+      "models",
+      "pages",
+      "project",
+      "schemaVersion",
+    ]);
     expect(body.pages).toHaveLength(2);
     expect(body.pages.map((p: { pageNumber: number }) => p.pageNumber)).toEqual([1, 2]); // orderBy
-    const p1 = body.pages[0];
-    expect(p1.textractData).toEqual({ blocks: [1] }); // present by default
-    expect(p1.pageIntelligence).toEqual({ summary: "s" });
-    // PADDED keys (page_0001, the engine convention)
-    expect(p1.image).toEqual({
-      pngKey: `${project.dataUrl}/pages/page_0001.png`,
-      pngUrl: `https://signed.test/${project.dataUrl}/pages/page_0001.png`,
-      thumbKey: `${project.dataUrl}/thumbnails/page_0001.png`,
-      thumbUrl: `https://signed.test/${project.dataUrl}/thumbnails/page_0001.png`,
+    // [DETECTOR closer SD-3] FULL page-object toEqual — pins all 11 fields incl. the previously
+    // unasserted name/drawingNumber/rawText/csiCodes/keynotes/textAnnotations/error, and the
+    // page key set itself (external bp-export/1 contract).
+    expect(body.pages[0]).toEqual({
+      pageNumber: 1,
+      name: "Page 1",
+      drawingNumber: "A-1",
+      rawText: null,
+      csiCodes: null,
+      keynotes: null,
+      textAnnotations: null,
+      textractData: { blocks: [1] }, // present by default
+      pageIntelligence: { summary: "s" },
+      error: null,
+      image: {
+        // PADDED keys (page_0001, the engine convention)
+        pngKey: `${project.dataUrl}/pages/page_0001.png`,
+        pngUrl: `https://signed.test/${project.dataUrl}/pages/page_0001.png`,
+        thumbKey: `${project.dataUrl}/thumbnails/page_0001.png`,
+        thumbUrl: `https://signed.test/${project.dataUrl}/thumbnails/page_0001.png`,
+      },
     });
-    expect(body.annotations).toEqual([]);
+    // [DETECTOR closer SD-2] the full 8-field annotation map, bbox ORDER pinned by value
+    expect(body.annotations).toEqual([
+      {
+        id: ann.id,
+        name: "det-1",
+        bbox: [0.1, 0.2, 0.3, 0.4], // [minX, minY, maxX, maxY]
+        pageNumber: 1,
+        threshold: 0.5,
+        source: "yolo",
+        data: { modelName: "yolo-v1" },
+        note: "n1",
+      },
+    ]);
   });
 
   it("?omit=textract,intelligence DROPS the keys (undefined → absent); ?omit=images nulls urls + skips presigns", async () => {
@@ -172,12 +224,12 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/export", () => {
     signedOut();
     const noAuth = await readJson(await exp(world.project.publicId));
     expect(noAuth.status).toBe(401);
-    expect(noAuth.body.error).toBe("Unauthorized"); // [P1.5 fold] → {code:"UNAUTHORIZED",message:"Unauthorized"}
+    expect(noAuth.body.error).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" }); // [P1.5 fold] flipped
 
     asUser(await createUser((await createCompany()).id));
     const cross = await readJson(await exp(world.project.publicId));
     expect(cross.status).toBe(404);
-    expect(cross.body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(cross.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped
 
     asUser(await createUser((await createCompany()).id, { isRootAdmin: true }));
     expect((await readJson(await exp(world.project.publicId))).status).toBe(200); // root bypass
@@ -185,14 +237,30 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/export", () => {
     signedOut();
     const unknown = await readJson(await exp(randomUUID()));
     expect(unknown.status).toBe(404); // 404 BEFORE auth (engine order)
-    expect(unknown.body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(unknown.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped
   });
 
-  // [P1.5 fold] WHOLE assertion flips: legacy feeds the non-uuid straight into the pg uuid cast
-  // inside resolveProjectAccess → REJECTS (raw framework 500, S003 class). Fold = clean 400 via
-  // zPublicId (sanctioned diff C).
-  it("non-uuid id → legacy pg uuid-cast throw (frozen defensive form)", async () => {
+  // [DETECTOR closer SD-4] sanctioned diff B representative: an UNEXPECTED throw (here the first
+  // db.select, inside the access engine) → the shell's generic INTERNAL 500, message NOT leaked.
+  it("unexpected db throw → 500 generic INTERNAL, no message leak (diff B)", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    vi.spyOn(db, "select").mockImplementationOnce(() => {
+      throw new Error("secret-db-detail");
+    });
+    const { status, body } = await readJson(await exp(project.publicId));
+    expect(status).toBe(500);
+    expect(body.error).toEqual({ code: "INTERNAL", message: "Internal server error" });
+    expect(JSON.stringify(body)).not.toContain("secret-db-detail");
+  });
+
+  // [P1.5 fold] WHOLE assertion flipped: legacy fed the non-uuid into the pg uuid cast inside
+  // resolveProjectAccess → REJECTED (frozen at 472e170 as .rejects.toThrow()). Now sanctioned
+  // diff C: clean 400 via zPublicId (fires even signed-out — the cast also did).
+  it("non-uuid id → 400 'Invalid project id' (sanctioned diff C; legacy threw)", async () => {
     signedOut();
-    await expect(exp("not-a-uuid")).rejects.toThrow();
+    const { status, body } = await readJson(await exp("not-a-uuid"));
+    expect(status).toBe(400);
+    expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
   });
 });
