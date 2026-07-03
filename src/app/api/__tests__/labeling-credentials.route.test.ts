@@ -10,7 +10,8 @@
 //   • missing env (LABEL_STUDIO_ADMIN_EMAIL / LABEL_STUDIO_ADMIN_PASSWORD) → 503
 //     "Label Studio not configured".
 //   • 200 = {email,password} straight from env — byte-identical across the fold.
-// Assertions tagged [P1.5 fold] flip envelopes in the fold commit (sanctioned diff A).
+// Assertions tagged [P1.5 fold] were flipped in the fold commit (sanctioned diff A); the freeze
+// form is at commit 025c9b7.
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -23,13 +24,16 @@ import {
   asUser,
   createCompany,
   createUser,
+  makeReq,
   readJson,
   signedOut,
 } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
-const creds = () => GET();
+// [P1.5 fold] the defineRoute shell needs a real Request (legacy GET() took no args — passing
+// one was already a no-op against legacy, so the freeze semantics is unchanged).
+const creds = () => GET(makeReq("/api/labeling/credentials", { method: "GET" }));
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -38,14 +42,14 @@ describe.skipIf(!dbUp)("GET /api/labeling/credentials", () => {
     signedOut();
     const { status, body } = await readJson(await creds());
     expect(status).toBe(403); // frozen at 403 both sides of the fold
-    expect(body.error).toBe("Admin only"); // [P1.5 fold] → {code:"FORBIDDEN",message:"Admin only"}
+    expect(body.error).toEqual({ code: "FORBIDDEN", message: "Admin only" }); // [P1.5 fold] flipped (legacy: bare string)
   });
 
   it("plain member → 403 'Admin only'", async () => {
     asUser(await createUser((await createCompany()).id)); // default role, not root
     const { status, body } = await readJson(await creds());
     expect(status).toBe(403);
-    expect(body.error).toBe("Admin only"); // [P1.5 fold] → {code:"FORBIDDEN",message:"Admin only"}
+    expect(body.error).toEqual({ code: "FORBIDDEN", message: "Admin only" }); // [P1.5 fold] flipped (legacy: bare string)
   });
 
   it("admin but env unset → 503 'Label Studio not configured'", async () => {
@@ -54,7 +58,18 @@ describe.skipIf(!dbUp)("GET /api/labeling/credentials", () => {
     vi.stubEnv("LABEL_STUDIO_ADMIN_PASSWORD", "");
     const { status, body } = await readJson(await creds());
     expect(status).toBe(503);
-    expect(body.error).toBe("Label Studio not configured"); // [P1.5 fold] → {code:"VALIDATION",message:"Label Studio not configured"}
+    expect(body.error).toEqual({ code: "VALIDATION", message: "Label Studio not configured" }); // [P1.5 fold] flipped (legacy: bare string; status stays 503 via ApiError statusOverride)
+  });
+
+  // [DETECTOR closer COV-4] pins the OR in `!email || !password` — a single missing var 503s
+  // (an || → && mutation in the service would pass the both-empty case above but fail here).
+  it("admin with email set but password unset → 503 (the single-missing arm of the OR)", async () => {
+    asUser(await createUser((await createCompany()).id, { role: "admin" }));
+    vi.stubEnv("LABEL_STUDIO_ADMIN_EMAIL", "ls-admin@test.invalid");
+    vi.stubEnv("LABEL_STUDIO_ADMIN_PASSWORD", "");
+    const { status, body } = await readJson(await creds());
+    expect(status).toBe(503);
+    expect(body.error).toEqual({ code: "VALIDATION", message: "Label Studio not configured" });
   });
 
   it("admin with env set → 200 {email,password} (success body byte-identical across the fold)", async () => {

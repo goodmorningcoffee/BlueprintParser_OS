@@ -1,24 +1,11 @@
-import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+// [refactor jul3 P1.5] Thin shell — behavior lives in services/labeling.ts (getLabelingCredentials).
+// auth:"none" is MANDATORY (not auth:"admin"): the legacy gate returns 403 "Admin only" for a
+// SIGNED-OUT caller — defineRoute's requireSession("admin") would 401 a null session before the
+// role check. The service resolves auth() itself to keep the ONE combined 403 gate byte-faithful.
+import { defineRoute } from "@/server/api/defineRoute";
+import { getLabelingCredentials } from "@/server/services/labeling";
 
-/**
- * GET /api/labeling/credentials
- *
- * Returns Label Studio login credentials for authenticated BP users.
- * Credentials come from server env vars — never hardcoded in frontend.
- */
-export async function GET() {
-  const session = await auth();
-  if (!session?.user || (session.user.role !== "admin" && !session.user.isRootAdmin)) {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
-
-  const email = process.env.LABEL_STUDIO_ADMIN_EMAIL;
-  const password = process.env.LABEL_STUDIO_ADMIN_PASSWORD;
-
-  if (!email || !password) {
-    return NextResponse.json({ error: "Label Studio not configured" }, { status: 503 });
-  }
-
-  return NextResponse.json({ email, password });
-}
+export const GET = defineRoute({
+  auth: "none",
+  handler: () => getLabelingCredentials(),
+});

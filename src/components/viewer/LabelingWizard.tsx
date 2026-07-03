@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { apiErrorMessage } from "@/lib/client-persist";
 import { useViewerStore } from "@/stores/viewerStore";
 
 interface LabelingWizardProps {
@@ -87,7 +88,9 @@ export default function LabelingWizard({ onClose, projectName, isDemo }: Labelin
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: "Unknown error" }));
-        throw new Error(data.error);
+        // [refactor jul3 P1.5] envelope-tolerant read — the labeling routes now return
+        // {error:{code,message}}; a raw `data.error` would render "[object Object]".
+        throw new Error(apiErrorMessage(data) || "Unknown error");
       }
 
       const data = await res.json();

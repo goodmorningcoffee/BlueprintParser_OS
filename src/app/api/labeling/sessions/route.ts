@@ -1,49 +1,12 @@
-import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { projects, labelingSessions } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+// [refactor jul3 P1.5] Thin shell — behavior lives in services/labeling.ts (listLabelingSessions).
+// auth:"session" = the legacy AUTH-FIRST shape (requireAuth 401 fired BEFORE the projectId-required
+// 400). NO declarative `query` schema: zodToApiError prepends the field path ("projectId: Required")
+// which would corrupt the verbatim "projectId required" message — the service validates imperatively.
+import { defineRoute } from "@/server/api/defineRoute";
+import { listLabelingSessions } from "@/server/services/labeling";
 
-export async function GET(req: Request) {
-  const { session, error } = await requireAuth();
-  if (error) return error;
-
-  const url = new URL(req.url);
-  const projectId = url.searchParams.get("projectId");
-  if (!projectId) {
-    return NextResponse.json({ error: "projectId required" }, { status: 400 });
-  }
-
-  const [project] = await db
-    .select()
-    .from(projects)
-    .where(
-      and(
-        eq(projects.publicId, projectId),
-        eq(projects.companyId, session.user.companyId)
-      )
-    )
-    .limit(1);
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const sessions = await db
-    .select()
-    .from(labelingSessions)
-    .where(eq(labelingSessions.projectId, project.id));
-
-  return NextResponse.json(
-    sessions.map((s) => ({
-      id: s.id,
-      labelStudioProjectId: s.labelStudioProjectId,
-      labelStudioUrl: s.labelStudioUrl,
-      taskType: s.taskType,
-      labels: s.labels,
-      pageRange: s.pageRange,
-      status: s.status,
-      createdAt: s.createdAt,
-    }))
-  );
-}
+export const GET = defineRoute({
+  auth: "session",
+  handler: ({ req, session }) =>
+    listLabelingSessions(new URL(req.url).searchParams.get("projectId"), session!),
+});

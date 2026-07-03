@@ -11,9 +11,10 @@
 //     Do NOT "upgrade" to Number() (would flip "5abc" from 404 to 500 — unsanctioned).
 //   • Label Studio deleteProject failure is SWALLOWED (logger only) — DB row is still deleted and
 //     the response is still 200 {success:true}. No affected-rows check (TOCTOU no-op).
-//   • NaN id: legacy has no catch → pg int-cast REJECTS. Flips to the shell's leak-free
-//     INTERNAL 500 at fold time (qto/annotations/takeoff-items precedent — NOT a clean 400).
-// Assertions tagged [P1.5 fold] flip envelopes in the fold commit (sanctioned diff A).
+//   • NaN id: legacy had no catch → pg int-cast THREW. Now the shell's leak-free INTERNAL 500
+//     (qto/annotations/takeoff-items precedent — NOT a clean 400).
+// Assertions tagged [P1.5 fold] were flipped in the fold commit (sanctioned diff A); the freeze
+// form is at commit 025c9b7.
 import { describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -103,7 +104,7 @@ describe.skipIf(!dbUp)("DELETE /api/labeling/sessions/[id]", () => {
     asUser(user);
     const { status, body } = await readJson(await del(999999));
     expect(status).toBe(404);
-    expect(body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped (legacy: bare "Not found")
   });
 
   it("signed-out → 401 (AUTH-FIRST)", async () => {
@@ -112,7 +113,7 @@ describe.skipIf(!dbUp)("DELETE /api/labeling/sessions/[id]", () => {
     signedOut();
     const { status, body } = await readJson(await del(session.id));
     expect(status).toBe(401);
-    expect(body.error).toBe("Unauthorized"); // [P1.5 fold] → {code:"UNAUTHORIZED",message:"Unauthorized"}
+    expect(body.error).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" }); // [P1.5 fold] flipped (legacy: bare string)
     expect(await rowById(session.id)).toHaveLength(1); // untouched
   });
 
@@ -123,7 +124,7 @@ describe.skipIf(!dbUp)("DELETE /api/labeling/sessions/[id]", () => {
 
     const { status, body } = await readJson(await del(session.id));
     expect(status).toBe(404);
-    expect(body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped (legacy: bare "Not found")
     expect(await rowById(session.id)).toHaveLength(1); // NOT deleted — no cross-company reach
   });
 
@@ -132,15 +133,36 @@ describe.skipIf(!dbUp)("DELETE /api/labeling/sessions/[id]", () => {
     asUser(user);
     const { status, body } = await readJson(await del("999999abc")); // parseInt → 999999 → no row
     expect(status).toBe(404);
-    expect(body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped (legacy: bare "Not found")
   });
 
-  // [P1.5 fold] WHOLE assertion flips: parseInt("abc") = NaN → legacy has no catch → the pg
-  // int-cast REJECTS (raw framework 500 in prod). Fold = the shell's deterministic leak-free
-  // INTERNAL 500 (frozen at 500 — NOT diff-D'd to a 400; qto-workflows/[id] precedent).
-  it("non-numeric id → legacy pg int-cast throw on NaN (frozen defensive form)", async () => {
+  // [P1.5 fold, DETECTOR closer E2] inherited P1.1 shell semantics: DELETE is in the shell's
+  // METHODS_WITH_BODY, so a NON-EMPTY malformed-JSON body 400s at parse (step 1) BEFORE auth
+  // (step 2) — legacy never read the body. Sanctioned via the annotation-groups diff-6 /
+  // projects diff-4 class; pinned here so the precedence is frozen. Empty body is unaffected.
+  it("DELETE with a malformed-JSON body → 400 BAD_REQUEST, fired BEFORE the 401 (shell E2)", async () => {
+    signedOut(); // proves the 400 precedes auth
+    const res = await DELETE(
+      new Request("http://test.local/api/labeling/sessions/1", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: "{not json",
+      }),
+      params({ id: "1" }),
+    );
+    const { status, body } = await readJson(res);
+    expect(status).toBe(400); // NOT 401
+    expect(body.error).toEqual({ code: "BAD_REQUEST", message: "Invalid JSON body" });
+  });
+
+  // [P1.5 fold] WHOLE assertion flipped: parseInt("abc") = NaN → pg int-cast throw (frozen at
+  // 025c9b7 as .rejects.toThrow(); raw framework 500 in prod). Now the shell's deterministic
+  // leak-free INTERNAL 500 (frozen at 500 — NOT diff-D'd to a 400; qto-workflows/[id] precedent).
+  it("non-numeric id → 500 leak-free INTERNAL on the NaN pg-cast (frozen at 500, not 400)", async () => {
     const { user } = await createWorld();
     asUser(user);
-    await expect(del("abc")).rejects.toThrow();
+    const { status, body } = await readJson(await del("abc"));
+    expect(status).toBe(500);
+    expect(body.error).toEqual({ code: "INTERNAL", message: "Internal server error" });
   });
 });

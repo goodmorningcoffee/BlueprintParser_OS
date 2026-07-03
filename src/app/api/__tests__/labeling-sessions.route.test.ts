@@ -9,10 +9,10 @@
 //   • 200 = BARE ARRAY (not {sessions:[...]}) mapped to EXACTLY 8 fields
 //     [id,labelStudioProjectId,labelStudioUrl,taskType,labels,pageRange,status,createdAt] —
 //     companyId/projectId/tilingEnabled/tileGrid/updatedAt are DROPPED. No orderBy.
-//   • non-uuid projectId: legacy has no catch → the pg uuid-cast THROWS (S003 class). Flips to a
-//     clean 400 "Invalid project id" at fold time (sanctioned diff C).
-// Assertions tagged [P1.5 fold] flip from the legacy {error:string} envelope to
-// {error:{code,message}} in the fold commit (sanctioned diff A).
+//   • non-uuid projectId: legacy had no catch → the pg uuid-cast THREW (S003 class). Now a clean
+//     400 "Invalid project id" (sanctioned diff C).
+// Assertions tagged [P1.5 fold] were flipped in the fold commit from the legacy {error:string}
+// envelope to {error:{code,message}} (sanctioned diff A); the freeze form is at commit 025c9b7.
 import { randomUUID } from "node:crypto";
 import { describe, expect, inject, it, vi } from "vitest";
 
@@ -77,8 +77,22 @@ const WIRE_FIELDS = [
 describe.skipIf(!dbUp)("GET /api/labeling/sessions", () => {
   it("happy: bare array of EXACTLY the 8 mapped fields (drops companyId/projectId/tiling*/updatedAt)", async () => {
     const { user, project, company } = await createWorld();
-    await seedSession(project.id, company.id);
-    await seedSession(project.id, company.id, { taskType: "tiled", tilingEnabled: true, tileGrid: 3 });
+    // [DETECTOR closer COV-2] two PER-FIELD-DISTINCT seeds so the field→column mapping is pinned
+    // by VALUE (a swapped/dropped mapping in the service .map() would pass a key-set-only check).
+    const s1 = await seedSession(project.id, company.id, {
+      labelStudioUrl: "http://ls.test/projects/91001",
+      labels: ["door", "window"],
+      pageRange: "1-3",
+      status: "active",
+    });
+    const s2 = await seedSession(project.id, company.id, {
+      labelStudioUrl: "http://ls.test/projects/91002",
+      taskType: "tiled",
+      tilingEnabled: true,
+      tileGrid: 3,
+      pageRange: "4-9",
+      status: "archived",
+    });
     asUser(user);
 
     const { status, body } = await readJson(await list(project.publicId));
@@ -89,6 +103,23 @@ describe.skipIf(!dbUp)("GET /api/labeling/sessions", () => {
       expect(Object.keys(row).sort()).toEqual(WIRE_FIELDS); // exact key set — nothing extra leaks
       expect(typeof row.createdAt).toBe("string"); // Date → ISO on the wire
     }
+    const byId = Object.fromEntries(body.map((r: { id: number }) => [r.id, r]));
+    expect(byId[s1.id]).toMatchObject({
+      labelStudioProjectId: s1.labelStudioProjectId,
+      labelStudioUrl: "http://ls.test/projects/91001",
+      taskType: "generic",
+      labels: ["door", "window"],
+      pageRange: "1-3",
+      status: "active",
+    });
+    expect(byId[s2.id]).toMatchObject({
+      labelStudioProjectId: s2.labelStudioProjectId,
+      labelStudioUrl: "http://ls.test/projects/91002",
+      taskType: "tiled",
+      labels: null,
+      pageRange: "4-9",
+      status: "archived",
+    });
   });
 
   it("happy: project with no sessions → 200 []", async () => {
@@ -104,14 +135,14 @@ describe.skipIf(!dbUp)("GET /api/labeling/sessions", () => {
     asUser(user);
     const { status, body } = await readJson(await list());
     expect(status).toBe(400);
-    expect(body.error).toBe("projectId required"); // [P1.5 fold] → {code:"VALIDATION",message:"projectId required"}
+    expect(body.error).toEqual({ code: "VALIDATION", message: "projectId required" }); // [P1.5 fold] flipped (legacy: bare string)
   });
 
   it("signed-out → 401 (AUTH-FIRST: fires even with no projectId at all)", async () => {
     signedOut();
     const { status, body } = await readJson(await list());
     expect(status).toBe(401);
-    expect(body.error).toBe("Unauthorized"); // [P1.5 fold] → {code:"UNAUTHORIZED",message:"Unauthorized"}
+    expect(body.error).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" }); // [P1.5 fold] flipped (legacy: bare string)
   });
 
   it("unknown (valid-uuid) projectId → 404 'Not found'", async () => {
@@ -119,7 +150,7 @@ describe.skipIf(!dbUp)("GET /api/labeling/sessions", () => {
     asUser(user);
     const { status, body } = await readJson(await list(randomUUID()));
     expect(status).toBe(404);
-    expect(body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped (legacy: bare "Not found")
   });
 
   it("cross-tenant member → 404, no existence leak", async () => {
@@ -127,7 +158,7 @@ describe.skipIf(!dbUp)("GET /api/labeling/sessions", () => {
     asUser(await createUser((await createCompany()).id));
     const { status, body } = await readJson(await list(project.publicId));
     expect(status).toBe(404);
-    expect(body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped (legacy: bare "Not found")
   });
 
   it("R1: ROOT ADMIN cross-company → 404 — the lookup has NO isRootAdmin bypass (frozen)", async () => {
@@ -135,15 +166,18 @@ describe.skipIf(!dbUp)("GET /api/labeling/sessions", () => {
     asUser(await createUser((await createCompany()).id, { isRootAdmin: true }));
     const { status, body } = await readJson(await list(project.publicId));
     expect(status).toBe(404);
-    expect(body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped (legacy: bare "Not found")
   });
 
-  // [P1.5 fold] WHOLE assertion flips: legacy has no catch → the pg uuid-cast on a non-uuid
-  // projectId REJECTS (raw framework 500 in prod, S003 class). Fold = clean 400 via zPublicId
-  // (sanctioned diff C: {code:"VALIDATION",message:"Invalid project id"}).
-  it("non-uuid projectId → legacy pg uuid-cast throw (frozen defensive form)", async () => {
+  // [P1.5 fold] WHOLE assertion flipped: legacy had no catch → the pg uuid-cast on a non-uuid
+  // projectId REJECTED (raw framework 500 in prod, S003 class — frozen at 025c9b7 as
+  // .rejects.toThrow()). Now sanctioned diff C: clean 400 via zPublicId, gated AFTER the
+  // projectId-required 400 so the missing-field message still wins.
+  it("non-uuid projectId → 400 'Invalid project id' (sanctioned diff C; legacy threw)", async () => {
     const { user } = await createWorld();
     asUser(user);
-    await expect(list("not-a-uuid")).rejects.toThrow();
+    const { status, body } = await readJson(await list("not-a-uuid"));
+    expect(status).toBe(400);
+    expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
   });
 });
