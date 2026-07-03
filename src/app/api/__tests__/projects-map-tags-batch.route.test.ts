@@ -111,7 +111,7 @@ describe.skipIf(!dbUp)("POST /api/projects/[id]/map-tags-batch", () => {
 
     const missing = await readJson(await mtb(project.publicId, { action: "scanClass" }));
     expect(missing.status).toBe(400);
-    expect(missing.body.error).toBe("yoloClass required for scanClass"); // [P1.5 fold] → {code:"VALIDATION",...}
+    expect(missing.body.error).toEqual({ code: "VALIDATION", message: "yoloClass required for scanClass" }); // [P1.5 fold] flipped
   });
 
   it("validation cascade, byte-exact messages + source order, fires BEFORE auth (signed-out, unknown project)", async () => {
@@ -138,11 +138,11 @@ describe.skipIf(!dbUp)("POST /api/projects/[id]/map-tags-batch", () => {
     for (const [body, msg] of cases) {
       const res = await readJson(await mtb(unknown, body));
       expect(res.status).toBe(400); // 400 wins over the would-be 404/401 — validate-before-auth
-      expect(res.body.error).toBe(msg); // [P1.5 fold] → {code:"VALIDATION",message:msg}
+      expect(res.body.error).toEqual({ code: "VALIDATION", message: msg }); // [P1.5 fold] flipped
     }
     // precedence inside the cascade: tags-required beats the itemType check
     const both = await readJson(await mtb(unknown, { itemType: "bogus" }));
-    expect(both.body.error).toBe("tags array required"); // [P1.5 fold] → {code:"VALIDATION",...}
+    expect(both.body.error).toEqual({ code: "VALIDATION", message: "tags array required" }); // [P1.5 fold] flipped
   });
 
   it("access matrix (valid body): demo signed-out 200; non-demo signed-out 401; cross-tenant 404; root 200; unknown 404-before-auth", async () => {
@@ -156,12 +156,12 @@ describe.skipIf(!dbUp)("POST /api/projects/[id]/map-tags-batch", () => {
     signedOut();
     const noAuth = await readJson(await mtb(world.project.publicId, BODY));
     expect(noAuth.status).toBe(401);
-    expect(noAuth.body.error).toBe("Unauthorized"); // [P1.5 fold] → {code:"UNAUTHORIZED",message:"Unauthorized"}
+    expect(noAuth.body.error).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" }); // [P1.5 fold] flipped
 
     asUser(await createUser((await createCompany()).id));
     const cross = await readJson(await mtb(world.project.publicId, BODY));
     expect(cross.status).toBe(404);
-    expect(cross.body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(cross.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped
 
     asUser(await createUser((await createCompany()).id, { isRootAdmin: true }));
     expect((await readJson(await mtb(world.project.publicId, BODY))).status).toBe(200); // root bypass
@@ -169,16 +169,17 @@ describe.skipIf(!dbUp)("POST /api/projects/[id]/map-tags-batch", () => {
     signedOut();
     const unknown = await readJson(await mtb(randomUUID(), BODY));
     expect(unknown.status).toBe(404); // 404 BEFORE auth (engine order)
-    expect(unknown.body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(unknown.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped
   });
 
-  // [P1.5 fold] WHOLE assertion flips: legacy's unguarded `await req.json()` throws on malformed
-  // JSON (raw framework 500). Fold = the shell's BAD_REQUEST 400 (sanctioned diff E).
-  it("malformed JSON body → legacy raw throw (frozen defensive form)", async () => {
+  // [P1.5 fold] WHOLE assertion flipped: legacy's unguarded `await req.json()` threw on malformed
+  // JSON (frozen at 0b133e2 as .rejects.toThrow(); raw framework 500 in prod). Now the shell's
+  // BAD_REQUEST 400 (sanctioned diff E).
+  it("malformed JSON body → 400 BAD_REQUEST 'Invalid JSON body' (diff E; legacy threw)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
-    await expect(
-      POST(
+    const { status, body } = await readJson(
+      await POST(
         new Request(`http://test.local/api/projects/${project.publicId}/map-tags-batch`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -186,14 +187,46 @@ describe.skipIf(!dbUp)("POST /api/projects/[id]/map-tags-batch", () => {
         }),
         params({ id: project.publicId }),
       ),
-    ).rejects.toThrow();
+    );
+    expect(status).toBe(400);
+    expect(body.error).toEqual({ code: "BAD_REQUEST", message: "Invalid JSON body" });
   });
 
-  // [P1.5 fold] WHOLE assertion flips: a VALID body + non-uuid id reaches the pg uuid cast inside
-  // resolveProjectAccess → REJECTS (raw 500, S003 class). Fold = clean 400 via zPublicId
-  // (sanctioned diff C), still AFTER the field cascade (validation-first is pinned above).
-  it("non-uuid id + valid body → legacy pg uuid-cast throw (frozen defensive form)", async () => {
+  // [DETECTOR closer COV-E] the REST of the diff-E body family — pins the subtle 500→400 vs
+  // 400→400 status boundary: EMPTY body + JSON `null` were legacy raw-500s (req.json() throw /
+  // destructure-of-null throw) → now the shell's VALIDATION 400; number/array bodies were legacy
+  // destructure-to-undefined "tags array required" 400s → now the shell's VALIDATION 400 (status
+  // preserved, message drifts — the S013 cosmetic class; sibling P1 char files all pin this).
+  it("empty / null / non-object bodies → 400 VALIDATION (diff-E family; empty+null were legacy 500s)", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const raw = (payload: string) =>
+      POST(
+        new Request(`http://test.local/api/projects/${project.publicId}/map-tags-batch`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: payload,
+        }),
+        params({ id: project.publicId }),
+      );
+    for (const payload of ["", "null", "5", "[1]"]) {
+      const { status, body } = await readJson(await raw(payload));
+      expect(status).toBe(400);
+      expect(body.error.code).toBe("VALIDATION"); // zLooseBody message, not pinned (zod wording)
+    }
+  });
+
+  // [P1.5 fold] WHOLE assertion flipped: a VALID body + non-uuid id reached the pg uuid cast
+  // inside resolveProjectAccess → REJECTED (frozen at 0b133e2). Now sanctioned diff C: clean 400
+  // via zPublicId, still AFTER the field cascade (validation-first pinned above — a field 400
+  // beats the non-uuid 400).
+  it("non-uuid id + valid body → 400 'Invalid project id' (diff C); field-400 still wins", async () => {
     signedOut();
-    await expect(mtb("not-a-uuid", { tags: ["a"] })).rejects.toThrow();
+    const c = await readJson(await mtb("not-a-uuid", { tags: ["a"] }));
+    expect(c.status).toBe(400);
+    expect(c.body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
+
+    const fieldWins = await readJson(await mtb("not-a-uuid", {}));
+    expect(fieldWins.body.error).toEqual({ code: "VALIDATION", message: "tags array required" });
   });
 });
