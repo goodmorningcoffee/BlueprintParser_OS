@@ -142,6 +142,65 @@ export async function listLabelingSessions(
   }));
 }
 
+// ── GET /api/demo/labeling/sessions ────────────────────────────────────────────────────────────
+//
+/** [refactor jul3 P1.5] PUBLIC demo twin of listLabelingSessions — DELIBERATELY ISOLATED (the
+ *  projects.ts getDemoProject/listDemoProjects doctrine): no session param, no companyId scope;
+ *  SOLE gate `and(publicId, isDemo=true)`. Do NOT parameterize the authed fn to serve both.
+ *  Frozen twin divergences (legacy design, do NOT harmonize): a MISS (unknown uuid OR non-demo
+ *  project) returns **[] at 200 — NOT 404** (the demo/projects/[id]/pages twin 404s instead);
+ *  the map is the 5-field PUBLIC SUBSET {id, labelStudioUrl, taskType, pageRange, taskCount}
+ *  with taskCount HARDCODED 0 ("Not stored in DB, cosmetic only" — legacy comment) and must
+ *  NEVER grow the authed 8-field shape (labelStudioProjectId/labels/status/createdAt stay
+ *  absent: data-minimization on an UNAUTHENTICATED endpoint, pinned NEGATIVELY by the char
+ *  test's strict key-set). Sanctioned diffs: A (envelope flip on the 400, message verbatim),
+ *  B (leak-drop: legacy had no catch → raw 500, now the shell's generic INTERNAL 500),
+ *  C (non-uuid projectId → clean 400 "Invalid project id", was a pg uuid-cast 500, gated AFTER
+ *  the required-400). Success bodies byte-identical. */
+export async function listDemoLabelingSessions(projectId: string | null): Promise<
+  Array<{
+    id: number;
+    labelStudioUrl: string | null;
+    taskType: string | null;
+    pageRange: string | null;
+    taskCount: number;
+  }>
+> {
+  if (!projectId) {
+    throw new ApiError("VALIDATION", "projectId required");
+  }
+  // [diff C] non-uuid → clean 400 (legacy: pg uuid-cast 500), AFTER the required-400.
+  const parsed = zPublicId.safeParse(projectId);
+  if (!parsed.success) {
+    throw new ApiError("VALIDATION", "Invalid project id");
+  }
+
+  // Only allow demo projects — a miss (unknown OR non-demo) is [] at 200, NOT 404 (frozen quirk).
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.publicId, parsed.data), eq(projects.isDemo, true)))
+    .limit(1);
+
+  if (!project) {
+    return [];
+  }
+
+  const sessions = await db
+    .select()
+    .from(labelingSessions)
+    .where(eq(labelingSessions.projectId, project.id));
+
+  // The 5-field PUBLIC subset — taskCount hardcoded 0 (not stored in DB, cosmetic only).
+  return sessions.map((s) => ({
+    id: s.id,
+    labelStudioUrl: s.labelStudioUrl,
+    taskType: s.taskType,
+    pageRange: s.pageRange,
+    taskCount: 0,
+  }));
+}
+
 /** DELETE /api/labeling/sessions/[id] — company-scoped via the DENORMALIZED companyId, no bypass. */
 export async function deleteLabelingSession(
   idParam: string,

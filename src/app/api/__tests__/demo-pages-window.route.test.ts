@@ -15,10 +15,10 @@
 //     a demo visitor sees project-scoped + ALL machine annotations but NEVER a user's hand-drawn
 //     (creatorId set + source "user"). Differs from the authed twin (own + machine).
 //   • NO Cache-Control header (the authed twin's private,max-age=300 is absent here — pinned).
-//   • non-uuid id: legacy had no catch → pg uuid-cast THREW (S003 class). Flips to a clean 400
-//     at fold time (sanctioned diff C).
-// Assertions tagged [P1.5 fold] flip from the legacy {error:string} envelope to
-// {error:{code,message}} in the fold commit (sanctioned diff A).
+//   • non-uuid id: legacy had no catch → pg uuid-cast THREW (S003 class). Now a clean 400
+//     "Invalid project id" AFTER the range gate (sanctioned diff C).
+// Assertions tagged [P1.5 fold] were flipped in the fold commit from the legacy {error:string}
+// envelope to {error:{code,message}} (sanctioned diff A); the freeze form is at commit 87199c4.
 import { randomUUID } from "node:crypto";
 import { describe, expect, inject, it, vi } from "vitest";
 
@@ -137,7 +137,7 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]/pages", () => {
     // unknown id + bad range → still the range 400 (proves precedence over the 404)
     const bad = await readJson(await win(randomUUID(), "?from=abc&to=5"));
     expect(bad.status).toBe(400);
-    expect(bad.body.error).toBe("Invalid range. Max 50 pages per request."); // [P1.5 fold] → {code:"VALIDATION",message:...}
+    expect(bad.body.error).toEqual({ code: "VALIDATION", message: "Invalid range. Max 50 pages per request." }); // [P1.5 fold] flipped (legacy: bare string)
 
     expect((await readJson(await win(randomUUID(), "?from=5&to=4"))).status).toBe(400);
     expect((await readJson(await win(randomUUID(), "?from=1&to=52"))).status).toBe(400); // span 51
@@ -149,13 +149,13 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]/pages", () => {
     asUser(user); // even the owning member can't read a non-demo project here
     const gated = await readJson(await win(project.publicId));
     expect(gated.status).toBe(404);
-    expect(gated.body.error).toBe("Not found"); // [P1.5 fold] → {code:"NOT_FOUND",message:"Not found"}
+    expect(gated.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped (legacy: bare "Not found")
 
     signedOut();
     expect((await readJson(await win(randomUUID()))).status).toBe(404);
   });
 
-  it("empty window → 200 with empty pages+annotations (no rows in range)", async () => {
+  it("empty window → 200; to-from===50 accept boundary; absent params → frozen defaults from=1/to=9", async () => {
     const { project } = await createWorld({ isDemo: true });
     await createPage(project.id, 1);
     signedOut();
@@ -163,13 +163,29 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]/pages", () => {
     expect(status).toBe(200);
     expect(body.pages).toEqual([]);
     expect(body.annotations).toEqual([]);
+
+    // [DETECTOR closer COV-4] the ACCEPT side of the span gate: to-from===50 (a 51-page window)
+    // is the LARGEST allowed — an off-by-one tightening (>50 → >=50, or harmonizing to the authed
+    // zPageRange 50-page-span cap) would fail here. Frozen verbatim from legacy.
+    expect((await readJson(await win(project.publicId, "?from=1&to=51"))).status).toBe(200);
+
+    // [DETECTOR closer COV-3] absent params exercise the frozen parseInt defaults ("1"/"9").
+    const defaults = await readJson(await win(project.publicId, ""));
+    expect(defaults.status).toBe(200);
+    expect(defaults.body.from).toBe(1);
+    expect(defaults.body.to).toBe(9);
   });
 
-  // [P1.5 fold] WHOLE assertion flips: legacy has no catch → the pg uuid-cast on a non-uuid id
-  // REJECTS (raw framework 500 in prod, S003 class). Fold = clean 400 via zPublicId, gated AFTER
-  // the range check (sanctioned diff C).
-  it("non-uuid id → legacy pg uuid-cast throw (frozen defensive form)", async () => {
+  // [P1.5 fold] WHOLE assertion flipped: legacy had no catch → the pg uuid-cast on a non-uuid id
+  // REJECTED (frozen at 87199c4 as .rejects.toThrow()). Now sanctioned diff C: clean 400 via
+  // zPublicId, gated AFTER the range check (so a bad range still wins — pinned below).
+  it("non-uuid id → 400 'Invalid project id' (diff C; range-400 still wins over it)", async () => {
     signedOut();
-    await expect(win("not-a-uuid")).rejects.toThrow();
+    const { status, body } = await readJson(await win("not-a-uuid"));
+    expect(status).toBe(400);
+    expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
+    // precedence: a bad RANGE on a non-uuid id still yields the RANGE message (range gate first)
+    const range = await readJson(await win("not-a-uuid", "?from=5&to=4"));
+    expect(range.body.error.message).toBe("Invalid range. Max 50 pages per request.");
   });
 });

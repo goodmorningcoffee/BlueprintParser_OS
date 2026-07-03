@@ -12,10 +12,10 @@
 //     taskCount} with taskCount HARDCODED 0 ("Not stored in DB, cosmetic only") — must NEVER
 //     grow the authed 8-field shape (labelStudioProjectId/labels/status/createdAt stay absent:
 //     data-minimization on an UNAUTHENTICATED endpoint).
-//   • non-uuid projectId: legacy had no catch → pg uuid-cast THREW (S003 class). Flips to a
-//     clean 400 at fold time (sanctioned diff C).
-// Assertions tagged [P1.5 fold] flip from the legacy {error:string} envelope to
-// {error:{code,message}} in the fold commit (sanctioned diff A).
+//   • non-uuid projectId: legacy had no catch → pg uuid-cast THREW (S003 class). Now a clean 400
+//     "Invalid project id" AFTER the required-400 (sanctioned diff C).
+// Assertions tagged [P1.5 fold] were flipped in the fold commit from the legacy {error:string}
+// envelope to {error:{code,message}} (sanctioned diff A); the freeze form is at commit 87199c4.
 import { randomUUID } from "node:crypto";
 import { describe, expect, inject, it, vi } from "vitest";
 
@@ -110,7 +110,7 @@ describe.skipIf(!dbUp)("GET /api/demo/labeling/sessions", () => {
     signedOut();
     const { status, body } = await readJson(await list());
     expect(status).toBe(400);
-    expect(body.error).toBe("projectId required"); // [P1.5 fold] → {code:"VALIDATION",message:"projectId required"}
+    expect(body.error).toEqual({ code: "VALIDATION", message: "projectId required" }); // [P1.5 fold] flipped (legacy: bare string)
   });
 
   it("unknown (valid) uuid → 200 [] — NOT 404 (THE frozen quirk)", async () => {
@@ -130,11 +130,13 @@ describe.skipIf(!dbUp)("GET /api/demo/labeling/sessions", () => {
     expect(body).toEqual([]);
   });
 
-  // [P1.5 fold] WHOLE assertion flips: legacy has no catch → the pg uuid-cast on a non-uuid
-  // projectId REJECTS (raw framework 500 in prod, S003 class). Fold = clean 400 via zPublicId,
-  // gated AFTER the projectId-required 400 (sanctioned diff C).
-  it("non-uuid projectId → legacy pg uuid-cast throw (frozen defensive form)", async () => {
+  // [P1.5 fold] WHOLE assertion flipped: legacy had no catch → the pg uuid-cast REJECTED (frozen
+  // at 87199c4 as .rejects.toThrow()). Now sanctioned diff C: clean 400 via zPublicId, gated
+  // AFTER the projectId-required 400 (the missing-field message still wins).
+  it("non-uuid projectId → 400 'Invalid project id' (sanctioned diff C; legacy threw)", async () => {
     signedOut();
-    await expect(list("not-a-uuid")).rejects.toThrow();
+    const { status, body } = await readJson(await list("not-a-uuid"));
+    expect(status).toBe(400);
+    expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
   });
 });

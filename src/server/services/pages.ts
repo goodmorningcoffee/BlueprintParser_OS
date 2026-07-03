@@ -51,8 +51,8 @@
 
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { pages, annotations } from "@/lib/db/schema";
-import { eq, and, gte, lte, or } from "drizzle-orm";
+import { pages, annotations, projects } from "@/lib/db/schema";
+import { eq, and, gte, lte, or, isNull } from "drizzle-orm";
 import { ApiError } from "@/server/api/envelope";
 import { resolveProjectOrThrow } from "@/server/api/access";
 import { zPublicId } from "@/server/api/schemas";
@@ -341,6 +341,155 @@ export async function getPageWindow(req: Request, idParam: string): Promise<Resp
   });
   response.headers.set("Cache-Control", "private, max-age=300, stale-while-revalidate=600");
   return response;
+}
+
+// ── GET /api/demo/projects/[id]/pages ──────────────────────────────────────────────────────────────
+//
+/** [refactor jul3 P1.5] PUBLIC demo twin of getPageWindow — DELIBERATELY ISOLATED (the projects.ts
+ *  getDemoProject/listDemoProjects doctrine): no session, no companyId, no root bypass; SOLE gate
+ *  `and(publicId, isDemo=true)` → 404 on miss (NOTE: the demo/labeling twin returns [] instead —
+ *  divergent by legacy design, do NOT harmonize). Do NOT collapse into getPageWindow: the twins
+ *  differ in visibility (here `isNull(creatorId) OR machine` — a visitor sees project-scoped + ALL
+ *  machine annotations, never a user's hand-drawn; authed = OWN + machine), caching (here NO
+ *  Cache-Control — a PLAIN object return is correct and the shell json-envelopes it; the authed twin
+ *  MUST return a raw NextResponse to carry its PERF-SACRED header), and query shape (here the legacy
+ *  5-col page select + TWO SEPARATE try/catch "migration-safety" re-queries for
+ *  textAnnotations/pageIntelligence, all SEQUENTIAL — the authed twin runs ONE 7-col select in a
+ *  Promise.all; preserved verbatim, do NOT merge or parallelize). Range validation text/ordering
+ *  IDENTICAL to the authed twin (400 BEFORE the lookup). Sanctioned diffs: A (envelope flip on the
+ *  two error paths, messages verbatim), B (leak-drop — legacy's only try/catch were the two
+ *  migration-safety swallows, KEPT; an unexpected throw was a raw leaky 500, now the shell's generic
+ *  INTERNAL 500), C (non-uuid id → clean 400 via zPublicId, was a pg-uuid-cast 500, gated AFTER the
+ *  range check). The 200 body is byte-identical. */
+export async function getPageWindowDemo(req: Request, idParam: string) {
+  const url = new URL(req.url);
+  const from = parseInt(url.searchParams.get("from") || "1", 10);
+  const to = parseInt(url.searchParams.get("to") || "9", 10);
+
+  // Range 400 BEFORE the project lookup (frozen precedence; message verbatim, envelope flips).
+  if (isNaN(from) || isNaN(to) || from < 1 || to < from || to - from > 50) {
+    throw new ApiError("VALIDATION", "Invalid range. Max 50 pages per request.");
+  }
+
+  // [diff C] non-uuid → clean 400 (legacy: pg uuid-cast 500), AFTER the range check.
+  const parsed = zPublicId.safeParse(idParam);
+  if (!parsed.success) {
+    throw new ApiError("VALIDATION", "Invalid project id");
+  }
+
+  // Public isDemo-only gate — non-demo and unknown are BOTH 404 (no existence leak).
+  const [project] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(and(eq(projects.publicId, parsed.data), eq(projects.isDemo, true)))
+    .limit(1);
+
+  if (!project) {
+    throw new ApiError("NOT_FOUND", "Not found");
+  }
+
+  // Legacy 5-col select (NOT the authed twin's 7-col) — the jsonb heavies come from the two
+  // migration-safety queries below. SEQUENTIAL by design; do not Promise.all.
+  const pageRows = await db
+    .select({
+      pageNumber: pages.pageNumber,
+      name: pages.name,
+      drawingNumber: pages.drawingNumber,
+      keynotes: pages.keynotes,
+      csiCodes: pages.csiCodes,
+    })
+    .from(pages)
+    .where(
+      and(
+        eq(pages.projectId, project.id),
+        gte(pages.pageNumber, from),
+        lte(pages.pageNumber, to),
+      ),
+    )
+    .orderBy(pages.pageNumber);
+
+  // TWO SEPARATE try/catch "migration safety" re-queries, swallowed to {} — preserved verbatim
+  // from legacy (they predate the columns existing everywhere; collapsing them into the main
+  // select would change failure behavior).
+  const textAnnotationsMap: Record<number, unknown> = {};
+  try {
+    const taRows = await db
+      .select({ pageNumber: pages.pageNumber, textAnnotations: pages.textAnnotations })
+      .from(pages)
+      .where(
+        and(
+          eq(pages.projectId, project.id),
+          gte(pages.pageNumber, from),
+          lte(pages.pageNumber, to),
+        ),
+      );
+    for (const r of taRows) {
+      if (r.textAnnotations) textAnnotationsMap[r.pageNumber] = r.textAnnotations;
+    }
+  } catch { /* migration safety */ }
+
+  const pageIntelligenceMap: Record<number, unknown> = {};
+  try {
+    const piRows = await db
+      .select({ pageNumber: pages.pageNumber, pageIntelligence: pages.pageIntelligence })
+      .from(pages)
+      .where(
+        and(
+          eq(pages.projectId, project.id),
+          gte(pages.pageNumber, from),
+          lte(pages.pageNumber, to),
+        ),
+      );
+    for (const r of piRows) {
+      if (r.pageIntelligence) pageIntelligenceMap[r.pageNumber] = r.pageIntelligence;
+    }
+  } catch { /* migration safety */ }
+
+  const rangeAnnotations = await db
+    .select()
+    .from(annotations)
+    .where(
+      and(
+        eq(annotations.projectId, project.id),
+        gte(annotations.pageNumber, from),
+        lte(annotations.pageNumber, to),
+        // Frozen DEMO visibility: project-scoped (null creator) OR the machine sources — YOLO
+        // annotations carry the running user's creator_id but are conceptually project-scoped, so
+        // a read-only demo visitor sees ALL of them (toolbar/tag-mapping discoverability). A
+        // user's HAND-DRAWN annotations (creatorId set, source "user") are NEVER shown here.
+        or(
+          isNull(annotations.creatorId),
+          eq(annotations.source, "yolo"),
+          eq(annotations.source, "shape-parse"),
+          eq(annotations.source, "symbol-search"),
+        ),
+      ),
+    );
+
+  // PLAIN object — the shell json-envelopes it at 200 with NO extra headers (legacy set no
+  // Cache-Control; pinned by the char test). Body byte-identical to legacy.
+  return {
+    from,
+    to,
+    pages: pageRows.map((p) => ({
+      pageNumber: p.pageNumber,
+      name: p.name,
+      drawingNumber: p.drawingNumber,
+      keynotes: p.keynotes,
+      csiCodes: p.csiCodes,
+      textAnnotations: textAnnotationsMap[p.pageNumber] || null,
+      pageIntelligence: pageIntelligenceMap[p.pageNumber] || null,
+    })),
+    annotations: rangeAnnotations.map((a) => ({
+      id: a.id,
+      pageNumber: a.pageNumber,
+      name: a.name,
+      bbox: [a.minX, a.minY, a.maxX, a.maxY],
+      note: a.note,
+      source: a.source as ClientAnnotation["source"],
+      data: a.data ?? null,
+    })),
+  };
 }
 
 // ── POST /api/pages/textract-rerun ───────────────────────────────────────────────────────────────
