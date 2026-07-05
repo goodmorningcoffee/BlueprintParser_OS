@@ -172,7 +172,9 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     for (const b of cases) {
       const { status, body: resBody } = await readJson(await call(b));
       expect(status).toBe(400); // 400 wins over the would-be 404/401 — validate-before-auth
-      expect(resBody).toEqual({ error: "Missing projectId, sourcePageNumber, or templateBbox" }); // [S024 fold: A] flips to {error:{code:"VALIDATION",message}}
+      expect(resBody).toEqual({
+        error: { code: "VALIDATION", message: "Missing projectId, sourcePageNumber, or templateBbox" },
+      }); // [S024 fold: A] flipped
     }
   });
 
@@ -186,13 +188,15 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     ]) {
       const { status, body: resBody } = await readJson(await call(body(999999999, { templateBbox: bad })));
       expect(status).toBe(400);
-      expect(resBody).toEqual({ error: "Invalid templateBbox" }); // [S024 fold: A] flips
+      expect(resBody).toEqual({ error: { code: "VALIDATION", message: "Invalid templateBbox" } }); // [S024 fold: A] flipped
     }
     // order pin: missing sourcePageNumber beats invalid bbox
     const order = await readJson(
       await call({ projectId: 999999999, templateBbox: { ...BBOX, x: 2 } }),
     );
-    expect(order.body).toEqual({ error: "Missing projectId, sourcePageNumber, or templateBbox" }); // [S024 fold: A] flips
+    expect(order.body).toEqual({
+      error: { code: "VALIDATION", message: "Missing projectId, sourcePageNumber, or templateBbox" },
+    }); // [S024 fold: A] flipped
   });
 
   // ── access matrix (valid body; happy stack mocked so 200-paths stream) ────────────────────
@@ -211,12 +215,12 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     signedOut();
     const noAuth = await readJson(await call(body(world.project.id)));
     expect(noAuth.status).toBe(401);
-    expect(noAuth.body).toEqual({ error: "Unauthorized" }); // [S024 fold: A] flips
+    expect(noAuth.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S024 fold: A] flipped
 
     asUser(await createUser((await createCompany()).id));
     const cross = await readJson(await call(body(world.project.id)));
     expect(cross.status).toBe(404);
-    expect(cross.body).toEqual({ error: "Not found" }); // [S024 fold: A] flips
+    expect(cross.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S024 fold: A] flipped
 
     asUser(await createUser((await createCompany()).id, { isRootAdmin: true }));
     const root = await call(body(world.project.id));
@@ -226,13 +230,13 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     signedOut();
     const unknown = await readJson(await call(body(999999999)));
     expect(unknown.status).toBe(404); // 404 BEFORE auth (engine order)
-    expect(unknown.body).toEqual({ error: "Not found" }); // [S024 fold: A] flips
+    expect(unknown.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S024 fold: A] flipped
 
     // negative id = query miss → 404, NOT a validation 400 (diff-D deliberately DECLINED at fold)
     signedOut();
     const negative = await readJson(await call(body(-5)));
     expect(negative.status).toBe(404);
-    expect(negative.body).toEqual({ error: "Not found" }); // [S024 fold: A] flips
+    expect(negative.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S024 fold: A] flipped
   });
 
   // ── pre-stream state errors (verbatim strings; the leak pinned at legacy) ─────────────────
@@ -271,12 +275,12 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     asUser(user);
     const none = await readJson(await call(body(project.id))); // no createPage at all
     expect(none.status).toBe(400);
-    expect(none.body).toEqual({ error: "No pages to search" }); // [S024 fold: A] flips
+    expect(none.body).toEqual({ error: { code: "VALIDATION", message: "No pages to search" } }); // [S024 fold: A] flipped
 
     await createPage(project.id, 1);
     const filtered = await readJson(await call(body(project.id, { searchPages: [99] })));
     expect(filtered.status).toBe(400); // searchPages ∩ existing = ∅ → same 400
-    expect(filtered.body).toEqual({ error: "No pages to search" }); // [S024 fold: A] flips
+    expect(filtered.body).toEqual({ error: { code: "VALIDATION", message: "No pages to search" } }); // [S024 fold: A] flipped
   });
 
   it("PDF fetch !ok → 500 'Failed to fetch PDF' (controlled message)", async () => {
@@ -286,7 +290,7 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     h.fetch.mockResolvedValue(new Response("", { status: 500 }));
     const { status, body: resBody } = await readJson(await call(body(project.id)));
     expect(status).toBe(500);
-    expect(resBody).toEqual({ error: "Failed to fetch PDF" }); // [S024 fold: A] flips (message PRESERVED — controlled string, not a leak-drop)
+    expect(resBody).toEqual({ error: { code: "INTERNAL", message: "Failed to fetch PDF" } }); // [S024 fold: A] flipped — message PRESERVED (controlled string, not a leak-drop; pins the envelope.ts:42 doc/code contradiction — the shell DOES surface INTERNAL ApiError messages)
   });
 
   it("local path, ALL page images fail → 500 'No page images available'", async () => {
@@ -301,7 +305,7 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     });
     const { status, body: resBody } = await readJson(await call(body(project.id)));
     expect(status).toBe(500);
-    expect(resBody).toEqual({ error: "No page images available" }); // [S024 fold: A] flips (message PRESERVED)
+    expect(resBody).toEqual({ error: { code: "INTERNAL", message: "No page images available" } }); // [S024 fold: A] flipped — message PRESERVED (same contradiction pin as "Failed to fetch PDF")
   });
 
   it("catch-all 500 LEAKS err.message (legacy route.ts:430 — pinned; fold drops the leak)", async () => {
@@ -311,7 +315,7 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     h.rasterizePage.mockRejectedValue(new Error("boom-raster-internals"));
     const { status, body: resBody } = await readJson(await call(body(project.id)));
     expect(status).toBe(500);
-    expect(resBody).toEqual({ error: "boom-raster-internals" }); // [S024 fold: B] flips to {error:{code:"INTERNAL",message:"Internal server error"}} — leak dropped
+    expect(resBody).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S024 fold: B] flipped — err.message leak DROPPED (real cause logged server-side with requestId)
   });
 
   // ── happy LOCAL transcript (full NDJSON; FQ-1/2/3/4/6/7c pins) ─────────────────────────────
@@ -386,6 +390,49 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     expect("boundText" in m).toBe(false); // swallow happened BEFORE the assignment loop
   });
 
+  // [DETECTOR closer] boundText NON-NULL propagation — the beforeEach mock returns null for
+  // every shape; this pins the real-string path through the assignment loop (FQ-5's third leg).
+  it("boundText propagates a real OCR string when bindOcrToShapes finds text", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1);
+    asUser(user);
+    h.templateMatch.mockResolvedValue({
+      totalMatches: 1,
+      results: [{ targetIndex: 0, bbox: [0.1, 0.1, 0.05, 0.05], confidence: 0.9, method: "template", scale: 1.0 }],
+    });
+    h.bindOcrToShapes.mockImplementation((shapes: unknown[]) => shapes.map(() => ({ boundText: "D-101" })));
+    const res = await call(body(project.id));
+    const lines = await drain(res);
+    const done = lines[lines.length - 1] as Record<string, unknown>;
+    expect((done.matches as Record<string, unknown>[])[0].boundText).toBe("D-101");
+  });
+
+  // [DETECTOR closer] searchPages POSITIVE subset — the only prior searchPages case was the
+  // zero-intersection 400. Pins that the filter actually narrows which pages get downloaded
+  // (page keys) and the transcript's totalPages, not just the degenerate empty case.
+  it("searchPages positive subset: only the requested existing pages are fetched; totalPages reflects the subset", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1);
+    await createPage(project.id, 2);
+    await createPage(project.id, 3);
+    asUser(user);
+    h.templateMatch.mockImplementation(async (_opts: unknown, cbs?: { onProgress?: (p: unknown) => void }) => {
+      cbs?.onProgress?.({ type: "progress", targetIndex: 0, targetPath: "t", matches: 0 });
+      return { totalMatches: 0, results: [] };
+    });
+    const res = await call(body(project.id, { searchPages: [2, 3, 99] })); // 99 silently dropped (filtered vs EXISTING)
+    expect(res.status).toBe(200);
+    const lines = await drain(res);
+    const progress = lines[0] as Record<string, unknown>;
+    expect(progress.totalPages).toBe(2); // pages 2+3 only
+    expect(progress.page).toBe(2); // pageMap[0] = first surviving page
+    const fetchedKeys = h.downloadFromS3.mock.calls.map((c: unknown[]) => c[0]).sort();
+    expect(fetchedKeys).toEqual([
+      `${project.dataUrl}/pages/page_0002.png`,
+      `${project.dataUrl}/pages/page_0003.png`,
+    ]); // page_0001 NOT fetched; no page_0099
+  });
+
   it("local in-stream engine error → HTTP 200 + {type:'error',message:<err.message>} (ZERO diff at fold)", async () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1);
@@ -439,6 +486,61 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     expect("scale" in m).toBe(false); // FQ-4
   });
 
+  // [DETECTOR closer] the Lambda branch's OWN OCR-bind try/catch (a deliberate duplicate of the
+  // local block) was only frozen via the local path — pins FQ-5 key-absent on the Lambda side.
+  it("lambda OCR-bind soft-fail: boundText key ABSENT, done still emitted (FQ-5, lambda branch)", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1);
+    asUser(user);
+    h.isLambdaCvEnabled.mockReturnValue(true);
+    h.fanOutTemplateMatch.mockResolvedValue({
+      results: [{ targetIndex: 0, bbox: [0.2, 0.2, 0.05, 0.05], confidence: 0.8, method: "template", scale: 1.0, pageS3Key: `${project.dataUrl}/pages/page_0001.png` }],
+      failedPages: [],
+      warnings: [],
+    });
+    h.bindOcrToShapes.mockImplementation(() => {
+      throw new Error("ocr exploded");
+    });
+    const res = await call(body(project.id));
+    expect(res.status).toBe(200);
+    const lines = await drain(res);
+    const done = lines[lines.length - 1] as Record<string, unknown>;
+    expect(done.type).toBe("done");
+    expect("boundText" in (done.matches as Record<string, unknown>[])[0]).toBe(false);
+  });
+
+  // [DETECTOR closer] multi-batch progress math was only frozen in the degenerate 1-batch shape.
+  // Pins: cumulative matches, monotonic pagesDone (batchesDone COUNT × size, Math.min clamp),
+  // ceil(totalBatches), and the OUT-OF-ORDER "Batch X/N" labels (expected, per the route note).
+  it("lambda multi-batch: cumulative matches + monotonic pagesDone survive out-of-order batch completion (FQ-7b/8)", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1);
+    await createPage(project.id, 2);
+    await createPage(project.id, 3);
+    asUser(user);
+    h.isLambdaCvEnabled.mockReturnValue(true);
+    h.fanOutTemplateMatch.mockImplementation(
+      async (opts: { onBatchComplete?: (idx: number, count: number) => void }) => {
+        opts.onBatchComplete?.(2, 2); // batch 3 settles FIRST (out of order)
+        opts.onBatchComplete?.(0, 1); // then batch 1
+        return { results: [], failedPages: [], warnings: [] };
+      },
+    );
+    const res = await call(body(project.id));
+    const lines = await drain(res);
+    // dispatch, batch progress ×2, done — TEMPLATE_MATCH_BATCH_SIZE mocked at its real default 1 → totalBatches = 3
+    expect(lines).toHaveLength(4);
+    expect(lines[1]).toEqual({
+      type: "progress", page: 0, pageIndex: 1, totalPages: 3, matches: 2,
+      message: "Batch 3/3 complete", // label jumps — batchIdx+1, NOT completion order
+    });
+    expect(lines[2]).toEqual({
+      type: "progress", page: 0, pageIndex: 2, totalPages: 3, matches: 3, // cumulative 2+1; pagesDone monotonic
+      message: "Batch 1/3 complete",
+    });
+    expect((lines[3] as Record<string, unknown>).type).toBe("done");
+  });
+
   it("lambda done WITHOUT failedPages key when empty (FQ-6 non-empty-only spread)", async () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1);
@@ -486,8 +588,13 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
 
   // ── body-parse family (diff E at fold) + non-castable dbId (diff B at fold) ───────────────
 
-  it("malformed / empty / null bodies REJECT raw (legacy unguarded req.json + destructure, route.ts:27-28)", async () => {
-    signedOut(); // rejection happens at the body parse, before auth could matter
+  // [S024 fold: E] WHOLE assertion set flipped: legacy's unguarded `await req.json()` +
+  // destructure (old route.ts:27-28, outside any try) rejected raw on malformed/empty/null
+  // (frozen at 0b91a74 as .rejects.toThrow(); raw framework 500 in prod). Now the shell's
+  // enveloped 400s: malformed → BAD_REQUEST "Invalid JSON body"; empty/null → zLooseBody
+  // VALIDATION (zod wording, code pinned only).
+  it("malformed / empty / null bodies → enveloped 400s (diff E; legacy rejected raw)", async () => {
+    signedOut(); // fires at the shell body parse, before auth could matter
     const raw = (payload: string) =>
       POST(
         new Request("http://test.local/api/symbol-search", {
@@ -496,14 +603,17 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
           body: payload,
         }),
       );
-    // [S024 fold: E] all three flip to enveloped 400s (BAD_REQUEST "Invalid JSON body" for
-    // malformed; VALIDATION for empty/null via zLooseBody) — legacy rejects raw (prod 500).
-    await expect(raw("{not json")).rejects.toThrow();
-    await expect(raw("")).rejects.toThrow();
-    await expect(raw("null")).rejects.toThrow();
+    const malformed = await readJson(await raw("{not json"));
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.error).toEqual({ code: "BAD_REQUEST", message: "Invalid JSON body" });
+    for (const payload of ["", "null"]) {
+      const { status, body: resBody } = await readJson(await raw(payload));
+      expect(status).toBe(400);
+      expect(resBody.error.code).toBe("VALIDATION"); // zLooseBody message not pinned (zod wording)
+    }
   });
 
-  it("number / array bodies destructure to undefined fields → legacy 'Missing…' 400 (status survives the fold, message drifts)", async () => {
+  it("number / array bodies → VALIDATION 400 (diff E; legacy 'Missing…' 400 — status preserved, message drifts)", async () => {
     signedOut();
     const raw = (payload: string) =>
       POST(
@@ -515,17 +625,20 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
       );
     for (const payload of ["5", "[1]"]) {
       const { status, body: resBody } = await readJson(await raw(payload));
-      expect(status).toBe(400);
-      expect(resBody).toEqual({ error: "Missing projectId, sourcePageNumber, or templateBbox" }); // [S024 fold: E] → VALIDATION 400, zod wording (cosmetic drift, status preserved)
+      expect(status).toBe(400); // [S024 fold: E] flipped — was legacy's field-cascade 400; the S013 cosmetic class
+      expect(resBody.error.code).toBe("VALIDATION");
     }
   });
 
-  it("non-castable string projectId REJECTS raw (pg integer cast at route.ts:64, outside the try)", async () => {
+  // [S024 fold: B] WHOLE assertion flipped: a non-castable string projectId reached the pg
+  // integer cast (old route.ts:64, outside the try) → raw rejection (frozen at 0b91a74 as
+  // .rejects.toThrow()). Now the shell catches the uncaught pg throw → generic INTERNAL 500,
+  // never leaking the pg message.
+  it("non-castable string projectId → 500 generic INTERNAL (diff B; legacy rejected raw)", async () => {
     signedOut();
-    // [S024 fold: B] flips to the shell's generic INTERNAL 500 (the uncaught pg throw is
-    // caught by defineRoute; never leaks). If this proves flaky against pg, drop it and rely
-    // on the unknown-int 404 for access coverage (design fallback).
-    await expect(call(body("abc"))).rejects.toThrow();
+    const { status, body: resBody } = await readJson(await call(body("abc")));
+    expect(status).toBe(500);
+    expect(resBody).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
   });
 
   // ── validate-before-auth composite pin ─────────────────────────────────────────────────────
@@ -536,6 +649,8 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
       await call({ projectId: 999999999, sourcePageNumber: 1 }), // no templateBbox
     );
     expect(status).toBe(400); // NOT the engine's 404
-    expect(resBody).toEqual({ error: "Missing projectId, sourcePageNumber, or templateBbox" }); // [S024 fold: A] flips
+    expect(resBody).toEqual({
+      error: { code: "VALIDATION", message: "Missing projectId, sourcePageNumber, or templateBbox" },
+    }); // [S024 fold: A] flipped
   });
 });

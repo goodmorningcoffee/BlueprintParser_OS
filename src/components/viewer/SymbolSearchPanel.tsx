@@ -156,8 +156,13 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
       });
 
       if (!resp.ok || !resp.body) {
-        const errorText = resp.ok ? "No response body" : await resp.text().catch(() => `HTTP ${resp.status}`);
-        throw new Error(errorText);
+        // [refactor jul4 S024] parse the error envelope instead of throwing the raw body string
+        // into the error box; apiErrorMessage reads both the new {error:{code,message}} and the
+        // legacy {error:string} shapes (also un-uglifies middleware rate-limit bodies).
+        const errBody = resp.ok ? undefined : await resp.json().catch(() => undefined);
+        throw new Error(
+          (errBody && apiErrorMessage(errBody)) || (resp.ok ? "No response body" : `HTTP ${resp.status}`),
+        );
       }
 
       const reader = resp.body.getReader();
