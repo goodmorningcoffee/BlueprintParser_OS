@@ -19,7 +19,7 @@ import { computeCsiSpatialMap } from "@/lib/csi-spatial";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
 import { reduceRegionVotes } from "@/lib/ensemble/region-ensemble";
 import { collectAllVotes } from "@/lib/ensemble/vote-adapters";
-import { carryNonComputedIntelligence } from "@/lib/intelligence-merge";
+import { carryNonComputedIntelligence, mergeProjectIntelligence } from "@/lib/intelligence-merge";
 import type { ClassifiedTable } from "@/types";
 
 /** YOLO classes aggregated by Layer 2 heatmap. Matches the "Notes agreement"
@@ -666,10 +666,11 @@ export async function POST(req: Request) {
               pageIntelligence: p.pageIntelligence ?? null, csiCodes: p.csiCodes,
             })));
 
-            // Preserve user config (classCsiOverrides) when regenerating
+            // [bugfix jul5 H6/DR002] preserve ALL user/unknown PI keys (classCsiOverrides,
+            // yoloTags, future keys) — the old classCsiOverrides-only merge silently wiped
+            // yoloTags company-wide. See mergeProjectIntelligence.
             const [currentProject] = await db.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, project.id));
-            const existingUserConfig = (currentProject?.pi as any)?.classCsiOverrides;
-            const mergedIntel = existingUserConfig ? { ...intelligence, classCsiOverrides: existingUserConfig } : intelligence;
+            const mergedIntel = mergeProjectIntelligence(currentProject?.pi, intelligence as Record<string, unknown>);
 
             await db.update(projects).set({ projectIntelligence: mergedIntel, projectSummary: summary }).where(eq(projects.id, project.id));
             send({ type: "project-analysis", project: project.name });

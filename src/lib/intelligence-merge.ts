@@ -43,3 +43,46 @@ export function carryNonComputedIntelligence(existing: unknown): Record<string, 
     Object.entries(existing as Record<string, unknown>).filter(([key]) => !computed.has(key)),
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [bugfix jul5 H6/DR002] PROJECT-level analogue of the page-level G3 policy.
+//
+// projects.projectIntelligence is ALSO mixed-ownership jsonb: analyzeProject()
+// recomputes {disciplines, refGraph, csiGraph, pageCount}, but user-owned keys
+// live alongside them — classCsiOverrides AND yoloTags (curated in the viewer,
+// persisted via the projects PUT merge). Both project-analysis write sites
+// (admin/reprocess?scope=intelligence and the upload-pipeline re-run) used a
+// hand-rolled "preserve ONLY classCsiOverrides" merge, silently destroying
+// yoloTags (and any future user key) company-wide on an unfiltered reprocess —
+// the exact project-level twin of bug G3. Same doctrine as above: computed keys
+// refresh, user/unknown keys ALWAYS survive; "reprocess" must never be the
+// thing that eats them.
+//
+// Note on empties: analyzeProject emits this-run-empty computed keys as
+// `undefined`, which the spread carries and the jsonb write then DROPS — so a
+// stale computed key still disappears when it genuinely computes to nothing,
+// byte-identical to the old behavior for the computed set.
+
+/** Keys the project-level analysis recomputes every run (informational). */
+export const PROJECT_REPROCESS_COMPUTED_KEYS = [
+  "disciplines",
+  "refGraph",
+  "csiGraph",
+  "pageCount",
+] as const;
+
+/**
+ * Merge freshly-computed project intelligence over the existing jsonb:
+ * computed keys refresh, everything else (classCsiOverrides, yoloTags,
+ * unknown future keys) survives untouched.
+ */
+export function mergeProjectIntelligence(
+  existing: unknown,
+  computed: Record<string, unknown>,
+): Record<string, unknown> {
+  const base =
+    !existing || typeof existing !== "object" || Array.isArray(existing)
+      ? {}
+      : { ...(existing as Record<string, unknown>) };
+  return { ...base, ...computed };
+}

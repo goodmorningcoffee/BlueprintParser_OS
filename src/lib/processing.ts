@@ -1,5 +1,7 @@
 import { db } from "@/lib/db";
 import { projects, pages, companies, annotations } from "@/lib/db/schema";
+// [bugfix jul5 H6/DR002] project-level user-key preservation on analysis re-runs
+import { mergeProjectIntelligence } from "@/lib/intelligence-merge";
 import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import {
@@ -539,12 +541,11 @@ export async function processProject(projectId: number): Promise<{
         }))
       );
 
-      // Preserve user-set fields (classCsiOverrides) when regenerating intelligence
+      // [bugfix jul5 H6/DR002] preserve ALL user/unknown PI keys (classCsiOverrides,
+      // yoloTags, future keys) — the old classCsiOverrides-only merge silently wiped
+      // yoloTags on upload re-runs. See mergeProjectIntelligence.
       const [currentProject] = await db.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, project.id));
-      const existingUserConfig = (currentProject?.pi as any)?.classCsiOverrides;
-      const mergedIntelligence = existingUserConfig
-        ? { ...intelligence, classCsiOverrides: existingUserConfig }
-        : intelligence;
+      const mergedIntelligence = mergeProjectIntelligence(currentProject?.pi, intelligence as Record<string, unknown>);
 
       await db
         .update(projects)

@@ -54,3 +54,48 @@ describe("carryNonComputedIntelligence", () => {
     });
   });
 });
+
+// [bugfix jul5 H6/DR002] project-level policy — regression for the yoloTags wipe
+import { mergeProjectIntelligence } from "@/lib/intelligence-merge";
+
+describe("mergeProjectIntelligence (H6 regression)", () => {
+  it("user keys (yoloTags, classCsiOverrides) and UNKNOWN keys survive; computed keys refresh", () => {
+    const existing = {
+      disciplines: [{ discipline: "A", count: 1 }], // stale computed — must refresh
+      yoloTags: { door: ["08 11 00"] }, // user-curated — THE H6 wipe victim
+      classCsiOverrides: { window: "08 50 00" }, // user config — old code's only survivor
+      someFutureKey: { keep: true }, // unknown — doctrine: never eaten
+    };
+    const computed = {
+      disciplines: [{ discipline: "M", count: 3 }],
+      refGraph: { edges: [1] },
+      csiGraph: { nodes: [] },
+      pageCount: 7,
+    };
+    const merged = mergeProjectIntelligence(existing, computed);
+    expect(merged.yoloTags).toEqual({ door: ["08 11 00"] });
+    expect(merged.classCsiOverrides).toEqual({ window: "08 50 00" });
+    expect(merged.someFutureKey).toEqual({ keep: true });
+    expect(merged.disciplines).toEqual([{ discipline: "M", count: 3 }]);
+    expect(merged.pageCount).toBe(7);
+  });
+
+  it("this-run-empty computed keys (undefined) still DROP after the jsonb write, matching legacy", () => {
+    const merged = mergeProjectIntelligence(
+      { disciplines: [{ discipline: "A", count: 1 }], yoloTags: { x: 1 } },
+      { disciplines: undefined, refGraph: undefined, csiGraph: undefined, pageCount: 0 },
+    );
+    // jsonb serialization drops undefined — simulate the round-trip
+    const written = JSON.parse(JSON.stringify(merged));
+    expect("disciplines" in written).toBe(false); // stale computed key gone (legacy-identical)
+    expect(written.yoloTags).toEqual({ x: 1 }); // user key survives
+    expect(written.pageCount).toBe(0);
+  });
+
+  it("null/garbage existing → just the computed object", () => {
+    for (const existing of [null, undefined, "junk", [1, 2]]) {
+      const merged = mergeProjectIntelligence(existing, { pageCount: 2 });
+      expect(merged).toEqual({ pageCount: 2 });
+    }
+  });
+});
