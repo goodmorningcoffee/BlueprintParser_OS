@@ -1,80 +1,17 @@
-import { NextResponse } from "next/server";
-import { resolveProjectAccess, apiError } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { pages } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
-import { detectRowsAndColumns, type GridDetectOptions } from "@/lib/ocr-grid-detect";
-import type { TextractPageData } from "@/types";
-import { logger } from "@/lib/logger";
-
 /**
  * POST /api/table-parse/propose
  *
- * Returns proposed row/column boundaries from OCR word clustering.
- * Used by guided parse flow — user can edit boundaries before parsing.
+ * [refactor jul5 S026] Thin shell — behavior lives in services/table-parse-propose.ts
+ * (tableParsePropose). auth:"none": validate-before-auth. Distinct from its 4 region-parse
+ * siblings: SHORT bbox message + NO allowDemo (demo+anon → 401) — both frozen (char PQ-2/3).
  */
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-    const { projectId, pageNumber, regionBbox, layoutHint, gridOptions } = body as {
-      projectId: number;
-      pageNumber: number;
-      regionBbox: [number, number, number, number];
-      layoutHint?: { columns?: number; tagColumnPosition?: "left" | "right" };
-      gridOptions?: GridDetectOptions;
-    };
 
-    if (!projectId || !pageNumber || !regionBbox || regionBbox.length !== 4) {
-      return apiError("Missing projectId, pageNumber, or regionBbox", 400);
-    }
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { tableParsePropose } from "@/server/services/table-parse-propose";
 
-    // Bbox validation
-    const [bx0, by0, bx1, by1] = regionBbox;
-    if (![bx0, by0, bx1, by1].every((v) => typeof v === "number" && isFinite(v) && v >= 0 && v <= 1) || bx0 >= bx1 || by0 >= by1) {
-      return apiError("Invalid regionBbox", 400);
-    }
-
-    const access = await resolveProjectAccess({ dbId: projectId });
-    if (access.error) return access.error;
-    const { project } = access;
-
-    // Fetch page OCR data
-    const [pageRow] = await db
-      .select({ textractData: pages.textractData })
-      .from(pages)
-      .where(
-        and(
-          eq(pages.projectId, project.id),
-          eq(pages.pageNumber, pageNumber),
-        ),
-      )
-      .limit(1);
-
-    if (!pageRow?.textractData) {
-      return apiError("Page has no OCR data", 404);
-    }
-
-    const textractData = pageRow.textractData as TextractPageData;
-
-    const proposal = detectRowsAndColumns(
-      textractData.words,
-      regionBbox,
-      layoutHint,
-      gridOptions,
-    );
-
-    return NextResponse.json({
-      proposedRows: proposal.rowBoundaries,
-      proposedCols: proposal.colBoundaries,
-      rowCenters: proposal.rows.map((r) => r.yCenter),
-      colCenters: proposal.cols.map((c) => c.center),
-      rowCount: proposal.rows.length,
-      colCount: proposal.cols.length,
-      wordCount: proposal.wordCount,
-      confidence: proposal.confidence,
-    });
-  } catch (err) {
-    logger.error("[table-parse/propose] Failed:", err);
-    return apiError(err instanceof Error ? err.message : "Grid proposal failed", 500);
-  }
-}
+export const POST = defineRoute({
+  auth: "none",
+  body: zLooseBody,
+  handler: ({ body }) => tableParsePropose(body),
+});

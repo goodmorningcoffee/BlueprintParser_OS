@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { unionBboxes } from "@/lib/specnote-parser";
-import { promoteParsedRegion, canPersist, regionIdFor } from "@/lib/client-persist";
+// [refactor jul5 S026] apiErrorMessage: spec-parse now serves {error:{code,message}}
+import { promoteParsedRegion, canPersist, regionIdFor, apiErrorMessage } from "@/lib/client-persist";
 import type { CsiCode, PageIntelligence, ParsedRegion, SpecData } from "@/types";
 
 type SpecSubMode = "auto" | "paragraph" | "manual";
@@ -118,7 +119,7 @@ export default function SpecParser() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Parse failed" }));
-        throw new Error(err.error || `HTTP ${res.status}`);
+        throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
       }
       const payload = (await res.json()) as PreviewSpec & { note?: string };
       if (!payload.sections?.length) {

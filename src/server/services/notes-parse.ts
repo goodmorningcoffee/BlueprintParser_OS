@@ -1,0 +1,77 @@
+// [refactor jul5 S026] /api/notes-parse + /api/notes-parse/propose route contracts, folded
+// from the legacy fat routes (git show bd9d51c^:src/app/api/notes-parse/route.ts and
+// …/propose/route.ts). ENGINE BYTE-UNTOUCHED: parseNotesFromRegion (@/lib/text-region-
+// classifier) + detectCsiFromGrid (@/lib/csi-detect). Char file: __tests__/parse-region.
+// route.test.ts. Frozen (PQ refs = char-file header):
+//   • Bbox arrives MinMax from the client, engine takes LTWH — converted here (PQ-4).
+//   • autoSplitColumns ?? true default (PQ-4).
+//   • csiTags MAPPED to {code, description} — drops trade etc. (PQ-5; spec-parse does NOT
+//     map — frozen asymmetry, do not harmonize).
+//   • CSI detect wrapped in a non-fatal inner try/catch (kept; only the outer leaky
+//     catch-all retired — diff B).
+//   • No-grid shapes: auto → {headers:[],rows:[],csiTags:[],note:"No numbered items detected
+//     in region"}; propose → {proposedRows:[],proposedCols:[]} (PQ-6). Full-grid auto emits
+//     rowBoundaries/colBoundaries only when the engine provided them (undefined keys dropped
+//     by the JSON layer — PQ-7); propose coalesces ?? [].
+
+import { parseNotesFromRegion } from "@/lib/text-region-classifier";
+import { detectCsiFromGrid } from "@/lib/csi-detect";
+import type { BboxLTWH } from "@/types";
+import { logger } from "@/lib/logger";
+import { resolveRegionPage, LONG_BBOX_MESSAGE } from "./region-parse-shared";
+
+const OPTS = { bboxMessage: LONG_BBOX_MESSAGE, allowDemo: true };
+
+export async function notesParse(rawBody: Record<string, unknown>) {
+  const { textractData, regionBbox } = await resolveRegionPage(rawBody, OPTS);
+  const { autoSplitColumns } = rawBody as { autoSplitColumns?: boolean };
+  const [x0, y0, x1, y1] = regionBbox;
+  const ltwhBbox: BboxLTWH = [x0, y0, x1 - x0, y1 - y0];
+
+  const grid = parseNotesFromRegion(textractData, ltwhBbox, {
+    autoSplitColumns: autoSplitColumns ?? true,
+  });
+  if (!grid) {
+    return {
+      headers: [],
+      rows: [],
+      csiTags: [],
+      note: "No numbered items detected in region",
+    };
+  }
+
+  let csiTags: { code: string; description: string }[] = [];
+  try {
+    const detected = detectCsiFromGrid(grid.headers, grid.rows);
+    csiTags = detected.map((c) => ({ code: c.code, description: c.description }));
+  } catch (err) {
+    logger.warn("[notes-parse] CSI detect failed (non-fatal):", err);
+  }
+
+  return {
+    headers: grid.headers,
+    rows: grid.rows,
+    rowBoundaries: grid.rowBoundaries,
+    colBoundaries: grid.colBoundaries,
+    csiTags,
+  };
+}
+
+export async function notesParsePropose(rawBody: Record<string, unknown>) {
+  const { textractData, regionBbox } = await resolveRegionPage(rawBody, OPTS);
+  const { autoSplitColumns } = rawBody as { autoSplitColumns?: boolean };
+  const [x0, y0, x1, y1] = regionBbox;
+  const ltwhBbox: BboxLTWH = [x0, y0, x1 - x0, y1 - y0];
+
+  const grid = parseNotesFromRegion(textractData, ltwhBbox, {
+    autoSplitColumns: autoSplitColumns ?? true,
+  });
+  if (!grid) {
+    return { proposedRows: [], proposedCols: [] };
+  }
+
+  return {
+    proposedRows: grid.rowBoundaries ?? [],
+    proposedCols: grid.colBoundaries ?? [],
+  };
+}

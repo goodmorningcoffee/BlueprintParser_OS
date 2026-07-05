@@ -153,7 +153,10 @@ describe.skipIf(!dbUp)("region-parse routes — shared validation cascade (PQ-1/
       ]) {
         const { status, body } = await readJson(await call(ROUTES[key], b));
         expect(status, `${key}`).toBe(400);
-        expect(body, `${key}`).toEqual({ error: "Missing projectId, pageNumber, or regionBbox" }); // [S026 fold: A]
+        // [S026 fold: A applied — was flat]
+        expect(body, `${key}`).toEqual({
+          error: { code: "VALIDATION", message: "Missing projectId, pageNumber, or regionBbox" },
+        });
       }
     }
   });
@@ -168,15 +171,20 @@ describe.skipIf(!dbUp)("region-parse routes — shared validation cascade (PQ-1/
       for (const key of LONG_BBOX_ROUTES) {
         const { status, body } = await readJson(await call(ROUTES[key], bodyFor(1, { regionBbox: bbox })));
         expect(status, `${key}`).toBe(400);
+        // [S026 fold: A applied]
         expect(body, `${key}`).toEqual({
-          error: "Invalid regionBbox: values must be finite numbers in [0,1] with min < max",
-        }); // [S026 fold: A]
+          error: {
+            code: "VALIDATION",
+            message: "Invalid regionBbox: values must be finite numbers in [0,1] with min < max",
+          },
+        });
       }
       const { status, body } = await readJson(
         await call(ROUTES.tablePropose, bodyFor(1, { regionBbox: bbox })),
       );
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Invalid regionBbox" }); // SHORT form — frozen drift [S026 fold: A]
+      // SHORT form — frozen drift [S026 fold: A applied]
+      expect(body).toEqual({ error: { code: "VALIDATION", message: "Invalid regionBbox" } });
     }
   });
 
@@ -192,7 +200,7 @@ describe.skipIf(!dbUp)("region-parse routes — access matrix (PQ-3)", () => {
     for (const key of Object.keys(ROUTES)) {
       const { status, body } = await readJson(await call(ROUTES[key], bodyFor(project.id)));
       expect(status, key).toBe(401);
-      expect(body, key).toEqual({ error: "Unauthorized" }); // [S026 fold: A]
+      expect(body, key).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S026 fold: A applied]
     }
   });
 
@@ -200,11 +208,11 @@ describe.skipIf(!dbUp)("region-parse routes — access matrix (PQ-3)", () => {
     for (const pid of [999999999, -5]) {
       const { status, body } = await readJson(await call(ROUTES.notes, bodyFor(pid)));
       expect(status).toBe(404);
-      expect(body).toEqual({ error: "Not found" }); // [S026 fold: A]
+      expect(body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S026 fold: A applied]
     }
     const r = await readJson(await call(ROUTES.tablePropose, bodyFor(-5)));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S026 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S026 fold: A applied]
   });
 
   it("cross-tenant authed → flat 404 'Not found'", async () => {
@@ -214,7 +222,7 @@ describe.skipIf(!dbUp)("region-parse routes — access matrix (PQ-3)", () => {
     for (const key of ["notes", "tablePropose"]) {
       const { status, body } = await readJson(await call(ROUTES[key], bodyFor(project.id)));
       expect(status, key).toBe(404);
-      expect(body, key).toEqual({ error: "Not found" }); // [S026 fold: A]
+      expect(body, key).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S026 fold: A applied]
     }
   });
 
@@ -225,8 +233,8 @@ describe.skipIf(!dbUp)("region-parse routes — access matrix (PQ-3)", () => {
       expect(status, `${key} allowDemo public read`).toBe(200);
     }
     const { status, body } = await readJson(await call(ROUTES.tablePropose, bodyFor(project.id)));
-    expect(status).toBe(401); // NO allowDemo — do NOT add it at fold
-    expect(body).toEqual({ error: "Unauthorized" }); // [S026 fold: A]
+    expect(status).toBe(401); // NO allowDemo — pinned, do NOT add
+    expect(body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S026 fold: A applied]
   });
 
   it("page without textractData → flat 404 'Page has no OCR data'", async () => {
@@ -236,29 +244,34 @@ describe.skipIf(!dbUp)("region-parse routes — access matrix (PQ-3)", () => {
     for (const key of ["notes", "specPropose", "tablePropose"]) {
       const { status, body } = await readJson(await call(ROUTES[key], bodyFor(project.id)));
       expect(status, key).toBe(404);
-      expect(body, key).toEqual({ error: "Page has no OCR data" }); // [S026 fold: A]
+      expect(body, key).toEqual({ error: { code: "NOT_FOUND", message: "Page has no OCR data" } }); // [S026 fold: A applied]
     }
   });
 });
 
-describe.skipIf(!dbUp)("legacy error plumbing — leaky catch-all (flips to B/E at fold)", () => {
-  it("malformed / empty / 'null' bodies land in the catch-all → flat LEAKY 500", async () => {
-    // [S026 fold: E — shell body-parse takes over: malformed → 400 BAD_REQUEST "Invalid JSON
-    // body"; empty/'null' → 400 VALIDATION. Legacy: req.json()/destructure throw INSIDE try.]
-    for (const raw of ["{oops", undefined, "null"]) {
-      const req = new Request("http://test.local/api/notes-parse", {
+describe.skipIf(!dbUp)("shell error plumbing — sanctioned B/E (was legacy leaky catch-all)", () => {
+  it("malformed → 400 BAD_REQUEST; empty/'null' → 400 VALIDATION", async () => {
+    // [S026 fold: E applied — legacy req.json()/destructure threw INSIDE the try → the
+    // catch-all LEAKED err.message at a flat 500. Shell body-parse now owns these.]
+    const mk = (raw: string | undefined) =>
+      new Request("http://test.local/api/notes-parse", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: raw,
       });
-      const { status, body } = await readJson(await notesPOST(req));
-      expect(status).toBe(500);
-      expect(typeof body.error).toBe("string"); // leaked err.message (flat)
+    let r = await readJson(await notesPOST(mk("{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    for (const raw of [undefined, "null"]) {
+      r = await readJson(await notesPOST(mk(raw)));
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION");
     }
   });
 
-  it("number/array bodies destructure to undefined → 'Missing…' 400", async () => {
-    // [S026 fold: E — zLooseBody rejects at 400 VALIDATION; status preserved, message drifts]
+  it("number/array bodies → 400 VALIDATION via zLooseBody", async () => {
+    // [S026 fold: E applied — legacy destructured to undefined → flat "Missing…" 400.
+    // Status preserved (400→400), message drifts to zod wording → code-only assert.]
     for (const raw of ["5", "[1]"]) {
       const req = new Request("http://test.local/api/spec-parse", {
         method: "POST",
@@ -267,19 +280,20 @@ describe.skipIf(!dbUp)("legacy error plumbing — leaky catch-all (flips to B/E 
       });
       const { status, body } = await readJson(await specPOST(req));
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Missing projectId, pageNumber, or regionBbox" });
+      expect(body.error.code).toBe("VALIDATION");
     }
   });
 
-  it("non-castable string projectId → pg cast throw → flat LEAKY 500", async () => {
-    // [S026 fold: B — shell generic INTERNAL 500 'Internal server error', leak dropped]
+  it("non-castable string projectId → pg cast throw → generic INTERNAL 500", async () => {
+    // [S026 fold: B applied — legacy leaked the pg error message at a flat 500. An int
+    // guard stays DECLINED (negative dbId must keep 404ing — pinned above).]
     const { status, body } = await readJson(await call(ROUTES.notes, bodyFor("not-a-number")));
     expect(status).toBe(500);
-    expect(typeof body.error).toBe("string");
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
   });
 
-  it("engine throw → catch-all LEAKS err.message at flat 500 (per-route fallback unused)", async () => {
-    // [S026 fold: B — generic INTERNAL 500; the leaked message disappears]
+  it("engine throw → generic INTERNAL 500, leak dropped", async () => {
+    // [S026 fold: B applied — legacy: {error:"engine exploded spectacularly"} flat 500.]
     const { user, project } = await world();
     asUser(user);
     h.parseNotesFromRegion.mockImplementation(() => {
@@ -287,7 +301,7 @@ describe.skipIf(!dbUp)("legacy error plumbing — leaky catch-all (flips to B/E 
     });
     const { status, body } = await readJson(await call(ROUTES.notes, bodyFor(project.id)));
     expect(status).toBe(500);
-    expect(body).toEqual({ error: "engine exploded spectacularly" });
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
   });
 });
 
@@ -392,6 +406,32 @@ describe.skipIf(!dbUp)("spec-parse — engine contract + response shapes (PQ-4/5
       csiTags: [],
       note: "No spec section headers detected in region",
     });
+  });
+
+  it("CSI throw → non-fatal csiTags [] (DETECTOR F1 — pins spec-parse's inner catch)", async () => {
+    const { user, project } = await world();
+    asUser(user);
+    h.detectCsiCodes.mockImplementation(() => {
+      throw new Error("csi died");
+    });
+    const r = await readJson(await call(ROUTES.spec, bodyFor(project.id)));
+    expect(r.status).toBe(200);
+    expect(r.body.csiTags).toEqual([]);
+    expect(r.body.sections).toEqual(SPEC_RESULT.sections); // parse itself unaffected
+  });
+
+  it("two-section bodyText: '\\n' inside a section, '\\n\\n' BETWEEN sections (DETECTOR F2, PQ-5)", async () => {
+    const { user, project } = await world();
+    asUser(user);
+    h.bindSpecSectionsInRegion.mockReturnValue({
+      sections: [
+        { sectionHeader: "H1", body: "b1" },
+        { sectionHeader: "H2", body: "b2" },
+      ],
+      rowBoundaries: [0.2, 0.4],
+    });
+    await call(ROUTES.spec, bodyFor(project.id));
+    expect(h.detectCsiCodes).toHaveBeenCalledWith("H1\nb1\n\nH2\nb2");
   });
 
   it("propose: {proposedRows: rowBoundaries ?? []}; null → []; no CSI step", async () => {

@@ -5,7 +5,8 @@ import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import { unionBboxes } from "@/lib/specnote-parser";
-import { promoteParsedRegion, canPersist, regionIdFor } from "@/lib/client-persist";
+// [refactor jul5 S026] apiErrorMessage: notes-parse now serves {error:{code,message}}
+import { promoteParsedRegion, canPersist, regionIdFor, apiErrorMessage } from "@/lib/client-persist";
 import type { BboxLTWH, NotesData, PageIntelligence, ParsedRegion } from "@/types";
 
 type NotesSubMode = "auto" | "guided" | "paragraph" | "fast-manual" | "manual";
@@ -175,7 +176,7 @@ export default function NotesParser() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Parse failed" }));
-        throw new Error(err.error || `HTTP ${res.status}`);
+        throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
       }
       const payload = (await res.json()) as PreviewGrid & { note?: string };
       if (!payload.headers?.length || !payload.rows?.length) {
