@@ -258,8 +258,8 @@ describe.skipIf(!dbUp)("single-page mode (SQ-4/5/6)", () => {
     h.downloadFromS3.mockRejectedValue(new Error("s3 dead"));
     r = await readJson(await call({ projectId: project.id, pageNumber: 2 }));
     expect(r.status).toBe(500);
-    // CONTROLLED message KEPT — ApiError("INTERNAL",msg) SURFACES via defineRoute.ts:254
-    // (the known envelope.ts:42 contradiction, S024 pin class; P1-review item)
+    // [S028 fold: A applied — CONTROLLED message KEPT] ApiError("INTERNAL",msg) SURFACES via
+    // defineRoute.ts:254 (the known envelope.ts:42 contradiction, S024 pin class; P1-review item)
     expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Failed to load page image" } });
   });
 
