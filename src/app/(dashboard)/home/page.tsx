@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 import Header from "@/components/dashboard/Header";
 import ProjectGrid from "@/components/dashboard/ProjectGrid";
 import UploadWidget from "@/components/dashboard/UploadWidget";
+// [refactor jul5 S025] ai-chat fold flipped route-level errors to {error:{code,message}};
+// apiErrorMessage reads both that and the still-flat 503 no-LLM error.
+import { apiErrorMessage } from "@/lib/client-persist";
 
 interface ProjectData {
   id: string;
@@ -145,8 +148,8 @@ export default function HomePage() {
         body: JSON.stringify({ message: msg, scope: "global" }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Failed" }));
-        setChatMessages((prev) => [...prev, { role: "assistant", content: `Error: ${err.error}` }]);
+        const err = await res.json().catch(() => undefined);
+        setChatMessages((prev) => [...prev, { role: "assistant", content: `Error: ${apiErrorMessage(err) || "Failed"}` }]);
         setChatLoading(false);
         return;
       }

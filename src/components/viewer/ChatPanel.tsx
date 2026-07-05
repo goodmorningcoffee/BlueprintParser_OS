@@ -2,6 +2,9 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useViewerStore, useChat, useProject, useNavigation } from "@/stores/viewerStore";
+// [refactor jul5 S025] ai-chat fold flipped route-level errors to {error:{code,message}};
+// apiErrorMessage reads both that and the still-flat delegated errors (503 no-LLM, demo 403).
+import { apiErrorMessage } from "@/lib/client-persist";
 
 const DISCIPLINE_PROMPTS: Record<string, string[]> = {
   A: ["What rooms are shown?", "Door/window schedules?", "What finishes are specified?", "Any accessibility notes?"],
@@ -90,10 +93,10 @@ export default function ChatPanel() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => undefined);
         addChatMessage({
           role: "assistant",
-          content: `Error: ${err.error || "Chat failed"}`,
+          content: `Error: ${apiErrorMessage(err) || "Chat failed"}`,
         });
         return;
       }

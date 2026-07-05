@@ -1,95 +1,38 @@
-import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { resolveProjectAccess, apiError } from "@/lib/api-utils";
-import { assertDemoFeatureEnabled } from "@/lib/demo-features";
-import { db } from "@/lib/db";
-import { chatMessages } from "@/lib/db/schema";
-import { eq, and, isNull } from "drizzle-orm";
-import { checkChatQuota, checkDemoChatQuota } from "@/lib/quotas";
-import { handleGlobalChat } from "@/lib/services/chat/global";
-import { handleScopedChat } from "@/lib/services/chat/scoped";
-
-export async function POST(req: Request) {
-  const session = await auth();
-  const { projectId, pageNumber, message, scope } = await req.json();
-
-  if (!message) {
-    return apiError("message required", 400);
-  }
-
-  // ─── Global RAG scope — search across all user's projects ───
-  if (scope === "global" && session?.user) {
-    const quota = await checkChatQuota(session.user.companyId);
-    if (!quota.allowed) {
-      return apiError(quota.message || "Rate limit exceeded", 429);
-    }
-    return handleGlobalChat({ user: session.user }, message);
-  }
-
-  // ─── Page/Project scope ─────────────────────────────────────
-  if (!projectId) {
-    return apiError("projectId required", 400);
-  }
-
-  const access = await resolveProjectAccess({ publicId: projectId }, { allowDemo: true });
-  if (access.error) return access.error;
-  const { project } = access;
-  const isDemo = access.scope === "demo";
-
-  if (isDemo) {
-    const gate = await assertDemoFeatureEnabled(project.companyId, "chat");
-    if (gate) return gate;
-  }
-
-  // Quota check
-  if (isDemo) {
-    const quota = await checkDemoChatQuota();
-    if (!quota.allowed) {
-      return apiError(quota.message || "Rate limit exceeded", 429);
-    }
-  } else {
-    const quota = await checkChatQuota(access.session!.user.companyId);
-    if (!quota.allowed) {
-      return apiError(quota.message || "Rate limit exceeded", 429);
-    }
-  }
-
-  return handleScopedChat({
-    project,
-    message,
-    scope,
-    pageNumber,
-    session: access.session,
-    isDemo,
-  });
-}
-
 /**
- * DELETE /api/ai/chat — Clear chat messages for a project
+ * POST /api/ai/chat (SSE stream) + DELETE /api/ai/chat
+ *
+ * [refactor jul5 S025] Thin shell — ALL behavior lives in services/ai-chat.ts
+ * (chatPost / chatDelete). The SECOND stream-kind route through the shell (S024
+ * symbol-search play).
+ *
+ * auth:"none" is MANDATORY on both methods: the legacy cascade validates BEFORE auth
+ * (message-400 / projectId-400 fire signed-out), the global branch needs the RAW
+ * session (scope:"global" + anon deliberately falls THROUGH to the scoped path, FC-4),
+ * and isDemo is a SCOPE property (FC-3) — none of which declarative project-auth can
+ * express. The service resolves access itself.
+ *
+ * kind:"stream" on POST: the engines' SSE Response (and the demo-gate's flat 403
+ * NextResponse) ride the `result instanceof Response` passthrough (defineRoute.ts:248,
+ * fires before the kind check); the kind only arms the INTERNAL safety net. DELETE is
+ * a plain json route: {success:true} wrapped by the shell = byte-identical to legacy.
+ *
+ * body:zLooseBody — the shell owns POST body-parse (sanctioned diff E); the service
+ * runs the legacy field cascade itself. Path must stay /api/ai/chat: middleware.ts:152
+ * rate-limits POST /api/ai/chat (30/user/hr) and feature-map.ts:41 keys on it.
  */
-export async function DELETE(req: Request) {
-  const url = new URL(req.url);
-  const projectId = url.searchParams.get("projectId");
-  const scope = url.searchParams.get("scope") || "all";
-  const pageNum = url.searchParams.get("pageNumber");
 
-  if (!projectId) {
-    return apiError("projectId required", 400);
-  }
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { chatPost, chatDelete } from "@/server/services/ai-chat";
 
-  const access = await resolveProjectAccess({ publicId: projectId });
-  if (access.error) return access.error;
-  const { project } = access;
+export const POST = defineRoute({
+  auth: "none",
+  kind: "stream",
+  body: zLooseBody,
+  handler: ({ body }) => chatPost(body),
+});
 
-  let conditions = [eq(chatMessages.projectId, project.id)];
-
-  if (scope === "page" && pageNum) {
-    conditions.push(eq(chatMessages.pageNumber, parseInt(pageNum)));
-  } else if (scope === "project") {
-    conditions.push(isNull(chatMessages.pageNumber));
-  }
-
-  await db.delete(chatMessages).where(and(...conditions));
-
-  return NextResponse.json({ success: true });
-}
+export const DELETE = defineRoute({
+  auth: "none",
+  handler: ({ req }) => chatDelete(req),
+});

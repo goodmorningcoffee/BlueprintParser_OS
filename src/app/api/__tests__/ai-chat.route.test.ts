@@ -48,7 +48,9 @@
 //     → raw rejection (framework 500 in prod). Non-uuid projectId → pg uuid-cast rejection
 //     (no route catch) → raw rejection; flips to the shell's generic INTERNAL 500 (diff B) —
 //     zPublicId pre-validation is DECLINED (would flip 500→400, unsanctioned).
-// Assertions tagged [S025 fold] flip in the fold commit (sanctioned diffs A/B/E only).
+// Assertions tagged [S025 fold] were written at freeze against legacy and FLIPPED in the
+// fold commit (sanctioned diffs A/B/E/E2 only — the flat FC-7 pins and ALL in-stream bytes
+// did NOT flip). Legacy remains recoverable: git show ba7cfee:src/app/api/ai/chat/route.ts
 import { describe, expect, inject, it, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -159,12 +161,14 @@ describe.skipIf(!dbUp)("POST /api/ai/chat — validation cascade (FC-1/FC-2/FC-4
     for (const body of [{}, { message: "" }, { message: 0 }, { scope: "global" }]) {
       const { status, body: resBody } = await readJson(await callPost(body));
       expect(status).toBe(400);
-      expect(resBody).toEqual({ error: "message required" }); // [S025 fold: A → {error:{code:"VALIDATION",message:"message required"}}]
+      // [S025 fold: A applied — was flat {error:"message required"}]
+      expect(resBody).toEqual({ error: { code: "VALIDATION", message: "message required" } });
     }
   });
 
-  it("primitive/array bodies destructure to undefined → 400 'message required'", async () => {
-    // [S025 fold: E — zLooseBody rejects these at 400 VALIDATION; status preserved, message drifts to zod wording]
+  it("primitive/array bodies → 400 VALIDATION via zLooseBody", async () => {
+    // [S025 fold: E applied — legacy destructured these to undefined → flat "message required"
+    // 400. Status preserved (400→400), message drifts to zod wording → code-only assert.]
     for (const raw of ["5", "[1]", '"abc"', "true"]) {
       const req = new Request(`http://test.local${PATH}`, {
         method: "POST",
@@ -173,33 +177,40 @@ describe.skipIf(!dbUp)("POST /api/ai/chat — validation cascade (FC-1/FC-2/FC-4
       });
       const { status, body: resBody } = await readJson(await POST(req));
       expect(status).toBe(400);
-      expect(resBody).toEqual({ error: "message required" });
+      expect(resBody.error.code).toBe("VALIDATION");
     }
   });
 
-  it("malformed / empty / 'null' bodies: legacy unguarded req.json() → raw rejection", async () => {
-    // [S025 fold: E — malformed → 400 BAD_REQUEST "Invalid JSON body"; empty/'null' → 400 VALIDATION]
+  it("malformed / empty / 'null' bodies → clean 400s from the shell body-parse", async () => {
+    // [S025 fold: E applied — legacy unguarded req.json()/destructure REJECTED raw (framework
+    // 500 in prod) for all three. Now: malformed → BAD_REQUEST; empty/'null' → VALIDATION.]
     const mk = (raw: string | undefined) =>
       new Request(`http://test.local${PATH}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: raw,
       });
-    await expect(POST(mk("{oops"))).rejects.toThrow();
-    await expect(POST(mk(undefined))).rejects.toThrow();
-    await expect(POST(mk("null"))).rejects.toThrow(); // destructure of null → TypeError
+    let r = await readJson(await POST(mk("{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    r = await readJson(await POST(mk(undefined)));
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe("VALIDATION");
+    r = await readJson(await POST(mk("null")));
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe("VALIDATION");
   });
 
   it("400 'projectId required' when message present but no projectId", async () => {
     const { status, body } = await readJson(await callPost({ message: "hi", scope: "page" }));
     expect(status).toBe(400);
-    expect(body).toEqual({ error: "projectId required" }); // [S025 fold: A]
+    expect(body).toEqual({ error: { code: "VALIDATION", message: "projectId required" } }); // [S025 fold: A applied]
   });
 
   it("FC-4: scope global while SIGNED OUT falls through to 'projectId required'", async () => {
     const { status, body } = await readJson(await callPost({ message: "hi", scope: "global" }));
     expect(status).toBe(400);
-    expect(body).toEqual({ error: "projectId required" }); // [S025 fold: A]
+    expect(body).toEqual({ error: { code: "VALIDATION", message: "projectId required" } }); // [S025 fold: A applied]
   });
 });
 
@@ -233,11 +244,11 @@ describe.skipIf(!dbUp)("POST — global branch (FC-6/FC-11)", () => {
     h.checkChatQuota.mockResolvedValue({ allowed: false, message: "Daily chat limit reached" });
     let r = await readJson(await callPost({ message: "hi", scope: "global" }));
     expect(r.status).toBe(429);
-    expect(r.body).toEqual({ error: "Daily chat limit reached" }); // [S025 fold: A]
+    expect(r.body).toEqual({ error: { code: "RATE_LIMITED", message: "Daily chat limit reached" } }); // [S025 fold: A applied]
     h.checkChatQuota.mockResolvedValue({ allowed: false });
     r = await readJson(await callPost({ message: "hi", scope: "global" }));
     expect(r.status).toBe(429);
-    expect(r.body).toEqual({ error: "Rate limit exceeded" }); // [S025 fold: A]
+    expect(r.body).toEqual({ error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } }); // [S025 fold: A applied]
   });
 
   it("global no-LLM: flat 503 from global.ts Response.json — FC-7, does NOT flip at fold", async () => {
@@ -266,15 +277,15 @@ describe.skipIf(!dbUp)("POST — scoped access matrix ({publicId}, allowDemo:tru
     const { project } = await createWorld();
     const { status, body } = await readJson(await callPost({ projectId: project.publicId, message: "hi" }));
     expect(status).toBe(401);
-    expect(body).toEqual({ error: "Unauthorized" }); // [S025 fold: A]
+    expect(body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S025 fold: A applied]
   });
 
-  it("unknown valid uuid → flat 404 'Not found' (miss BEFORE auth, even signed-out)", async () => {
+  it("unknown valid uuid → 404 'Not found' (miss BEFORE auth, even signed-out)", async () => {
     const { status, body } = await readJson(
       await callPost({ projectId: "00000000-0000-4000-8000-000000000000", message: "hi" }),
     );
     expect(status).toBe(404);
-    expect(body).toEqual({ error: "Not found" }); // [S025 fold: A]
+    expect(body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S025 fold: A applied]
   });
 
   it("cross-tenant authed on non-demo → flat 404 'Not found'", async () => {
@@ -284,7 +295,7 @@ describe.skipIf(!dbUp)("POST — scoped access matrix ({publicId}, allowDemo:tru
     asUser(intruder);
     const { status, body } = await readJson(await callPost({ projectId: project.publicId, message: "hi" }));
     expect(status).toBe(404);
-    expect(body).toEqual({ error: "Not found" }); // [S025 fold: A]
+    expect(body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S025 fold: A applied]
   });
 
   it("owner project scope: 200 stream; user + assistant rows persisted, pageNumber null (FC-11)", async () => {
@@ -321,10 +332,12 @@ describe.skipIf(!dbUp)("POST — scoped access matrix ({publicId}, allowDemo:tru
     ]);
   });
 
-  it("non-uuid projectId → pg uuid-cast rejection (no route catch): raw rejection", async () => {
-    // [S025 fold: B → generic INTERNAL 500 "Internal server error". zPublicId pre-validation
-    // DECLINED — would flip this 500 to a 400, unsanctioned (symbol-search dbId precedent).]
-    await expect(callPost({ projectId: "not-a-uuid", message: "hi" })).rejects.toThrow();
+  it("non-uuid projectId → pg uuid-cast throw → shell generic INTERNAL 500", async () => {
+    // [S025 fold: B applied — legacy rejected raw. zPublicId pre-validation DECLINED — it
+    // would flip this 500 to a 400, unsanctioned (symbol-search dbId precedent). PINNED.]
+    const { status, body } = await readJson(await callPost({ projectId: "not-a-uuid", message: "hi" }));
+    expect(status).toBe(500);
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
   });
 });
 
@@ -375,7 +388,7 @@ describe.skipIf(!dbUp)("POST — demo semantics (FC-3/FC-6/FC-7)", () => {
     h.checkDemoChatQuota.mockResolvedValue({ allowed: false, message: "Demo chat limit reached for today." });
     const { status, body } = await readJson(await callPost({ projectId: project.publicId, message: "hi" }));
     expect(status).toBe(429);
-    expect(body).toEqual({ error: "Demo chat limit reached for today." }); // [S025 fold: A]
+    expect(body).toEqual({ error: { code: "RATE_LIMITED", message: "Demo chat limit reached for today." } }); // [S025 fold: A applied]
   });
 
   it("scoped no-LLM: flat 503 via scoped.ts apiError — FC-7, does NOT flip at fold", async () => {
@@ -518,18 +531,18 @@ describe.skipIf(!dbUp)("DELETE /api/ai/chat (FC-10)", () => {
   it("400 'projectId required' without projectId", async () => {
     const { status, body } = await readJson(await callDelete("scope=all"));
     expect(status).toBe(400);
-    expect(body).toEqual({ error: "projectId required" }); // [S025 fold: A]
+    expect(body).toEqual({ error: { code: "VALIDATION", message: "projectId required" } }); // [S025 fold: A applied]
   });
 
   it("demo project ANON → 401 (NO allowDemo on DELETE) and unknown uuid → 404", async () => {
     const { project } = await createWorld({ isDemo: true });
     let r = await readJson(await callDelete(`projectId=${project.publicId}`));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S025 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S025 fold: A applied]
     signedOut();
     r = await readJson(await callDelete("projectId=00000000-0000-4000-8000-000000000000"));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S025 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S025 fold: A applied]
   });
 
   it("scope=page&pageNumber=1 → only that page's rows deleted; {success:true}", async () => {
@@ -559,16 +572,23 @@ describe.skipIf(!dbUp)("DELETE /api/ai/chat (FC-10)", () => {
     expect(await rowsFor(project.id)).toHaveLength(0);
   });
 
-  it("pageNumber non-numeric → parseInt NaN → pg int-cast rejection (legacy raw)", async () => {
-    // [S025 fold: B → generic INTERNAL 500. Radix/NaN guard DECLINED — frozen quirk.]
+  it("pageNumber non-numeric → parseInt NaN → pg int-cast throw → generic INTERNAL 500", async () => {
+    // [S025 fold: B applied — legacy rejected raw. Radix/NaN guard DECLINED — frozen quirk;
+    // rows must SURVIVE (the throw happens inside the delete query itself).]
     const { user, project } = await seededWorld();
     asUser(user);
-    await expect(callDelete(`projectId=${project.publicId}&scope=page&pageNumber=abc`)).rejects.toThrow();
+    const { status, body } = await readJson(
+      await callDelete(`projectId=${project.publicId}&scope=page&pageNumber=abc`),
+    );
+    expect(status).toBe(500);
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
+    expect(await rowsFor(project.id)).toHaveLength(3);
   });
 
-  it("request body is IGNORED at legacy (even malformed)", async () => {
-    // [S025 fold: E2 (S020 annotation-groups precedent) — the shell parses DELETE bodies, so a
-    // non-empty malformed body will 400 BAD_REQUEST before auth after the fold. PINNED here.]
+  it("non-empty malformed DELETE body → shell 400 BEFORE anything runs (E2)", async () => {
+    // [S025 fold: E2 applied (S020 annotation-groups precedent) — legacy IGNORED the body and
+    // deleted normally; the shell parses DELETE bodies. Unreachable from the fire-and-forget
+    // consumer (ChatPanel sends no body). Rows must SURVIVE — the 400 fires pre-handler.]
     const { user, project } = await seededWorld();
     asUser(user);
     const req = new Request(`http://test.local${PATH}?projectId=${project.publicId}`, {
@@ -577,8 +597,8 @@ describe.skipIf(!dbUp)("DELETE /api/ai/chat (FC-10)", () => {
       body: "{oops",
     });
     const { status, body } = await readJson(await DELETE(req));
-    expect(status).toBe(200);
-    expect(body).toEqual({ success: true });
-    expect(await rowsFor(project.id)).toHaveLength(0);
+    expect(status).toBe(400);
+    expect(body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    expect(await rowsFor(project.id)).toHaveLength(3);
   });
 });
