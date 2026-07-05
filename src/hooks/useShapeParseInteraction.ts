@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useViewerStore, useNavigation, usePageData } from "@/stores/viewerStore";
+// [refactor jul5 S028] apiErrorMessage: shape-parse now serves {error:{code,message}} for
+// cascade errors (demo-gate 403 stays flat — apiErrorMessage reads both shapes).
+import { apiErrorMessage } from "@/lib/client-persist";
 
 export interface UseShapeParseInteractionOpts {
   detectionTab: "models" | "tags" | "shape";
@@ -95,7 +98,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        setError(err.error || `Failed (${res.status})`);
+        setError(apiErrorMessage(err) || `Failed (${res.status})`);
         return;
       }
       const data = await res.json();
@@ -125,7 +128,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        setError(err.error || `Failed (${res.status})`);
+        setError(apiErrorMessage(err) || `Failed (${res.status})`);
         return;
       }
       const data = await res.json();

@@ -122,42 +122,51 @@ describe.skipIf(!dbUp)("POST /api/shape-parse — cascade (SQ-1)", () => {
     for (const b of [{}, { projectId: 0, pageNumber: 1 }]) {
       const { status, body } = await readJson(await call(b));
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Missing projectId" }); // [S028 fold: A]
+      expect(body).toEqual({ error: { code: "VALIDATION", message: "Missing projectId" } }); // [S028 fold: A applied]
     }
     for (const b of [{ projectId: 1 }, { projectId: 1, pageNumber: 0 }, { projectId: 1, scanAll: false }]) {
       const { status, body } = await readJson(await call(b));
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Missing pageNumber (or set scanAll: true)" }); // [S028 fold: A]
+      expect(body).toEqual({
+        error: { code: "VALIDATION", message: "Missing pageNumber (or set scanAll: true)" },
+      }); // [S028 fold: A applied]
     }
   });
 
-  it("malformed / empty / 'null' bodies + non-castable projectId: raw rejections (pre-try)", async () => {
-    // [S028 fold: E — malformed→BAD_REQUEST 400, empty/null→VALIDATION 400; B — pg-cast→generic 500]
+  it("malformed / empty / 'null' bodies → clean 400s; non-castable projectId → generic 500", async () => {
+    // [S028 fold: E+B applied — all four rejected RAW at legacy (pre-try req.json/pg-cast)]
     const mk = (raw: string | undefined) =>
       new Request("http://test.local/api/shape-parse", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: raw,
       });
-    await expect(POST(mk("{oops"))).rejects.toThrow();
-    await expect(POST(mk(undefined))).rejects.toThrow();
-    await expect(POST(mk("null"))).rejects.toThrow();
-    await expect(call({ projectId: "not-a-number", pageNumber: 1 })).rejects.toThrow();
+    let r = await readJson(await POST(mk("{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    for (const raw of [undefined, "null"]) {
+      r = await readJson(await POST(mk(raw)));
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION");
+    }
+    r = await readJson(await call({ projectId: "not-a-number", pageNumber: 1 }));
+    expect(r.status).toBe(500);
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
   });
 
   it("access: signed-out 401 / cross-tenant 404 / negative 404 (int-guard DECLINED)", async () => {
     const { project } = await world();
     let r = await readJson(await call({ projectId: project.id, pageNumber: 1 }));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S028 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S028 fold: A applied]
     const other = await createCompany();
     asUser(await createUser(other.id));
     r = await readJson(await call({ projectId: project.id, pageNumber: 1 }));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S028 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S028 fold: A applied]
     r = await readJson(await call({ projectId: -5, pageNumber: 1 }));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S028 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S028 fold: A applied]
   });
 
   it("demo gate: keynoteParse disabled → FLAT 403 (does NOT flip); default-on → 200 anon read", async () => {
@@ -249,18 +258,19 @@ describe.skipIf(!dbUp)("single-page mode (SQ-4/5/6)", () => {
     h.downloadFromS3.mockRejectedValue(new Error("s3 dead"));
     r = await readJson(await call({ projectId: project.id, pageNumber: 2 }));
     expect(r.status).toBe(500);
-    // CONTROLLED message — KEPT at fold (ApiError INTERNAL w/ surfacing message, S024 pin class)
-    expect(r.body).toEqual({ error: "Failed to load page image" });
+    // CONTROLLED message KEPT — ApiError("INTERNAL",msg) SURFACES via defineRoute.ts:254
+    // (the known envelope.ts:42 contradiction, S024 pin class; P1-review item)
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Failed to load page image" } });
   });
 
-  it("engine throw → outer catch LEAKS 'Shape parse failed: <msg>' at flat 500", async () => {
-    // [S028 fold: B — shell generic INTERNAL 500; leak dropped]
+  it("engine throw → generic INTERNAL 500, leak dropped", async () => {
+    // [S028 fold: B applied — legacy leaked {error:"Shape parse failed: cv exploded"} flat]
     const { user, project } = await world();
     asUser(user);
     h.extractKeynotes.mockRejectedValue(new Error("cv exploded"));
     const { status, body } = await readJson(await call({ projectId: project.id, pageNumber: 1 }));
     expect(status).toBe(500);
-    expect(body).toEqual({ error: "Shape parse failed: cv exploded" });
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
   });
 });
 
@@ -327,8 +337,9 @@ describe.skipIf(!dbUp)("scanAll mode (SQ-3)", () => {
     expect(body.warnings).toEqual(["blur", "Page 2 failed"]);
   });
 
-  it("scanAll catch-all LEAKS 'All-pages scan failed: <msg>' at flat 500", async () => {
-    // [S028 fold: B — shell generic INTERNAL 500; leak dropped]
+  it("scanAll fan-out throw → generic INTERNAL 500, leak dropped", async () => {
+    // [S028 fold: B applied — legacy leaked {error:"All-pages scan failed: lambda dead"} flat,
+    // incl. fanOutShapeParse's env-var messages]
     const { user, project } = await world();
     await createPage(project.id, 1);
     asUser(user);
@@ -336,6 +347,6 @@ describe.skipIf(!dbUp)("scanAll mode (SQ-3)", () => {
     h.fanOutShapeParse.mockRejectedValue(new Error("lambda dead"));
     const { status, body } = await readJson(await call({ projectId: project.id, scanAll: true }));
     expect(status).toBe(500);
-    expect(body).toEqual({ error: "All-pages scan failed: lambda dead" });
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
   });
 });
