@@ -144,9 +144,12 @@ async function world(textractData: unknown = TEXTRACT_WITH_TABLES, projectOver =
   return w;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   signedOut();
+  // crash-residue guard (standalone-lens F2): the debug-override key is GLOBAL in the shared
+  // parallel DB — a crashed prior run could leave it enabled and flake default-response asserts
+  await db.delete(appSettings).where(eq(appSettings.key, "tableParse.debugMode"));
   h.methodOcrPositions.mockReturnValue(mr("ocr-positions"));
   h.methodTextractTables.mockReturnValue(mr("textract-tables"));
   h.methodOpenCvLines.mockResolvedValue(mr("opencv-lines"));
@@ -170,30 +173,43 @@ describe.skipIf(!dbUp)("POST /api/table-parse — pre-try cascade (TQ-1)", () =>
     for (const b of [bodyFor(0), { projectId: 1, regionBbox: BBOX }, bodyFor(1, { regionBbox: [0.1] })]) {
       const { status, body } = await readJson(await call(b));
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Missing projectId, pageNumber, or regionBbox" }); // [S027 fold: A]
+      // [S027 fold: A applied — was flat]
+      expect(body).toEqual({
+        error: { code: "VALIDATION", message: "Missing projectId, pageNumber, or regionBbox" },
+      });
     }
     const { status, body } = await readJson(await call(bodyFor(1, { regionBbox: [0.5, 0.1, 0.1, 0.5] })));
     expect(status).toBe(400);
+    // [S027 fold: A applied]
     expect(body).toEqual({
-      error: "Invalid regionBbox: values must be finite numbers in [0,1] with min < max",
-    }); // [S027 fold: A]
+      error: {
+        code: "VALIDATION",
+        message: "Invalid regionBbox: values must be finite numbers in [0,1] with min < max",
+      },
+    });
   });
 
-  it("malformed / empty / 'null' bodies: req.json() OUTSIDE any try → raw rejection", async () => {
-    // [S027 fold: E — malformed → 400 BAD_REQUEST "Invalid JSON body"; empty/'null' → 400 VALIDATION]
+  it("malformed / empty / 'null' bodies → clean 400s from the shell body-parse", async () => {
+    // [S027 fold: E applied — legacy req.json() was OUTSIDE any try → raw rejections]
     const mk = (raw: string | undefined) =>
       new Request("http://test.local/api/table-parse", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: raw,
       });
-    await expect(POST(mk("{oops"))).rejects.toThrow();
-    await expect(POST(mk(undefined))).rejects.toThrow();
-    await expect(POST(mk("null"))).rejects.toThrow();
+    let r = await readJson(await POST(mk("{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    for (const raw of [undefined, "null"]) {
+      r = await readJson(await POST(mk(raw)));
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION");
+    }
   });
 
-  it("number/array body → destructure-undefined → 'Missing…' 400", async () => {
-    // [S027 fold: E — VALIDATION 400, status preserved, zod message drift]
+  it("number/array body → 400 VALIDATION via zLooseBody", async () => {
+    // [S027 fold: E applied — legacy destructured to undefined → flat "Missing…" 400;
+    // status preserved, message drifts to zod wording → code-only assert]
     for (const raw of ["5", "[1]"]) {
       const req = new Request("http://test.local/api/table-parse", {
         method: "POST",
@@ -202,7 +218,7 @@ describe.skipIf(!dbUp)("POST /api/table-parse — pre-try cascade (TQ-1)", () =>
       });
       const { status, body } = await readJson(await POST(req));
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Missing projectId, pageNumber, or regionBbox" });
+      expect(body.error.code).toBe("VALIDATION");
     }
   });
 
@@ -210,17 +226,19 @@ describe.skipIf(!dbUp)("POST /api/table-parse — pre-try cascade (TQ-1)", () =>
     const { project } = await world();
     let r = await readJson(await call(bodyFor(project.id)));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S027 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S027 fold: A applied]
     const other = await createCompany();
     asUser(await createUser(other.id));
     r = await readJson(await call(bodyFor(project.id)));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S027 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S027 fold: A applied]
     r = await readJson(await call(bodyFor(-5)));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // int-guard DECLINED at fold [S027 fold: A]
-    // pg cast throw happens OUTSIDE the try at legacy → raw rejection
-    await expect(call(bodyFor("not-a-number"))).rejects.toThrow(); // [S027 fold: B → generic INTERNAL 500]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // int-guard DECLINED — pinned [S027 fold: A applied]
+    // [S027 fold: B applied — legacy pg-cast rejected raw; now the shell's generic 500]
+    r = await readJson(await call(bodyFor("not-a-number")));
+    expect(r.status).toBe(500);
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
   });
 
   it("demo gate: project.isDemo + tableParse disabled → FLAT 403 (does NOT flip at fold); default-on → runs", async () => {
@@ -235,13 +253,13 @@ describe.skipIf(!dbUp)("POST /api/table-parse — pre-try cascade (TQ-1)", () =>
     expect(r.status).toBe(200); // DEFAULT_ON.tableParse = true; anon demo read allowed (allowDemo:true)
   });
 
-  it("page without textractData → flat 404 'Page has no OCR data'", async () => {
+  it("page without textractData → 404 'Page has no OCR data'", async () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1, {});
     asUser(user);
     const { status, body } = await readJson(await call(bodyFor(project.id)));
     expect(status).toBe(404);
-    expect(body).toEqual({ error: "Page has no OCR data" }); // [S027 fold: A]
+    expect(body).toEqual({ error: { code: "NOT_FOUND", message: "Page has no OCR data" } }); // [S027 fold: A applied]
   });
 });
 
@@ -370,6 +388,11 @@ describe.skipIf(!dbUp)("POST /api/table-parse — infra failures (TQ-6) + debug 
     expect(Array.isArray(body.infraStages)).toBe(true);
     expect(body.infraStages.map((s: { stage: string }) => s.stage)).toEqual(["pdf-download", "rasterize"]);
     expect(typeof body.totalDurationMs).toBe("number"); // nondeterministic — shape only
+    // [S027 DETECTOR TP-1 closer] the history ring buffer must get the FULL UNFILTERED set
+    // even while the response filters — this is the ONLY case where they diverge (3 vs 4)
+    const entry = h.addToHistory.mock.calls[0][0];
+    expect(entry.response.methodResults).toHaveLength(4);
+    expect(entry.response.methodResults.map((r: { method: string }) => r.method)).toContain("ocr-positions");
     // default response omits all three
     const { body: plain } = await readJson(await call(bodyFor(project.id)));
     for (const k of ["methodResults", "infraStages", "totalDurationMs"]) expect(k in plain).toBe(false);
@@ -389,8 +412,8 @@ describe.skipIf(!dbUp)("POST /api/table-parse — infra failures (TQ-6) + debug 
     }
   });
 
-  it("pipeline throw (mergeGrids) → catch-all LEAKS err.message at flat 500", async () => {
-    // [S027 fold: B — shell generic INTERNAL 500 'Internal server error'; leak dropped]
+  it("pipeline throw (mergeGrids) → generic INTERNAL 500, leak dropped", async () => {
+    // [S027 fold: B applied — legacy catch-all leaked {error:"merge exploded"} flat 500]
     const { user, project } = await world();
     asUser(user);
     h.mergeGrids.mockImplementation(() => {
@@ -398,6 +421,6 @@ describe.skipIf(!dbUp)("POST /api/table-parse — infra failures (TQ-6) + debug 
     });
     const { status, body } = await readJson(await call(bodyFor(project.id)));
     expect(status).toBe(500);
-    expect(body).toEqual({ error: "merge exploded" });
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
   });
 });

@@ -3,6 +3,9 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useViewerStore, useTableParse, useNavigation, useProject } from "@/stores/viewerStore";
 import { exportTableCsv } from "@/lib/table-parse-utils";
+// [refactor jul5 S027] apiErrorMessage: table-parse now serves {error:{code,message}}
+// for cascade errors (demo-gate 403 stays flat — apiErrorMessage reads both).
+import { apiErrorMessage } from "@/lib/client-persist";
 import HelpTooltip from "./HelpTooltip";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 
@@ -152,7 +155,7 @@ export default function AutoParseTab({
 
           if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
-            throw new Error(err.error || `Region ${i + 1}: API error ${resp.status}`);
+            throw new Error(apiErrorMessage(err) || `Region ${i + 1}: API error ${resp.status}`);
           }
 
           const result = await resp.json();
