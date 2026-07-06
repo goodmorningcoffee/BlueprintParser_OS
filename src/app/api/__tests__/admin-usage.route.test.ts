@@ -1,7 +1,8 @@
 // @vitest-environment node
 // [refactor jul6 S040] CHARACTERIZATION for the ADMIN B5 write-cluster — usage (GET compute
 // dashboard + PUT limit/reset mutations) + projects (GET cross-company god-view), written as
-// THE FREEZE before the fold onto services/admin-usage.ts + services/admin-projects.ts. B5 is
+// THE FREEZE before the fold onto services/admin-usage.ts (getUsage/updateUsage +
+// getAdminProjects — all three live in ONE service file). B5 is
 // a WRITE-CLUSTER: shared freeze, ONE DETECTOR PER ROUTE (DR002 §5). NOT a symmetric pair —
 // usage has a 4-branch PUT write; projects is read-only.
 //
