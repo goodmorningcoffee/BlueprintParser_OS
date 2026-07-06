@@ -186,6 +186,20 @@ describe.skipIf(!dbUp)("POST /api/processing/dev (PQ5-3)", () => {
     expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S035 fold: A applied]
   });
 
+  it("guard-preemption pins (S035 DETECTOR): body handling beats the env guard", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("DEV_PROCESSING_ENABLED", "false");
+    const mk = (raw: string) => new Request("http://test.local/api/processing/dev", {
+      method: "POST", headers: { "content-type": "application/json" }, body: raw,
+    });
+    let r = await readJson(await devPOST(mk("{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe("BAD_REQUEST"); // parse precedes the sacred 403
+    r = await readJson(await devPOST(mk("null")));
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe("VALIDATION"); // schema precedes it too
+  });
+
   it("happy spreads processProject's result; throw → LEAKY 500", async () => {
     const { user, project } = await createWorld();
     asUser(user);

@@ -11,7 +11,8 @@
 //     payload.error !== undefined — survivor-pinned) → processingJobs close. The leaky
 //     catch-all ("Webhook failed" fallback) RETIRED (diff B).
 //   • dev: ★ ENV-GUARD-BEFORE-AUTH preserved (prod && !DEV_PROCESSING_ENABLED → 403 even
-//     signed-out) → hence auth:"none" + the service calls auth() itself → projectId 400 →
+//     signed-out) → hence auth:"none" + the service calls auth() itself. Shell body
+//     handling (parse + zLooseBody) PRECEDES the guard (S033 trait; char-pinned) → projectId 400 →
 //     company-scoped publicId 404 → processProject → {success:true, ...result} spread.
 //     Leaky catch RETIRED (diff B).
 
