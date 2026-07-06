@@ -1,40 +1,17 @@
-import { NextResponse } from "next/server";
-import { requireRootAdmin } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { abuseEvents } from "@/lib/db/schema";
-import { desc, isNull, sql } from "drizzle-orm";
-
 /**
  * GET /api/admin/logs/alert-count
  *
- * Fast count of unseen abuse_events. Drives the yellow badge on the Logs
- * admin tab. Root_Admin's browser polls this every 60s; opening the
- * Security subtab marks everything seen (side-effect of the /security
- * endpoint).
+ * [refactor jul6 S038] Thin shell — behavior lives in services/admin-logs.ts
+ * (getAlertCount; the internal try/catch → 200 graceful "fail quietly" fallback is
+ * PRESERVED there, NOT dropped to a generic 500). auth:"root" (A: flat errors → envelope,
+ * byte-same). No body/query. Part of the ADMIN B3 batch (char: admin-logs.route.test.ts
+ * ALERT-*).
  */
-export async function GET() {
-  const { error } = await requireRootAdmin();
-  if (error) return error;
 
-  try {
-    const [row] = await db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(abuseEvents)
-      .where(isNull(abuseEvents.seenAt));
+import { defineRoute } from "@/server/api/defineRoute";
+import { getAlertCount } from "@/server/services/admin-logs";
 
-    const [latest] = await db
-      .select({ createdAt: abuseEvents.createdAt })
-      .from(abuseEvents)
-      .where(isNull(abuseEvents.seenAt))
-      .orderBy(desc(abuseEvents.createdAt))
-      .limit(1);
-
-    return NextResponse.json({
-      unseen: row?.n ?? 0,
-      latestEventAt: latest?.createdAt ?? null,
-    });
-  } catch {
-    // Fail quietly — if the DB hiccups we don't want to light up the badge.
-    return NextResponse.json({ unseen: 0, latestEventAt: null });
-  }
-}
+export const GET = defineRoute({
+  auth: "root",
+  handler: () => getAlertCount(),
+});

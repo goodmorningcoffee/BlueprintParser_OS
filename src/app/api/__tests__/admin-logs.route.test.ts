@@ -20,7 +20,8 @@
 //     "<X> query failed" (Accounts/Engagement/Visitor). These 4 fixed 500-literals (no
 //     err.message leak) flip to generic INTERNAL 500 at fold (diff B; S032 precedent).
 //   • The range-400 literal stays byte-verbatim in-service (diff A → VALIDATION 400).
-// Assertions tagged [S038 fold] flip in the fold commit (sanctioned A/B only — ZERO E).
+// Assertions tagged [S038 fold: … applied] were flipped in the fold commit onto
+// services/admin-logs.ts (sanctioned A/B only — ZERO E; GET-only batch).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -55,7 +56,7 @@ import { GET as engGET } from "@/app/api/admin/logs/engagement/route";
 import { GET as visGET } from "@/app/api/admin/logs/visitors/route";
 import { db } from "@/lib/db";
 import { abuseEvents, manualIpBans } from "@/lib/db/schema";
-import { eq, isNull } from "drizzle-orm";
+import { isNull } from "drizzle-orm";
 import {
   asUser,
   createCompany,
@@ -63,7 +64,6 @@ import {
   makeReq,
   readJson,
   signedOut,
-  type FixtureUser,
 } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
@@ -76,8 +76,8 @@ async function makeRoot() {
 }
 
 const getReq = (path: string) => makeReq(path, { method: "GET" });
-const UNAUTH = { error: "Unauthorized" }; // [S038 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ROOT_ONLY = { error: "Root admin only" }; // [S038 fold: A → {error:{code:"FORBIDDEN",message:"Root admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S038 fold: A applied]
+const ROOT_ONLY = { error: { code: "FORBIDDEN", message: "Root admin only" } }; // [S038 fold: A applied]
 
 // Seed helpers
 async function seedAbuse(over: Partial<typeof abuseEvents.$inferInsert> = {}) {
@@ -98,15 +98,15 @@ beforeEach(() => {
 describe.skipIf(!dbUp)("admin/logs/alert-count (ALERT)", () => {
   it("ALERT-1 auth: signed-out→401, member→403, root→200", async () => {
     const { root, member } = await makeRoot();
-    let r = await readJson(await alertGET());
+    let r = await readJson(await alertGET(getReq("/api/admin/logs/alert-count")));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S038 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S038 fold: A applied]
     asUser(member);
-    r = await readJson(await alertGET());
+    r = await readJson(await alertGET(getReq("/api/admin/logs/alert-count")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_ONLY); // [S038 fold: A]
+    expect(r.body).toEqual(ROOT_ONLY); // [S038 fold: A applied]
     asUser(root);
-    r = await readJson(await alertGET());
+    r = await readJson(await alertGET(getReq("/api/admin/logs/alert-count")));
     expect(r.status).toBe(200);
   });
 
@@ -114,13 +114,13 @@ describe.skipIf(!dbUp)("admin/logs/alert-count (ALERT)", () => {
     const { root } = await makeRoot();
     asUser(root);
     // empty first
-    let r = await readJson(await alertGET());
+    let r = await readJson(await alertGET(getReq("/api/admin/logs/alert-count")));
     expect(r.body).toEqual({ unseen: 0, latestEventAt: null });
     // 2 unseen + 1 already-seen (excluded from the count)
     await seedAbuse({ ip: "9.9.9.1" });
     const newest = await seedAbuse({ ip: "9.9.9.2" });
     await seedAbuse({ ip: "9.9.9.3", seenAt: new Date() });
-    r = await readJson(await alertGET());
+    r = await readJson(await alertGET(getReq("/api/admin/logs/alert-count")));
     expect(r.status).toBe(200);
     expect(r.body.unseen).toBe(2);
     expect(new Date(r.body.latestEventAt).getTime()).toBe(new Date(newest.createdAt as Date).getTime());
@@ -131,13 +131,13 @@ describe.skipIf(!dbUp)("admin/logs/alert-count (ALERT)", () => {
 describe.skipIf(!dbUp)("admin/logs/security (SEC)", () => {
   it("SEC-1 auth: signed-out→401, member→403", async () => {
     const { member } = await makeRoot();
-    let r = await readJson(await secGET());
+    let r = await readJson(await secGET(getReq("/api/admin/logs/security")));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S038 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S038 fold: A applied]
     asUser(member);
-    r = await readJson(await secGET());
+    r = await readJson(await secGET(getReq("/api/admin/logs/security")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_ONLY); // [S038 fold: A]
+    expect(r.body).toEqual(ROOT_ONLY); // [S038 fold: A applied]
   });
 
   it("SEC-2 read+shape: {abuseEvents, manualBans, violationStats{last24h,last7d,byType}}", async () => {
@@ -147,7 +147,7 @@ describe.skipIf(!dbUp)("admin/logs/security (SEC)", () => {
     await seedAbuse({ eventType: "RATE_LIMIT", ip: "5.5.5.2" });
     await seedAbuse({ eventType: "LOCKOUT", ip: "5.5.5.3" });
     await db.insert(manualIpBans).values({ ip: "6.6.6.6", reason: "spam" });
-    const r = await readJson(await secGET());
+    const r = await readJson(await secGET(getReq("/api/admin/logs/security")));
     expect(r.status).toBe(200);
     expect(Array.isArray(r.body.abuseEvents)).toBe(true);
     expect(r.body.abuseEvents.length).toBeGreaterThanOrEqual(3);
@@ -162,7 +162,7 @@ describe.skipIf(!dbUp)("admin/logs/security (SEC)", () => {
     asUser(root);
     await seedAbuse({ ip: "7.7.7.1" });
     await seedAbuse({ ip: "7.7.7.2" });
-    await readJson(await secGET());
+    await readJson(await secGET(getReq("/api/admin/logs/security")));
     // fire-and-forget → poll until the async UPDATE lands (bounded)
     let remaining = 99;
     for (let i = 0; i < 50 && remaining > 0; i++) {
@@ -181,11 +181,11 @@ describe.skipIf(!dbUp)("admin/logs/accounts (ACC)", () => {
     const { member } = await makeRoot();
     let r = await readJson(await accGET(getReq("/api/admin/logs/accounts")));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S038 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S038 fold: A applied]
     asUser(member);
     r = await readJson(await accGET(getReq("/api/admin/logs/accounts")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_ONLY); // [S038 fold: A]
+    expect(r.body).toEqual(ROOT_ONLY); // [S038 fold: A applied]
   });
 
   it("ACC-2 range validation: bad range → 400 byte-literal (BEFORE any query)", async () => {
@@ -193,7 +193,7 @@ describe.skipIf(!dbUp)("admin/logs/accounts (ACC)", () => {
     asUser(root);
     const r = await readJson(await accGET(getReq("/api/admin/logs/accounts?range=99y")));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "range must be 1h|24h|7d|30d" }); // [S038 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "range must be 1h|24h|7d|30d" } }); // [S038 fold: A applied]
     expect(h.runInsightsQuery).not.toHaveBeenCalled();
   });
 
@@ -234,7 +234,7 @@ describe.skipIf(!dbUp)("admin/logs/accounts (ACC)", () => {
     h.runInsightsQuery.mockRejectedValue(new Error("cw down"));
     const r = await readJson(await accGET(getReq("/api/admin/logs/accounts?range=24h")));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "Accounts query failed" }); // [S038 fold: B]
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S038 fold: B applied — leak-free literal retired]
   });
 });
 
@@ -245,7 +245,7 @@ describe.skipIf(!dbUp)("admin/logs/engagement (ENG)", () => {
     asUser(root);
     const r = await readJson(await engGET(getReq("/api/admin/logs/engagement?range=nope")));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "range must be 1h|24h|7d|30d" }); // [S038 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "range must be 1h|24h|7d|30d" } }); // [S038 fold: A applied]
   });
 
   it("ENG-2 read+shape: top10 + unmappedHits + totalMappedRoutes; ?all=1 zero-fills labels", async () => {
@@ -277,7 +277,7 @@ describe.skipIf(!dbUp)("admin/logs/engagement (ENG)", () => {
     h.runInsightsQuery.mockRejectedValue(new Error("cw down"));
     const r = await readJson(await engGET(getReq("/api/admin/logs/engagement?range=24h")));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "Engagement query failed" }); // [S038 fold: B]
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S038 fold: B applied]
   });
 });
 
@@ -288,7 +288,7 @@ describe.skipIf(!dbUp)("admin/logs/visitors (VIS)", () => {
     asUser(root);
     const r = await readJson(await visGET(getReq("/api/admin/logs/visitors?range=bad")));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "range must be 1h|24h|7d|30d" }); // [S038 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "range must be 1h|24h|7d|30d" } }); // [S038 fold: A applied]
   });
 
   it("VIS-2 read+shape: per-IP summary, isManuallyBanned join, retentionWarning null when logs fresh", async () => {
@@ -326,6 +326,6 @@ describe.skipIf(!dbUp)("admin/logs/visitors (VIS)", () => {
     h.runInsightsQuery.mockRejectedValue(new Error("cw down"));
     const r = await readJson(await visGET(getReq("/api/admin/logs/visitors?range=24h")));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "Visitor query failed" }); // [S038 fold: B]
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S038 fold: B applied]
   });
 });
