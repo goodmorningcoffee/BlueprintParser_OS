@@ -1,26 +1,15 @@
-import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { companies } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { createUploadPresignedPost, generateProjectPath } from "@/lib/s3";
+/**
+ * GET /api/s3/credentials
+ *
+ * [refactor jul6 S033] Thin shell — behavior lives in services/s3.ts (uploadCredentials).
+ * auth:"session". ⚠️ ZERO runtime consumers (docs-only; P5 dead-route candidate) and the
+ * middleware rate rule on this path keys POST — dead rule, P1 ledger. Folded byte-faithful.
+ */
 
-export async function GET() {
-  const { session, error } = await requireAuth();
-  if (error) return error;
+import { defineRoute } from "@/server/api/defineRoute";
+import { uploadCredentials } from "@/server/services/s3";
 
-  const [company] = await db
-    .select()
-    .from(companies)
-    .where(eq(companies.id, session.user.companyId))
-    .limit(1);
-
-  if (!company) {
-    return NextResponse.json({ error: "Company not found" }, { status: 404 });
-  }
-
-  const projectPath = generateProjectPath(company.dataKey);
-  const presigned = await createUploadPresignedPost(projectPath);
-
-  return NextResponse.json(presigned);
-}
+export const GET = defineRoute({
+  auth: "session",
+  handler: ({ session }) => uploadCredentials(session!),
+});

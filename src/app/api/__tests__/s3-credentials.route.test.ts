@@ -64,7 +64,7 @@ describe.skipIf(!dbUp)("POST /api/s3/staging-credentials (SQ3-1)", () => {
   it("auth-first 401; malformed body → the route's OWN flat 400 'Invalid JSON body'", async () => {
     let r = await readJson(await call({ filenames: ["a.pdf"] }));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S033 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S033 fold: A applied]
     const { user } = await createWorld();
     asUser(user);
     const raw = new Request("http://test.local/api/s3/staging-credentials", {
@@ -72,7 +72,7 @@ describe.skipIf(!dbUp)("POST /api/s3/staging-credentials (SQ3-1)", () => {
     });
     r = await readJson(await stagingPOST(raw));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Invalid JSON body" }); // SAME text as the shell — SHAPE-ONLY flip [S033 fold: A/E]
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }); // SHAPE-ONLY, text identical [S033 fold: A/E applied]
   });
 
   it("validation ladder in order: array → max → per-file string/length → extension", async () => {
@@ -81,19 +81,19 @@ describe.skipIf(!dbUp)("POST /api/s3/staging-credentials (SQ3-1)", () => {
     for (const b of [{}, { filenames: [] }, { filenames: "a.pdf" }]) {
       const r = await readJson(await call(b));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "filenames must be a non-empty array of strings" }); // [S033 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "filenames must be a non-empty array of strings" } }); // [S033 fold: A applied]
     }
     let r = await readJson(await call({ filenames: Array.from({ length: 31 }, (_, i) => `${i}.pdf`) }));
-    expect(r.body).toEqual({ error: "Maximum 30 files per project" }); // [S033 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Maximum 30 files per project" } }); // [S033 fold: A applied]
     for (const bad of [[""], [123], ["x".repeat(256) + ".pdf"]]) {
       r = await readJson(await call({ filenames: bad }));
-      expect(r.body).toEqual({ error: "Each filename must be a non-empty string ≤255 chars" }); // [S033 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Each filename must be a non-empty string ≤255 chars" } }); // [S033 fold: A applied]
     }
     r = await readJson(await call({ filenames: ["notes.docx"] }));
     expect(r.status).toBe(400);
     expect(r.body).toEqual({
-      error: "Unsupported file type: notes.docx (allowed: pdf, png, jpg, jpeg, tif, tiff, heic)",
-    }); // interpolated allowlist pinned [S033 fold: A]
+      error: { code: "VALIDATION", message: "Unsupported file type: notes.docx (allowed: pdf, png, jpg, jpeg, tif, tiff, heic)" },
+    }); // interpolated allowlist pinned [S033 fold: A applied]
   });
 
   it("2-ARG quota (companyId, role) 429 no-fallback; happy fanout preserves order + shape", async () => {
@@ -102,7 +102,7 @@ describe.skipIf(!dbUp)("POST /api/s3/staging-credentials (SQ3-1)", () => {
     h.checkUploadQuota.mockResolvedValue({ allowed: false, message: "Daily project limit reached" });
     let r = await readJson(await call({ filenames: ["a.pdf"] }));
     expect(r.status).toBe(429);
-    expect(r.body).toEqual({ error: "Daily project limit reached" }); // [S033 fold: A]
+    expect(r.body).toEqual({ error: { code: "RATE_LIMITED", message: "Daily project limit reached" } }); // [S033 fold: A applied]
     expect(h.checkUploadQuota).toHaveBeenCalledWith(user.companyId, user.role); // 2-arg pinned
     h.checkUploadQuota.mockResolvedValue({ allowed: true });
     r = await readJson(await call({ filenames: ["b.pdf", "a.PNG"] }));
@@ -119,7 +119,7 @@ describe.skipIf(!dbUp)("GET /api/s3/credentials (SQ3-2 — zero runtime consumer
   it("401 signed-out; happy passthrough of the presign object", async () => {
     let r = await readJson(await callCreds());
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S033 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S033 fold: A applied]
     const { user } = await createWorld();
     asUser(user);
     r = await readJson(await callCreds());

@@ -151,7 +151,8 @@ export default function UploadWidget({ onUploadComplete }: UploadWidgetProps) {
       });
       if (!credRes.ok) {
         const j = await credRes.json().catch(() => ({}));
-        throw new Error(j.error || `Failed to get upload credentials (${credRes.status})`);
+        // [refactor jul6 S033] staging-credentials now serves {error:{code,message}}
+        throw new Error(apiErrorMessage(j) || `Failed to get upload credentials (${credRes.status})`);
       }
       const { projectPath, files: presigns } = (await credRes.json()) as {
         projectPath: string;
