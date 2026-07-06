@@ -13,7 +13,8 @@
 //     update {value, updatedBy:dbId, updatedAt:now}; else insert {key, value, updatedBy:dbId}.
 //     value is jsonb WHOLE-REPLACE (correct key-value semantics, not a merge). → {success:true}.
 // GET no body → no E; PUT reads body → E applies at fold. No catch-500 literal → NO B.
-// Assertions tagged [S047 fold] flip in the fold commit (sanctioned A/E only).
+// Assertions tagged [S047 fold: … applied] were flipped in the fold commit onto
+// services/app-settings.ts (sanctioned A/E only).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -39,9 +40,9 @@ async function makeWorld() {
 
 const getReq = () => makeReq("/api/admin/app-settings", { method: "GET" });
 const putReq = (body: unknown) => makeReq("/api/admin/app-settings", { method: "PUT", body });
-const UNAUTH = { error: "Unauthorized" }; // [S047 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S047 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
-const ROOT_REQUIRED = { error: "Root admin required" }; // [S047 fold: A → {error:{code:"FORBIDDEN",message:"Root admin required"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S047 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S047 fold: A applied]
+const ROOT_REQUIRED = { error: { code: "FORBIDDEN", message: "Root admin required" } }; // [S047 fold: A applied]
 
 const tag = () => Math.random().toString(36).slice(2, 8);
 async function settingRow(key: string) {
@@ -54,17 +55,17 @@ beforeEach(() => { vi.clearAllMocks(); signedOut(); });
 describe.skipIf(!dbUp)("admin/app-settings (AS)", () => {
   it("AS-1 GET auth: signed-out→401, member→403, admin+root→200", async () => {
     const { admin, member, root } = await makeWorld();
-    let r = await readJson(await asGET());
+    let r = await readJson(await asGET(getReq()));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S047 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S047 fold: A applied]
     asUser(member);
-    r = await readJson(await asGET());
+    r = await readJson(await asGET(getReq()));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S047 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S047 fold: A applied]
     asUser(admin);
-    expect((await readJson(await asGET())).status).toBe(200);
+    expect((await readJson(await asGET(getReq()))).status).toBe(200);
     asUser(root);
-    expect((await readJson(await asGET())).status).toBe(200);
+    expect((await readJson(await asGET(getReq()))).status).toBe(200);
   });
 
   it("AS-2 GET: collapses rows into a BARE {key:value} object map", async () => {
@@ -73,7 +74,7 @@ describe.skipIf(!dbUp)("admin/app-settings (AS)", () => {
     await db.insert(appSettings).values({ key: k1, value: { a: 1 } as never });
     await db.insert(appSettings).values({ key: k2, value: { b: "x" } as never });
     asUser(admin);
-    const r = await readJson(await asGET());
+    const r = await readJson(await asGET(getReq()));
     expect(r.status).toBe(200);
     expect(r.body[k1]).toEqual({ a: 1 }); // bare object, keyed by setting key
     expect(r.body[k2]).toEqual({ b: "x" });
@@ -84,17 +85,17 @@ describe.skipIf(!dbUp)("admin/app-settings (AS)", () => {
     // signed-out → 401 (requireAdmin)
     let r = await readJson(await asPUT(putReq({ key: "x", value: 1 })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S047 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S047 fold: A applied]
     // member → 403 "Admin only" (requireAdmin)
     asUser(member);
     r = await readJson(await asPUT(putReq({ key: "x", value: 1 })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S047 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S047 fold: A applied]
     // company-ADMIN (role admin, NOT root) → passes requireAdmin, blocked by the in-body gate
     asUser(admin);
     r = await readJson(await asPUT(putReq({ key: "x", value: 1 })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_REQUIRED); // [S047 fold: A] — the trap
+    expect(r.body).toEqual(ROOT_REQUIRED); // [S047 fold: A applied] — the trap
   });
 
   it("AS-4 PUT validation (root): missing key / undefined value → 400 'key and value required'", async () => {
@@ -103,7 +104,7 @@ describe.skipIf(!dbUp)("admin/app-settings (AS)", () => {
     for (const body of [{}, { value: 1 }, { key: "x" }]) { // {key:"x"} has value===undefined
       const r = await readJson(await asPUT(putReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "key and value required" }); // [S047 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "key and value required" } }); // [S047 fold: A applied]
     }
   });
 
