@@ -692,7 +692,10 @@ function DetectCellStructureButton() {
       });
       const data = await resp.json();
       if (!resp.ok || data.error) {
-        setError(data.error || `HTTP ${resp.status}`);
+        // [refactor jul6 S029] apiErrorMessage: non-OK now serves {error:{code,message}} —
+        // setting the raw object would crash the JSX render; the UQ-3 in-band 200 error
+        // stays a flat string and reads through unchanged.
+        setError(apiErrorMessage(data) || `HTTP ${resp.status}`);
         return;
       }
       setTableCellStructure({

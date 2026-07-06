@@ -136,7 +136,10 @@ describe.skipIf(!dbUp)("POST /api/table-structure — cascade (UQ-1)", () => {
     for (const b of [bodyFor(0), { projectId: 1, regionBbox: BBOX }, bodyFor(1, { regionBbox: [0.1] })]) {
       const { status, body } = await readJson(await call(b));
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Missing projectId, pageNumber, or regionBbox" }); // [S029 fold: A]
+      // [S029 fold: A applied — was flat]
+      expect(body).toEqual({
+        error: { code: "VALIDATION", message: "Missing projectId, pageNumber, or regionBbox" },
+      });
     }
   });
 
@@ -148,25 +151,32 @@ describe.skipIf(!dbUp)("POST /api/table-structure — cascade (UQ-1)", () => {
         headers: { "content-type": "application/json" },
         body: raw,
       });
-    await expect(POST(mk("{oops"))).rejects.toThrow();
-    await expect(POST(mk(undefined))).rejects.toThrow();
-    await expect(POST(mk("null"))).rejects.toThrow();
-    await expect(call(bodyFor("not-a-number"))).rejects.toThrow();
+    let r = await readJson(await POST(mk("{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    for (const raw of [undefined, "null"]) {
+      r = await readJson(await POST(mk(raw)));
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION");
+    }
+    r = await readJson(await call(bodyFor("not-a-number")));
+    expect(r.status).toBe(500);
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S029 fold: E+B applied]
   });
 
   it("access 401/404/negative-404 + demo gate 'tableParse' flat 403 / default-on 200", async () => {
     const { project } = await world();
     let r = await readJson(await call(bodyFor(project.id)));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S029 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S029 fold: A applied]
     const other = await createCompany();
     asUser(await createUser(other.id));
     r = await readJson(await call(bodyFor(project.id)));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S029 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S029 fold: A applied]
     r = await readJson(await call(bodyFor(-5)));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // int-guard DECLINED [S029 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // int-guard DECLINED [S029 fold: A applied]
     signedOut();
     const demo = await world({ isDemo: true });
     await db.update(companies).set({ pipelineConfig: { demo: { tableParse: false } } }).where(eq(companies.id, demo.company.id));
@@ -240,8 +250,10 @@ describe.skipIf(!dbUp)("pipeline (UQ-2/3/4/5/6)", () => {
     h.downloadFromS3.mockRejectedValue(new Error("s3 exploded"));
     const { status, body } = await readJson(await call(bodyFor(project.id)));
     expect(status).toBe(500);
-    expect(body).toEqual({ error: "Failed to fetch PDF: s3 exploded" });
-    expect(h.rm).toHaveBeenCalledTimes(1); // finally runs even on the early return
+    // [S029 fold: UQ-2 sanction applied — suffix DROPPED, message now byte-identical to the
+    // S024-pinned string; surfaces as ApiError INTERNAL via defineRoute:254]
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Failed to fetch PDF" } });
+    expect(h.rm).toHaveBeenCalledTimes(1); // finally runs even on the throw path
   });
 
   it("pipeline throw (rasterize) → outer catch LEAKS err.message flat 500; finally still rm's", async () => {
@@ -251,7 +263,7 @@ describe.skipIf(!dbUp)("pipeline (UQ-2/3/4/5/6)", () => {
     h.rasterizePage.mockRejectedValue(new Error("raster died"));
     const { status, body } = await readJson(await call(bodyFor(project.id)));
     expect(status).toBe(500);
-    expect(body).toEqual({ error: "raster died" });
-    expect(h.rm).toHaveBeenCalledTimes(1);
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S029 fold: B applied]
+    expect(h.rm).toHaveBeenCalledTimes(1); // finally KEPT
   });
 });

@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
-import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
+// [refactor jul6 S029] apiErrorMessage: table-structure non-OK now serves the envelope
+import { promoteParsedRegion, canPersist, apiErrorMessage } from "@/lib/client-persist";
 import type { YoloTag } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 import type { MapTagsStrictness } from "./MapTagsSection";
@@ -107,7 +108,7 @@ export default memo(function ParsedTableItem({
       });
       const data = await resp.json();
       if (!resp.ok || data.error) {
-        setDetectCellsError(data.error || `HTTP ${resp.status}`);
+        setDetectCellsError(apiErrorMessage(data) || `HTTP ${resp.status}`);
         return;
       }
       // setTableCellStructure auto-enables showTableCellStructure
