@@ -125,6 +125,19 @@ describe.skipIf(!dbUp)("admin/logs/alert-count (ALERT)", () => {
     expect(r.body.unseen).toBe(2);
     expect(new Date(r.body.latestEventAt).getTime()).toBe(new Date(newest.createdAt as Date).getTime());
   });
+
+  // [S038 DETECTOR closer LC-2] The graceful catch is LOAD-BEARING: a db error must yield a
+  // 200 fallback, NOT a generic 500 (a regression deleting the in-service try/catch would go
+  // unnoticed since ALERT-2 only exercises the empty-db SUCCESS path). Force a db throw.
+  it("ALERT-3 GRACEFUL catch: db error → 200 {unseen:0,latestEventAt:null} (never a 500) [closer]", async () => {
+    const { root } = await makeRoot();
+    asUser(root);
+    const spy = vi.spyOn(db, "select").mockImplementationOnce((() => { throw new Error("db down"); }) as never);
+    const r = await readJson(await alertGET(getReq("/api/admin/logs/alert-count")));
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ unseen: 0, latestEventAt: null });
+    spy.mockRestore();
+  });
 });
 
 // ── security — db read + mark-seen SIDE-EFFECT + 500-literal catch ─────────────
@@ -172,6 +185,19 @@ describe.skipIf(!dbUp)("admin/logs/security (SEC)", () => {
       await new Promise((res) => setTimeout(res, 20));
     }
     expect(remaining).toBe(0);
+  });
+
+  // [S038 DETECTOR closer LC-1] security has NO in-service try/catch (unlike alert-count) —
+  // a db error must propagate to the shell's generic INTERNAL 500 (the legacy "Security
+  // query failed" fixed literal retired to B). Pin the B-flip by forcing a throw.
+  it("SEC-4 catch→B: db error → generic INTERNAL 500 (legacy 'Security query failed' retired) [closer]", async () => {
+    const { root } = await makeRoot();
+    asUser(root);
+    const spy = vi.spyOn(db, "select").mockImplementationOnce((() => { throw new Error("db down"); }) as never);
+    const r = await readJson(await secGET(getReq("/api/admin/logs/security")));
+    expect(r.status).toBe(500);
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
+    spy.mockRestore();
   });
 });
 
@@ -235,6 +261,28 @@ describe.skipIf(!dbUp)("admin/logs/accounts (ACC)", () => {
     const r = await readJson(await accGET(getReq("/api/admin/logs/accounts?range=24h")));
     expect(r.status).toBe(500);
     expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S038 fold: B applied — leak-free literal retired]
+  });
+
+  // [S038 DETECTOR closer ACC-COV-1/2] The terminal accounts.sort (totalActions DESC) and
+  // the companyId-null branch (companyName null + companyIds.length?...:[] skip) were pinned
+  // only by the single-account ACC-3 fixture. Exercise both: two accounts (order) + one row
+  // with a non-finite companyId (null-company path).
+  it("ACC-5 multi-account DESC sort + companyId-null path [closer]", async () => {
+    const { company, root } = await makeRoot();
+    asUser(root);
+    const uHi = await createUser(company.id);
+    const uLo = await createUser(company.id);
+    h.labelFor.mockImplementation((_m: string, p: string) => (p === "/api/tool-a" ? "Tool A" : null));
+    h.runInsightsQuery.mockResolvedValue([
+      { userId: String(uLo.id), companyId: String(company.id), method: "GET", path: "/api/tool-a", hits: "2", firstTs: "2026-07-01T00:00:00.000Z", lastTs: "2026-07-01T00:00:00.000Z" },
+      { userId: String(uHi.id), companyId: "not-a-number", method: "GET", path: "/api/tool-a", hits: "40", firstTs: "2026-07-01T00:00:00.000Z", lastTs: "2026-07-01T00:00:00.000Z" },
+    ]);
+    const r = await readJson(await accGET(getReq("/api/admin/logs/accounts?range=24h")));
+    expect(r.status).toBe(200);
+    expect(r.body.accounts.map((a: { userId: number }) => a.userId)).toEqual([uHi.id, uLo.id]); // 40 before 2 (DESC)
+    const hi = r.body.accounts[0];
+    expect(hi.companyId).toBeNull(); // non-finite companyId → null
+    expect(hi.companyName).toBeNull(); // companyId null → companyName null (skip branch)
   });
 });
 
