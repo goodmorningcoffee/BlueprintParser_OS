@@ -1,37 +1,30 @@
 /**
  * /api/admin/recent-parses
  *
- * Phase I.2.c: Read the in-memory ring buffer of recent table-parse requests
- * for the admin debug UI. Returns the last N parses with FULL methodResults
- * including subprocess stderr, intermediate state, and timing.
+ * Phase I.2.c: Read the in-memory ring buffer of recent table-parse requests for the admin
+ * debug UI. Returns the last N parses with FULL methodResults including subprocess stderr,
+ * intermediate state, and timing.
  *
  * GET    → list all entries in the ring buffer (newest first)
  * DELETE → clear the ring buffer
  *
- * Multi-replica ECS gotcha: each task has its own buffer. The admin page may
- * see different "recent parses" depending on which task served the request.
- * Acceptable for MVP.
+ * Multi-replica ECS gotcha: each task has its own buffer. The admin page may see different
+ * "recent parses" depending on which task served the request. Acceptable for MVP.
+ *
+ * [refactor jul6 S044] Thin shells — behavior lives in services/recent-parses.ts
+ * (getRecentParses / clearRecentParses). auth:"admin" (A). No body on either method → no E;
+ * no catch-500 literal → no B. Solo fold (char: admin-recent-parses.route.test.ts RP-*).
  */
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-utils";
-import { getHistory, clearHistory, getMaxEntries } from "@/lib/parse-history";
 
-export async function GET() {
-  const { error } = await requireAdmin();
-  if (error) return error;
+import { defineRoute } from "@/server/api/defineRoute";
+import { getRecentParses, clearRecentParses } from "@/server/services/recent-parses";
 
-  const entries = getHistory();
-  return NextResponse.json({
-    entries,
-    count: entries.length,
-    maxEntries: getMaxEntries(),
-  });
-}
+export const GET = defineRoute({
+  auth: "admin",
+  handler: () => getRecentParses(),
+});
 
-export async function DELETE() {
-  const { error } = await requireAdmin();
-  if (error) return error;
-
-  clearHistory();
-  return NextResponse.json({ ok: true });
-}
+export const DELETE = defineRoute({
+  auth: "admin",
+  handler: () => clearRecentParses(),
+});
