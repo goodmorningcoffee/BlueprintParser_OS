@@ -10,7 +10,8 @@
 //     publicId=projectId AND companyId=session.companyId → {success:true}.
 // BOTH writes are companyId-SCOPED (cross-company tenancy guard; NO root bypass — preserve
 // byte-exact). new Date() non-determinism. Body IS read (E applies at fold). No catch-500 → NO B.
-// Assertions tagged [S045 fold] flip in the fold commit (sanctioned A/E only).
+// Assertions tagged [S045 fold: … applied] were flipped in the fold commit onto
+// services/demo.ts (sanctioned A/E only).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -35,8 +36,8 @@ async function makeWorld() {
 }
 
 const post = (body: unknown) => makeReq("/api/admin/demo", { method: "POST", body });
-const UNAUTH = { error: "Unauthorized" }; // [S045 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S045 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S045 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S045 fold: A applied]
 
 async function projectRow(id: number) {
   const [p] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
@@ -50,11 +51,11 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
     const { admin, member, root } = await makeWorld();
     let r = await readJson(await demoPOST(post({ action: "refresh" })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S045 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S045 fold: A applied]
     asUser(member);
     r = await readJson(await demoPOST(post({ action: "refresh" })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S045 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S045 fold: A applied]
     asUser(admin);
     expect((await readJson(await demoPOST(post({ action: "refresh" })))).status).toBe(200);
     asUser(root);
@@ -89,7 +90,7 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
     for (const body of [{}, { isDemo: true }, { projectId: "x" }, { projectId: "x", isDemo: "yes" }, { projectId: "x", isDemo: 1 }]) {
       const r = await readJson(await demoPOST(post(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "projectId and isDemo required" }); // [S045 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "projectId and isDemo required" } }); // [S045 fold: A applied]
     }
   });
 

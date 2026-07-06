@@ -1,46 +1,18 @@
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+/**
+ * POST /api/admin/demo  (refresh demo projects, or toggle a project's isDemo flag)
+ *
+ * [refactor jul6 S045] Thin shell — behavior lives in services/demo.ts (manageDemo).
+ * auth:"admin" (A). body:zLooseBody (E: legacy `await req.json()` → shell "Invalid JSON
+ * body"). Both writes' companyId tenancy scope + the "projectId and isDemo required"
+ * validation stay in-service. Solo fold (char: admin-demo.route.test.ts DEMO-*).
+ */
 
-export async function POST(req: Request) {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { manageDemo } from "@/server/services/demo";
 
-  const body = await req.json();
-
-  // Refresh all demo projects (bust caches, confirm sync)
-  if (body.action === "refresh") {
-    const result = await db
-      .update(projects)
-      .set({ updatedAt: new Date() })
-      .where(
-        and(
-          eq(projects.isDemo, true),
-          eq(projects.companyId, session.user.companyId)
-        )
-      )
-      .returning({ id: projects.id });
-
-    return NextResponse.json({ success: true, refreshed: result.length });
-  }
-
-  const { projectId, isDemo } = body;
-
-  if (!projectId || typeof isDemo !== "boolean") {
-    return NextResponse.json({ error: "projectId and isDemo required" }, { status: 400 });
-  }
-
-  await db
-    .update(projects)
-    .set({ isDemo, updatedAt: new Date() })
-    .where(
-      and(
-        eq(projects.publicId, projectId),
-        eq(projects.companyId, session.user.companyId)
-      )
-    );
-
-  return NextResponse.json({ success: true });
-}
+export const POST = defineRoute({
+  auth: "admin",
+  body: zLooseBody,
+  handler: ({ body, session }) => manageDemo(body, session!),
+});
