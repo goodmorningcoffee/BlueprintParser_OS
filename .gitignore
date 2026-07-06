@@ -44,8 +44,14 @@ infrastructure/terraform/.terraform.lock.hcl
 # the real backend values back afterwards.
 infrastructure/terraform/main.tf
 
-# YOLO models (large binary files)
-models/
+# YOLO model WEIGHTS (large binary files). ANCHORED to the repo root — the weights live in
+# /models (yolo_*.pt, tatr/model.safetensors); build-artifact copies under .next are covered
+# by the .next ignore. The previous UN-anchored `models/` glob also matched the SOURCE route
+# dir src/app/api/admin/models/, leaving admin/models/route.ts + models/reprocess-csi/route.ts
+# UNTRACKED (fresh clones/CI/deploy were missing them). Weight leaks are additionally blocked
+# by the CloudFront + task-role Deny rules (defense-in-depth). [refactor jul6 S041 — S001-class
+# tree-integrity gap]
+/models/
 
 # internal planning docs
 plans/
