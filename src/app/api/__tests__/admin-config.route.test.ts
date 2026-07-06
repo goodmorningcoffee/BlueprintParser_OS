@@ -548,4 +548,47 @@ describe.skipIf(!dbUp)("admin/heuristics/config (HEU)", () => {
     expect(row.pc?.heuristics).toEqual([]);
     expect(row.pc?.pageNaming).toEqual(SEED.pageNaming); // null is falsy → conditional skip
   });
+
+  // [S037 DETECTOR closers] The B1 shared-DETECTOR sample audit (heuristics = the P3 pick)
+  // surfaced two coverage NOTEs (HEU-COV-1/2): the E-class body edges and the root-admin
+  // path were pinned only on OTHER routes (DEMO-5, DEMO-1) on the reasoning that both are
+  // shell/helper-shared mechanisms. Non-falsifying, but heuristics is the deviant member
+  // (auth:"none" GET + in-service auth()), so its root path is genuinely NOT the shared
+  // requireSession one on GET — pin both here directly.
+  it("HEU-7 root-admin (isRootAdmin, role member) gets the FULL admin read on GET (not the fallback) and can PUT [closer HEU-COV-2]", async () => {
+    const { company } = await makeWorld();
+    const root = await createUser(company.id, { isRootAdmin: true });
+    asUser(root);
+    // GET: the in-service isAdmin gate must treat root as admin → full company read, NOT the built-ins fallback
+    const g = await get(heuGET, "/api/admin/heuristics/config");
+    expect(g.status).toBe(200);
+    expect(g.body.companyOverrides).toEqual(SEED.heuristics); // full read (fallback would be [])
+    expect(g.body.pageNaming).toEqual(SEED.pageNaming);
+    // PUT: root passes requireSession("admin") (isRootAdmin bypass) and writes
+    const r = await put(heuPUT, "/api/admin/heuristics/config", { heuristics: [{ id: "hR", name: "Root Rule" }] });
+    expect(r.status).toBe(200);
+    expect((await rowOf(company.id)).pc?.heuristics).toEqual([{ id: "hR", name: "Root Rule" }]);
+  });
+
+  it("HEU-8 PUT body-edge E-class + no-write (parse-before-auth systemic trait, pinned on the deviant member) [closer HEU-COV-1]", async () => {
+    const { company, admin } = await makeWorld();
+    // signed-out + malformed → 400 BAD_REQUEST pre-auth (E; legacy authed first → 401)
+    let r = await readJson(await heuPUT(rawPut("/api/admin/heuristics/config", "{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    asUser(admin);
+    // authed + malformed → same BAD_REQUEST; authed empty + JSON-null + scalar → VALIDATION generic
+    r = await readJson(await heuPUT(rawPut("/api/admin/heuristics/config", "{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe("BAD_REQUEST");
+    for (const raw of [undefined, "null", "5"]) {
+      r = await readJson(await heuPUT(rawPut("/api/admin/heuristics/config", raw)));
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION"); // generic zod message; legacy gave 500 / route literal
+    }
+    // none of the edges wrote
+    const after = await rowOf(company.id);
+    expect(after.pc?.heuristics).toEqual(SEED.heuristics);
+    expect(after.pc?.pageNaming).toEqual(SEED.pageNaming);
+  });
 });
