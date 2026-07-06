@@ -53,12 +53,16 @@ infrastructure/terraform/main.tf
 # tree-integrity gap]
 /models/
 
-# internal planning docs
-plans/
-REFACTORED_MARCH29.md
-bucket-fill.md
-csv-editor-panel.md
-symbol-search-fix.md
+# internal planning docs — ANCHORED to repo root (DR004 TREE-1/TREE-2): un-anchored dir/file
+# globs are the same antipattern that gitignored the admin/models SOURCE dir (S041). These
+# only ignore the root-level planning docs; a same-named source file under src/ stays tracked.
+# (NOTE: *.plan / *.pem below stay UN-anchored ON PURPOSE — secret/key protection must match
+# at any depth.)
+/plans/
+/REFACTORED_MARCH29.md
+/bucket-fill.md
+/csv-editor-panel.md
+/symbol-search-fix.md
 
 # vercel
 .vercel
