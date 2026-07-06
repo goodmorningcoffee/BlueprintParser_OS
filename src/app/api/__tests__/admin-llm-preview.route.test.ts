@@ -14,7 +14,8 @@
 // Body IS read → E applies at fold. No catch-500 literal → NO B. The section-builder internals
 // are pure library fns not touched by the fold, so this freeze pins auth + validation + the
 // companyId 404 scope + the response SHAPE (not every section permutation).
-// Assertions tagged [S048 fold] flip in the fold commit (sanctioned A/E only).
+// Assertions tagged [S048 fold: … applied] were flipped in the fold commit onto
+// services/llm-preview.ts (sanctioned A/E only).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -37,8 +38,8 @@ async function makeWorld() {
 }
 
 const post = (body: unknown) => makeReq("/api/admin/llm/preview", { method: "POST", body });
-const UNAUTH = { error: "Unauthorized" }; // [S048 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S048 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S048 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S048 fold: A applied]
 
 beforeEach(() => { vi.clearAllMocks(); signedOut(); });
 
@@ -47,11 +48,11 @@ describe.skipIf(!dbUp)("admin/llm/preview (LP)", () => {
     const { admin, member } = await makeWorld();
     let r = await readJson(await lpPOST(post({})));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S048 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S048 fold: A applied]
     asUser(member);
     r = await readJson(await lpPOST(post({})));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S048 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S048 fold: A applied]
     asUser(admin); // passes auth → hits validation (400, not 403)
     r = await readJson(await lpPOST(post({})));
     expect(r.status).toBe(400);
@@ -62,7 +63,7 @@ describe.skipIf(!dbUp)("admin/llm/preview (LP)", () => {
     asUser(admin);
     const r = await readJson(await lpPOST(post({ scope: "project" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "projectId required" }); // [S048 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "projectId required" } }); // [S048 fold: A applied]
   });
 
   it("LP-3 ⚠️ companyId-scoped 404: another company's project → 404 'Not found'; own project → 200", async () => {
@@ -74,7 +75,7 @@ describe.skipIf(!dbUp)("admin/llm/preview (LP)", () => {
     asUser(admin);
     let r = await readJson(await lpPOST(post({ projectId: otherProj.publicId })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S048 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S048 fold: A applied]
     // own project → 200
     r = await readJson(await lpPOST(post({ projectId: mine.publicId })));
     expect(r.status).toBe(200);
