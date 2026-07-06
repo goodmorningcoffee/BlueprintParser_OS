@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { apiErrorMessage } from "@/lib/client-persist";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -29,7 +30,8 @@ export default function RegisterForm() {
     const data = await res.json();
 
     if (!res.ok) {
-      setError(data.error || "Registration failed");
+      // [refactor jul6 S034] register now serves {error:{code,message}}
+      setError(apiErrorMessage(data) || "Registration failed");
       setLoading(false);
       return;
     }

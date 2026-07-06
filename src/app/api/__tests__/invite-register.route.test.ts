@@ -19,6 +19,13 @@
 import { describe, expect, inject, it, vi, beforeEach } from "vitest";
 import bcrypt from "bcrypt";
 
+// Even though both routes are PUBLIC, the shell imports @/lib/auth (next-auth) — the
+// standard harness mock keeps next-auth out of the vitest node graph.
+vi.mock("@/lib/auth", async () => {
+  const { sessionState } = await import("@/test/harness");
+  return { auth: async () => sessionState.current };
+});
+
 const h = vi.hoisted(() => ({ audit: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
 
@@ -43,7 +50,7 @@ describe.skipIf(!dbUp)("POST /api/invite (IQ-1, public)", () => {
     for (const email of [undefined, 42, "nope", "a@b", "x".repeat(250) + "@a.com", " padded@test.com "]) {
       const { status, body } = await readJson(await inv({ email }));
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Valid email required" }); // [S034 fold: A]
+      expect(body).toEqual({ error: { code: "VALIDATION", message: "Valid email required" } }); // [S034 fold: A applied]
     }
     const uniq = `inv-${Math.random().toString(36).slice(2, 8)}`;
     const r = await readJson(await inv({ email: `${uniq.toUpperCase()}@Test.COM`, name: "  Al  ", company: undefined }));
@@ -62,8 +69,8 @@ describe.skipIf(!dbUp)("POST /api/invite (IQ-1, public)", () => {
       method: "POST", headers: { "content-type": "application/json" }, body: "{oops",
     });
     const { status, body } = await readJson(await invitePOST(raw));
-    expect(status).toBe(500);
-    expect(body).toEqual({ error: "Failed to submit" });
+    expect(status).toBe(400);
+    expect(body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }); // [S034 fold: E applied — the fixed 500 now covers only real runtime failures via B]
   });
 });
 
@@ -73,24 +80,24 @@ describe.skipIf(!dbUp)("POST /api/register (IQ-2, public)", () => {
   it("cascade: fields → length → charset; each message byte-exact", async () => {
     let r = await readJson(await reg({ username: "u" }));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "All fields are required" }); // [S034 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "All fields are required" } }); // [S034 fold: A applied]
     r = await readJson(await reg({ ...F, accessKey: "k", password: "Short1A" }));
-    expect(r.body).toEqual({ error: "Password must be at least 10 characters" }); // [S034 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Password must be at least 10 characters" } }); // [S034 fold: A applied]
     r = await readJson(await reg({ ...F, accessKey: "k", password: "alllowercase1" }));
-    expect(r.body).toEqual({ error: "Password must contain at least one uppercase letter and one number" }); // [S034 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Password must contain at least one uppercase letter and one number" } }); // [S034 fold: A applied]
     r = await readJson(await reg({ ...F, accessKey: "k", password: "NoNumbersHere" }));
-    expect(r.body).toEqual({ error: "Password must contain at least one uppercase letter and one number" }); // [S034 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Password must contain at least one uppercase letter and one number" } }); // [S034 fold: A applied]
   });
 
   it("no-reveal generic 400: bad key AND existing email produce the SAME message", async () => {
     const company = await createCompany(); // plaintext accessKey ak-<tag>
     let r = await readJson(await reg({ ...F, accessKey: "wrong-key-entirely" }));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Invalid access key or email already in use" }); // [S034 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Invalid access key or email already in use" } }); // [S034 fold: A]
     const existing = await createUser(company.id);
     r = await readJson(await reg({ ...F, email: existing.email, accessKey: company.accessKey }));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Invalid access key or email already in use" }); // SAME msg — no reveal [S034 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Invalid access key or email already in use" } }); // SAME msg — no reveal [S034 fold: A]
   });
 
   it("plaintext-key path (timingSafeEqual) registers; email normalized; role member; audit fires", async () => {
@@ -120,6 +127,8 @@ describe.skipIf(!dbUp)("POST /api/register (IQ-2, public)", () => {
     const raw = new Request("http://test.local/api/register", {
       method: "POST", headers: { "content-type": "application/json" }, body: "{oops",
     });
-    await expect(registerPOST(raw)).rejects.toThrow();
+    const rr = await readJson(await registerPOST(raw));
+    expect(rr.status).toBe(400);
+    expect(rr.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }); // [S034 fold: E applied]
   });
 });

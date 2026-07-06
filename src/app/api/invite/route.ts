@@ -1,26 +1,19 @@
-import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { inviteRequests } from "@/lib/db/schema";
-import { logger } from "@/lib/logger";
+/**
+ * POST /api/invite
+ *
+ * [refactor jul6 S034] Thin shell — behavior lives in services/invite-register.ts
+ * (inviteRequest). auth:"none" — the PUBLIC invite-request form (demo page + login
+ * form; docs mislabel it admin — P1 ledger). body:zLooseBody (diff E; the FIXED
+ * "Failed to submit" catch retired → shell generic, diff B/S015 class). Path pinned
+ * by the middleware ip rate rule on POST /api/invite.
+ */
 
-export async function POST(req: Request) {
-  try {
-    const { email, name, company } = await req.json();
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { inviteRequest } from "@/server/services/invite-register";
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!email || typeof email !== "string" || !emailRegex.test(email) || email.length > 254) {
-      return NextResponse.json({ error: "Valid email required" }, { status: 400 });
-    }
-
-    await db.insert(inviteRequests).values({
-      email: email.trim().toLowerCase().slice(0, 254),
-      name: name?.trim()?.slice(0, 100) || null,
-      company: company?.trim()?.slice(0, 100) || null,
-    });
-
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    logger.error("Failed to create invite request:", err);
-    return NextResponse.json({ error: "Failed to submit" }, { status: 500 });
-  }
-}
+export const POST = defineRoute({
+  auth: "none",
+  body: zLooseBody,
+  handler: ({ body }) => inviteRequest(body),
+});
