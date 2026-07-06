@@ -1,70 +1,26 @@
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { processingJobs, projects } from "@/lib/db/schema";
-import { eq, and, sql } from "drizzle-orm";
-
 /**
- * GET /api/admin/running-jobs
- * Returns YOLO jobs with status='running' for the admin's company.
- * Used to resume polling after navigating away from admin panel.
+ * GET/PUT /api/admin/running-jobs
+ *
+ * GET → YOLO jobs with status='running' for the admin's company (resume polling after
+ * navigating away). PUT → update a job's status when polling detects completion.
+ *
+ * [refactor jul6 S046] Thin shells — behavior lives in services/running-jobs.ts
+ * (getRunningJobs / updateRunningJob). auth:"admin" (A). GET has no body (no E) and keeps its
+ * graceful catch→[] in-service; PUT body:zLooseBody (E: legacy `await req.json()` → shell
+ * "Invalid JSON body"). Solo fold (char: admin-running-jobs.route.test.ts RJ-*).
  */
-export async function GET() {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
 
-  try {
-    const rows = await db.execute(sql`
-      SELECT
-        pj.id,
-        pj.execution_id AS "executionId",
-        pj.model_config AS "modelConfig",
-        pj.started_at AS "startedAt",
-        p.public_id AS "projectPublicId"
-      FROM processing_jobs pj
-      JOIN projects p ON pj.project_id = p.id
-      WHERE p.company_id = ${session.user.companyId}
-        AND pj.status = 'running'
-        AND pj.model_config IS NOT NULL
-      ORDER BY pj.started_at DESC
-    `);
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { getRunningJobs, updateRunningJob } from "@/server/services/running-jobs";
 
-    const jobs = (rows.rows as any[]).map((r) => ({
-      projectPublicId: r.projectPublicId,
-      executionId: r.executionId,
-      modelId: r.modelConfig?.modelId,
-      modelName: r.modelConfig?.modelName,
-      startedAt: r.startedAt,
-    }));
+export const GET = defineRoute({
+  auth: "admin",
+  handler: ({ session }) => getRunningJobs(session!),
+});
 
-    return NextResponse.json(jobs);
-  } catch {
-    return NextResponse.json([]);
-  }
-}
-
-/**
- * PUT /api/admin/running-jobs
- * Update a job's status when polling detects completion.
- */
-export async function PUT(req: Request) {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
-
-  const { executionId, status } = await req.json();
-  if (!executionId || !status) {
-    return NextResponse.json({ error: "executionId and status required" }, { status: 400 });
-  }
-
-  const dbStatus = status === "Completed" ? "completed" : status === "Failed" || status === "Stopped" ? "failed" : null;
-  if (!dbStatus) {
-    return NextResponse.json({ error: "Invalid terminal status" }, { status: 400 });
-  }
-
-  await db
-    .update(processingJobs)
-    .set({ status: dbStatus, completedAt: new Date() })
-    .where(eq(processingJobs.executionId, executionId));
-
-  return NextResponse.json({ success: true });
-}
+export const PUT = defineRoute({
+  auth: "admin",
+  body: zLooseBody,
+  handler: ({ body }) => updateRunningJob(body),
+});

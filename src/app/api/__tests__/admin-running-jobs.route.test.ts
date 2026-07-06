@@ -14,7 +14,8 @@
 //     completedAt:now} WHERE executionId=executionId (⚠️ NOT company-scoped — legacy behavior,
 //     preserve byte-exact) → {success:true}.
 // GET body: none → GET has no E. PUT reads body → E applies at fold. No catch-500 literal → NO B.
-// Assertions tagged [S046 fold] flip in the fold commit (sanctioned A/E only).
+// Assertions tagged [S046 fold: … applied] were flipped in the fold commit onto
+// services/running-jobs.ts (sanctioned A/E only).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -40,8 +41,8 @@ async function makeWorld() {
 
 const getReq = () => makeReq("/api/admin/running-jobs", { method: "GET" });
 const putReq = (body: unknown) => makeReq("/api/admin/running-jobs", { method: "PUT", body });
-const UNAUTH = { error: "Unauthorized" }; // [S046 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S046 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S046 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S046 fold: A applied]
 
 const tag = () => Math.random().toString(36).slice(2, 8);
 async function seedJob(projectId: number, over: Partial<typeof processingJobs.$inferInsert> = {}) {
@@ -61,17 +62,17 @@ beforeEach(() => { vi.clearAllMocks(); signedOut(); });
 describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
   it("RJ-1 GET auth: signed-out→401, member→403, admin+root→200", async () => {
     const { admin, member, root } = await makeWorld();
-    let r = await readJson(await rjGET());
+    let r = await readJson(await rjGET(getReq()));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S046 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S046 fold: A applied]
     asUser(member);
-    r = await readJson(await rjGET());
+    r = await readJson(await rjGET(getReq()));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S046 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S046 fold: A applied]
     asUser(admin);
-    expect((await readJson(await rjGET())).status).toBe(200);
+    expect((await readJson(await rjGET(getReq()))).status).toBe(200);
     asUser(root);
-    expect((await readJson(await rjGET())).status).toBe(200);
+    expect((await readJson(await rjGET(getReq()))).status).toBe(200);
   });
 
   it("RJ-2 GET: BARE ARRAY of own-company running jobs (companyId-scoped), shaped from model_config", async () => {
@@ -85,7 +86,7 @@ describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
     const otherProj = await createProject(otherCo.id, (await createUser(otherCo.id)).id);
     await seedJob(otherProj.id);
     asUser(admin);
-    const r = await readJson(await rjGET());
+    const r = await readJson(await rjGET(getReq()));
     expect(r.status).toBe(200);
     expect(Array.isArray(r.body)).toBe(true); // BARE array, not enveloped
     const mine = r.body.filter((j: { executionId: string }) => j.executionId === job.executionId);
@@ -99,7 +100,7 @@ describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
     const { admin } = await makeWorld();
     asUser(admin);
     const spy = vi.spyOn(db, "execute").mockRejectedValueOnce(new Error("db down"));
-    const r = await readJson(await rjGET());
+    const r = await readJson(await rjGET(getReq()));
     expect(r.status).toBe(200);
     expect(r.body).toEqual([]); // graceful empty array
     spy.mockRestore();
@@ -109,11 +110,11 @@ describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
     const { member } = await makeWorld();
     let r = await readJson(await rjPUT(putReq({ executionId: "x", status: "Completed" })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S046 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S046 fold: A applied]
     asUser(member);
     r = await readJson(await rjPUT(putReq({ executionId: "x", status: "Completed" })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S046 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S046 fold: A applied]
   });
 
   it("RJ-5 PUT validation: missing fields → 'executionId and status required'; bad status → 'Invalid terminal status'", async () => {
@@ -122,11 +123,11 @@ describe.skipIf(!dbUp)("admin/running-jobs (RJ)", () => {
     for (const body of [{}, { executionId: "x" }, { status: "Completed" }]) {
       const r = await readJson(await rjPUT(putReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "executionId and status required" }); // [S046 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "executionId and status required" } }); // [S046 fold: A applied]
     }
     const r = await readJson(await rjPUT(putReq({ executionId: "x", status: "Bogus" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Invalid terminal status" }); // [S046 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Invalid terminal status" } }); // [S046 fold: A applied]
   });
 
   it("RJ-6 PUT write: maps Completed→completed / Failed|Stopped→failed, sets completedAt (by executionId, NOT company-scoped)", async () => {
