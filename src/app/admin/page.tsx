@@ -4,6 +4,9 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Header from "@/components/dashboard/Header";
+// [refactor jul6 S031] apiErrorMessage: yolo routes now serve {error:{code,message}};
+// reads both shapes (the retry below compares the MESSAGE, not the raw body field).
+import { apiErrorMessage } from "@/lib/client-persist";
 import AdminTabs, { type AdminTab } from "./AdminTabs";
 import OverviewTab from "./tabs/OverviewTab";
 import ProjectsTab from "./tabs/ProjectsTab";
@@ -374,12 +377,13 @@ export default function AdminPage() {
         }
       } else {
         const err = await loadRes.json().catch(() => ({ error: "Unknown error" }));
-        if (err.error === "No results found" && retryCount < 1) {
+        const errMsg = apiErrorMessage(err) || "Unknown error";
+        if (errMsg === "No results found" && retryCount < 1) {
           setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: "Waiting for S3 results..." } }));
           await new Promise((r) => setTimeout(r, 5000));
           return loadYoloResults(projectId, modelId, modelName, retryCount + 1);
         }
-        setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Load failed: ${err.error}` } }));
+        setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Load failed: ${errMsg}` } }));
       }
     } catch {
       setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: "Load failed: network error" } }));
@@ -405,7 +409,7 @@ export default function AdminPage() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Unknown error" }));
-      setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Error: ${err.error}` } }));
+      setYoloJobs((prev) => ({ ...prev, [projectId]: { ...(prev[projectId] || {}), [mk]: `Error: ${apiErrorMessage(err) || "Unknown error"}` } }));
       return;
     }
 

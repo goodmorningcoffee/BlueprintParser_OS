@@ -1,27 +1,16 @@
-import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-utils";
-import { getYoloJobStatus } from "@/lib/yolo";
-import { logger } from "@/lib/logger";
+/**
+ * GET /api/yolo/status
+ *
+ * [refactor jul6 S031] Thin shell — behavior lives in services/yolo.ts (yoloStatus).
+ * auth:"session": legacy requireAuth-first (401 flat → envelope, diff A). Query read
+ * imperatively in the service to keep the exact "jobName required" message. The fixed
+ * "Failed to check status" catch is retired (diff B, S015 fixed-literal precedent).
+ */
 
-export async function GET(req: Request) {
-  const { session, error } = await requireAuth();
-  if (error) return error;
+import { defineRoute } from "@/server/api/defineRoute";
+import { yoloStatus } from "@/server/services/yolo";
 
-  const url = new URL(req.url);
-  const jobName = url.searchParams.get("jobName");
-
-  if (!jobName) {
-    return NextResponse.json({ error: "jobName required" }, { status: 400 });
-  }
-
-  try {
-    const status = await getYoloJobStatus(jobName);
-    return NextResponse.json(status);
-  } catch (err) {
-    logger.error("YOLO status check failed:", err);
-    return NextResponse.json(
-      { error: "Failed to check status" },
-      { status: 500 }
-    );
-  }
-}
+export const GET = defineRoute({
+  auth: "session",
+  handler: ({ req }) => yoloStatus(req),
+});

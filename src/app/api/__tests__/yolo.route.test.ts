@@ -211,12 +211,12 @@ describe.skipIf(!dbUp)("GET /api/yolo/status", () => {
   it("signed-out 401; no jobName 400; happy passthrough; engine throw → FIXED 500", async () => {
     let r = await readJson(await call("?jobName=j1"));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S031 fold: A applied]
     const { user } = await createWorld();
     asUser(user);
     r = await readJson(await call(""));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "jobName required" }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "jobName required" } }); // [S031 fold: A applied]
     r = await readJson(await call("?jobName=j1"));
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ status: "Completed", progress: 100 }); // engine passthrough
@@ -224,7 +224,7 @@ describe.skipIf(!dbUp)("GET /api/yolo/status", () => {
     h.getYoloJobStatus.mockRejectedValue(new Error("sfn down — must not appear"));
     r = await readJson(await call("?jobName=j1"));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "Failed to check status" }); // FIXED literal [S031 fold: B → generic, S015 precedent]
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S031 fold: B applied — fixed literal retired]
   });
 });
 
@@ -243,28 +243,28 @@ describe.skipIf(!dbUp)("POST /api/yolo/run — gates in order (YQ-3/YQ-4)", () =
   it("auth-first ladder: 401 signed-out → canRunModels 403 → sagemaker-toggle 403 → quota 429 (no fallback) → field 400", async () => {
     let r = await readJson(await call({}));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S031 fold: A applied]
     const { user } = await runWorld({ canRunModels: false });
     asUser(user);
     r = await readJson(await call({}));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "You don't have permission to run models. Ask your admin to enable it." }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "You don't have permission to run models. Ask your admin to enable it." } }); // [S031 fold: A applied]
     const w = await runWorld();
     asUser(w.user);
     h.getToggles.mockResolvedValue({ sagemakerEnabled: false, quotaEnabled: true });
     r = await readJson(await call({}));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "SageMaker is disabled by admin. Enable it in Admin > Toggles." }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "SageMaker is disabled by admin. Enable it in Admin > Toggles." } }); // [S031 fold: A applied]
     expect(h.getToggles).toHaveBeenCalledWith(true); // fresh S3 read pinned
     h.getToggles.mockResolvedValue({ sagemakerEnabled: true, quotaEnabled: true });
     h.checkYoloQuota.mockResolvedValue({ allowed: false, message: "YOLO daily cap reached" });
     r = await readJson(await call({}));
     expect(r.status).toBe(429);
-    expect(r.body).toEqual({ error: "YOLO daily cap reached" }); // NO || fallback (YQ-3) [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "RATE_LIMITED", message: "YOLO daily cap reached" } }); // NO || fallback (YQ-3) [S031 fold: A applied]
     h.checkYoloQuota.mockResolvedValue({ allowed: true });
     r = await readJson(await call({ projectId: w.project.publicId }));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "projectId and modelId required" }); // body parsed AFTER the 3 gates [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "projectId and modelId required" } }); // [S031 fold: A applied]
   });
 
   it("malformed body rejects RAW only AFTER auth+toggles+quota pass (YQ-3)", async () => {
@@ -278,7 +278,16 @@ describe.skipIf(!dbUp)("POST /api/yolo/run — gates in order (YQ-3/YQ-4)", () =
       headers: { "content-type": "application/json" },
       body: "{oops",
     });
-    await expect(runPOST(raw)).rejects.toThrow();
+    let rr = await readJson(await runPOST(raw));
+    expect(rr.status).toBe(400);
+    expect(rr.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }); // [S031 fold: E applied]
+    // E ordering note pinned: the shell parses the body PRE-auth — malformed 400s even signed-out
+    signedOut();
+    rr = await readJson(await runPOST(new Request("http://test.local/api/yolo/run", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{oops",
+    })));
+    expect(rr.status).toBe(400);
+    expect(rr.body.error.code).toBe("BAD_REQUEST");
   });
 
   it("YQ-1a: company-scoped lookup — ROOT cross-company gets 404 (NO bypass); numPages gate", async () => {
@@ -288,12 +297,12 @@ describe.skipIf(!dbUp)("POST /api/yolo/run — gates in order (YQ-3/YQ-4)", () =
     asUser(rootUser);
     let r = await readJson(await call({ projectId: w.project.publicId, modelId: w.model.id }));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Project not found" }); // root does NOT bypass here [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Project not found" } }); // root does NOT bypass here [S031 fold: A applied]
     const w2 = await runWorld({}, { numPages: 0 });
     asUser(w2.user);
     r = await readJson(await call({ projectId: w2.project.publicId, modelId: w2.model.id }));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Project page count is unknown. Reprocess the project before running models." }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Project page count is unknown. Reprocess the project before running models." } }); // [S031 fold: A applied]
   });
 
   it("YQ-1b: demo yoloRun gate blocks non-root; ROOT bypasses the gate", async () => {
@@ -316,12 +325,12 @@ describe.skipIf(!dbUp)("POST /api/yolo/run — gates in order (YQ-3/YQ-4)", () =
     asUser(w.user);
     let r = await readJson(await call({ projectId: w.project.publicId, modelId: 999999 }));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Model not found" }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Model not found" } }); // [S031 fold: A applied]
     const foreignCo = await createCompany();
     const foreignModel = await createModel(foreignCo.id);
     r = await readJson(await call({ projectId: w.project.publicId, modelId: foreignModel.id }));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Model not found" }); // no existence leak [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Model not found" } }); // no existence leak [S031 fold: A applied]
     await db.insert(modelAccess).values({ modelId: foreignModel.id, companyId: w.company.id, enabled: true, userId: null } as never);
     r = await readJson(await call({ projectId: w.project.publicId, modelId: foreignModel.id }));
     expect(r.status).toBe(200); // company-wide grant admits
@@ -357,12 +366,12 @@ describe.skipIf(!dbUp)("POST /api/yolo/run — gates in order (YQ-3/YQ-4)", () =
     h.s3Send.mockRejectedValue(new Error("404 head"));
     let r = await readJson(await call({ projectId: w.project.publicId, modelId: w.model.id }));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Page images not found. The project needs to be processed first (or reprocessed if it was uploaded before the image pipeline was added)." }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Page images not found. The project needs to be processed first (or reprocessed if it was uploaded before the image pipeline was added)." } }); // [S031 fold: A applied]
     h.s3Send.mockResolvedValue({});
     h.reserveSagemakerPages.mockResolvedValue({ allowed: false, message: "Company cap hit", capHit: "company", companyUsed: 100, companyLimit: 100, userUsed: 0, userLimit: null });
     r = await readJson(await call({ projectId: w.project.publicId, modelId: w.model.id }));
     expect(r.status).toBe(429);
-    expect(r.body).toEqual({ error: "Company cap hit" }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "RATE_LIMITED", message: "Company cap hit" } }); // [S031 fold: A applied]
     expect(h.recordAbuseEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "SAGEMAKER_CAP_HIT" }));
     expect(h.audit).toHaveBeenCalledWith("yolo_cap_hit", expect.anything());
     expect(h.sendAlertEmail).not.toHaveBeenCalled(); // no ROOT_ADMIN_EMAIL in test env
@@ -377,7 +386,8 @@ describe.skipIf(!dbUp)("POST /api/yolo/run — gates in order (YQ-3/YQ-4)", () =
     h.startYoloJob.mockRejectedValue(new Error("sfn exploded"));
     let r = await readJson(await call({ projectId: w.project.publicId, modelId: w.model.id }));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "Failed to start SageMaker job: sfn exploded" });
+    // [S031 fold: B applied — suffix dropped, prefix KEPT (surfaces, S024 pin class)]
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Failed to start SageMaker job" } });
     expect(h.releaseReservation).toHaveBeenCalledWith(77);
     h.startYoloJob.mockResolvedValue("job-abc");
     h.stampReservationJob.mockRejectedValue(new Error("ledger down"));
@@ -406,19 +416,19 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
   it("YQ-2: signed-out → 403 'Admin only' (NOT 401); member → 403; cross-company → 404", async () => {
     let r = await readJson(await call({ projectId: "x", modelId: 1, modelName: "m" }));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Admin only" }); // signed-out gets 403 — S020 class [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "Admin only" } }); // signed-out 403 — S020 class [S031 fold: A applied]
     const w = await loadWorld();
     const member = await createUser(w.company.id); // role member
     asUser(member);
     r = await readJson(await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Admin only" }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "Admin only" } }); // [S031 fold: A applied]
     const otherCo = await createCompany();
     const otherAdmin = await createUser(otherCo.id, { role: "admin" } as never);
     asUser(otherAdmin);
     r = await readJson(await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Project not found" }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Project not found" } }); // [S031 fold: A applied]
   });
 
   it("S3 list empty → 404 'No results found'; unknown modelId PROCEEDS (no 404)", async () => {
@@ -427,7 +437,7 @@ describe.skipIf(!dbUp)("POST /api/yolo/load (YQ-2/YQ-5)", () => {
     h.sdkSend.mockResolvedValue({ Contents: [] });
     let r = await readJson(await call({ projectId: w.project.publicId, modelId: w.model.id, modelName: "m" }));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "No results found" }); // [S031 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "No results found" } }); // [S031 fold: A applied]
     // unknown modelId: empty class config, still runs the loop (YQ-5)
     seedS3Results([detFile(`${w.project.dataUrl}/yolo-output/m/page_0001.json`, [DET])]);
     r = await readJson(await call({ projectId: w.project.publicId, modelId: 999999, modelName: "m" }));
