@@ -79,19 +79,19 @@ describe.skipIf(!dbUp)("POST /api/processing/webhook — auth ladder (PQ5-1)", (
   it("bad/missing Bearer, missing/stale/future timestamp — each branch's status+message", async () => {
     let r = await readJson(await hook({ projectId: 1, pages: [], status: "completed" }, { authorization: "Bearer wrong" }));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S035 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S035 fold: A applied]
     r = await readJson(await webhookPOST(makeReq("/api/processing/webhook", { body: {}, headers: {} })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // no header [S035 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // no header [S035 fold: A applied]
     r = await readJson(await webhookPOST(makeReq("/api/processing/webhook", { body: {}, headers: { authorization: `Bearer ${SECRET}` } })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Missing timestamp" }); // [S035 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Missing timestamp" } }); // [S035 fold: A applied]
     r = await readJson(await hook({}, { "x-webhook-timestamp": String(Date.now() - 6 * 60 * 1000) }));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Webhook expired" }); // stale [S035 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Webhook expired" } }); // stale [S035 fold: A applied]
     r = await readJson(await hook({}, { "x-webhook-timestamp": String(Date.now() + 2 * 60 * 1000) }));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Webhook expired" }); // future [S035 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Webhook expired" } }); // future [S035 fold: A applied]
   });
 });
 
@@ -99,14 +99,16 @@ describe.skipIf(!dbUp)("POST /api/processing/webhook — body semantics (PQ5-2)"
   it("unknown dbId → 404; malformed-with-valid-auth → raw rejection", async () => {
     const r = await readJson(await hook({ projectId: 999999999, pages: [], status: "completed" }));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Project not found" }); // [S035 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Project not found" } }); // [S035 fold: A applied]
     // [S035 fold: E — becomes 400 BAD_REQUEST; note the shell also 400s BAD-auth+malformed (S033 trait)]
     const raw = new Request("http://test.local/api/processing/webhook", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${SECRET}`, "x-webhook-timestamp": String(Date.now()) },
       body: "{oops",
     });
-    await expect(webhookPOST(raw)).rejects.toThrow();
+    const rr = await readJson(await webhookPOST(raw));
+    expect(rr.status).toBe(400);
+    expect(rr.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }); // [S035 fold: E applied]
   });
 
   it("★ G1 pin: upsert both paths, search_vector, processingError NOT clobbered on success, job closed", async () => {
@@ -156,7 +158,7 @@ describe.skipIf(!dbUp)("POST /api/processing/webhook — body semantics (PQ5-2)"
     h.parseTextractResponse.mockImplementation(() => { throw new Error("textract parse died"); });
     r = await readJson(await hook({ projectId: project.id, status: "completed", pages: [{ pageNumber: 3, textractBlocks: [] }] }));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "textract parse died" });
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S035 fold: B applied]
   });
 });
 
@@ -166,22 +168,22 @@ describe.skipIf(!dbUp)("POST /api/processing/dev (PQ5-3)", () => {
     vi.stubEnv("DEV_PROCESSING_ENABLED", "false");
     let r = await readJson(await dev({ projectId: "x" }));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Dev processing not enabled" }); // signed-out yet 403 — guard first [S035 fold: A]
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "Dev processing not enabled" } }); // guard-before-auth held [S035 fold: A applied]
     vi.unstubAllEnvs();
     vi.stubEnv("PROCESSING_WEBHOOK_SECRET", SECRET);
     r = await readJson(await dev({ projectId: "x" }));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S035 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S035 fold: A applied]
     const { user, project } = await createWorld();
     asUser(user);
     r = await readJson(await dev({}));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "projectId required" }); // [S035 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "projectId required" } }); // [S035 fold: A applied]
     const other = await createCompany();
     asUser(await createUser(other.id));
     r = await readJson(await dev({ projectId: project.publicId }));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S035 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S035 fold: A applied]
   });
 
   it("happy spreads processProject's result; throw → LEAKY 500", async () => {
@@ -194,6 +196,6 @@ describe.skipIf(!dbUp)("POST /api/processing/dev (PQ5-3)", () => {
     h.processProject.mockRejectedValue(new Error("pipeline died"));
     r = await readJson(await dev({ projectId: project.publicId }));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "pipeline died" }); // [S035 fold: B — generic INTERNAL 500]
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S035 fold: B applied]
   });
 });
