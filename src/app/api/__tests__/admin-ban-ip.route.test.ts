@@ -23,7 +23,8 @@
 //   • The malformed-JSON 400 "Invalid JSON" (route's own try/catch) → shell 400 BAD_REQUEST
 //     "Invalid JSON body" at fold (diff E; message drift). Auth-before-parse ordering flips
 //     for signed-out+malformed (401 → 400 pre-auth; PR-D5(a)).
-// Assertions tagged [S039 fold] flip in the fold commit (sanctioned A/B/E only).
+// Assertions tagged [S039 fold: … applied] were flipped in the fold commit onto
+// services/manual-ip-bans.ts (sanctioned A/B/E only).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -61,8 +62,8 @@ async function makeRoot() {
   return { company, root, member };
 }
 
-const UNAUTH = { error: "Unauthorized" }; // [S039 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ROOT_ONLY = { error: "Root admin only" }; // [S039 fold: A → {error:{code:"FORBIDDEN",message:"Root admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S039 fold: A applied]
+const ROOT_ONLY = { error: { code: "FORBIDDEN", message: "Root admin only" } }; // [S039 fold: A applied]
 
 const banReq = (body: unknown) => makeReq("/api/admin/logs/ban-ip", { method: "POST", body });
 const unbanReq = (body: unknown) => makeReq("/api/admin/logs/unban-ip", { method: "POST", body });
@@ -86,11 +87,11 @@ describe.skipIf(!dbUp)("admin/logs/ban-ip (BAN)", () => {
     const { root, member } = await makeRoot();
     let r = await readJson(await banPOST(banReq({ ip: "1.2.3.4" })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S039 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S039 fold: A applied]
     asUser(member);
     r = await readJson(await banPOST(banReq({ ip: "1.2.3.4" })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_ONLY); // [S039 fold: A]
+    expect(r.body).toEqual(ROOT_ONLY); // [S039 fold: A applied]
     asUser(root);
     r = await readJson(await banPOST(banReq({ ip: "1.2.3.9" })));
     expect(r.status).toBe(200);
@@ -103,7 +104,7 @@ describe.skipIf(!dbUp)("admin/logs/ban-ip (BAN)", () => {
     // [S039 fold: E — shell parses raw body pre-auth → 400 BAD_REQUEST "Invalid JSON body"]
     const r = await readJson(await banPOST(rawReq("/api/admin/logs/ban-ip", "{oops")));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Invalid JSON" }); // [S039 fold: E — message drifts to "Invalid JSON body"]
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }); // [S039 fold: E applied]
     expect(h.bumpManualBanCacheVersion).not.toHaveBeenCalled();
   });
 
@@ -113,12 +114,12 @@ describe.skipIf(!dbUp)("admin/logs/ban-ip (BAN)", () => {
     for (const ip of ["", "   ", "x".repeat(46), "1.2.3.4; DROP", "not_an_ip!"]) {
       const r = await readJson(await banPOST(banReq({ ip })));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "Invalid IP address" }); // [S039 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Invalid IP address" } }); // [S039 fold: A applied]
     }
     // non-string ip → treated as "" → same
     const r = await readJson(await banPOST(banReq({ ip: 12345 })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Invalid IP address" }); // [S039 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Invalid IP address" } }); // [S039 fold: A applied]
     expect(h.recordAbuseEvent).not.toHaveBeenCalled();
   });
 
@@ -159,11 +160,11 @@ describe.skipIf(!dbUp)("admin/logs/unban-ip (UNBAN)", () => {
     const { member } = await makeRoot();
     let r = await readJson(await unbanPOST(unbanReq({ ip: "1.2.3.4" })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S039 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S039 fold: A applied]
     asUser(member);
     r = await readJson(await unbanPOST(unbanReq({ ip: "1.2.3.4" })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_ONLY); // [S039 fold: A]
+    expect(r.body).toEqual(ROOT_ONLY); // [S039 fold: A applied]
   });
 
   it("UNBAN-2 validation: empty ip → 400 'ip required' (NO regex — unlike ban); no write", async () => {
@@ -172,7 +173,7 @@ describe.skipIf(!dbUp)("admin/logs/unban-ip (UNBAN)", () => {
     for (const ip of ["", "   ", 999]) {
       const r = await readJson(await unbanPOST(unbanReq({ ip })));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "ip required" }); // [S039 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "ip required" } }); // [S039 fold: A applied]
     }
     // NOTE: unban accepts "malformed" ips that ban would reject (no regex) — frozen asymmetry
     expect(h.bumpManualBanCacheVersion).not.toHaveBeenCalled();
@@ -184,7 +185,7 @@ describe.skipIf(!dbUp)("admin/logs/unban-ip (UNBAN)", () => {
     // [S039 fold: E — shell → 400 BAD_REQUEST "Invalid JSON body"]
     const r = await readJson(await unbanPOST(rawReq("/api/admin/logs/unban-ip", "{oops")));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Invalid JSON" }); // [S039 fold: E]
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }); // [S039 fold: E applied]
   });
 
   it("UNBAN-4 write: deletes ban row, trims ip, bump + MANUAL_UNBAN abuse", async () => {
