@@ -1,49 +1,18 @@
-import { NextResponse } from "next/server";
-import crypto from "crypto";
-import { db } from "@/lib/db";
-import { users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { sendPasswordResetEmail } from "@/lib/email";
-import { logger } from "@/lib/logger";
+/**
+ * POST /api/auth/forgot-password
+ *
+ * [refactor jul6 S036] Thin shell — behavior lives in services/password-reset.ts
+ * (forgotPassword). auth:"none" (public). body:zLooseBody (diff E; the FIXED "Failed"
+ * catch retired → diff B). NO-LEAK + token-hash semantics byte-preserved in the
+ * service. Path pinned by the middleware ip rate rule.
+ */
 
-export async function POST(req: Request) {
-  try {
-    const { email } = await req.json();
-    if (!email || typeof email !== "string") {
-      return NextResponse.json({ error: "Email required" }, { status: 400 });
-    }
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { forgotPassword } from "@/server/services/password-reset";
 
-    const normalizedEmail = email.toLowerCase().trim();
-
-    // Always return success (don't leak whether email exists)
-    const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, normalizedEmail)).limit(1);
-    if (!user) {
-      return NextResponse.json({ success: true });
-    }
-
-    // Generate token: raw token sent via email, SHA-256 hash stored in DB
-    const rawToken = crypto.randomBytes(32).toString("hex");
-    const hashedToken = crypto.createHash("sha256").update(rawToken).digest("hex");
-    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-
-    await db.update(users).set({
-      passwordResetToken: hashedToken,
-      passwordResetExpires: expires,
-    }).where(eq(users.id, user.id));
-
-    const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-    const resetUrl = `${baseUrl}/reset-password?token=${rawToken}`;
-
-    try {
-      await sendPasswordResetEmail(normalizedEmail, resetUrl);
-    } catch (emailErr) {
-      logger.error("Failed to send reset email", emailErr);
-      // Still return success — token is saved, admin can retrieve the link
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    logger.error("Forgot password error", err);
-    return NextResponse.json({ error: "Failed" }, { status: 500 });
-  }
-}
+export const POST = defineRoute({
+  auth: "none",
+  body: zLooseBody,
+  handler: ({ body }) => forgotPassword(body),
+});

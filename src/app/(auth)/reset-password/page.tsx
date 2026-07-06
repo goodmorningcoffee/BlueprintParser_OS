@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, Suspense } from "react";
+import { apiErrorMessage } from "@/lib/client-persist";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -43,7 +44,7 @@ function ResetForm() {
       if (res.ok) {
         setSuccess(true);
       } else {
-        setError(data.error || "Something went wrong");
+        setError(apiErrorMessage(data) || "Something went wrong"); // [refactor jul6 S036] envelope-tolerant
       }
     } catch {
       setError("Network error");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { apiErrorMessage } from "@/lib/client-persist";
 import Link from "next/link";
 
 export default function ForgotPasswordPage() {
@@ -23,7 +24,7 @@ export default function ForgotPasswordPage() {
         setSent(true);
       } else {
         const data = await res.json();
-        setError(data.error || "Something went wrong");
+        setError(apiErrorMessage(data) || "Something went wrong"); // [refactor jul6 S036] envelope-tolerant
       }
     } catch {
       setError("Network error");

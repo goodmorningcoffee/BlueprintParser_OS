@@ -48,7 +48,7 @@ describe.skipIf(!dbUp)("POST /api/auth/forgot-password (WQ-1)", () => {
     for (const email of [undefined, 42, ""]) {
       const { status, body } = await readJson(await forgot({ email }));
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Email required" }); // [S036 fold: A]
+      expect(body).toEqual({ error: { code: "VALIDATION", message: "Email required" } }); // [S036 fold: A applied]
     }
     const r = await readJson(await forgot({ email: "nobody@nowhere.test" }));
     expect(r.status).toBe(200);
@@ -80,8 +80,8 @@ describe.skipIf(!dbUp)("POST /api/auth/forgot-password (WQ-1)", () => {
       method: "POST", headers: { "content-type": "application/json" }, body: "{oops",
     });
     const { status, body } = await readJson(await forgotPOST(raw));
-    expect(status).toBe(500);
-    expect(body).toEqual({ error: "Failed" });
+    expect(status).toBe(400);
+    expect(body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }); // [S036 fold: E applied]
   });
 });
 
@@ -89,19 +89,19 @@ describe.skipIf(!dbUp)("POST /api/auth/reset-password (WQ-2)", () => {
   it("field + SPLIT password-rule messages (distinct from register's combined)", async () => {
     let r = await readJson(await reset({ token: "t" }));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Token and password required" }); // [S036 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Token and password required" } }); // [S036 fold: A applied]
     r = await readJson(await reset({ token: "t", password: "Short1A" }));
-    expect(r.body).toEqual({ error: "Password must be at least 10 characters" }); // [S036 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Password must be at least 10 characters" } }); // [S036 fold: A applied]
     r = await readJson(await reset({ token: "t", password: "alllowercase1" }));
-    expect(r.body).toEqual({ error: "Password must contain at least one uppercase letter" }); // SPLIT [S036 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Password must contain at least one uppercase letter" } }); // SPLIT [S036 fold: A applied]
     r = await readJson(await reset({ token: "t", password: "NoDigitsHere" }));
-    expect(r.body).toEqual({ error: "Password must contain at least one digit" }); // SPLIT [S036 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Password must contain at least one digit" } }); // SPLIT [S036 fold: A applied]
   });
 
   it("bad token AND expired token → the SAME 'Invalid or expired reset link'", async () => {
     let r = await readJson(await reset({ token: "bogus", password: "Password123" }));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Invalid or expired reset link" }); // [S036 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Invalid or expired reset link" } }); // [S036 fold: A]
     const company = await createCompany();
     const u = await createUser(company.id);
     const rawToken = "expired-token-raw";
@@ -111,7 +111,7 @@ describe.skipIf(!dbUp)("POST /api/auth/reset-password (WQ-2)", () => {
     }).where(eq(users.id, u.id));
     r = await readJson(await reset({ token: rawToken, password: "Password123" }));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Invalid or expired reset link" }); // expired ≡ bad [S036 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Invalid or expired reset link" } }); // expired ≡ bad [S036 fold: A]
   });
 
   it("ROUND-TRIP: forgot's token resets the password; hash verifies; token cleared; audit", async () => {
@@ -130,7 +130,7 @@ describe.skipIf(!dbUp)("POST /api/auth/reset-password (WQ-2)", () => {
     // token single-use: second attempt fails
     const r2 = await readJson(await reset({ token: rawToken, password: "AnotherPass9" }));
     expect(r2.status).toBe(400);
-    expect(r2.body).toEqual({ error: "Invalid or expired reset link" }); // [S036 fold: A]
+    expect(r2.body).toEqual({ error: { code: "VALIDATION", message: "Invalid or expired reset link" } }); // [S036 fold: A applied]
   });
 
   it("malformed body → the FIXED 'Failed' 500", async () => {
@@ -139,7 +139,7 @@ describe.skipIf(!dbUp)("POST /api/auth/reset-password (WQ-2)", () => {
       method: "POST", headers: { "content-type": "application/json" }, body: "{oops",
     });
     const { status, body } = await readJson(await resetPOST(raw));
-    expect(status).toBe(500);
-    expect(body).toEqual({ error: "Failed" });
+    expect(status).toBe(400);
+    expect(body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }); // [S036 fold: E applied]
   });
 });
