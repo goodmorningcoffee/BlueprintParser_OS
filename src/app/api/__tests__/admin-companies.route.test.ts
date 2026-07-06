@@ -18,7 +18,8 @@
 //     company with existing users. Remove all users first."; projects>0 → 400 "Cannot delete
 //     company with existing projects. Delete all projects first."; else delete → {success:true}.
 // crypto → keys non-deterministic: assert PATTERNS (hex length) + slug prefix, not exact values.
-// Assertions tagged [S043 fold] flip in the fold commit (sanctioned A/E only — no catch-500 → NO B).
+// Assertions tagged [S043 fold: … applied] were flipped in the fold commit onto
+// services/companies.ts (sanctioned A/E only — no catch-500 → NO B).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -44,8 +45,8 @@ async function makeRoot() {
 
 const getReq = () => makeReq("/api/admin/companies", { method: "GET" });
 const bodyReq = (method: string, body?: unknown) => makeReq("/api/admin/companies", { method, body });
-const UNAUTH = { error: "Unauthorized" }; // [S043 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ROOT_ONLY = { error: "Root admin only" }; // [S043 fold: A → {error:{code:"FORBIDDEN",message:"Root admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S043 fold: A applied]
+const ROOT_ONLY = { error: { code: "FORBIDDEN", message: "Root admin only" } }; // [S043 fold: A applied]
 
 async function companyById(id: number) {
   const [c] = await db.select().from(companies).where(eq(companies.id, id)).limit(1);
@@ -57,15 +58,15 @@ beforeEach(() => { vi.clearAllMocks(); signedOut(); });
 describe.skipIf(!dbUp)("admin/companies (CO, requireRootAdmin)", () => {
   it("CO-1 auth: signed-out→401, company-admin→403 (root-only), root→200", async () => {
     const { root, admin } = await makeRoot();
-    let r = await readJson(await coGET());
+    let r = await readJson(await coGET(getReq()));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S043 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S043 fold: A applied]
     asUser(admin); // a company-ADMIN is still 403 — this route is ROOT-only
-    r = await readJson(await coGET());
+    r = await readJson(await coGET(getReq()));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_ONLY); // [S043 fold: A]
+    expect(r.body).toEqual(ROOT_ONLY); // [S043 fold: A applied]
     asUser(root);
-    expect((await readJson(await coGET())).status).toBe(200);
+    expect((await readJson(await coGET(getReq()))).status).toBe(200);
   });
 
   it("CO-2 GET: list ORDER BY name + user/NON-DEMO project counts", async () => {
@@ -75,7 +76,7 @@ describe.skipIf(!dbUp)("admin/companies (CO, requireRootAdmin)", () => {
     await createProject(company.id, author.id);
     await createProject(company.id, author.id, { isDemo: true } as never);
     asUser(root);
-    const r = await readJson(await coGET());
+    const r = await readJson(await coGET(getReq()));
     expect(r.status).toBe(200);
     const c = r.body.companies.find((x: { id: number }) => x.id === company.id);
     expect(c).toMatchObject({ publicId: company.publicId, name: company.name, accessKey: company.accessKey, dataKey: company.dataKey });
@@ -92,7 +93,7 @@ describe.skipIf(!dbUp)("admin/companies (CO, requireRootAdmin)", () => {
     for (const body of [{}, { name: "" }, { name: "   " }]) {
       const r = await readJson(await coPOST(bodyReq("POST", body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "Company name required" }); // [S043 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Company name required" } }); // [S043 fold: A applied]
     }
   });
 
@@ -120,7 +121,7 @@ describe.skipIf(!dbUp)("admin/companies (CO, requireRootAdmin)", () => {
     asUser(root);
     let r = await readJson(await coPUT(bodyReq("PUT", {})));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "companyId required" }); // [S043 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "companyId required" } }); // [S043 fold: A applied]
     const origKey = company.accessKey;
     const newName = `Renamed ${tag()}`;
     r = await readJson(await coPUT(bodyReq("PUT", { companyId: company.id, name: newName, regenerateKey: true })));
@@ -140,13 +141,13 @@ describe.skipIf(!dbUp)("admin/companies (CO, requireRootAdmin)", () => {
     asUser(root);
     let r = await readJson(await coDELETE(bodyReq("DELETE", {})));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "companyId required" }); // [S043 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "companyId required" } }); // [S043 fold: A applied]
     // company WITH a user → blocked
     const withUser = await createCompany();
     await createUser(withUser.id);
     r = await readJson(await coDELETE(bodyReq("DELETE", { companyId: withUser.id })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Cannot delete company with existing users. Remove all users first." }); // [S043 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Cannot delete company with existing users. Remove all users first." } }); // [S043 fold: A applied]
     // company WITH a project but NO users → blocked on the project guard. Author the project
     // with a user from ANOTHER company so withProj itself has 0 users (users-guard passes,
     // project-guard fires — the count is company_id-scoped).
@@ -156,7 +157,7 @@ describe.skipIf(!dbUp)("admin/companies (CO, requireRootAdmin)", () => {
     await createProject(withProj.id, otherAuthor.id);
     r = await readJson(await coDELETE(bodyReq("DELETE", { companyId: withProj.id })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Cannot delete company with existing projects. Delete all projects first." }); // [S043 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Cannot delete company with existing projects. Delete all projects first." } }); // [S043 fold: A applied]
     // truly empty company → deletes
     const empty = await createCompany();
     r = await readJson(await coDELETE(bodyReq("DELETE", { companyId: empty.id })));
