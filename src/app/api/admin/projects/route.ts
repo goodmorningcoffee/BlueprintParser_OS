@@ -1,34 +1,18 @@
-import { NextResponse } from "next/server";
-import { requireRootAdmin } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { projects, companies, users } from "@/lib/db/schema";
-import { desc, eq } from "drizzle-orm";
-
 /**
- * Root-only god-view (R2): list every project across ALL companies, joined to
- * its company + author. Normal company queries always filter by companyId, so
- * this cross-company listing is deliberately gated to requireRootAdmin.
+ * GET /api/admin/projects  (root-only cross-company god-view)
+ *
+ * [refactor jul6 S040] Thin shell — behavior lives in services/admin-usage.ts
+ * (getAdminProjects). auth:"root" (A) — this cross-company listing is deliberately gated to
+ * root (normal company queries always filter by companyId); the auth:"root" gate is the
+ * security-load-bearing invariant. The innerJoin companies + leftJoin users god-view (exposes
+ * publicId, ORDER BY createdAt DESC LIMIT 1000) is ported verbatim. Part of the ADMIN B5
+ * write-cluster (char: admin-usage.route.test.ts PROJ-*).
  */
-export async function GET() {
-  const { error } = await requireRootAdmin();
-  if (error) return error;
 
-  const rows = await db
-    .select({
-      id: projects.publicId,
-      name: projects.name,
-      status: projects.status,
-      numPages: projects.numPages,
-      createdAt: projects.createdAt,
-      companyId: projects.companyId,
-      companyName: companies.name,
-      author: users.username,
-    })
-    .from(projects)
-    .innerJoin(companies, eq(companies.id, projects.companyId))
-    .leftJoin(users, eq(users.id, projects.authorId))
-    .orderBy(desc(projects.createdAt))
-    .limit(1000);
+import { defineRoute } from "@/server/api/defineRoute";
+import { getAdminProjects } from "@/server/services/admin-usage";
 
-  return NextResponse.json({ projects: rows });
-}
+export const GET = defineRoute({
+  auth: "root",
+  handler: () => getAdminProjects(),
+});

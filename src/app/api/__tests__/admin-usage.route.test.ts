@@ -22,7 +22,8 @@
 //   • projects GET: cross-company list (innerJoin companies, leftJoin users) ORDER BY
 //     createdAt DESC LIMIT 1000 → {projects:[{id:publicId,name,status,numPages,createdAt,
 //     companyId,companyName,author}]}.
-// Assertions tagged [S040 fold] flip in the fold commit (sanctioned A/E only — no catch-500
+// Assertions tagged [S040 fold: … applied] were flipped in the fold commit onto
+// services/admin-usage.ts (sanctioned A/E only — no catch-500
 // literals in B5, so NO B; usage/projects have no try/catch → unexpected errors → generic
 // INTERNAL 500, the inherent shell property, not a literal drop).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
@@ -61,8 +62,8 @@ const putReq = (body: unknown) => makeReq("/api/admin/usage", { method: "PUT", b
 const rawPut = (raw?: string) =>
   new Request("http://test.local/api/admin/usage", { method: "PUT", headers: { "content-type": "application/json" }, body: raw });
 
-const UNAUTH = { error: "Unauthorized" }; // [S040 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ROOT_ONLY = { error: "Root admin only" }; // [S040 fold: A → {error:{code:"FORBIDDEN",message:"Root admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S040 fold: A applied]
+const ROOT_ONLY = { error: { code: "FORBIDDEN", message: "Root admin only" } }; // [S040 fold: A applied]
 
 async function seedUsage(over: Partial<typeof computeUsage.$inferInsert> & { companyId: number }) {
   await db.insert(computeUsage).values({ resource: "sagemaker", pages: 1, ...over });
@@ -82,15 +83,15 @@ beforeEach(() => { vi.clearAllMocks(); signedOut(); });
 describe.skipIf(!dbUp)("admin/usage GET (UGET)", () => {
   it("UGET-1 auth: signed-out→401, member→403, root→200", async () => {
     const { root, member } = await makeRoot();
-    let r = await readJson(await usageGET());
+    let r = await readJson(await usageGET(getReq("/api/admin/usage")));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S040 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S040 fold: A applied]
     asUser(member);
-    r = await readJson(await usageGET());
+    r = await readJson(await usageGET(getReq("/api/admin/usage")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_ONLY); // [S040 fold: A]
+    expect(r.body).toEqual(ROOT_ONLY); // [S040 fold: A applied]
     asUser(root);
-    r = await readJson(await usageGET());
+    r = await readJson(await usageGET(getReq("/api/admin/usage")));
     expect(r.status).toBe(200);
   });
 
@@ -102,7 +103,7 @@ describe.skipIf(!dbUp)("admin/usage GET (UGET)", () => {
     await seedUsage({ companyId: company.id, userId: u.id, resource: "sagemaker", pages: 10 });
     await seedUsage({ companyId: company.id, userId: u.id, resource: "sagemaker", pages: 5 });
     await seedUsage({ companyId: company.id, resource: "textract", pages: 7 });
-    const r = await readJson(await usageGET());
+    const r = await readJson(await usageGET(getReq("/api/admin/usage")));
     expect(r.status).toBe(200);
     const c = r.body.companies.find((x: { id: number }) => x.id === company.id);
     expect(c).toMatchObject({ name: company.name, sagemakerLimit: 500, sagemakerUsed: 15, textractLimit: 9000, textractUsed: 7, resetInterval: "manual" });
@@ -119,7 +120,7 @@ describe.skipIf(!dbUp)("admin/usage GET (UGET)", () => {
     await seedUsage({ companyId: company.id, resource: "sagemaker", pages: 100, createdAt: new Date(anchor.getTime() - 3600_000) }); // before anchor
     await seedUsage({ companyId: company.id, resource: "sagemaker", pages: 3, createdAt: new Date(anchor.getTime() + 1000) }); // after anchor
     asUser(root);
-    const r = await readJson(await usageGET());
+    const r = await readJson(await usageGET(getReq("/api/admin/usage")));
     const c = r.body.companies.find((x: { id: number }) => x.id === company.id);
     expect(c.sagemakerUsed).toBe(3); // only the after-anchor row
   });
@@ -131,7 +132,7 @@ describe.skipIf(!dbUp)("admin/usage PUT (UPUT)", () => {
     await makeRoot();
     const r = await readJson(await usagePUT(putReq({ target: "company", id: 1, action: "reset" })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S040 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S040 fold: A applied]
   });
 
   it("UPUT-2 target/id validation: bad target or non-positive id → 400 literal", async () => {
@@ -140,7 +141,7 @@ describe.skipIf(!dbUp)("admin/usage PUT (UPUT)", () => {
     for (const body of [{ action: "reset" }, { target: "x", id: 1 }, { target: "company", id: 0 }, { target: "user", id: -3 }, { target: "company", id: "abc" }]) {
       const r = await readJson(await usagePUT(putReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "target ('company'|'user') and a numeric id are required" }); // [S040 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "target ('company'|'user') and a numeric id are required" } }); // [S040 fold: A applied]
     }
   });
 
@@ -169,7 +170,7 @@ describe.skipIf(!dbUp)("admin/usage PUT (UPUT)", () => {
     for (const value of [-1, 2147483648, 1.5, "x"]) {
       r = await readJson(await usagePUT(putReq({ target: "company", id: company.id, action: "setSagemakerLimit", value })));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "value must be an integer between 0 and 2147483647" }); // [S040 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "value must be an integer between 0 and 2147483647" } }); // [S040 fold: A applied]
     }
     expect((await companyRow(company.id)).sagemakerPageLimit).toBe(777); // unchanged
   });
@@ -193,7 +194,7 @@ describe.skipIf(!dbUp)("admin/usage PUT (UPUT)", () => {
     // out of range → 400 "...or null" literal (distinct from company message)
     r = await readJson(await usagePUT(putReq({ target: "user", id: u.id, action: "setSagemakerLimit", value: 2147483648 })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "value must be an integer between 0 and 2147483647, or null" }); // [S040 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "value must be an integer between 0 and 2147483647, or null" } }); // [S040 fold: A applied]
   });
 
   it("UPUT-6 unknown action / invalid target+action combo → 400 fallthrough literal", async () => {
@@ -205,7 +206,7 @@ describe.skipIf(!dbUp)("admin/usage PUT (UPUT)", () => {
     ]) {
       const r = await readJson(await usagePUT(putReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "Unknown or invalid action for target" }); // [S040 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Unknown or invalid action for target" } }); // [S040 fold: A applied]
     }
   });
 
@@ -215,7 +216,7 @@ describe.skipIf(!dbUp)("admin/usage PUT (UPUT)", () => {
     // [S040 fold: E — shell raw-parse → 400 BAD_REQUEST "Invalid JSON body" (message/code drift; both 400)]
     const r = await readJson(await usagePUT(rawPut("{oops")));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "target ('company'|'user') and a numeric id are required" }); // [S040 fold: E]
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }); // [S040 fold: E applied]
   });
 });
 
@@ -223,13 +224,13 @@ describe.skipIf(!dbUp)("admin/usage PUT (UPUT)", () => {
 describe.skipIf(!dbUp)("admin/projects GET (PROJ)", () => {
   it("PROJ-1 auth: signed-out→401, member→403", async () => {
     const { member } = await makeRoot();
-    let r = await readJson(await projectsGET());
+    let r = await readJson(await projectsGET(getReq("/api/admin/projects")));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S040 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S040 fold: A applied]
     asUser(member);
-    r = await readJson(await projectsGET());
+    r = await readJson(await projectsGET(getReq("/api/admin/projects")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_ONLY); // [S040 fold: A]
+    expect(r.body).toEqual(ROOT_ONLY); // [S040 fold: A applied]
   });
 
   it("PROJ-2 cross-company god-view: lists projects from MULTIPLE companies, publicId + joined names", async () => {
@@ -240,7 +241,7 @@ describe.skipIf(!dbUp)("admin/projects GET (PROJ)", () => {
     const uB = await createUser(cB.id);
     const pB = await createProject(cB.id, uB.id, { name: "Bravo" });
     asUser(await createUser(cA.id, { isRootAdmin: true }));
-    const r = await readJson(await projectsGET());
+    const r = await readJson(await projectsGET(getReq("/api/admin/projects")));
     expect(r.status).toBe(200);
     const mine = r.body.projects.filter((p: { id: string }) => [pA.publicId, pB.publicId].includes(p.id));
     expect(mine).toHaveLength(2); // BOTH companies visible (cross-company god-view)
