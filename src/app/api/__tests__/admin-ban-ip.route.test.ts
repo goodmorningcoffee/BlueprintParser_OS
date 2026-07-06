@@ -98,7 +98,7 @@ describe.skipIf(!dbUp)("admin/logs/ban-ip (BAN)", () => {
     expect(r.body).toEqual({ ok: true });
   });
 
-  it("BAN-2 malformed JSON → 400 'Invalid JSON' (route try/catch); no write", async () => {
+  it("BAN-2 malformed JSON → 400 (legacy 'Invalid JSON' → shell 'Invalid JSON body'); no write", async () => {
     const { root } = await makeRoot();
     asUser(root);
     // [S039 fold: E — shell parses raw body pre-auth → 400 BAD_REQUEST "Invalid JSON body"]
@@ -179,7 +179,7 @@ describe.skipIf(!dbUp)("admin/logs/unban-ip (UNBAN)", () => {
     expect(h.bumpManualBanCacheVersion).not.toHaveBeenCalled();
   });
 
-  it("UNBAN-3 malformed JSON → 400 'Invalid JSON'", async () => {
+  it("UNBAN-3 malformed JSON → 400 (legacy 'Invalid JSON' → shell 'Invalid JSON body')", async () => {
     const { root } = await makeRoot();
     asUser(root);
     // [S039 fold: E — shell → 400 BAD_REQUEST "Invalid JSON body"]
