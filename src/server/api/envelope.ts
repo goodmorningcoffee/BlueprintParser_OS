@@ -38,8 +38,13 @@ export interface ErrorEnvelope {
 
 /**
  * The error type handlers/services throw. The shell catches it and renders the envelope.
- * `message` IS surfaced to the client for every non-500 code (these are controlled,
- * leak-free messages). For INTERNAL the shell substitutes a generic message regardless.
+ * `message` IS surfaced to the client for EVERY ApiError — INCLUDING an explicitly
+ * thrown ApiError("INTERNAL", msg): defineRoute's catch returns err.message for any
+ * ApiError instance. The generic "Internal server error" substitute applies ONLY to
+ * non-ApiError (unexpected) throws. [DR003 FIX-2 — this doc previously claimed the
+ * opposite and misled 3+ sessions; the surfacing behavior is LOAD-BEARING (pinned
+ * strings: "Failed to fetch PDF", "No page images available", "Failed to load page
+ * image"). Do NOT "fix" the mechanism to match the old doc — tests will fail loudly.]
  */
 export class ApiError extends Error {
   readonly code: ErrorCode;

@@ -17,5 +17,5 @@ import { yoloRun } from "@/server/services/yolo";
 export const POST = defineRoute({
   auth: "session",
   body: zLooseBody,
-  handler: ({ body, session }) => yoloRun(body, session!),
+  handler: ({ body, session, req }) => yoloRun(body, session!, req),
 });

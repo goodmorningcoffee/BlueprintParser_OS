@@ -86,7 +86,7 @@ export async function yoloStatus(req: Request): Promise<unknown> {
 }
 
 // ── POST /api/yolo/run ────────────────────────────────────────────────────────
-export async function yoloRun(rawBody: Record<string, unknown>, session: AuthSession): Promise<unknown> {
+export async function yoloRun(rawBody: Record<string, unknown>, session: AuthSession, req: Request): Promise<unknown> {
   if (!session.user.canRunModels) {
     throw new ApiError("FORBIDDEN", "You don't have permission to run models. Ask your admin to enable it.");
   }
@@ -221,11 +221,9 @@ ${classList.map((c: string) => `  - ${c}`).join("\n")}
       pagesToCharge
     );
     if (!cap.allowed) {
-      // NOTE: legacy read x-forwarded-for off the request; the service receives no req —
-      // the abuse row's ip comes from the session-less fallback "unknown" ONLY when the
-      // header is absent. To stay byte-faithful the shell passes nothing; we keep the
-      // legacy literal fallback. (Header was best-effort telemetry; P1-review note.)
-      const ip = "unknown";
+      // [DR003 FIX-1] legacy parity RESTORED: the shell now passes req through, so the
+      // abuse row records the real client IP again (x-forwarded-for, first hop, trimmed).
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
       // Drive the root Logs/alert badge + an audit-log entry (always — cheap).
       recordAbuseEvent({
         eventType: "SAGEMAKER_CAP_HIT",
