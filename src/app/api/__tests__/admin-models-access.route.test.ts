@@ -29,7 +29,8 @@
 //   • model-access uses req.json().catch(()=>({})) GRACEFUL; reprocess-csi uses await
 //     req.json() NON-graceful (malformed throws → legacy 500). Both → shell "Invalid JSON
 //     body" 400 at fold (E).
-// Assertions tagged [S041 fold] flip in the fold commit (sanctioned A/E only — no catch-500
+// Assertions tagged [S041 fold: … applied] were flipped in the fold commit onto
+// services/model-access.ts + services/reprocess-csi.ts (sanctioned A/E only — no catch-500
 // literals, so NO B; unexpected errors → generic INTERNAL 500).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
@@ -63,13 +64,14 @@ async function makeModel(companyId: number, config?: unknown) {
 }
 
 const maReq = (method: string, body?: unknown) => makeReq("/api/admin/model-access", { method, body });
+const maGetReq = () => makeReq("/api/admin/model-access", { method: "GET" });
 const rcReq = (body: unknown) => makeReq("/api/admin/models/reprocess-csi", { method: "POST", body });
 const rawReq = (path: string, method: string, raw?: string) =>
   new Request(`http://test.local${path}`, { method, headers: { "content-type": "application/json" }, body: raw });
 
-const UNAUTH = { error: "Unauthorized" }; // [S041 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ROOT_ONLY = { error: "Root admin only" }; // [S041 fold: A → {error:{code:"FORBIDDEN",message:"Root admin only"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S041 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S041 fold: A applied]
+const ROOT_ONLY = { error: { code: "FORBIDDEN", message: "Root admin only" } }; // [S041 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S041 fold: A applied]
 
 beforeEach(() => { vi.clearAllMocks(); signedOut(); });
 
@@ -79,15 +81,15 @@ describe.skipIf(!dbUp)("admin/model-access (MA, requireRootAdmin)", () => {
     const company = await createCompany();
     const member = await createUser(company.id);
     const root = await createUser(company.id, { isRootAdmin: true });
-    let r = await readJson(await maGET());
+    let r = await readJson(await maGET(maGetReq()));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S041 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S041 fold: A applied]
     asUser(member);
-    r = await readJson(await maGET());
+    r = await readJson(await maGET(maGetReq()));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_ONLY); // [S041 fold: A]
+    expect(r.body).toEqual(ROOT_ONLY); // [S041 fold: A applied]
     asUser(root);
-    r = await readJson(await maGET());
+    r = await readJson(await maGET(maGetReq()));
     expect(r.status).toBe(200);
   });
 
@@ -99,7 +101,7 @@ describe.skipIf(!dbUp)("admin/model-access (MA, requireRootAdmin)", () => {
     const grantee = await createUser(granteeCo.id);
     await db.insert(modelAccess).values({ modelId: model.id, companyId: granteeCo.id, userId: grantee.id, enabled: true, grantedBy: root.id });
     asUser(root);
-    const r = await readJson(await maGET());
+    const r = await readJson(await maGET(maGetReq()));
     expect(r.status).toBe(200);
     expect(r.body.models.some((m: { id: number }) => m.id === model.id)).toBe(true);
     const g = r.body.grants.find((x: { modelId: number }) => x.modelId === model.id);
@@ -111,10 +113,10 @@ describe.skipIf(!dbUp)("admin/model-access (MA, requireRootAdmin)", () => {
     asUser(await createUser(rootCo.id, { isRootAdmin: true }));
     let r = await readJson(await maPOST(maReq("POST", { companyId: 1 })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "modelId and companyId are required" }); // [S041 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "modelId and companyId are required" } }); // [S041 fold: A applied]
     r = await readJson(await maPOST(maReq("POST", { modelId: 1, companyId: 2, userId: "abc" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "userId must be an integer or null" }); // [S041 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "userId must be an integer or null" } }); // [S041 fold: A applied]
   });
 
   it("MA-4 POST ownership/existence gates", async () => {
@@ -126,22 +128,22 @@ describe.skipIf(!dbUp)("admin/model-access (MA, requireRootAdmin)", () => {
     // model not owned by root's company → 404 "Model not found"
     let r = await readJson(await maPOST(maReq("POST", { modelId: foreignModel.id, companyId: rootCo.id })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Model not found" }); // [S041 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Model not found" } }); // [S041 fold: A applied]
     // owned model, missing company → 404 "Company not found"
     const model = await makeModel(rootCo.id);
     r = await readJson(await maPOST(maReq("POST", { modelId: model.id, companyId: 99999 })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Company not found" }); // [S041 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Company not found" } }); // [S041 fold: A applied]
     // userId that doesn't exist → 404 "User not found"
     r = await readJson(await maPOST(maReq("POST", { modelId: model.id, companyId: rootCo.id, userId: 88888 })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "User not found" }); // [S041 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "User not found" } }); // [S041 fold: A applied]
     // user in a DIFFERENT company than the grant target → 400 "That user is not in the selected company"
     const c2 = await createCompany();
     const u2 = await createUser(c2.id);
     r = await readJson(await maPOST(maReq("POST", { modelId: model.id, companyId: rootCo.id, userId: u2.id })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "That user is not in the selected company" }); // [S041 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "That user is not in the selected company" } }); // [S041 fold: A applied]
   });
 
   it("MA-5 POST grant: company-wide insert (userId null) + re-grant updates (no dup)", async () => {
@@ -183,7 +185,7 @@ describe.skipIf(!dbUp)("admin/model-access (MA, requireRootAdmin)", () => {
     const foreign = await makeModel(otherCo.id);
     const r2 = await readJson(await maDELETE(maReq("DELETE", { modelId: foreign.id, companyId: target.id })));
     expect(r2.status).toBe(404);
-    expect(r2.body).toEqual({ error: "Model not found" }); // [S041 fold: A]
+    expect(r2.body).toEqual({ error: { code: "NOT_FOUND", message: "Model not found" } }); // [S041 fold: A applied]
   });
 });
 
@@ -195,16 +197,16 @@ describe.skipIf(!dbUp)("admin/models/reprocess-csi (RC, requireAdmin)", () => {
     const admin = await createUser(company.id, { role: "admin" });
     let r = await readJson(await rcPOST(rcReq({ modelId: 1 })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S041 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S041 fold: A applied]
     asUser(member);
     r = await readJson(await rcPOST(rcReq({ modelId: 1 })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S041 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S041 fold: A applied]
     // a plain company-admin (role:"admin", NOT root) is ACCEPTED past auth → hits model lookup 404
     asUser(admin);
     r = await readJson(await rcPOST(rcReq({ modelId: 99999 })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Model not found" }); // [S041 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Model not found" } }); // [S041 fold: A applied]
   });
 
   it("RC-2 modelId required → 400", async () => {
@@ -212,7 +214,7 @@ describe.skipIf(!dbUp)("admin/models/reprocess-csi (RC, requireAdmin)", () => {
     asUser(await createUser(company.id, { role: "admin" }));
     const r = await readJson(await rcPOST(rcReq({})));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "modelId required" }); // [S041 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "modelId required" } }); // [S041 fold: A applied]
   });
 
   it("RC-3 ⚠️ SECURITY SCOPE: company-admin CANNOT reprocess another company's model (404); ROOT bypasses", async () => {
@@ -224,7 +226,7 @@ describe.skipIf(!dbUp)("admin/models/reprocess-csi (RC, requireAdmin)", () => {
     asUser(adminA);
     let r = await readJson(await rcPOST(rcReq({ modelId: modelB.id })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Model not found" }); // [S041 fold: A] — the H6-class cross-company block
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Model not found" } }); // [S041 fold: A applied] — the H6-class cross-company block
     // a ROOT admin (even of a different company) BYPASSES the scope → reaches empty-classNames success
     const rootAny = await createUser(coA.id, { isRootAdmin: true });
     asUser(rootAny);
@@ -279,7 +281,9 @@ describe.skipIf(!dbUp)("admin/models/reprocess-csi (RC, requireAdmin)", () => {
   it("RC-6 malformed body: legacy await req.json() throws (500-class)", async () => {
     const company = await createCompany();
     asUser(await createUser(company.id, { role: "admin" }));
-    // [S041 fold: E — shell raw-parse → 400 BAD_REQUEST "Invalid JSON body"]
-    await expect(rcPOST(rawReq("/api/admin/models/reprocess-csi", "POST", "{oops"))).rejects.toThrow();
+    // [S041 fold: E applied — shell raw-parse → 400 BAD_REQUEST "Invalid JSON body"]
+    const r = await readJson(await rcPOST(rawReq("/api/admin/models/reprocess-csi", "POST", "{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
   });
 });
