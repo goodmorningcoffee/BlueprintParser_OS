@@ -1,31 +1,20 @@
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { inviteRequests } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+/**
+ * GET/PUT /api/admin/invites  (admin invite-request inbox: list + mark-all-seen)
+ *
+ * [refactor jul6 S042] Thin shells — behavior lives in services/invites.ts (getInvites /
+ * markInvitesSeen). auth:"admin" (A). Neither method reads a body → no E; no catch-500
+ * literal → no B. Solo fold (char: admin-invites.route.test.ts INV-*).
+ */
 
-export async function GET() {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
+import { defineRoute } from "@/server/api/defineRoute";
+import { getInvites, markInvitesSeen } from "@/server/services/invites";
 
-  const requests = await db
-    .select()
-    .from(inviteRequests)
-    .orderBy(desc(inviteRequests.createdAt));
+export const GET = defineRoute({
+  auth: "admin",
+  handler: () => getInvites(),
+});
 
-  const unseenCount = requests.filter((r) => !r.seen).length;
-
-  return NextResponse.json({ requests, unseenCount });
-}
-
-export async function PUT() {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
-
-  await db
-    .update(inviteRequests)
-    .set({ seen: true })
-    .where(eq(inviteRequests.seen, false));
-
-  return NextResponse.json({ success: true });
-}
+export const PUT = defineRoute({
+  auth: "admin",
+  handler: () => markInvitesSeen(),
+});
