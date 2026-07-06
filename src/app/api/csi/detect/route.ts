@@ -1,49 +1,18 @@
-import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { detectCsiCodes, detectCsiFromGrid } from "@/lib/csi-detect";
-import { logger } from "@/lib/logger";
-
 /**
  * POST /api/csi/detect
  *
- * Client-callable CSI detection endpoint.
- * Accepts either raw text or a parsed grid (headers + rows).
- * Returns detected CSI codes.
+ * [refactor jul6 S032] Thin shell — behavior lives in services/csi.ts (csiDetect).
+ * auth:"none" — DELIBERATELY PUBLIC (pure local text matching; the docs' public entry;
+ * legacy behavior preserved; its dead `auth` import dropped). body:zLooseBody — shell
+ * owns body-parse (diff E; legacy req.json-inside-try leaked SyntaxError messages).
  */
-export async function POST(req: Request) {
-  // No auth required — CSI detection is purely local text matching, no DB/AWS calls
-  try {
-    const body = await req.json();
 
-    if (body.headers && body.rows) {
-      // Grid mode: detect CSI from parsed table/keynote
-      const csiTags = detectCsiFromGrid(
-        body.headers as string[],
-        body.rows as Record<string, string>[],
-        body.config,
-      );
-      return NextResponse.json({
-        csiTags: csiTags.map((c) => ({ code: c.code, description: c.description })),
-      });
-    }
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { csiDetect } from "@/server/services/csi";
 
-    if (body.text && typeof body.text === "string") {
-      // Text mode: detect CSI from raw text
-      const csiTags = detectCsiCodes(body.text, undefined, body.config);
-      return NextResponse.json({
-        csiTags: csiTags.map((c) => ({ code: c.code, description: c.description })),
-      });
-    }
-
-    return NextResponse.json(
-      { error: "Provide either { text: string } or { headers: string[], rows: Record<string,string>[] }" },
-      { status: 400 },
-    );
-  } catch (err) {
-    logger.error("[csi/detect] Failed:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "CSI detection failed" },
-      { status: 500 },
-    );
-  }
-}
+export const POST = defineRoute({
+  auth: "none",
+  body: zLooseBody,
+  handler: ({ body }) => csiDetect(body),
+});

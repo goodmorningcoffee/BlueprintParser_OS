@@ -68,9 +68,9 @@ beforeEach(() => {
 
 describe.skipIf(!dbUp)("GET /api/csi — company aggregate (CQ-1)", () => {
   it("signed-out → flat 401", async () => {
-    const { status, body } = await readJson(await csiGET());
+    const { status, body } = await readJson(await csiGET(makeReq("/api/csi", { method: "GET" })));
     expect(status).toBe(401);
-    expect(body).toEqual({ error: "Unauthorized" }); // [S032 fold: A]
+    expect(body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S032 fold: A applied]
   });
 
   it("aggregates company-scoped completed projects; bare array; sheetCounts fanout; DESC order", async () => {
@@ -91,7 +91,7 @@ describe.skipIf(!dbUp)("GET /api/csi — company aggregate (CQ-1)", () => {
     await createPage(otherW.project.id, 1, { csiCodes: CSI_A as never });
 
     asUser(user);
-    const { status, body } = await readJson(await csiGET());
+    const { status, body } = await readJson(await csiGET(makeReq("/api/csi", { method: "GET" })));
     expect(status).toBe(200);
     expect(Array.isArray(body)).toBe(true); // bare array (no envelope)
     const mine = body.filter((r: { code: string }) => ["09 00 00", "03 00 00"].includes(r.code));
@@ -129,8 +129,8 @@ describe.skipIf(!dbUp)("POST /api/csi/detect — public 3-tier entry (CQ-2/CQ-3)
       const { status, body } = await readJson(await callDetect(b));
       expect(status).toBe(400);
       expect(body).toEqual({
-        error: "Provide either { text: string } or { headers: string[], rows: Record<string,string>[] }",
-      }); // [S032 fold: A]
+        error: { code: "VALIDATION", message: "Provide either { text: string } or { headers: string[], rows: Record<string,string>[] }" },
+      }); // [S032 fold: A applied]
     }
   });
 
@@ -142,11 +142,14 @@ describe.skipIf(!dbUp)("POST /api/csi/detect — public 3-tier entry (CQ-2/CQ-3)
         headers: { "content-type": "application/json" },
         body: raw,
       });
-    for (const raw of ["{oops", undefined, "null"]) {
-      const { status, body } = await readJson(await detectPOST(mk(raw)));
-      expect(status).toBe(500);
-      expect(typeof body.error).toBe("string"); // leaked message, flat
-    }
+    let r = await readJson(await detectPOST(mk("{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    for (const raw of [undefined, "null"]) {
+      r = await readJson(await detectPOST(mk(raw)));
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION");
+    } // [S032 fold: E applied — was leaky flat 500s]
   });
 
   it("engine throw → leaky flat 500", async () => {
@@ -156,6 +159,6 @@ describe.skipIf(!dbUp)("POST /api/csi/detect — public 3-tier entry (CQ-2/CQ-3)
     });
     const { status, body } = await readJson(await callDetect({ text: "x" }));
     expect(status).toBe(500);
-    expect(body).toEqual({ error: "tier table corrupted" });
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S032 fold: B applied — leak dropped]
   });
 });
