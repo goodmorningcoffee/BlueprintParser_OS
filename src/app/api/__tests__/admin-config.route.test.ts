@@ -28,7 +28,8 @@
 //     routes flip legacy throw-500 / route-literal-400 → 400 VALIDATION (PR-D5(c), S032
 //     precedent). csi GET stats + llm GET defaultDomainKnowledge are computed against the
 //     repo data files with the same algorithm (independent oracle, pins fold parity).
-// Assertions tagged [S037 fold] flip in the fold commit (sanctioned A/B/E only).
+// Assertions tagged [S037 fold: … applied] were flipped in the fold commit onto
+// services/company-settings.ts (sanctioned A/E only; this batch had no B-class leaks).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -105,8 +106,8 @@ const get = async (fn: (req: Request) => Promise<Response>, path: string) =>
 const put = async (fn: (req: Request) => Promise<Response>, path: string, body: unknown) =>
   readJson(await fn(makeReq(path, { method: "PUT", body })));
 
-const UNAUTH = { error: "Unauthorized" }; // [S037 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S037 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S037 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S037 fold: A applied]
 
 beforeEach(() => signedOut());
 
@@ -116,11 +117,11 @@ describe.skipIf(!dbUp)("admin/demo/config (DEMO)", () => {
     const { company, member } = await makeWorld();
     let r = await get(demoGET, "/api/admin/demo/config");
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S037 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S037 fold: A applied]
     asUser(member);
     r = await get(demoGET, "/api/admin/demo/config");
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A applied]
     // isRootAdmin bypasses the role check (requireAdmin quirk shared by all 6)
     const root = await createUser(company.id, { isRootAdmin: true });
     asUser(root);
@@ -161,28 +162,32 @@ describe.skipIf(!dbUp)("admin/demo/config (DEMO)", () => {
     for (const body of [{}, { demo: "x" }, { demo: null }, { demo: 5 }]) {
       const r = await put(demoPUT, "/api/admin/demo/config", body);
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "demo object required" }); // [S037 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "demo object required" } }); // [S037 fold: A applied]
     }
   });
 
-  it("DEMO-5 PUT auth-before-parse ordering + body-shape edges (PR-D5 systemic pins)", async () => {
+  it("DEMO-5 PUT parse-before-auth ordering + body-shape edges (PR-D5 systemic pins)", async () => {
     const { company, admin } = await makeWorld();
-    // signed-out + malformed body: legacy auths FIRST → 401
-    // [S037 fold: E — shell parses raw body first → 400 BAD_REQUEST "Invalid JSON body" PRE-auth]
+    // signed-out + malformed body: legacy authed FIRST (401); the shell parses the raw
+    // body first. [S037 fold: E applied — 400 BAD_REQUEST "Invalid JSON body" PRE-auth]
     let r = await readJson(await demoPUT(rawPut("/api/admin/demo/config", "{oops")));
-    expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH);
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
     asUser(admin);
-    // authed + malformed / empty: legacy req.json() throws and PROPAGATES (Next-level 500)
-    // [S037 fold: E — malformed → 400 BAD_REQUEST "Invalid JSON body"; empty → 400 VALIDATION]
-    await expect(demoPUT(rawPut("/api/admin/demo/config", "{oops"))).rejects.toThrow();
-    await expect(demoPUT(rawPut("/api/admin/demo/config", undefined))).rejects.toThrow();
-    // authed + well-formed NON-OBJECT body: destructuring a scalar/array yields undefined →
-    // the route literal. [S037 fold: E — zLooseBody rejects → 400 VALIDATION, generic message]
+    // authed + malformed / empty: legacy req.json() threw and PROPAGATED (Next-level 500)
+    // [S037 fold: E applied — malformed → 400 BAD_REQUEST; empty → 400 VALIDATION generic]
+    r = await readJson(await demoPUT(rawPut("/api/admin/demo/config", "{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    r = await readJson(await demoPUT(rawPut("/api/admin/demo/config", undefined)));
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe("VALIDATION");
+    // authed + well-formed NON-OBJECT body: legacy destructured to undefined → route literal
+    // 400. [S037 fold: E applied — zLooseBody rejects → 400 VALIDATION, generic zod message]
     for (const raw of ["5", "[1,2]"]) {
       r = await readJson(await demoPUT(rawPut("/api/admin/demo/config", raw)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "demo object required" }); // [S037 fold: E — message drifts]
+      expect(r.body.error.code).toBe("VALIDATION"); // [S037 fold: E applied — message drifted]
     }
     const after = await rowOf(company.id);
     expect(after.pc?.demo).toEqual(SEED.demo); // none of the above wrote
@@ -195,15 +200,15 @@ describe.skipIf(!dbUp)("admin/pipeline (PIPE)", () => {
     const { member } = await makeWorld();
     let r = await get(pipeGET, "/api/admin/pipeline");
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S037 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S037 fold: A applied]
     asUser(member);
     r = await get(pipeGET, "/api/admin/pipeline");
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A applied]
     signedOut();
     r = await put(pipePUT, "/api/admin/pipeline", { pipeline: {} });
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S037 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S037 fold: A applied]
   });
 
   it("PIPE-2 read shape: {pipeline: slice}; empty config → {pipeline:{}}", async () => {
@@ -238,7 +243,7 @@ describe.skipIf(!dbUp)("admin/pipeline (PIPE)", () => {
     for (const body of [{}, { pipeline: "x" }, { pipeline: null }]) {
       const r = await put(pipePUT, "/api/admin/pipeline", body);
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "pipeline object required" }); // [S037 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "pipeline object required" } }); // [S037 fold: A applied]
     }
   });
 });
@@ -249,11 +254,11 @@ describe.skipIf(!dbUp)("admin/llm/config (LLM)", () => {
     const { member } = await makeWorld();
     let r = await get(llmGET, "/api/admin/llm/config");
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S037 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S037 fold: A applied]
     asUser(member);
     r = await get(llmGET, "/api/admin/llm/config");
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A applied]
   });
 
   it("LLM-2 read shape: {llm: slice, defaultDomainKnowledge: <file>} — byte-pinned to the repo file", async () => {
@@ -289,7 +294,7 @@ describe.skipIf(!dbUp)("admin/llm/config (LLM)", () => {
     for (const body of [{}, { llm: 7 }, { llm: null }]) {
       const r = await put(llmPUT, "/api/admin/llm/config", body);
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "llm config object required" }); // [S037 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "llm config object required" } }); // [S037 fold: A applied]
     }
   });
 });
@@ -300,15 +305,15 @@ describe.skipIf(!dbUp)("admin/csi/config (CSI)", () => {
     const { member } = await makeWorld();
     let r = await get(csiGET, "/api/admin/csi/config");
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S037 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S037 fold: A applied]
     asUser(member);
     r = await get(csiGET, "/api/admin/csi/config");
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A applied]
     signedOut();
     r = await put(csiPUT, "/api/admin/csi/config", { any: 1 });
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S037 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S037 fold: A applied]
   });
 
   it("CSI-2 read shape: {config, stats} — TSV stats pinned by independent recomputation", async () => {
@@ -366,13 +371,18 @@ describe.skipIf(!dbUp)("admin/csi/config (CSI)", () => {
     expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
   });
 
-  it("CSI-5 write edges: malformed/empty body → req.json() throw PROPAGATES; nothing written", async () => {
+  it("CSI-5 write edges: malformed/empty body error out; nothing written", async () => {
     const { company, admin } = await makeWorld();
     asUser(admin);
-    // [S037 fold: E — malformed → 400 BAD_REQUEST "Invalid JSON body" pre-auth; empty →
-    //  error status ≥400 (service throws on undefined body), STILL no write]
-    await expect(csiPUT(rawPut("/api/admin/csi/config", "{oops"))).rejects.toThrow();
-    await expect(csiPUT(rawPut("/api/admin/csi/config", undefined))).rejects.toThrow();
+    // legacy: req.json() threw and PROPAGATED for both. [S037 fold: E applied — malformed →
+    //  400 BAD_REQUEST pre-auth; empty → in-service plain-Error throw → generic INTERNAL 500
+    //  (csi: undefined must NOT fall through to a key-deleting write)]
+    let r = await readJson(await csiPUT(rawPut("/api/admin/csi/config", "{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    r = await readJson(await csiPUT(rawPut("/api/admin/csi/config", undefined)));
+    expect(r.status).toBe(500);
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
     expect((await rowOf(company.id)).pc?.csi).toEqual(SEED.csi); // untouched
   });
 });
@@ -387,11 +397,11 @@ describe.skipIf(!dbUp)("admin/text-annotations/config (TA)", () => {
     const { member } = await makeWorld();
     let r = await get(taGET, "/api/admin/text-annotations/config");
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S037 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S037 fold: A applied]
     asUser(member);
     r = await get(taGET, "/api/admin/text-annotations/config");
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A applied]
   });
 
   it("TA-2 read shape: {detectors: full meta, enabled}; unconfigured → defaultEnabled ids; configured wins", async () => {
@@ -413,13 +423,13 @@ describe.skipIf(!dbUp)("admin/text-annotations/config (TA)", () => {
     for (const body of [{}, { enabledDetectors: "rooms" }, { enabledDetectors: null }]) {
       const r = await put(taPUT, "/api/admin/text-annotations/config", body);
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "enabledDetectors must be an array" }); // [S037 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "enabledDetectors must be an array" } }); // [S037 fold: A applied]
     }
     const r = await put(taPUT, "/api/admin/text-annotations/config", {
       enabledDetectors: [validId, "nope-1", "nope-2"],
     });
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Unknown detector IDs: nope-1, nope-2" }); // [S037 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Unknown detector IDs: nope-1, nope-2" } }); // [S037 fold: A applied]
   });
 
   it("TA-4 write: REBUILDS textAnnotation (sibling SUBkeys dropped), echo response, updatedAt TOUCHED, top-level siblings survive", async () => {
@@ -489,11 +499,11 @@ describe.skipIf(!dbUp)("admin/heuristics/config (HEU)", () => {
     const { member } = await makeWorld();
     let r = await put(heuPUT, "/api/admin/heuristics/config", { heuristics: [] });
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S037 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S037 fold: A applied]
     asUser(member);
     r = await put(heuPUT, "/api/admin/heuristics/config", { heuristics: [] });
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S037 fold: A applied]
   });
 
   it("HEU-4 PUT validation literal: neither field / non-array heuristics without pageNaming", async () => {
@@ -502,7 +512,7 @@ describe.skipIf(!dbUp)("admin/heuristics/config (HEU)", () => {
     for (const body of [{}, { heuristics: "x" }, { heuristics: 5, pageNaming: null }]) {
       const r = await put(heuPUT, "/api/admin/heuristics/config", body);
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "heuristics array or pageNaming config required" }); // [S037 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "heuristics array or pageNaming config required" } }); // [S037 fold: A applied]
     }
   });
 

@@ -1,56 +1,23 @@
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { companies } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-
 /**
- * GET /api/admin/pipeline
- * Returns the pipeline configuration for the admin's company.
+ * GET/PUT /api/admin/pipeline
+ *
+ * [refactor jul6 S037] Thin shells — behavior lives in services/company-settings.ts
+ * (getPipelineConfig/putPipelineConfig). auth:"admin" (A). PUT body:zLooseBody (E);
+ * the "pipeline object required" field check stays in-service, byte-verbatim. Part of
+ * the ADMIN B1 six-clone batch (char: __tests__/admin-config.route.test.ts PIPE-*).
  */
-export async function GET() {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
 
-  const [company] = await db
-    .select({ pipelineConfig: companies.pipelineConfig })
-    .from(companies)
-    .where(eq(companies.id, session.user.companyId))
-    .limit(1);
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { getPipelineConfig, putPipelineConfig } from "@/server/services/company-settings";
 
-  const config = company?.pipelineConfig || {};
-  return NextResponse.json({ pipeline: config.pipeline || {} });
-}
+export const GET = defineRoute({
+  auth: "admin",
+  handler: ({ session }) => getPipelineConfig(session!),
+});
 
-/**
- * PUT /api/admin/pipeline
- * Updates the pipeline configuration for the admin's company.
- * Merges into existing pipelineConfig (preserves heuristics, csi, etc).
- */
-export async function PUT(req: Request) {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
-
-  const body = await req.json();
-  const { pipeline } = body;
-
-  if (!pipeline || typeof pipeline !== "object") {
-    return NextResponse.json({ error: "pipeline object required" }, { status: 400 });
-  }
-
-  const [company] = await db
-    .select({ pipelineConfig: companies.pipelineConfig })
-    .from(companies)
-    .where(eq(companies.id, session.user.companyId))
-    .limit(1);
-
-  const existing = company?.pipelineConfig || {};
-  const updated = { ...existing, pipeline };
-
-  await db
-    .update(companies)
-    .set({ pipelineConfig: updated })
-    .where(eq(companies.id, session.user.companyId));
-
-  return NextResponse.json({ success: true });
-}
+export const PUT = defineRoute({
+  auth: "admin",
+  body: zLooseBody,
+  handler: ({ session, body }) => putPipelineConfig(session!, body),
+});

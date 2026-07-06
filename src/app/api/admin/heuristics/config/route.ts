@@ -1,74 +1,27 @@
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { companies } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { BUILT_IN_RULES } from "@/lib/heuristic-engine";
-
 /**
- * GET — Return built-in heuristic rules + company-level overrides
+ * GET/PUT /api/admin/heuristics/config
+ *
+ * [refactor jul6 S037] Thin shells — behavior lives in services/company-settings.ts
+ * (getHeuristicsConfig/putHeuristicsConfig). GET is auth:"none" ON PURPOSE — legacy
+ * swallows the requireAdmin error and answers unauth/non-admin callers with the
+ * built-in-rules fallback (the B1 batch's one auth-shape deviation, frozen HEU-1);
+ * the service checks admin-ness inline via auth(). PUT auth:"admin" (A) +
+ * body:zLooseBody (E); the "heuristics array or pageNaming config required" check and
+ * the conditional dual-key write (+updatedAt touch) stay in-service. Part of the
+ * ADMIN B1 six-clone batch (char: __tests__/admin-config.route.test.ts HEU-*).
  */
-export async function GET() {
-  const { session, error } = await requireAdmin();
-  if (error) {
-    // For demo/unauthenticated users, return built-in rules only (read-only safe)
-    return NextResponse.json({
-      builtInRules: BUILT_IN_RULES.map((r) => ({ ...r, source: "built-in" as const })),
-      companyOverrides: [],
-      pageNaming: { enabled: false, yoloSources: [] },
-    });
-  }
 
-  const [company] = await db
-    .select({ pipelineConfig: companies.pipelineConfig })
-    .from(companies)
-    .where(eq(companies.id, session.user.companyId))
-    .limit(1);
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { getHeuristicsConfig, putHeuristicsConfig } from "@/server/services/company-settings";
 
-  const config = company?.pipelineConfig || {};
-  const companyHeuristics = config.heuristics || [];
-  const pageNaming = config.pageNaming || { enabled: false, yoloSources: [] };
+export const GET = defineRoute({
+  auth: "none",
+  handler: () => getHeuristicsConfig(),
+});
 
-  return NextResponse.json({
-    builtInRules: BUILT_IN_RULES.map((r) => ({
-      ...r,
-      source: "built-in" as const,
-    })),
-    companyOverrides: companyHeuristics,
-    pageNaming,
-  });
-}
-
-/**
- * PUT — Save heuristic rule overrides to company pipelineConfig
- */
-export async function PUT(req: Request) {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
-
-  const body = await req.json();
-  const { heuristics, pageNaming } = body;
-
-  // At least one of heuristics or pageNaming must be provided
-  if (!Array.isArray(heuristics) && !pageNaming) {
-    return NextResponse.json({ error: "heuristics array or pageNaming config required" }, { status: 400 });
-  }
-
-  const [company] = await db
-    .select({ pipelineConfig: companies.pipelineConfig })
-    .from(companies)
-    .where(eq(companies.id, session.user.companyId))
-    .limit(1);
-
-  const existing = company?.pipelineConfig || {};
-  const updated = { ...existing };
-  if (Array.isArray(heuristics)) updated.heuristics = heuristics;
-  if (pageNaming) updated.pageNaming = pageNaming;
-
-  await db
-    .update(companies)
-    .set({ pipelineConfig: updated, updatedAt: new Date() })
-    .where(eq(companies.id, session.user.companyId));
-
-  return NextResponse.json({ success: true });
-}
+export const PUT = defineRoute({
+  auth: "admin",
+  body: zLooseBody,
+  handler: ({ session, body }) => putHeuristicsConfig(session!, body),
+});

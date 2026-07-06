@@ -1,65 +1,24 @@
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { companies } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-
 /**
- * GET /api/admin/llm/config
- * Returns the LLM context configuration for the admin's company.
+ * GET/PUT /api/admin/llm/config
+ *
+ * [refactor jul6 S037] Thin shells — behavior lives in services/company-settings.ts
+ * (getLlmConfig/putLlmConfig; GET's domain-knowledge file read ported verbatim).
+ * auth:"admin" (A). PUT body:zLooseBody (E); the "llm config object required" field
+ * check stays in-service, byte-verbatim. Part of the ADMIN B1 six-clone batch
+ * (char: __tests__/admin-config.route.test.ts LLM-*).
  */
-export async function GET() {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
 
-  const [company] = await db
-    .select({ pipelineConfig: companies.pipelineConfig })
-    .from(companies)
-    .where(eq(companies.id, session.user.companyId))
-    .limit(1);
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { getLlmConfig, putLlmConfig } from "@/server/services/company-settings";
 
-  const config = company?.pipelineConfig || {};
+export const GET = defineRoute({
+  auth: "admin",
+  handler: ({ session }) => getLlmConfig(session!),
+});
 
-  // Include default domain knowledge so admin editor can show it
-  let defaultDomainKnowledge = "";
-  try {
-    const { readFile } = await import("fs/promises");
-    const { join } = await import("path");
-    defaultDomainKnowledge = await readFile(join(process.cwd(), "src/data/domain-knowledge.md"), "utf-8");
-  } catch { /* file not found in production — try dist path */ }
-
-  return NextResponse.json({ llm: config.llm || {}, defaultDomainKnowledge });
-}
-
-/**
- * PUT /api/admin/llm/config
- * Updates the LLM context configuration.
- * Merges into existing pipelineConfig (preserves heuristics, pipeline, csi, etc).
- */
-export async function PUT(req: Request) {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
-
-  const body = await req.json();
-  const { llm } = body;
-
-  if (!llm || typeof llm !== "object") {
-    return NextResponse.json({ error: "llm config object required" }, { status: 400 });
-  }
-
-  const [company] = await db
-    .select({ pipelineConfig: companies.pipelineConfig })
-    .from(companies)
-    .where(eq(companies.id, session.user.companyId))
-    .limit(1);
-
-  const existing = company?.pipelineConfig || {};
-  const updated = { ...existing, llm };
-
-  await db
-    .update(companies)
-    .set({ pipelineConfig: updated })
-    .where(eq(companies.id, session.user.companyId));
-
-  return NextResponse.json({ success: true });
-}
+export const PUT = defineRoute({
+  auth: "admin",
+  body: zLooseBody,
+  handler: ({ session, body }) => putLlmConfig(session!, body),
+});
