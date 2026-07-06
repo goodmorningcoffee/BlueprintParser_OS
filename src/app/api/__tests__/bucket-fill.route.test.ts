@@ -98,12 +98,13 @@ describe.skipIf(!dbUp)("POST /api/bucket-fill — cascade (BQ-1)", () => {
     for (const b of [bodyFor(0), { projectId: 1, seedPoint: { x: 0.5, y: 0.5 } }, bodyFor(1, { seedPoint: undefined })]) {
       const { status, body } = await readJson(await call(b));
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Missing projectId, pageNumber, or seedPoint" }); // [S030 fold: A]
+      // [S030 fold: A applied — was flat]
+      expect(body).toEqual({ error: { code: "VALIDATION", message: "Missing projectId, pageNumber, or seedPoint" } });
     }
     for (const sp of [{ x: "0.5", y: 0.5 }, { x: -0.1, y: 0.5 }, { x: 0.5, y: 1.5 }, {}]) {
       const { status, body } = await readJson(await call(bodyFor(1, { seedPoint: sp })));
       expect(status).toBe(400);
-      expect(body).toEqual({ error: "Invalid seedPoint (must be normalized 0-1)" }); // [S030 fold: A]
+      expect(body).toEqual({ error: { code: "VALIDATION", message: "Invalid seedPoint (must be normalized 0-1)" } }); // [S030 fold: A applied]
     }
     // boundary values are valid → proceeds to access (signed-out non-demo → 401)
     const { user, project } = await createWorld();
@@ -120,25 +121,32 @@ describe.skipIf(!dbUp)("POST /api/bucket-fill — cascade (BQ-1)", () => {
         headers: { "content-type": "application/json" },
         body: raw,
       });
-    await expect(POST(mk("{oops"))).rejects.toThrow();
-    await expect(POST(mk(undefined))).rejects.toThrow();
-    await expect(POST(mk("null"))).rejects.toThrow();
-    await expect(call(bodyFor("not-a-number"))).rejects.toThrow();
+    let r = await readJson(await POST(mk("{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    for (const raw of [undefined, "null"]) {
+      r = await readJson(await POST(mk(raw)));
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION");
+    }
+    r = await readJson(await call(bodyFor("not-a-number")));
+    expect(r.status).toBe(500);
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S030 fold: E+B applied]
   });
 
   it("access 401/404/neg-404 + demo gate 'bucketFill' flat 403 / default-on 200", async () => {
     const { project } = await createWorld();
     let r = await readJson(await call(bodyFor(project.id)));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Unauthorized" }); // [S030 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S030 fold: A applied]
     const other = await createCompany();
     asUser(await createUser(other.id));
     r = await readJson(await call(bodyFor(project.id)));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S030 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S030 fold: A applied]
     r = await readJson(await call(bodyFor(-5)));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // int-guard DECLINED [S030 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // int-guard DECLINED [S030 fold: A applied]
     signedOut();
     const demo = await createWorld({ isDemo: true });
     await db.update(companies).set({ pipelineConfig: { demo: { bucketFill: false } } }).where(eq(companies.id, demo.company.id));
@@ -205,7 +213,8 @@ describe.skipIf(!dbUp)("pipeline (BQ-2/3/4/5/6)", () => {
     h.downloadFromS3.mockRejectedValue(new Error("s3 dead"));
     r = await readJson(await call(bodyFor(project.id)));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "Failed to load page image" }); // message KEPT at fold (shape-parse-shared pin)
+    // [S030 fold: A applied — message KEPT] ApiError INTERNAL surfaces (S024 pin class; shared w/ shape-parse)
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Failed to load page image" } });
   });
 
   it("BQ-5 engine throw → the FIXED 'Bucket fill failed' 500 (no leak); rm still fires", async () => {
@@ -215,7 +224,7 @@ describe.skipIf(!dbUp)("pipeline (BQ-2/3/4/5/6)", () => {
     h.bucketFill.mockRejectedValue(new Error("cv exploded — should NOT appear"));
     const { status, body } = await readJson(await call(bodyFor(project.id)));
     expect(status).toBe(500);
-    expect(body).toEqual({ error: "Bucket fill failed" });
-    expect(h.rm).toHaveBeenCalledTimes(1);
+    expect(body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S030 fold: B applied — fixed literal retired, S015 precedent]
+    expect(h.rm).toHaveBeenCalledTimes(1); // finally (swallowed) KEPT
   });
 });

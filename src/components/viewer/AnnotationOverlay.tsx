@@ -9,7 +9,7 @@ import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength
 import { splitPolygonByLine, findSplittablePolygons } from "@/lib/polygon-split";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
-import { persistFetch, canPersist } from "@/lib/client-persist";
+import { persistFetch, canPersist , apiErrorMessage } from "@/lib/client-persist";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
@@ -1400,7 +1400,9 @@ export default memo(function AnnotationOverlay({
             }),
           })
             .then(async (res) => {
-              if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err?.error || `HTTP ${res.status}`); }
+              // [refactor jul6 S030] apiErrorMessage: non-OK now serves {error:{code,message}};
+              // the engine's in-band {type:"error"}-at-200 protocol below is untouched.
+              if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`); }
               return res.json();
             })
             .then((data) => {

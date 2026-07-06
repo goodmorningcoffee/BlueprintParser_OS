@@ -1,123 +1,24 @@
 /**
  * POST /api/bucket-fill
  *
- * Bucket Fill tool endpoint. Accepts a seed point click and returns a polygon
- * outlining the enclosing room/region via OpenCV flood fill.
+ * [refactor jul6 S030] Thin shell — behavior lives in services/bucket-fill.ts
+ * (bucketFillRoute; named to avoid colliding with the ENGINE export @/lib/bucket-fill
+ * .bucketFill, which is byte-untouched). The flood-fill SERVER FALLBACK.
  *
- * Optional barrier lines can be drawn by the user to seal doorways before filling.
+ * auth:"none" MANDATORY: legacy validates field+seedPoint BEFORE resolveProjectAccess
+ * and has the project.isDemo-only "bucketFill" flat-403 gate. body:zLooseBody — shell
+ * owns body-parse (sanctioned diff E; legacy req.json was pre-try → raw rejections).
+ * The service returns the engine result verbatim — including its in-band
+ * {type:"error"}-at-200 protocol — or the demo-gate NextResponse (passthrough).
+ * Path must stay /api/bucket-fill: middleware ABUSIVE_ROUTE_PREFIXES keys on it.
  */
 
-import { resolveProjectAccess, apiError } from "@/lib/api-utils";
-import { assertDemoFeatureEnabled } from "@/lib/demo-features";
-import { downloadFromS3 } from "@/lib/s3";
-import { rasterizePage } from "@/lib/pdf-rasterize";
-import { writeFile, rm, mkdtemp } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
-import { bucketFill } from "@/lib/bucket-fill";
-import { logger } from "@/lib/logger";
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { bucketFillRoute } from "@/server/services/bucket-fill";
 
-export async function POST(req: Request) {
-  const body = await req.json();
-  const {
-    projectId,
-    pageNumber,
-    seedPoint,
-    tolerance = 30,
-    dilate = 3,
-    simplifyEpsilon = 0.005,
-    leakThreshold = 0.25,
-    barriers = [],
-    polygonBarriers = [],
-  } = body as {
-    projectId: number;
-    pageNumber: number;
-    seedPoint: { x: number; y: number };
-    tolerance?: number;
-    dilate?: number;
-    simplifyEpsilon?: number;
-    leakThreshold?: number;
-    barriers?: Array<{ x1: number; y1: number; x2: number; y2: number }>;
-    polygonBarriers?: Array<{ vertices: Array<{ x: number; y: number }> }>;
-  };
-
-  if (!projectId || !pageNumber || !seedPoint) {
-    return apiError("Missing projectId, pageNumber, or seedPoint", 400);
-  }
-
-  const { x, y } = seedPoint;
-  if (typeof x !== "number" || typeof y !== "number" || x < 0 || x > 1 || y < 0 || y > 1) {
-    return apiError("Invalid seedPoint (must be normalized 0-1)", 400);
-  }
-
-  // Belt-and-suspenders clamp. The client worker and Python script also clamp,
-  // but a direct API caller that passes a nonsense value (e.g., leakThreshold=100
-  // meaning "100%" interpreted as a raw fraction) would otherwise pass an
-  // impossible threshold into the picker logic. Clamp to sane bounds at the
-  // boundary so no downstream code has to assume input validity.
-  const clampedLeakThreshold = Math.max(0.05, Math.min(0.95, leakThreshold));
-  // Client worker accepts negative tolerance (expanded 2026-04-22 for user
-  // thin-line sensitivity). The server fallback's Python script predates
-  // that expansion and may not handle negative values gracefully. Clamp to
-  // 0 at the server boundary so the Python path gets the tightest-positive
-  // equivalent. Server fallback is rare (only fires on worker failure).
-  const clampedTolerance = Math.max(0, tolerance);
-
-  const access = await resolveProjectAccess({ dbId: projectId }, { allowDemo: true });
-  if (access.error) return access.error;
-  const { project } = access;
-
-  if (project.isDemo) {
-    const gate = await assertDemoFeatureEnabled(project.companyId, "bucketFill");
-    if (gate) return gate;
-  }
-
-  if (!project.dataUrl) {
-    return apiError("Project not found", 404);
-  }
-
-  const tempDir = await mkdtemp(join(tmpdir(), "bp2-bucket-fill-"));
-
-  try {
-    // Happy path: download pre-rendered PNG from S3 (no PDF fetch needed)
-    const s3Key = `${project.dataUrl}/pages/page_${String(pageNumber).padStart(4, "0")}.png`;
-    let pngBuffer: Buffer | null = null;
-    try {
-      pngBuffer = await downloadFromS3(s3Key);
-    } catch {
-      // Fallback: PNG missing from S3 — fetch PDF and rasterize
-      logger.warn(`[BUCKET_FILL] PNG missing at ${s3Key}, falling back to PDF rasterize`);
-      try {
-        const pdfBuffer = await downloadFromS3(`${project.dataUrl}/original.pdf`);
-        pngBuffer = await rasterizePage(pdfBuffer, pageNumber, 200);
-      } catch (err) {
-        logger.error("[BUCKET_FILL] Failed to rasterize page:", err);
-        return apiError("Failed to load page image", 500);
-      }
-    }
-
-    const imagePath = join(tempDir, `page_${String(pageNumber).padStart(4, "0")}.png`);
-    await writeFile(imagePath, pngBuffer);
-
-    // Raster-only flood fill (vector mode removed)
-    const result = await bucketFill({
-      imagePath,
-      pageNumber,
-      seedX: x,
-      seedY: y,
-      tolerance: clampedTolerance,
-      dilatePx: dilate,
-      simplifyEpsilon,
-      leakThreshold: clampedLeakThreshold,
-      barriers,
-      polygonBarriers,
-    });
-
-    return Response.json(result);
-  } catch (err) {
-    logger.error("[BUCKET_FILL] Error:", err);
-    return apiError("Bucket fill failed", 500);
-  } finally {
-    rm(tempDir, { recursive: true, force: true }).catch(() => {});
-  }
-}
+export const POST = defineRoute({
+  auth: "none",
+  body: zLooseBody,
+  handler: ({ body }) => bucketFillRoute(body),
+});
