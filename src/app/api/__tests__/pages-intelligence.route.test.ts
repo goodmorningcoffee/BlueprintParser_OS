@@ -229,3 +229,36 @@ describe.skipIf(!dbUp)("PATCH /api/pages/intelligence", () => {
     expect(body.error.code).toBe("VALIDATION");
   });
 });
+
+// [bugfix jul6 H2/DR002] updatePageIntelligence's read-merge-write is now a db.transaction
+// with SELECT ... FOR UPDATE (mirroring regions/promote) — concurrent PATCHes serialize
+// instead of interleaving (the lost-update class where a stale classifier reject-PATCH could
+// clobber a freshly-promoted parsedRegion). Deterministic post-fix invariant pinned here:
+// two CONCURRENT single-key merges must BOTH survive (pre-fix this was a timing lottery).
+describe.skipIf(!dbUp)("H2 regression — concurrent PATCH serialization", () => {
+  it("two concurrent single-key merges both survive (FOR UPDATE serializes the read-merge-write)", async () => {
+    const { user, project } = await createWorld();
+    await createPage(project.id, 1, { pageIntelligence: { seed: true } as never });
+    asUser(user);
+    // NOTE: the promises must NOT be awaited before Promise.all — that would serialize them
+    const [res1, res2] = await Promise.all([
+      req({ publicId: project.publicId, pageNumber: 1, intelligence: { keyA: "a" } }),
+      req({ publicId: project.publicId, pageNumber: 1, intelligence: { keyB: "b" } }),
+    ]);
+    const r1 = await readJson(res1);
+    const r2 = await readJson(res2);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    const { db } = await import("@/lib/db");
+    const { pages } = await import("@/lib/db/schema");
+    const { eq, and } = await import("drizzle-orm");
+    const [row] = await db
+      .select({ pi: pages.pageIntelligence })
+      .from(pages)
+      .where(and(eq(pages.projectId, project.id), eq(pages.pageNumber, 1)));
+    const pi = row.pi as Record<string, unknown>;
+    expect(pi.seed).toBe(true);
+    expect(pi.keyA).toBe("a"); // pre-fix, one of these could be silently lost
+    expect(pi.keyB).toBe("b");
+  });
+});

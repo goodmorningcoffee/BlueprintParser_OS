@@ -156,37 +156,49 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
     throw new ApiError("FORBIDDEN", "Demo projects are read-only");
   }
 
-  const [pageRow] = await db
-    .select({
-      id: pages.id,
-      pageIntelligence: pages.pageIntelligence,
-      csiCodes: pages.csiCodes,
-    })
-    .from(pages)
-    .where(and(eq(pages.projectId, proj.id), eq(pages.pageNumber, pageNumber)))
-    .limit(1);
+  // [bugfix jul6 H2/DR002] The read-merge-write below was UNLOCKED — a concurrent writer
+  // (regions/promote's own tx, or a second PATCH from another tab holding a stale client
+  // blob) could interleave between the SELECT and the UPDATE and have its write silently
+  // overwritten (lost update; DR002-confirmed HIGH: a stale classifier reject-PATCH could
+  // destroy a freshly-promoted parsedRegion). Now a transaction with SELECT ... FOR UPDATE,
+  // mirroring services/regions.ts promote — writers serialize, last-write-wins stays the
+  // (frozen) semantic, but no write is ever TORN. The merge semantics below are UNTOUCHED.
+  const csiCodeCount = await db.transaction(async (tx) => {
+    const [pageRow] = await tx
+      .select({
+        id: pages.id,
+        pageIntelligence: pages.pageIntelligence,
+        csiCodes: pages.csiCodes,
+      })
+      .from(pages)
+      .where(and(eq(pages.projectId, proj.id), eq(pages.pageNumber, pageNumber)))
+      .for("update")
+      .limit(1);
 
-  if (!pageRow) {
-    throw new ApiError("NOT_FOUND", "Page not found");
-  }
+    if (!pageRow) {
+      throw new ApiError("NOT_FOUND", "Page not found");
+    }
 
-  // Frozen SHALLOW merge (top-level keys only; a nested object under a shared key is REPLACED
-  // wholesale — do NOT "fix" into a recursive merge: the CSI merge below reads merged.parsedRegions).
-  const existing = (pageRow.pageIntelligence || {}) as Record<string, unknown>;
-  const merged = { ...existing, ...intelligence };
+    // Frozen SHALLOW merge (top-level keys only; a nested object under a shared key is REPLACED
+    // wholesale — do NOT "fix" into a recursive merge: the CSI merge below reads merged.parsedRegions).
+    const existing = (pageRow.pageIntelligence || {}) as Record<string, unknown>;
+    const merged = { ...existing, ...intelligence };
 
-  // CSI merge: collect csiTags from parsedRegions and merge into the page-level csiCodes.
-  const existingCsi = (pageRow.csiCodes || []) as CsiCode[];
-  const parsedRegions = (merged.parsedRegions || []) as Array<{
-    csiTags?: Array<{ code: string; description: string; division?: string; trade?: string }>;
-  }>;
-  const incomingTags = parsedRegions.flatMap((r) => r.csiTags ?? []);
-  const newCsi = mergeCsiCodes(existingCsi, incomingTags);
+    // CSI merge: collect csiTags from parsedRegions and merge into the page-level csiCodes.
+    const existingCsi = (pageRow.csiCodes || []) as CsiCode[];
+    const parsedRegions = (merged.parsedRegions || []) as Array<{
+      csiTags?: Array<{ code: string; description: string; division?: string; trade?: string }>;
+    }>;
+    const incomingTags = parsedRegions.flatMap((r) => r.csiTags ?? []);
+    const newCsi = mergeCsiCodes(existingCsi, incomingTags);
 
-  await db
-    .update(pages)
-    .set({ pageIntelligence: merged, csiCodes: newCsi })
-    .where(eq(pages.id, pageRow.id));
+    await tx
+      .update(pages)
+      .set({ pageIntelligence: merged, csiCodes: newCsi })
+      .where(eq(pages.id, pageRow.id));
+
+    return newCsi.length;
+  });
 
   // Frozen: recompute summaries only when parsedRegions are present in the INCOMING body (not the
   // merged object); the inner try/catch must NOT abort the 200 — a failure logs + leaves summaries
@@ -200,7 +212,7 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
     }
   }
 
-  return { ok: true, csiCodeCount: newCsi.length, summaries };
+  return { ok: true, csiCodeCount, summaries };
 }
 
 // ── GET /api/pages/textract ────────────────────────────────────────────────────────────────────
