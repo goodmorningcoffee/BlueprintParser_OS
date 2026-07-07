@@ -11,7 +11,8 @@
 //   • catch → {error:"Monitor fetch failed"} @500 (FIXED literal, no err leak) → generic B.
 // GET no body → ZERO E. Sanctioned diffs A (auth) + B (fixed catch-500). AWS SDKs +
 // query-cache mocked; Date (now/fetchedAt) non-deterministic → assert shape not exact.
-// Assertions tagged [S053 fold] flip in the fold commit.
+// Assertions tagged [S053 fold: … applied] were flipped in the fold commit onto
+// services/admin-monitor.ts.
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -46,8 +47,8 @@ async function makeWorld() {
 }
 
 const req = () => makeReq("/api/admin/logs/monitor", { method: "GET" });
-const UNAUTH = { error: "Unauthorized" }; // [S053 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ROOT_ONLY = { error: "Root admin only" }; // [S053 fold: A → {error:{code:"FORBIDDEN",message:"Root admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S053 fold: A applied]
+const ROOT_ONLY = { error: { code: "FORBIDDEN", message: "Root admin only" } }; // [S053 fold: A applied]
 
 const ts = [new Date("2026-07-01T00:00:00Z"), new Date("2026-07-01T00:01:00Z")];
 const METRIC_RESP = {
@@ -72,11 +73,11 @@ describe.skipIf(!dbUp)("admin/logs/monitor (MON)", () => {
     const { root, admin } = await makeWorld();
     let r = await readJson(await monGET(req()));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S053 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S053 fold: A applied]
     asUser(admin); // company-admin still 403 — root-only route
     r = await readJson(await monGET(req()));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_ONLY); // [S053 fold: A]
+    expect(r.body).toEqual(ROOT_ONLY); // [S053 fold: A applied]
     asUser(root);
     expect((await readJson(await monGET(req()))).status).toBe(200);
   });
@@ -121,6 +122,6 @@ describe.skipIf(!dbUp)("admin/logs/monitor (MON)", () => {
     h.cwSend.mockRejectedValue(new Error("AccessDenied cloudwatch:GetMetricData"));
     const r = await readJson(await monGET(req()));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "Monitor fetch failed" }); // [S053 fold: B — → generic INTERNAL]
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S053 fold: B applied — fixed literal retired]
   });
 });
