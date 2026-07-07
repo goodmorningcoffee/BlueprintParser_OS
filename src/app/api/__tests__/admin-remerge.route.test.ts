@@ -8,7 +8,8 @@
 //     NextResponse.json(merged) = BARE (whatever mergeGrids returns).
 //   • mergeGrids is a pure @/lib/grid-merger fn — mocked here to control output + assert args.
 // Body IS read → E applies at fold (malformed + non-object → shell). No catch-500 → NO B.
-// Assertions tagged [S050 fold] flip in the fold commit (sanctioned A/E only).
+// Assertions tagged [S050 fold: … applied] were flipped in the fold commit onto
+// services/remerge.ts (sanctioned A/E only).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -35,8 +36,8 @@ async function makeAdmin() {
 const post = (body: unknown) => makeReq("/api/admin/remerge", { method: "POST", body });
 const rawPost = (raw?: string) =>
   new Request("http://test.local/api/admin/remerge", { method: "POST", headers: { "content-type": "application/json" }, body: raw });
-const UNAUTH = { error: "Unauthorized" }; // [S050 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S050 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S050 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S050 fold: A applied]
 
 beforeEach(() => { vi.clearAllMocks(); signedOut(); h.mergeGrids.mockReturnValue({ merged: true, rows: 3 }); });
 
@@ -45,11 +46,11 @@ describe.skipIf(!dbUp)("admin/remerge (RM)", () => {
     const { admin, member, root } = await makeAdmin();
     let r = await readJson(await rmPOST(post({ results: [] })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S050 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S050 fold: A applied]
     asUser(member);
     r = await readJson(await rmPOST(post({ results: [] })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S050 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S050 fold: A applied]
     asUser(admin);
     expect((await readJson(await rmPOST(post({ results: [] })))).status).toBe(200);
     asUser(root);
@@ -61,9 +62,13 @@ describe.skipIf(!dbUp)("admin/remerge (RM)", () => {
     asUser(admin);
     // legacy: scalar/null body → typeof !== "object" → "body must be JSON"
     // [S050 fold: E — scalar/null on zLooseBody → 400 VALIDATION generic; malformed → BAD_REQUEST]
-    const r = await readJson(await rmPOST(rawPost("5")));
+    let r = await readJson(await rmPOST(rawPost("5")));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "body must be JSON" }); // [S050 fold: E — message drifts]
+    expect(r.body.error.code).toBe("VALIDATION"); // [S050 fold: E applied — non-object → generic zod VALIDATION]
+    // malformed JSON → shell BAD_REQUEST (pre-auth)
+    r = await readJson(await rmPOST(rawPost("{oops")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
   });
 
   it("RM-3 results not an array → 400 'results must be an array of MethodResult'", async () => {
@@ -72,7 +77,7 @@ describe.skipIf(!dbUp)("admin/remerge (RM)", () => {
     for (const body of [{}, { results: "x" }, { results: 5 }, { options: {} }]) {
       const r = await readJson(await rmPOST(post(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "results must be an array of MethodResult" }); // [S050 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "results must be an array of MethodResult" } }); // [S050 fold: A applied]
     }
     expect(h.mergeGrids).not.toHaveBeenCalled(); // no merge on invalid input
   });

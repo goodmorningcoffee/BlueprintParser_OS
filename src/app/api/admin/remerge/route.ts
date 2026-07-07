@@ -1,36 +1,24 @@
 /**
  * /api/admin/remerge
  *
- * Admin-only: accept a stored MethodResult[] (from the parse-history ring
- * buffer or a recent response) and re-run mergeGrids against it with the
- * current merger code. Lets us iterate on merger heuristics and inspect the
- * result against historical data without a 90-second re-parse.
+ * Admin-only: accept a stored MethodResult[] (from the parse-history ring buffer or a recent
+ * response) and re-run mergeGrids against it with the current merger code. Lets us iterate on
+ * merger heuristics and inspect the result against historical data without a 90-second re-parse.
  *
- * POST body:
- *   { results: MethodResult[], options?: { editDistanceThreshold?: number } }
+ * POST body: { results: MethodResult[], options?: { editDistanceThreshold?: number } }
+ *
+ * [refactor jul7 S050] Thin shell — behavior lives in services/remerge.ts (remergeGrids).
+ * auth:"admin" (A). body:zLooseBody (E: legacy graceful req.json + "body must be JSON"
+ * non-object guard → shell "Invalid JSON body" / generic VALIDATION). The "results must be an
+ * array" check + the mergeGrids call stay in-service. Solo fold (char: admin-remerge.route.test.ts RM-*).
  */
-import { NextResponse } from "next/server";
-import { requireAdmin, apiError } from "@/lib/api-utils";
-import { mergeGrids, type MethodResult, type MergeOptions } from "@/lib/grid-merger";
 
-export async function POST(req: Request) {
-  const { error } = await requireAdmin();
-  if (error) return error;
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { remergeGrids } from "@/server/services/remerge";
 
-  const body = await req.json().catch(() => null);
-  if (!body || typeof body !== "object") {
-    return apiError("body must be JSON", 400);
-  }
-
-  const { results, options } = body as {
-    results?: MethodResult[];
-    options?: MergeOptions;
-  };
-
-  if (!Array.isArray(results)) {
-    return apiError("results must be an array of MethodResult", 400);
-  }
-
-  const merged = mergeGrids(results, options);
-  return NextResponse.json(merged);
-}
+export const POST = defineRoute({
+  auth: "admin",
+  body: zLooseBody,
+  handler: ({ body }) => remergeGrids(body),
+});
