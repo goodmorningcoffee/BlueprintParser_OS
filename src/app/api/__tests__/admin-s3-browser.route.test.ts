@@ -12,7 +12,8 @@
 // {error: err.message||"Failed to list S3 objects"} 500 (⚠️ err.message LEAK, DR002 :109).
 // GET query-param → ZERO E. Sanctioned A (auth + security 403 literals) + B (both catch-500s
 // → generic INTERNAL). @aws-sdk/client-s3 + @/lib/s3 mocked; real db (companies.dataKey).
-// Assertions tagged [S054 fold] flip in the fold commit.
+// Assertions tagged [S054 fold: … applied] were flipped in the fold commit onto
+// services/s3-browser.ts.
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -34,8 +35,8 @@ const dbUp = inject("dbUp") as boolean;
 
 const req = (qs = "") => makeReq(`/api/admin/s3-browser${qs}`, { method: "GET" });
 const dkey = () => `co-${Math.random().toString(36).slice(2, 8)}`; // unique (companies.data_key is UNIQUE)
-const UNAUTH = { error: "Unauthorized" }; // [S054 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S054 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S054 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S054 fold: A applied]
 
 const LIST_RESP = {
   CommonPrefixes: [{ Prefix: "co-abc/proj1/sub/" }],
@@ -60,11 +61,11 @@ describe.skipIf(!dbUp)("admin/s3-browser (SB)", () => {
     const member = await createUser(company.id);
     let r = await readJson(await sbGET(req("?prefix=x/")));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S054 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S054 fold: A applied]
     asUser(member);
     r = await readJson(await sbGET(req("?prefix=x/")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S054 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S054 fold: A applied]
   });
 
   it("SB-2 ⚠️ WEIGHTS-2 backstop: company-admin CANNOT access models/; root exempt", async () => {
@@ -75,11 +76,11 @@ describe.skipIf(!dbUp)("admin/s3-browser (SB)", () => {
     asUser(admin);
     let r = await readJson(await sbGET(req("?prefix=models/yolo/")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Access denied" }); // [S054 fold: A] — the WEIGHTS backstop
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "Access denied" } }); // [S054 fold: A applied] — the WEIGHTS backstop
     // also blocks the leading-slash + download variants
     r = await readJson(await sbGET(req("?download=/models/yolo_precise.pt")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Access denied" }); // [S054 fold: A]
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "Access denied" } }); // [S054 fold: A applied]
     // root admin IS exempt (trusted owner) — reaches the S3 list
     asUser(root);
     r = await readJson(await sbGET(req("?prefix=models/")));
@@ -94,11 +95,11 @@ describe.skipIf(!dbUp)("admin/s3-browser (SB)", () => {
     // outside scope → 403 scope literal
     let r = await readJson(await sbGET(req("?prefix=other-co/proj/")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Access denied: path outside company scope" }); // [S054 fold: A]
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "Access denied: path outside company scope" } }); // [S054 fold: A applied]
     // a dataKey PREFIX must NOT match (anchored dataKey+"/" check, not bare startsWith)
     r = await readJson(await sbGET(req(`?prefix=${dk}x/proj/`)));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Access denied: path outside company scope" }); // [S054 fold: A]
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "Access denied: path outside company scope" } }); // [S054 fold: A applied]
     // within scope → passes to the list
     r = await readJson(await sbGET(req(`?prefix=${dk}/proj1/`)));
     expect(r.status).toBe(200);
@@ -132,10 +133,10 @@ describe.skipIf(!dbUp)("admin/s3-browser (SB)", () => {
     h.s3Send.mockRejectedValue(new Error("AccessDenied s3:ListBucket on arn:..."));
     let r = await readJson(await sbGET(req("?prefix=co-abc/")));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "AccessDenied s3:ListBucket on arn:..." }); // [S054 fold: B — leak dropped]
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S054 fold: B applied — err.message leak dropped]
     h.getPresignedGetUrl.mockRejectedValue(new Error("presign boom"));
     r = await readJson(await sbGET(req("?download=co-abc/x.pdf")));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "Failed to generate download URL" }); // [S054 fold: B — → generic]
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S054 fold: B applied — fixed literal retired]
   });
 });
