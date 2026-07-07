@@ -85,6 +85,15 @@ export interface RouteSpec<B, Q> {
   kind?: "json" | "stream" | "raw";
   body?: z.ZodType<B>;
   query?: z.ZodType<Q>;
+  /**
+   * [refactor jul7 DR006] Skip the step-1 JSON body parse so the handler can consume the raw
+   * request stream itself (e.g. `ctx.req.formData()` for multipart uploads). The shell would
+   * otherwise `req.text()` the stream away and 400 on non-JSON. When true, `ctx.body` stays
+   * undefined — do NOT also set `body` (there is nothing to validate), and do NOT use a
+   * project `bodyKey` auth (the raw object it reads from is unavailable). Only route that needs
+   * this today: admin/csi/upload (multipart). Auth still runs normally (before the handler).
+   */
+  rawBody?: boolean;
   handler: (ctx: RouteContext<B, Q>) => unknown | Promise<unknown>;
 }
 
@@ -203,8 +212,8 @@ export function defineRoute<B = undefined, Q = undefined>(
     try {
       const params = segment?.params ? await segment.params : {};
 
-      // 1. raw body
-      const raw = METHODS_WITH_BODY.has(req.method) ? await safeParseJsonBody(req) : undefined;
+      // 1. raw body — skipped when spec.rawBody, so the handler owns the stream (e.g. formData)
+      const raw = !spec.rawBody && METHODS_WITH_BODY.has(req.method) ? await safeParseJsonBody(req) : undefined;
 
       // 2. auth
       let session: AuthSession | null = null;

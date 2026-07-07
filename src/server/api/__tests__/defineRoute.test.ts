@@ -130,6 +130,35 @@ describe("defineRoute — body parse + envelope", () => {
     expect(status).toBe(201);
     expect(body).toEqual({ raw: true });
   });
+
+  // [refactor jul7 DR006] rawBody skip-parse mode — the shell must NOT consume/parse a
+  // non-JSON (multipart) body, so a formData handler (admin/csi/upload) can read the stream.
+  it("rawBody:true leaves the multipart stream intact for the handler to read via req.formData()", async () => {
+    const route = defineRoute({
+      auth: "none",
+      rawBody: true,
+      handler: async ({ req, body }) => {
+        const form = await req.formData(); // shell did NOT already drain the stream
+        return { name: form.get("name"), bodyIsUndefined: body === undefined };
+      },
+    });
+    const fd = new FormData();
+    fd.set("name", "spec.csi");
+    const req = new Request("http://test.local/x", { method: "POST", body: fd });
+    const { status, body } = await readJson(await route(req));
+    expect(status).toBe(200);
+    expect(body).toEqual({ name: "spec.csi", bodyIsUndefined: true });
+  });
+
+  it("WITHOUT rawBody, a multipart body is rejected as invalid JSON (proves the flag is load-bearing)", async () => {
+    const route = defineRoute({ auth: "none", handler: () => ({ ok: true }) });
+    const fd = new FormData();
+    fd.set("name", "spec.csi");
+    const req = new Request("http://test.local/x", { method: "POST", body: fd });
+    const { status, body } = await readJson(await route(req));
+    expect(status).toBe(400);
+    expect(body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+  });
 });
 
 describe("defineRoute — auth modes", () => {
