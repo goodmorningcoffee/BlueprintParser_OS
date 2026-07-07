@@ -10,7 +10,8 @@
 //   • ⚠️ catch: {error: err.message || "Failed to describe job"} @500 — an ERR.MESSAGE LEAK
 //     (DR002 :70 sanctioned B) → flips to generic INTERNAL 500 at fold.
 // GET no body (query param) → ZERO E. Sanctioned diffs A (jobName-required) + B (leak catch).
-// @aws-sdk/client-sagemaker mocked. Assertions tagged [S052 fold] flip in the fold commit.
+// @aws-sdk/client-sagemaker mocked. Assertions tagged [S052 fold: … applied] were flipped
+// in the fold commit onto services/sagemaker-details.ts.
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -38,8 +39,8 @@ async function makeAdmin() {
 }
 
 const req = (qs = "") => makeReq(`/api/admin/sagemaker-details${qs}`, { method: "GET" });
-const UNAUTH = { error: "Unauthorized" }; // [S052 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S052 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S052 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S052 fold: A applied]
 
 const COMPLETED_JOB = {
   ProcessingJobName: "job-1",
@@ -62,11 +63,11 @@ describe.skipIf(!dbUp)("admin/sagemaker-details (SM)", () => {
     const { admin, member } = await makeAdmin();
     let r = await readJson(await smGET(req("?jobName=job-1")));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S052 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S052 fold: A applied]
     asUser(member);
     r = await readJson(await smGET(req("?jobName=job-1")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S052 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S052 fold: A applied]
     asUser(admin);
     expect((await readJson(await smGET(req("?jobName=job-1")))).status).toBe(200);
   });
@@ -76,7 +77,7 @@ describe.skipIf(!dbUp)("admin/sagemaker-details (SM)", () => {
     asUser(admin);
     const r = await readJson(await smGET(req()));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "jobName required" }); // [S052 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "jobName required" } }); // [S052 fold: A applied]
     expect(h.send).not.toHaveBeenCalled();
   });
 
@@ -109,6 +110,6 @@ describe.skipIf(!dbUp)("admin/sagemaker-details (SM)", () => {
     h.send.mockRejectedValue(new Error("AccessDenied: not authorized to sagemaker:DescribeProcessingJob"));
     const r = await readJson(await smGET(req("?jobName=job-1")));
     expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: "AccessDenied: not authorized to sagemaker:DescribeProcessingJob" }); // [S052 fold: B — leak dropped]
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } }); // [S052 fold: B applied — AWS-error leak dropped]
   });
 });
