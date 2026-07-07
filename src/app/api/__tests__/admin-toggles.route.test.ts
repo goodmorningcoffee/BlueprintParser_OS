@@ -13,7 +13,8 @@
 //     401 "Invalid toggle password"; setToggle(key,enabled) → {success:true,sagemakerEnabled,
 //     quotaEnabled}.
 // GET no body; PUT body read → E on PUT. No catch-500 → NO B. Sanctioned A + E.
-// Assertions tagged [S055 fold] flip in the fold commit.
+// Assertions tagged [S055 fold: … applied] were flipped in the fold commit onto
+// services/toggles.ts.
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -41,8 +42,8 @@ async function makeAdmin() {
 
 const getReq = () => makeReq("/api/admin/toggles", { method: "GET" });
 const put = (body: unknown) => makeReq("/api/admin/toggles", { method: "PUT", body });
-const UNAUTH = { error: "Unauthorized" }; // [S055 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S055 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S055 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S055 fold: A applied]
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -59,14 +60,14 @@ describe.skipIf(!dbUp)("admin/toggles (TG)", () => {
     const { member } = await makeAdmin();
     let r = await readJson(await tgGET(getReq()));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S055 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S055 fold: A applied]
     r = await readJson(await tgPUT(put({ toggle: "sagemaker", enabled: true, password: "x" })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S055 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S055 fold: A applied]
     asUser(member);
     r = await readJson(await tgGET(getReq()));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S055 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S055 fold: A applied]
   });
 
   it("TG-2 GET → {sagemakerEnabled, quotaEnabled, hasPassword}", async () => {
@@ -82,12 +83,12 @@ describe.skipIf(!dbUp)("admin/toggles (TG)", () => {
     asUser(admin);
     let r = await readJson(await tgPUT(put({ action: "set-password", newPassword: "short" }))); // <6
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Password must be at least 6 characters" }); // [S055 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Password must be at least 6 characters" } }); // [S055 fold: A applied]
     // lib rejects (e.g. wrong current password) → 401 with the lib's dynamic message
     h.setTogglePassword.mockResolvedValueOnce({ success: false, error: "Current password incorrect" });
     r = await readJson(await tgPUT(put({ action: "set-password", newPassword: "longenough", currentPassword: "wrong" })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Current password incorrect" }); // [S055 fold: A — dynamic domain msg]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Current password incorrect" } }); // [S055 fold: A applied — dynamic domain msg]
     // success
     r = await readJson(await tgPUT(put({ action: "set-password", newPassword: "longenough" })));
     expect(r.status).toBe(200);
@@ -101,21 +102,21 @@ describe.skipIf(!dbUp)("admin/toggles (TG)", () => {
     // missing fields
     let r = await readJson(await tgPUT(put({ toggle: "sagemaker", enabled: "yes", password: "x" }))); // enabled not boolean
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "toggle, enabled, and password required" }); // [S055 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "toggle, enabled, and password required" } }); // [S055 fold: A applied]
     // invalid toggle name
     r = await readJson(await tgPUT(put({ toggle: "bogus", enabled: true, password: "x" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Invalid toggle" }); // [S055 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Invalid toggle" } }); // [S055 fold: A applied]
     // no toggle password set yet
     h.hasTogglePassword.mockResolvedValueOnce(false);
     r = await readJson(await tgPUT(put({ toggle: "sagemaker", enabled: true, password: "x" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Toggle password not set. Set it first." }); // [S055 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Toggle password not set. Set it first." } }); // [S055 fold: A applied]
     // wrong toggle password
     h.verifyTogglePassword.mockResolvedValueOnce(false);
     r = await readJson(await tgPUT(put({ toggle: "sagemaker", enabled: true, password: "wrong" })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: "Invalid toggle password" }); // [S055 fold: A]
+    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Invalid toggle password" } }); // [S055 fold: A applied]
     expect(h.setToggle).not.toHaveBeenCalled();
   });
 

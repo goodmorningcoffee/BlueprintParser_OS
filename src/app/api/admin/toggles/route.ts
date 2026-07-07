@@ -1,68 +1,26 @@
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-utils";
-import { getToggles, setToggle, hasTogglePassword, setTogglePassword, verifyTogglePassword } from "@/lib/toggles";
+/**
+ * /api/admin/toggles
+ *
+ * Read the app-global feature toggles (sagemaker / quota) + their gating password, and mutate
+ * them behind the INDEPENDENT bcrypt toggle-password subsystem. Admin only.
+ *
+ * [refactor jul7 S055] Thin shell — behavior lives in services/toggles.ts (getTogglesStatus /
+ * updateToggle). auth:"admin" (A). GET no body → no E. PUT body:zLooseBody (E: legacy
+ * `await req.json()` → shell "Invalid JSON body"). No catch-500 → no B. Solo fold (char:
+ * admin-toggles.route.test.ts TG-*).
+ */
 
-export async function GET() {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
+import { defineRoute } from "@/server/api/defineRoute";
+import { zLooseBody } from "@/server/api/schemas";
+import { getTogglesStatus, updateToggle } from "@/server/services/toggles";
 
-  const toggles = await getToggles();
-  const hasPassword = await hasTogglePassword();
+export const GET = defineRoute({
+  auth: "admin",
+  handler: () => getTogglesStatus(),
+});
 
-  return NextResponse.json({
-    sagemakerEnabled: toggles.sagemakerEnabled,
-    quotaEnabled: toggles.quotaEnabled,
-    hasPassword,
-  });
-}
-
-export async function PUT(req: Request) {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
-
-  const body = await req.json();
-
-  // Set or change the toggle password
-  if (body.action === "set-password") {
-    const { newPassword, currentPassword } = body;
-    if (!newPassword || newPassword.length < 6) {
-      return NextResponse.json({ error: "Password must be at least 6 characters" }, { status: 400 });
-    }
-    const result = await setTogglePassword(newPassword, currentPassword);
-    if (!result.success) {
-      return NextResponse.json({ error: result.error }, { status: 401 });
-    }
-    return NextResponse.json({ success: true });
-  }
-
-  // Toggle a setting
-  const { toggle, enabled, password } = body;
-
-  if (!toggle || typeof enabled !== "boolean" || !password) {
-    return NextResponse.json({ error: "toggle, enabled, and password required" }, { status: 400 });
-  }
-
-  if (toggle !== "sagemaker" && toggle !== "quota") {
-    return NextResponse.json({ error: "Invalid toggle" }, { status: 400 });
-  }
-
-  // Verify the independent toggle password
-  const hasPass = await hasTogglePassword();
-  if (!hasPass) {
-    return NextResponse.json({ error: "Toggle password not set. Set it first." }, { status: 400 });
-  }
-
-  const valid = await verifyTogglePassword(password);
-  if (!valid) {
-    return NextResponse.json({ error: "Invalid toggle password" }, { status: 401 });
-  }
-
-  const key = toggle === "sagemaker" ? "sagemakerEnabled" : "quotaEnabled";
-  const updated = await setToggle(key, enabled);
-
-  return NextResponse.json({
-    success: true,
-    sagemakerEnabled: updated.sagemakerEnabled,
-    quotaEnabled: updated.quotaEnabled,
-  });
-}
+export const PUT = defineRoute({
+  auth: "admin",
+  body: zLooseBody,
+  handler: ({ body }) => updateToggle(body),
+});
