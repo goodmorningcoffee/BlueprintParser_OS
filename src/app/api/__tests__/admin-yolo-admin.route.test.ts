@@ -9,7 +9,8 @@
 //   • yolo-purge DELETE → DELETE annotations WHERE source='yolo' AND project_id IN (company's
 //     projects) → {deleted: rowCount}. A destructive write, company-scoped (tenancy-safe).
 // No body on either → ZERO E; no catch-500 literal → NO B; sanctioned diff A only.
-// Assertions tagged [S049 fold] flip in the fold commit.
+// Assertions tagged [S049 fold: … applied] were flipped in the fold commit onto
+// services/yolo-admin.ts.
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -37,8 +38,8 @@ async function makeWorld() {
 
 const statusReq = () => makeReq("/api/admin/yolo-status", { method: "GET" });
 const purgeReq = () => makeReq("/api/admin/yolo-purge", { method: "DELETE" });
-const UNAUTH = { error: "Unauthorized" }; // [S049 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S049 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S049 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S049 fold: A applied]
 
 async function seedYolo(projectId: number, modelId: number, over: Partial<typeof annotations.$inferInsert> = {}) {
   await db.insert(annotations).values({
@@ -56,17 +57,17 @@ beforeEach(() => { vi.clearAllMocks(); signedOut(); });
 describe.skipIf(!dbUp)("admin/yolo-status (YS)", () => {
   it("YS-1 auth: signed-out→401, member→403, admin+root→200", async () => {
     const { admin, member, root } = await makeWorld();
-    let r = await readJson(await ysGET());
+    let r = await readJson(await ysGET(statusReq()));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S049 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S049 fold: A applied]
     asUser(member);
-    r = await readJson(await ysGET());
+    r = await readJson(await ysGET(statusReq()));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S049 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S049 fold: A applied]
     asUser(admin);
-    expect((await readJson(await ysGET())).status).toBe(200);
+    expect((await readJson(await ysGET(statusReq()))).status).toBe(200);
     asUser(root);
-    expect((await readJson(await ysGET())).status).toBe(200);
+    expect((await readJson(await ysGET(statusReq()))).status).toBe(200);
   });
 
   it("YS-2 GET: nested {projectPublicId:{modelId:count}} bare object, company-scoped", async () => {
@@ -80,7 +81,7 @@ describe.skipIf(!dbUp)("admin/yolo-status (YS)", () => {
     const otherProj = await createProject(otherCo.id, (await createUser(otherCo.id)).id);
     await seedYolo(otherProj.id, 7);
     asUser(admin);
-    const r = await readJson(await ysGET());
+    const r = await readJson(await ysGET(statusReq()));
     expect(r.status).toBe(200);
     expect(r.body[proj.publicId]).toEqual({ "7": 2, "9": 1 }); // nested count map
     expect(r.body[otherProj.publicId]).toBeUndefined(); // company-scoped
@@ -90,13 +91,13 @@ describe.skipIf(!dbUp)("admin/yolo-status (YS)", () => {
 describe.skipIf(!dbUp)("admin/yolo-purge (YP)", () => {
   it("YP-1 auth: signed-out→401, member→403", async () => {
     const { member } = await makeWorld();
-    let r = await readJson(await ypDELETE());
+    let r = await readJson(await ypDELETE(purgeReq()));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S049 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S049 fold: A applied]
     asUser(member);
-    r = await readJson(await ypDELETE());
+    r = await readJson(await ypDELETE(purgeReq()));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S049 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S049 fold: A applied]
   });
 
   it("YP-2 DELETE: purges own-company yolo annotations only; non-yolo + other-company UNTOUCHED", async () => {
@@ -111,7 +112,7 @@ describe.skipIf(!dbUp)("admin/yolo-purge (YP)", () => {
     const otherProj = await createProject(otherCo.id, (await createUser(otherCo.id)).id);
     await seedYolo(otherProj.id, 7);
     asUser(admin);
-    const r = await readJson(await ypDELETE());
+    const r = await readJson(await ypDELETE(purgeReq()));
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ deleted: 2 }); // only the 2 own-company yolo rows
     // own project: the user annotation survives (1 left)

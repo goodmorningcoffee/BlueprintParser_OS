@@ -1,23 +1,17 @@
-import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/api-utils";
-import { db } from "@/lib/db";
-import { sql } from "drizzle-orm";
-
 /**
  * DELETE /api/admin/yolo-purge
  * Purges ALL YOLO annotations across all projects for the current company.
+ *
+ * [refactor jul7 S049] Thin shell — behavior lives in services/yolo-admin.ts (purgeYolo).
+ * auth:"admin" (A). No body → no E. A destructive but company-SCOPED write (tenancy-safe).
+ * Solo fold (DR005 GAP-1 — this route was uninventoried; an unfolded destructive write now
+ * brought under the envelope/service discipline). Char: admin-yolo-admin.route.test.ts YP-*.
  */
-export async function DELETE() {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
 
-  const result = await db.execute(sql`
-    DELETE FROM annotations
-    WHERE source = 'yolo'
-      AND project_id IN (
-        SELECT id FROM projects WHERE company_id = ${session.user.companyId}
-      )
-  `);
+import { defineRoute } from "@/server/api/defineRoute";
+import { purgeYolo } from "@/server/services/yolo-admin";
 
-  return NextResponse.json({ deleted: result.rowCount ?? 0 });
-}
+export const DELETE = defineRoute({
+  auth: "admin",
+  handler: ({ session }) => purgeYolo(session!),
+});
