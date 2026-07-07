@@ -11,7 +11,8 @@
 //     password set"; bcrypt.compare(adminPassword, hash) false → 403 "Admin password
 //     incorrect"; target user by Number(userId) missing → 404 "User not found".
 //   • bcrypt.hash(newPassword, 12) → update target passwordHash + updatedAt → {success:true}.
-// Body IS read → E at fold. No catch-500 → NO B. Assertions tagged [S051 fold] flip in the fold.
+// Body IS read → E at fold. No catch-500 → NO B. Assertions tagged [S051 fold: … applied]
+// were flipped in the fold commit onto services/users-reset-password.ts.
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 import bcrypt from "bcrypt";
 
@@ -40,9 +41,9 @@ async function makeWorld(rootHasPw = true) {
 }
 
 const post = (body: unknown) => makeReq("/api/admin/users/reset-password", { method: "POST", body });
-const UNAUTH = { error: "Unauthorized" }; // [S051 fold: A → {error:{code:"UNAUTHORIZED",message:"Unauthorized"}}]
-const ADMIN_ONLY = { error: "Admin only" }; // [S051 fold: A → {error:{code:"FORBIDDEN",message:"Admin only"}}]
-const ROOT_REQUIRED = { error: "Root admin required" }; // [S051 fold: A → {error:{code:"FORBIDDEN",message:"Root admin required"}}]
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S051 fold: A applied]
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S051 fold: A applied]
+const ROOT_REQUIRED = { error: { code: "FORBIDDEN", message: "Root admin required" } }; // [S051 fold: A applied]
 const GOOD = (over: Record<string, unknown> = {}) => ({ userId: 0, newPassword: "newpass12", adminPassword: ADMIN_PW, ...over });
 
 async function userHash(id: number) {
@@ -57,16 +58,16 @@ describe.skipIf(!dbUp)("admin/users/reset-password (RP)", () => {
     const { admin, member, target } = await makeWorld();
     let r = await readJson(await rpPOST(post(GOOD({ userId: target.id }))));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S051 fold: A]
+    expect(r.body).toEqual(UNAUTH); // [S051 fold: A applied]
     asUser(member);
     r = await readJson(await rpPOST(post(GOOD({ userId: target.id }))));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S051 fold: A]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S051 fold: A applied]
     // a company-ADMIN passes requireAdmin but the secondary gate blocks → "Root admin required"
     asUser(admin);
     r = await readJson(await rpPOST(post(GOOD({ userId: target.id }))));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ROOT_REQUIRED); // [S051 fold: A] — the secondary root gate
+    expect(r.body).toEqual(ROOT_REQUIRED); // [S051 fold: A applied] — the secondary root gate
   });
 
   it("RP-2 validation: missing fields / short password → 400 literal", async () => {
@@ -81,7 +82,7 @@ describe.skipIf(!dbUp)("admin/users/reset-password (RP)", () => {
     ]) {
       const r = await readJson(await rpPOST(post(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "userId, newPassword (min 8 chars), and adminPassword required" }); // [S051 fold: A]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "userId, newPassword (min 8 chars), and adminPassword required" } }); // [S051 fold: A applied]
     }
   });
 
@@ -90,7 +91,7 @@ describe.skipIf(!dbUp)("admin/users/reset-password (RP)", () => {
     asUser(root);
     const r = await readJson(await rpPOST(post(GOOD({ userId: target.id }))));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Admin account has no password set" }); // [S051 fold: A]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "Admin account has no password set" } }); // [S051 fold: A applied]
   });
 
   it("RP-4 wrong adminPassword → 403 'Admin password incorrect' (bcrypt.compare false)", async () => {
@@ -98,7 +99,7 @@ describe.skipIf(!dbUp)("admin/users/reset-password (RP)", () => {
     asUser(root);
     const r = await readJson(await rpPOST(post(GOOD({ userId: target.id, adminPassword: "wrongpass" }))));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Admin password incorrect" }); // [S051 fold: A]
+    expect(r.body).toEqual({ error: { code: "FORBIDDEN", message: "Admin password incorrect" } }); // [S051 fold: A applied]
     // target NOT changed
     expect(await userHash(target.id)).toBeNull();
   });
@@ -108,7 +109,7 @@ describe.skipIf(!dbUp)("admin/users/reset-password (RP)", () => {
     asUser(root);
     const r = await readJson(await rpPOST(post(GOOD({ userId: 999999 }))));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "User not found" }); // [S051 fold: A]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "User not found" } }); // [S051 fold: A applied]
   });
 
   it("RP-6 happy: verifies admin pw + bcrypt-hashes(12) the new password onto the target → {success:true}", async () => {
