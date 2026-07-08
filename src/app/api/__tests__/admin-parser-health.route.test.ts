@@ -21,10 +21,10 @@
 // Sanctioned at fold (recon batch-2): A (auth + the sole 400 literal → envelope, message
 // BYTE-verbatim incl. the interpolated check) + E (malformed JSON: legacy .catch(()=>({}))
 // →400 unknown-undefined becomes shell 400 "Invalid JSON body") + US-20 shell property
-// (non-object JSON bodies → VALIDATION 400). NO B. Assertions tagged [S061 fold: … flips]
-// state the post-fold expectation; this freeze commit asserts the LEGACY behavior.
-// ⚠️ 0-arg-GET gotcha (S043/S060): legacy GET() takes no args — freeze calls phGET();
-// the fold flips call sites to phGET(getReq()).
+// (non-object JSON bodies → VALIDATION 400). NO B. Assertions tagged [S061 fold: … applied]
+// were flipped in the fold commit; the freeze commit (59c4ba1) asserted the legacy
+// behaviors stated inline. ⚠️ 0-arg-GET gotcha (S043/S060): legacy GET() took no args —
+// the freeze called phGET(); the fold flipped call sites to phGET(getReq()).
 import { EventEmitter } from "events";
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
@@ -46,14 +46,16 @@ import { asUser, createCompany, createUser, makeReq, readJson, signedOut } from 
 
 const dbUp = inject("dbUp") as boolean;
 
-// [S061 fold: A flips these to {error:{code:"UNAUTHORIZED"|"FORBIDDEN", message}}]
-const UNAUTH = { error: "Unauthorized" };
-const ADMIN_ONLY = { error: "Admin only" };
+// [S061 fold: A applied] — at freeze these were the legacy flat bodies
+// {error:"Unauthorized"} / {error:"Admin only"}.
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } };
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } };
 
 const AVAILABLE =
   "deps, tatr_files, tatr_import, img2table_import, ghostscript, tesseract, pymupdf, python_version";
 const unknownMsg = (check: string) => `Unknown check: "${check}". Available: ${AVAILABLE}`;
 
+const getReq = () => makeReq("/api/admin/parser-health", { method: "GET" });
 const postReq = (body: unknown) => makeReq("/api/admin/parser-health", { method: "POST", body });
 const rawPost = (body: string) =>
   new Request("http://test.local/api/admin/parser-health", {
@@ -96,20 +98,20 @@ beforeEach(() => {
 describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
   it("PH-1 GET auth: signed-out→401, member→403; spawn never touched", async () => {
     const { member } = await makeAdmin();
-    let r = await readJson(await phGET());
+    let r = await readJson(await phGET(getReq()));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S061 fold: A flips]
+    expect(r.body).toEqual(UNAUTH); // [S061 fold: A applied]
     asUser(member);
-    r = await readJson(await phGET());
+    r = await readJson(await phGET(getReq()));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S061 fold: A flips]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S061 fold: A applied]
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
   it("PH-2 GET admin → 200 bare {checks:[8]} — ids + descriptions BYTE-exact, whitelist order", async () => {
     const { admin } = await makeAdmin();
     asUser(admin);
-    const r = await readJson(await phGET());
+    const r = await readJson(await phGET(getReq()));
     expect(r.status).toBe(200);
     expect(r.body).toEqual({
       checks: [
@@ -129,11 +131,11 @@ describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
     const { member } = await makeAdmin();
     let r = await readJson(await phPOST(postReq({ check: "ghostscript" })));
     expect(r.status).toBe(401);
-    expect(r.body).toEqual(UNAUTH); // [S061 fold: A flips]
+    expect(r.body).toEqual(UNAUTH); // [S061 fold: A applied]
     asUser(member);
     r = await readJson(await phPOST(postReq({ check: "ghostscript" })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual(ADMIN_ONLY); // [S061 fold: A flips]
+    expect(r.body).toEqual(ADMIN_ONLY); // [S061 fold: A applied]
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
@@ -148,51 +150,51 @@ describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
     ] as const) {
       const r = await readJson(await phPOST(postReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: expected }); // [S061 fold: A flips to {error:{code:"VALIDATION",message:expected}}]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: expected } }); // [S061 fold: A applied — legacy flat {error: expected}]
     }
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
-  it("PH-5 POST malformed JSON → legacy .catch(()=>({})) swallow → 400 unknownMsg('undefined')", async () => {
+  it("PH-5 POST malformed JSON → 400 'Invalid JSON body'", async () => {
     const { admin } = await makeAdmin();
     asUser(admin);
-    // [S061 fold: E flips this to 400 {error:{code:"BAD_REQUEST",message:"Invalid JSON body"}}
-    // — the shell's safe-parse replaces the legacy silent {}-swallow. Sanctioned E, recon §parser-health.]
+    // [S061 fold: E applied — legacy `.catch(() => ({}))` swallowed the parse failure to {}
+    // and fell through to 400 unknownMsg("undefined"). Sanctioned E, recon §parser-health.]
     const r = await readJson(await phPOST(rawPost("{ nope")));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: unknownMsg("undefined") });
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
-  it("PH-6 POST non-object JSON bodies: legacy array/empty → 400 unknownMsg, null → UNHANDLED throw", async () => {
+  it("PH-6 POST non-object JSON bodies → shell zLooseBody VALIDATION 400 (US-20 uniform shell property)", async () => {
     const { admin } = await makeAdmin();
     asUser(admin);
-    // [S061 fold: US-20 flips ALL THREE to a uniform zLooseBody VALIDATION 400 (repo-wide
-    // shell property; remerge precedent, DR006 noted-not-drift).]
-    // "[1,2]" → destructure of an array → check=undefined → the 400 unknownMsg path.
-    let r = await readJson(await phPOST(rawPost("[1,2]")));
-    expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: unknownMsg("undefined") });
-    // "null" → `const { check } = null` THROWS (unhandled → Next default 500).
-    await expect(phPOST(rawPost("null"))).rejects.toThrow(TypeError);
-    // "" → req.json() rejects → .catch {} → the 400 unknownMsg path.
-    r = await readJson(await phPOST(rawPost("")));
-    expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: unknownMsg("undefined") });
+    // [S061 fold: US-20 applied] Legacy: "[1,2]" destructured to check=undefined (→ 400
+    // unknownMsg path); "null" THREW on destructure (unhandled → Next default 500); ""
+    // json()-rejected → .catch {} → 400 unknownMsg path. The shell's z.record object-ness
+    // check yields a uniform VALIDATION 400 instead — repo-wide shell property (remerge
+    // precedent, DR006 noted-not-drift).
+    for (const body of ["[1,2]", "null", ""] as const) {
+      const r = await readJson(await phPOST(rawPost(body)));
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION");
+    }
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
-  it("PH-6b POST prototype-key whitelist quirk ('toString' passes the guard, crashes on args) → UNHANDLED throw; spawn NEVER called", async () => {
+  it("PH-6b POST prototype-key whitelist quirk ('toString' passes the guard, crashes on args) → generic 500; spawn NEVER called", async () => {
     const { admin } = await makeAdmin();
     asUser(admin);
     // Legacy: `!CHECKS[check]` is a PLAIN lookup, so Object.prototype keys pass the guard,
     // then `spawn(args[0], …)` crashes on args=undefined INSIDE the Promise executor →
     // rejected promise (Next default 500). SECURITY: nothing reaches spawn — crash-only.
-    // [S061 fold: shell-catch flips this to 500 {error:{code:"INTERNAL",message:"Internal
-    // server error"}}. PRESERVED-not-fixed; P1 phase-review candidate: sanction a
-    // hasOwnProperty guard → 400.]
+    // [S061 fold: shell-catch applied — the same throw is now caught by defineRoute → generic
+    // INTERNAL envelope (no message leak). PRESERVED-not-fixed; P1 phase-review candidate:
+    // sanction a hasOwnProperty guard → 400.]
     for (const check of ["toString", "constructor", "__proto__"]) {
-      await expect(phPOST(postReq({ check }))).rejects.toThrow(TypeError);
+      const r = await readJson(await phPOST(postReq({ check })));
+      expect(r.status).toBe(500);
+      expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
     }
     expect(h.spawn).not.toHaveBeenCalled();
   });
