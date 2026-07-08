@@ -1,6 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+// [refactor jul8 S058] folded admin routes serve {error:{code,message}} — every err.error
+// string read below unwraps via apiErrorMessage (an envelope OBJECT in rendered string
+// state crashes React; the S056 DETECTOR found the class).
+import { apiErrorMessage } from "@/lib/client-persist";
 
 interface CompanyItem {
   id: number;
@@ -97,7 +101,7 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
         loadData();
       } else {
         const err = await res.json();
-        setMessage(err.error || "Failed");
+        setMessage(apiErrorMessage(err) || "Failed");
       }
     } catch { setMessage("Failed"); }
     setCreating(false);
@@ -130,7 +134,7 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
         loadData();
       } else {
         const err = await res.json();
-        setFormError(err.error || "Failed to create user");
+        setFormError(apiErrorMessage(err) || "Failed to create user");
       }
     } catch { setFormError("Failed to create user"); }
     setAddingUser(false);
@@ -152,7 +156,7 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
         loadData();
       } else {
         const err = await res.json().catch(() => ({}));
-        setDeleteMessage(err.error || "Delete failed");
+        setDeleteMessage(apiErrorMessage(err) || "Delete failed");
       }
     } catch {
       setDeleteMessage("Delete failed");
@@ -178,7 +182,7 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
       setTimeout(() => { setResettingUserId(null); setResetMessage(""); }, 2000);
     } else {
       const err = await res.json().catch(() => ({ error: "Failed" }));
-      setResetMessage(err.error || "Failed");
+      setResetMessage(apiErrorMessage(err) || "Failed");
     }
     setResetBusy(false);
   };
@@ -194,7 +198,7 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
       loadData();
     } else {
       const err = await res.json().catch(() => ({ error: "Failed" }));
-      setMessage(err.error || "Failed to update role");
+      setMessage(apiErrorMessage(err) || "Failed to update role");
       setTimeout(() => setMessage(""), 4000);
     }
   };
@@ -216,7 +220,7 @@ export default function CompaniesUsersTab({ demoMode = false }: { demoMode?: boo
       loadData();
     } else {
       const err = await res.json();
-      setMessage(err.error || "Failed");
+      setMessage(apiErrorMessage(err) || "Failed");
       setTimeout(() => setMessage(""), 4000);
     }
   };

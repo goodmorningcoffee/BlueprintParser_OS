@@ -54,8 +54,13 @@ const dbUp = inject("dbUp") as boolean;
 
 // [S058 fold: A applied] — at freeze these were the legacy flat bodies
 // UNAUTH={error:"Unauthorized"}, ADMIN_ONLY={error:"Admin only"}.
-const UNAUTH = { error: "Unauthorized" };
-const ADMIN_ONLY = { error: "Admin only" };
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } };
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } };
+const A = {
+  validation: (message: string) => ({ error: { code: "VALIDATION", message } }),
+  notFound: (message: string) => ({ error: { code: "NOT_FOUND", message } }),
+};
+const INTERNAL = { error: { code: "INTERNAL", message: "Internal server error" } };
 
 async function makeWorld() {
   const company = await createCompany();
@@ -183,17 +188,17 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     for (const body of [{}, { username: "u" }, { username: "u", email: "e@x.t" }]) {
       const r = await readJson(await usPOST(postReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "username, email, password required" }); // [S058 fold: A applied]
+      expect(r.body).toEqual(A.validation("username, email, password required")); // [S058 fold: A applied]
     }
     let r = await readJson(await usPOST(postReq({ username: "u", email: "e@x.t", password: "short7c" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Password must be at least 8 characters" }); // [S058 fold: A applied]
+    expect(r.body).toEqual(A.validation("Password must be at least 8 characters")); // [S058 fold: A applied]
     // duplicate email — existing row is lowercase; POST an upper/spaced variant → normalized match
     const dup = `dup-${Date.now()}@x.test`;
     await readJson(await usPOST(postReq({ username: "first", email: dup, password: "longenough" })));
     r = await readJson(await usPOST(postReq({ username: "second", email: `  ${dup.toUpperCase()}  `, password: "longenough" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Email already exists" }); // [S058 fold: A applied]
+    expect(r.body).toEqual(A.validation("Email already exists")); // [S058 fold: A applied]
   });
 
   it("US-6 POST happy: member default vs role admin; email normalized; bcrypt(12) verifies; {success:true}", async () => {
@@ -233,8 +238,9 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const r = await readJson(await usPOST(postReq({ username: "u", email: `l-${Date.now()}@x.t`, password: "longenough" })));
     spy.mockRestore();
     expect(r.status).toBe(500);
-    // [S058 fold: B applied — the :109 err.message leak is RETIRED to the shell generic INTERNAL]
-    expect(r.body).toEqual({ error: "boom-insert" });
+    // [S058 fold: B applied — the :109 err.message leak ({error:"boom-insert"}) is RETIRED
+    // to the shell generic INTERNAL]
+    expect(r.body).toEqual(INTERNAL);
   });
 
   // ── PUT ─────────────────────────────────────────────────────────────────────
@@ -245,13 +251,13 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     asUser(admin);
     let r = await readJson(await usPUT(putReq({})));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "id required" }); // [S058 fold: A applied]
+    expect(r.body).toEqual(A.validation("id required")); // [S058 fold: A applied]
     r = await readJson(await usPUT(putReq({ id: "00000000-0000-4000-8000-000000000000" })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "User not found" }); // [S058 fold: A applied]
+    expect(r.body).toEqual(A.notFound("User not found")); // [S058 fold: A applied]
     r = await readJson(await usPUT(putReq({ id: await publicIdOf(foreign.id), canRunModels: true })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "User not found" }); // [S058 fold: A applied] — same msg cross-company
+    expect(r.body).toEqual(A.notFound("User not found")); // [S058 fold: A applied] — same msg cross-company
   });
 
   it("US-10 PUT gates: canRunModels any-admin; role/companyId ROOT-only (silently ignored otherwise)", async () => {
@@ -282,8 +288,9 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const r = await readJson(await usPUT(putReq({ id: memberPub, canRunModels: false })));
     spy.mockRestore();
     expect(r.status).toBe(500);
-    // [S058 fold: B applied — the :149 fixed catch-500 literal is RETIRED to the shell generic INTERNAL]
-    expect(r.body).toEqual({ error: "Update failed" });
+    // [S058 fold: B applied — the :149 fixed catch-500 literal ({error:"Update failed"}) is
+    // RETIRED to the shell generic INTERNAL]
+    expect(r.body).toEqual(INTERNAL);
   });
 
   // ── DELETE ──────────────────────────────────────────────────────────────────
@@ -307,7 +314,8 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     for (const [body, status, msg] of cases) {
       const r = await readJson(await usDELETE(delReq(body)));
       expect(r.status).toBe(status);
-      expect(r.body).toEqual({ error: msg }); // [S058 fold: A applied]
+      // [S058 fold: A applied — code from status: 400→VALIDATION, 404→NOT_FOUND]
+      expect(r.body).toEqual(status === 404 ? A.notFound(msg) : A.validation(msg));
     }
   });
 
@@ -378,20 +386,22 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const r = await readJson(await usDELETE(delReq({ id: await publicIdOf(victim.id) })));
     spy.mockRestore();
     expect(r.status).toBe(500);
-    // [S058 fold: B applied — the :270 err.message leak is RETIRED to the shell generic
-    // INTERNAL; the '[user-delete] Failed' logger.error breadcrumb SURVIVES via the
-    // in-service try/log/re-throw]
-    expect(r.body).toEqual({ error: "boom-tx" });
+    // [S058 fold: B applied — the :270 err.message leak ({error:"boom-tx"}) is RETIRED to
+    // the shell generic INTERNAL; the '[user-delete] Failed' logger.error breadcrumb
+    // SURVIVES via the in-service try/log/re-throw]
+    expect(r.body).toEqual(INTERNAL);
     expect(await userByPublicId(await publicIdOf(victim.id))).toBeTruthy(); // nothing deleted
   });
 
   // ── E (malformed body) ──────────────────────────────────────────────────────
-  it("US-17 malformed JSON on POST/PUT/DELETE → legacy REJECTS (fold: 400 'Invalid JSON body')", async () => {
+  it("US-17 malformed JSON on POST/PUT/DELETE → 400 'Invalid JSON body'", async () => {
     const { admin } = await makeWorld();
     asUser(admin);
-    // [S058 fold: E applied]
-    await expect(usPOST(malformed("POST"))).rejects.toThrow();
-    await expect(usPUT(malformed("PUT"))).rejects.toThrow();
-    await expect(usDELETE(malformed("DELETE"))).rejects.toThrow();
+    // [S058 fold: E applied — legacy `await req.json()` threw (handler rejected)]
+    for (const call of [usPOST(malformed("POST")), usPUT(malformed("PUT")), usDELETE(malformed("DELETE"))]) {
+      const r = await readJson(await call);
+      expect(r.status).toBe(400);
+      expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    }
   });
 });

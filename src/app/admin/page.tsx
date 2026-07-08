@@ -489,7 +489,8 @@ export default function AdminPage() {
       loadData();
     } else {
       const err = await res.json();
-      throw new Error(err.error || "Failed to create user");
+      // [refactor jul8 S058] envelope unwrap — err.error is {code,message} post-fold
+      throw new Error(apiErrorMessage(err) || "Failed to create user");
     }
   }
 
@@ -503,7 +504,8 @@ export default function AdminPage() {
       setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, canRunModels } : u));
     } else {
       const err = await res.json().catch(() => ({ error: "Failed" }));
-      setMessage(err.error || "Failed to update permission");
+      // [refactor jul8 S058] envelope unwrap — object in string state crashes React
+      setMessage(apiErrorMessage(err) || "Failed to update permission");
     }
   }
 
@@ -614,7 +616,8 @@ export default function AdminPage() {
       setMessage("User deleted");
     } else {
       const err = await res.json();
-      setMessage(err.error || "Delete failed");
+      // [refactor jul8 S058] envelope unwrap — object in string state crashes React
+      setMessage(apiErrorMessage(err) || "Delete failed");
     }
   }, []);
 
