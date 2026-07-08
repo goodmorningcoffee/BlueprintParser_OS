@@ -51,9 +51,11 @@ import { asUser, createCompany, createUser, readJson, signedOut } from "@/test/h
 
 const dbUp = inject("dbUp") as boolean;
 
-// [S059 fold: A applied] — at freeze these were the legacy flat bodies.
-const UNAUTH = { error: "Unauthorized" };
-const ADMIN_ONLY = { error: "Admin only" };
+// [S059 fold: A applied] — at freeze these were the legacy flat bodies
+// UNAUTH={error:"Unauthorized"}, ADMIN_ONLY={error:"Admin only"}.
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } };
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } };
+const BAD = (message: string) => ({ error: { code: "BAD_REQUEST", message } });
 
 async function makeWorld() {
   const company = await createCompany();
@@ -104,7 +106,7 @@ describe.skipIf(!dbUp)("admin/csi/upload (CU)", () => {
     asUser(admin);
     const r = await readJson(await cuPOST(formReq()));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "No file uploaded" }); // [S059 fold: A applied]
+    expect(r.body).toEqual(BAD("No file uploaded")); // [S059 fold: A applied]
   });
 
   it("CU-3 POST unsupported extension → 400 byte-verbatim", async () => {
@@ -112,7 +114,7 @@ describe.skipIf(!dbUp)("admin/csi/upload (CU)", () => {
     asUser(admin);
     const r = await readJson(await cuPOST(formReq({ name: "codes.pdf", content: "x" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Unsupported format. Use CSV, TSV, or JSON." }); // [S059 fold: A applied]
+    expect(r.body).toEqual(BAD("Unsupported format. Use CSV, TSV, or JSON.")); // [S059 fold: A applied]
   });
 
   it("CU-4 POST parse errors → 400 'Parse error: …' (deliberate parser messages verbatim; json by PREFIX)", async () => {
@@ -121,19 +123,20 @@ describe.skipIf(!dbUp)("admin/csi/upload (CU)", () => {
     // <2 lines
     let r = await readJson(await cuPOST(formReq({ name: "a.csv", content: "code,description" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Parse error: File must have a header row and at least one data row" }); // [S059 fold: A applied]
+    expect(r.body).toEqual(BAD("Parse error: File must have a header row and at least one data row")); // [S059 fold: A applied]
     // no code column
     r = await readJson(await cuPOST(formReq({ name: "a.csv", content: "foo,description\nx,y" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Parse error: No 'code' or 'number' column found in header" }); // [S059 fold: A applied]
+    expect(r.body).toEqual(BAD("Parse error: No 'code' or 'number' column found in header")); // [S059 fold: A applied]
     // no description column
     r = await readJson(await cuPOST(formReq({ name: "a.csv", content: "code,foo\nx,y" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Parse error: No 'description' or 'title' column found in header" }); // [S059 fold: A applied]
+    expect(r.body).toEqual(BAD("Parse error: No 'description' or 'title' column found in header")); // [S059 fold: A applied]
     // invalid JSON in a .json file — SyntaxError text is node-version-dependent → prefix only
     r = await readJson(await cuPOST(formReq({ name: "a.json", content: "{ not json" })));
     expect(r.status).toBe(400);
-    expect(r.body.error).toMatch(/^Parse error: /); // [S059 fold: A applied — message via envelope]
+    expect(r.body.error.code).toBe("BAD_REQUEST"); // [S059 fold: A applied]
+    expect(r.body.error.message).toMatch(/^Parse error: /);
   });
 
   it("CU-5 POST valid file with 0 usable rows → 400 'No CSI codes found in file'", async () => {
@@ -142,7 +145,7 @@ describe.skipIf(!dbUp)("admin/csi/upload (CU)", () => {
     // rows missing description → filtered out → empty
     const r = await readJson(await cuPOST(formReq({ name: "a.csv", content: "code,description\n03 05,\n," })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "No CSI codes found in file" }); // [S059 fold: A applied]
+    expect(r.body).toEqual(BAD("No CSI codes found in file")); // [S059 fold: A applied]
   });
 
   it("CU-6 POST happy CSV: exact TSV bytes to S3 + jsonb spread-merge + bare success body", async () => {
@@ -228,5 +231,17 @@ describe.skipIf(!dbUp)("admin/csi/upload (CU)", () => {
     const r = await readJson(await cuDELETE(delReq()));
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true });
+  });
+
+  it("CU-11 [fold-only] DELETE malformed JSON body → 400 'Invalid JSON body' (uniform shell property; legacy 0-arg DELETE ignored the body)", async () => {
+    const { admin } = await makeWorld();
+    asUser(admin);
+    // yolo-purge precedent: DELETE ∈ METHODS_WITH_BODY under the shell — degenerate input,
+    // arguably safer, sanctioned. Pinned so a future "optimization" can't silently change it.
+    const r = await readJson(await cuDELETE(new Request("http://test.local/api/admin/csi/upload", {
+      method: "DELETE", headers: { "content-type": "application/json" }, body: "{ nope",
+    })));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual(BAD("Invalid JSON body"));
   });
 });
