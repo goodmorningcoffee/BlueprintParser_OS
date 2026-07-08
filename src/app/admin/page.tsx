@@ -292,7 +292,8 @@ export default function AdminPage() {
       const presignRes = await fetch(`/api/admin/models?action=presign&name=${encodeURIComponent(name)}`);
       if (!presignRes.ok) {
         const err = await presignRes.json();
-        throw new Error(err.error || "Failed to get upload URL");
+        // [refactor jul8 S057] folded route serves {error:{code,message}} — read both envelopes
+        throw new Error(apiErrorMessage(err) || "Failed to get upload URL");
       }
       const { url, fields, s3Path } = await presignRes.json();
 
@@ -342,7 +343,8 @@ export default function AdminPage() {
         loadData();
       } else {
         const err = await registerRes.json();
-        setMessage(err.error || "Registration failed");
+        // [refactor jul8 S057] envelope OBJECT in a string state would crash React — unwrap
+        setMessage(apiErrorMessage(err) || "Registration failed");
       }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Upload failed");

@@ -65,9 +65,15 @@ import { asUser, createCompany, createUser, makeReq, readJson, signedOut } from 
 
 const dbUp = inject("dbUp") as boolean;
 
-// [S057 fold: A applied] — at freeze these were the legacy flat bodies.
-const UNAUTH = { error: "Unauthorized" };
-const ADMIN_ONLY = { error: "Admin only" };
+// [S057 fold: A applied] — at freeze these were the legacy flat bodies
+// UNAUTH={error:"Unauthorized"}, ADMIN_ONLY={error:"Admin only"}.
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } };
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } };
+const A = {
+  forbidden: (message: string) => ({ error: { code: "FORBIDDEN", message } }),
+  validation: (message: string) => ({ error: { code: "VALIDATION", message } }),
+  notFound: (message: string) => ({ error: { code: "NOT_FOUND", message } }),
+};
 
 let modelSeq = 0;
 async function seedModel(companyId: number, over: Partial<typeof models.$inferInsert> = {}) {
@@ -153,15 +159,15 @@ describe.skipIf(!dbUp)("admin/models (MD)", () => {
     asUser(admin);
     let r = await readJson(await mdGET(getReq("?action=presign&name=x")));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Not authorized" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.forbidden("Not authorized")); // [S057 fold: A applied]
     asUser(root);
     r = await readJson(await mdGET(getReq("?action=presign&name=x"))); // uploads disabled
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Model uploads are disabled on this deployment." }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.forbidden("Model uploads are disabled on this deployment.")); // [S057 fold: A applied]
     process.env.ALLOW_MODEL_UPLOAD = "true";
     r = await readJson(await mdGET(getReq("?action=presign")));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "name required" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.validation("name required")); // [S057 fold: A applied]
     r = await readJson(await mdGET(getReq("?action=presign&name=Foo%20Bar!")));
     expect(r.status).toBe(200);
     expect(h.createModelUploadPresignedPost).toHaveBeenCalledWith("foo-bar-"); // slug: lower + [^a-z0-9-]→"-"
@@ -235,18 +241,18 @@ describe.skipIf(!dbUp)("admin/models (MD)", () => {
   });
 
   // ── POST ────────────────────────────────────────────────────────────────────
-  it("MD-6 POST kill-switch: legacy PRE-AUTH 403 (signed-out AND authed) — fold flips signed-out to 401 (S051 owner decision)", async () => {
+  it("MD-6 POST kill-switch: auth-first under the fold — signed-out+disabled 401 (S051 owner decision); authed+disabled 403 literal", async () => {
     const { admin } = await makeWorld();
-    // signed-out + disabled: legacy 403 (kill-switch before auth)
-    // [S057 fold: S051 owner-sanctioned auth-first flip applied — was 403 disabled-literal pre-auth]
+    // signed-out + disabled: legacy was 403 disabled-literal (kill-switch PRE-auth)
+    // [S057 fold: S051 owner-sanctioned auth-first flip applied — now 401 UNAUTHORIZED]
     let r = await readJson(await mdPOST(postReq({ name: "x", s3Path: "models/x" })));
-    expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Model uploads are disabled on this deployment. Contact an administrator to enable ALLOW_MODEL_UPLOAD." });
+    expect(r.status).toBe(401);
+    expect(r.body).toEqual(UNAUTH);
     // authed admin + disabled: 403 with the SAME byte-verbatim literal (both worlds)
     asUser(admin);
     r = await readJson(await mdPOST(postReq({ name: "x", s3Path: "models/x" })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Model uploads are disabled on this deployment. Contact an administrator to enable ALLOW_MODEL_UPLOAD." }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.forbidden("Model uploads are disabled on this deployment. Contact an administrator to enable ALLOW_MODEL_UPLOAD.")); // [S057 fold: A applied]
     expect(h.uploadToS3).not.toHaveBeenCalled();
   });
 
@@ -257,7 +263,7 @@ describe.skipIf(!dbUp)("admin/models (MD)", () => {
     for (const body of [{}, { name: "x" }, { s3Path: "models/x" }]) {
       const r = await readJson(await mdPOST(postReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "name and s3Path required" }); // [S057 fold: A applied]
+      expect(r.body).toEqual(A.validation("name and s3Path required")); // [S057 fold: A applied]
     }
   });
 
@@ -321,10 +327,10 @@ classes:
     asUser(admin);
     let r = await readJson(await mdPUT(putReq({ confidence: 0.5 })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "id required" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.validation("id required")); // [S057 fold: A applied]
     r = await readJson(await mdPUT(putReq({ id: 123 })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "At least one field required" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.validation("At least one field required")); // [S057 fold: A applied]
   });
 
   it("MD-11 PUT tenancy: missing → 'Model not found'; cross-company non-root → 'Not found' (DISTINCT msgs); root bypasses", async () => {
@@ -334,10 +340,10 @@ classes:
     asUser(admin);
     let r = await readJson(await mdPUT(putReq({ id: 99999999, confidence: 0.5 })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Model not found" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.notFound("Model not found")); // [S057 fold: A applied]
     r = await readJson(await mdPUT(putReq({ id: foreign.id, confidence: 0.5 })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S057 fold: A applied] — cross-company, distinct msg
+    expect(r.body).toEqual(A.notFound("Not found")); // [S057 fold: A applied] — cross-company, distinct msg
     // root cross-company → allowed
     asUser(root);
     r = await readJson(await mdPUT(putReq({ id: foreign.id, confidence: 0.9 })));
@@ -375,10 +381,10 @@ classes:
     asUser(admin);
     let r = await readJson(await mdDELETE(delReq({ id: 99999999 })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Model not found" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.notFound("Model not found")); // [S057 fold: A applied]
     r = await readJson(await mdDELETE(delReq({ id: foreign.id })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.notFound("Not found")); // [S057 fold: A applied]
     expect(await modelById(foreign.id)).toBeTruthy(); // untouched
     r = await readJson(await mdDELETE(delReq({ id: mine.id })));
     expect(r.status).toBe(200);
@@ -397,7 +403,7 @@ classes:
     // nothing → the ordinary "Model not found" 404 (NOT a throw; verified firsthand at freeze).
     const r = await readJson(await mdDELETE(delReq({})));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Model not found" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.notFound("Model not found")); // [S057 fold: A applied]
   });
 
   // ── PATCH ───────────────────────────────────────────────────────────────────
@@ -407,10 +413,10 @@ classes:
     asUser(admin);
     let r = await readJson(await mdPATCH(patchReq({})));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "modelId required" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.validation("modelId required")); // [S057 fold: A applied]
     r = await readJson(await mdPATCH(patchReq({ modelId: 1, companyId: otherCo.id })));
     expect(r.status).toBe(403);
-    expect(r.body).toEqual({ error: "Only root admin can share models to other companies" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.forbidden("Only root admin can share models to other companies")); // [S057 fold: A applied]
   });
 
   it("MD-16 PATCH non-root gates: model missing → 'Model not found'; not-owned no-access → 'Not found'; a PER-USER grant passes hasAccess (quirk)", async () => {
@@ -420,10 +426,10 @@ classes:
     asUser(admin);
     let r = await readJson(await mdPATCH(patchReq({ modelId: 99999999 })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Model not found" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.notFound("Model not found")); // [S057 fold: A applied]
     r = await readJson(await mdPATCH(patchReq({ modelId: foreign.id })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S057 fold: A applied]
+    expect(r.body).toEqual(A.notFound("Not found")); // [S057 fold: A applied]
     // QUIRK: a PER-USER grant row satisfies hasAccess, and the upsert then creates a NEW
     // COMPANY-level grant beside it (per-user row untouched).
     await db.insert(modelAccess).values({ modelId: foreign.id, companyId: company.id, userId: admin.id, enabled: true, grantedBy: root.id });
@@ -462,14 +468,16 @@ classes:
   });
 
   // ── E (malformed body) ──────────────────────────────────────────────────────
-  it("MD-18 malformed JSON on POST/PUT/DELETE/PATCH → legacy REJECTS (fold: 400 'Invalid JSON body')", async () => {
+  it("MD-18 malformed JSON on POST/PUT/DELETE/PATCH → 400 'Invalid JSON body'", async () => {
     const { admin } = await makeWorld();
     process.env.ALLOW_MODEL_UPLOAD = "true"; // POST reaches req.json in legacy
     asUser(admin);
-    // [S057 fold: E applied — shell parses body in step 1 → 400 BAD_REQUEST "Invalid JSON body"]
-    await expect(mdPOST(malformed("POST"))).rejects.toThrow();
-    await expect(mdPUT(malformed("PUT"))).rejects.toThrow();
-    await expect(mdDELETE(malformed("DELETE"))).rejects.toThrow();
-    await expect(mdPATCH(malformed("PATCH"))).rejects.toThrow();
+    // [S057 fold: E applied — legacy `await req.json()` threw (handler rejected); the shell
+    // parses the body in step 1 → 400 BAD_REQUEST "Invalid JSON body"]
+    for (const call of [mdPOST(malformed("POST")), mdPUT(malformed("PUT")), mdDELETE(malformed("DELETE")), mdPATCH(malformed("PATCH"))]) {
+      const r = await readJson(await call);
+      expect(r.status).toBe(400);
+      expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    }
   });
 });
