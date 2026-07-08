@@ -564,6 +564,28 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     expect(lines[lines.length - 1]).toEqual({ type: "done", updated: 0, skipped: 1, total: 1 });
   }, 30000);
 
+  // ── T2 demo-write exclusion (P1-review, owner-sanctioned 2026-07-08) ─────────
+  it("T2: isDemo projects are EXCLUDED from reprocess — not counted, never written", async () => {
+    const { company, user, project: normal } = await createWorld();
+    const admin = await createUser(company.id, { role: "admin" });
+    const demoProj = await createProject(company.id, user.id, {
+      isDemo: true,
+      projectIntelligence: { curated: "demo-content" } as any,
+    });
+    await createPage(normal.id, 1, { textractData: emptyTextract, rawText: "" });
+    await createPage(demoProj.id, 1, { textractData: emptyTextract, rawText: "" });
+
+    asUser(admin);
+    const res = await POST(makeReq("/api/admin/reprocess?scope=intelligence", { method: "POST" }));
+    const lines = await drain(res);
+    expect(lines[0]).toEqual({ type: "start", projects: 1 }); // demo project NOT counted
+
+    const [demoRow] = await db.select().from(projects).where(eq(projects.id, demoProj.id));
+    expect(demoRow.projectIntelligence).toEqual({ curated: "demo-content" }); // byte-untouched
+    const [normalRow] = await db.select().from(projects).where(eq(projects.id, normal.id));
+    expect((normalRow.projectIntelligence as any)?.pageCount).toBe(1); // normal still processed
+  }, 30000);
+
   // ── §E-a body policy (case 17 — owner-locked 2026-07-08: PRESERVE the swallow) ─
   it("§E-a: admin + MALFORMED JSON body → 200, swallowed, processes ALL company projects", async () => {
     const { company, project } = await createWorld();

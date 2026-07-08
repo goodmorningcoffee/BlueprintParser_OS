@@ -82,10 +82,16 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
   const enabledDetectorIds = company?.pipelineConfig?.textAnnotation?.enabledDetectors;
 
   // Get all completed projects for this company
+  // [refactor jul8 P1-review T2, OWNER-SANCTIONED] + isDemo exclusion: legacy reprocessed
+  // isDemo projects of the admin's own company, which could mutate the hand-curated public
+  // demo content (pageIntelligence/csiCodes rewrites). Owner policy (2026-07-08): admin
+  // reprocess NEVER touches demo projects — "demo never writes" now holds here too. This is
+  // the ONLY behavior delta vs the S062 fold (freeze-pinned: demo project excluded from the
+  // start count and byte-untouched after a no-body run).
   const allCompanyProjects = await db
     .select({ id: projects.id, name: projects.name, publicId: projects.publicId, dataUrl: projects.dataUrl, numPages: projects.numPages })
     .from(projects)
-    .where(eq(projects.companyId, session.user.companyId));
+    .where(and(eq(projects.companyId, session.user.companyId), eq(projects.isDemo, false)));
 
   // Filter to selected projects if specified
   const allProjects = selectedProjectIds
