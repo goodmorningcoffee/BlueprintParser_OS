@@ -371,6 +371,58 @@ describe.skipIf(!dbUp)("admin/llm-config (LC)", () => {
     expect(pc.llm!.toolUse).toBe(true);
   });
 
+  // ── DETECTOR closers (wf_a473cb8f-818 FIX-2..5) ─────────────────────────────────
+  it("LC-18 POST update-existing with a NEW apiKey: key ROTATED (round-trips), maskedKey from the new key", async () => {
+    const { company, admin } = await makeWorld();
+    const existing = await seedConfig(company.id, { encryptedApiKey: encryptApiKey("sk-old-1111") });
+    asUser(admin);
+    const r = await readJson(await lcPOST(postReq({ provider: "groq", model: "m", apiKey: "sk-new-2222" })));
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ id: existing.id, maskedKey: "••••2222", hasKey: true });
+    const row = await configById(existing.id);
+    expect(maskApiKey((await import("@/lib/crypto")).decryptApiKey(row.encryptedApiKey!))).toBe("••••2222"); // rotated
+  });
+
+  it("LC-19 POST userId-scoped upsert: user row created/targeted, company-wide row NOT clobbered", async () => {
+    const { company, admin } = await makeWorld();
+    const companyWide = await seedConfig(company.id, { provider: "groq", model: "company-model" });
+    asUser(admin);
+    // userId present → the upsert match keys on eq(userId), NOT isNull → separate row
+    const r = await readJson(await lcPOST(postReq({ provider: "openai", model: "user-model", userId: admin.id })));
+    expect(r.status).toBe(200);
+    expect(r.body.id).not.toBe(companyWide.id);
+    expect((await configById(r.body.id)).userId).toBe(admin.id); // user-scoped insert
+    expect((await configById(companyWide.id)).model).toBe("company-model"); // untouched
+    // second user-scoped POST updates the USER row (upsert match hits eq(userId))
+    const r2 = await readJson(await lcPOST(postReq({ provider: "openai", model: "user-model-v2", userId: admin.id })));
+    expect(r2.body.id).toBe(r.body.id);
+    expect((await configById(companyWide.id)).model).toBe("company-model"); // still untouched
+  });
+
+  it("LC-20 POST isDemo=true vs same-company isDemo=false: SEPARATE row (isDemo participates in the upsert match)", async () => {
+    const { company, admin } = await makeWorld();
+    const nonDemo = await seedConfig(company.id, { provider: "groq", model: "live-model" });
+    asUser(admin);
+    const r = await readJson(await lcPOST(postReq({ provider: "groq", model: "demo-model", isDemo: true })));
+    expect(r.status).toBe(200);
+    expect(r.body.id).not.toBe(nonDemo.id); // new row, not an update of the isDemo=false row
+    expect((await configById(r.body.id)).isDemo).toBe(true);
+    expect((await configById(nonDemo.id)).model).toBe("live-model"); // untouched
+  });
+
+  it("LC-21 POST update-branch decrypt ASYMMETRY: corrupt stored key + apiKey 'unchanged' → 500 INTERNAL (no GET-style swallow)", async () => {
+    const { company, admin } = await makeWorld();
+    // GET swallows a bad decrypt per-row ('***decrypt-error***', LC-5); the POST
+    // update-branch response derivation decrypts BARE — a corrupt stored key THROWS →
+    // shell generic INTERNAL 500 (legacy: framework 500). Frozen so a future shared-masker
+    // refactor cannot silently convert this to a 200.
+    await seedConfig(company.id, { encryptedApiKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" });
+    asUser(admin);
+    const r = await readJson(await lcPOST(postReq({ provider: "groq", model: "m", apiKey: "unchanged" })));
+    expect(r.status).toBe(500);
+    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
+  });
+
   // ── E (malformed body) ──────────────────────────────────────────────────────────
   it("LC-17 malformed JSON body on POST/PUT/DELETE → 400 'Invalid JSON body'", async () => {
     const { admin } = await makeWorld();

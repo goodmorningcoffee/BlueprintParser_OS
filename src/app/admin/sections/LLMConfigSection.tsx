@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { LLM_PRESETS, PROVIDER_ORDER } from "@/lib/llm/presets";
+import { apiErrorMessage } from "@/lib/client-persist";
 
 interface LlmConfigView {
   id: number;
@@ -141,7 +142,10 @@ export default function LLMConfigSection() {
         loadConfigs();
       } else {
         const data = await res.json();
-        setError(data.error || "Save failed");
+        // [refactor jul8 S056 DETECTOR FIX-1] the folded route serves the envelope
+        // {error:{code,message}} — data.error is an OBJECT now; rendering it as a string
+        // state crashed React. apiErrorMessage reads BOTH envelopes.
+        setError(apiErrorMessage(data) || "Save failed");
       }
     } catch {
       setError("Network error");
