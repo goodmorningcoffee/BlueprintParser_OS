@@ -40,9 +40,10 @@ import { asUser, createCompany, createUser, makeReq, readJson, signedOut } from 
 
 const dbUp = inject("dbUp") as boolean;
 
-// [S060 fold: A applied] — at freeze these were the legacy flat bodies.
-const UNAUTH = { error: "Unauthorized" };
-const ADMIN_ONLY = { error: "Admin only" };
+// [S060 fold: A applied] — at freeze these were the legacy flat bodies
+// {error:"Unauthorized"} / {error:"Admin only"}.
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } };
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } };
 
 const postReq = (body: unknown) => makeReq("/api/admin/llm-config/test", { method: "POST", body });
 
@@ -84,7 +85,7 @@ describe.skipIf(!dbUp)("admin/llm-config/test (LT)", () => {
     for (const body of [{}, { provider: "groq" }, { model: "m" }]) {
       const r = await readJson(await ltPOST(postReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "provider and model required" }); // [S060 fold: A applied]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "provider and model required" } }); // [S060 fold: A applied]
     }
   });
 
@@ -155,12 +156,14 @@ describe.skipIf(!dbUp)("admin/llm-config/test (LT)", () => {
     }
   });
 
-  it("LT-7 malformed JSON → legacy REJECTS (fold: 400 'Invalid JSON body')", async () => {
+  it("LT-7 malformed JSON → 400 'Invalid JSON body'", async () => {
     const { admin } = await makeAdmin();
     asUser(admin);
-    // [S060 fold: E applied]
-    await expect(ltPOST(new Request("http://test.local/api/admin/llm-config/test", {
+    // [S060 fold: E applied — legacy `await req.json()` threw (handler rejected)]
+    const r = await readJson(await ltPOST(new Request("http://test.local/api/admin/llm-config/test", {
       method: "POST", headers: { "content-type": "application/json" }, body: "{ nope",
-    }))).rejects.toThrow();
+    })));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
   });
 });
