@@ -147,6 +147,10 @@ describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
       [{ check: "foo" }, unknownMsg("foo")],
       [{ check: "" }, unknownMsg("")],
       [{ check: "deps; rm -rf /" }, unknownMsg("deps; rm -rf /")], // injection attempt = just an unknown key
+      // [S061 DETECTOR closer FA-4] non-string check values interpolate stringified —
+      // locks the zLooseBody loose-typing contract against a future z.string() tightening.
+      [{ check: 123 }, unknownMsg("123")],
+      [{ check: {} }, unknownMsg("[object Object]")],
     ] as const) {
       const r = await readJson(await phPOST(postReq(body)));
       expect(r.status).toBe(400);
@@ -163,6 +167,20 @@ describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
     const r = await readJson(await phPOST(rawPost("{ nope")));
     expect(r.status).toBe(400);
     expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    expect(h.spawn).not.toHaveBeenCalled();
+  });
+
+  it("PH-5b SIGNED-OUT + malformed JSON → 400 (shell parses body BEFORE auth; legacy was 401)", async () => {
+    // [S061 DETECTOR closer FA-1/SEC-1/PH-F1 — all three lanes, deduped] The shell's step-1
+    // safeParseJsonBody runs BEFORE step-2 auth (defineRoute.ts; auth-by-body needs the raw
+    // object), so signed-out + PARSE-FAILURE now 400s where legacy auth-first returned 401.
+    // Repo-wide shell invariant (US-20/DR006 precedent class), no auth oracle / existence
+    // leak. Non-object bodies parse fine at step 1 and still 401 at auth — pinned below.
+    const r = await readJson(await phPOST(rawPost("{ nope")));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    const r2 = await readJson(await phPOST(rawPost("[1,2]"))); // parses OK → auth wins
+    expect(r2.status).toBe(401);
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
@@ -225,13 +243,17 @@ describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
   it("PH-8 POST spawn error (ENOENT class) → 200 DOMAIN data: stderr '[spawn error] '+message, exitCode -1", async () => {
     const { admin } = await makeAdmin();
     asUser(admin);
-    spawnScript((p) => p.emit("error", new Error("spawn gs ENOENT")));
+    spawnScript((p) => {
+      p.stderr.emit("data", "partial warn"); // [S061 DETECTOR closer FA-3] prior stderr must survive
+      p.emit("error", new Error("spawn gs ENOENT"));
+    });
     const r = await readJson(await phPOST(postReq({ check: "ghostscript" })));
     expect(r.status).toBe(200); // failure is DATA for the debug UI, not an error envelope
     expect(r.body).toMatchObject({
       check: "ghostscript",
       stdout: "",
-      stderr: "\n[spawn error] spawn gs ENOENT", // err.message = domain stderr data, NOT a B-leak
+      // accumulated stderr + APPENDED suffix; err.message = domain stderr data, NOT a B-leak
+      stderr: "partial warn\n[spawn error] spawn gs ENOENT",
       exitCode: -1,
     });
   });
@@ -242,7 +264,13 @@ describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
     vi.useFakeTimers();
     try {
       let proc!: FakeProc;
-      h.spawn.mockImplementationOnce(() => (proc = fakeProc())); // never emits close
+      h.spawn.mockImplementationOnce(() => {
+        proc = fakeProc(); // never emits close
+        // [S061 DETECTOR closer FA-3] stderr emitted BEFORE the timeout must survive into
+        // the suffixed value (microtasks run under fake timers; listeners attach sync).
+        queueMicrotask(() => proc.stderr.emit("data", "loading torch..."));
+        return proc;
+      });
       const pending = phPOST(postReq({ check: "python_version" }));
       await vi.advanceTimersByTimeAsync(30_000);
       const r = await readJson(await pending);
@@ -253,7 +281,7 @@ describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
         command: "python3 -c import sys; print(sys.version); print(sys.executable)",
         durationMs: expect.any(Number),
         stdout: "",
-        stderr: "\n[TIMEOUT after 30s]",
+        stderr: "loading torch...\n[TIMEOUT after 30s]", // accumulated + APPENDED suffix
         exitCode: -1,
       });
       expect(proc.kill).toHaveBeenCalledExactlyOnceWith("SIGKILL");
@@ -273,5 +301,31 @@ describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
     expect(h.spawn).toHaveBeenCalledExactlyOnceWith("tesseract", ["--version"]);
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ stdout: "partial", stderr: "", exitCode: -1 });
+  });
+
+  it("PH-11 SECURITY-CORE table: every whitelist entry spawns its EXACT (cmd, args) — all 8 pinned", async () => {
+    const { admin } = await makeAdmin();
+    asUser(admin);
+    // [S061 DETECTOR closer FA-2] PH-7/9/10 pinned only 3 of 8 arg-arrays; a silent mutation
+    // of e.g. tatr_import's '/app/models/tatr' or deps' script path would otherwise pass.
+    const TABLE: Array<[check: string, cmd: string, args: string[]]> = [
+      ["deps", "python3", ["/app/scripts/check_deps.py"]],
+      ["tatr_files", "ls", ["-la", "/app/models/tatr"]],
+      ["tatr_import", "python3", ["-c", "from transformers import TableTransformerForObjectDetection; m = TableTransformerForObjectDetection.from_pretrained('/app/models/tatr'); print('OK', type(m).__name__)"]],
+      ["img2table_import", "python3", ["-c", "from img2table.document import PDF, Image; from img2table.ocr import TesseractOCR; print('OK PDF Image TesseractOCR available')"]],
+      ["ghostscript", "gs", ["--version"]],
+      ["tesseract", "tesseract", ["--version"]],
+      ["pymupdf", "python3", ["-c", "import fitz; print(fitz.__doc__[:120] if fitz.__doc__ else 'fitz available')"]],
+      ["python_version", "python3", ["-c", "import sys; print(sys.version); print(sys.executable)"]],
+    ];
+    for (let i = 0; i < TABLE.length; i++) {
+      const [check, cmd, args] = TABLE[i];
+      spawnScript((p) => p.emit("close", 0));
+      const r = await readJson(await phPOST(postReq({ check })));
+      expect(r.status).toBe(200);
+      expect(r.body).toMatchObject({ check, command: [cmd, ...args].join(" "), exitCode: 0 });
+      expect(h.spawn).toHaveBeenNthCalledWith(i + 1, cmd, args);
+    }
+    expect(h.spawn).toHaveBeenCalledTimes(TABLE.length);
   });
 });
