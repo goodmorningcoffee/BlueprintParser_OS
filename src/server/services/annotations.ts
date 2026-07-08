@@ -41,8 +41,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { detectCsiCodes } from "@/lib/csi-detect";
 import { logger } from "@/lib/logger";
 import { ApiError } from "@/server/api/envelope";
-import { resolveProjectOrThrow } from "@/server/api/access";
-import { zPublicId } from "@/server/api/schemas";
+import { resolveByPublicId, resolveProjectOrThrow } from "@/server/api/access";
 import type { ClientAnnotation } from "@/types";
 
 /**
@@ -95,15 +94,12 @@ function toClientAnnotation(a: typeof annotations.$inferSelect): ClientAnnotatio
   };
 }
 
-/** Validate a publicId at the auth step, then resolve access — the validate-before-auth recipe.
- *  NO allowDemo (annotation writes never allow demo). The zPublicId guard turns a non-uuid id
- *  into a clean 400 instead of the legacy pg-uuid-cast 500 (the S003 quirk the shell closes);
- *  it sits AFTER field validation so error precedence the characterization tests freeze is kept. */
-async function resolveByPublicId(projectId: unknown) {
-  const parsed = zPublicId.safeParse(projectId);
-  if (!parsed.success) throw new ApiError("VALIDATION", "Invalid project id");
-  return resolveProjectOrThrow({ publicId: parsed.data });
-}
+// [refactor jul8 P1-review PR-C1] the local resolveByPublicId (validate-before-auth recipe) was
+// hoisted byte-identical to server/api/access.ts. Call sites here pass NO opts on purpose —
+// undefined ≡ allowDemo:false (api-utils gates on `options?.allowDemo`), preserving the old
+// no-opts body exactly: annotation writes never allow demo. The zPublicId guard (non-uuid id →
+// clean 400, not the legacy pg-uuid-cast 500) still sits AFTER field validation, so the error
+// precedence the characterization tests freeze is unchanged.
 
 /** Indirect lookup: fetch the annotation by id (404 if missing), then resolve access on its
  *  parent project (no allowDemo). parseInt has NO radix → non-numeric id → NaN → pg cast 500. */

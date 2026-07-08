@@ -49,16 +49,16 @@
 //       cosmetic, same as pages.ts diff E.
 // Happy paths are byte-identical. Every other quirk is frozen verbatim (see promoteRegion).
 //
-// BACKLOG (P1 phase review): resolveByPublicId / resolveByDbId / resolveDual now live in pages.ts AND
-// here (qto-workflows also has its own resolveByPublicId) — extract to server/api/access.ts in a
-// mechanical, behavior-preserving commit during the P1 phase review.
+// [refactor jul8 P1-review PR-C1] BACKLOG discharged: the resolveByPublicId / resolveByDbId /
+// resolveDual trio that lived here (and in pages.ts) was hoisted byte-identical to
+// server/api/access.ts; this file now imports resolveDual. Behavior identical (opts were already
+// explicit at the one call site).
 
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { ApiError } from "@/server/api/envelope";
-import { resolveProjectOrThrow } from "@/server/api/access";
-import { zPublicId } from "@/server/api/schemas";
+import { resolveDual } from "@/server/api/access";
 import { parseNotesFromRegion } from "@/lib/text-region-classifier";
 import { bindSpecSectionsInRegion } from "@/lib/specnote-parser";
 import { detectCsiFromGrid, detectCsiCodes } from "@/lib/csi-detect";
@@ -76,29 +76,8 @@ import type {
   SpecData,
 } from "@/types";
 
-// ── shared dual-ID resolvers (mirror services/pages.ts — see BACKLOG note above) ────────────────
-
-/** publicId path: validate the uuid (zPublicId → clean 400 "Invalid project id", closing the S003
- *  pg-uuid-cast 500 = diff D), then resolve. Sits AFTER field validation so validate-before-auth holds. */
-async function resolveByPublicId(publicId: unknown, opts?: { allowDemo?: boolean }) {
-  const parsed = zPublicId.safeParse(publicId);
-  if (!parsed.success) throw new ApiError("VALIDATION", "Invalid project id");
-  return resolveProjectOrThrow({ publicId: parsed.data }, opts);
-}
-
-/** dbId path: coerce + Number.isInteger(>0) guard (diff E — closes the latent pg int-cast 500), resolve. */
-async function resolveByDbId(dbId: unknown, opts?: { allowDemo?: boolean }) {
-  const n = typeof dbId === "number" ? dbId : Number(dbId);
-  if (!Number.isInteger(n) || n <= 0) throw new ApiError("VALIDATION", "Invalid project id");
-  return resolveProjectOrThrow({ dbId: n }, opts);
-}
-
-/** The unified dual selector (generalizes the legacy `publicId ? {publicId} : {dbId: projectId!}`):
- *  a truthy publicId WINS (canonical, invariant-honoring); otherwise fall back to the legacy dbId. */
-async function resolveDual(args: { publicId?: unknown; dbId?: unknown }, opts?: { allowDemo?: boolean }) {
-  if (args.publicId) return resolveByPublicId(args.publicId, opts);
-  return resolveByDbId(args.dbId, opts);
-}
+// (The shared dual-ID resolver trio previously defined here now lives in server/api/access.ts —
+//  see the PR-C1 note in the header. Diffs D/E above are implemented by those shared helpers.)
 
 // ── POST /api/regions/promote ───────────────────────────────────────────────────────────────────
 //

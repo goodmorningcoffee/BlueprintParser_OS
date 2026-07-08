@@ -43,8 +43,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { detectCsiCodes } from "@/lib/csi-detect";
 import { TWENTY_COLORS } from "@/types";
 import { ApiError } from "@/server/api/envelope";
-import { resolveProjectOrThrow } from "@/server/api/access";
-import { zPublicId } from "@/server/api/schemas";
+import { resolveByPublicId, resolveProjectOrThrow } from "@/server/api/access";
 
 function toClientGroup(g: typeof annotationGroups.$inferSelect) {
   return {
@@ -61,15 +60,12 @@ function toClientGroup(g: typeof annotationGroups.$inferSelect) {
   };
 }
 
-/** Validate a body publicId then resolve access (validate-before-auth, NO allowDemo — writes
- *  never allow demo). zPublicId turns a non-uuid id into a clean 400 instead of the legacy
- *  pg-uuid-cast 500 (S003 quirk the shell closes); sits AFTER field validation so the frozen
- *  error precedence is kept. */
-async function resolveByPublicId(projectId: unknown) {
-  const parsed = zPublicId.safeParse(projectId);
-  if (!parsed.success) throw new ApiError("VALIDATION", "Invalid project id");
-  return resolveProjectOrThrow({ publicId: parsed.data });
-}
+// [refactor jul8 P1-review PR-C1] the local resolveByPublicId (validate-before-auth, NO
+// allowDemo — writes never allow demo) was hoisted byte-identical to server/api/access.ts. The
+// call site here passes NO opts on purpose — undefined ≡ allowDemo:false (api-utils gates on
+// `options?.allowDemo`), preserving the old no-opts body exactly. The zPublicId guard (non-uuid
+// id → clean 400, not the legacy pg-uuid-cast 500) still sits AFTER field validation, keeping
+// the frozen error precedence.
 
 /** Indirect lookup: parse the URL id (non-numeric → clean 400, preserving this family's
  *  stricter behavior), fetch the group (404 if missing), resolve access on its parent project

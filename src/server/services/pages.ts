@@ -54,7 +54,7 @@ import { db } from "@/lib/db";
 import { pages, annotations, projects } from "@/lib/db/schema";
 import { eq, and, gte, lte, or, isNull } from "drizzle-orm";
 import { ApiError } from "@/server/api/envelope";
-import { resolveProjectOrThrow } from "@/server/api/access";
+import { resolveByPublicId, resolveDual, resolveProjectOrThrow } from "@/server/api/access";
 import { zPublicId } from "@/server/api/schemas";
 import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
@@ -65,33 +65,12 @@ import { logger } from "@/lib/logger";
 import type { CsiCode, TextractPageData, ClientAnnotation } from "@/types";
 
 // ── shared dual-ID resolvers ───────────────────────────────────────────────────────────────
-
-/** publicId path: validate the uuid at the access step (zPublicId → clean 400 "Invalid project
- *  id", closing the S003 pg-uuid-cast 500), then resolve. Mirrors qto-workflows.resolveByPublicId.
- *  Sits AFTER each handler's field validation so the frozen validate-before-auth order holds. */
-async function resolveByPublicId(publicId: unknown, opts?: { allowDemo?: boolean }) {
-  const parsed = zPublicId.safeParse(publicId);
-  if (!parsed.success) throw new ApiError("VALIDATION", "Invalid project id");
-  return resolveProjectOrThrow({ publicId: parsed.data }, opts);
-}
-
-/** dbId path: coerce + Number.isInteger(>0) guard (sanctioned diff D — closes the latent pg
- *  int-cast 500 the two cast-only POSTs had), then resolve. */
-async function resolveByDbId(dbId: unknown, opts?: { allowDemo?: boolean }) {
-  const n = typeof dbId === "number" ? dbId : Number(dbId);
-  if (!Number.isInteger(n) || n <= 0) throw new ApiError("VALIDATION", "Invalid project id");
-  return resolveProjectOrThrow({ dbId: n }, opts);
-}
-
-/** The unified dual selector (generalized from intelligence's `publicId ? {publicId} : {dbId}`):
- *  a truthy publicId WINS (the canonical, invariant-honoring path); otherwise fall back to the
- *  legacy numeric dbId. Used by the four routes whose legacy `projectId` field is a dbId or
- *  dual. NOTE: pages/update is NOT one of them — its legacy `projectId` is itself a publicId, so
- *  updatePageName resolves both fields through resolveByPublicId directly (never resolveByDbId). */
-async function resolveDual(args: { publicId?: unknown; dbId?: unknown }, opts?: { allowDemo?: boolean }) {
-  if (args.publicId) return resolveByPublicId(args.publicId, opts);
-  return resolveByDbId(args.dbId, opts);
-}
+// [refactor jul8 P1-review PR-C1] resolveByPublicId / resolveByDbId / resolveDual were defined
+// here; hoisted byte-identical to server/api/access.ts (shared with regions/annotations/
+// annotation-groups/takeoff/qto-workflows). Call sites unchanged — opts were already explicit at
+// each call in this file. NOTE preserved from the old resolveDual doc: pages/update does NOT use
+// resolveDual — its legacy `projectId` field is itself a publicId, so updatePageName resolves both
+// fields through resolveByPublicId directly (never resolveByDbId; see comment at its call site).
 
 // ── POST /api/pages/update ───────────────────────────────────────────────────────────────────
 //

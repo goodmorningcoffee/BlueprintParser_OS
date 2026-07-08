@@ -58,8 +58,7 @@ import { db } from "@/lib/db";
 import { projects, qtoWorkflows } from "@/lib/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { ApiError, notFound } from "@/server/api/envelope";
-import { resolveProjectOrThrow } from "@/server/api/access";
-import { zPublicId } from "@/server/api/schemas";
+import { resolveByPublicId, resolveProjectOrThrow } from "@/server/api/access";
 import type { AuthSession } from "@/lib/api-utils";
 
 // Frozen PUT validation constants (verbatim from legacy [id]/route.ts lines 52–54).
@@ -67,15 +66,14 @@ const VALID_STEPS = ["pick", "select-schedule", "confirm-tags", "map-tags", "rev
 const MAX_JSONB_BYTES = 1_048_576; // 1 MB
 const MAX_STRING_LEN = 1024;
 
-/** Validate a body publicId then resolve access WITH allowDemo (POST needs the demo project to
- *  resolve so the explicit isDemo write-gate can return the frozen 403). zPublicId turns a non-uuid
- *  id into a clean 400 instead of the legacy pg-uuid-cast 500 (sanctioned diff b); it sits AFTER
- *  the caller's field validation so the frozen validate-before-auth precedence is preserved. */
-async function resolveByPublicId(projectId: unknown) {
-  const parsed = zPublicId.safeParse(projectId);
-  if (!parsed.success) throw new ApiError("VALIDATION", "Invalid project id");
-  return resolveProjectOrThrow({ publicId: parsed.data }, { allowDemo: true });
-}
+// [refactor jul8 P1-review PR-C1] the local resolveByPublicId was hoisted to
+// server/api/access.ts. ⚠️ The deleted local copy HARDCODED `{allowDemo:true}` inside its body;
+// the shared helper is opts-parameterized, so the POST call site below now passes
+// `{allowDemo:true}` explicitly — dropping it would flip demo-project resolution 403→404
+// (POST needs the demo project to RESOLVE so the explicit isDemo write-gate can return the
+// frozen 403). The zPublicId guard (non-uuid id → clean 400, not the legacy pg-uuid-cast 500,
+// sanctioned diff b) still sits AFTER the caller's field validation, preserving the frozen
+// validate-before-auth precedence.
 
 /** Indirect-lookup prologue for the three [id] handlers (frozen order):
  *  Number(id) (NO guard — legacy quirk; non-numeric → NaN → pg int-cast THROWS → shell INTERNAL 500)
@@ -134,7 +132,9 @@ export async function createQtoWorkflow(body: Record<string, unknown>) {
     throw new ApiError("VALIDATION", "projectId and materialType required");
   }
 
-  const { project, scope } = await resolveByPublicId(projectId);
+  // [refactor jul8 P1-review PR-C1] allowDemo:true was hardcoded inside the old local helper;
+  // now passed explicitly to the shared access.ts helper. Behavior identical.
+  const { project, scope } = await resolveByPublicId(projectId, { allowDemo: true });
 
   if (project.isDemo && scope !== "admin" && scope !== "root") {
     throw new ApiError("FORBIDDEN", "Demo projects are read-only");

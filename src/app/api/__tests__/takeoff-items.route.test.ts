@@ -20,6 +20,7 @@ import {
   createWorld,
   makeReq,
   readJson,
+  signedOut,
 } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
@@ -57,6 +58,28 @@ describe.skipIf(!dbUp)("/api/takeoff-items", () => {
     expect((await readJson(await post({ projectId: project.publicId, name: "x", shape: "circle", color: "#fff" }))).status).toBe(403);
     asUser(await createUser(company.id, { role: "admin" }));
     expect((await readJson(await post({ projectId: project.publicId, name: "x", shape: "circle", color: "#fff" }))).status).toBe(200);
+  });
+
+  // [refactor jul8 P1-review PR-C1] demo-RESOLUTION parity guard. The service's local
+  // resolveByPublicId (which HARDCODED {allowDemo:true}) was hoisted to the opts-parameterized
+  // access.ts helper, with the option re-supplied at the call site. These two legs are the exact
+  // regression dropping that option would produce: without allowDemo a demo project would 401
+  // (unauth) / 404 (cross-company) at resolution instead of resolving to scope "demo" and hitting
+  // the frozen 403 write-gate. (The member/admin cases above resolve through the non-demo branch
+  // and would NOT catch the flip.)
+  it("demo resolution parity: unauth + cross-company writers still get the 403 write-gate (not 401/404)", async () => {
+    const { project } = await createWorld({ isDemo: true });
+    const body = { projectId: project.publicId, name: "x", shape: "circle", color: "#fff" };
+
+    signedOut();
+    const anon = await readJson(await post(body));
+    expect(anon.status).toBe(403);
+    expect(anon.body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
+
+    asUser(await createUser((await createCompany()).id));
+    const crossCo = await readJson(await post(body));
+    expect(crossCo.status).toBe(403);
+    expect(crossCo.body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
   });
 
   it("GET: list shape OMITS groupId (asymmetry quirk); company-scoped strictly", async () => {

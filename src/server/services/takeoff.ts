@@ -36,20 +36,17 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 import { logger } from "@/lib/logger";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
-import { resolveProjectOrThrow } from "@/server/api/access";
-import { zPublicId } from "@/server/api/schemas";
+import { resolveByPublicId, resolveProjectOrThrow } from "@/server/api/access";
 
 const VALID_KINDS = ["count", "area", "linear"] as const;
 
-/** Validate a publicId at the auth step, then resolve access — the create-path recipe.
- *  Keeps the non-uuid → 400 (not pg-cast 500) check AFTER field validation so the order of
- *  error precedence the characterization tests freeze (e.g. "invalid kind" wins over a bad
- *  id) is unchanged. */
-async function resolveByPublicId(projectId: unknown) {
-  const parsed = zPublicId.safeParse(projectId);
-  if (!parsed.success) throw new ApiError("VALIDATION", "Invalid project id");
-  return resolveProjectOrThrow({ publicId: parsed.data }, { allowDemo: true });
-}
+// [refactor jul8 P1-review PR-C1] the local resolveByPublicId (create-path recipe) was hoisted
+// to server/api/access.ts. ⚠️ The deleted local copy HARDCODED `{allowDemo:true}` inside its
+// body; the shared helper is opts-parameterized, so both create call sites below now pass
+// `{allowDemo:true}` explicitly — dropping it would flip demo-project resolution 403→404
+// (demo must RESOLVE so the isDemo write-gate can return the frozen 403 "read-only").
+// The non-uuid → 400 (not pg-cast 500) check still sits AFTER field validation, so the frozen
+// error precedence (e.g. "invalid kind" wins over a bad id) is unchanged.
 
 // ── takeoff items ──────────────────────────────────────────────────────────────
 
@@ -94,7 +91,9 @@ export async function createTakeoffItem(body: Record<string, unknown>) {
     throw new ApiError("VALIDATION", "invalid groupId");
   }
 
-  const { project, scope } = await resolveByPublicId(projectId);
+  // [refactor jul8 P1-review PR-C1] allowDemo:true was hardcoded inside the old local helper;
+  // now passed explicitly to the shared access.ts helper. Behavior identical.
+  const { project, scope } = await resolveByPublicId(projectId, { allowDemo: true });
   if (project.isDemo && scope !== "admin" && scope !== "root") {
     throw new ApiError("FORBIDDEN", "Demo projects are read-only");
   }
@@ -236,7 +235,9 @@ export async function createTakeoffGroup(body: Record<string, unknown>) {
     throw new ApiError("VALIDATION", "invalid csiCode");
   }
 
-  const { project, scope } = await resolveByPublicId(projectId);
+  // [refactor jul8 P1-review PR-C1] allowDemo:true was hardcoded inside the old local helper;
+  // now passed explicitly to the shared access.ts helper. Behavior identical.
+  const { project, scope } = await resolveByPublicId(projectId, { allowDemo: true });
   if (project.isDemo && scope !== "admin" && scope !== "root") {
     throw new ApiError("FORBIDDEN", "Demo projects are read-only");
   }
