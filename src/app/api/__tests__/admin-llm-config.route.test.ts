@@ -42,8 +42,8 @@ const dbUp = inject("dbUp") as boolean;
 
 // [S056 fold: A applied] — at freeze these were the legacy flat bodies
 // UNAUTH={error:"Unauthorized"}, ADMIN_ONLY={error:"Admin only"}.
-const UNAUTH = { error: "Unauthorized" };
-const ADMIN_ONLY = { error: "Admin only" };
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } };
+const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } };
 
 async function makeWorld() {
   const company = await createCompany();
@@ -245,7 +245,7 @@ describe.skipIf(!dbUp)("admin/llm-config (LC)", () => {
     for (const body of [{}, { provider: "groq" }, { model: "m" }]) {
       const r = await readJson(await lcPOST(postReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "provider and model required" }); // [S056 fold: A applied]
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "provider and model required" } }); // [S056 fold: A applied]
     }
   });
 
@@ -315,7 +315,7 @@ describe.skipIf(!dbUp)("admin/llm-config (LC)", () => {
     asUser(admin);
     const r = await readJson(await lcDELETE(delReq({})));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "id required" }); // [S056 fold: A applied]
+    expect(r.body).toEqual({ error: { code: "VALIDATION", message: "id required" } }); // [S056 fold: A applied]
   });
 
   it("LC-14 DELETE scope: non-root cross-company → 404 'Not found'; root deletes any; success", async () => {
@@ -326,7 +326,7 @@ describe.skipIf(!dbUp)("admin/llm-config (LC)", () => {
     // non-root can't see/delete another company's config
     let r = await readJson(await lcDELETE(delReq({ id: foreign.id })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "Not found" }); // [S056 fold: A applied]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S056 fold: A applied]
     expect(await configById(foreign.id)).toBeTruthy(); // still there
     // own config deletes fine
     const mine = await seedConfig(company.id);
@@ -372,13 +372,15 @@ describe.skipIf(!dbUp)("admin/llm-config (LC)", () => {
   });
 
   // ── E (malformed body) ──────────────────────────────────────────────────────────
-  it("LC-17 malformed JSON body on POST/PUT/DELETE → legacy REJECTS (fold: 400 'Invalid JSON body')", async () => {
+  it("LC-17 malformed JSON body on POST/PUT/DELETE → 400 'Invalid JSON body'", async () => {
     const { admin } = await makeWorld();
     asUser(admin);
-    // [S056 fold: E applied] — at freeze legacy `await req.json()` throws (handler rejects);
+    // [S056 fold: E applied] — at freeze legacy `await req.json()` threw (handler rejected);
     // the shell parses the body in step 1 → 400 BAD_REQUEST "Invalid JSON body".
-    await expect(lcPOST(malformed("POST"))).rejects.toThrow();
-    await expect(lcPUT(malformed("PUT"))).rejects.toThrow();
-    await expect(lcDELETE(malformed("DELETE"))).rejects.toThrow();
+    for (const call of [lcPOST(malformed("POST")), lcPUT(malformed("PUT")), lcDELETE(malformed("DELETE"))]) {
+      const r = await readJson(await call);
+      expect(r.status).toBe(400);
+      expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    }
   });
 });
