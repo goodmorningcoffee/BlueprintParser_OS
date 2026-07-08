@@ -26,8 +26,8 @@
 //     {...existingConfig, ...updates} (H6-class — merge, never replace); classTypes/classCsiCodes/
 //     classKeywords TRUTHY-gated vs confidence/iou/imageSize !==undefined-gated + Number()
 //     coerced (confidence:0 applies; classTypes:"" does not). Bare {success:true, config}.
-//   • DELETE: NO !id guard — {} body → drizzle eq(id, undefined) throws = legacy UNHANDLED
-//     rejection (framework 500) [fold: shell generic INTERNAL 500 — new wrapping, not B].
+//   • DELETE: NO !id guard — {} body → 404 "Model not found" (eq(models.id, undefined) binds
+//     to no-match, NOT a throw; identical in legacy and fold — MD-14 freeze correction).
 //     Same unscoped-fetch-then-JS-404 pair as PUT; root cross-company allowed.
 //   • PATCH: !modelId → 400 "modelId required"; share-to-OTHER-company → root-only 403
 //     "Only root admin can share models to other companies"; non-root on a model not owned:
