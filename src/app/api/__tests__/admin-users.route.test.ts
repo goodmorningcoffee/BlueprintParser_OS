@@ -48,6 +48,7 @@ import { db } from "@/lib/db";
 import { users, projects, annotations } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
+import { logger } from "@/lib/logger";
 import { asUser, createCompany, createProject, createUser, makeReq, readJson, signedOut } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
@@ -382,6 +383,7 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const { company, admin } = await makeWorld();
     const victim = await createUser(company.id);
     asUser(admin);
+    const logSpy = vi.spyOn(logger, "error");
     const spy = vi.spyOn(db, "transaction").mockRejectedValueOnce(new Error("boom-tx"));
     const r = await readJson(await usDELETE(delReq({ id: await publicIdOf(victim.id) })));
     spy.mockRestore();
@@ -390,7 +392,63 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     // the shell generic INTERNAL; the '[user-delete] Failed' logger.error breadcrumb
     // SURVIVES via the in-service try/log/re-throw]
     expect(r.body).toEqual(INTERNAL);
+    // [S058 DETECTOR closer P2] the breadcrumb is the WHOLE POINT of the try/log/re-throw —
+    // pin it (the objectContaining 2nd arg distinguishes it from the shell's string-only
+    // '[route] …' log; a bare-propagate mutation would pass without this assert).
+    expect(logSpy).toHaveBeenCalledWith("[user-delete] Failed", expect.objectContaining({ mode: "reassign", err: expect.anything() }));
+    logSpy.mockRestore();
     expect(await userByPublicId(await publicIdOf(victim.id))).toBeTruthy(); // nothing deleted
+  });
+
+  // ── DETECTOR closers (wf_9933fb7e-4b9 P1/P4/P3) ─────────────────────────────
+  it("US-18 [closer P1] ROOT cascade of a CROSS-COMPANY victim: unscoped owned-select arm", async () => {
+    const { root } = await makeWorld();
+    const otherCo = await createCompany();
+    const victim = await createUser(otherCo.id);
+    const victimPub = await publicIdOf(victim.id);
+    const p = await createProject(otherCo.id, victim.id);
+    asUser(root);
+    const r = await readJson(await usDELETE(delReq({ id: victimPub, mode: "cascade" })));
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ success: true, mode: "cascade", projectCount: 1 });
+    // proves the root arm is eq(authorId) UNSCOPED by company — a companyId filter added to
+    // the root arm would orphan the cross-company victim's projects and fail here loudly
+    expect(h.deleteProjectFully).toHaveBeenCalledTimes(1);
+    expect((h.deleteProjectFully.mock.calls[0][0] as { id: number }).id).toBe(p.id);
+    expect(await userByPublicId(victimPub)).toBeUndefined();
+  });
+
+  it("US-19 [closer P4] ROOT reassign bypasses BOTH cross-company gates (victim gate + heir gate)", async () => {
+    const { root } = await makeWorld();
+    const otherCo = await createCompany();
+    const victim = await createUser(otherCo.id);
+    const heirCo = await createCompany();
+    const heir = await createUser(heirCo.id);
+    const p = await createProject(otherCo.id, victim.id);
+    asUser(root);
+    // root deletes a cross-company victim (non-root would 404) AND reassigns to a heir in a
+    // THIRD company (non-root would 400 'Reassign target must be in your company')
+    const r = await readJson(await usDELETE(delReq({ id: await publicIdOf(victim.id), reassignTo: await publicIdOf(heir.id) })));
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ success: true, mode: "reassign", projectCount: 1 });
+    const [row] = await db.select({ authorId: projects.authorId }).from(projects).where(eq(projects.id, p.id));
+    expect(row.authorId).toBe(heir.id);
+  });
+
+  it("US-20 [closer P3 pin] non-object JSON bodies → shell zLooseBody VALIDATION 400 (uniform shell property)", async () => {
+    const { admin } = await makeWorld();
+    asUser(admin);
+    // Legacy destructured an array to all-undefined (POST → the required-fields 400) and
+    // THREW on null/empty (unhandled 500). The shell's z.record object-ness check yields a
+    // uniform VALIDATION 400 instead — repo-wide shell property (remerge precedent, DR006
+    // noted-not-drift), pinned here so it cannot silently shift.
+    for (const body of ["[1,2]", "null", ""] as const) {
+      const r = await readJson(await usPOST(new Request("http://test.local/api/admin/users", {
+        method: "POST", headers: { "content-type": "application/json" }, body,
+      })));
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION");
+    }
   });
 
   // ── E (malformed body) ──────────────────────────────────────────────────────
