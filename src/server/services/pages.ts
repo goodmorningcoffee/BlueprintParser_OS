@@ -118,6 +118,9 @@ export async function updatePageName(body: Record<string, unknown>) {
 
   // BOTH fields are publicIds → resolveByPublicId (never resolveByDbId — Number('<uuid>')=NaN
   // would 400 every PageSidebar save). Truthy publicId wins, else the legacy projectId.
+  // [refactor jul8 P1-review N-2] DELIBERATELY no allowDemo: this is a WRITE — a future
+  // "harmonize the resolvers" pass must NOT add allowDemo:true here without an isDemo→403
+  // gate, or it opens a demo write (demo-never-writes invariant).
   const { project } = await resolveByPublicId(publicId || projectId);
 
   // Frozen: no pre-read / no 404 for a missing page — a 0-row update still returns success.
