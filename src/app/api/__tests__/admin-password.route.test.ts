@@ -32,7 +32,11 @@ import { asUser, createCompany, createUser, makeReq, readJson, signedOut } from 
 const dbUp = inject("dbUp") as boolean;
 
 // [S060 fold: A applied] — at freeze this was the legacy flat body {error:"Unauthorized"}.
-const UNAUTH = { error: "Unauthorized" };
+const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } };
+const A = {
+  validation: (message: string) => ({ error: { code: "VALIDATION", message } }),
+  notFound: (message: string) => ({ error: { code: "NOT_FOUND", message } }),
+};
 
 const postReq = (body: unknown) => makeReq("/api/admin/password", { method: "POST", body });
 const malformed = () =>
@@ -67,7 +71,7 @@ describe.skipIf(!dbUp)("admin/password (PW)", () => {
     asUser(member);
     r = await readJson(await pwPOST(postReq({ currentPassword: "a", newPassword: "longenough" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "No password set for this account" }); // [S060 fold: A applied]
+    expect(r.body).toEqual(A.validation("No password set for this account")); // [S060 fold: A applied]
   });
 
   it("PW-2 validation: missing/short → ONE combined 400 literal", async () => {
@@ -77,7 +81,7 @@ describe.skipIf(!dbUp)("admin/password (PW)", () => {
     for (const body of [{}, { currentPassword: "x" }, { currentPassword: "x", newPassword: "short7c" }]) {
       const r = await readJson(await pwPOST(postReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: "Current and new password required (min 8 chars)" }); // [S060 fold: A applied]
+      expect(r.body).toEqual(A.validation("Current and new password required (min 8 chars)")); // [S060 fold: A applied]
     }
   });
 
@@ -88,7 +92,7 @@ describe.skipIf(!dbUp)("admin/password (PW)", () => {
     await db.delete(users).where(eq(users.id, ghost.id)); // session survives, row gone
     const r = await readJson(await pwPOST(postReq({ currentPassword: "x", newPassword: "longenough" })));
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "User not found" }); // [S060 fold: A applied]
+    expect(r.body).toEqual(A.notFound("User not found")); // [S060 fold: A applied]
   });
 
   it("PW-4 wrong current password → 400 'Current password is incorrect'; hash untouched", async () => {
@@ -98,7 +102,7 @@ describe.skipIf(!dbUp)("admin/password (PW)", () => {
     asUser(u);
     const r = await readJson(await pwPOST(postReq({ currentPassword: "WRONG", newPassword: "longenough" })));
     expect(r.status).toBe(400);
-    expect(r.body).toEqual({ error: "Current password is incorrect" }); // [S060 fold: A applied]
+    expect(r.body).toEqual(A.validation("Current password is incorrect")); // [S060 fold: A applied]
     expect(await hashOf(u.id)).toBe(before);
   });
 
@@ -114,11 +118,13 @@ describe.skipIf(!dbUp)("admin/password (PW)", () => {
     expect(await bcrypt.compare("old-password", after!)).toBe(false);
   });
 
-  it("PW-6 malformed JSON → legacy REJECTS (fold: 400 'Invalid JSON body')", async () => {
+  it("PW-6 malformed JSON → 400 'Invalid JSON body'", async () => {
     const company = await createCompany();
     const member = await createUser(company.id);
     asUser(member);
-    // [S060 fold: E applied]
-    await expect(pwPOST(malformed())).rejects.toThrow();
+    // [S060 fold: E applied — legacy `await req.json()` threw (handler rejected)]
+    const r = await readJson(await pwPOST(malformed()));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
   });
 });
