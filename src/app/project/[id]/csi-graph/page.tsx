@@ -437,12 +437,20 @@ export default function CsiGraphPage() {
             onClick={async () => {
               setRefreshing(true);
               try {
-                const res = await fetch(`/api/admin/reprocess`, {
+                // [bugfix jul8 P1-review T1, owner-sanctioned] was body:{projectId:Number(id),
+                // scope:"intelligence"} — the route reads scope from the QUERY only and
+                // projectIds (plural publicId array) only, and Number(<uuid>)=NaN anyway, so
+                // BOTH fields were silently ignored → every click ran a company-wide FULL
+                // reprocess. Route untouched (byte-frozen, S062 pins); this consumer now
+                // targets one project's intelligence pass, and drains the NDJSON stream so
+                // the graph reload below sees the RECOMPUTED state instead of racing it.
+                const res = await fetch(`/api/admin/reprocess?scope=intelligence`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ projectId: Number(id), scope: "intelligence" }),
+                  body: JSON.stringify({ projectIds: [id] }),
                 });
                 if (res.ok) {
+                  await res.text(); // the work happens inside the stream — wait for "done"
                   // Reload graph data
                   for (const url of [`/api/projects/${id}`, `/api/demo/projects/${id}`]) {
                     try {
