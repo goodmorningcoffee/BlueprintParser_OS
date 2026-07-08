@@ -77,6 +77,17 @@ vi.mock("@/lib/text-region-classifier-debug", async (importOriginal) => ({
   writeClassifierDebugBundle: debugMocks.writeClassifierDebugBundle,
 }));
 
+// [refactor P1-review jul8] L3-4 gap: the auto-table detector is dynamically imported and
+// gated on pipelineConfig.autoDetect.tables (default OFF) — mock it so the default-off pin
+// can assert not-called (and a future default-flip fails loudly).
+const autoTableMocks = vi.hoisted(() => ({
+  detectAutoTables: vi.fn(() => [] as any[]),
+}));
+vi.mock("@/lib/auto-detect/auto-table-detector", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  detectAutoTables: autoTableMocks.detectAutoTables,
+}));
+
 import { POST } from "@/app/api/admin/reprocess/route";
 import { db } from "@/lib/db";
 import { annotations, pages, projects } from "@/lib/db/schema";
@@ -230,6 +241,79 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
       1,
       expect.anything(),
     );
+  }, 30000);
+
+  // ── P1-review char-gap closers (S062 DETECTOR L3-1/L3-2/L3-4) ────────────────
+  it("★L3-1: YOLO-present intelligence — heatmap/composite/ensemble path runs and user keys still survive", async () => {
+    const { company, project } = await createWorld();
+    const admin = await createUser(company.id, { role: "admin" });
+    const userParsedRegions = [
+      { id: "pr-yolo", type: "schedule", bbox: [0.1, 0.1, 0.5, 0.5], data: { rows: 2 } },
+    ];
+    const page = await createPage(project.id, 1, {
+      textractData: richTextract,
+      rawText: "GENERAL NOTES",
+      pageIntelligence: { parsedRegions: userParsedRegions, someFutureKey: { keep: "me" } } as any,
+    });
+    // a HEATMAP_CLASSES-member YOLO annotation → yoloByPage non-empty → the composite/
+    // heatmap/ensemble sub-branch (dead in every other test) actually executes
+    await db.insert(annotations).values({
+      name: "text_box", minX: 0.1, minY: 0.1, maxX: 0.4, maxY: 0.3, pageNumber: 1,
+      threshold: 0.5, source: "yolo", projectId: project.id,
+      data: { confidence: 0.9, modelName: "yolo-test" } as any,
+    });
+
+    asUser(admin);
+    const res = await POST(makeReq("/api/admin/reprocess?scope=intelligence", { method: "POST" }));
+    const lines = await drain(res);
+    const proj = lines.find((l) => l.type === "project");
+    expect(proj).toMatchObject({ type: "project", yoloPages: 1 }); // yolo grouping ran
+
+    const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
+    const pi = row.pageIntelligence as Record<string, any>;
+    // exact key-set pin: with this fixture the yolo sub-branch writes EXACTLY these
+    // three computed keys alongside the two carried user keys (observed 2026-07-08)
+    expect(Object.keys(pi).sort()).toEqual([
+      "classifiedRegions", "ensembleRegions", "parsedRegions", "someFutureKey", "yoloHeatmap",
+    ]);
+    // G3 carry still holds WITH the yolo path active
+    expect(pi.parsedRegions).toEqual(userParsedRegions);
+    expect(pi.someFutureKey).toEqual({ keep: "me" });
+    // heatmap: the seeded text_box detection became a confident region
+    expect(pi.yoloHeatmap.confidentRegions.length).toBeGreaterThan(0);
+    expect(pi.yoloHeatmap.confidentRegions[0].classes).toEqual(["text_box"]);
+    // composite classifier: table region sourced FROM the user's parsedRegions
+    expect(pi.classifiedRegions.tables[0]).toMatchObject({
+      kind: "table", sources: ["parsedRegions"], pageNumber: 1,
+    });
+    // ensemble: a parsed-region vote survived into the reduced output — pins that
+    // collectAllVotes still receives parsedRegions (the G3b source-of-truth read);
+    // deleting the yolo/heatmap/ensemble sub-branch can no longer pass green (L3-1)
+    expect(pi.ensembleRegions.length).toBeGreaterThan(0);
+    expect(pi.ensembleRegions[0].reasoning).toContain("parsed-region");
+    expect(pi.ensembleRegions[0].reasoning).toContain("yolo-heatmap");
+  }, 30000);
+
+  it("L3-2: intelligence WITHOUT debug=1 does NOT write the classifier debug bundle", async () => {
+    const { company, project } = await createWorld();
+    const admin = await createUser(company.id, { role: "admin" });
+    await createPage(project.id, 1, { textractData: richTextract, rawText: "" });
+
+    asUser(admin);
+    const res = await POST(makeReq("/api/admin/reprocess?scope=intelligence", { method: "POST" }));
+    await drain(res);
+    expect(debugMocks.writeClassifierDebugBundle).not.toHaveBeenCalled();
+  }, 30000);
+
+  it("L3-4: default pipelineConfig does NOT invoke the auto-table detector (autoDetect off-by-default)", async () => {
+    const { company, project } = await createWorld();
+    const admin = await createUser(company.id, { role: "admin" });
+    await createPage(project.id, 1, { textractData: richTextract, rawText: "" });
+
+    asUser(admin);
+    const res = await POST(makeReq("/api/admin/reprocess?scope=intelligence", { method: "POST" }));
+    await drain(res);
+    expect(autoTableMocks.detectAutoTables).not.toHaveBeenCalled();
   }, 30000);
 
   // ── projectIds filter (case 7 — publicId contract) ───────────────────────────
