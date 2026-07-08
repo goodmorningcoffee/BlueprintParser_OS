@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 interface CompanyUsage {
   id: number;
@@ -81,7 +82,7 @@ export default function UsageTab() {
         setUsers(data.users);
       } else {
         const err = await usageRes.json().catch(() => ({}));
-        setMessage(err.error || "Failed to load usage");
+        setMessage(apiErrorMessage(err) || "Failed to load usage");
       }
       if (maRes.ok) {
         const ma = await maRes.json();
@@ -117,7 +118,7 @@ export default function UsageTab() {
           await loadData();
         } else {
           const err = await res.json().catch(() => ({}));
-          flash(err.error || "Failed");
+          flash(apiErrorMessage(err) || "Failed");
         }
       } catch {
         flash("Failed");
@@ -151,7 +152,7 @@ export default function UsageTab() {
         await loadData();
       } else {
         const err = await res.json().catch(() => ({}));
-        flash(err.error || "Failed");
+        flash(apiErrorMessage(err) || "Failed");
       }
     } catch {
       flash("Failed");
@@ -172,7 +173,7 @@ export default function UsageTab() {
         await loadData();
       } else {
         const err = await res.json().catch(() => ({}));
-        flash(err.error || "Failed");
+        flash(apiErrorMessage(err) || "Failed");
       }
     } catch {
       flash("Failed");

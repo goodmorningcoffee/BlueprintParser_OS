@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 interface DetectorMeta {
   id: string;
@@ -80,7 +81,7 @@ export default function TextAnnotationsTab({
         setSaveMessage("Configuration saved successfully.");
       } else {
         const err = await res.json().catch(() => ({ error: "Failed" }));
-        setSaveMessage(`Error: ${err.error || "Save failed"}`);
+        setSaveMessage(`Error: ${apiErrorMessage(err) || "Save failed"}`);
       }
     } catch {
       setSaveMessage("Error: Network request failed");

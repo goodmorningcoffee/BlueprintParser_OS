@@ -230,7 +230,7 @@ export default function AdminPage() {
       setYoloJobs({}); // Clear stale YOLO error states after toggle change
     } else {
       const err = await res.json().catch(() => ({ error: "Failed" }));
-      setToggleError(err.error || "Failed");
+      setToggleError(apiErrorMessage(err) || "Failed");
     }
   }
 
@@ -253,7 +253,7 @@ export default function AdminPage() {
       setToggleError("");
     } else {
       const err = await res.json().catch(() => ({ error: "Failed" }));
-      setToggleError(err.error || "Failed");
+      setToggleError(apiErrorMessage(err) || "Failed");
     }
   }
 
@@ -562,7 +562,7 @@ export default function AdminPage() {
       setPasswordForm({ currentPassword: "", newPassword: "" });
     } else {
       const err = await res.json();
-      setMessage(err.error || "Failed");
+      setMessage(apiErrorMessage(err) || "Failed");
     }
   }
 

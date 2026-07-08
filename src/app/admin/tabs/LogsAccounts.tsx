@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, Fragment } from "react";
 import type { LogsRange } from "./LogsTab";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 interface ToolHit {
   tool: string;
@@ -94,7 +95,7 @@ export default function LogsAccounts({ range }: { range: LogsRange }) {
       const res = await fetch(`/api/admin/logs/accounts?range=${range}`);
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
-        throw new Error(e.error || `HTTP ${res.status}`);
+        throw new Error(apiErrorMessage(e) || `HTTP ${res.status}`);
       }
       setData((await res.json()) as AccountsResponse);
       setLastRefresh(new Date());

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
 import { DEFAULT_CSI_DETECT_CONFIG, type CsiDetectConfig } from "@/lib/csi-detect-defs";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 // CsiConfig is a superset of CsiDetectConfig — the extra fields belong to
 // adjacent systems (CSI tagger, LLM context budgets), not the detection engine.
@@ -85,7 +86,7 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
         setTimeout(() => setMessage(""), 3000);
       } else {
         const err = await res.json().catch(() => ({ error: "Failed" }));
-        setMessage(err.error || "Save failed");
+        setMessage(apiErrorMessage(err) || "Save failed");
       }
     } catch {
       setMessage("Save failed");
@@ -174,7 +175,7 @@ export default function CsiTab({ reprocessing, reprocessLog, onReprocess }: CsiT
                     loadConfig();
                   } else {
                     const err = await res.json().catch(() => ({ error: "Upload failed" }));
-                    setMessage(err.error || "Upload failed");
+                    setMessage(apiErrorMessage(err) || "Upload failed");
                   }
                 } catch { setMessage("Upload failed"); }
                 setUploading(false);

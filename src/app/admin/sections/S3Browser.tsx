@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 interface S3Item {
   key: string;
@@ -25,7 +26,7 @@ export default function S3Browser() {
       const res = await fetch(`/api/admin/s3-browser?prefix=${encodeURIComponent(newPrefix)}`);
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to browse");
+        setError(apiErrorMessage(data) || "Failed to browse");
         return;
       }
       const data = await res.json();

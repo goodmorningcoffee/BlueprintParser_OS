@@ -5,6 +5,7 @@ import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
 import LLMConfigSection from "../sections/LLMConfigSection";
 import S3Browser from "../sections/S3Browser";
 import type { ModelClassType } from "@/types";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 interface ModelItem {
   id: number;
@@ -613,7 +614,7 @@ export default function AiModelsTab({
                     try {
                       const res = await fetch("/api/admin/yolo-purge", { method: "DELETE" });
                       const data = await res.json();
-                      if (!res.ok) throw new Error(data.error || "Failed");
+                      if (!res.ok) throw new Error(apiErrorMessage(data) || "Failed");
                       alert(`Purged ${data.deleted} detections`);
                     } catch (err: any) {
                       alert("Purge failed: " + (err.message || err));

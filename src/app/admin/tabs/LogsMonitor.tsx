@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 interface DataPoint { t: string; v: number }
 
@@ -59,7 +60,7 @@ export default function LogsMonitor() {
       ]);
       if (!monitorRes.ok) {
         const err = await monitorRes.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${monitorRes.status}`);
+        throw new Error(apiErrorMessage(err) || `HTTP ${monitorRes.status}`);
       }
       setData(await monitorRes.json());
       setLastRefresh(new Date());

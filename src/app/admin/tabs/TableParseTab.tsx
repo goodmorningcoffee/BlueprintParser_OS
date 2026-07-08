@@ -20,6 +20,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -152,7 +153,7 @@ function ContainerHealthCard() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
+        throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
       }
       const data = (await res.json()) as CheckResult;
       setResult(data);
@@ -393,7 +394,7 @@ function ParseHistoryDetail({ entry }: { entry: ParseHistoryEntry }) {
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${resp.status}`);
+        throw new Error(apiErrorMessage(err) || `HTTP ${resp.status}`);
       }
       const merged = await resp.json();
       setRemerge({
@@ -726,7 +727,7 @@ function DebugToggleCard() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
+        throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
       }
       setEnabled(newValue);
     } catch (err) {

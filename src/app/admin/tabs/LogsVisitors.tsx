@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { LogsRange } from "./LogsTab";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 interface VisitorRow {
   ip: string;
@@ -110,7 +111,7 @@ export default function LogsVisitors({ range }: { range: LogsRange }) {
       const res = await fetch(`/api/admin/logs/visitors?range=${range}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
+        throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
       }
       const payload = (await res.json()) as VisitorsResponse;
       setData(payload);
@@ -139,7 +140,7 @@ export default function LogsVisitors({ range }: { range: LogsRange }) {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
+        throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
       }
       setBanModal(null);
       setBanReason("");

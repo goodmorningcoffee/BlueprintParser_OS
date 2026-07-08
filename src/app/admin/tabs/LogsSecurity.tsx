@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 interface AbuseEvent {
   id: number;
@@ -52,7 +53,7 @@ export default function LogsSecurity() {
       const res = await fetch(`/api/admin/logs/security`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
+        throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
       }
       setData(await res.json());
     } catch (err) {

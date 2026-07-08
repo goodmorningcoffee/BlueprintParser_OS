@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { LogsRange } from "./LogsTab";
+import { apiErrorMessage } from "@/lib/client-persist"; // [refactor jul8 S058 PR-E1] envelope unwrap
 
 interface EngagementRow {
   feature: string;
@@ -31,7 +32,7 @@ export default function LogsEngagement({ range }: { range: LogsRange }) {
       const res = await fetch(`/api/admin/logs/engagement?range=${range}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
+        throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
       }
       const payload = (await res.json()) as EngagementResponse;
       setData(payload);
