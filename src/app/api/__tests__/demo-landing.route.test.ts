@@ -22,6 +22,8 @@
 //     parallel test DB seeds demo projects from other files; the downstream queries are all
 //     company-scoped and deterministic once pinned).
 // Assertions tagged [S060 fold: … applied] were flipped in the fold commit.
+// [S060 fold] call-sites flipped 0-arg→(makeReq(...)): legacy GET() took no Request; the
+// defineRoute shell requires one (the documented S043 freeze-first gotcha).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/auth", async () => {
@@ -41,7 +43,7 @@ import { GET as daGET } from "@/app/api/demo/admin/route";
 import { db } from "@/lib/db";
 import { appSettings, annotations, companies, models, projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { createCompany, createProject, createUser, readJson, signedOut } from "@/test/harness";
+import { createCompany, createProject, createUser, makeReq, readJson, signedOut } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -80,7 +82,7 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
   it("DC-1 no header_links row → the 5 defaults", async () => {
     // the shared DB may carry a row from another test — delete OUR key first (app-global!)
     await db.delete(appSettings).where(eq(appSettings.key, "header_links"));
-    const r = await readJson(await dcGET());
+    const r = await readJson(await dcGET(makeReq("/api/demo/config", { method: "GET" })));
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ headerLinks: DEFAULTS });
   });
@@ -91,7 +93,7 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
       key: "header_links",
       value: { home: "custom.example.com", labelFleet: "http://keep-http.example" } as never,
     });
-    const r = await readJson(await dcGET());
+    const r = await readJson(await dcGET(makeReq("/api/demo/config", { method: "GET" })));
     expect(r.status).toBe(200);
     expect(r.body.headerLinks).toEqual({
       ...DEFAULTS,
@@ -103,7 +105,7 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
 
   it("DC-3 db throw → SWALLOWED to defaults @200 (never a 500)", async () => {
     const spy = vi.spyOn(db, "select").mockImplementationOnce(() => { throw new Error("db down"); });
-    const r = await readJson(await dcGET());
+    const r = await readJson(await dcGET(makeReq("/api/demo/config", { method: "GET" })));
     spy.mockRestore();
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ headerLinks: DEFAULTS });
@@ -111,7 +113,7 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
 
   // ── demo/domain-knowledge ───────────────────────────────────────────────────
   it("DK-1 happy: RAW text/plain + Cache-Control public max-age=3600 + real file content", async () => {
-    const res = await dkGET();
+    const res = await dkGET(makeReq("/api/demo/domain-knowledge", { method: "GET" }));
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/plain");
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=3600"); // must survive shell passthrough
@@ -121,7 +123,7 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
 
   it("DK-2 read failure → RAW empty-body 404 (not JSON)", async () => {
     fsm.readFile.mockRejectedValueOnce(new Error("ENOENT"));
-    const res = await dkGET();
+    const res = await dkGET(makeReq("/api/demo/domain-knowledge", { method: "GET" }));
     expect(res.status).toBe(404);
     expect(await res.text()).toBe("");
   });
@@ -135,10 +137,10 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
       if (first) { first = false; return { from: () => ({ where: () => ({ limit: async () => [] }) }) }; }
       return (realSelect as (...args: unknown[]) => unknown)(...a);
     }) as typeof db.select);
-    const r = await readJson(await daGET());
+    const r = await readJson(await daGET(makeReq("/api/demo/admin", { method: "GET" })));
     spy.mockRestore();
     expect(r.status).toBe(404);
-    expect(r.body).toEqual({ error: "No demo projects" }); // [S060 fold: A applied]
+    expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "No demo projects" } }); // [S060 fold: A applied]
   });
 
   it("DA-2 SECURITY SCRUB: isDemo-only projects · minimal model shape · mock-model dedup · demo-only pipelineConfig · hardcoded toggles", async () => {
@@ -161,7 +163,7 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
     }).where(eq(companies.id, company.id));
 
     const spy = pinDemoCompany(company.id);
-    const r = await readJson(await daGET());
+    const r = await readJson(await daGET(makeReq("/api/demo/admin", { method: "GET" })));
     spy.mockRestore();
     expect(r.status).toBe(200);
     // projects: isDemo only, 5-field public shape

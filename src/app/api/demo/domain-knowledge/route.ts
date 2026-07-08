@@ -1,24 +1,18 @@
 /**
- * GET /api/demo/domain-knowledge
+ * GET /api/demo/domain-knowledge  (public static domain-knowledge markdown, text/plain)
  *
- * Serves the built-in domain knowledge file for the demo admin panel.
- * No auth required — this is static reference content.
+ * [refactor jul8 S060] Thin auth:"none" shell (Option B) — behavior lives in
+ * services/demo-landing.ts (getDemoDomainKnowledge). The service returns a RAW NextResponse
+ * on BOTH branches (text/plain + Cache-Control "public, max-age=3600" happy path; "" 404 on
+ * read failure) — the shell's result-instanceof-Response passthrough keeps the headers
+ * (getPageTextract precedent). ZERO sanctioned diffs. Shell-fold (char:
+ * demo-landing.route.test.ts DK-*).
  */
 
-import { readFile } from "fs/promises";
-import { join } from "path";
-import { NextResponse } from "next/server";
+import { defineRoute } from "@/server/api/defineRoute";
+import { getDemoDomainKnowledge } from "@/server/services/demo-landing";
 
-export async function GET() {
-  try {
-    const content = await readFile(
-      join(process.cwd(), "src/data/domain-knowledge.md"),
-      "utf-8"
-    );
-    return new NextResponse(content, {
-      headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=3600" },
-    });
-  } catch {
-    return new NextResponse("", { status: 404 });
-  }
-}
+export const GET = defineRoute({
+  auth: "none",
+  handler: () => getDemoDomainKnowledge(),
+});
