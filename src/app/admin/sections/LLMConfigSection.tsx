@@ -111,7 +111,12 @@ export default function LLMConfigSection() {
       const data = await res.json();
       setTestResult({
         success: data.success,
-        message: data.success ? `Connected! ${data.responseTime}ms` : data.error,
+        // [refactor jul8 P1-review S1] was `data.error` — fine for the 200 domain body
+        // ({success:false,error:<string>}) but the shell's non-200 envelope makes
+        // data.error an OBJECT → React-child crash at render (:254). Same class as
+        // saveConfig below (fixed S056); testConnection was the sweep miss.
+        // apiErrorMessage reads BOTH shapes — the 200-path string is byte-identical.
+        message: data.success ? `Connected! ${data.responseTime}ms` : apiErrorMessage(data) || "Connection failed",
       });
     } catch {
       setTestResult({ success: false, message: "Network error" });
