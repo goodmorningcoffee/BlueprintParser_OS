@@ -139,21 +139,22 @@ beforeEach(() => {
 });
 
 describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
-  // ── auth literals (cases 1-2; flip to envelope at fold per sanctioned-A) ────
-  it("signed-out → 401 {error:'Unauthorized'} (auth runs BEFORE anything else)", async () => {
+  // ── auth literals (cases 1-2; flipped flat→envelope AT FOLD per sanctioned-A —
+  //    status + message byte-verbatim, only the envelope shape changed) ─────────
+  it("signed-out → 401 UNAUTHORIZED/'Unauthorized' (auth runs BEFORE anything else)", async () => {
     signedOut();
     const res = await POST(makeReq("/api/admin/reprocess", { method: "POST" }));
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect(await res.json()).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
   });
 
-  it("non-admin member → 403 {error:'Admin only'}", async () => {
+  it("non-admin member → 403 FORBIDDEN/'Admin only'", async () => {
     const { company } = await createWorld();
     const member = await createUser(company.id, { role: "user" });
     asUser(member);
     const res = await POST(makeReq("/api/admin/reprocess", { method: "POST" }));
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "Admin only" });
+    expect(await res.json()).toEqual({ error: { code: "FORBIDDEN", message: "Admin only" } });
   });
 
   // ── stream envelope + intelligence scope (cases 3-4, 14-16) ─────────────────
@@ -504,10 +505,10 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     expect(lines[0]).toEqual({ type: "start", projects: 1 });
   }, 30000);
 
-  it("§E-a ORDERING pin: signed-out + malformed body → 401 (auth BEFORE parse; the fold must NOT flip this to 400)", async () => {
+  it("§E-a ORDERING pin: signed-out + malformed body → 401 (auth BEFORE parse; rawBody:true must NOT flip this to 400)", async () => {
     signedOut();
     const res = await POST(rawBodyReq("/api/admin/reprocess", "{not-json"));
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect(await res.json()).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } });
   });
 });
