@@ -68,11 +68,13 @@ export function listParserChecks() {
 export async function runParserCheck(body: Record<string, unknown>) {
   const { check } = body as { check?: string };
 
-  if (!check || !CHECKS[check]) {
+  if (!check || !Object.hasOwn(CHECKS, check)) {
     // [refactor jul8 S061] sanctioned A: was flat apiError(...,400) — message byte-verbatim.
-    // ⚠️ PLAIN property lookup preserved: Object.prototype keys ("toString", …) pass this
-    // guard and crash on args below (spawn is NEVER reached — the shell turns the throw into
-    // a generic 500). Legacy quirk pinned by PH-6b; P1 phase-review fix candidate.
+    // [refactor jul8 P1-review PH-6b, OWNER-SANCTIONED] was a PLAIN `!CHECKS[check]` lookup:
+    // Object.prototype keys ("toString"/"constructor"/"__proto__") passed the guard and
+    // crashed on args below → generic 500 (spawn was NEVER reachable — crash-only, no RCE).
+    // Object.hasOwn routes them into THIS clean 400 like any other unknown check. The only
+    // behavior delta is prototype-keys 500→400; every real check id is unaffected.
     throw new ApiError("VALIDATION", `Unknown check: "${check}". Available: ${Object.keys(CHECKS).join(", ")}`);
   }
 

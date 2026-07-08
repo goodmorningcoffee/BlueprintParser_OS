@@ -200,19 +200,18 @@ describe.skipIf(!dbUp)("admin/parser-health (PH)", () => {
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
-  it("PH-6b POST prototype-key whitelist quirk ('toString' passes the guard, crashes on args) → generic 500; spawn NEVER called", async () => {
+  it("PH-6b POST prototype keys → clean 400 like any unknown check; spawn NEVER called [owner-sanctioned P1-review fix]", async () => {
     const { admin } = await makeAdmin();
     asUser(admin);
-    // Legacy: `!CHECKS[check]` is a PLAIN lookup, so Object.prototype keys pass the guard,
-    // then `spawn(args[0], …)` crashes on args=undefined INSIDE the Promise executor →
-    // rejected promise (Next default 500). SECURITY: nothing reaches spawn — crash-only.
-    // [S061 fold: shell-catch applied — the same throw is now caught by defineRoute → generic
-    // INTERNAL envelope (no message leak). PRESERVED-not-fixed; P1 phase-review candidate:
-    // sanction a hasOwnProperty guard → 400.]
+    // History: legacy `!CHECKS[check]` was a PLAIN lookup — prototype keys passed the guard
+    // and crashed on args (500; spawn unreachable, crash-only). S061 pinned that quirk.
+    // P1 phase review (2026-07-08): owner SANCTIONED the Object.hasOwn guard → these keys
+    // now take the ordinary unknown-check VALIDATION 400, message verbatim. Spawn stays
+    // unreachable — the security property is unchanged, only the status/envelope improved.
     for (const check of ["toString", "constructor", "__proto__"]) {
       const r = await readJson(await phPOST(postReq({ check })));
-      expect(r.status).toBe(500);
-      expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
+      expect(r.status).toBe(400);
+      expect(r.body).toEqual({ error: { code: "VALIDATION", message: unknownMsg(check) } });
     }
     expect(h.spawn).not.toHaveBeenCalled();
   });
