@@ -9,29 +9,18 @@
  * Config-driven thresholds loaded from company pipeline_config.csi.
  */
 
-import { readFileSync } from "fs";
-import { join } from "path";
 import type { CsiCode, CsiCodeTrigger, TextractWord, BboxLTWH } from "@/types";
-import { logger } from "@/lib/logger";
 import { DEFAULT_CSI_DETECT_CONFIG, type CsiDetectConfig } from "@/lib/csi-detect-defs";
+// [refactor jul9 P2-A C1] DB types + builtin loader extracted to their own
+// module (SPEC_FINAL §1.0/§1.1) so the C3 company-DB resolver never imports
+// through csi-detect — several route tests full-factory-mock this module and
+// would zero out any loader re-exported here (C3-F-1). Deliberately NOT
+// re-exported from this file for the same reason.
+import { type CsiDatabase, type CsiEntry, loadBuiltinCsiDatabase } from "@/lib/csi-database";
 
 // Re-export the client-safe types so existing server-side callers that
 // `import { CsiDetectConfig } from "@/lib/csi-detect"` keep working.
 export type { CsiDetectConfig };
-
-// ═══════════════════════════════════════════════════════════════
-// Database types
-// ═══════════════════════════════════════════════════════════════
-
-interface CsiEntry {
-  code: string;
-  phraseWords: string[];       // significant words from description
-  allWords: string[];          // all words including stop words
-  description: string;
-  trade: string;
-  division: string;
-  wordCount: number;           // count of significant words
-}
 
 // Re-export shared CSI utilities (client-safe)
 export { normalizeCsiCode, normalizeCsiCodes } from "@/lib/csi-utils";
@@ -47,88 +36,25 @@ export { normalizeCsiCode, normalizeCsiCodes } from "@/lib/csi-utils";
 
 const DEFAULT_CONFIG = DEFAULT_CSI_DETECT_CONFIG;
 
-// ═══════════════════════════════════════════════════════════════
-// Stop words (filtered from bag-of-words matching)
-// ═══════════════════════════════════════════════════════════════
-
-const STOP_WORDS = new Set([
-  "a", "an", "the", "and", "or", "of", "for", "in", "on", "at", "to",
-  "by", "with", "from", "as", "is", "are", "was", "were", "be", "been",
-  "not", "no", "all", "any", "each", "other", "such", "than", "that",
-  "this", "its", "per", "new",
-]);
-
-function getSignificantWords(words: string[]): string[] {
-  return words.filter(w => w.length > 2 && !STOP_WORDS.has(w));
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Database loading
-// ═══════════════════════════════════════════════════════════════
-
-let csiDatabase: CsiEntry[] | null = null;
-let wordFrequency: Map<string, number> | null = null;
-
-function loadCsiDatabase(): CsiEntry[] {
-  if (csiDatabase) return csiDatabase;
-
-  const paths = [
-    join(process.cwd(), "src/data/csi-masterformat.tsv"),
-    join(process.cwd(), "csi-masterformat.tsv"),
-    join(__dirname, "../../data/csi-masterformat.tsv"),
-  ];
-
-  let content = "";
-  for (const p of paths) {
-    try {
-      content = readFileSync(p, "utf-8");
-      break;
-    } catch { continue; }
-  }
-
-  if (!content) {
-    logger.error("CSI database not found");
-    csiDatabase = [];
-    return csiDatabase;
-  }
-
-  const lines = content.split("\n").slice(1); // skip header
-  csiDatabase = [];
-  wordFrequency = new Map();
-
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    const cols = line.split("\t");
-    if (cols.length < 6) continue;
-
-    const description = cols[3].trim();
-    const allWords = description.toLowerCase().replace(/-/g, " ").split(/\s+/).filter(Boolean);
-    const phraseWords = getSignificantWords(allWords);
-
-    // Track word frequency across all descriptions (for anchor scoring)
-    for (const w of phraseWords) {
-      wordFrequency.set(w, (wordFrequency.get(w) || 0) + 1);
-    }
-
-    csiDatabase.push({
-      code: cols[2].trim(),
-      phraseWords,
-      allWords,
-      description,
-      trade: cols[4].trim(),
-      division: cols[5].trim(),
-      wordCount: phraseWords.length,
-    });
-  }
-
-  return csiDatabase;
-}
+// [refactor jul9 P2-A C1] Stop words, TSV parsing, and the builtin loader now
+// live in @/lib/csi-database (extraction is behavior-identical — proven by the
+// C0 freeze-first baselines staying green through this commit). The engine
+// below is pure matching logic; `wordFrequency` is threaded explicitly instead
+// of read from module lets so a per-company bundle (C3+) scores anchors
+// against ITS OWN frequency map (invariant I-2).
 
 /** Get anchor words — rarest words in a description (most distinctive). */
-function getAnchorWords(phraseWords: string[], topN: number = 4): string[] {
-  if (!wordFrequency) return phraseWords.slice(0, topN);
+// [refactor jul9 P2-A C1] `wordFrequency` was a module let; now a param.
+// Guard kept from that era (was `!wordFrequency`): an empty map (builtin DB
+// file not found → empty memoized bundle) short-circuits to the first-N slice.
+function getAnchorWords(
+  phraseWords: string[],
+  wordFrequency: Map<string, number>,
+  topN: number = 4,
+): string[] {
+  if (wordFrequency.size === 0) return phraseWords.slice(0, topN);
   return [...phraseWords]
-    .sort((a, b) => (wordFrequency!.get(a) || 0) - (wordFrequency!.get(b) || 0))
+    .sort((a, b) => (wordFrequency.get(a) || 0) - (wordFrequency.get(b) || 0))
     .slice(0, topN);
 }
 
@@ -167,8 +93,13 @@ function bagOfWordsScore(phraseWords: string[], textWordSet: Set<string>): numbe
 // Tier 3: Keyword anchor matching
 // ═══════════════════════════════════════════════════════════════
 
-function anchorScore(phraseWords: string[], textWordSet: Set<string>): number {
-  const anchors = getAnchorWords(phraseWords);
+// [refactor jul9 P2-A C1] wordFrequency threaded through (see getAnchorWords).
+function anchorScore(
+  phraseWords: string[],
+  textWordSet: Set<string>,
+  wordFrequency: Map<string, number>,
+): number {
+  const anchors = getAnchorWords(phraseWords, wordFrequency);
   if (anchors.length === 0) return 0;
   const matched = anchors.filter(w => textWordSet.has(w)).length;
   return matched / anchors.length;
@@ -212,6 +143,9 @@ function normalizeTextractWords(textractWords: TextractWord[]): NormalizedWord[]
 function collectTriggersForEntry(
   entry: CsiEntry,
   normalizedWords: NormalizedWord[],
+  // [refactor jul9 P2-A C1] threaded — Tier-3 anchor labeling must use the
+  // frequency map of the SAME database the entry came from (I-2).
+  wordFrequency: Map<string, number>,
 ): CsiCodeTrigger[] {
   const triggers: CsiCodeTrigger[] = [];
   const usedIdxs = new Set<number>();
@@ -252,7 +186,7 @@ function collectTriggersForEntry(
   }
 
   // ── Tier 3: anchor words (rare/distinctive — label these before plain Tier 2) ──
-  const anchorSet = new Set(getAnchorWords(entry.phraseWords));
+  const anchorSet = new Set(getAnchorWords(entry.phraseWords, wordFrequency));
   if (anchorSet.size > 0) {
     for (const nw of normalizedWords) {
       if (usedIdxs.has(nw.idx)) continue;
@@ -290,16 +224,24 @@ function collectTriggersForEntry(
  * the exact words/phrases on the page that fired its detection, with bboxes.
  * Callers that only have raw text (e.g. table-parse grids) can omit the param;
  * the function works as before and returns codes without triggers.
+ *
+ * [refactor jul9 P2-A C1] Optional 4th param `db`: a CsiDatabase bundle
+ * (entries + their own wordFrequency, I-2). Omitted ⇒ builtin DB, output
+ * byte-identical to the pre-refactor engine (I-6). The engine stays fully
+ * synchronous (I-1) — async company-DB resolution happens in the caller
+ * (C3's resolver) and arrives here as a plain argument.
  */
 export function detectCsiCodes(
   rawText: string,
   textractWords?: TextractWord[],
   config?: Partial<CsiDetectConfig>,
+  db?: CsiDatabase,
 ): CsiCode[] {
   if (!rawText || rawText.length < 10) return [];
 
   const cfg = { ...DEFAULT_CONFIG, ...config };
-  const db = loadCsiDatabase();
+  const database = db ?? loadBuiltinCsiDatabase();
+  const wordFrequency = database.wordFrequency;
   const text = rawText.replace(/\n/g, " ").toLowerCase();
   const textWords = text.split(/\s+/).filter(Boolean);
   const textWordSet = new Set(textWords);
@@ -310,7 +252,7 @@ export function detectCsiCodes(
   // Track best match per code (highest confidence wins)
   const bestMatches = new Map<string, { entry: CsiEntry; confidence: number; tier: number }>();
 
-  for (const entry of db) {
+  for (const entry of database.entries) {
     if (entry.phraseWords.length === 0) continue;
 
     let bestConf = 0;
@@ -340,7 +282,7 @@ export function detectCsiCodes(
 
     // Tier 3: Keyword anchors (only for longer descriptions)
     if (bestConf < cfg.tier3Weight && entry.wordCount >= cfg.tier3MinWords) {
-      const anchor = anchorScore(entry.phraseWords, textWordSet) * cfg.tier3Weight;
+      const anchor = anchorScore(entry.phraseWords, textWordSet, wordFrequency) * cfg.tier3Weight;
       if (anchor > bestConf) {
         bestConf = anchor;
         bestTier = 3;
@@ -350,7 +292,7 @@ export function detectCsiCodes(
     // Multi-tier boost: if Tier 1 didn't fire but both Tier 2 and 3 did
     if (bestTier >= 2) {
       const bow = bagOfWordsScore(entry.phraseWords, textWordSet) * cfg.tier2Weight;
-      const anchor = anchorScore(entry.phraseWords, textWordSet) * cfg.tier3Weight;
+      const anchor = anchorScore(entry.phraseWords, textWordSet, wordFrequency) * cfg.tier3Weight;
       if (bow > cfg.matchingConfidenceThreshold && anchor > cfg.matchingConfidenceThreshold * 0.5) {
         bestConf = Math.min(bestConf + 0.05, 0.90); // small boost for multi-tier agreement
       }
@@ -376,7 +318,7 @@ export function detectCsiCodes(
       division: entry.division,
     };
     if (normalizedWords) {
-      code.triggers = collectTriggersForEntry(entry, normalizedWords);
+      code.triggers = collectTriggersForEntry(entry, normalizedWords, wordFrequency);
     }
     results.push(code);
   }
@@ -392,6 +334,7 @@ export function detectCsiFromGrid(
   headers: string[],
   rows: Record<string, string>[],
   config?: Partial<CsiDetectConfig>,
+  db?: CsiDatabase, // [refactor jul9 P2-A C1] forwarded — see detectCsiCodes
 ): CsiCode[] {
   const parts: string[] = [...headers];
   for (const row of rows) {
@@ -401,5 +344,5 @@ export function detectCsiFromGrid(
   }
   const text = parts.join(" ");
   // Grid cells have no Textract word positions — call without textractWords.
-  return detectCsiCodes(text, undefined, config);
+  return detectCsiCodes(text, undefined, config, db);
 }
