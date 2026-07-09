@@ -1,16 +1,40 @@
 {
-  "date": "2026-06-12",
-  "mode": "dev-turbopack-offline-stub",
+  "date": "2026-07-09",
+  "mode": "dev-turbopack-offline-stub · median-of-3",
+  "runs": 3,
   "fixture": {
     "pages": 100,
     "approxMB": 62.6,
     "underlays": "absent (404) — pure pdf.js canvas path"
   },
-  "coldOpenWarmMs": 4044,
-  "nav20Ms": 7888,
   "navProtocol": "per-step sidebar scroll + thumbnail click (virtualized list)",
-  "navPerPageMs": 394.4,
-  "zoom10Ms": 674,
-  "rafP95NavMs": 66.7,
-  "rafP95ZoomMs": 16.7
+  "coldOpenWarmMs": 870,
+  "nav20Ms": 4195,
+  "navPerPageMs": 209.8,
+  "zoom10Ms": 680,
+  "rafP95NavMs": 33.3,
+  "rafP95ZoomMs": 16.7,
+  "samples": [
+    {
+      "coldOpenWarmMs": 1339,
+      "nav20Ms": 4079,
+      "zoom10Ms": 697,
+      "rafP95NavMs": 33.4,
+      "rafP95ZoomMs": 16.7
+    },
+    {
+      "coldOpenWarmMs": 870,
+      "nav20Ms": 4314,
+      "zoom10Ms": 680,
+      "rafP95NavMs": 33.3,
+      "rafP95ZoomMs": 16.8
+    },
+    {
+      "coldOpenWarmMs": 841,
+      "nav20Ms": 4195,
+      "zoom10Ms": 663,
+      "rafP95NavMs": 33.3,
+      "rafP95ZoomMs": 16.7
+    }
+  ]
 }
