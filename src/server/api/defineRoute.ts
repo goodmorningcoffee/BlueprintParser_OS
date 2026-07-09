@@ -97,7 +97,15 @@ export interface RouteSpec<B, Q> {
   handler: (ctx: RouteContext<B, Q>) => unknown | Promise<unknown>;
 }
 
-type NextSegment = { params?: Promise<Record<string, string>> };
+// [P2-entry jul9] LOOSE ON PURPOSE (type-only; runtime identical): Next's dev-generated
+// .next/dev/types/validator.ts checks every exported handler against
+// `context: { params: Promise<ParamMap[Route]> }` — and ParamMap[Route] can degrade to
+// `unknown` under stale/partial dev codegen (first surfaced when the e2e harness started
+// running dev servers: two dynamic GET routes failed tsc ONLY while .next/dev existed,
+// breaking the `tsc --noEmit` gate for every session after any dev run). Accept anything
+// promise-shaped here and coerce after await — route params are always string-valued at
+// runtime for our routes.
+type NextSegment = { params?: Promise<unknown> };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -210,7 +218,7 @@ export function defineRoute<B = undefined, Q = undefined>(
   return async function routeHandler(req: Request, segment?: NextSegment): Promise<Response> {
     const requestId = randomUUID();
     try {
-      const params = segment?.params ? await segment.params : {};
+      const params = (segment?.params ? await segment.params : {}) as Record<string, string>;
 
       // 1. raw body — skipped when spec.rawBody, so the handler owns the stream (e.g. formData)
       const raw = !spec.rawBody && METHODS_WITH_BODY.has(req.method) ? await safeParseJsonBody(req) : undefined;

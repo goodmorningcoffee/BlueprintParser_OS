@@ -26,5 +26,12 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  // [P2-entry jul9] .next/dev/types/validator.ts is EXCLUDED: Next 16.2.4's dev typegen drops
+  // depth-5 routes (api/demo/projects/[id]/pages + api/projects/[id]/thumbnail/[page]) from
+  // routes.d.ts while validator.ts still checks them → generated-vs-generated TS2344 that no
+  // source change can fix, corrupting `tsc --noEmit` after every dev run. Deterministic
+  // (`next typegen` reproduces it). BUILD typegen (.next/types) is complete — `next build`'s
+  // own validator check still runs at deploy. Re-test on any Next upgrade; drop the exclude
+  // once upstream includes depth-5 routes in dev routes.d.ts.
+  "exclude": ["node_modules", ".next/dev/types/validator.ts"]
 }
