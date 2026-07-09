@@ -40,7 +40,11 @@ import { DIVISION_NAMES } from "@/lib/csi-divisions";
 // consumes the SAME prefix, so a literal here could silently drift). On
 // upload/revert we invalidate the resolver's per-company cache so a foreign
 // ECS task re-reads on its next detect (generation-guarded, query-cache.ts §1.8).
-import { csiDbKeyPrefix } from "@/lib/csi-database";
+// [refactor jul9 P2-A C1] C4 (SPEC_FINAL §1.6(C4), I-9, ledger D-14): the I-9
+// size/row caps — the SAME constants the resolver guard (csi-company-db.ts step 7)
+// enforces at read time. Upload gate = write-time bound; resolver guard = read-time
+// bound covering pre-existing oversized S3 objects. Both are needed (invariant I-9).
+import { csiDbKeyPrefix, CSI_DB_MAX_BYTES, CSI_DB_MAX_ENTRIES } from "@/lib/csi-database";
 import { invalidateCache } from "@/lib/admin-logs/query-cache";
 import { csiDbCacheKey } from "@/lib/csi-company-db";
 
@@ -55,6 +59,16 @@ export async function uploadCsiDatabase(req: Request, session: AuthSession): Pro
   const file = formData.get("file") as File | null;
   if (!file) {
     throw new ApiError("BAD_REQUEST", "No file uploaded");
+  }
+
+  // [refactor jul9 P2-A C1] C4 (SPEC_FINAL §1.6(C4), I-9, ledger D-14): reject an
+  // oversized upload at the write gate BEFORE reading the stream. Post-C6 the custom
+  // DB is hot-path resident (per-page synchronous full-DB iteration in the engine),
+  // so an unbounded upload converts one admin action into per-task resident memory +
+  // per-page CPU across every tenant on the ECS task — a cross-tenant availability
+  // lever. New 400 (was: unbounded accept).
+  if (file.size > CSI_DB_MAX_BYTES) {
+    throw new ApiError("BAD_REQUEST", `File too large (max ${CSI_DB_MAX_BYTES / (1024 * 1024)} MB)`);
   }
 
   const content = await file.text();
@@ -82,6 +96,14 @@ export async function uploadCsiDatabase(req: Request, session: AuthSession): Pro
 
   if (entries.length === 0) {
     throw new ApiError("BAD_REQUEST", "No CSI codes found in file");
+  }
+
+  // [refactor jul9 P2-A C1] C4 (SPEC_FINAL §1.6(C4), I-9, ledger D-14): reject a
+  // row-count blowup at the write gate, next to the emptiness check. Mirrors the
+  // resolver guard's `parsed.entries.length > CSI_DB_MAX_ENTRIES` branch — a small-
+  // byte file can still parse to a huge entry count. New 400 (was: unbounded accept).
+  if (entries.length > CSI_DB_MAX_ENTRIES) {
+    throw new ApiError("BAD_REQUEST", `Too many CSI codes (max ${CSI_DB_MAX_ENTRIES} rows)`);
   }
 
   // Convert to TSV format for storage (same format as built-in)

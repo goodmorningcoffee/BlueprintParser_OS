@@ -50,7 +50,7 @@ import { eq } from "drizzle-orm";
 import { asUser, createCompany, createUser, readJson, signedOut } from "@/test/harness";
 // [refactor jul9 P2-A C1] C3 (CU-14): the resolver's tenant guard consumes the
 // SAME prefix helper — pin writer/guard coherence so the two can't drift (I-7).
-import { csiDbKeyPrefix } from "@/lib/csi-database";
+import { csiDbKeyPrefix, CSI_DB_MAX_BYTES, CSI_DB_MAX_ENTRIES } from "@/lib/csi-database";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -246,6 +246,43 @@ describe.skipIf(!dbUp)("admin/csi/upload (CU)", () => {
     })));
     expect(r.status).toBe(400);
     expect(r.body).toEqual(BAD("Invalid JSON body"));
+  });
+
+  it("CU-12 [C1 approval 2026-07-09] POST file over the byte cap → 400, no S3 write, config untouched (I-9/D-14)", async () => {
+    const { company, admin } = await makeWorld();
+    // pre-existing csi config that MUST survive the rejected upload
+    await db.update(companies).set({
+      pipelineConfig: { csi: { tier2Weight: 7 } } as never,
+    }).where(eq(companies.id, company.id));
+    asUser(admin);
+    // File.size = byte length of the content; one ASCII char = 1 byte. Cross the cap by 1.
+    const oversize = "x".repeat(CSI_DB_MAX_BYTES + 1);
+    const r = await readJson(await cuPOST(formReq({ name: "big.csv", content: oversize })));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual(BAD(`File too large (max ${CSI_DB_MAX_BYTES / (1024 * 1024)} MB)`));
+    // gate fires before file.text()/parse/S3 — no write, config unchanged
+    expect(h.uploadToS3).not.toHaveBeenCalled();
+    const pc = await pipelineConfigOf(company.id);
+    expect(pc.csi).toEqual({ tier2Weight: 7 });
+  });
+
+  it("CU-13 [C1 approval 2026-07-09] POST parsed rows over the entry cap → 400, no S3 write, config untouched (I-9/D-14)", async () => {
+    const { company, admin } = await makeWorld();
+    await db.update(companies).set({
+      pipelineConfig: { csi: { tier2Weight: 7 } } as never,
+    }).where(eq(companies.id, company.id));
+    asUser(admin);
+    // A small-byte file (well under the byte cap) that still parses to > CSI_DB_MAX_ENTRIES
+    // rows — proves the row cap is a distinct gate from the byte cap.
+    const rows = "03 05,concrete mix\n".repeat(CSI_DB_MAX_ENTRIES + 1);
+    const content = "code,description\n" + rows;
+    expect(content.length).toBeLessThan(CSI_DB_MAX_BYTES); // stays under the byte gate
+    const r = await readJson(await cuPOST(formReq({ name: "many.csv", content })));
+    expect(r.status).toBe(400);
+    expect(r.body).toEqual(BAD(`Too many CSI codes (max ${CSI_DB_MAX_ENTRIES} rows)`));
+    expect(h.uploadToS3).not.toHaveBeenCalled();
+    const pc = await pipelineConfigOf(company.id);
+    expect(pc.csi).toEqual({ tier2Weight: 7 });
   });
 
   it("CU-14 [C1 approval 2026-07-09] writer/guard coherence: the uploaded s3Key is under csiDbKeyPrefix(companyId) so the resolver guard accepts it (I-7)", async () => {
