@@ -51,3 +51,26 @@ describe("findRateRule — G9 exact/prefix semantics", () => {
     expect(findRateRule("/api/annotations/123/whatever", "POST")).toBeUndefined();
   });
 });
+
+// [bugfix jul9 P2-entry] the general-bucket session-GET exemption — the reload-brick class:
+// SessionProvider's GET /api/auth/session 429'd under the shared bucket, and the session-
+// gated project bootstrap has no retry → eternal "Loading project...". Pin the exemption
+// EXACTLY: session GET only; session POST and every other path stay in the general bucket.
+import { isGeneralBucketExempt } from "@/middleware";
+
+describe("isGeneralBucketExempt — session-GET reload-brick exemption", () => {
+  it("GET /api/auth/session is exempt from the general 120/min bucket", () => {
+    expect(isGeneralBucketExempt("/api/auth/session", "GET")).toBe(true);
+  });
+
+  it("the exemption is EXACTLY session GET — nothing else escapes the bucket", () => {
+    expect(isGeneralBucketExempt("/api/auth/session", "POST")).toBe(false); // sign-in/out stay covered
+    expect(isGeneralBucketExempt("/api/auth/csrf", "GET")).toBe(false);
+    expect(isGeneralBucketExempt("/api/auth/session/extra", "GET")).toBe(false); // exact, not prefix
+    expect(isGeneralBucketExempt("/api/projects", "GET")).toBe(false);
+  });
+
+  it("per-endpoint RATE_RULES are unaffected — no auth rule matches session GET anyway", () => {
+    expect(findRateRule("/api/auth/session", "GET")).toBeUndefined();
+  });
+});

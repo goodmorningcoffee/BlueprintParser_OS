@@ -179,6 +179,19 @@ const RATE_RULES: RateRule[] = [
   { pattern: "/api/demo/chat", method: "POST", limit: 10, windowMs: 60 * 1000, keyType: "ip" },
 ];
 
+// [bugfix jul9 P2-entry, owner-sanctioned] paths exempt from the GENERAL 120/min bucket
+// (per-endpoint RATE_RULES above still apply if one matches). GET /api/auth/session only:
+// NextAuth's SessionProvider reads it on every document load; a 429 here silently bricks
+// the project page ("Loading project..." forever — the bootstrap is session-gated with no
+// retry, and authjs only refetches on window focus). A power user's own traffic (thumbnail
+// + chunk bursts) legitimately crosses 120/min, so their next F5 in that window hung. Same
+// bug class as the removed blanket /api/auth POST rule (see RATE_RULES note) — per-email
+// lockout + tight per-endpoint rules still cover abuse; session GET is a cheap read.
+// Exported for unit tests only.
+export function isGeneralBucketExempt(pathname: string, method: string): boolean {
+  return method === "GET" && pathname === "/api/auth/session";
+}
+
 // [refactor jun13 P0.5-G9] single matcher for both the rule lookup and the
 // "fall through to the general 120/min bucket" check — they previously
 // duplicated the predicate inline. Exported for unit tests only.
@@ -465,8 +478,9 @@ export async function middleware(request: NextRequest) {
       }
     }
 
-    // General API rate limit: 120 req/min per IP
-    if (!findRateRule(pathname, method)) {
+    // General API rate limit: 120 req/min per IP — session GETs exempt (see
+    // isGeneralBucketExempt for the full rationale; jul9 reload-brick bugfix)
+    if (!isGeneralBucketExempt(pathname, method) && !findRateRule(pathname, method)) {
       if (isRateLimited(`rl:api:${ip}`, 120, 60 * 1000)) {
         return finalize(new NextResponse(
           JSON.stringify({ error: "Too many requests." }),
