@@ -168,7 +168,9 @@ const DIVISION_TRADES: Record<string, string> = {
   "31": "Earthwork", "32": "Exterior Improvements", "33": "Utilities",
 };
 
-function inferTradeFromCode(code: string): { trade: string; division: string } {
+// [refactor jul9 P2-A C1] exported (was module-private) so the C0 freeze-first baseline
+// tests can pin its trade-string output directly (SPEC_FINAL §6.2-2 / C2-F4). Behavior identical.
+export function inferTradeFromCode(code: string): { trade: string; division: string } {
   const div = code.replace(/\s+/g, "").substring(0, 2);
   return {
     trade: DIVISION_TRADES[div] || `Division ${div}`,
