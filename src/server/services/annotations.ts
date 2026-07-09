@@ -39,6 +39,9 @@ import { db } from "@/lib/db";
 import { annotations } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { detectCsiCodes } from "@/lib/csi-detect";
+// [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB). Resolved once
+// per request (before any tx, I-1) and threaded through mergeAutoCsi into detect (D-1/D-2).
+import { getCompanyCsiContext, type CompanyCsiContext } from "@/lib/csi-company-db";
 import { logger } from "@/lib/logger";
 import { ApiError } from "@/server/api/envelope";
 import { resolveByPublicId, resolveProjectOrThrow } from "@/server/api/access";
@@ -52,10 +55,14 @@ import type { ClientAnnotation } from "@/types";
 function mergeAutoCsi(
   noteText: string | undefined,
   existingData: Record<string, unknown> | null | undefined,
+  // [refactor jul9 P2-A C1] company CSI context (config + DB), resolved once per request
+  // by the caller and threaded in so this per-annotation call adds ZERO extra I/O.
+  csiCtx: CompanyCsiContext,
 ): Record<string, unknown> | null {
   const text = (noteText || "").trim();
   if (!text) return existingData ?? null;
-  const auto = detectCsiCodes(text).map((c) => c.code);
+  // [refactor jul9 P2-A C1] 4-arg: text-only detection (no textract words) + company config/DB.
+  const auto = detectCsiCodes(text, undefined, csiCtx.config, csiCtx.db).map((c) => c.code);
   if (auto.length === 0) return existingData ?? null;
   const data = { ...(existingData ?? {}) };
   const manual = (data.csiCodes as string[]) || [];
@@ -110,8 +117,10 @@ async function verifyAnnotationAccess(annotationId: number) {
     .where(eq(annotations.id, annotationId))
     .limit(1);
   if (!annotation) throw new ApiError("NOT_FOUND", "Not found");
-  await resolveProjectOrThrow({ dbId: annotation.projectId });
-  return annotation;
+  // [refactor jul9 P2-A C1] keep the resolved project (was discarded) so updateAnnotation
+  // can derive companyId for the CSI resolver. Access check is byte-identical.
+  const { project } = await resolveProjectOrThrow({ dbId: annotation.projectId });
+  return { annotation, project };
 }
 
 // ── POST /api/annotations (single + batch) ───────────────────────────────────────
@@ -138,6 +147,10 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
 
   const { project, session } = await resolveByPublicId(projectId);
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
+
+  // [refactor jul9 P2-A C1] Resolve company CSI context ONCE, BEFORE the tx below
+  // (I-1) — not per annotation. Threaded into every mergeAutoCsi call in the .map().
+  const csiCtx = await getCompanyCsiContext(project.companyId);
 
   for (const ann of anns) {
     const err = validateBbox(ann.bbox);
@@ -173,7 +186,7 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
           threshold: ann.threshold ?? null,
           note: ann.note || null,
           source: ann.source || "user",
-          data: mergeAutoCsi(ann.note, ann.data),
+          data: mergeAutoCsi(ann.note, ann.data, csiCtx), // [refactor jul9 P2-A C1]
           creatorId: session.user.dbId,
           projectId: project.id,
         })),
@@ -211,6 +224,9 @@ async function createAnnotationSingle(body: Record<string, unknown>) {
   const { project, session } = await resolveByPublicId(projectId);
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
 
+  // [refactor jul9 P2-A C1] company CSI context (no tx here); threaded into mergeAutoCsi.
+  const csiCtx = await getCompanyCsiContext(project.companyId);
+
   const [annotation] = await db
     .insert(annotations)
     .values({
@@ -222,7 +238,7 @@ async function createAnnotationSingle(body: Record<string, unknown>) {
       pageNumber,
       note: note || null,
       source: source || "user",
-      data: mergeAutoCsi(note, data),
+      data: mergeAutoCsi(note, data, csiCtx), // [refactor jul9 P2-A C1]
       creatorId: session.user.dbId,
       projectId: project.id,
     })
@@ -236,7 +252,9 @@ async function createAnnotationSingle(body: Record<string, unknown>) {
 /** PUT /api/annotations/[id] — partial update + auto-CSI merge from the note. NO bbox validation
  *  (frozen). Returns {success, autoCsiCodes}. */
 export async function updateAnnotation(idParam: string, body: Record<string, unknown>) {
-  const annotation = await verifyAnnotationAccess(parseInt(idParam));
+  // [refactor jul9 P2-A C1] verifyAnnotationAccess now returns { annotation, project };
+  // project.companyId feeds the CSI resolver for the auto-CSI detect below.
+  const { annotation, project } = await verifyAnnotationAccess(parseInt(idParam));
 
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name;
@@ -254,7 +272,9 @@ export async function updateAnnotation(idParam: string, body: Record<string, unk
   let autoCsiCodes: string[] = [];
   const noteText = (body.note as string) || "";
   if (noteText.trim()) {
-    autoCsiCodes = detectCsiCodes(noteText).map((c) => c.code);
+    // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
+    const csiCtx = await getCompanyCsiContext(project.companyId);
+    autoCsiCodes = detectCsiCodes(noteText, undefined, csiCtx.config, csiCtx.db).map((c) => c.code);
   }
 
   if (autoCsiCodes.length > 0) {
@@ -278,7 +298,8 @@ export async function updateAnnotation(idParam: string, body: Record<string, unk
 
 /** DELETE /api/annotations/[id] — removes the annotation row (annotation_group_members cascade). */
 export async function deleteAnnotation(idParam: string) {
-  const annotation = await verifyAnnotationAccess(parseInt(idParam));
+  // [refactor jul9 P2-A C1] verifyAnnotationAccess now returns { annotation, project }.
+  const { annotation } = await verifyAnnotationAccess(parseInt(idParam));
   await db.delete(annotations).where(eq(annotations.id, annotation.id));
   return { success: true as const };
 }

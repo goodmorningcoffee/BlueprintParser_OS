@@ -302,7 +302,15 @@ describe.skipIf(!dbUp)("POST /api/regions/promote", () => {
       await req({ publicId: project.publicId, pageNumber: 1, type: "spec", sourceTextRegionId: "tr-1", overrides: { regionId: "sp" } }), // no csiTags → auto-detect runs
     );
     expect(detectCsiFromGrid).not.toHaveBeenCalled(); // spec binder = detectCsiCodes, NOT detectCsiFromGrid
-    expect(detectCsiCodes).toHaveBeenCalledWith("23 00 00\nHVAC"); // frozen bodyText join template (\n per section, \n\n between)
+    // [refactor jul9 P2-A C6, C1 approval 2026-07-09] detect is now 4-arg (config, db) — the
+    // fixture company stored no csi config ⇒ config === undefined, db === builtin bundle.
+    // bodyText join template still frozen (\n per section, \n\n between).
+    expect(detectCsiCodes).toHaveBeenCalledWith(
+      "23 00 00\nHVAC",
+      undefined,
+      undefined,
+      expect.objectContaining({ entries: expect.any(Array), wordFrequency: expect.any(Map) }),
+    );
     expect(body.parsedRegion.csiTags).toEqual([{ code: "23", description: "spec" }]);
     expect(body.parsedRegion.data.csiTags).toEqual([{ code: "23", description: "spec" }]); // SpecData mirrors the top-level tags
     expect(mergeCsiCodes).toHaveBeenCalledWith([{ code: "01" }], [{ code: "23", description: "spec" }]);

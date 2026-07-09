@@ -41,6 +41,9 @@ import { db } from "@/lib/db";
 import { annotationGroups, annotationGroupMembers, annotations } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { detectCsiCodes } from "@/lib/csi-detect";
+// [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB), threaded into
+// the auto-CSI detect in create/update below (D-1/D-2).
+import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { TWENTY_COLORS } from "@/types";
 import { ApiError } from "@/server/api/envelope";
 import { resolveByPublicId, resolveProjectOrThrow } from "@/server/api/access";
@@ -81,8 +84,11 @@ async function loadGroupAndAuthz(idParam: string) {
     .limit(1);
   if (!group) throw new ApiError("NOT_FOUND", "Not found");
 
-  await resolveProjectOrThrow({ dbId: group.projectId });
-  return group;
+  // [refactor jul9 P2-A C1] keep the resolved project (was discarded) so
+  // updateAnnotationGroup can derive companyId for the CSI resolver. Access
+  // check is byte-identical; other callers just destructure { group }.
+  const { project } = await resolveProjectOrThrow({ dbId: group.projectId });
+  return { group, project };
 }
 
 /** Narrow + validate an `annotationIds` body into a non-empty integer array (frozen message). */
@@ -160,12 +166,17 @@ export async function createAnnotationGroup(body: Record<string, unknown>) {
   const { project, session } = await resolveByPublicId(projectId);
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
 
+  // [refactor jul9 P2-A C1] Resolve company CSI context BEFORE the tx (I-1) — the
+  // detect below and the tx at the insert both follow.
+  const csiCtx = await getCompanyCsiContext(project.companyId);
+
   // Auto-CSI from name + notes when the caller didn't set it explicitly. Manual value wins.
   let finalCsi: string | null = csiCode ?? null;
   if (!finalCsi) {
     const tagSource = `${name} ${notes ?? ""}`.trim();
     if (tagSource) {
-      const detected = detectCsiCodes(tagSource);
+      // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
+      const detected = detectCsiCodes(tagSource, undefined, csiCtx.config, csiCtx.db);
       if (detected.length > 0) finalCsi = detected[0].code;
     }
   }
@@ -209,7 +220,8 @@ export async function createAnnotationGroup(body: Record<string, unknown>) {
 /** Partial update of a group row. Order (frozen): id-parse → load+authz → field validation →
  *  update. Auto-CSI re-derives from post-update (name, notes) when csiCode omitted but text changed. */
 export async function updateAnnotationGroup(idParam: string, body: Record<string, unknown>) {
-  const group = await loadGroupAndAuthz(idParam);
+  // [refactor jul9 P2-A C1] loadGroupAndAuthz now returns { group, project }.
+  const { group, project } = await loadGroupAndAuthz(idParam);
 
   const updates: Record<string, unknown> = {};
 
@@ -249,7 +261,9 @@ export async function updateAnnotationGroup(idParam: string, body: Record<string
     const nextNotes = (updates.notes as string | null | undefined) ?? group.notes;
     const tagSource = `${nextName} ${nextNotes ?? ""}`.trim();
     if (tagSource) {
-      const detected = detectCsiCodes(tagSource);
+      // [refactor jul9 P2-A C1] 4-arg (no tx here): thread company config + DB (D-1/D-2).
+      const csiCtx = await getCompanyCsiContext(project.companyId);
+      const detected = detectCsiCodes(tagSource, undefined, csiCtx.config, csiCtx.db);
       if (detected.length > 0) updates.csiCode = detected[0].code;
     }
   }
@@ -271,7 +285,7 @@ export async function updateAnnotationGroup(idParam: string, body: Record<string
  *  clears junction rows), then the group — a member that ALSO belongs to other groups loses
  *  those memberships too (caller UI must surface impact before calling). */
 export async function deleteAnnotationGroup(idParam: string, cascade: boolean) {
-  const group = await loadGroupAndAuthz(idParam);
+  const { group } = await loadGroupAndAuthz(idParam); // [refactor jul9 P2-A C1] destructure
 
   if (cascade) {
     await db.transaction(async (tx) => {
@@ -298,7 +312,7 @@ export async function deleteAnnotationGroup(idParam: string, cascade: boolean) {
 /** Bulk-add annotations to a group. M:N + upsert (ON CONFLICT DO NOTHING) → repeated adds are
  *  safe. Order (frozen): id-parse → load+authz → body validation → tenancy verify → upsert. */
 export async function addGroupMembers(idParam: string, body: Record<string, unknown>) {
-  const group = await loadGroupAndAuthz(idParam);
+  const { group } = await loadGroupAndAuthz(idParam); // [refactor jul9 P2-A C1] destructure
   const annotationIds = parseAnnotationIds(body.annotationIds);
 
   // Tenancy — every annotationId must belong to the group's project.
@@ -320,7 +334,7 @@ export async function addGroupMembers(idParam: string, body: Record<string, unkn
 
 /** Bulk-remove membership rows; the annotations themselves are unaffected. */
 export async function removeGroupMembers(idParam: string, body: Record<string, unknown>) {
-  const group = await loadGroupAndAuthz(idParam);
+  const { group } = await loadGroupAndAuthz(idParam); // [refactor jul9 P2-A C1] destructure
   const annotationIds = parseAnnotationIds(body.annotationIds);
 
   await db

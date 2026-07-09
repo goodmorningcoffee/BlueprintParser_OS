@@ -40,6 +40,9 @@ import { rasterizePage } from "@/lib/pdf-rasterize";
 import { mergeGrids, type MethodResult } from "@/lib/grid-merger";
 import type { TextractPageData, TextractTable } from "@/types";
 import { detectCsiFromGrid } from "@/lib/csi-detect";
+// [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB), threaded into
+// the best-effort table-parse detect below (D-1/D-2).
+import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { extractWithImg2Table } from "@/lib/img2table-extract";
 import { methodOcrPositions, methodTextractTables, methodOpenCvLines } from "@/lib/services/table-parse";
 import { analyzePageImage } from "@/lib/textract";
@@ -240,6 +243,10 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
 
   const { project } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
 
+  // [refactor jul9 P2-A C1] resolve company CSI context once, up front (no tx around the
+  // detect; engine stays sync). Threaded into the best-effort detect near the end.
+  const csiCtx = await getCompanyCsiContext(project.companyId);
+
   if (project.isDemo) {
     const gate = await assertDemoFeatureEnabled(project.companyId, "tableParse");
     if (gate) return gate; // flat 403 passthrough — does NOT flip here (TQ-1)
@@ -361,7 +368,8 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
 
   // Auto-detect CSI codes from parsed content
   try {
-    const csiCodes = detectCsiFromGrid(merged.headers || [], merged.rows || []);
+    // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
+    const csiCodes = detectCsiFromGrid(merged.headers || [], merged.rows || [], csiCtx.config, csiCtx.db);
     (merged as any).csiTags = csiCodes.map((c) => ({ code: c.code, description: c.description }));
   } catch { /* CSI detection is best-effort */ }
 

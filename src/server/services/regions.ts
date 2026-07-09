@@ -62,6 +62,9 @@ import { resolveDual } from "@/server/api/access";
 import { parseNotesFromRegion } from "@/lib/text-region-classifier";
 import { bindSpecSectionsInRegion } from "@/lib/specnote-parser";
 import { detectCsiFromGrid, detectCsiCodes } from "@/lib/csi-detect";
+// [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB). Resolved BEFORE
+// the FOR-UPDATE tx (I-1, highest-severity site) and threaded into both detect paths (D-1/D-2).
+import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import { PARSED_REGION_DEFAULT_CONFIDENCE } from "@/lib/spatial-constants";
@@ -146,6 +149,11 @@ export async function promoteRegion(body: Record<string, unknown>) {
     throw new ApiError("FORBIDDEN", "Demo projects are read-only");
   }
 
+  // [refactor jul9 P2-A C1] Resolve the company CSI context (async DB/S3) BEFORE opening
+  // the tx that holds the FOR UPDATE row lock at :159 (I-1 — no async detect-dep work may
+  // run while the lock is held). The engine stays sync and receives the resolved bundle.
+  const csiCtx = await getCompanyCsiContext(project.companyId);
+
   const result = await db.transaction(async (tx) => {
     const [pageRow] = await tx
       .select({
@@ -211,7 +219,8 @@ export async function promoteRegion(body: Record<string, unknown>) {
             const bodyText = bound.sections
               .map((s) => `${s.sectionHeader}\n${s.body}`)
               .join("\n\n");
-            regionCsiTags = detectCsiCodes(bodyText);
+            // [refactor jul9 P2-A C1] 4-arg (undefined middle = no textract words): company config + DB.
+            regionCsiTags = detectCsiCodes(bodyText, undefined, csiCtx.config, csiCtx.db);
           } catch (err) {
             logger.warn("[regions/promote] CSI detect failed (non-fatal):", err);
           }
@@ -249,7 +258,8 @@ export async function promoteRegion(body: Record<string, unknown>) {
 
         if (regionCsiTags.length === 0) {
           try {
-            regionCsiTags = detectCsiFromGrid(grid.headers, grid.rows);
+            // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
+            regionCsiTags = detectCsiFromGrid(grid.headers, grid.rows, csiCtx.config, csiCtx.db);
           } catch (err) {
             logger.warn("[regions/promote] CSI detect failed (non-fatal):", err);
           }

@@ -17,6 +17,9 @@
 
 import { bindSpecSectionsInRegion } from "@/lib/specnote-parser";
 import { detectCsiCodes } from "@/lib/csi-detect";
+// [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB), threaded into
+// the spec-parse detect below (D-1/D-2). ENGINE still byte-untouched — only its args change.
+import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import type { CsiCode } from "@/types";
 import { logger } from "@/lib/logger";
 import { resolveRegionPage, LONG_BBOX_MESSAGE } from "./region-parse-shared";
@@ -24,7 +27,9 @@ import { resolveRegionPage, LONG_BBOX_MESSAGE } from "./region-parse-shared";
 const OPTS = { bboxMessage: LONG_BBOX_MESSAGE, allowDemo: true };
 
 export async function specParse(rawBody: Record<string, unknown>) {
-  const { textractData, regionBbox } = await resolveRegionPage(rawBody, OPTS);
+  const { textractData, regionBbox, companyId } = await resolveRegionPage(rawBody, OPTS);
+  // [refactor jul9 P2-A C1] resolve company CSI context for the detect below (no tx here).
+  const csiCtx = await getCompanyCsiContext(companyId);
   const { includeSubSections } = rawBody as { includeSubSections?: boolean };
   const [x0, y0, x1, y1] = regionBbox;
 
@@ -45,7 +50,8 @@ export async function specParse(rawBody: Record<string, unknown>) {
   let csiTags: CsiCode[] = [];
   try {
     const bodyText = result.sections.map((s) => `${s.sectionHeader}\n${s.body}`).join("\n\n");
-    csiTags = detectCsiCodes(bodyText);
+    // [refactor jul9 P2-A C1] 4-arg (undefined middle): thread company config + DB (D-1/D-2).
+    csiTags = detectCsiCodes(bodyText, undefined, csiCtx.config, csiCtx.db);
   } catch (err) {
     logger.warn("[spec-parse] CSI detect failed (non-fatal):", err);
   }

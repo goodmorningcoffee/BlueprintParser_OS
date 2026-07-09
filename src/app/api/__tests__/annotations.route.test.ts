@@ -12,11 +12,23 @@ vi.mock("@/lib/auth", async () => {
   return { auth: async () => sessionState.current };
 });
 
+// [refactor jul9 P2-A C6] s3 mocked importOriginal-spread — only downloadFromS3 is stubbed so
+// the custom-CSI-DB proof tests (§6.2-5) can inject a TSV / a rejection. Every other test in
+// this real-engine suite never calls downloadFromS3 (annotation writes touch no S3), so the
+// default undefined-returning stub is inert there; the resolver runs REAL against the test DB.
+vi.mock("@/lib/s3", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/lib/s3")>();
+  return { ...orig, downloadFromS3: vi.fn() };
+});
+
 import { POST } from "@/app/api/annotations/route";
+import { downloadFromS3 } from "@/lib/s3";
+import { csiDbKeyPrefix } from "@/lib/csi-database";
 import {
   annotationsFor,
   asUser,
   createUser,
+  createProject,
   createWorld,
   createCompany,
   makeReq,
@@ -246,5 +258,112 @@ describe.skipIf(!dbUp)("POST /api/annotations — batch mode", () => {
     );
     expect(status).toBe(500); // generic INTERNAL (leak-free)
     expect(await annotationsFor(project.id)).toHaveLength(1); // rollback: the original row survives
+  });
+});
+
+// ── [refactor jul9 P2-A C6, C1 approval 2026-07-09] levers-go-live proof tests ──────────────
+//
+// §6.2-4/5: the reason C6 exists. A company's STORED pipelineConfig.csi now visibly changes
+// pipeline detect output (D-1), and a company's uploaded custom CSI DB is used instead of the
+// builtin (D-2), with a never-throw builtin fallback (I-4). Real-engine suite: detect + the
+// csi-company-db resolver run REAL against the test DB; only downloadFromS3 is stubbed.
+//
+// INPUT is the C0-characterized concrete/foundation phrase: 11 codes under DEFAULT config,
+// ZERO under matchingConfidenceThreshold 0.99 (nothing reaches 0.99 confidence). See
+// src/lib/__tests__/csi-detect.test.ts.
+const DETECTS_UNDER_DEFAULT =
+  "Provide cast in place concrete for all foundation walls and footings.";
+
+/** company (optionally with pipelineConfig) + member user + completed project. */
+async function csiWorld(pipelineConfig?: Record<string, unknown>) {
+  const company = await createCompany(pipelineConfig ? { pipelineConfig: pipelineConfig as never } : {});
+  const user = await createUser(company.id);
+  const project = await createProject(company.id, user.id);
+  return { company, user, project };
+}
+
+const postNote = async (publicId: string, note: string) =>
+  readJson(
+    await POST(makeReq("/api/annotations", {
+      body: { projectId: publicId, pageNumber: 1, name: "n", bbox, note },
+    })),
+  );
+
+describe.skipIf(!dbUp)("POST /api/annotations — company config threads into detect (D-1)", () => {
+  it("stored matchingConfidenceThreshold: 0.99 suppresses codes that the default config detects", async () => {
+    // Company A: no stored config → default engine → codes detected (I-6 byte-identical path).
+    const a = await csiWorld();
+    asUser(a.user);
+    const { status: sA, body: bodyA } = await postNote(a.project.publicId, DETECTS_UNDER_DEFAULT);
+    expect(sA).toBe(200);
+    expect(Array.isArray(bodyA.data?.csiCodes)).toBe(true);
+    expect(bodyA.data.csiCodes).toContain("033000"); // stable default hit (C0 baseline)
+
+    // Company B: SAME note, but stored threshold 0.99 → the lever now bites → no auto codes.
+    const b = await csiWorld({ csi: { matchingConfidenceThreshold: 0.99 } });
+    asUser(b.user);
+    const { status: sB, body: bodyB } = await postNote(b.project.publicId, DETECTS_UNDER_DEFAULT);
+    expect(sB).toBe(200);
+    // No manual data + no auto codes → mergeAutoCsi returns null (data untouched).
+    expect(bodyB.data).toBeNull();
+
+    // downloadFromS3 untouched — neither company has a custom-DB pointer.
+    expect(vi.mocked(downloadFromS3)).not.toHaveBeenCalled();
+  });
+});
+
+describe.skipIf(!dbUp)("POST /api/annotations — custom CSI DB threads into detect (D-2, I-4)", () => {
+  // A 1-row custom DB whose only code ("99 99 99 zebra fixture widget") does NOT exist in the
+  // builtin masterformat — so detecting it PROVES the uploaded DB was routed, not a coincidence.
+  const CUSTOM_TSV = [
+    "col0\tcol1\tcode\tdescription\ttrade\tdivision",
+    "x\tx\t99 99 99\tzebra fixture widget\tFixture Trade\t99 00 00",
+  ].join("\n");
+  const CUSTOM_NOTE = "Furnish the zebra fixture widget assembly per plan detail.";
+
+  // pipelineConfig.customDatabaseS3Key must live under the company's OWN prefix (I-7 tenant
+  // guard), but the id is only known post-insert — so seed a company, then set the correct key.
+  async function companyWithCustomDb() {
+    const company = await createCompany();
+    const owner = await createUser(company.id);
+    const proj = await createProject(company.id, owner.id);
+    const { db } = await import("@/lib/db");
+    const { companies } = await import("@/lib/db/schema");
+    const { eq } = await import("drizzle-orm");
+    await db.update(companies)
+      .set({ pipelineConfig: { csi: { customDatabaseS3Key: `${csiDbKeyPrefix(company.id)}custom-csi.tsv` } } })
+      .where(eq(companies.id, company.id));
+    return { company, owner, proj };
+  }
+
+  it("company with a valid own-prefix pointer detects against its uploaded DB", async () => {
+    const { owner, proj } = await companyWithCustomDb();
+    vi.mocked(downloadFromS3).mockReset();
+    vi.mocked(downloadFromS3).mockResolvedValue(Buffer.from(CUSTOM_TSV, "utf-8"));
+
+    asUser(owner);
+    const { status, body } = await postNote(proj.publicId, CUSTOM_NOTE);
+    expect(status).toBe(200);
+    expect(body.data.csiCodes).toContain("99 99 99"); // routed to the custom DB (not in builtin)
+    expect(vi.mocked(downloadFromS3)).toHaveBeenCalled();
+  });
+
+  it("custom-DB load failure → builtin fallback (200, never throws); second request adds ZERO S3 calls", async () => {
+    const { owner, proj } = await companyWithCustomDb();
+
+    // The pointer resolves but the object is gone (deleted-object case) → downloadFromS3 rejects.
+    vi.mocked(downloadFromS3).mockReset();
+    vi.mocked(downloadFromS3).mockRejectedValue(new Error("NoSuchKey"));
+
+    asUser(owner);
+    // First POST: I-4 fallback to builtin → the concrete note still detects builtin codes, 200.
+    const { status: s1, body: b1 } = await postNote(proj.publicId, DETECTS_UNDER_DEFAULT);
+    expect(s1).toBe(200);
+    expect(b1.data.csiCodes).toContain("033000"); // builtin fallback detected
+
+    // Second POST: the failure is cached for the TTL (anti-retry-storm) → no extra S3 GET.
+    const { status: s2 } = await postNote(proj.publicId, DETECTS_UNDER_DEFAULT);
+    expect(s2).toBe(200);
+    expect(vi.mocked(downloadFromS3)).toHaveBeenCalledTimes(1);
   });
 });

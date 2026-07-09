@@ -33,6 +33,9 @@ import { projects, takeoffItems, takeoffGroups } from "@/lib/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { TAKEOFF_SHAPES } from "@/types";
 import { detectCsiCodes } from "@/lib/csi-detect";
+// [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB), threaded into
+// the auto-CSI detect in create/update below (D-1/D-2).
+import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { logger } from "@/lib/logger";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
@@ -242,6 +245,10 @@ export async function createTakeoffGroup(body: Record<string, unknown>) {
     throw new ApiError("FORBIDDEN", "Demo projects are read-only");
   }
 
+  // [refactor jul9 P2-A C1] Resolve company CSI context BEFORE the tx (I-1); the
+  // detect at the auto-CSI branch inside the tx receives the resolved bundle.
+  const csiCtx = await getCompanyCsiContext(project.companyId);
+
   try {
     const group = await db.transaction(async (tx) => {
       // Sort order is scoped to (projectId, kind) — separate ladder per kind.
@@ -255,7 +262,8 @@ export async function createTakeoffGroup(body: Record<string, unknown>) {
       // Auto-CSI from the name when the caller didn't set one explicitly (user value wins).
       let finalCsiCode: string | null = (csiCode as string | null | undefined) ?? null;
       if (!finalCsiCode) {
-        const detected = detectCsiCodes(name);
+        // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
+        const detected = detectCsiCodes(name, undefined, csiCtx.config, csiCtx.db);
         if (detected.length > 0) finalCsiCode = detected[0].code;
       }
 
@@ -296,7 +304,8 @@ export async function updateTakeoffGroup(idParam: string, body: Record<string, u
   const [group] = await db.select().from(takeoffGroups).where(eq(takeoffGroups.id, groupId)).limit(1);
   if (!group) throw new ApiError("NOT_FOUND", "Not found");
 
-  await resolveProjectOrThrow({ dbId: group.projectId });
+  // [refactor jul9 P2-A C1] keep the resolved project (was discarded) for companyId.
+  const { project } = await resolveProjectOrThrow({ dbId: group.projectId });
 
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) {
@@ -322,7 +331,9 @@ export async function updateTakeoffGroup(idParam: string, body: Record<string, u
     group.csiCode === null &&
     typeof updates.name === "string"
   ) {
-    const detected = detectCsiCodes(updates.name as string);
+    // [refactor jul9 P2-A C1] 4-arg (no tx here): thread company config + DB (D-1/D-2).
+    const csiCtx = await getCompanyCsiContext(project.companyId);
+    const detected = detectCsiCodes(updates.name as string, undefined, csiCtx.config, csiCtx.db);
     if (detected.length > 0) updates.csiCode = detected[0].code;
   }
   if (body.sortOrder !== undefined) {

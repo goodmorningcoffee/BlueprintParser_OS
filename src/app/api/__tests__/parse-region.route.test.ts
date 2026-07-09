@@ -316,7 +316,14 @@ describe.skipIf(!dbUp)("notes-parse — engine contract + response shapes (PQ-4/
       LTWH_OF_BBOX,
       { autoSplitColumns: true }, // ?? true default
     );
-    expect(h.detectCsiFromGrid).toHaveBeenCalledWith(NOTES_GRID.headers, NOTES_GRID.rows);
+    // [refactor jul9 P2-A C6, C1 approval 2026-07-09] 4-arg: config (undefined — fixture
+    // company has no csi config) + db (builtin bundle). Structural pattern unchanged.
+    expect(h.detectCsiFromGrid).toHaveBeenCalledWith(
+      NOTES_GRID.headers,
+      NOTES_GRID.rows,
+      undefined,
+      expect.objectContaining({ entries: expect.any(Array), wordFrequency: expect.any(Map) }),
+    );
     expect(body).toEqual({
       headers: NOTES_GRID.headers,
       rows: NOTES_GRID.rows,
@@ -383,7 +390,14 @@ describe.skipIf(!dbUp)("spec-parse — engine contract + response shapes (PQ-4/5
       LTWH_OF_BBOX,
       { includeSubSections: false }, // !!undefined
     );
-    expect(h.detectCsiCodes).toHaveBeenCalledWith("PART 1 — GENERAL\n1.01 scope."); // join format
+    // [refactor jul9 P2-A C6, C1 approval 2026-07-09] 4-arg: undefined words + undefined
+    // config (no company csi) + builtin db bundle. Join format still frozen.
+    expect(h.detectCsiCodes).toHaveBeenCalledWith(
+      "PART 1 — GENERAL\n1.01 scope.",
+      undefined,
+      undefined,
+      expect.objectContaining({ entries: expect.any(Array), wordFrequency: expect.any(Map) }),
+    );
     expect(body).toEqual({
       sections: SPEC_RESULT.sections,
       rowBoundaries: SPEC_RESULT.rowBoundaries,
@@ -431,7 +445,13 @@ describe.skipIf(!dbUp)("spec-parse — engine contract + response shapes (PQ-4/5
       rowBoundaries: [0.2, 0.4],
     });
     await call(ROUTES.spec, bodyFor(project.id));
-    expect(h.detectCsiCodes).toHaveBeenCalledWith("H1\nb1\n\nH2\nb2");
+    // [refactor jul9 P2-A C6, C1 approval 2026-07-09] 4-arg extension; join format frozen.
+    expect(h.detectCsiCodes).toHaveBeenCalledWith(
+      "H1\nb1\n\nH2\nb2",
+      undefined,
+      undefined,
+      expect.objectContaining({ entries: expect.any(Array), wordFrequency: expect.any(Map) }),
+    );
   });
 
   it("propose: {proposedRows: rowBoundaries ?? []}; null → []; no CSI step", async () => {

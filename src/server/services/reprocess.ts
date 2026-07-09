@@ -21,6 +21,10 @@ import { projects, pages, companies, annotations } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { detectTextAnnotations } from "@/lib/text-annotations";
 import { detectCsiCodes } from "@/lib/csi-detect";
+// [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB), threaded
+// into the detect call below (D-1/D-2). Uses the already-SELECTed pipelineConfig as the
+// preloaded row → zero extra queries for the whole streaming run.
+import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
@@ -80,6 +84,13 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
     .where(eq(companies.id, session.user.companyId))
     .limit(1);
   const enabledDetectorIds = company?.pipelineConfig?.textAnnotation?.enabledDetectors;
+
+  // [refactor jul9 P2-A C1] Resolve the company's CSI context ONCE for the whole
+  // streaming run (I-1: resolved here, before any per-page detect). Company is a
+  // constant across the run (= session.user.companyId); passing the already-fetched
+  // pipelineConfig as `preloadedPipelineConfig` avoids a second PK read. The resolver
+  // is never re-entered mid-run — this is a stable snapshot for the run.
+  const csiCtx = await getCompanyCsiContext(session.user.companyId, company?.pipelineConfig);
 
   // Get all completed projects for this company
   // [refactor jul8 P1-review T2, OWNER-SANCTIONED] + isDemo exclusion: legacy reprocessed
@@ -740,7 +751,8 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             // Re-run CSI detection (before text annotations, since CSI feeds into them).
             // Pass Textract words so trigger bboxes are recorded on each detected code.
             const rawText = page.rawText || extractRawText(textractData);
-            const csiCodes = detectCsiCodes(rawText, textractData.words);
+            // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
+            const csiCodes = detectCsiCodes(rawText, textractData.words, csiCtx.config, csiCtx.db);
 
             // Re-run text annotation detectors (with CSI codes + pipeline config)
             const textAnnotationResult = detectTextAnnotations(textractData, csiCodes, enabledDetectorIds);

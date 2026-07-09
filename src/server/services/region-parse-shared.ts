@@ -25,6 +25,10 @@ export interface RegionParseInput {
   textractData: TextractPageData;
   regionBbox: [number, number, number, number];
   pageNumber: number;
+  // [refactor jul9 P2-A C1] the owning company id — surfaced here (from the already-
+  // resolved project) so notes-parse/spec-parse can resolve their CSI context. Fixes
+  // both dependents in one change (the project is fetched here, not in the callers).
+  companyId: number;
 }
 
 export async function resolveRegionPage(
@@ -68,6 +72,7 @@ export async function resolveRegionPage(
     textractData: pageRow.textractData as TextractPageData,
     regionBbox,
     pageNumber,
+    companyId: project.companyId, // [refactor jul9 P2-A C1]
   };
 }
 

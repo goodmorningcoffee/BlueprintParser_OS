@@ -59,6 +59,9 @@ import { zPublicId } from "@/server/api/schemas";
 import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
 import { detectCsiCodes } from "@/lib/csi-detect";
+// [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB), threaded
+// into recomputePageCsi's detect call below (D-1/D-2).
+import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { downloadFromS3 } from "@/lib/s3";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { logger } from "@/lib/logger";
@@ -636,6 +639,10 @@ export async function recomputePageCsi(body: Record<string, unknown>) {
 
   const { project } = await resolveDual({ publicId, dbId: projectId });
 
+  // [refactor jul9 P2-A C1] Resolve the company's CSI context (config + custom DB)
+  // before the detect call (no transaction here; engine stays sync).
+  const csiCtx = await getCompanyCsiContext(project.companyId);
+
   const [pageRow] = await db
     .select({ id: pages.id, textractData: pages.textractData, rawText: pages.rawText })
     .from(pages)
@@ -653,7 +660,8 @@ export async function recomputePageCsi(body: Record<string, unknown>) {
   const start = Date.now();
   let csiCodes;
   try {
-    csiCodes = detectCsiCodes(rawText, textractData.words);
+    // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
+    csiCodes = detectCsiCodes(rawText, textractData.words, csiCtx.config, csiCtx.db);
   } catch (err) {
     logger.error("[csi-recompute] detectCsiCodes failed:", err);
     // Sanctioned diff B: was `apiError(err.message, 500)` (leak) → generic INTERNAL 500.

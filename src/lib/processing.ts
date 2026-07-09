@@ -18,6 +18,10 @@ import { rasterizePage, getPdfPageCount } from "@/lib/pdf-rasterize";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { extractDrawingNumber } from "@/lib/title-block";
 import { detectCsiCodes } from "@/lib/csi-detect";
+// [refactor jul9 P2-A C1] company CSI context (config + custom DB) resolver — threaded
+// into the detect call below so a company's stored pipelineConfig.csi + uploaded DB take
+// effect on the ingest hot path (levers go live, ledger D-1/D-2).
+import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { detectTextAnnotations } from "@/lib/text-annotations";
 import { extractKeynotes } from "@/lib/keynotes";
 import { analyzePageIntelligence } from "@/lib/page-analysis";
@@ -254,6 +258,13 @@ export async function processProject(projectId: number): Promise<{
       disabledSteps = new Set<string>((company?.pipelineConfig as any)?.disabledSteps || []);
     } catch { /* ignore — use built-in defaults */ }
 
+    // [refactor jul9 P2-A C1] Resolve the company's CSI context ONCE, before the
+    // per-page loop (I-1: async DB/S3 work happens here, outside any transaction;
+    // the engine stays synchronous and receives the resolved bundle per page). One
+    // resolver call per project run — no per-page I/O added. Its own PK select (the
+    // :246 config select above is try-scoped/narrowed, so we do not contort it).
+    const csiCtx = await getCompanyCsiContext(project.companyId);
+
     logger.info(`[processing] Processing ${numPages} pages with concurrency ${pageConcurrency}`);
 
     // Process pages in parallel with concurrency limit
@@ -328,7 +339,8 @@ export async function processProject(projectId: number): Promise<{
         // code records its trigger word bboxes (for trade filter highlights).
         let csiCodes: CsiCode[] = [];
         try {
-          csiCodes = detectCsiCodes(rawText, textractData.words);
+          // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
+          csiCodes = detectCsiCodes(rawText, textractData.words, csiCtx.config, csiCtx.db);
         } catch (err) {
           logger.error(`[processing] CSI detection FAILED for page ${pageNum}:`, err);
         }

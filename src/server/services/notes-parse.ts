@@ -16,6 +16,9 @@
 
 import { parseNotesFromRegion } from "@/lib/text-region-classifier";
 import { detectCsiFromGrid } from "@/lib/csi-detect";
+// [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB), threaded into
+// the notes-parse detect below (D-1/D-2). ENGINE still byte-untouched — only its args change.
+import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import type { BboxLTWH } from "@/types";
 import { logger } from "@/lib/logger";
 import { resolveRegionPage, LONG_BBOX_MESSAGE } from "./region-parse-shared";
@@ -23,7 +26,9 @@ import { resolveRegionPage, LONG_BBOX_MESSAGE } from "./region-parse-shared";
 const OPTS = { bboxMessage: LONG_BBOX_MESSAGE, allowDemo: true };
 
 export async function notesParse(rawBody: Record<string, unknown>) {
-  const { textractData, regionBbox } = await resolveRegionPage(rawBody, OPTS);
+  const { textractData, regionBbox, companyId } = await resolveRegionPage(rawBody, OPTS);
+  // [refactor jul9 P2-A C1] resolve company CSI context for the detect below (no tx here).
+  const csiCtx = await getCompanyCsiContext(companyId);
   const { autoSplitColumns } = rawBody as { autoSplitColumns?: boolean };
   const [x0, y0, x1, y1] = regionBbox;
   const ltwhBbox: BboxLTWH = [x0, y0, x1 - x0, y1 - y0];
@@ -42,7 +47,8 @@ export async function notesParse(rawBody: Record<string, unknown>) {
 
   let csiTags: { code: string; description: string }[] = [];
   try {
-    const detected = detectCsiFromGrid(grid.headers, grid.rows);
+    // [refactor jul9 P2-A C1] 4-arg: thread company config + DB (D-1/D-2).
+    const detected = detectCsiFromGrid(grid.headers, grid.rows, csiCtx.config, csiCtx.db);
     csiTags = detected.map((c) => ({ code: c.code, description: c.description }));
   } catch (err) {
     logger.warn("[notes-parse] CSI detect failed (non-fatal):", err);
