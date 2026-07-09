@@ -45,7 +45,11 @@ const server = createServer({ key: readFileSync(KEY), cert: readFileSync(CERT) }
     res.writeHead(204, CORS);
     return res.end();
   }
-  if (url.pathname !== ROUTE) {
+  // [refactor jun16 P0-review] serve the fixture for ANY <dataUrl>/original.pdf
+  // so multiple seeded projects share one fixture (the non-demo perf project +
+  // the demo golden-path project). Page-PNG underlays/thumbnails still 404 by
+  // design → pure pdf.js canvas path.
+  if (!url.pathname.endsWith("/original.pdf")) {
     res.writeHead(404, { ...CORS, "content-type": "text/plain" });
     return res.end("not found");
   }

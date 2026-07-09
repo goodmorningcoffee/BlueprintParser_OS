@@ -1,10 +1,20 @@
 // [refactor jun12 P0.4] Viewer performance baseline + golden open path.
+// [refactor jun16 P0-review] median-of-3 + a soft regression gate.
 //
 // THE point of this file (owner mandate): the PDF viewer's performance is
 // sacred and nobody fully remembers how it was achieved — so every phase that
 // touches src/components/viewer or the hot stores re-runs this spec and
 // compares against perf/baseline.json. Numbers are DEV-MODE and machine-local:
 // only phase-over-phase deltas mean anything, never absolutes.
+//
+// Single runs are NOISY on this box (a G6 run once spiked zoom 2-4x then
+// returned to baseline = machine noise, not a regression). So each metric is
+// now the MEDIAN of N=3 measurement passes (PERF_RUNS env override). A soft
+// regression gate fails the run if any median exceeds baseline * factor
+// (PERF_REGRESSION_FACTOR, default 1.6 — gross-regression guard, generous on
+// purpose so noise doesn't flake CI/owner runs). The gate is dormant when no
+// baseline exists (first run writes one). Re-baseline by deleting
+// perf/baseline.json and re-running.
 //
 // Measures (100-page / ~62MB synthetic fixture over the Range+CORS cdn-stub):
 //   coldOpenWarmMs — reload-to-first-rendered-canvas after a warmup visit
@@ -60,6 +70,14 @@ const p95 = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
   return s.length ? +s[Math.min(s.length - 1, Math.floor(s.length * 0.95))].toFixed(1) : 0;
 };
+// median of the per-run samples — the noise damper. Odd N picks the middle;
+// even N averages the two middles (keeps it sane for PERF_RUNS overrides).
+const median = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  if (!s.length) return 0;
+  const mid = Math.floor(s.length / 2);
+  return +(s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2).toFixed(1);
+};
 
 // The sidebar's scroll container has no test id (P0 = no viewer edits), so
 // walk up from any mounted thumbnail to the first scrollable ancestor.
@@ -73,7 +91,70 @@ function setSidebarScroll(page: import("@playwright/test").Page, top: number) {
   }, top);
 }
 
+interface PerfSample {
+  coldOpenWarmMs: number;
+  nav20Ms: number;
+  zoom10Ms: number;
+  rafP95NavMs: number;
+  rafP95ZoomMs: number;
+}
+
+// One full measurement pass (cold-open via reload → nav → zoom). Called N times
+// for the median. performance.now() (monotonic) for the wall-time deltas.
+async function measureOnce(page: import("@playwright/test").Page): Promise<PerfSample> {
+  // ── cold-open (warm route): reload → first canvas ──
+  // 120s ceiling (not 60s): a turbopack dev server degraded by a prior spec run
+  // can take >60s to re-render. The metric is the measured time, not the ceiling;
+  // for clean numbers run this spec in ISOLATION (npm run e2e -- e2e/viewer-perf.spec.ts).
+  const t0 = performance.now();
+  await page.reload();
+  await page.waitForSelector("canvas", { timeout: 120_000 });
+  const coldOpenWarmMs = Math.round(performance.now() - t0);
+  await settleFrames(page, 10);
+
+  // derive itemHeight from the virtualized list (spacer height / numPages);
+  // headers make it inexact but VIRTUAL_BUFFER absorbs the error
+  const { scrollHeight } = await setSidebarScroll(page, Number.MAX_SAFE_INTEGER);
+  await setSidebarScroll(page, 0);
+  await settleFrames(page, 2);
+  const itemHeight = scrollHeight / world.pages;
+
+  // ── page-nav: scroll+click through 20 thumbnails ──
+  await startFrameSampler(page);
+  const tNav = performance.now();
+  for (let n = 2; n <= 21; n++) {
+    await setSidebarScroll(page, (n - 1) * itemHeight);
+    await settleFrames(page, 2); // scroll → rAF'd setScrollTop → window remount
+    await page.locator(`[data-page-num="${n}"]`).click();
+    await settleFrames(page, 2);
+  }
+  const nav20Ms = Math.round(performance.now() - tNav);
+  const navGaps = await stopFrameSampler(page);
+
+  // ── wheel-zoom: 10 steps at canvas center ──
+  const canvas = page.locator("canvas").first();
+  const box = await canvas.boundingBox();
+  if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await startFrameSampler(page);
+  const tZoom = performance.now();
+  for (let i = 0; i < 10; i++) {
+    await page.mouse.wheel(0, -120);
+    await settleFrames(page, 2);
+  }
+  const zoom10Ms = Math.round(performance.now() - tZoom);
+  const zoomGaps = await stopFrameSampler(page);
+
+  return { coldOpenWarmMs, nav20Ms, zoom10Ms, rafP95NavMs: p95(navGaps), rafP95ZoomMs: p95(zoomGaps) };
+}
+
+const RUNS = Number(process.env.PERF_RUNS || 3);
+const REGRESSION_FACTOR = Number(process.env.PERF_REGRESSION_FACTOR || 1.6);
+
 test("viewer perf baseline on the synthetic 100-page set", async ({ page }) => {
+  // median-of-N is N× the measurement work; the default 180s test timeout is
+  // for a single pass. Scale it (warmup compile can be slow when the dev server
+  // is loaded from prior specs).
+  test.setTimeout(Math.max(180_000, RUNS * 150_000));
   const pageErrors: string[] = [];
   page.on("pageerror", (e) => pageErrors.push(String(e)));
 
@@ -89,52 +170,21 @@ test("viewer perf baseline on the synthetic 100-page set", async ({ page }) => {
   await page.waitForSelector("canvas", { timeout: 120_000 });
   await settleFrames(page, 10);
 
-  // ── cold-open (warm route): reload → first canvas ──
-  const t0 = Date.now();
-  await page.reload();
-  await page.waitForSelector("canvas", { timeout: 60_000 });
-  const coldOpenWarmMs = Date.now() - t0;
-  await settleFrames(page, 10);
-
-  // ── golden assertions: the sidebar VIRTUALIZES (PageSidebar ITEM_HEIGHT
-  // window + buffer) — freeze that: page 1 mounted, page 100 NOT, only a
-  // window's worth of buttons in the DOM…
+  // ── golden assertions (once): the sidebar VIRTUALIZES (PageSidebar
+  // ITEM_HEIGHT window + buffer) — freeze that: page 1 mounted, page 100 NOT,
+  // only a window's worth of buttons in the DOM…
   await expect(page.locator('[data-page-num="1"]')).toBeAttached({ timeout: 30_000 });
   await expect(page.locator('[data-page-num="100"]')).not.toBeAttached();
   expect(await page.locator("[data-page-num]").count()).toBeLessThan(30);
   // …while every page stays REACHABLE by scroll (page 100 mounts at bottom)
-  const { scrollHeight } = await setSidebarScroll(page, Number.MAX_SAFE_INTEGER);
+  await setSidebarScroll(page, Number.MAX_SAFE_INTEGER);
   await expect(page.locator('[data-page-num="100"]')).toBeAttached({ timeout: 10_000 });
   await setSidebarScroll(page, 0);
   await settleFrames(page, 2);
-  // spacer height / numPages — runtime ITEM_HEIGHT, headers make it inexact
-  // but the VIRTUAL_BUFFER absorbs the error
-  const itemHeight = scrollHeight / world.pages;
 
-  // ── page-nav: scroll+click through 20 thumbnails ──
-  await startFrameSampler(page);
-  const tNav = Date.now();
-  for (let n = 2; n <= 21; n++) {
-    await setSidebarScroll(page, (n - 1) * itemHeight);
-    await settleFrames(page, 2); // scroll → rAF'd setScrollTop → window remount
-    await page.locator(`[data-page-num="${n}"]`).click();
-    await settleFrames(page, 2);
-  }
-  const nav20Ms = Date.now() - tNav;
-  const navGaps = await stopFrameSampler(page);
-
-  // ── wheel-zoom: 10 steps at canvas center ──
-  const canvas = page.locator("canvas").first();
-  const box = await canvas.boundingBox();
-  if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await startFrameSampler(page);
-  const tZoom = Date.now();
-  for (let i = 0; i < 10; i++) {
-    await page.mouse.wheel(0, -120);
-    await settleFrames(page, 2);
-  }
-  const zoom10Ms = Date.now() - tZoom;
-  const zoomGaps = await stopFrameSampler(page);
+  // ── median-of-N measurement passes (noise damper) ──
+  const samples: PerfSample[] = [];
+  for (let i = 0; i < RUNS; i++) samples.push(await measureOnce(page));
 
   // no uncaught page errors during the whole run (404'd PNG underlays are
   // fine and expected offline; exceptions are not)
@@ -142,22 +192,35 @@ test("viewer perf baseline on the synthetic 100-page set", async ({ page }) => {
 
   const result = {
     date: new Date().toISOString().slice(0, 10),
-    mode: "dev-turbopack-offline-stub",
+    mode: `dev-turbopack-offline-stub · median-of-${RUNS}`,
+    runs: RUNS,
     fixture: { pages: 100, approxMB: 62.6, underlays: "absent (404) — pure pdf.js canvas path" },
-    coldOpenWarmMs,
-    nav20Ms,
     navProtocol: "per-step sidebar scroll + thumbnail click (virtualized list)",
-    navPerPageMs: +(nav20Ms / 20).toFixed(1),
-    zoom10Ms,
-    rafP95NavMs: p95(navGaps),
-    rafP95ZoomMs: p95(zoomGaps),
+    coldOpenWarmMs: median(samples.map((s) => s.coldOpenWarmMs)),
+    nav20Ms: median(samples.map((s) => s.nav20Ms)),
+    navPerPageMs: +(median(samples.map((s) => s.nav20Ms)) / 20).toFixed(1),
+    zoom10Ms: median(samples.map((s) => s.zoom10Ms)),
+    rafP95NavMs: median(samples.map((s) => s.rafP95NavMs)),
+    rafP95ZoomMs: median(samples.map((s) => s.rafP95ZoomMs)),
+    samples,
   };
   mkdirSync("perf", { recursive: true });
   writeFileSync("perf/latest.json", JSON.stringify(result, null, 2));
+
   if (!existsSync("perf/baseline.json")) {
     writeFileSync("perf/baseline.json", JSON.stringify(result, null, 2));
     console.log("[perf] baseline.json created", result);
   } else {
-    console.log("[perf] latest run", result);
+    // soft regression gate — reports every metric, then fails if any median
+    // grossly exceeds baseline. Generous factor so machine noise doesn't flake.
+    const base = JSON.parse(readFileSync("perf/baseline.json", "utf8"));
+    console.log(`[perf] latest vs baseline (gate factor ${REGRESSION_FACTOR}x)`, { latest: result, baseline: base });
+    for (const k of ["coldOpenWarmMs", "nav20Ms", "zoom10Ms", "rafP95NavMs", "rafP95ZoomMs"] as const) {
+      if (typeof base[k] === "number" && base[k] > 0) {
+        expect
+          .soft(result[k], `${k} regressed: ${result[k]} vs baseline ${base[k]} (>${REGRESSION_FACTOR}x)`)
+          .toBeLessThan(base[k] * REGRESSION_FACTOR);
+      }
+    }
   }
 });

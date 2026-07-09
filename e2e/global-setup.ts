@@ -15,6 +15,10 @@ export const E2E = {
   email: "e2e@test.invalid",
   password: "e2e-password-123",
   dataUrl: "e2e/synthetic",
+  // [refactor jun16 P0-review] a second, is_demo=true project for the demo
+  // read-only golden path. Distinct data_url (data_url is unique); the cdn-stub
+  // serves any <dataUrl>/original.pdf so it shares the one fixture.
+  demoDataUrl: "e2e/synthetic-demo",
   pages: 100,
 };
 
@@ -67,10 +71,44 @@ export default async function globalSetup() {
        SELECT $1, n, 'Page ' || n FROM generate_series(1, $2::int) n`,
       [projectId, E2E.pages],
     );
+    // [refactor jun16 P0-review] search-jump golden path: pages.search_vector
+    // has NO DB trigger (drizzle 0001 adds only the column + GIN index — app code
+    // populates it), so seed raw_text + the tsvector by hand or /api/search finds
+    // nothing. "schedule"/"door" then match every page.
+    await pool.query(
+      `UPDATE pages
+       SET raw_text = 'door schedule plan page ' || page_number,
+           search_vector = to_tsvector('english', 'door schedule plan page ' || page_number)
+       WHERE project_id = $1`,
+      [projectId],
+    );
+    // [refactor jun16 P0-review] the draw-count golden path writes annotations +
+    // a takeoff_item; clear them so re-runs start from zero (idempotent seed —
+    // pages are already wiped above, but those tables are not).
+    await pool.query(`DELETE FROM annotations WHERE project_id = $1`, [projectId]);
+    await pool.query(`DELETE FROM takeoff_items WHERE project_id = $1`, [projectId]);
+
+    // [refactor jun16 P0-review] demo project (is_demo=true) for the read-only
+    // golden path. No demo user needed — the /demo/* routes are public.
+    const demo = await pool.query(
+      `INSERT INTO projects (name, data_url, company_id, author_id, status, num_pages, is_demo)
+       VALUES ('E2E Demo Plan Set', $1, $2, $3, 'completed', $4, true)
+       ON CONFLICT (data_url) DO UPDATE SET num_pages = $4, status = 'completed', is_demo = true, company_id = $2, author_id = $3
+       RETURNING id, public_id`,
+      [E2E.demoDataUrl, companyId, userId, E2E.pages],
+    );
+    const demoProjectId = demo.rows[0].id;
+    const demoPublicId = demo.rows[0].public_id;
+    await pool.query(`DELETE FROM pages WHERE project_id = $1`, [demoProjectId]);
+    await pool.query(
+      `INSERT INTO pages (project_id, page_number, name)
+       SELECT $1, n, 'Page ' || n FROM generate_series(1, $2::int) n`,
+      [demoProjectId, E2E.pages],
+    );
 
     mkdirSync("e2e/.state", { recursive: true });
-    writeFileSync("e2e/.state/world.json", JSON.stringify({ publicId, ...E2E }, null, 2));
-    console.log(`[e2e-setup] world ready: project ${publicId} (${E2E.pages} pages)`);
+    writeFileSync("e2e/.state/world.json", JSON.stringify({ publicId, demoPublicId, ...E2E }, null, 2));
+    console.log(`[e2e-setup] world ready: project ${publicId} + demo ${demoPublicId} (${E2E.pages} pages each)`);
   } finally {
     await pool.end();
   }
