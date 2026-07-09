@@ -9,7 +9,6 @@ import type {
   TextractPageData,
   PageIntelligence,
   SearchWordMatch,
-  ChatMsg,
   TakeoffTab,
   ScaleCalibrationData,
   TextAnnotation,
@@ -207,10 +206,9 @@ interface ViewerState {
   toggleChatPanel: () => void;
 
   // ─── Chat ────────────────────────────────────────────────
-  chatMessages: ChatMsg[];
-  addChatMessage: (msg: ChatMsg) => void;
-  setChatMessages: (msgs: ChatMsg[]) => void;
-  clearChatMessages: () => void;
+  // [refactor jul9 P2.2①] message DATA (list + add/set/clear) moved to the TanStack Query cache
+  // (src/queries/useChatMessages.ts, key queryKeys.chatMessages.all(publicId)). Only the chatScope
+  // UI knob stays here; showChatPanel lives with the other panel toggles above.
   chatScope: "page" | "project";
   setChatScope: (scope: "page" | "project") => void;
 
@@ -924,11 +922,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   showChatPanel: true,
   toggleChatPanel: () => set((s) => ({ showChatPanel: !s.showChatPanel })),
 
-  chatMessages: [],
-  addChatMessage: (msg) =>
-    set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
-  setChatMessages: (chatMessages) => set({ chatMessages }),
-  clearChatMessages: () => set({ chatMessages: [] }),
+  // [refactor jul9 P2.2①] chatMessages/add/set/clear removed — chat message data lives in the
+  // TanStack Query cache now (see useChatMessages). chatScope (UI) stays.
   chatScope: "page",
   setChatScope: (chatScope) => set({ chatScope }),
 
@@ -1735,7 +1730,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       activeTakeoffFilter: null,
       textPanelTab: "annotations",
       activeMarkupId: null,
-      chatMessages: [],
+      // [refactor jul9 P2.2①] chatMessages no longer reset here — chat data is cache-backed and
+      // publicId-scoped; the loader unconditionally re-seeds the new project's key. chatScope (UI) stays.
       chatScope: "page",
       activeKeynoteFilter: null,
       activeAnnotationFilter: null,
@@ -1968,13 +1964,10 @@ export const useSymbolSearch = () =>
     setSymbolSearchPreset: s.setSymbolSearchPreset,
   })));
 
-/** Chat state */
+/** Chat UI state. [refactor jul9 P2.2①] message DATA moved to the query cache — see
+ *  useChatMessages(); this selector is now the chatScope knob only. */
 export const useChat = () =>
   useViewerStore(useShallow((s) => ({
-    chatMessages: s.chatMessages,
-    addChatMessage: s.addChatMessage,
-    setChatMessages: s.setChatMessages,
-    clearChatMessages: s.clearChatMessages,
     chatScope: s.chatScope,
     setChatScope: s.setChatScope,
   })));

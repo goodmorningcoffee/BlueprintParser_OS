@@ -21,13 +21,12 @@ import { queryKeys } from "@/queries/queryKeys";
 import type { ChatMsg } from "@/types";
 
 // ── seedChat: THE sanctioned divergence point ────────────────────────────────
-// PRE-migration (chat lives in zustand): write the store field.
-// POST-migration (chat lives in the query cache): swap the body to
-//   qc.setQueryData(queryKeys.chatMessages.all(useViewerStore.getState().publicId), msgs)
-// and add `qc` to the closure. Nothing else in this file changes.
+// POST-migration (chat lives in the query cache): seed the per-publicId cache entry the facade
+// hook reads. (Pre-migration this wrote useViewerStore.setState({chatMessages: msgs}); flipping this
+// ONE helper — nothing else in the file — is the entire test-side delta of the migration.)
 let qc: QueryClient;
 function seedChat(msgs: ChatMsg[]) {
-  useViewerStore.setState({ chatMessages: msgs });
+  qc.setQueryData(queryKeys.chatMessages.all(useViewerStore.getState().publicId), msgs);
 }
 
 function wrapper({ children }: { children: ReactNode }) {

@@ -9,7 +9,7 @@ const SLICES = [
   { name: "useAnnotationGroups",     line: 1737, purpose: "groups, memberships, upsert" },
   { name: "useDrawingState",         line: 1751, purpose: "_drawing/_drawStart/_drawEnd/_mousePos" },
   { name: "useSymbolSearch",         line: 1764, purpose: "results, confidence, dismissed" },
-  { name: "useChat",                 line: 1792, purpose: "messages, scope" },
+  { name: "useChat",                 line: 1971, purpose: "chatScope (messages → query cache, P2.2①)" },
   { name: "useTableParse",           line: 1803, purpose: "step, region, grid, col/row BBs" },
   { name: "useKeynoteParse",         line: 1832, purpose: "step, region, yolo-class bind" },
   { name: "useProject",              line: 1859, purpose: "projectId, publicId, dataUrl, isDemo" },

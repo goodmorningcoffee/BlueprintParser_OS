@@ -286,37 +286,20 @@ describe("viewerStore — resetProjectData", () => {
   });
 });
 
-// [refactor jul9 P2.2①] Chat slice characterization (SPEC §2.C). T-C3 + the chatScope half of T-C2
-// are PERMANENT (scope stays in zustand). T-C1 and the chatMessages half of T-C2 are the L3 net for
-// the store's DATA fields — they get DELETED in the same commit that removes those fields (chat data
-// moves to the TanStack cache). Leaving them in after the fields are gone would fail to compile.
-describe("viewerStore — chat slice", () => {
-  // ── T-C1 (RETIRE at store-field deletion) ──────────────────────────────────
-  it("[retire@migration] add/set/clear message data via the store API", () => {
-    const s = () => useViewerStore.getState();
-    s().addChatMessage({ role: "user", content: "u" });
-    s().addChatMessage({ role: "assistant", content: "a" });
-    expect(s().chatMessages).toEqual([
-      { role: "user", content: "u" },
-      { role: "assistant", content: "a" },
-    ]);
-    s().setChatMessages([{ id: 1, role: "user", content: "x" }]);
-    expect(s().chatMessages).toEqual([{ id: 1, role: "user", content: "x" }]);
-    s().clearChatMessages();
-    expect(s().chatMessages).toEqual([]);
-  });
-
-  // ── T-C2 (chatMessages assertion RETIRES; chatScope assertion STAYS) ────────
-  it("resetProjectData clears messages [retire@migration] AND re-defaults scope to 'page' [stays]", () => {
-    useViewerStore.getState().addChatMessage({ role: "user", content: "u" });
+// [refactor jul9 P2.2①] Chat slice characterization (SPEC §2.C). After the migration ONLY the
+// chatScope UI knob remains in zustand — the message DATA (list + add/set/clear) moved to the
+// TanStack Query cache (covered by src/queries/__tests__/useChatMessages.test.tsx). T-C1 and the
+// chatMessages half of T-C2 were RETIRED here in the same commit that deleted those store fields.
+describe("viewerStore — chat scope (UI state; data lives in the query cache)", () => {
+  // ── T-C2 (scope half — chatMessages assertion retired with the field) ──────
+  it("resetProjectData re-defaults chatScope to 'page'", () => {
     useViewerStore.getState().setChatScope("project");
     useViewerStore.getState().resetProjectData();
-    expect(useViewerStore.getState().chatMessages).toEqual([]); // RETIRE at migration
-    expect(useViewerStore.getState().chatScope).toBe("page"); // STAYS (scope is zustand-owned UI)
+    expect(useViewerStore.getState().chatScope).toBe("page"); // scope is zustand-owned UI
   });
 
-  // ── T-C3 (PERMANENT — chatScope survives the data migration untouched) ──────
-  it("chatScope defaults to 'page' and toggles (survives migration)", () => {
+  // ── T-C3 (chatScope default + toggle) ──────────────────────────────────────
+  it("chatScope defaults to 'page' and toggles", () => {
     expect(useViewerStore.getState().chatScope).toBe("page");
     useViewerStore.getState().setChatScope("project");
     expect(useViewerStore.getState().chatScope).toBe("project");

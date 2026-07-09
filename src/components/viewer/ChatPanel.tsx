@@ -2,6 +2,9 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useViewerStore, useChat, useProject, useNavigation } from "@/stores/viewerStore";
+// [refactor jul9 P2.2①] chat message DATA now lives in the TanStack Query cache (facade hook);
+// useChat() is shrunk to the chatScope UI knob. showChatPanel still comes from usePanels().
+import { useChatMessages } from "@/queries/useChatMessages";
 // [refactor jul5 S025] ai-chat fold flipped route-level errors to {error:{code,message}};
 // apiErrorMessage reads both that and the still-flat delegated errors (503 no-LLM, demo 403).
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -37,7 +40,9 @@ function getDisciplineFromPageName(pageName: string): string | null {
 }
 
 export default function ChatPanel() {
-  const { chatMessages, addChatMessage, clearChatMessages, chatScope, setChatScope } = useChat();
+  // [refactor jul9 P2.2①] message data from the query-cache facade; scope stays zustand UI state.
+  const { chatMessages, addChatMessage, clearChatMessages } = useChatMessages();
+  const { chatScope, setChatScope } = useChat();
   const { publicId, pageNames } = useProject();
   const { pageNumber } = useNavigation();
 

@@ -3,9 +3,11 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSearch } from "@/hooks/useSearch";
 import { mapChatRows } from "@/queries/useChatMessages";
+import { queryKeys } from "@/queries/queryKeys";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
@@ -75,7 +77,7 @@ export default function ProjectPage() {
   const setPageDrawingNumbers = useViewerStore((s) => s.setPageDrawingNumbers);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
-  const setChatMessages = useViewerStore((s) => s.setChatMessages);
+  const queryClient = useQueryClient();
   const setTakeoffItems = useViewerStore((s) => s.setTakeoffItems);
   const setTakeoffGroups = useViewerStore((s) => s.setTakeoffGroups);
   const setScaleCalibration = useViewerStore((s) => s.setScaleCalibration);
@@ -142,12 +144,16 @@ export default function ProjectPage() {
       if (csiParam) setCsiFilter(csiParam);
       if (qParam) useViewerStore.getState().setSearch(qParam);
 
-      // Load chat history
-      // [refactor jul9 P2.2①] map extracted to mapChatRows (pure no-op; the cache move lands in the
-      // next commit). Still writes the store field here — the facade swap happens separately.
-      if (data.chatMessages) {
-        setChatMessages(mapChatRows(data.chatMessages));
-      }
+      // Load chat history into the TanStack Query cache (facade — no longer a zustand field).
+      // [refactor jul9 P2.2①] UNCONDITIONAL seed-with-default: reproduces the OLD net behavior
+      // EXACTLY (resetProjectData used to clear chatMessages:[] then the loader conditionally
+      // overwrote) AND overwrites any stale client-echoes cached under this publicId on re-open.
+      // ChatPanel is the sole observer and is unmounted while `loading` (page gates PDFViewer on
+      // !loading), so this seed always lands before the panel remounts — no stale flash (D5).
+      queryClient.setQueryData(
+        queryKeys.chatMessages.all(data.id),
+        mapChatRows(data.chatMessages ?? []),
+      );
 
       // Load takeoff items
       if (data.takeoffItems) {
@@ -241,7 +247,7 @@ export default function ProjectPage() {
     setPageDrawingNumbers,
     setAllTrades,
     setAllCsiCodes,
-    setChatMessages,
+    queryClient,
     setTakeoffItems,
     setTakeoffGroups,
     setScaleCalibration,
