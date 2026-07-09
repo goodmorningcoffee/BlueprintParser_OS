@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSearch } from "@/hooks/useSearch";
+import { mapChatRows } from "@/queries/useChatMessages";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
@@ -142,15 +143,10 @@ export default function ProjectPage() {
       if (qParam) useViewerStore.getState().setSearch(qParam);
 
       // Load chat history
+      // [refactor jul9 P2.2①] map extracted to mapChatRows (pure no-op; the cache move lands in the
+      // next commit). Still writes the store field here — the facade swap happens separately.
       if (data.chatMessages) {
-        setChatMessages(
-          data.chatMessages.map((c) => ({
-            id: c.id,
-            role: c.role as "user" | "assistant",
-            content: c.content,
-            model: c.model || undefined,
-          }))
-        );
+        setChatMessages(mapChatRows(data.chatMessages));
       }
 
       // Load takeoff items
