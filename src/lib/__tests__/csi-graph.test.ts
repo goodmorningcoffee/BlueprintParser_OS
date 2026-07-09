@@ -1,17 +1,16 @@
 /**
- * csi-graph.test.ts — buildCsiGraph FREEZE-FIRST structural baseline.
+ * csi-graph.test.ts — buildCsiGraph structural baseline.
  *
- * [refactor jul9 P2-A C1] Commit C0 of the CSI Option C1 server-half arc
- * (SPEC_FINAL §6.2-2, C2-F4). Pins the CURRENT structural output of
- * buildCsiGraph — node ids/order, edge set, cluster membership, fingerprint —
- * plus the Div-00 fallback label "Division 00" (csi-graph's local
- * DIVISION_NAMES table lacks "00").
+ * [refactor jul9 P2-A C1] Written as the FREEZE-FIRST baseline in commit C0
+ * (SPEC_FINAL §6.2-2, C2-F4): node ids/order, edge set, cluster membership,
+ * fingerprint, plus the Div-00 fallback label "Division 00" (the old local
+ * table lacked "00").
  *
- * Commit C2 swaps the local table for the canonical 25-division map
- * (@/lib/csi-divisions). The STRUCTURE pinned here must stay byte-identical
+ * Commit C2 swapped the local table for the canonical 25-division map
+ * (@/lib/csi-divisions). The STRUCTURE pinned here stayed byte-identical
  * through C2 (the map is only a label lookup at the node-name fallback);
- * the ONE sanctioned flip is the Div-00 label "Division 00" → "Procurement"
- * (ledger D-8), re-pinned in C2 with the [C1 approval 2026-07-09] citation.
+ * the ONE sanctioned flip, re-pinned below, is the Div-00 label
+ * "Division 00" → "Procurement" (ledger D-8) [C1 approval 2026-07-09].
  */
 import { describe, it, expect } from "vitest";
 import { buildCsiGraph } from "@/lib/csi-graph";
@@ -34,7 +33,7 @@ function code(c: string): CsiCode {
  *    divisions 00/03/05),
  *  - the known "Structural" cluster (03+05 share both their pages,
  *    cohesion 1),
- *  - a Div-00 node (NOT in csi-graph's local name table → fallback label).
+ *  - a Div-00 node (post-C2: named via the canonical map — ledger D-8).
  */
 const PAGES = [
   {
@@ -67,7 +66,7 @@ const PAGES = [
   },
 ];
 
-describe("buildCsiGraph — structural fingerprint baseline (pre-C2)", () => {
+describe("buildCsiGraph — structural fingerprint baseline (canonical map, post-C2)", () => {
   it("produces the pinned fingerprint", () => {
     const graph = buildCsiGraph(PAGES);
     expect(graph).not.toBeNull();
@@ -87,11 +86,11 @@ describe("buildCsiGraph — structural fingerprint baseline (pre-C2)", () => {
     ).toEqual([
       { division: "03", name: "Concrete", totalInstances: 3, pageCount: 2, pages: [1, 2] },
       { division: "05", name: "Metals", totalInstances: 2, pageCount: 2, pages: [1, 2] },
-      // Div 00 falls back to "Division 00" — csi-graph's local DIVISION_NAMES
-      // has no "00" entry. [refactor jul9 P2-A C1] C2 flips this label to
-      // "Procurement" via the canonical map (ledger D-8) — the ONLY
-      // sanctioned delta in this file.
-      { division: "00", name: "Division 00", totalInstances: 1, pageCount: 1, pages: [1] },
+      // [refactor jul9 P2-A C1] C2 RE-PIN [C1 approval 2026-07-09, D-8]:
+      // was "Division 00" (fallback — the old local table had no "00" entry);
+      // the canonical map names it "Procurement". The ONLY sanctioned delta
+      // in this file — everything else is the untouched C0 structural pin.
+      { division: "00", name: "Procurement", totalInstances: 1, pageCount: 1, pages: [1] },
       { division: "23", name: "HVAC", totalInstances: 1, pageCount: 1, pages: [3] },
     ]);
   });

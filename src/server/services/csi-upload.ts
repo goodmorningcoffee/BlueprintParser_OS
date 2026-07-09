@@ -23,6 +23,8 @@
 // DELETE non-blocking S3 delete SILENT-swallow catch (CU-10); DIVISION_TRADES/inferTradeFromCode/
 // parseJsonCsi/parseCsvTsvCsi moved here whole (route-local, behavior-carrying). Dropped: the
 // dead legacy `getS3Url` import only.
+// [refactor jul9 P2-A C1] C2 update: DIVISION_TRADES since replaced by the canonical
+// @/lib/csi-divisions map (see comment at inferTradeFromCode; ledger D-9).
 
 import { db } from "@/lib/db";
 import { companies } from "@/lib/db/schema";
@@ -30,6 +32,9 @@ import { eq } from "drizzle-orm";
 import { uploadToS3, deleteFromS3 } from "@/lib/s3";
 import { ApiError } from "@/server/api/envelope";
 import type { AuthSession } from "@/lib/api-utils";
+// [refactor jul9 P2-A C1] C2: canonical division map replaces the local
+// DIVISION_TRADES table (SPEC_FINAL §1.6, [C1 approval 2026-07-09]).
+import { DIVISION_NAMES } from "@/lib/csi-divisions";
 
 const CSI_S3_PREFIX = "csi-databases";
 
@@ -156,24 +161,21 @@ export async function revertCsiDatabase(session: AuthSession): Promise<unknown> 
 // Parsers
 // ═══════════════════════════════════════════════════════════════
 
-const DIVISION_TRADES: Record<string, string> = {
-  "00": "Procurement", "01": "General Requirements", "02": "Existing Conditions",
-  "03": "Concrete", "04": "Masonry", "05": "Metals",
-  "06": "Wood/Plastics/Composites", "07": "Thermal & Moisture Protection",
-  "08": "Openings", "09": "Finishes", "10": "Specialties",
-  "11": "Equipment", "12": "Furnishings", "13": "Special Construction",
-  "14": "Conveying Equipment", "21": "Fire Suppression", "22": "Plumbing",
-  "23": "HVAC", "25": "Integrated Automation", "26": "Electrical",
-  "27": "Communications", "28": "Electronic Safety & Security",
-  "31": "Earthwork", "32": "Exterior Improvements", "33": "Utilities",
-};
+// [refactor jul9 P2-A C1] C2: local DIVISION_TRADES table (25 divisions — the
+// same set as the canonical map) deleted; trade strings now come from
+// @/lib/csi-divisions (SPEC_FINAL §1.6(C2), [C1 approval 2026-07-09]).
+// Acceptance/validation delta: ZERO — the parsers below gate only on
+// code+description, never on division/trade. Only Div 07/28 trade strings
+// change for FUTURE uploads' stored TSVs (ledger D-9): "Thermal & Moisture
+// Protection" → "Thermal & Moisture", "Electronic Safety & Security" →
+// "Electronic Safety" (majority-rule wording). Past uploads immutable in S3.
 
 // [refactor jul9 P2-A C1] exported (was module-private) so the C0 freeze-first baseline
-// tests can pin its trade-string output directly (SPEC_FINAL §6.2-2 / C2-F4). Behavior identical.
+// tests can pin its trade-string output directly (SPEC_FINAL §6.2-2 / C2-F4).
 export function inferTradeFromCode(code: string): { trade: string; division: string } {
   const div = code.replace(/\s+/g, "").substring(0, 2);
   return {
-    trade: DIVISION_TRADES[div] || `Division ${div}`,
+    trade: DIVISION_NAMES[div] || `Division ${div}`,
     division: `${div} 00 00`,
   };
 }

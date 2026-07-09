@@ -6,6 +6,7 @@
  */
 
 import type { CsiCode, PageIntelligence } from "@/types";
+import { DIVISION_NAMES } from "@/lib/csi-divisions";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -48,20 +49,15 @@ interface PageSummary {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Division names (same as project-analysis.ts)
+// Division names
 // ═══════════════════════════════════════════════════════════════════
-
-const DIVISION_NAMES: Record<string, string> = {
-  "01": "General Requirements", "02": "Existing Conditions", "03": "Concrete",
-  "04": "Masonry", "05": "Metals", "06": "Wood/Plastics/Composites",
-  "07": "Thermal & Moisture", "08": "Openings", "09": "Finishes",
-  "10": "Specialties", "11": "Equipment", "12": "Furnishings",
-  "13": "Special Construction", "14": "Conveying Equipment",
-  "21": "Fire Suppression", "22": "Plumbing", "23": "HVAC",
-  "25": "Integrated Automation", "26": "Electrical", "27": "Communications",
-  "28": "Electronic Safety", "31": "Earthwork", "32": "Exterior Improvements",
-  "33": "Utilities",
-};
+// [refactor jul9 P2-A C1] C2: local 24-division table deleted in favor of the
+// canonical 25-division map (imported from @/lib/csi-divisions at top;
+// SPEC_FINAL §1.5, [C1 approval 2026-07-09]). Only read site is the node-name
+// fallback below — structural output (nodes/edges/clusters/fingerprint) is
+// unchanged, proven green-through by the C0 fingerprint baseline
+// (csi-graph.test.ts). Sole delta: a Div-00 node now labels "Procurement"
+// instead of the "Division 00" fallback (ledger D-8).
 
 // ═══════════════════════════════════════════════════════════════════
 // Known cluster definitions

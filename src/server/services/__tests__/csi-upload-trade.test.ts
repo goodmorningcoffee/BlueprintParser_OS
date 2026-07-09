@@ -1,22 +1,20 @@
 /**
- * csi-upload-trade.test.ts — inferTradeFromCode FREEZE-FIRST trade-string pins.
+ * csi-upload-trade.test.ts — inferTradeFromCode trade-string pins.
  *
- * [refactor jul9 P2-A C1] Commit C0 of the CSI Option C1 server-half arc
- * (SPEC_FINAL §6.2-2, C2-F4). `inferTradeFromCode` was exported from
- * csi-upload.ts in this commit (one-line mechanical change) purely so these
- * baselines can pin its output directly.
+ * [refactor jul9 P2-A C1] Written as FREEZE-FIRST baselines in commit C0
+ * (SPEC_FINAL §6.2-2, C2-F4; `inferTradeFromCode` exported for exactly this).
  *
- * Pins the CURRENT (pre-C2) trade strings from csi-upload's local
- * DIVISION_TRADES table. Commit C2 replaces that table with the canonical
- * 25-division map (@/lib/csi-divisions), whose majority-rule wording drops
- * the " Protection" / " & Security" suffixes for Div 07 / Div 28 — those two
- * pins FLIP in C2 with the [C1 approval 2026-07-09] citation (ledger D-9).
- * Everything else here must survive C2 byte-identical.
+ * RE-PINNED in commit C2 [C1 approval 2026-07-09]: csi-upload's local
+ * DIVISION_TRADES table was replaced by the canonical 25-division map
+ * (@/lib/csi-divisions), whose majority-rule wording drops the
+ * " Protection" / " & Security" suffixes for Div 07 / Div 28 (ledger D-9 —
+ * affects FUTURE uploads' stored TSVs only; past uploads immutable in S3).
+ * Everything else survived C2 byte-identical.
  */
 import { describe, it, expect } from "vitest";
 import { inferTradeFromCode } from "@/server/services/csi-upload";
 
-describe("inferTradeFromCode — trade-string baseline (pre-C2)", () => {
+describe("inferTradeFromCode — trade-string pins (canonical map, post-C2)", () => {
   it("Div 03 → Concrete (stable through C2)", () => {
     expect(inferTradeFromCode("03 30 00")).toEqual({
       trade: "Concrete",
@@ -24,16 +22,16 @@ describe("inferTradeFromCode — trade-string baseline (pre-C2)", () => {
     });
   });
 
-  it("Div 07 → 'Thermal & Moisture Protection' (C2 flips to 'Thermal & Moisture' — D-9)", () => {
+  it("Div 07 → 'Thermal & Moisture' (C2 re-pin — was '… Protection') [C1 approval 2026-07-09, D-9]", () => {
     expect(inferTradeFromCode("07 21 00")).toEqual({
-      trade: "Thermal & Moisture Protection",
+      trade: "Thermal & Moisture",
       division: "07 00 00",
     });
   });
 
-  it("Div 28 → 'Electronic Safety & Security' (C2 flips to 'Electronic Safety' — D-9)", () => {
+  it("Div 28 → 'Electronic Safety' (C2 re-pin — was '… & Security') [C1 approval 2026-07-09, D-9]", () => {
     expect(inferTradeFromCode("28 31 00")).toEqual({
-      trade: "Electronic Safety & Security",
+      trade: "Electronic Safety",
       division: "28 00 00",
     });
   });

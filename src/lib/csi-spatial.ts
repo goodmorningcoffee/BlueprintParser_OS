@@ -3,8 +3,15 @@
  *
  * CSI Spatial Heatmap: grid-bins CSI-tagged elements by location on a
  * blueprint page.  Produces a CsiSpatialMap that tells downstream
- * consumers (LLM context builder, admin UI) where each CSI division
- * clusters on the page.
+ * consumers where each CSI division clusters on the page.
+ *
+ * Real consumers ([refactor jul9 P2-A C1] docblock corrected — the old
+ * "admin UI" claim was stale, SPEC_FINAL §1.4):
+ *   - server: LLM context builder (context-builder.ts:460-471) and
+ *     llm/tools.ts (:187, :304-311);
+ *   - client: csi-spatial-refresh.ts recomputes this map IN THE BROWSER
+ *     against the hot viewer store (called from 6 viewer panels) — which is
+ *     why changes here run the PDF-viewer perf protocol (SPEC_FINAL §6.3).
  *
  * Grid layout (normalized 0-1 coordinates):
  *   - 9x9 drawing grid (default, configurable via CsiSpatialGridConfig)
@@ -23,6 +30,7 @@ import type {
   ClientAnnotation,
 } from "@/types";
 import { TITLE_BLOCK_Y_THRESHOLD, RIGHT_MARGIN_X_THRESHOLD } from "@/lib/spatial-constants";
+import { DIVISION_NAMES } from "@/lib/csi-divisions";
 
 // ═══════════════════════════════════════════════════════════════════
 // Public types
@@ -62,27 +70,13 @@ export interface YoloDetectionInput {
 // Division name map
 // ═══════════════════════════════════════════════════════════════════
 
-const DIVISION_NAMES: Record<string, string> = {
-  "00": "Procurement",
-  "01": "General Requirements",
-  "02": "Existing Conditions",
-  "03": "Concrete",
-  "04": "Masonry",
-  "05": "Metals",
-  "06": "Wood/Plastics",
-  "07": "Thermal & Moisture",
-  "08": "Openings",
-  "09": "Finishes",
-  "10": "Specialties",
-  "11": "Equipment",
-  "12": "Furnishings",
-  "21": "Fire Suppression",
-  "22": "Plumbing",
-  "23": "HVAC",
-  "26": "Electrical",
-  "27": "Communications",
-  "28": "Electronic Safety",
-};
+// [refactor jul9 P2-A C1] C2: local 19-division table deleted in favor of the
+// canonical 25-division map (imported from @/lib/csi-divisions at top;
+// SPEC_FINAL §1.4, [C1 approval 2026-07-09]). This FIXES the live spatial
+// recall bug (ledger D-7): the local table lacked divisions 13/14/25/31/32/33,
+// so addCode's allowlist gate silently dropped every code in those divisions
+// from the heatmap. Div 06 label also moves "Wood/Plastics" →
+// "Wood/Plastics/Composites" (ledger D-8, flows into LLM context text).
 
 // ═══════════════════════════════════════════════════════════════════
 // Zone classification
@@ -177,6 +171,9 @@ function createAccumulator(grid: CsiSpatialGridConfig): ZoneAccumulator {
 
 function addCode(acc: ZoneAccumulator, zone: string, code: string): void {
   const div = code.substring(0, 2);
+  // [refactor jul9 P2-A C1] C2 keeps this allowlist gate DELIBERATELY — the
+  // recall fix is the bigger canonical map, not removing the gate.
+  // masterformat.tsv divisions 34/35/40-46/48 stay excluded (SPEC_FINAL N-3).
   if (!DIVISION_NAMES[div]) return; // skip unrecognised divisions
 
   if (!acc.bins.has(zone)) acc.bins.set(zone, new Map());
