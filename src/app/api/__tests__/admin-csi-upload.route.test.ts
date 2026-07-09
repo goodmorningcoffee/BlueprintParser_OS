@@ -48,6 +48,9 @@ import { db } from "@/lib/db";
 import { companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { asUser, createCompany, createUser, readJson, signedOut } from "@/test/harness";
+// [refactor jul9 P2-A C1] C3 (CU-14): the resolver's tenant guard consumes the
+// SAME prefix helper — pin writer/guard coherence so the two can't drift (I-7).
+import { csiDbKeyPrefix } from "@/lib/csi-database";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -243,5 +246,19 @@ describe.skipIf(!dbUp)("admin/csi/upload (CU)", () => {
     })));
     expect(r.status).toBe(400);
     expect(r.body).toEqual(BAD("Invalid JSON body"));
+  });
+
+  it("CU-14 [C1 approval 2026-07-09] writer/guard coherence: the uploaded s3Key is under csiDbKeyPrefix(companyId) so the resolver guard accepts it (I-7)", async () => {
+    // If the writer's key template ever drifts from csiDbKeyPrefix, the resolver's
+    // startsWith guard would silently reject EVERY custom DB (masked by the warn-only
+    // builtin fallback). This pins them to the ONE shared helper (SPEC_FINAL §1.6(C3)/C2-F3).
+    const { company, admin } = await makeWorld();
+    asUser(admin);
+    const r = await readJson(await cuPOST(formReq({ name: "x.csv", content: "code,description\n03 05,concrete mix" })));
+    expect(r.status).toBe(200);
+    const writtenKey = h.uploadToS3.mock.calls[0][0] as string;
+    // the key the writer sent to S3 == the key returned == a key the guard accepts
+    expect(writtenKey).toBe(r.body.s3Key);
+    expect(writtenKey.startsWith(csiDbKeyPrefix(company.id))).toBe(true);
   });
 });

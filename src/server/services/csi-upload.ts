@@ -35,8 +35,14 @@ import type { AuthSession } from "@/lib/api-utils";
 // [refactor jul9 P2-A C1] C2: canonical division map replaces the local
 // DIVISION_TRADES table (SPEC_FINAL §1.6, [C1 approval 2026-07-09]).
 import { DIVISION_NAMES } from "@/lib/csi-divisions";
-
-const CSI_S3_PREFIX = "csi-databases";
+// [refactor jul9 P2-A C1] C3 (SPEC_FINAL §1.6(C3)): the custom-DB S3 key
+// namespace is now the ONE shared helper (I-7 — the resolver's tenant guard
+// consumes the SAME prefix, so a literal here could silently drift). On
+// upload/revert we invalidate the resolver's per-company cache so a foreign
+// ECS task re-reads on its next detect (generation-guarded, query-cache.ts §1.8).
+import { csiDbKeyPrefix } from "@/lib/csi-database";
+import { invalidateCache } from "@/lib/admin-logs/query-cache";
+import { csiDbCacheKey } from "@/lib/csi-company-db";
 
 /**
  * POST /api/admin/csi/upload
@@ -88,7 +94,9 @@ export async function uploadCsiDatabase(req: Request, session: AuthSession): Pro
 
   // Upload to S3
   const companyId = session.user.companyId;
-  const s3Key = `${CSI_S3_PREFIX}/company-${companyId}/custom-csi.tsv`;
+  // [refactor jul9 P2-A C1] C3: shared prefix helper (I-7) — was the local
+  // `${CSI_S3_PREFIX}/company-${companyId}/` literal.
+  const s3Key = `${csiDbKeyPrefix(companyId)}custom-csi.tsv`;
 
   await uploadToS3(s3Key, Buffer.from(tsvContent, "utf-8"), "text/tab-separated-values");
 
@@ -115,6 +123,11 @@ export async function uploadCsiDatabase(req: Request, session: AuthSession): Pro
     .update(companies)
     .set({ pipelineConfig: updated })
     .where(eq(companies.id, companyId));
+
+  // [refactor jul9 P2-A C1] C3: drop the resolver's cached custom-DB snapshot so
+  // the re-upload-to-same-key case (deterministic s3Key) is visible immediately
+  // in THIS process; a foreign task's warm cache is TTL-bounded (SPEC_FINAL §1.7).
+  invalidateCache(csiDbCacheKey(companyId));
 
   return {
     success: true,
@@ -148,9 +161,15 @@ export async function revertCsiDatabase(session: AuthSession): Promise<unknown> 
     .set({ pipelineConfig: updated })
     .where(eq(companies.id, companyId));
 
+  // [refactor jul9 P2-A C1] C3: invalidate the resolver cache AFTER the config
+  // write (the pointer is gone → next resolve short-circuits to builtin) and
+  // BEFORE the best-effort S3 delete below (SPEC_FINAL §1.6(C3)).
+  invalidateCache(csiDbCacheKey(companyId));
+
   // Try to delete from S3 (non-blocking)
   try {
-    const s3Key = `${CSI_S3_PREFIX}/company-${companyId}/custom-csi.tsv`;
+    // [refactor jul9 P2-A C1] C3: shared prefix helper (I-7).
+    const s3Key = `${csiDbKeyPrefix(companyId)}custom-csi.tsv`;
     await deleteFromS3(s3Key);
   } catch { /* ignore — file may not exist */ }
 
