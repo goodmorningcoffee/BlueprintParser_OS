@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import { projects, pages, companies, annotations } from "@/lib/db/schema";
 // [bugfix jul5 H6/DR002] project-level user-key preservation on analysis re-runs
-import { mergeProjectIntelligence } from "@/lib/intelligence-merge";
+// [bugfix jul9 F4] + page-level carry for the UPDATE branch (same policy module)
+import { carryNonComputedIntelligence, mergeProjectIntelligence } from "@/lib/intelligence-merge";
 import { eq, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import {
@@ -261,8 +262,14 @@ export async function processProject(projectId: number): Promise<{
     await mapConcurrent(pageNums, pageConcurrency, async (pageNum) => {
       try {
         // Check if page already has textract data (skip if re-processing)
+        // [bugfix jul9 F4] pageIntelligence selected so the UPDATE branch below can
+        // merge instead of wholesale-overwrite (user keys must survive re-runs).
         const [existingPage] = await db
-          .select({ id: pages.id, textractData: pages.textractData })
+          .select({
+            id: pages.id,
+            textractData: pages.textractData,
+            pageIntelligence: pages.pageIntelligence,
+          })
           .from(pages)
           .where(
             and(
@@ -466,9 +473,27 @@ export async function processProject(projectId: number): Promise<{
 
         // Upsert page row
         if (existingPage) {
+          // [bugfix jul9 F4 P2-phaseB, owner-sanctioned] page-level twin of G3/H6 —
+          // carry user/unknown PI keys through re-processing; see
+          // services/reprocess.ts intelligence branch for the canonical semantics.
+          // This UPDATE used to write the freshly-built pageIntelligence WHOLESALE
+          // (even null when nothing was detected), wiping parsedRegions and any
+          // unknown/future key whenever processProject re-ran over an existing row
+          // (processingDev has no status guard; SFN worker retries too). Base =
+          // existing PI with computed keys cleared, overlay = this run's fresh keys
+          // (all fresh keys are REPROCESS_COMPUTED_KEYS members). Merged-empty →
+          // OMIT the column: an update must never null-out user data.
+          const carried = carryNonComputedIntelligence(existingPage.pageIntelligence);
+          const mergedIntelligence = { ...carried, ...(pageIntelligence ?? {}) };
+          const updateData: Record<string, unknown> = { ...pageData };
+          if (Object.keys(mergedIntelligence).length > 0) {
+            updateData.pageIntelligence = mergedIntelligence;
+          } else {
+            delete updateData.pageIntelligence;
+          }
           await db
             .update(pages)
-            .set(pageData)
+            .set(updateData)
             .where(eq(pages.id, existingPage.id));
 
           await db.execute(
