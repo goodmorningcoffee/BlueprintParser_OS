@@ -61,3 +61,31 @@ export const zPageRange = z
 
 export type BboxMinMaxInput = z.infer<typeof zBboxMinMax>;
 export type PageRangeInput = z.infer<typeof zPageRange>;
+
+/**
+ * [refactor jul9 P2-A C1] PUT /api/admin/csi/config body — [C1 approval 2026-07-09]
+ * replaces the S037-frozen z.unknown() accept-anything (supersedes the S037 keep-z.unknown
+ * decision). Known keys typed; unknown keys STRIPPED (zod default, NOT .strict() — see
+ * REJECTED-FIX R-5: unknowable legacy jsonb keys must round-trip through CsiTab's spread or
+ * every admin save would 400). Deliberately stripped too: customDatabaseS3Key/Name/Codes —
+ * those are owned by the upload route (csi-upload.ts) and server-preserved by putCsiConfig
+ * (I-7 belt: a client body can never inject/overwrite the custom-DB pointer triple).
+ * Ledger: D-3 (malformed bodies now 400, no write), D-4 (empty body 500→400), D-5 (unknown
+ * keys stripped + triple preserved), D-15 (non-positive threshold rejected).
+ */
+export const zCsiConfigPut = z.object({
+  // the 6 engine fields (csi-detect-defs.ts CsiDetectConfig)
+  matchingConfidenceThreshold: z.number().finite().positive().optional(), // .positive(): I-10 (a non-positive threshold returns the ENTIRE DB per detect call); UI slider min=0.1 (CsiTab.tsx:224) so no legit save can send <=0
+  tier2MinWords: z.number().int().nonnegative().optional(),
+  tier3MinWords: z.number().int().nonnegative().optional(),
+  tier2Weight: z.number().finite().optional(),
+  tier3Weight: z.number().finite().optional(),
+  tier1WeightByWordCount: z.array(z.number().finite()).max(32).optional(), // weights stay TYPE-ONLY: UI sliders min=0 (CsiTab.tsx:272-300); 0-weight is engine-safe (C0 pathological-weight pins), so no .positive() here
+  // the 4 admin-UI orphan fields — validated & stored (status-quo storage; CsiTab sends them
+  // every save, so rejecting would 400 every admin save; removing the dead sliders = UI half, N-4)
+  taggerKeywordOverlap: z.number().finite().optional(),
+  taggerMinWordMatches: z.number().int().nonnegative().optional(),
+  maxCsiTagsPerAnnotation: z.number().int().nonnegative().optional(),
+  contextBudgetOverrides: z.record(z.string(), z.number().finite()).optional(),
+});
+export type CsiConfigPutBody = z.infer<typeof zCsiConfigPut>;

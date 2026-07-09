@@ -38,6 +38,7 @@ import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
+import type { CsiConfigPutBody } from "@/server/api/schemas"; // [refactor jul9 P2-A C1]
 import { BUILT_IN_RULES } from "@/lib/heuristic-engine";
 import { getAllDetectorMeta } from "@/lib/detectors/registry";
 
@@ -170,14 +171,28 @@ export async function getCsiConfig(session: AuthSession): Promise<unknown> {
   };
 }
 
-/** rawBody is DELIBERATELY unknown — legacy stored whatever JSON arrived (scalars/null too). */
-export async function putCsiConfig(session: AuthSession, rawBody: unknown): Promise<unknown> {
-  if (rawBody === undefined) {
-    // legacy: req.json() on an empty body THREW (Next 500, no write). Plain Error →
-    // shell generic INTERNAL 500; must NOT fall through (csi: undefined would DELETE the key).
-    throw new Error("csi config: empty body");
-  }
-  await writePipelineConfig(session.user.companyId, { csi: rawBody });
+/**
+ * [refactor jul9 P2-A C1] validated replace + custom-triple preservation — [C1 approval
+ * 2026-07-09] (supersedes the S037 store-anything/empty-body-500 CSI-4/CSI-5 behavior).
+ * `body` is now zCsiConfigPut-validated at the shell: scalars/null/arrays/non-positive
+ * threshold/empty bodies 400 BEFORE this runs (D-3/D-4/D-15), unknown keys already stripped
+ * (D-5). PUT stays REPLACE for the 10 config fields (omitted field = cleared — matches
+ * CsiTab's send-everything contract), but the upload route's server-owned pointer triple
+ * (customDatabaseS3Key/Name/Codes) is re-attached here so a client body can neither wipe it
+ * (a stale tab's untyped spread) nor inject a foreign one (I-7 belt). Pre-existing non-atomic
+ * RMW (H2 class, :14-15) unchanged in kind. getCsiConfig untouched (CSI-2/CSI-3 hold).
+ */
+export async function putCsiConfig(session: AuthSession, body: CsiConfigPutBody): Promise<unknown> {
+  const existing = await readPipelineConfig(session.user.companyId);
+  const existingCsi = (existing.csi && typeof existing.csi === "object" && !Array.isArray(existing.csi)
+    ? existing.csi
+    : {}) as Record<string, unknown>;
+  const { customDatabaseS3Key, customDatabaseName, customDatabaseCodes } = existingCsi;
+  const preserved: Record<string, unknown> = {};
+  if (customDatabaseS3Key !== undefined) preserved.customDatabaseS3Key = customDatabaseS3Key;
+  if (customDatabaseName !== undefined) preserved.customDatabaseName = customDatabaseName;
+  if (customDatabaseCodes !== undefined) preserved.customDatabaseCodes = customDatabaseCodes;
+  await writePipelineConfig(session.user.companyId, { csi: { ...body, ...preserved } });
   return { success: true };
 }
 

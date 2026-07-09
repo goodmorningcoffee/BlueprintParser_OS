@@ -348,41 +348,88 @@ describe.skipIf(!dbUp)("admin/csi/config (CSI)", () => {
     expect(r.body.stats.source).toBe("Custom: MyDB (? codes)");
   });
 
-  it("CSI-4 write: RAW BODY IS THE VALUE (no validation) — object, SCALAR and null all WRITTEN; siblings survive; updatedAt UNTOUCHED", async () => {
+  // [refactor jul9 P2-A C1] CSI-4/CSI-5 REWRITE — [C1 approval 2026-07-09; supersedes the
+  // S037 keep-z.unknown accept-anything decision]. PUT is now zCsiConfigPut-validated at the
+  // shell: known keys typed & stored, unknown keys STRIPPED, non-positive threshold rejected
+  // (D-15/I-10), the custom-DB pointer triple server-preserved (D-5). Ledger D-3/D-4/D-5/D-15.
+  it("CSI-4 write: zod-validated — object stored, scalar/null/array 400 (was stored), unknown keys stripped, threshold guarded; siblings survive; updatedAt UNTOUCHED [C1 approval 2026-07-09]", async () => {
     const { company, admin } = await makeWorld();
     const before = await rowOf(company.id);
     asUser(admin);
-    // arbitrary object → stored verbatim as `csi`
+    // scalar / null / array bodies now 400 VALIDATION (reverses the S037 accept-anything, D-3); NO write
+    for (const raw of ["5", "null", "[1,2]"]) {
+      const r = await readJson(await csiPUT(rawPut("/api/admin/csi/config", raw)));
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION");
+      expect((await rowOf(company.id)).pc?.csi).toEqual(SEED.csi); // untouched
+    }
+    // arbitrary UNKNOWN-keys object → 200 {success:true}; all keys stripped → stored csi = {}
+    // (CsiTab.tsx:78-92 depends on the 200; replace semantics wipe the old SEED threshold)
     let r = await put(csiPUT, "/api/admin/csi/config", { anything: 1, nested: { a: [1] } });
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true });
-    expect((await rowOf(company.id)).pc?.csi).toEqual({ anything: 1, nested: { a: [1] } });
-    // SCALAR body → 200 and csi = 5 (the no-validation quirk — fold must KEEP accepting)
-    r = await readJson(await csiPUT(rawPut("/api/admin/csi/config", "5")));
+    expect((await rowOf(company.id)).pc?.csi).toEqual({});
+    // valid partial → stored
+    r = await put(csiPUT, "/api/admin/csi/config", { matchingConfidenceThreshold: 0.7 });
     expect(r.status).toBe(200);
-    expect((await rowOf(company.id)).pc?.csi).toBe(5);
-    // JSON null body → 200 and csi = null
-    r = await readJson(await csiPUT(rawPut("/api/admin/csi/config", "null")));
+    expect((await rowOf(company.id)).pc?.csi).toEqual({ matchingConfidenceThreshold: 0.7 });
+    // non-positive threshold rejected (D-15): 0 and -1 → 400, no write (last valid value stands)
+    for (const bad of [{ matchingConfidenceThreshold: 0 }, { matchingConfidenceThreshold: -1 }]) {
+      r = await put(csiPUT, "/api/admin/csi/config", bad);
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("VALIDATION");
+    }
+    expect((await rowOf(company.id)).pc?.csi).toEqual({ matchingConfidenceThreshold: 0.7 });
+    // unknown key alongside nothing valid → stored WITHOUT the unknown key
+    r = await put(csiPUT, "/api/admin/csi/config", { zzz: 1 });
     expect(r.status).toBe(200);
+    expect((await rowOf(company.id)).pc?.csi).toEqual({});
+    // client-sent customDatabaseS3Key is IGNORED (stripped — upload route owns it, I-7 belt, D-5)
+    r = await put(csiPUT, "/api/admin/csi/config", {
+      matchingConfidenceThreshold: 0.6,
+      customDatabaseS3Key: "csi-databases/company-999/x.tsv",
+    });
+    expect(r.status).toBe(200);
+    const stored = (await rowOf(company.id)).pc?.csi as Record<string, unknown>;
+    expect(stored).toEqual({ matchingConfidenceThreshold: 0.6 }); // no injected pointer
+    // siblings + updatedAt survive every write above (csi does NOT touch updatedAt)
     const after = await rowOf(company.id);
-    expect(after.pc?.csi).toBeNull();
-    expect(after.pc?.demo).toEqual(SEED.demo); // siblings intact throughout
+    expect(after.pc?.demo).toEqual(SEED.demo);
     expect(after.pc?.__sentinel).toEqual(SEED.__sentinel);
     expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
   });
 
-  it("CSI-5 write edges: malformed/empty body error out; nothing written", async () => {
+  it("CSI-4b custom-DB pointer TRIPLE is server-preserved across a threshold save (client body cannot wipe or inject it) [C1 approval 2026-07-09]", async () => {
+    const { company, admin } = await makeWorld({
+      csi: { customDatabaseS3Key: "csi-databases/company-1/custom-csi.tsv", customDatabaseName: "MyDB", customDatabaseCodes: 99 },
+      demo: SEED.demo,
+      __sentinel: SEED.__sentinel,
+    });
+    asUser(admin);
+    // client sends ONLY a threshold (the CsiTab send-everything contract minus the triple) →
+    // triple re-attached verbatim by putCsiConfig; threshold applied
+    const r = await put(csiPUT, "/api/admin/csi/config", { matchingConfidenceThreshold: 0.5 });
+    expect(r.status).toBe(200);
+    expect((await rowOf(company.id)).pc?.csi).toEqual({
+      matchingConfidenceThreshold: 0.5,
+      customDatabaseS3Key: "csi-databases/company-1/custom-csi.tsv",
+      customDatabaseName: "MyDB",
+      customDatabaseCodes: 99,
+    });
+    expect((await rowOf(company.id)).pc?.__sentinel).toEqual(SEED.__sentinel); // top-level sibling survives
+  });
+
+  it("CSI-5 write edges: malformed body → 400 BAD_REQUEST; empty body → 400 VALIDATION (was 500); nothing written [C1 approval 2026-07-09; supersedes S037]", async () => {
     const { company, admin } = await makeWorld();
     asUser(admin);
-    // legacy: req.json() threw and PROPAGATED for both. [S037 fold: E applied — malformed →
-    //  400 BAD_REQUEST pre-auth; empty → in-service plain-Error throw → generic INTERNAL 500
-    //  (csi: undefined must NOT fall through to a key-deleting write)]
+    // malformed JSON → shell BAD_REQUEST at parse (step 1, before/independent of auth)
     let r = await readJson(await csiPUT(rawPut("/api/admin/csi/config", "{oops")));
     expect(r.status).toBe(400);
     expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+    // empty body → z.object rejects undefined → 400 VALIDATION (was in-service plain-Error 500)
     r = await readJson(await csiPUT(rawPut("/api/admin/csi/config", undefined)));
-    expect(r.status).toBe(500);
-    expect(r.body).toEqual({ error: { code: "INTERNAL", message: "Internal server error" } });
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe("VALIDATION");
     expect((await rowOf(company.id)).pc?.csi).toEqual(SEED.csi); // untouched
   });
 });
