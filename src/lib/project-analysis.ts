@@ -22,6 +22,12 @@ import type {
   KeynoteShapeData,
 } from "@/types";
 import { buildCsiGraph } from "@/lib/csi-graph";
+// [refactor jul9 P2-A C1 R2] Folded the byte-dup local DIVISION_NAMES table into the
+// canonical map (SPEC_FINAL §4.2 / N-2; owner "Fold them" 2026-07-09). The local was the
+// 24-division set missing Div 00; canonical adds "00":"Procurement" — the sole delta here,
+// surfacing a Procurement label in analyzeCsiTopology when Div-00 codes are present
+// (ledger D-8 class). analyzeCsiTopology still reads DIVISION_NAMES[div] || `Division ${div}`.
+import { DIVISION_NAMES } from "@/lib/csi-divisions";
 import { db } from "@/lib/db";
 import { pages, annotations, projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -154,17 +160,8 @@ interface CsiDivisionSummary {
   codes: { code: string; description: string; pages: number[] }[];
 }
 
-const DIVISION_NAMES: Record<string, string> = {
-  "01": "General Requirements", "02": "Existing Conditions", "03": "Concrete",
-  "04": "Masonry", "05": "Metals", "06": "Wood/Plastics/Composites",
-  "07": "Thermal & Moisture", "08": "Openings", "09": "Finishes",
-  "10": "Specialties", "11": "Equipment", "12": "Furnishings",
-  "13": "Special Construction", "14": "Conveying Equipment",
-  "21": "Fire Suppression", "22": "Plumbing", "23": "HVAC",
-  "25": "Integrated Automation", "26": "Electrical", "27": "Communications",
-  "28": "Electronic Safety", "31": "Earthwork", "32": "Exterior Improvements",
-  "33": "Utilities",
-};
+// [refactor jul9 P2-A C1 R2] local DIVISION_NAMES deleted — now imported from
+// @/lib/csi-divisions (canonical 25-division map). See import-site note above.
 
 function analyzeCsiTopology(pages: PageSummary[]): CsiDivisionSummary[] {
   const divMap = new Map<string, {
