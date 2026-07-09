@@ -114,6 +114,15 @@ export async function uploadCsiDatabase(req: Request, session: AuthSession): Pro
       return `${codeNoSpace}\t${phrase}\t${codeNoSpace}\t${phrase}\t${e.trade}\t${e.division}`;
     }).join("\n");
 
+  // [refactor jul9 P2-A C1 · DETECTOR note jul9] KNOWN QUIRK (C4 review, CONFIRMED low): the
+  // write gate above bounds the RAW upload (file.size), but THIS regenerated 6-column TSV is
+  // what the resolver re-checks (csi-company-db.ts:182, buf.byteLength). Each row duplicates
+  // code+description, so a near-cap raw upload can inflate past CSI_DB_MAX_BYTES here and be
+  // SILENTLY rejected at read → builtin fallback (I-4, warn-only). Fails SAFE, and the row cap
+  // (entries.length, symmetric at both gates) is the real I-9 availability backstop — the byte
+  // cap is only early-reject UX. Tightening to gate Buffer.byteLength(tsvContent) here would make
+  // write-accept ⇒ read-accept; DEFERRED to owner (frozen file.size semantics §1.6(C4); N-6 caps).
+
   // Upload to S3
   const companyId = session.user.companyId;
   // [refactor jul9 P2-A C1] C3: shared prefix helper (I-7) — was the local

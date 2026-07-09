@@ -243,14 +243,16 @@ export async function tableParse(rawBody: Record<string, unknown>): Promise<unkn
 
   const { project } = await resolveProjectOrThrow({ dbId: projectId }, { allowDemo: true });
 
-  // [refactor jul9 P2-A C1] resolve company CSI context once, up front (no tx around the
-  // detect; engine stays sync). Threaded into the best-effort detect near the end.
-  const csiCtx = await getCompanyCsiContext(project.companyId);
-
   if (project.isDemo) {
     const gate = await assertDemoFeatureEnabled(project.companyId, "tableParse");
     if (gate) return gate; // flat 403 passthrough — does NOT flip here (TQ-1)
   }
+
+  // [refactor jul9 P2-A C1 · DETECTOR closer jul9] Resolve the company CSI context AFTER the
+  // demo 403 gate (was before it): a disabled-tableParse demo project no longer does the PK
+  // SELECT + possible custom-DB S3 GET just to then 403 (C6 review, CONFIRMED efficiency nit).
+  // Response is byte-identical either way; no tx around the detect, engine stays sync.
+  const csiCtx = await getCompanyCsiContext(project.companyId);
 
   const [pageRow] = await db
     .select({ id: pages.id, textractData: pages.textractData })

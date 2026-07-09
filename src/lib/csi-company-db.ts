@@ -48,7 +48,10 @@ import { db } from "@/lib/db";
 import { companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { downloadFromS3 } from "@/lib/s3";
-import { cachedQuery, invalidateCache } from "@/lib/admin-logs/query-cache";
+// [refactor jul9 P2-A C1 · DETECTOR closer jul9] only cachedQuery is used here; the
+// invalidateCache caller is csi-upload.ts (imports it separately). Was an unused import
+// (C3 review, CONFIRMED-cosmetic — noUnusedLocals off, so build was green regardless).
+import { cachedQuery } from "@/lib/admin-logs/query-cache";
 import {
   loadBuiltinCsiDatabase,
   parseCsiTsv,
