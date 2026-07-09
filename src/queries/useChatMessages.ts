@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query"; // v5.101 installed
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"; // v5.101 installed
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ChatMsg } from "@/types";
@@ -20,6 +20,20 @@ export function mapChatRows(
     content: c.content,
     model: c.model || undefined,
   }));
+}
+
+// [refactor jul9 P2.2① · DETECTOR closer] Loader-side seed of the chat cache, extracted from the
+// project loader so the one deliberate behavior change of this migration is unit-testable. The seed
+// is UNCONDITIONAL with `rows ?? []`: reproduces the OLD net behavior (resetProjectData used to
+// clear chatMessages:[] then the loader conditionally overwrote) AND overwrites any stale client
+// echoes cached under this publicId on re-open. The demo path matters: getDemoProject omits
+// chatMessages (rows === undefined) -> this seeds [] rather than leaving a stale entry.
+export function seedChatCache(
+  qc: QueryClient,
+  publicId: string,
+  rows: Array<{ id: number; role: string; content: string; model: string | null }> | undefined | null,
+) {
+  qc.setQueryData(queryKeys.chatMessages.all(publicId), mapChatRows(rows ?? []));
 }
 
 // [refactor jul9 P2.2①] chat: zustand viewerStore -> TanStack Query cache (FIRST of 9 domains;

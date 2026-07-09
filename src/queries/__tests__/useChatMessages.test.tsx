@@ -3,11 +3,11 @@
 //   • mapChatRows tests are green from the EXTRACTION commit.
 //   • the useChatMessages HOOK tests are green only once the hook lands (migration commit) — they
 //     define the target backing and are added there.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { mapChatRows, useChatMessages } from "@/queries/useChatMessages";
+import { mapChatRows, seedChatCache, useChatMessages } from "@/queries/useChatMessages";
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ChatMsg } from "@/types";
@@ -34,6 +34,44 @@ describe("mapChatRows (T-A1)", () => {
 
   it("empty input -> empty array", () => {
     expect(mapChatRows([])).toEqual([]);
+  });
+});
+
+// [DETECTOR closer] seedChatCache freezes the loader's ONE deliberate behavior change: an
+// UNCONDITIONAL, publicId-scoped seed with a `?? []` default (the demo/undefined path). The
+// conditional-if version this replaced would leave stale client-echoes on a demo re-open.
+describe("seedChatCache (loader seed — the migration's behavior change)", () => {
+  it("undefined rows (demo omits chat) seeds [] under the publicId key", () => {
+    const qc = new QueryClient();
+    seedChatCache(qc, "demo-pub", undefined);
+    expect(qc.getQueryData(queryKeys.chatMessages.all("demo-pub"))).toEqual([]);
+  });
+
+  it("null rows also seed []", () => {
+    const qc = new QueryClient();
+    seedChatCache(qc, "p", null);
+    expect(qc.getQueryData(queryKeys.chatMessages.all("p"))).toEqual([]);
+  });
+
+  it("present rows land mapped (model null->undefined) under the exact publicId key", () => {
+    const qc = new QueryClient();
+    seedChatCache(qc, "p-A", [
+      { id: 1, role: "user", content: "q", model: null },
+      { id: 2, role: "assistant", content: "a", model: "gpt-4" },
+    ]);
+    expect(qc.getQueryData(queryKeys.chatMessages.all("p-A"))).toEqual([
+      { id: 1, role: "user", content: "q", model: undefined },
+      { id: 2, role: "assistant", content: "a", model: "gpt-4" },
+    ]);
+    // seeded under p-A only — a different publicId is untouched (overwrite-stale-echo semantics)
+    expect(qc.getQueryData(queryKeys.chatMessages.all("p-B"))).toBeUndefined();
+  });
+
+  it("re-seeding the same key OVERWRITES (stale-echo clear on re-open)", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(queryKeys.chatMessages.all("p"), [{ id: 99, role: "user", content: "stale echo" }]);
+    seedChatCache(qc, "p", []); // fresh load returns no rows -> must clear, not append
+    expect(qc.getQueryData(queryKeys.chatMessages.all("p"))).toEqual([]);
   });
 });
 
@@ -114,20 +152,38 @@ describe("useChatMessages hook", () => {
     expect(client.getQueryData(queryKeys.chatMessages.all("B"))).toEqual([b1]);
   });
 
-  it("T-A6: survives an observer gap — unmount/remount against the same client keeps seeded msgs (gcTime guard)", () => {
-    const client = freshClient();
-    const seeded: ChatMsg[] = [
-      { id: 1, role: "user", content: "s1" },
-      { id: 2, role: "assistant", content: "s2" },
-    ];
-    client.setQueryData(queryKeys.chatMessages.all("A"), seeded);
-    useViewerStore.setState({ publicId: "A" });
+  // [DETECTOR closer] T-A6 REWRITTEN to actually freeze gcTime:Infinity. The old version used a
+  // synchronous unmount/remount with no timer advance — React Query schedules GC via
+  // setTimeout(gcTime), which never fires in a synchronous test, so the old test passed identically
+  // for Infinity, the 5-min default, or 0 (it froze nothing). Here we advance FAKE timers an hour
+  // past the observer's unmount: under the hook's gcTime:Infinity the entry survives; if a future
+  // edit lowers gcTime below an hour (the recipe default for heavy siblings is finite), the entry
+  // GCs and the remount reads empty via initialData:[] — this test then FAILS, catching the
+  // regression the DETECTOR flagged (panel closed > gcTime -> reopen empty; loader re-seeds only on
+  // a full project load, never on a showChatPanel toggle).
+  it("T-A6: gcTime:Infinity keeps chat alive across an observer gap even after an hour passes", () => {
+    vi.useFakeTimers();
+    try {
+      const client = freshClient();
+      const seeded: ChatMsg[] = [
+        { id: 1, role: "user", content: "s1" },
+        { id: 2, role: "assistant", content: "s2" },
+      ];
+      client.setQueryData(queryKeys.chatMessages.all("A"), seeded);
+      useViewerStore.setState({ publicId: "A" });
 
-    const first = renderHook(() => useChatMessages(), { wrapper: makeWrapper(client) });
-    expect(first.result.current.chatMessages).toEqual(seeded);
-    first.unmount(); // sole observer gone — under a finite gcTime this entry would eventually GC
+      const first = renderHook(() => useChatMessages(), { wrapper: makeWrapper(client) });
+      expect(first.result.current.chatMessages).toEqual(seeded);
+      first.unmount(); // last observer gone -> GC timer armed at gcTime (Infinity = never fires)
 
-    const second = renderHook(() => useChatMessages(), { wrapper: makeWrapper(client) });
-    expect(second.result.current.chatMessages).toEqual(seeded);
+      vi.advanceTimersByTime(60 * 60 * 1000); // an hour of "panel closed"
+      // entry not collected (proves gcTime:Infinity, not a finite default)
+      expect(client.getQueryData(queryKeys.chatMessages.all("A"))).toEqual(seeded);
+
+      const second = renderHook(() => useChatMessages(), { wrapper: makeWrapper(client) });
+      expect(second.result.current.chatMessages).toEqual(seeded);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -6,8 +6,7 @@ import { useSession } from "next-auth/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSearch } from "@/hooks/useSearch";
-import { mapChatRows } from "@/queries/useChatMessages";
-import { queryKeys } from "@/queries/queryKeys";
+import { seedChatCache } from "@/queries/useChatMessages";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
@@ -145,15 +144,10 @@ export default function ProjectPage() {
       if (qParam) useViewerStore.getState().setSearch(qParam);
 
       // Load chat history into the TanStack Query cache (facade — no longer a zustand field).
-      // [refactor jul9 P2.2①] UNCONDITIONAL seed-with-default: reproduces the OLD net behavior
-      // EXACTLY (resetProjectData used to clear chatMessages:[] then the loader conditionally
-      // overwrote) AND overwrites any stale client-echoes cached under this publicId on re-open.
-      // ChatPanel is the sole observer and is unmounted while `loading` (page gates PDFViewer on
-      // !loading), so this seed always lands before the panel remounts — no stale flash (D5).
-      queryClient.setQueryData(
-        queryKeys.chatMessages.all(data.id),
-        mapChatRows(data.chatMessages ?? []),
-      );
+      // [refactor jul9 P2.2①] Unconditional publicId-scoped seed (see seedChatCache). ChatPanel is
+      // the sole observer and is unmounted while `loading` (page gates PDFViewer on !loading), so
+      // this seed always lands before the panel remounts — no stale flash (D5).
+      seedChatCache(queryClient, data.id, data.chatMessages);
 
       // Load takeoff items
       if (data.takeoffItems) {
