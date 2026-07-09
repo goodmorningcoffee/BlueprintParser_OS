@@ -121,8 +121,11 @@ export const companies = pgTable("companies", {
       };
     };
     autoDetect?: {
-      /** Stage 2c: emit AutoTableProposal[] during processing/reprocess.
-       *  Default: disabled (admin opt-in). */
+      /** [refactor jul9 P2-A S1] Stage 2c pipeline emission REMOVED (stored
+       *  autoTableProposals had zero readers). These keys are currently
+       *  inert config — the PipelineTab toggle still writes them; only the
+       *  deferred S5 chain-slim (with P5 frozen-route deletion) may retire
+       *  them fully. Default: disabled (admin opt-in). */
       tables?: boolean;
       /** Override the auto-detector's minProbability floor. */
       minProbability?: number;

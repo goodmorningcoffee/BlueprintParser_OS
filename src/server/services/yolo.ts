@@ -519,13 +519,14 @@ export async function yoloLoad(rawBody: Record<string, unknown>): Promise<unknow
         .where(eq(pages.projectId, project.id));
 
       // Fetch company heuristic config + Stage 2d pipeline toggles.
-      // Absent flags → legacy defaults (heatmap + ensemble on, autoDetect off).
+      // Absent flags → legacy defaults (heatmap + ensemble on).
+      // [refactor jul9 P2-A S1] Stage 2c (auto-table-detector → autoTableProposals)
+      // removed here: the STORED key had zero readers repo-wide (U1-F1); the
+      // auto-detect-tables route computes proposals on demand from ensembleRegions.
       let companyHeuristics: any[] | undefined;
       let heatmapEnabled = true;
       let ensembleEnabled = true;
       let ensembleConfig: any;
-      let autoDetectEnabled = false;
-      let autoDetectConfig: { minProbability?: number; categoryFilter?: string[] } = {};
       try {
         const [company] = await db
           .select({ pipelineConfig: companies.pipelineConfig })
@@ -537,12 +538,6 @@ export async function yoloLoad(rawBody: Record<string, unknown>): Promise<unknow
         heatmapEnabled = !disabledSteps.has("yolo-heatmap");
         ensembleEnabled = !disabledSteps.has("ensemble");
         ensembleConfig = company?.pipelineConfig?.ensemble?.config;
-        autoDetectEnabled = company?.pipelineConfig?.autoDetect?.tables === true
-          && !disabledSteps.has("auto-table-detect");
-        autoDetectConfig = {
-          minProbability: company?.pipelineConfig?.autoDetect?.minProbability,
-          categoryFilter: company?.pipelineConfig?.autoDetect?.categoryFilter,
-        };
       } catch { /* use defaults */ }
 
       const rules = getEffectiveRules(companyHeuristics);
@@ -665,24 +660,6 @@ export async function yoloLoad(rawBody: Record<string, unknown>): Promise<unknow
             }
           } catch (err) {
             logger.error(`[YOLO-LOAD] ensemble reducer failed for page ${page.pageNumber}:`, err);
-          }
-        }
-
-        // Stage 2c: auto-table-detector — emit AutoTableProposal[] for review.
-        if (autoDetectEnabled) {
-          try {
-            const { detectAutoTables } = await import("@/lib/auto-detect/auto-table-detector");
-            const proposals = detectAutoTables(
-              page.pageNumber,
-              updated.ensembleRegions as any,
-              autoDetectConfig,
-            );
-            if (proposals.length > 0) {
-              (updated as any).autoTableProposals = proposals;
-              pageChanged = true;
-            }
-          } catch (err) {
-            logger.error(`[YOLO-LOAD] auto-table-detector failed for page ${page.pageNumber}:`, err);
           }
         }
 

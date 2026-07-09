@@ -271,7 +271,10 @@ export function analyzeProject(pageSummaries: PageSummary[]): {
       disciplines: disciplines.length > 0 ? disciplines : undefined,
       refGraph: refGraph.edges.length > 0 ? refGraph : undefined,
       csiGraph: csiGraph || undefined,
-      pageCount: pageSummaries.length,
+      // [refactor jul9 P2-A S2] pageCount purged — zero readers repo-wide (U1-F2).
+      // NOTE this was the only UNCONDITIONALLY-emitted key; every remaining key
+      // degrades to undefined when empty (dropped by the jsonb write), so
+      // "did analysis run" witnesses must pin a stale-key REFRESH instead.
     },
     summary,
   };

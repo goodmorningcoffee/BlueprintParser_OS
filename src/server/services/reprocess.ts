@@ -112,17 +112,14 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
       const companyHeuristics = company?.pipelineConfig?.heuristics;
       // Stage 2d: pluggable pipeline toggles. The existing PipelineTab UI
       // drives `disabledSteps` for on/off; advanced tuning lives on dedicated
-      // keys. Defaults: heatmap + ensemble on, autoDetect off.
+      // keys. Defaults: heatmap + ensemble on.
+      // [refactor jul9 P2-A S1] Stage 2c (auto-table-detector → autoTableProposals)
+      // removed here: the STORED key had zero readers repo-wide (U1-F1); the
+      // auto-detect-tables route computes proposals on demand from ensembleRegions.
       const disabledSteps = new Set(company?.pipelineConfig?.disabledSteps ?? []);
       const heatmapEnabled = !disabledSteps.has("yolo-heatmap");
       const ensembleEnabled = !disabledSteps.has("ensemble");
       const ensembleConfig = company?.pipelineConfig?.ensemble?.config;
-      const autoDetectEnabled = company?.pipelineConfig?.autoDetect?.tables === true
-        && !disabledSteps.has("auto-table-detect");
-      const autoDetectConfig = {
-        minProbability: company?.pipelineConfig?.autoDetect?.minProbability,
-        categoryFilter: company?.pipelineConfig?.autoDetect?.categoryFilter,
-      };
 
       send({ type: "start", projects: allProjects.length });
 
@@ -626,27 +623,6 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                   }
                 } catch (err) {
                   logger.error(`[reprocess-intel] ensemble reducer failed for page ${page.pageNumber}:`, err);
-                }
-              }
-
-              // Stage 2c: auto-table-detector — emits AutoTableProposal[] for
-              // downstream review. Gated on pipelineConfig.autoDetect.tables.
-              if (autoDetectEnabled) {
-                try {
-                  const { detectAutoTables } = await import("@/lib/auto-detect/auto-table-detector");
-                  const proposals = detectAutoTables(
-                    page.pageNumber,
-                    (pageIntelligence as any).ensembleRegions,
-                    {
-                      minProbability: autoDetectConfig.minProbability,
-                      categoryFilter: autoDetectConfig.categoryFilter,
-                    },
-                  );
-                  if (proposals.length > 0) {
-                    (pageIntelligence as any).autoTableProposals = proposals;
-                  }
-                } catch (err) {
-                  logger.error(`[reprocess-intel] auto-table-detector failed for page ${page.pageNumber}:`, err);
                 }
               }
 

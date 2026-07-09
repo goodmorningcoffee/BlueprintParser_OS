@@ -545,10 +545,8 @@ export interface PageIntelligence {
    *  Authoritative source for "is there a real table on this page" — filters
    *  the keyword-only false positives that classifiedTables alone produces. */
   ensembleRegions?: EnsembleRegion[];
-  /** Stage 2c: auto-table-detector proposals. Written only when
-   *  `pipelineConfig.autoDetect.tables` is enabled. Read by the auto-detect
-   *  API route and (future) by an admin review UI. */
-  autoTableProposals?: AutoTableProposal[];
+  // [refactor jul9 P2-A S1] autoTableProposals field purged — writers removed
+  // (yolo/reprocess Stage 2c), zero readers; old jsonb rows may still carry it.
   parsedRegions?: ParsedRegion[];
   /** Stage 4: user-dismissed textRegion IDs. Persisted per-page via the same
    *  `/api/pages/intelligence` PATCH path. Preserved across Layer 1 reprocess
@@ -738,7 +736,8 @@ export interface ProjectIntelligence {
   disciplines?: DisciplineBreakdown[];
   refGraph?: { edges: RefGraphEdge[]; hubs: string[]; leaves: string[] };
   csiGraph?: unknown; // CsiNetworkGraph — imported from csi-graph.ts at usage sites
-  pageCount?: number;
+  // [refactor jul9 P2-A S2] pageCount field purged — writer (analyzeProject)
+  // removed, zero readers; old jsonb rows may still carry a stale value.
   summaries?: ProjectSummaries;
   yoloTags?: YoloTag[];
 }

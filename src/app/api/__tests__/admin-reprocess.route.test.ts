@@ -15,9 +15,14 @@
 //
 // ★H6 FREEZE PIN (case 4): W8 project-level merge is a BLIND spread — keys present in
 // analyzeProject's output win; EVERY other existing projectIntelligence key survives
-// (yoloTags, classCsiOverrides, unknown/future keys). PROJECT_REPROCESS_COMPUTED_KEYS is
-// dead code; the pin is the spread semantics, NOT a 4-key refresh. Wlib
-// (computeProjectSummaries) re-reads AFTER W8 and must also preserve those keys.
+// (yoloTags, classCsiOverrides, unknown/future keys). The pin is the spread semantics,
+// NOT a key-list refresh (the dead PROJECT_REPROCESS_COMPUTED_KEYS const was deleted
+// jul9 P2-A S3). Wlib (computeProjectSummaries) re-reads AFTER W8 and must also
+// preserve those keys.
+// [refactor jul9 P2-A S2] projectIntelligence.pageCount purged (was analyzeProject's
+// only unconditionally-emitted key): "was processed" witnesses swapped to the
+// stale-disciplines REFRESH (seed a stale value → W8 lays over/drops it) + Wlib's
+// `summaries` presence. Owner-sanctioned same-commit pin swap, P2_STATE 2026-07-09.
 //
 // Mocks: @/lib/s3, @/lib/pdf-rasterize, @/lib/lambda-cv, @/lib/keynotes,
 // @/lib/text-region-classifier-debug (side-effectful edges only). The intelligence/full
@@ -217,10 +222,10 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     expect(pi.yoloTags).toEqual(seededPi.yoloTags);
     expect(pi.classCsiOverrides).toEqual(seededPi.classCsiOverrides);
     expect(pi.futureKey).toEqual(seededPi.futureKey);
-    // analyzeProject keys WIN (blind spread): pageCount always emitted; the stale
-    // disciplines is laid over by the fresh (empty→undefined→dropped) value
-    expect(pi.pageCount).toBe(1);
-    expect(pi.disciplines).not.toEqual(["stale-discipline"]);
+    // analyzeProject keys WIN (blind spread): the stale disciplines is laid over by
+    // the fresh value — empty this run → undefined → dropped by the jsonb write, so
+    // the key must be GONE (also the "W8 ran" witness; pageCount purged jul9 P2-A S2)
+    expect(pi).not.toHaveProperty("disciplines");
     // Wlib (computeProjectSummaries) layered `summaries` AFTER W8 without clobbering
     expect(pi.summaries).toBeDefined();
     expect(typeof row.projectSummary).toBe("string");
@@ -318,7 +323,11 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
 
   // ── projectIds filter (case 7 — publicId contract) ───────────────────────────
   it("body {projectIds:[publicId]} scopes the run; unlisted projects untouched", async () => {
-    const { company, user, project: projA } = await createWorld();
+    // stale disciplines = the "A processed" witness (W8 refreshes it away);
+    // pageCount purged jul9 P2-A S2
+    const { company, user, project: projA } = await createWorld({
+      projectIntelligence: { disciplines: ["stale-A"] } as any,
+    });
     const admin = await createUser(company.id, { role: "admin" });
     const projB = await createProject(company.id, user.id, {
       projectIntelligence: { marker: "untouched" } as any,
@@ -338,7 +347,10 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
 
     const [rowA] = await db.select().from(projects).where(eq(projects.id, projA.id));
     const [rowB] = await db.select().from(projects).where(eq(projects.id, projB.id));
-    expect((rowA.projectIntelligence as any)?.pageCount).toBe(1); // A processed
+    // A processed: W8 ran → seeded stale disciplines refreshed away (empty run →
+    // key dropped) AND Wlib layered summaries
+    expect(rowA.projectIntelligence).not.toHaveProperty("disciplines");
+    expect((rowA.projectIntelligence as any)?.summaries).toBeDefined();
     expect(rowB.projectIntelligence).toEqual({ marker: "untouched" }); // B byte-identical
   }, 30000);
 
@@ -566,7 +578,11 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
 
   // ── T2 demo-write exclusion (P1-review, owner-sanctioned 2026-07-08) ─────────
   it("T2: isDemo projects are EXCLUDED from reprocess — not counted, never written", async () => {
-    const { company, user, project: normal } = await createWorld();
+    // stale disciplines = the "normal processed" witness (W8 refreshes it away);
+    // pageCount purged jul9 P2-A S2
+    const { company, user, project: normal } = await createWorld({
+      projectIntelligence: { disciplines: ["stale-normal"] } as any,
+    });
     const admin = await createUser(company.id, { role: "admin" });
     const demoProj = await createProject(company.id, user.id, {
       isDemo: true,
@@ -583,7 +599,9 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     const [demoRow] = await db.select().from(projects).where(eq(projects.id, demoProj.id));
     expect(demoRow.projectIntelligence).toEqual({ curated: "demo-content" }); // byte-untouched
     const [normalRow] = await db.select().from(projects).where(eq(projects.id, normal.id));
-    expect((normalRow.projectIntelligence as any)?.pageCount).toBe(1); // normal still processed
+    // normal still processed: stale disciplines refreshed away + Wlib summaries present
+    expect(normalRow.projectIntelligence).not.toHaveProperty("disciplines");
+    expect((normalRow.projectIntelligence as any)?.summaries).toBeDefined();
   }, 30000);
 
   // ── §E-a body policy (case 17 — owner-locked 2026-07-08: PRESERVE the swallow) ─

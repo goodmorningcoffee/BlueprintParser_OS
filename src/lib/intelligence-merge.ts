@@ -27,7 +27,9 @@ export const REPROCESS_COMPUTED_KEYS = [
   "classifiedRegions",
   "yoloHeatmap",
   "ensembleRegions",
-  "autoTableProposals",
+  // [refactor jul9 P2-A S1] "autoTableProposals" purged — zero readers repo-wide
+  // (U1-F1); both writers (yolo Stage 2c + reprocess Stage 2c) removed same commit.
+  // Old rows keep the stored key as an unknown-key survivor: harmless dead data.
   "csiSpatialMap",
 ] as const;
 
@@ -48,7 +50,7 @@ export function carryNonComputedIntelligence(existing: unknown): Record<string, 
 // [bugfix jul5 H6/DR002] PROJECT-level analogue of the page-level G3 policy.
 //
 // projects.projectIntelligence is ALSO mixed-ownership jsonb: analyzeProject()
-// recomputes {disciplines, refGraph, csiGraph, pageCount}, but user-owned keys
+// recomputes {disciplines, refGraph, csiGraph}, but user-owned keys
 // live alongside them — classCsiOverrides AND yoloTags (curated in the viewer,
 // persisted via the projects PUT merge). Both project-analysis write sites
 // (admin/reprocess?scope=intelligence and the upload-pipeline re-run) used a
@@ -63,13 +65,11 @@ export function carryNonComputedIntelligence(existing: unknown): Record<string, 
 // stale computed key still disappears when it genuinely computes to nothing,
 // byte-identical to the old behavior for the computed set.
 
-/** Keys the project-level analysis recomputes every run (informational). */
-export const PROJECT_REPROCESS_COMPUTED_KEYS = [
-  "disciplines",
-  "refGraph",
-  "csiGraph",
-  "pageCount",
-] as const;
+// [refactor jul9 P2-A S2+S3] PROJECT_REPROCESS_COMPUTED_KEYS deleted — it was
+// declared-never-referenced (U1-F6; the S062 freeze pinned the BLIND-spread
+// semantics, not a key list). projectIntelligence.pageCount purged with it:
+// writer was project-analysis.ts analyzeProject(), zero readers (U1-F2). Old
+// rows keep their stale stored pageCount as an unknown-key survivor.
 
 /**
  * Merge freshly-computed project intelligence over the existing jsonb:
