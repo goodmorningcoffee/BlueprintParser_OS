@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo, useState, useCallback, useRef } from "react";
-import { useViewerStore, useSummaries, useProject } from "@/stores/viewerStore";
+import { useQueryClient } from "@tanstack/react-query";
+import { useViewerStore, useProject } from "@/stores/viewerStore";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
+import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
 import HelpTooltip from "./HelpTooltip";
 import KeynoteItem from "./KeynoteItem";
 import CompareEditTab from "./CompareEditTab";
@@ -71,6 +74,9 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
   const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
   const { publicId } = useProject();
+  // [refactor jul10 P2.2③] context-only handle for the two promote-refresher cache seeds below
+  // (saveKeynoteToIntelligence + the guided-parse save) — zero subscription.
+  const queryClient = useQueryClient();
 
   // Guided parse state
   const guidedParseActive = useViewerStore((s) => s.guidedParseActive);
@@ -179,9 +185,12 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       });
       // Adopt the server's authoritative intelligence + summaries.
       setPageIntelligence(pageNumber, result.updatedIntelligence as any);
-      if (result.summaries) useViewerStore.getState().setSummaries(result.summaries as any);
+      // [refactor jul10 P2.2③] cache seed under the render `publicId` (useProject) — the same id
+      // the promote request above used (SPEC §5-S3). Guard KEPT: promote returns summaries:null
+      // on real paths (compute-reject swallow) and must not clear live data.
+      if (result.summaries) seedSummariesCache(queryClient, publicId, result.summaries as any);
     }
-  }, [pageNumber, keynoteParseRegion, setPageIntelligence, publicId]);
+  }, [pageNumber, keynoteParseRegion, setPageIntelligence, publicId, queryClient]);
 
   const [autoParsing, setAutoParsing] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -595,7 +604,11 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           csiTags,
         });
         store.setPageIntelligence(pageNumber, promoteResult.updatedIntelligence as any);
-        if (promoteResult.summaries) store.setSummaries(promoteResult.summaries as any);
+        // [refactor jul10 P2.2③] was the ODD site: `store.setSummaries(...)` off the :542
+        // getState() capture, not the getState().setSummaries form. Now the shared cache seed
+        // under the render `publicId` — the same id the promote above used (SPEC §4.2, §5-S3).
+        // Guard KEPT (summaries:null on real paths must not clear live data).
+        if (promoteResult.summaries) seedSummariesCache(queryClient, publicId, promoteResult.summaries as any);
       }
 
       if (keys.length > 0) {
@@ -613,7 +626,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       // Clearing isSavingRef last so the guard only lifts once we're done.
       isSavingRef.current = false;
     }
-  }, [pageNumber, publicId, guidedParseRows, guidedParseCols, guidedParseRegion, resetGuidedParse, resetKeynoteParse, addParsedKeynote, mapKeynoteKeysToYoloTags]);
+  }, [pageNumber, publicId, guidedParseRows, guidedParseCols, guidedParseRegion, resetGuidedParse, resetKeynoteParse, addParsedKeynote, mapKeynoteKeysToYoloTags, queryClient]);
 
   // ─── Repeat row down ───────────────────────────────────
   const repeatRowDown = useCallback((rowBB: [number, number, number, number]) => {

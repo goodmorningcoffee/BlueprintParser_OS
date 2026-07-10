@@ -2,7 +2,12 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
+// [refactor jul10 P2.2③] FIRST-EVER queryClient plumbing in the demo loader (chat never seeded it —
+// getDemoProject omits chatMessages). The root layout wraps /demo in <Providers>, so the
+// QueryClient context is available here.
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { seedSummariesCache } from "@/queries/useSummaries";
 import { useSearch } from "@/hooks/useSearch";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
@@ -68,6 +73,8 @@ export default function DemoProjectPage() {
   const setIsDemo = useViewerStore((s) => s.setIsDemo);
   const resetProjectData = useViewerStore((s) => s.resetProjectData);
   const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
+  // [refactor jul10 P2.2③] summaries now live in the query cache; the loader seeds it below.
+  const queryClient = useQueryClient();
 
   const load = useCallback(async () => {
     try {
@@ -112,9 +119,17 @@ export default function DemoProjectPage() {
         useViewerStore.getState().setDemoFeatureConfig(data.demoConfig);
       }
 
-      // Hydrate summaries
+      // Load summaries into the TanStack Query cache (facade — no longer a zustand field).
+      // [refactor jul10 P2.2③] UNCONDITIONAL publicId-scoped seed (`?? null` in the helper):
+      // reproduces reset-then-conditional-set net behavior; a conditional seed would retain a
+      // stale same-key entry when the demo response omits summaries. Seed-before-reveal: runs
+      // before setLoading(false); consumers unmount behind the `loading` gate. This is a
+      // read-side cache write of server-provided data, NOT a persistence mutation — the
+      // demo-never-writes invariant is untouched (SPEC §7).
+      seedSummariesCache(queryClient, data.id, data.summaries);
+      // Guard KEEPS its 4 piggybacks — allTrades/allCsiCodes/detection models AND the demo-only
+      // setModelConfidence(name, 0) loop are separate, non-migrating zustand fields.
       if (data.summaries) {
-        useViewerStore.getState().setSummaries(data.summaries);
         setAllTrades(data.summaries.allTrades);
         setAllCsiCodes(data.summaries.allCsiCodes);
         if (data.summaries.annotationSummary.modelNames.length > 0) {
@@ -200,7 +215,7 @@ export default function DemoProjectPage() {
     } finally {
       setLoading(false);
     }
-  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, initDetectionModels, setPageNames, setPageDrawingNumbers, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData, csiParam, qParam, setCsiFilter]);
+  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, initDetectionModels, setPageNames, setPageDrawingNumbers, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData, csiParam, qParam, setCsiFilter, queryClient]);
 
   useEffect(() => {
     load();

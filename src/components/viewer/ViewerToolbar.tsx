@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useViewerStore, useNavigation, useProject, usePanels, usePageData, useDetection, useSummaries } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useProject, usePanels, usePageData, useDetection } from "@/stores/viewerStore";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
+import { useSummaries } from "@/queries/useSummaries";
 import Link from "next/link";
 import LabelingWizard from "./LabelingWizard";
 import HelpTooltip from "./HelpTooltip";

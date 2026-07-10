@@ -22,7 +22,10 @@ const SLICES = [
   // purpose described table-parse state). The store selector is deleted; the facade lives in
   // src/queries/useQtoWorkflows.ts (list → query cache; activeQtoWorkflow stays zustand).
   { name: "useQtoWorkflows",         line: 2141, purpose: "→ src/queries facade (P2.2②): list in query cache, active stays zustand" },
-  { name: "useSummaries",            line: 1977, purpose: "summary arrays + chunk loader state" },
+  // [refactor jul10 P2.2③] row rewritten: the store selector is deleted (its `line: 1977` was
+  // already stale); the facade lives in src/queries/useSummaries.ts (summaries → query cache;
+  // chunk-loader state loadedPageRange/chunkLoading stays zustand until domain ⑦).
+  { name: "useSummaries",            line: 2145, purpose: "→ src/queries facade (P2.2③): summaries in query cache, chunk-loader state stays zustand" },
 ];
 
 export function StoreSliceHookMap() {

@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useNavigation, useProject, usePageData, useDetection, useTextAnnotationDisplay, useYoloTags, useSymbolSearch, useSummaries } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useProject, usePageData, useDetection, useTextAnnotationDisplay, useYoloTags, useSymbolSearch } from "@/stores/viewerStore";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
+import { useSummaries } from "@/queries/useSummaries";
 import { findPhraseMatches } from "./SearchHighlightOverlay";
 import { extractDisciplinePrefix, disciplineOrder } from "@/lib/page-utils";
 

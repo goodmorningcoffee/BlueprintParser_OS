@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useViewerStore, useProject, useNavigation, useSummaries, isDemoFeatureEnabled } from "@/stores/viewerStore";
+import { useViewerStore, useProject, useNavigation, isDemoFeatureEnabled } from "@/stores/viewerStore";
 // [refactor jul10 P2.2②] qtoWorkflows collection moved zustand → TanStack cache; the facade hook
 // returns the same 4-field shape the old useQtoWorkflow() store selector did (SPEC §3).
 import { useQtoWorkflows } from "@/queries/useQtoWorkflows";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
+import { useSummaries } from "@/queries/useSummaries";
 import type { QtoWorkflow, QtoLineItem, QtoFlag, QtoItemType } from "@/types";
 import type { ScoredMatch, DropReason } from "@/lib/tag-mapping";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";

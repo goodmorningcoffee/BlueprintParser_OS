@@ -7,6 +7,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSearch } from "@/hooks/useSearch";
 import { seedChatCache } from "@/queries/useChatMessages";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; loader seeds the cache.
+import { seedSummariesCache } from "@/queries/useSummaries";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
@@ -119,9 +121,16 @@ export default function ProjectPage() {
         }
       }
 
-      // Hydrate summaries (powers sidebar filters, panel lists, annotation counts)
+      // Load summaries into the TanStack Query cache (facade — no longer a zustand field).
+      // [refactor jul10 P2.2③] UNCONDITIONAL publicId-scoped seed with `?? null` inside the
+      // helper: reproduces the old reset-then-conditional-set net behavior (resetProjectData
+      // nulled the field above; a conditional seed would RETAIN a stale same-key entry when the
+      // response omits summaries). Seed-before-reveal: runs before setLoading(false) and every
+      // consumer is unmounted behind the `loading` gate, so no stale flash (mirrors seedChatCache).
+      seedSummariesCache(queryClient, data.id, data.summaries);
+      // Guard KEEPS its piggybacks — allTrades/allCsiCodes/detection models are separate,
+      // non-migrating zustand fields hydrated only when summaries exist.
       if (data.summaries) {
-        useViewerStore.getState().setSummaries(data.summaries);
         setAllTrades(data.summaries.allTrades);
         setAllCsiCodes(data.summaries.allCsiCodes);
         if (data.summaries.annotationSummary.modelNames.length > 0) {

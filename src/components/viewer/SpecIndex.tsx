@@ -2,6 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache. NARROW hook on purpose: this
+// component subscribed to ONLY s.summaries — the full 6-field facade would add chunkLoading-flip
+// re-renders it never had (chunkLoading toggles on every chunk fetch; viewer perf is sacred).
+import { useSummariesData } from "@/queries/useSummaries";
 import type { SpecSummaryEntry } from "@/types";
 
 interface SpecIndexProps {
@@ -15,7 +19,7 @@ interface SpecIndexProps {
  * seeds page + specParseRegion so the Parser tab opens pre-targeted.
  */
 export default function SpecIndex({ onOpenParser }: SpecIndexProps) {
-  const summaries = useViewerStore((s) => s.summaries);
+  const { summaries } = useSummariesData();
   const setPage = useViewerStore((s) => s.setPage);
   const setSpecParseRegion = useViewerStore((s) => s.setSpecParseRegion);
   const [filter, setFilter] = useState("");

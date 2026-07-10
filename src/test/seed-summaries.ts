@@ -2,25 +2,24 @@
 //
 // This is the SPEC §6 single flip point (single-divergence rule, RECIPE 10 / SPEC §5-S7).
 // It is shared by every suite that seeds summaries (AutoQtoTab.test.tsx preflight + Q-10,
-// SummariesFreeze.test.tsx SI/NI/TPP/KP/VT/PS cases) so that the §2.2③ migration commit
-// flips exactly ONE function body and ZERO call sites:
+// SummariesFreeze.test.tsx SI/NI/TPP/KP/VT/PS cases). The §2.2③ MIGRATION COMMIT flipped
+// exactly this ONE function body and ZERO call sites:
 //
-//   PRE-migration (NOW):  summaries lives in viewerStore → write the store field.
-//   POST-migration:       the body becomes
-//     qc.setQueryData(queryKeys.summaries.all(useViewerStore.getState().publicId), summaries ?? null)
+//   PRE-migration:        summaries lived in viewerStore → useViewerStore.setState({ summaries })
+//   POST-migration (NOW): summaries live in the TanStack Query cache → write the publicId-keyed
+//                         cache entry, exactly like the production seed sites do.
 //
-// `qc` is deliberately accepted (and unused) TODAY so the flip needs no call-site churn —
-// the QueryClient is per-test-file state and cannot be imported from here.
-// Call AFTER setting `publicId` in the store: post-migration the cache key derives from it.
-// The `?? null` in the future body is LOAD-BEARING (RQ v5 setQueryData(key, undefined) is a
-// silent no-op — SPEC §2.1); the store write needs no coercion because callers pass
-// `ProjectSummaries | null` already.
+// Call AFTER setting `publicId` in the store: the cache key derives from it. Every existing
+// call site (AutoQtoTab beforeEach, Q-11 openProject, SummariesFreeze beforeEach) satisfies this.
+// The `?? null` is LOAD-BEARING (RQ v5 setQueryData(key, undefined) is a silent no-op — SPEC
+// §2.1) and mirrors the production seedSummariesCache; the param type already forbids undefined
+// but the coercion keeps the helper faithful to the production write shape.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { queryKeys } from "@/queries/queryKeys";
 import type { ProjectSummaries } from "@/types";
 
 export function seedSummaries(qc: QueryClient, summaries: ProjectSummaries | null): void {
-  void qc; // unused pre-migration; the post-migration body writes the query cache through it
-  useViewerStore.setState({ summaries });
+  qc.setQueryData(queryKeys.summaries.all(useViewerStore.getState().publicId), summaries ?? null);
 }

@@ -17,7 +17,6 @@ import type {
   SymbolSearchResult,
   SymbolSearchMatch,
   QtoWorkflow,
-  ProjectSummaries,
   AnnotationGroup,
   ParsedRegion,
   TextractLine,
@@ -155,9 +154,9 @@ interface ViewerState {
   labelingCredentials: { email: string; password: string } | null;
   setLabelingCredentials: (creds: { email: string; password: string } | null) => void;
 
-  // ─── Project Summaries (chunking support) ────────────────
-  summaries: ProjectSummaries | null;
-  setSummaries: (s: ProjectSummaries | null) => void;
+  // ─── Chunk-loader state (Project Summaries support) ──────
+  // [refactor jul10 P2.2③] summaries/setSummaries moved to the TanStack Query cache — facade in
+  // src/queries/useSummaries.ts. The chunk-loader pair below is domain ⑦'s surface; stays zustand.
   loadedPageRange: { from: number; to: number } | null;
   setLoadedPageRange: (range: { from: number; to: number } | null) => void;
   chunkLoading: boolean;
@@ -861,8 +860,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   labelingCredentials: null,
   setLabelingCredentials: (labelingCredentials) => set({ labelingCredentials }),
 
-  summaries: null,
-  setSummaries: (summaries) => set({ summaries }),
   loadedPageRange: null,
   setLoadedPageRange: (loadedPageRange) => set({ loadedPageRange }),
   chunkLoading: false,
@@ -1709,7 +1706,10 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       isDemo: false,
       demoFeatureConfig: null,
       projectIntelligenceData: null,
-      summaries: null,
+      // [refactor jul10 P2.2③] `summaries: null` reset line deleted — summaries live in the query
+      // cache now (publicId-keyed entries give free cross-project isolation; the old key's entry
+      // persists but is unobservable: reset sets publicId:"" which re-keys every subscriber, and
+      // consumers are unmounted behind the loaders' `loading` gates until the fresh seed lands).
       loadedPageRange: null,
       chunkLoading: false,
       showLabelingWizard: false,
@@ -2142,13 +2142,9 @@ export const useAnnotationFilters = () =>
 // uses the cache facade src/queries/useQtoWorkflows.ts, which also surfaces the zustand-resident
 // activeQtoWorkflow pair. (Unlike chat's useChat, no second caller kept a slice alive.)
 
-export const useSummaries = () =>
-  useViewerStore(useShallow((s) => ({
-    summaries: s.summaries,
-    setSummaries: s.setSummaries,
-    loadedPageRange: s.loadedPageRange,
-    setLoadedPageRange: s.setLoadedPageRange,
-    chunkLoading: s.chunkLoading,
-    setChunkLoading: s.setChunkLoading,
-  })));
+// [refactor jul10 P2.2③] useSummaries selector DELETED — the NAME moved to the facade in
+// src/queries/useSummaries.ts (same 6-field shape: summaries/setSummaries cache-backed,
+// loadedPageRange/chunkLoading pairs passed through from this store until ⑦), so any stale
+// `useSummaries` import from here compile-breaks instead of silently reading a dead slice.
+// A shrunk same-name store selector was explicitly rejected for that reason (SPEC §3).
 

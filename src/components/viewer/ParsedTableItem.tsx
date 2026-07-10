@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
+import { seedSummariesCache } from "@/queries/useSummaries";
 // [refactor jul6 S029] apiErrorMessage: table-structure non-OK now serves the envelope
 import { promoteParsedRegion, canPersist, apiErrorMessage } from "@/lib/client-persist";
 import type { YoloTag } from "@/types";
@@ -32,6 +35,8 @@ export default memo(function ParsedTableItem({
   onDelete,
   focusedParsedRegionId,
 }: ParsedTableItemProps) {
+  // [refactor jul10 P2.2③] context-only handle for the summaries cache seed (zero subscription).
+  const queryClient = useQueryClient();
   const itemRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -208,8 +213,12 @@ export default memo(function ParsedTableItem({
     });
     // Adopt server-authoritative intelligence + summaries.
     useViewerStore.getState().setPageIntelligence(table.pageNum, result.updatedIntelligence as any);
-    if (result.summaries) useViewerStore.getState().setSummaries(result.summaries as any);
-  }, [publicId, table.pageNum, table.region]);
+    // [refactor jul10 P2.2③] cache seed under the `publicId` PROP — the id the promote request
+    // used (SPEC §5-S3). Guard KEPT: promote returns summaries:null on real paths and must not
+    // clear live data. useQueryClient is context-only — no per-item subscription (perf: this is a
+    // per-row list component; a useQuery here would re-render every row on every summaries write).
+    if (result.summaries) seedSummariesCache(queryClient, publicId, result.summaries as any);
+  }, [publicId, table.pageNum, table.region, queryClient]);
 
   const saveName = async () => {
     const trimmed = nameValue.trim();

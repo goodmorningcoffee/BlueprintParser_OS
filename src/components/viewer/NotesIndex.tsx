@@ -2,6 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache. NARROW hook on purpose: this
+// component subscribed to ONLY s.summaries — the full 6-field facade would add chunkLoading-flip
+// re-renders it never had (chunkLoading toggles on every chunk fetch; viewer perf is sacred).
+import { useSummariesData } from "@/queries/useSummaries";
 import type { NotesSummaryEntry } from "@/types";
 
 interface NotesIndexProps {
@@ -24,7 +28,7 @@ interface NotesIndexProps {
  *      when notesParseRegion was already set on a prior row
  */
 export default function NotesIndex({ onOpenParser }: NotesIndexProps) {
-  const summaries = useViewerStore((s) => s.summaries);
+  const { summaries } = useSummariesData();
   const setPage = useViewerStore((s) => s.setPage);
   const setNotesParseRegion = useViewerStore((s) => s.setNotesParseRegion);
   const [filter, setFilter] = useState("");

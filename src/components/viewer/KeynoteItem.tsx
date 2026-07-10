@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
+import { seedSummariesCache } from "@/queries/useSummaries";
 import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import type { YoloTag } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
@@ -39,6 +42,9 @@ export default function KeynoteItem({
   region,
   publicId,
 }: KeynoteItemProps) {
+  // [refactor jul10 P2.2③] context-only handle for the summaries cache seed (zero subscription —
+  // per-item list component; a useQuery here would re-render every row on every summaries write).
+  const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editNote, setEditNote] = useState("");
@@ -131,7 +137,10 @@ export default function KeynoteItem({
         csiTags: matchedCsiTags,
       });
       useViewerStore.getState().setPageIntelligence(keynote.pageNumber, result.updatedIntelligence as any);
-      if (result.summaries) useViewerStore.getState().setSummaries(result.summaries as any);
+      // [refactor jul10 P2.2③] cache seed under the `publicId` PROP (the id the promote used;
+      // SPEC §5-S3) — non-null assertion is safe: canPersist gated above. Guard KEPT (promote
+      // returns summaries:null on real paths; must not clear live data).
+      if (result.summaries) seedSummariesCache(queryClient, publicId!, result.summaries as any);
     } catch (err) {
       setNameError(err instanceof Error ? err.message : "Could not save name");
     }

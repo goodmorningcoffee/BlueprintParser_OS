@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
-import { useViewerStore, useSummaries, useProject } from "@/stores/viewerStore";
+import { useQueryClient } from "@tanstack/react-query";
+import { useViewerStore, useProject } from "@/stores/viewerStore";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
+import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
 import ParsedTableItem from "./ParsedTableItem";
 import AutoParseTab from "./AutoParseTab";
 import GuidedParseTab from "./GuidedParseTab";
@@ -20,6 +23,9 @@ import type { ScoredMatch } from "@/lib/tag-mapping";
  * All Tables tab is rendered inline (small).
  */
 export default function TableParsePanel() {
+  // [refactor jul10 P2.2③] context-only handle for the promote-refresher cache seed below —
+  // useQueryClient carries ZERO subscription (no re-render on summaries writes).
+  const queryClient = useQueryClient();
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
   const toggleTableParsePanel = useViewerStore((s) => s.toggleTableParsePanel);
@@ -181,7 +187,11 @@ export default function TableParsePanel() {
         });
         // Adopt the server's authoritative intelligence + summaries.
         setPageIntelligence(pageNumber, result.updatedIntelligence as any);
-        if (result.summaries) useViewerStore.getState().setSummaries(result.summaries as any);
+        // [refactor jul10 P2.2③] cache seed under `pid` — the handler-time publicId the promote
+        // request itself used — NOT a render-captured id (a mid-await project switch must not leak
+        // this response into another project's entry; SPEC §5-S3). Guard KEPT: promote returns
+        // summaries:null on real paths (compute-reject swallow) and must not clear live data.
+        if (result.summaries) seedSummariesCache(queryClient, pid, result.summaries as any);
         refreshPageCsiSpatialMap(pageNumber);
       } else {
         // Demo / no publicId: optimistic local-only save so the region renders.
@@ -203,7 +213,7 @@ export default function TableParsePanel() {
     } finally {
       isSavingRef.current = false;
     }
-  }, [pageNumber, saveParsedToIntelligence, resetTableParse, setPageIntelligence]);
+  }, [pageNumber, saveParsedToIntelligence, resetTableParse, setPageIntelligence, queryClient]);
 
   // ─── Shared memos ─────────────────────────────────────────
   const autoDetectedTables = useMemo(() => {

@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
+import { seedSummariesCache } from "@/queries/useSummaries";
 import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import EditableGrid from "./EditableGrid";
 
@@ -17,6 +20,8 @@ interface TableCompareModalProps {
  * Mode B: Overlay — parsed text overlaid on original image with adjustable opacity.
  */
 export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
+  // [refactor jul10 P2.2③] context-only handle for the summaries cache seed (zero subscription).
+  const queryClient = useQueryClient();
   const toggleModal = useViewerStore((s) => s.toggleTableCompareModal);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
@@ -474,14 +479,17 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
         csiTags: matchedCsiTags,
       });
       useViewerStore.getState().setPageIntelligence(pageNumber, result.updatedIntelligence as any);
-      if (result.summaries) useViewerStore.getState().setSummaries(result.summaries as any);
+      // [refactor jul10 P2.2③] cache seed under the handler-time `publicId` (destructured from
+      // the getState() `store` capture above — the id the promote request used; SPEC §5-S3).
+      // Guard KEPT: promote returns summaries:null on real paths; must not clear live data.
+      if (result.summaries) seedSummariesCache(queryClient, publicId, result.summaries as any);
       toggleModal();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Could not save edits");
     } finally {
       setSavingDone(false);
     }
-  }, [pageNumber, toggleModal]);
+  }, [pageNumber, toggleModal, queryClient]);
 
   if (!tableParsedGrid || !tableParseRegion) return null;
 
