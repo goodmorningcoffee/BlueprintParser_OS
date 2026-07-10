@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useViewerStore, useProject, useNavigation, useQtoWorkflow, useSummaries, isDemoFeatureEnabled } from "@/stores/viewerStore";
+import { useViewerStore, useProject, useNavigation, useSummaries, isDemoFeatureEnabled } from "@/stores/viewerStore";
+// [refactor jul10 P2.2②] qtoWorkflows collection moved zustand → TanStack cache; the facade hook
+// returns the same 4-field shape the old useQtoWorkflow() store selector did (SPEC §3).
+import { useQtoWorkflows } from "@/queries/useQtoWorkflows";
 import type { QtoWorkflow, QtoLineItem, QtoFlag, QtoItemType } from "@/types";
 import type { ScoredMatch, DropReason } from "@/lib/tag-mapping";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
@@ -93,7 +96,7 @@ function computeQtoPreflight(
 export default function AutoQtoTab() {
   const { publicId } = useProject();
   const { setPage } = useNavigation();
-  const { activeQtoWorkflow, setActiveQtoWorkflow, qtoWorkflows, setQtoWorkflows } = useQtoWorkflow();
+  const { activeQtoWorkflow, setActiveQtoWorkflow, qtoWorkflows, setQtoWorkflows } = useQtoWorkflows();
   const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
   const pageNames = useViewerStore((s) => s.pageNames);
   const isDemo = useViewerStore((s) => s.isDemo);
@@ -166,19 +169,9 @@ export default function AutoQtoTab() {
     [summaries],
   );
 
-  // Load workflows from API on mount (skip for demo — no persisted workflows)
-  useEffect(() => {
-    if (!publicId || isDemo) return;
-    const controller = new AbortController();
-    fetch(`/api/qto-workflows?projectId=${publicId}`, { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : []))
-      .then(setQtoWorkflows)
-      .catch((err) => {
-        if (err.name === "AbortError") return;
-        console.error("[auto-qto] Failed to load workflows:", err);
-      });
-    return () => controller.abort();
-  }, [publicId, isDemo, setQtoWorkflows]);
+  // [refactor jul10 P2.2②] The fetch-on-mount effect that lived here moved INTO useQtoWorkflows'
+  // queryFn (staleTime:0 + refetchOnMount reproduce fetch-on-every-mount; enabled gate reproduces
+  // the `if (!publicId || isDemo) return` guard; non-ok→[] list-clear preserved). SPEC §2/§4.
 
   const startWorkflow = useCallback(async (materialType: string, materialLabel: string) => {
     if (!publicId) return;

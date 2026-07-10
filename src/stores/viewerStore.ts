@@ -388,10 +388,11 @@ interface ViewerState {
   takeoffRedo: () => void;
 
   // ─── Auto-QTO ────────────────────────────────────────────
+  // [refactor jul10 P2.2②] qtoWorkflows COLLECTION moved to the TanStack cache
+  // (src/queries/useQtoWorkflows.ts). The active pointer stays here: it is a UI-selection /
+  // in-progress draft, not a server collection (P2_DESIGN/QTO_IMPL/SPEC.md §3).
   activeQtoWorkflow: QtoWorkflow | null;
   setActiveQtoWorkflow: (w: QtoWorkflow | null) => void;
-  qtoWorkflows: QtoWorkflow[];
-  setQtoWorkflows: (workflows: QtoWorkflow[]) => void;
 
   // ─── Table Parse ───────────────────────────────────────
   showTableParsePanel: boolean;
@@ -1233,11 +1234,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     };
   }),
 
-  // ─── Auto-QTO ────────────────────────────────────────────
+  // ─── Auto-QTO ──────────────────────────────────────────── (collection → query cache, P2.2②)
   activeQtoWorkflow: null,
   setActiveQtoWorkflow: (activeQtoWorkflow) => set({ activeQtoWorkflow }),
-  qtoWorkflows: [],
-  setQtoWorkflows: (qtoWorkflows) => set({ qtoWorkflows }),
 
   showTableParsePanel: false,
   toggleTableParsePanel: () =>
@@ -1756,7 +1755,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       activeTakeoffItemId: null,
       takeoffTab: "count",
       activeQtoWorkflow: null,
-      qtoWorkflows: [],
+      // qtoWorkflows: cache-backed since P2.2② — reset deliberately does NOT touch the query
+      // cache (RECIPE step 7; publicId-keyed isolation makes it unnecessary, SPEC §7).
       pageDimensions: {},
       scaleCalibrations: {},
       calibrationMode: "idle",
@@ -2138,14 +2138,9 @@ export const useAnnotationFilters = () =>
     hiddenAnnotationIds: s.hiddenAnnotationIds,
   })));
 
-/** Auto-QTO workflow state */
-export const useQtoWorkflow = () =>
-  useViewerStore(useShallow((s) => ({
-    activeQtoWorkflow: s.activeQtoWorkflow,
-    setActiveQtoWorkflow: s.setActiveQtoWorkflow,
-    qtoWorkflows: s.qtoWorkflows,
-    setQtoWorkflows: s.setQtoWorkflows,
-  })));
+// [refactor jul10 P2.2②] useQtoWorkflow selector DELETED — its sole consumer (AutoQtoTab) now
+// uses the cache facade src/queries/useQtoWorkflows.ts, which also surfaces the zustand-resident
+// activeQtoWorkflow pair. (Unlike chat's useChat, no second caller kept a slice alive.)
 
 export const useSummaries = () =>
   useViewerStore(useShallow((s) => ({

@@ -33,12 +33,13 @@ vi.mock("@/lib/client-persist", async (importOriginal) => {
 const persistFetchMock = vi.mocked(persistFetch);
 
 // ── seedQtoWorkflows: THE sanctioned divergence point ────────────────────────
-// PRE-migration (current): the collection lives in zustand. POST-migration this ONE helper —
-// nothing else in the file — flips to the cache write:
-//   qc.setQueryData(queryKeys.qtoWorkflows.all(useViewerStore.getState().publicId), rows);
+// POST-migration (the collection lives in the query cache): seed the per-publicId cache entry the
+// facade hook reads. (Pre-migration this wrote useViewerStore.setState({ qtoWorkflows: rows });
+// flipping this ONE helper body — nothing else in the file — was the entire test-side delta of
+// the migration. Demo/failure cases only; non-demo cases seed via the GET mock, SPEC §6.1.)
 let qc: QueryClient;
 function seedQtoWorkflows(rows: QtoWorkflow[]) {
-  useViewerStore.setState({ qtoWorkflows: rows });
+  qc.setQueryData(queryKeys.qtoWorkflows.all(useViewerStore.getState().publicId), rows);
 }
 
 function wrapper({ children }: { children: ReactNode }) {

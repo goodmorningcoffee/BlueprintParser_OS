@@ -18,7 +18,10 @@ const SLICES = [
   { name: "useYoloTags",             line: 1921, purpose: "tags, activeId, visibility, picking mode" },
   { name: "useTextAnnotationDisplay",line: 1940, purpose: "shown types + colors + hidden set" },
   { name: "useAnnotationFilters",    line: 1956, purpose: "active filter, csi filter, trade filter" },
-  { name: "useQtoWorkflow",          line: 1969, purpose: "active wf, cell structure, toggleCellHighlight" },
+  // [refactor jul10 P2.2②] row rewritten: the old entry was doubly stale (line pointed at useChat;
+  // purpose described table-parse state). The store selector is deleted; the facade lives in
+  // src/queries/useQtoWorkflows.ts (list → query cache; activeQtoWorkflow stays zustand).
+  { name: "useQtoWorkflows",         line: 2141, purpose: "→ src/queries facade (P2.2②): list in query cache, active stays zustand" },
   { name: "useSummaries",            line: 1977, purpose: "summary arrays + chunk loader state" },
 ];
 
