@@ -17,13 +17,16 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import "@testing-library/jest-dom";
-import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor, within, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import AutoQtoTab from "../AutoQtoTab";
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import { persistFetch } from "@/lib/client-persist";
+// [refactor jul10 P2.2③] summaries seeds now route through the SHARED seedSummaries helper —
+// the ③ migration's single test-side flip point (its body moves store→cache; call sites frozen).
+import { seedSummaries } from "@/test/seed-summaries";
 import type { QtoWorkflow } from "@/types";
 
 vi.mock("@/lib/client-persist", async (importOriginal) => {
@@ -70,20 +73,20 @@ function wf(over: Partial<QtoWorkflow> & { id: number }): QtoWorkflow {
 }
 
 // Preflight-satisfying summaries: the strict exclusion classes must have count>0 or the material
-// picker hard-blocks (AutoQtoTab computeQtoPreflight). Seeded via the summaries STORE field —
-// that's domain ③, still zustand-backed; when ③ migrates, its own recipe flips this seed.
+// picker hard-blocks (AutoQtoTab computeQtoPreflight). [refactor jul10 P2.2③] Routed through the
+// shared seedSummaries helper (domain ③'s sanctioned flip point) — when ③ migrates, ONLY the
+// helper body changes (store field → query cache); this file stays byte-identical.
+const PREFLIGHT_OK_SUMMARIES = {
+  annotationSummary: {
+    categoryCounts: {
+      tables: { count: 3 },
+      title_block: { count: 2 },
+      drawings: { count: 5 },
+    },
+  },
+} as never;
 function seedPreflightOk() {
-  useViewerStore.setState({
-    summaries: {
-      annotationSummary: {
-        categoryCounts: {
-          tables: { count: 3 },
-          title_block: { count: 2 },
-          drawings: { count: 5 },
-        },
-      },
-    } as never,
-  });
+  seedSummaries(qc, PREFLIGHT_OK_SUMMARIES);
 }
 
 const fetchMock = vi.fn();
@@ -322,9 +325,13 @@ describe("AutoQtoTab — updateWorkflowStep, demo (Q-9)", () => {
   });
 });
 
+// Hard-block summaries: empty categoryCounts fails every strict preflight class.
+// [refactor jul10 P2.2③] shared between Q-10 and AQT-R; seeded via the shared helper.
+const HARD_BLOCK_SUMMARIES = { annotationSummary: { categoryCounts: {} } } as never;
+
 describe("AutoQtoTab — preflight hard block (Q-10)", () => {
   it("missing strict YOLO classes: warning shown, material buttons disabled, no workflow creatable", async () => {
-    useViewerStore.setState({ summaries: { annotationSummary: { categoryCounts: {} } } as never });
+    seedSummaries(qc, HARD_BLOCK_SUMMARIES);
     mockQtoGet({ pid: [] });
     renderTab();
 
@@ -332,6 +339,32 @@ describe("AutoQtoTab — preflight hard block (Q-10)", () => {
     const doors = screen.getByRole("button", { name: /^D ?Doors$/ });
     expect(doors).toBeDisabled();
     fireEvent.click(doors);
+    expect(persistFetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("AutoQtoTab — live summaries write clears the hard block (AQT-R, §2.2③)", () => {
+  // [refactor jul10 P2.2③] THE imperative-write→subscribed-read pin for the summaries domain
+  // (SPEC §6 AQT-R / §5-S1). The 6 production refresher sites (promote responses) all reduce to
+  // one imperative summaries write while a subscriber is mounted — that write form is exactly
+  // seedSummaries() here, so this case is backing-agnostic without promote-fetch plumbing.
+  // Old backing: zustand notifies synchronously; new backing: RQ notifies via microtask — hence
+  // the waitFor reads (sync asserts would false-pass now and flake post-migration).
+  it("hard-blocked mount → summaries write → warning clears + material buttons enable", async () => {
+    seedSummaries(qc, HARD_BLOCK_SUMMARIES);
+    mockQtoGet({ pid: [] });
+    renderTab();
+
+    // prove the block actually rendered (de-vacuates the clear assertion below)
+    expect(screen.getByText(/Can't run Auto-QTO yet/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^D ?Doors$/ })).toBeDisabled();
+
+    // the production write form, mid-mount (act: a bare store/cache write outside React events)
+    act(() => seedSummaries(qc, PREFLIGHT_OK_SUMMARIES));
+
+    await waitFor(() => expect(screen.queryByText(/Can't run Auto-QTO yet/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /^D ?Doors$/ })).not.toBeDisabled());
+    // still no writes fired — this is a read-side unblock, not a workflow action
     expect(persistFetchMock).not.toHaveBeenCalled();
   });
 });
