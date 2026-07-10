@@ -10,7 +10,7 @@ import { seedChatCache } from "@/queries/useChatMessages";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; loader seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
 // [refactor jul10 P2.2④] takeoff items+groups moved zustand → TanStack cache; loader seeds both keys.
-import { seedTakeoffCache } from "@/queries/useTakeoff";
+import { seedTakeoffFromBootstrap } from "@/queries/useTakeoff";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
@@ -164,7 +164,10 @@ export default function ProjectPage() {
       // (resetProjectData cleared both arrays above; a conditional seed would RETAIN stale
       // same-key rows when the response omits a collection — SPEC §5-D3). Same sync block as
       // the setState({publicId}) hydration above, seed-before-reveal like chat/summaries.
-      seedTakeoffCache(queryClient, data.id, data.takeoffItems, data.takeoffGroups);
+      // [DETECTOR jul10 closer] The field mapping (takeoffItems→items key, takeoffGroups→groups
+      // key) lives in seedTakeoffFromBootstrap and is unit-pinned there — this CALL is the one
+      // remaining unpinned line; do not inline the mapping back.
+      seedTakeoffFromBootstrap(queryClient, data.id, data);
 
       // Hydrate annotation groups + M:N membership indexes. Both the
       // flat group list and the junction rows come from a single endpoint

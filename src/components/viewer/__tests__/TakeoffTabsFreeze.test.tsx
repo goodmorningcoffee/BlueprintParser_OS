@@ -11,6 +11,11 @@
 //    failure channel is the INLINE `groupError` state (AreaTab:94,:600) — NOT window.alert;
 //    LinearTab's is alert (LinearTab:206). Freezing the per-tab channel blocks a "unify error
 //    UX" drive-by during the consumer rewrite (§4.7/§4.8).
+//  - [DETECTOR jul10 closer] TA-4/TL-3 demo-guards + TA-5/TL-4 optimistic rename-group
+//    canaries: mutation testing (wf_5d3c6afd-bf0) proved Area/Linear handler conversions were
+//    TEST-INVISIBLE to the CountTab TC pins (M6/M9 stayed green — TC cases never mount these
+//    tabs) and demo-never-writes (workspace HARD invariant) had no executable pin here. Both
+//    are pinned per-tab now; coverage is PER-CONSUMER (useTakeoff.ts header, SPEC §9 errata).
 //  - ViewAllPanel VA-1/VA-2 pin the 3-level expansion read (Takeoffs→kind→group→rows incl. the
 //    missing-group "Ungrouped" fallback, ViewAllPanel:403) and the cache-item × zustand
 //    hiddenTakeoffItemIds join (eye toggle → line-through). Known pre-existing nested-<button>
@@ -30,7 +35,7 @@ import { useViewerStore } from "@/stores/viewerStore";
 import { seedTakeoff } from "@/test/seed-takeoff";
 import { persistFetch } from "@/lib/client-persist";
 import { TWENTY_COLORS } from "@/types";
-import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
+import type { ClientAnnotation, ClientTakeoffItem, TakeoffGroup } from "@/types";
 import AreaTab from "../AreaTab";
 import LinearTab from "../LinearTab";
 import ViewAllPanel from "../ViewAllPanel";
@@ -63,6 +68,20 @@ function item(over: Partial<ClientTakeoffItem> & { id: number; name: string }): 
 function group(over: Partial<TakeoffGroup> & { id: number; name: string }): TakeoffGroup {
   return { kind: "count", color: null, csiCode: null, sortOrder: 0, ...over };
 }
+// Takeoff-sourced annotation for the demo-guard sweep asserts (TA-4/TL-3). `type` matches the
+// host tab's data shape ("area-polygon" / "linear-polyline"); the delete sweep itself only
+// matches source+takeoffItemId, but fixtures stay honest against what each tab renders.
+function takeoffAnn(id: number, takeoffItemId: number, name: string, type: string): ClientAnnotation {
+  return {
+    id,
+    pageNumber: 1,
+    name,
+    bbox: [0, 0, 0.1, 0.1],
+    note: null,
+    source: "takeoff",
+    data: { type, takeoffItemId, vertices: PENDING_POLYGON.vertices } as never,
+  };
+}
 
 // Shared pending polygon for the BF cases — shape of viewerStore.bucketFillPendingPolygon.
 const PENDING_POLYGON = {
@@ -83,7 +102,16 @@ const alertMock = vi.fn();
 beforeEach(() => {
   qc = new QueryClient(); // pure defaults, matching production Providers.tsx
   useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "pid", isDemo: false });
+  // [DETECTOR jul10 closer] Store-bleed guard: resetProjectData deliberately EXCLUDES
+  // hiddenTakeoffItemIds (census flag 9 — never in the reset block, frozen; do not "fix" in
+  // the store) and bucketFillPendingPolygon, so VA-2's hide-toggle and the BF cases' pending
+  // polygon would leak into later tests through the module-singleton store. Reset both here.
+  useViewerStore.setState({
+    publicId: "pid",
+    isDemo: false,
+    hiddenTakeoffItemIds: new Set<number>(),
+    bucketFillPendingPolygon: null,
+  });
   fetchMock.mockReset();
   fetchMock.mockImplementation((url: unknown) => {
     throw new Error(`unexpected raw fetch in takeoff freeze test: ${url}`);
@@ -179,6 +207,99 @@ describe("AreaTab — group-create failure is INLINE groupError, not alert (TA-3
   });
 });
 
+// [DETECTOR jul10 closer] TA-4: demo-never-writes is a workspace HARD invariant and was
+// test-invisible in this tab (only TC-2/TC-13/BF-2 pinned it, none of which mount AreaTab).
+// One case drives all four demo write paths through the DOM and pins ZERO network on BOTH
+// channels + the local effects (temp ids, annotation sweep/name-sync).
+describe("AreaTab — demo NEVER writes (TA-4)", () => {
+  it("rename+delete+create item and create group all land locally; ZERO calls on either channel", async () => {
+    useViewerStore.setState({
+      isDemo: true,
+      annotations: [
+        takeoffAnn(100, 7, "Carpet", "area-polygon"),
+        // cross-domain bait: a non-takeoff annotation must SURVIVE the demo delete sweep
+        { id: 101, pageNumber: 1, name: "door_single", bbox: [0, 0, 0.1, 0.1], note: null, source: "yolo", data: null },
+      ],
+    });
+    seedTakeoff(
+      qc,
+      [item({ id: 7, name: "Carpet", shape: "polygon", groupId: 5 })],
+      [group({ id: 5, name: "Div 09", kind: "area" })],
+    );
+    render(<AreaTab />, { wrapper });
+    await waitFor(() => expect(screen.getByText("Carpet")).toBeInTheDocument());
+
+    // rename item — demo branch: local write + annotation name-sync, NO PUT
+    fireEvent.doubleClick(screen.getByText("Carpet"));
+    const renameInput = screen.getByDisplayValue("Carpet");
+    fireEvent.change(renameInput, { target: { value: "Carpet 2" } });
+    fireEvent.keyDown(renameInput, { key: "Enter" });
+    await waitFor(() => expect(screen.getByText("Carpet 2")).toBeInTheDocument());
+    expect(useViewerStore.getState().annotations[0].name).toBe("Carpet 2"); // demo name-sync ran
+
+    // delete item — demo branch: local remove + sweep, NO DELETE (sole row → title unique)
+    fireEvent.click(screen.getByTitle("Delete item and all polygons"));
+    await waitFor(() => expect(screen.queryByText("Carpet 2")).not.toBeInTheDocument());
+    // sweep kept the yolo bait, dropped the takeoff marker (annotations stay zustand in ④)
+    await waitFor(() =>
+      expect(useViewerStore.getState().annotations.map((a) => a.id)).toEqual([101]),
+    );
+
+    // create item — demo branch: local temp (id: -Date.now()), NO POST
+    fireEvent.click(screen.getByRole("button", { name: "+ Add Area Item" }));
+    fireEvent.change(screen.getByPlaceholderText("Area item name..."), { target: { value: "Demo Tile" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(screen.getByText("Demo Tile")).toBeInTheDocument());
+    await waitFor(() => expect(useViewerStore.getState().activeTakeoffItemId).toBeLessThan(0));
+
+    // create group — demo branch: local temp group, NO POST
+    fireEvent.click(screen.getByRole("button", { name: "+ New Group" }));
+    fireEvent.change(screen.getByPlaceholderText("Group name (e.g. Division 09)"), {
+      target: { value: "Demo G" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(screen.getByText("Demo G")).toBeInTheDocument());
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(persistFetchMock).not.toHaveBeenCalled();
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+});
+
+// [DETECTOR jul10 closer] TA-5: optimistic-conversion canary. Mutation M6 (flipping an AreaTab
+// optimistic op to server-first) stayed GREEN against the original freeze — the TC-8/9 pins
+// never mount this tab. This pins the SPEC §6.3 optimistic contract (a): DOM changed while the
+// deferred PUT is STILL pending; a server-first conversion of handleRenameGroup fails here.
+describe("AreaTab — rename group is optimistic (TA-5)", () => {
+  it("new name in DOM while the PUT is pending; resolved auto-CSI row stays IGNORED", async () => {
+    seedTakeoff(qc, [], [group({ id: 5, name: "Div 09", kind: "area" })]);
+    const d = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(d.promise);
+    render(<AreaTab />, { wrapper });
+    await waitFor(() => expect(screen.getByText("Div 09")).toBeInTheDocument());
+
+    fireEvent.doubleClick(screen.getByText("Div 09"));
+    const input = screen.getByDisplayValue("Div 09");
+    fireEvent.change(input, { target: { value: "Div 10" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    // optimistic pin (a): rename visible while the deferred is STILL pending
+    await waitFor(() =>
+      expect(persistFetchMock).toHaveBeenCalledWith("/api/takeoff-groups/5", { name: "Div 10" }, "PUT"),
+    );
+    await waitFor(() => expect(screen.getByText("Div 10")).toBeInTheDocument());
+    expect(alertMock).not.toHaveBeenCalled();
+
+    // groups PUT auto-fills csiCode and returns the full row — the client ignores it (TC-8
+    // pins this on CountTab; asserted per-tab here so a reconcile drive-by fails locally too)
+    d.resolve(group({ id: 5, name: "Div 10", kind: "area", csiCode: "09 00 00" }));
+    await act(async () => {}); // drain the settle past the notify horizon
+    await act(async () => {});
+    expect(screen.queryByText("09 00 00")).not.toBeInTheDocument(); // NO csi badge surfaced
+    expect(screen.getByText("Div 10")).toBeInTheDocument();
+  });
+});
+
 // ─── LinearTab ───────────────────────────────────────────────────────────────────────────────
 
 describe("LinearTab — seeded render + server-first create (TL-1)", () => {
@@ -235,6 +356,94 @@ describe("LinearTab — group-create failure is ALERT (TL-2)", () => {
 
     await waitFor(() => expect(alertMock).toHaveBeenCalledWith("Failed to create group: boom"));
     expect(screen.queryByText("Div 03")).not.toBeInTheDocument();
+  });
+});
+
+// [DETECTOR jul10 closer] TL-3: demo-never-writes pin for LinearTab — same rationale as TA-4
+// (HARD invariant, previously test-invisible in this tab).
+describe("LinearTab — demo NEVER writes (TL-3)", () => {
+  it("rename+delete+create item and create group all land locally; ZERO calls on either channel", async () => {
+    useViewerStore.setState({
+      isDemo: true,
+      annotations: [
+        takeoffAnn(100, 7, "Wall Framing", "linear-polyline"),
+        // cross-domain bait: a non-takeoff annotation must SURVIVE the demo delete sweep
+        { id: 101, pageNumber: 1, name: "door_single", bbox: [0, 0, 0.1, 0.1], note: null, source: "yolo", data: null },
+      ],
+    });
+    seedTakeoff(
+      qc,
+      [item({ id: 7, name: "Wall Framing", shape: "linear", groupId: 5 })],
+      [group({ id: 5, name: "Div 26", kind: "linear" })],
+    );
+    render(<LinearTab />, { wrapper });
+    await waitFor(() => expect(screen.getByText("Wall Framing")).toBeInTheDocument());
+
+    // rename item — demo branch: local write + annotation name-sync, NO PUT
+    fireEvent.doubleClick(screen.getByText("Wall Framing"));
+    const renameInput = screen.getByDisplayValue("Wall Framing");
+    fireEvent.change(renameInput, { target: { value: "Wall Framing 2" } });
+    fireEvent.keyDown(renameInput, { key: "Enter" });
+    await waitFor(() => expect(screen.getByText("Wall Framing 2")).toBeInTheDocument());
+    expect(useViewerStore.getState().annotations[0].name).toBe("Wall Framing 2"); // demo name-sync
+
+    // delete item — demo branch: local remove + sweep, NO DELETE (sole row → title unique)
+    fireEvent.click(screen.getByTitle("Delete item and all lines"));
+    await waitFor(() => expect(screen.queryByText("Wall Framing 2")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(useViewerStore.getState().annotations.map((a) => a.id)).toEqual([101]),
+    );
+
+    // create item — demo branch: local temp (id: -Date.now()), NO POST
+    fireEvent.click(screen.getByRole("button", { name: "+ Add Linear Item" }));
+    fireEvent.change(screen.getByPlaceholderText("Linear item name (e.g., Wall Framing)..."), {
+      target: { value: "Demo Pipe" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(screen.getByText("Demo Pipe")).toBeInTheDocument());
+    await waitFor(() => expect(useViewerStore.getState().activeTakeoffItemId).toBeLessThan(0));
+
+    // create group — demo branch: local temp group, NO POST
+    fireEvent.click(screen.getByRole("button", { name: "+ New Group" }));
+    fireEvent.change(screen.getByPlaceholderText("Group name (e.g. Division 03)"), {
+      target: { value: "Demo G" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(screen.getByText("Demo G")).toBeInTheDocument());
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(persistFetchMock).not.toHaveBeenCalled();
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+});
+
+// [DETECTOR jul10 closer] TL-4: optimistic-conversion canary for LinearTab — same rationale as
+// TA-5 (mutation M9 on this tab's handlers stayed green against the original freeze).
+describe("LinearTab — rename group is optimistic (TL-4)", () => {
+  it("new name in DOM while the PUT is pending; resolved auto-CSI row stays IGNORED", async () => {
+    seedTakeoff(qc, [], [group({ id: 5, name: "Div 26", kind: "linear" })]);
+    const d = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(d.promise);
+    render(<LinearTab />, { wrapper });
+    await waitFor(() => expect(screen.getByText("Div 26")).toBeInTheDocument());
+
+    fireEvent.doubleClick(screen.getByText("Div 26"));
+    const input = screen.getByDisplayValue("Div 26");
+    fireEvent.change(input, { target: { value: "Div 27" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    // optimistic pin (a): rename visible while the deferred is STILL pending
+    await waitFor(() =>
+      expect(persistFetchMock).toHaveBeenCalledWith("/api/takeoff-groups/5", { name: "Div 27" }, "PUT"),
+    );
+    await waitFor(() => expect(screen.getByText("Div 27")).toBeInTheDocument());
+    expect(alertMock).not.toHaveBeenCalled();
+
+    d.resolve(group({ id: 5, name: "Div 27", kind: "linear", csiCode: "26 00 00" }));
+    await act(async () => {}); // drain the settle past the notify horizon
+    await act(async () => {});
+    expect(screen.queryByText("26 00 00")).not.toBeInTheDocument(); // NO csi badge surfaced
+    expect(screen.getByText("Div 27")).toBeInTheDocument();
   });
 });
 

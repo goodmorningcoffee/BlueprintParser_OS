@@ -2347,6 +2347,9 @@ export default memo(function AnnotationOverlay({
       const store = useViewerStore.getState();
       // [refactor jul10 P2.2④] items via the cache bridge; every OTHER field read on `store`
       // (activeTakeoffItemId, polygonVertices) stays getState — those fields are still zustand.
+      // [DETECTOR jul10 closer] publicId freshness rides this callback's savePolygon/
+      // saveLinearPolyline deps (both re-create on publicId change), so the closure is never
+      // stale across a project switch — same argument as the Enter-keydown bridge read below.
       const activeItem = readTakeoffItems(qc, publicId).find((t) => t.id === store.activeTakeoffItemId);
       const isLinear = activeItem?.shape === "linear";
 

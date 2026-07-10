@@ -16,6 +16,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import {
   seedTakeoffCache,
+  seedTakeoffFromBootstrap,
   readTakeoffItems,
   useTakeoffItems,
   useTakeoffGroups,
@@ -86,6 +87,46 @@ describe("seedTakeoffCache (loader seed, both keys)", () => {
     seedTakeoffCache(qc, "p", nextItems, nextGroups);
     expect(qc.getQueryData(queryKeys.takeoff.items("p"))).toEqual(nextItems);
     expect(qc.getQueryData(queryKeys.takeoff.groups("p"))).toEqual(nextGroups);
+  });
+});
+
+// ── seedTakeoffFromBootstrap — the dashboard loader's field-mapping adapter ───────────────────
+// [DETECTOR jul10 closer] Mutation testing showed deleting the loader's takeoff seed passed the
+// whole suite — the payload-field→cache-key mapping was test-invisible. These cases pin the
+// mapping itself (the loader keeps one trivial call: seedTakeoffFromBootstrap(qc, data.id, data)).
+// The loader CALL is still not executable-pinned (page not cleanly jsdom-mountable) — known,
+// accepted residual, named in the closer commit body.
+describe("seedTakeoffFromBootstrap (loader field-mapping adapter)", () => {
+  it("maps takeoffItems→items key and takeoffGroups→groups key (a field swap fails here)", () => {
+    const qc = new QueryClient();
+    const items = [item({ id: 1, name: "Door" })];
+    const groups = [group({ id: 5, name: "Div 08" })];
+    seedTakeoffFromBootstrap(qc, "p", { takeoffItems: items, takeoffGroups: groups });
+    expect(qc.getQueryData(queryKeys.takeoff.items("p"))).toEqual(items);
+    expect(qc.getQueryData(queryKeys.takeoff.groups("p"))).toEqual(groups);
+  });
+
+  it("omitted fields seed [] — demo bootstrap omits takeoff entirely (D3 via the ?? [] guard)", () => {
+    const qc = new QueryClient();
+    // previous-visit residue under the SAME publicId must be cleared, not retained
+    seedTakeoffFromBootstrap(qc, "p", {
+      takeoffItems: [item({ id: 1, name: "Stale" })],
+      takeoffGroups: [group({ id: 9, name: "Old G" })],
+    });
+    seedTakeoffFromBootstrap(qc, "p", {});
+    expect(qc.getQueryData(queryKeys.takeoff.items("p"))).toEqual([]);
+    expect(qc.getQueryData(queryKeys.takeoff.groups("p"))).toEqual([]);
+  });
+
+  it("re-open REPLACES both entries; a field omitted on re-open lands [] (never merges/retains)", () => {
+    const qc = new QueryClient();
+    seedTakeoffFromBootstrap(qc, "p", {
+      takeoffItems: [item({ id: 1, name: "Old" })],
+      takeoffGroups: [group({ id: 5, name: "Old G" })],
+    });
+    seedTakeoffFromBootstrap(qc, "p", { takeoffItems: [item({ id: 2, name: "New" })] });
+    expect(qc.getQueryData(queryKeys.takeoff.items("p"))).toEqual([item({ id: 2, name: "New" })]);
+    expect(qc.getQueryData(queryKeys.takeoff.groups("p"))).toEqual([]);
   });
 });
 
@@ -216,13 +257,27 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
     const { result } = renderHook(useBoth, { wrapper: makeWrapper(client) });
 
     // A raw QueryCache listener DOES fire synchronously between the facade's two setQueryData
-    // calls (probe-confirmed, SPEC §4.15 hygiene: no production raw subscriber exists — keep it
-    // that way). The D6 contract is weaker and is what renders depend on: by the earliest
+    // calls (probe-confirmed). [DETECTOR jul10 closer] An earlier version of this comment
+    // claimed "no production raw subscriber exists" — FALSE: ReactQueryDevtools
+    // (Providers.tsx:22, dev-only behind NODE_ENV) IS a synchronous cache listener and DOES
+    // observe the between-writes half-state in dev builds. Display-only, harmless — but it means
+    // D6 is scoped to RENDERABLE FRAMES + SCHEDULED (notify-batched) OBSERVERS, never raw
+    // listeners (SPEC §9.2 errata). No PRODUCTION-build raw subscriber exists; keep it that way.
+    // The D6 contract is weaker and is what renders depend on: by the earliest
     // RENDER-EQUIVALENT boundary (the microtask queue — RQ's own notify is even later, a
     // setTimeout(0) macrotask), BOTH writes have landed. If someone inserts an await between the
     // ungroup's two writes, the microtask scheduled at the groups-final event runs at that await
     // boundary and catches items still stale.
     const groupsKeyJson = JSON.stringify(queryKeys.takeoff.groups("p-A"));
+    // [DETECTOR jul10 closer] Tear-net DESIGN (do not simplify): the listener ANCHORS on the
+    // groups-key write that removes group 5 (the delete-final write) and probes the ITEMS key one
+    // microtask later — the earliest render-equivalent boundary. An inserted await between the
+    // facade's two writes parks the items write behind that microtask, so `violations` catches
+    // it. `sawGroupsFinal` is the POSITIVE CONTROL: if the anchor predicate ever stops matching
+    // (key-tuple change, updater rewrite, fixture drift), the case fails on it instead of
+    // vacuously passing with zero probes armed. Deliberately NOT caught here: the synchronous
+    // between-writes window itself (raw listeners like devtools DO see it — header note above)
+    // and a flipped write ORDER (items-first then groups is equally atomic and benign).
     let sawGroupsFinal = false; // positive control — without it the pin is vacuous
     const violations: string[] = [];
     const unsubscribe = client.getQueryCache().subscribe((event) => {

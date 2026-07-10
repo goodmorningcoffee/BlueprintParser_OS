@@ -33,8 +33,15 @@ import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 // > alert-and-keep error UX would change; auto-CSI would newly surface in the UI). Until then
 // > facade actions are plain synchronous setQueryData closures at today's store-action
 // > granularity and every call site keeps its verbatim ordering — do NOT convert call sites
-// > opportunistically. The freeze suite's ordering pins (TC-1..TC-11) fail loudly on any such
-// > conversion; that is their purpose. (SPEC §3.4)
+// > opportunistically. Ordering-pin coverage is PER-CONSUMER, not global (mutation-tested,
+// > DETECTOR wf_5d3c6afd-bf0 — an earlier version of this comment falsely claimed the TC pins
+// > catch ANY call-site conversion): CountTab is pinned deep by TC-1..TC-11 and BucketFill's
+// > server-first create by BF-3; AreaTab/LinearTab conversions were TEST-INVISIBLE to those
+// > (mutations M6/M9 stayed green — the TC cases never mount those tabs) and are now pinned by
+// > TA-2/TL-1 (server-first creates), TA-4/TL-3 (demo-guards) and TA-5/TL-4 (optimistic
+// > rename-group canaries) in TakeoffTabsFreeze; TakeoffPanel's W9 debounce by TP-1/TP-2.
+// > Converting a call site fails loudly only in ITS OWN consumer's cases — do not assume TC
+// > coverage extends beyond CountTab. (SPEC §3.4 + §9 errata appendix)
 
 // [refactor jul10 P2.2④] Loader-side seed of BOTH takeoff cache entries — the ONE production
 // write helper for full-collection hydration (dashboard + demo loaders). The old store setters
@@ -60,6 +67,26 @@ export function seedTakeoffCache(
 ): void {
   qc.setQueryData(queryKeys.takeoff.items(publicId), items ?? []);
   qc.setQueryData(queryKeys.takeoff.groups(publicId), groups ?? []);
+}
+
+// [DETECTOR jul10 P2.2④ closer] Bootstrap-payload adapter for the loader seed — a PURE no-op
+// extract of the field mapping the dashboard loader previously inlined
+// (`seedTakeoffCache(qc, data.id, data.takeoffItems, data.takeoffGroups)`). Exists so the
+// takeoffItems→items-key / takeoffGroups→groups-key MAPPING is unit-pinned (useTakeoff.test.tsx):
+// mutation testing showed deleting the loader's seed call passed the entire suite — the mapping
+// was test-invisible. The loader CALL itself is still not executable-pinned (the dashboard page
+// is not cleanly jsdom-mountable: next/navigation + next-auth + triple-fetch bootstrap); this
+// extract narrows that hole to one trivial, comment-guarded loader line. Payload is structural
+// (`{ takeoffItems?, takeoffGroups? }`) so both loaders' response types satisfy it.
+export function seedTakeoffFromBootstrap(
+  qc: QueryClient,
+  publicId: string,
+  data: {
+    takeoffItems?: ClientTakeoffItem[] | null;
+    takeoffGroups?: TakeoffGroup[] | null;
+  },
+): void {
+  seedTakeoffCache(qc, publicId, data.takeoffItems, data.takeoffGroups);
 }
 
 // [refactor jul10 P2.2④] The getState() bridge for AnnotationOverlay's 7 handler/effect-time
