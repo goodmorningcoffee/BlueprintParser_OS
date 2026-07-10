@@ -131,6 +131,10 @@ export default function GroupActionsBar() {
     setShowAddPicker(false);
   }
 
+  // GROUPS-W1 deferred (owner): unguarded PUT site (no canPersist — demo-inert only emergently,
+  // demo groups stay empty). Error channel (alert + dialog-stays-open) and rollback semantics
+  // are FROZEN by G-4; tier-2 useMutation unification is the future owner-signed GROUPS-W1 pass
+  // — see the useAnnotationGroups.ts header tripwire. Do not convert opportunistically.
   async function handleEditSave() {
     if (!editingGroup || !editName.trim()) return;
     setBusy(true);

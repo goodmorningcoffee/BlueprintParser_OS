@@ -41,6 +41,10 @@ export const queryKeys = {
   // ⑤ annotationGroups + memberships — ONE key, raw {groups, memberships} payload; the Set
   // indexes are derived in-hook via useMemo on the memberships sub-reference, NOT `select`
   // (Sets are opaque to structural sharing — ANNGROUPS_IMPL/SPEC.md verdict 4).
+  // ⚠️ INVALIDATION TRIPWIRE (DETECTOR jul10): a project-wide invalidateQueries prefix-matches
+  // this key and WILL refetch it through the always-mounted GroupActionsBar observer
+  // (PDFViewer.tsx:538; hooks run before the count<2 null-return), reopening the E8
+  // optimistic-toggle race — exclude this key or extend the freeze first.
   annotationGroups: {
     all: (publicId: string) => ["project", publicId, "annotationGroups"] as const,
   },

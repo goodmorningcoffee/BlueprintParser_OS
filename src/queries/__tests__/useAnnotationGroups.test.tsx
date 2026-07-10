@@ -24,6 +24,7 @@ import type { ReactNode } from "react";
 import {
   useAnnotationGroups,
   seedAnnotationGroupsCache,
+  seedAnnotationGroupsFromBootstrap,
   deriveGroupIndexes,
   type AnnotationGroupsPayload,
 } from "@/queries/useAnnotationGroups";
@@ -124,6 +125,60 @@ describe("seedAnnotationGroupsCache", () => {
     });
     seedAnnotationGroupsCache(client, "P", { memberships: [pair(11, 2)] });
     expect(client.getQueryData(KEY_P)).toEqual({ groups: [], memberships: [pair(11, 2)] });
+  });
+});
+
+// ─── seedAnnotationGroupsFromBootstrap (the dashboard-loader adapter, DETECTOR M8/M11) ───────
+
+describe("seedAnnotationGroupsFromBootstrap", () => {
+  // The loader's groupsRes handling, extracted verbatim so it is unit-pinnable — the migrate
+  // commit's mutation pass (DETECTOR wf_b2563a99-b02) showed the inline pair was deletable
+  // (M8) and mis-keyable (M11) with a fully green suite. The loader CALL line itself remains
+  // executable-unpinned (④ precedent — the page is not cleanly jsdom-mountable).
+  const okRes = (body: unknown) => ({ ok: true, json: async () => body });
+
+  it("M8 happy path: ok response seeds the parsed payload verbatim", async () => {
+    const client = freshClient();
+    const groups = [grp({ id: 1, name: "A" })];
+    const memberships = [pair(10, 1)];
+    await seedAnnotationGroupsFromBootstrap(client, "P", okRes({ groups, memberships }));
+    expect(client.getQueryData(KEY_P)).toEqual({ groups, memberships });
+  });
+
+  it("M8 UNCONDITIONAL: !ok / json-reject / null-body ALL seed an EMPTY entry — never skip, never retain", async () => {
+    // !ok: short-circuits BEFORE parsing (json never called) and still seeds empty over
+    // previously-visible rows (E3 clear-on-fail). A conditional-seed mutant (skip on !ok or
+    // on null payload) leaves the stale entry — this toEqual fails.
+    const c1 = freshClient();
+    seedAnnotationGroupsCache(c1, "P", { groups: [grp({ id: 1, name: "stale" })], memberships: [pair(10, 1)] });
+    const json = vi.fn(async () => ({ groups: [grp({ id: 9, name: "never-read" })] }));
+    await seedAnnotationGroupsFromBootstrap(c1, "P", { ok: false, json });
+    expect(c1.getQueryData(KEY_P)).toEqual({ groups: [], memberships: [] });
+    expect(json).not.toHaveBeenCalled(); // parity: the old inline ternary never parsed !ok bodies
+
+    // ok but unparseable: `.catch(() => null)` → empty entry (not absent, not a throw)
+    const c2 = freshClient();
+    await seedAnnotationGroupsFromBootstrap(c2, "P", {
+      ok: true,
+      json: async () => {
+        throw new Error("bad json");
+      },
+    });
+    expect(c2.getQueryData(KEY_P)).toEqual({ groups: [], memberships: [] });
+
+    // ok with a null body: the seed helper's `?? []` — entry EXISTS with empty halves
+    const c3 = freshClient();
+    await seedAnnotationGroupsFromBootstrap(c3, "P", okRes(null));
+    expect(c3.getQueryData(KEY_P)).toEqual({ groups: [], memberships: [] });
+  });
+
+  it("M11 keying: seeds under the PASSED publicId; a wrong-key read-back returns nothing", async () => {
+    // The call site passes data.id (server-canonical) — a mutant keying on anything else
+    // (e.g. the user-controlled route param) writes where no observer reads.
+    const client = freshClient();
+    await seedAnnotationGroupsFromBootstrap(client, "P", okRes({ groups: [grp({ id: 1, name: "A" })], memberships: [] }));
+    expect(client.getQueryData<AnnotationGroupsPayload>(KEY_P)?.groups.map((g) => g.id)).toEqual([1]);
+    expect(client.getQueryData(queryKeys.annotationGroups.all("route-param-id"))).toBeUndefined();
   });
 });
 
@@ -292,6 +347,28 @@ describe("useAnnotationGroups — reads and writes", () => {
     expect(result.current.groupMembers[1]).toEqual(new Set([10])); // carryover intact
   });
 
+  it("M4 pin: two upserts of DIFFERENT groups in ONE sync block BOTH apply (bulk-toggle shape)", async () => {
+    // DETECTOR M4 (value-replace upsert) survived the hook suite: the create-sequence pin
+    // above only catches a value-replace HYDRATE, and every other upsert case writes once per
+    // sync block — a render-snapshot value-replace upsert stayed green here and only V-5
+    // (cross-suite, ViewAllPanelGroupsFreeze) caught it. This is the unit-level kill: the
+    // ViewAllPanel setGroupsActiveBulk shape is N optimistic upserts of DIFFERENT groups in
+    // one sync loop with no render between them — a mutant computing the base from the
+    // render-captured snapshot instead of `(old) =>` drops every write but the last.
+    const client = freshClient();
+    seedAnnotationGroupsCache(client, "P", { groups: [grp({ id: 1, name: "A" })], memberships: [] });
+    const { result } = renderHook(() => useAnnotationGroups(), { wrapper: makeWrapper(client) });
+    await waitFor(() => expect(result.current.annotationGroups).toHaveLength(1));
+
+    act(() => {
+      result.current.upsertAnnotationGroup(grp({ id: 2, name: "B" }));
+      result.current.upsertAnnotationGroup(grp({ id: 3, name: "C" }));
+    });
+    await waitFor(() =>
+      expect(result.current.annotationGroups.map((g) => g.id)).toEqual([1, 2, 3]),
+    );
+  });
+
   it("rollback verbatim: optimistic upsert then upsert(captured old row) restores it byte-equal (ViewAllPanel toggle-failure path)", async () => {
     const client = freshClient();
     const original = grp({ id: 1, name: "A", isActive: true, color: "#f00" });
@@ -381,7 +458,7 @@ describe("useAnnotationGroups — config", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("demo: enabled false — zero fetches, reads empty (GET is allowDemo server-side; the gate is the ONLY thing keeping demo groups invisible)", async () => {
+  it("demo: zero fetches, reads empty — enabled gate is DEFENSE-IN-DEPTH (initialData+staleTime ∞ are the primary dormancy mechanism; the gate's own kill is the M10 invalidation pin below)", async () => {
     useViewerStore.setState({ isDemo: true });
     const { result } = renderHook(() => useAnnotationGroups(), {
       wrapper: makeWrapper(freshClient()),
@@ -392,7 +469,32 @@ describe("useAnnotationGroups — config", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("empty publicId: enabled false — zero fetches, reads empty", async () => {
+  it("M10 gate pin: invalidateQueries on a seeded DEMO entry never reaches the queryFn (invalidation pierces staleTime ∞ but flows through `enabled`)", async () => {
+    // THE discriminating enabled-gate test (DETECTOR M10 surviving mutant): every other
+    // zero-fetch case here stays green with the gate deleted, because initialData+staleTime ∞
+    // already suppress all AUTOMATIC fetches. Invalidation is the one vector that pierces
+    // staleTime — and the networkMode/retry test below proves invalidateQueries DOES reach
+    // the queryFn when enabled, so this zero-call assert is discriminating, not vacuous.
+    // Delete `enabled: !!publicId && !isDemo` and this fails.
+    useViewerStore.setState({ isDemo: true }); // publicId stays "P" — gate false via isDemo alone
+    const client = freshClient();
+    // A seeded demo entry = the exact future-demo-seed world the §7.1 tripwire warns about.
+    seedAnnotationGroupsCache(client, "P", {
+      groups: [grp({ id: 1, name: "demo-kept" })],
+      memberships: [],
+    });
+    const { result } = renderHook(() => useAnnotationGroups(), { wrapper: makeWrapper(client) });
+    await waitFor(() => expect(result.current.annotationGroups).toHaveLength(1));
+
+    act(() => {
+      void client.invalidateQueries({ queryKey: KEY_P });
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fetchMock).not.toHaveBeenCalled(); // disabled observer: refetchType 'active' skips it
+    expect(result.current.annotationGroups).toHaveLength(1); // rows untouched
+  });
+
+  it("empty publicId: zero fetches, reads empty (enabled-gate defense-in-depth — same dormancy note as the demo case)", async () => {
     useViewerStore.setState({ publicId: "" });
     const { result } = renderHook(() => useAnnotationGroups(), {
       wrapper: makeWrapper(freshClient()),
@@ -433,7 +535,9 @@ describe("useAnnotationGroups — config", () => {
   it("gcTime ∞: the entry survives a full observer-less day (disabled-variant fake timers, qto §6.4 idiom)", () => {
     // ⚠️ RTL@16 + full fake timers deadlock waitFor — this test uses NO waitFor and a
     // DISABLED query (isDemo → enabled:false) so no fetch/notify races the fake clock.
-    vi.useFakeTimers();
+    // toFake narrowed to the SPEC §6.3 idiom (setTimeout/clearTimeout only — the GC timer's
+    // primitives); Date/queueMicrotask/etc. stay real.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const client = freshClient();
       useViewerStore.setState({ isDemo: true });

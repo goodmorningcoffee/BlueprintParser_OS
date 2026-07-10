@@ -12,7 +12,7 @@ import { seedSummariesCache } from "@/queries/useSummaries";
 // [refactor jul10 P2.2④] takeoff items+groups moved zustand → TanStack cache; loader seeds both keys.
 import { seedTakeoffFromBootstrap } from "@/queries/useTakeoff";
 // [refactor jul10 P2.2⑤] annotation groups moved zustand → TanStack cache; loader seeds the one key.
-import { seedAnnotationGroupsCache } from "@/queries/useAnnotationGroups";
+import { seedAnnotationGroupsFromBootstrap } from "@/queries/useAnnotationGroups";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
@@ -185,8 +185,12 @@ export default function ProjectPage() {
       // gate, so groups are painted at first reveal exactly as before (no pop-in). Failure
       // semantics deltas vs the old retain-on-fail store writes are the pinned E3 ledger
       // (ANNGROUPS_IMPL/SPEC.md §5-E3: clear-on-fail, leak-class elimination).
-      const groupsData = groupsRes.ok ? await groupsRes.json().catch(() => null) : null;
-      seedAnnotationGroupsCache(queryClient, data.id, groupsData);
+      // [DETECTOR jul10 closer] The ok→parse-or-null→unconditional-seed mapping lives in
+      // seedAnnotationGroupsFromBootstrap and is unit-pinned there (M8 unconditional/empty,
+      // M11 publicId keying) — this CALL is the one remaining unpinned line (④ precedent);
+      // do not inline the mapping back. Awaited so the seed still lands before the
+      // `finally setLoading(false)` (seed-before-reveal).
+      await seedAnnotationGroupsFromBootstrap(queryClient, data.id, groupsRes);
 
       // ─── Hydrate initial chunk (already fetched in parallel above) ───
       if (chunkRes.ok) {

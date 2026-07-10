@@ -261,6 +261,11 @@ export default function ViewAllPanel() {
   }
 
   // Toggle a single group's `isActive`. Optimistic update + rollback on error.
+  // GROUPS-W1 deferred (owner): server-row ADOPTION on ok (data.group re-upsert) + rollback to
+  // the captured `g` on fail + console-only errors are FROZEN by V-3/V-4 — note the asymmetry
+  // vs the bulk handler below, which never reads response bodies. Tier-2 useMutation
+  // unification is the future owner-signed GROUPS-W1 pass — see the useAnnotationGroups.ts
+  // header tripwire. Do not convert opportunistically.
   async function toggleGroupActive(g: AnnotationGroup) {
     const nextActive = g.isActive === false;
     upsertAnnotationGroup({ ...g, isActive: nextActive });
@@ -280,6 +285,10 @@ export default function ViewAllPanel() {
   }
 
   // Bulk toggle `isActive` across many groups. Optimistic + parallel PUTs.
+  // GROUPS-W1 deferred (owner): bulk IGNORES response bodies (no adoption — asymmetric vs the
+  // single toggle above), rolls back per-item on reject OR fulfilled-!ok, and is fully silent
+  // (no alert, no console) — all FROZEN by V-5. Tier-2 useMutation unification is the future
+  // owner-signed GROUPS-W1 pass — see the useAnnotationGroups.ts header tripwire.
   async function setGroupsActiveBulk(gs: AnnotationGroup[], nextActive: boolean) {
     for (const g of gs) upsertAnnotationGroup({ ...g, isActive: nextActive });
     const results = await Promise.allSettled(

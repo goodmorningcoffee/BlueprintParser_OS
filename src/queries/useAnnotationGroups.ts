@@ -139,6 +139,30 @@ export function seedAnnotationGroupsCache(
   });
 }
 
+// [DETECTOR jul10 closer M8/M11] The dashboard loader's groups-seed tail, extracted VERBATIM
+// from page.tsx (④'s seedTakeoffFromBootstrap precedent, d2229a3): ok-gate → parse-or-null →
+// UNCONDITIONAL seed. A pure adapter over seedAnnotationGroupsCache so the response mapping and
+// the publicId keying are unit-pinnable (the migrate-commit mutation pass showed the old inline
+// pair was deletable/mis-keyable with a fully green suite). Contract = exactly what the loader
+// line did: !ok short-circuits (json() is never called) → null; unparseable json → null; the
+// seed helper's `?? []` turns null/omitted fields into empty halves — the entry is ALWAYS
+// written, never skipped (E3 clear-on-fail semantics). The loader passes `data.id`
+// (server-canonical), never the route param — the wrong-key pin guards that regression.
+// `groupsRes` is typed structurally (ok + json) so tests need no real Response.
+export async function seedAnnotationGroupsFromBootstrap(
+  qc: QueryClient,
+  publicId: string,
+  groupsRes: { ok: boolean; json: () => Promise<unknown> },
+): Promise<void> {
+  const groupsData = groupsRes.ok
+    ? ((await groupsRes.json().catch(() => null)) as {
+        groups?: AnnotationGroup[] | null;
+        memberships?: AnnotationGroupMembership[] | null;
+      } | null)
+    : null;
+  seedAnnotationGroupsCache(qc, publicId, groupsData);
+}
+
 // [refactor jul10 P2.2⑤] The facade — 5-member live shape (deliberate narrowing of the old
 // 9-member zustand selector; SPEC §3.1). Return object is a fresh literal per render, like the
 // old useShallow result on change — all three consumers destructure immediately; nothing
@@ -153,6 +177,13 @@ export function useAnnotationGroups() {
   // fetch-status field here (isFetching/status/dataUpdatedAt/…) would subscribe the canvas-
   // adjacent readers to fetch-lifecycle notifications and break render parity (SPEC §1.3).
   const { data } = useQuery({
+    // ⚠️ INVALIDATION TRIPWIRE (DETECTOR jul10): a project-wide invalidateQueries (any prefix of
+    // ["project", publicId]) prefix-matches this key and WILL refetch it through the
+    // always-mounted GroupActionsBar observer (PDFViewer.tsx:538; its hooks run before the
+    // count<2 null-return), reopening the E8 optimistic-toggle race. That vector is closed
+    // today ONLY by call-site absence (zero production invalidateQueries reach this key,
+    // grep-pinned) plus the demo-side enabled gate — if you add a project-wide invalidation,
+    // exclude this key or extend the freeze first. Same warning on the queryKeys.ts ⑤ row.
     queryKey: key,
     // Variant-b contract: the key stays honest (a real queryFn exists) but is DORMANT by
     // construction under option (a) — initialData marks the entry fresh, staleTime ∞ keeps it
@@ -164,10 +195,15 @@ export function useAnnotationGroups() {
       if (!r.ok) return EMPTY_PAYLOAD;
       return ((await r.json().catch(() => null)) ?? EMPTY_PAYLOAD) as AnnotationGroupsPayload;
     },
-    // LOAD-BEARING TWICE (SPEC §2.2/§7.1): (1) the GET is allowDemo-readable server-side — an
-    // ungated query would surface DB rows old demo never showed; (2) demo write-inertness for
-    // the four unguarded PUT sites depends on demo groups staying EMPTY. Gate-order safe: the
-    // demo loader sets isDemo:true before publicId, so this never flickers true.
+    // DEFENSE-IN-DEPTH, not the active dormancy mechanism (DETECTOR jul10 reword — the old
+    // "LOAD-BEARING TWICE" phrasing overclaimed; SPEC §7.1 erratum): under initialData +
+    // staleTime ∞ this query never fetches AUTOMATICALLY even ungated, so the gate's real work
+    // is (1) blocking INVALIDATION-driven refetches — invalidateQueries pierces staleTime but
+    // flows through `enabled` (M10 pin in the hook suite) — and (2) config drift: any future
+    // staleTime/initialData change would expose demo to the allowDemo-readable GET (DB rows old
+    // demo never showed), and demo write-inertness for the four unguarded PUT sites depends on
+    // demo groups staying EMPTY (SPEC §7.1). Gate-order safe: the demo loader sets isDemo:true
+    // before publicId, so this never flickers true.
     enabled: !!publicId && !isDemo,
     // Matches the old zustand inits ([], {}, {} → derived-empty). See the header COUPLING note.
     initialData: EMPTY_PAYLOAD,
