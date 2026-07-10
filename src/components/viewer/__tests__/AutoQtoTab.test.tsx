@@ -107,7 +107,10 @@ function mockQtoGet(rowsByPublicId: Record<string, QtoWorkflow[] | { status: num
 const alertMock = vi.fn();
 
 beforeEach(() => {
-  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // [DETECTOR closer] PURE-DEFAULTS client, matching production (Providers.tsx has no
+  // defaultOptions). A test-level retry:false here masked whether the HOOK pins retry itself —
+  // the freeze net must run against production-equivalent client defaults.
+  qc = new QueryClient();
   useViewerStore.getState().resetProjectData();
   useViewerStore.setState({ publicId: "pid", isDemo: false, pageNames: {} });
   seedPreflightOk();
@@ -148,10 +151,26 @@ describe("AutoQtoTab — mount GET populates the workflow list (Q-1)", () => {
 
 describe("AutoQtoTab — non-ok GET clears the list (Q-2)", () => {
   it("a 500 list response empties a previously-seeded list (non-ok → [], frozen)", async () => {
+    // [DETECTOR closer] de-vacuated: the 500 is DEFERRED so we can prove the seeded row actually
+    // rendered before the clear — the old absence-only assert also passed with a broken seed
+    // helper or a full revert (vacuous truth).
     seedQtoWorkflows([wf({ id: 3, materialLabel: "Plumbing" })]);
-    mockQtoGet({ pid: { status: 500 } });
+    let release500!: () => void;
+    fetchMock.mockImplementation(
+      (url: string) =>
+        new Promise((resolve) => {
+          if (!/\/api\/qto-workflows\?projectId=/.test(String(url))) {
+            throw new Error(`unexpected fetch in AutoQtoTab freeze test: ${url}`);
+          }
+          release500 = () => resolve({ ok: false, status: 500, json: async () => ({}) });
+        }),
+    );
     renderTab();
 
+    // seeded row visible while the GET is in flight…
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Plumbing")).toBeInTheDocument());
+    release500();
+    // …then the non-ok settle clears it
     await waitFor(() => expect(screen.queryByText("Previous workflows")).not.toBeInTheDocument());
   });
 });
@@ -234,8 +253,9 @@ describe("AutoQtoTab — create workflow, demo (Q-6)", () => {
 describe("AutoQtoTab — demo temp workflow survives unmount/remount (Q-7)", () => {
   // THE load-bearing persistence pin (BRIEF H3): AutoQtoTab is conditionally mounted
   // (TakeoffPanel:463) and demo temps are client-only. Old backing: zustand persists across the
-  // auto-qto sub-tab toggle. New backing: gcTime:Infinity + enabled:!isDemo must reproduce it —
-  // a finite gcTime or a demo refetch would clobber the temp and FAIL this test.
+  // auto-qto sub-tab toggle. New backing: the cache entry + enabled:!isDemo reproduce it. NOTE
+  // this SYNCHRONOUS remount does NOT discriminate gcTime values (no GC timer fires without a
+  // timer advance) — the actual gcTime:Infinity pin is the hook suite's T-Q9 fake-timer test.
   it("create temp in demo → unmount → remount → temp still listed", async () => {
     useViewerStore.setState({ isDemo: true });
     seedQtoWorkflows([]);

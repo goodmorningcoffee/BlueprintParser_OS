@@ -111,7 +111,10 @@ describe("useQtoWorkflows hook", () => {
 
     // the failed refetch leaves the cached rows rendered (== old console.error + list unchanged)
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    await new Promise((r) => setTimeout(r, 50)); // give a (wrong) retry the chance to fire
+    // [DETECTOR closer] retry pin must outlast query-core's DEFAULT first retry, which fires at
+    // 1000ms (retryer delay = 1000 * 2^0) — the old 50ms window could never see it, so deleting
+    // retry:false left every test green while production gained 4-attempt/~7s retry behavior.
+    await new Promise((r) => setTimeout(r, 1250));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.current.qtoWorkflows).toEqual(kept);
   });
@@ -173,13 +176,16 @@ describe("useQtoWorkflows hook", () => {
     renderHook(() => useQtoWorkflows(), { wrapper: makeWrapper(freshClient()) });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    act(() => {
-      focusManager.setFocused(false);
-      focusManager.setFocused(true); // would refetch a stale query if the flag were default-true
-    });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    focusManager.setFocused(undefined); // restore default focus detection
+    try {
+      act(() => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true); // would refetch a stale query if the flag were default-true
+      });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      focusManager.setFocused(undefined); // restore default focus detection even on assert failure
+    }
   });
 
   it("T-Q10: empty publicId → disabled, fetch never fires, reads []", async () => {
@@ -266,7 +272,7 @@ describe("useQtoWorkflows hook", () => {
       expect(first.result.current.qtoWorkflows).toEqual(temp);
       first.unmount(); // GC timer armed (Infinity = never fires)
 
-      vi.advanceTimersByTime(60 * 60 * 1000);
+      vi.advanceTimersByTime(24 * 60 * 60 * 1000); // a full observer-less DAY (tightens the ∞ bound)
       expect(client.getQueryData(queryKeys.qtoWorkflows.all("P"))).toEqual(temp);
 
       const second = renderHook(() => useQtoWorkflows(), { wrapper: makeWrapper(client) });
