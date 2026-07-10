@@ -5,7 +5,7 @@
 // null default, seed→read, the v5 setQueryData(undefined)-no-op trap, value-replace, per-request
 // publicId provenance (S3), key isolation, and the staleTime/gcTime config.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { render, renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { seedSummariesCache, useSummariesData, useSummaries } from "@/queries/useSummaries";
@@ -202,6 +202,44 @@ describe("useSummaries hooks", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // [refactor jul10 P2.2③ closers] Mechanical pin of the SpecIndex/NotesIndex hot-path property
+  // (SPEC §2.3 / §7): the narrow hook exists PRECISELY so those two viewer-adjacent consumers
+  // never gain chunk-field re-renders they lacked under their old raw `s.summaries` selector
+  // (chunkLoading toggles on every chunk fetch; PDF-viewer perf is sacred). Before this case the
+  // property was only prose — a future "simplify: reuse useSummaries() everywhere" edit would
+  // have passed the whole suite. This probe counts renders: zustand chunk-field flips must cause
+  // ZERO, a summaries cache write must cause EXACTLY ONE.
+  it("narrow-hook topology: chunk-field store flips don't re-render; a cache write re-renders exactly once", async () => {
+    useViewerStore.setState({ publicId: "p-A" });
+    const client = freshClient();
+    let renders = 0;
+    let seen: ProjectSummaries | null = null;
+    function Probe() {
+      renders += 1;
+      seen = useSummariesData().summaries;
+      return null;
+    }
+    render(<Probe />, { wrapper: makeWrapper(client) });
+    const base = renders; // absolute mount count is harness detail; deltas are the pin
+    expect(seen).toBeNull();
+
+    // Flip BOTH chunk-loader fields the old 6-field selector subscribed to. async act flushes
+    // any scheduled work so a wrong-world re-render can't hide in a pending microtask.
+    await act(async () => {
+      useViewerStore.getState().setChunkLoading(true);
+      useViewerStore.getState().setLoadedPageRange({ from: 1, to: 15 });
+    });
+    expect(useViewerStore.getState().chunkLoading).toBe(true); // the flips really landed
+    expect(useViewerStore.getState().loadedPageRange).toEqual({ from: 1, to: 15 });
+    expect(renders).toBe(base); // ZERO re-renders — the narrow hook never sees chunk state
+
+    // Control flip: a summaries cache write MUST propagate — and as ONE batched render.
+    const s = summariesFixture({ allTrades: ["Topology"] });
+    act(() => seedSummariesCache(client, "p-A", s));
+    await waitFor(() => expect(renders).toBe(base + 1));
+    expect(seen).toEqual(s); // the extra render carried the new data (not an unrelated tick)
   });
 
   it("useSummaries facade returns the old 6-field selector shape; chunk pair stays zustand-wired", async () => {

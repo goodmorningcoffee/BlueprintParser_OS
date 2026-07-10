@@ -382,6 +382,7 @@ describe("AutoQtoTab — empty GET renders no list section (Q-12)", () => {
 
 describe("AutoQtoTab — empty publicId never GETs (Q-13)", () => {
   it("publicId '' (pre-load): no qto fetch fires", async () => {
+    // [refactor jul10 P2.2③ closers] across the ③ flip the beforeEach seed lives under "pid", so the empty-publicId key reads null → render is hard-blocked; only the no-fetch assertion is frozen here.
     useViewerStore.setState({ publicId: "" });
     mockQtoGet({});
     renderTab();

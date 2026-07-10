@@ -1,7 +1,8 @@
 // [refactor jul10 P2.2③] SUMMARIES MIGRATION FREEZE NET — per-consumer DOM characterization.
 //
 // One thin, discriminating case per summaries READ surface (SPEC §6: SI-1/SI-2/NI-1/TPP-1/KP-1/
-// VT-1/PS-1; AQT-R lives in AutoQtoTab.test.tsx which already owns that harness). Written GREEN
+// VT-1/PS-1; AQT-R lives in AutoQtoTab.test.tsx which already owns that harness; TPP-R added
+// post-migration by the DETECTOR closers — the refresher null-retention pin, SPEC §5-S4). Written GREEN
 // against the CURRENT (zustand-backed) code and MUST stay green byte-for-byte after the summaries
 // domain migrates to the TanStack Query cache (variant a, bootstrap-seeded —
 // P2_DESIGN/SUMMARIES_IMPL/SPEC.md). The single sanctioned divergence point is the SHARED
@@ -202,6 +203,85 @@ describe("TableParsePanel — All Tables merges summaries with loaded intel, ded
     // lightweight summary-only row: name + page label (no region detail loaded yet)
     expect(screen.getByText("Door Schedule")).toBeInTheDocument();
     expect(screen.getByText(/p\.9/)).toBeInTheDocument();
+  });
+});
+
+// ─── TableParsePanel — refresher null-retention: the `if (result.summaries)` guard (TPP-R) ───
+
+// [refactor jul10 P2.2③ closers] THE executable pin for SPEC §5-S4. Before this case, all 6
+// promote-refresher guards were deletable with a green suite: the server-side pin
+// (regions-promote.route.test.ts:524) only proves the API RETURNS summaries:null on the
+// compute-reject swallow, and AQT-R only pins imperative-write→subscribed-read propagation —
+// neither exercises the CLIENT's guarded write. This case drives TableParsePanel's REAL save
+// handler (detectCsiAndPersist → promoteParsedRegion → fetch("/api/regions/promote")) against a
+// mocked response whose summaries is null, then asserts the previously-seeded catalog STILL
+// renders. Discrimination (verified against the handler at TableParsePanel.tsx:194): deleting the
+// guard makes the seed unconditional → seedSummariesCache(qc, pid, null) nulls the "pid" cache
+// entry → allParsedTables loses its summary-only row → the final asserts fail ("No parsed tables
+// found." replaces "Door Schedule"). The grid carries non-empty csiTags so the best-effort
+// /api/csi/detect pre-fetch is skipped — the ONLY network hop is the promote itself.
+describe("TableParsePanel — promote returning summaries:null keeps seeded summaries (TPP-R)", () => {
+  it("save flows through the real promote path; guard retains the seeded catalog", async () => {
+    // Mocked promote response: success envelope, summaries:null (the compute-reject swallow
+    // shape). updatedIntelligence has NO schedule regions so the seeded page-9 summary row stays
+    // the single All-Tables entry — "1 table(s)" discriminates cleanly.
+    const promoteResponse = {
+      ok: true,
+      parsedRegion: {},
+      updatedIntelligence: { parsedRegions: [] },
+      summaries: null,
+    };
+    const promoteFetch = vi.fn(async (url: unknown) => {
+      if (url !== "/api/regions/promote") {
+        throw new Error(`unexpected fetch in TPP-R (only the promote may fire): ${url}`);
+      }
+      return { ok: true, json: async () => promoteResponse } as Response;
+    });
+    vi.stubGlobal("fetch", promoteFetch); // overrides the beforeEach fail-loud stub for this case
+
+    // Review-step state so AutoParseTab renders its Save button immediately; canPersist("pid",
+    // false) is true, so Save takes the promote branch, not the local-only fallback.
+    useViewerStore.setState({
+      tableParseStep: "review",
+      tableParsedGrid: {
+        headers: ["TAG", "SIZE"],
+        rows: [{ TAG: "D1", SIZE: "3070" }],
+        tableName: "Fresh Save",
+        csiTags: [{ code: "08 11 13", description: "Hollow Metal Doors" }],
+      },
+    });
+    seedSummaries(
+      qc,
+      summariesFixture({
+        parsedTables: [
+          { pageNum: 9, name: "Door Schedule", category: "door-schedule", rowCount: 12, colCount: 3 },
+        ],
+      }),
+    );
+    render(<TableParsePanel />, { wrapper });
+
+    // Pre-save: the seeded summary-only row renders on the default All Tables tab.
+    await waitFor(() => expect(screen.getByText("Door Schedule")).toBeInTheDocument());
+    expect(screen.getByText("1 table(s)")).toBeInTheDocument();
+
+    // Drive the refresher: Auto Parse tab → Save → real detectCsiAndPersist runs.
+    fireEvent.click(screen.getByRole("button", { name: "Auto Parse" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    // Success-path completion signal: the promote fired AND the review UI reset (on the error
+    // path Save stays mounted with an error box — so a silently-failed promote can't false-pass).
+    await waitFor(() => expect(promoteFetch).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument(),
+    );
+
+    // Back to All Tables: a fresh render pass reads the CURRENT cache entry (no notify race) —
+    // the guard held, so the seeded catalog is still there.
+    fireEvent.click(screen.getByRole("button", { name: "All Tables" }));
+    await waitFor(() => expect(screen.getByText("Door Schedule")).toBeInTheDocument());
+    expect(screen.getByText("1 table(s)")).toBeInTheDocument();
+    expect(screen.queryByText("No parsed tables found.")).not.toBeInTheDocument();
   });
 });
 
