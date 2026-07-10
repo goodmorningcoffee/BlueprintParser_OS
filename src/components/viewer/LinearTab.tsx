@@ -2,6 +2,8 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
+import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { ColorDot, TakeoffEditPanel } from "./TakeoffShared";
@@ -64,20 +66,17 @@ function ScaleStatus() {
 // ─── Linear tab main component ─────────────────────────────
 export default memo(function LinearTab() {
   const annotations = useViewerStore((s) => s.annotations);
-  const takeoffItems = useViewerStore((s) => s.takeoffItems);
-  const addTakeoffItem = useViewerStore((s) => s.addTakeoffItem);
-  const removeTakeoffItem = useViewerStore((s) => s.removeTakeoffItem);
-  const updateTakeoffItem = useViewerStore((s) => s.updateTakeoffItem);
+  // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (dual
+  // reader). Handler bodies UNCHANGED — orderings frozen per TAKEOFF_IMPL/SPEC.md §3.
+  const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   const setAnnotations = useViewerStore((s) => s.setAnnotations);
   const publicId = useViewerStore((s) => s.publicId);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const isDemo = useViewerStore((s) => s.isDemo);
-  const takeoffGroups = useViewerStore((s) => s.takeoffGroups);
-  const addTakeoffGroup = useViewerStore((s) => s.addTakeoffGroup);
-  const removeTakeoffGroup = useViewerStore((s) => s.removeTakeoffGroup);
-  const updateTakeoffGroup = useViewerStore((s) => s.updateTakeoffGroup);
+  const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();
+  // visibility set + toggle STAY zustand in ④ (UI state, not a server collection)
   const hiddenTakeoffItemIds = useViewerStore((s) => s.hiddenTakeoffItemIds);
   const toggleTakeoffItemVisibility = useViewerStore((s) => s.toggleTakeoffItemVisibility);
 

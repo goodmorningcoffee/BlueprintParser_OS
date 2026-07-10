@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade (data only). This layer
+// is CANVAS-ADJACENT: items-key observers re-render only on items CONTENT change (structural
+// sharing) — group writes never reach it (two-hook split, TAKEOFF_IMPL/SPEC.md §2.2/§7.3).
+import { useTakeoffItems } from "@/queries/useTakeoff";
 import BucketFillAssignDialog from "./BucketFillAssignDialog";
 
 interface DrawingPreviewLayerProps {
@@ -41,7 +45,7 @@ export default memo(function DrawingPreviewLayer({
   const polygonDrawingMode = useViewerStore((s) => s.polygonDrawingMode);
   const polygonVertices = useViewerStore((s) => s.polygonVertices);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
-  const takeoffItems = useViewerStore((s) => s.takeoffItems);
+  const { takeoffItems } = useTakeoffItems(); // [refactor jul10 P2.2④] cache-backed; draw-effect dep at the bottom keeps `takeoffItems`
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
   const bucketFillActive = useViewerStore((s) => s.bucketFillActive);
   const bucketFillPreview = useViewerStore((s) => s.bucketFillPreview);

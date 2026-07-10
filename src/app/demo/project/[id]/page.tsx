@@ -8,6 +8,8 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedSummariesCache } from "@/queries/useSummaries";
+// [refactor jul10 P2.2④] takeoff items+groups moved zustand → TanStack cache; loader seeds both keys.
+import { seedTakeoffCache } from "@/queries/useTakeoff";
 import { useSearch } from "@/hooks/useSearch";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
@@ -127,6 +129,13 @@ export default function DemoProjectPage() {
       // read-side cache write of server-provided data, NOT a persistence mutation — the
       // demo-never-writes invariant is untouched (SPEC §7).
       seedSummariesCache(queryClient, data.id, data.summaries);
+      // [refactor jul10 P2.2④] Takeoff seed: the demo ProjectResponse OMITS takeoffItems/
+      // takeoffGroups entirely (the old loader never seeded takeoff at all), so this lands
+      // []/[] under the demo publicId — exactly today's post-reset state (SPEC §5-D3) — and
+      // OVERWRITES any temp rows a previous demo visit left cached under the same publicId
+      // (demo temps were already lost on reload). Read-side cache write of (absent)
+      // server-provided data — the demo-never-writes invariant is untouched.
+      seedTakeoffCache(queryClient, data.id, undefined, undefined);
       // Guard KEEPS its 4 piggybacks — allTrades/allCsiCodes/detection models AND the demo-only
       // setModelConfidence(name, 0) loop are separate, non-migrating zustand fields.
       if (data.summaries) {

@@ -10,6 +10,8 @@ import {
   useDetection,
   useTextAnnotationDisplay,
 } from "@/stores/viewerStore";
+// [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
+import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem, TextAnnotation, ParsedRegion, ScheduleData, KeynoteData, LegendData, NotesData, SpecData } from "@/types";
 import TreeSection from "./TreeSection";
 import MarkupDialog from "./MarkupDialog";
@@ -114,8 +116,10 @@ export default function ViewAllPanel() {
   // Direct selectors — matches TakeoffPanel.tsx:28 convention for takeoff state
   // + picks up the visibility fields that aren't in a slice hook.
   const annotations = useViewerStore((s) => s.annotations);
-  const takeoffItems = useViewerStore((s) => s.takeoffItems);
-  const takeoffGroups = useViewerStore((s) => s.takeoffGroups);
+  // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (data only —
+  // this panel writes nothing to takeoff; visibility toggles below stay zustand).
+  const { takeoffItems } = useTakeoffItems();
+  const { takeoffGroups } = useTakeoffGroups();
   const hiddenTakeoffItemIds = useViewerStore((s) => s.hiddenTakeoffItemIds);
   const toggleTakeoffItemVisibility = useViewerStore((s) => s.toggleTakeoffItemVisibility);
   const setPage = useViewerStore((s) => s.setPage);

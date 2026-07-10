@@ -2,6 +2,11 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (both hooks —
+// CountTab is a dual reader). Handler bodies below are UNCHANGED: the SPLIT write ordering
+// (server-first item ops + group create; optimistic group rename/delete, move, edit-panel save;
+// NO rollback) is frozen — see TAKEOFF_IMPL/SPEC.md §3 + TakeoffCountFreeze.test.tsx.
+import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 import { TAKEOFF_SHAPES, TWENTY_COLORS } from "@/types";
 import type { TakeoffShape, ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { SHAPE_ICONS, TakeoffEditPanel } from "./TakeoffShared";
@@ -10,19 +15,13 @@ import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist"
 
 export default memo(function CountTab() {
   const annotations = useViewerStore((s) => s.annotations);
-  const takeoffItems = useViewerStore((s) => s.takeoffItems);
-  const addTakeoffItem = useViewerStore((s) => s.addTakeoffItem);
-  const removeTakeoffItem = useViewerStore((s) => s.removeTakeoffItem);
-  const updateTakeoffItem = useViewerStore((s) => s.updateTakeoffItem);
+  const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   const setAnnotations = useViewerStore((s) => s.setAnnotations);
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
-  const takeoffGroups = useViewerStore((s) => s.takeoffGroups);
-  const addTakeoffGroup = useViewerStore((s) => s.addTakeoffGroup);
-  const removeTakeoffGroup = useViewerStore((s) => s.removeTakeoffGroup);
-  const updateTakeoffGroup = useViewerStore((s) => s.updateTakeoffGroup);
+  const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();
 
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");

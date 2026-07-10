@@ -2,6 +2,9 @@
 
 import { useMemo, useState, useRef } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade (items only — this
+// panel never reads groups; do not add useTakeoffGroups here).
+import { useTakeoffItems } from "@/queries/useTakeoff";
 import { AREA_UNIT_MAP } from "@/types";
 import type { AreaPolygonData, AreaUnitSq, TakeoffTab } from "@/types";
 import { computeRealArea } from "@/lib/areaCalc";
@@ -25,8 +28,10 @@ export default function TakeoffPanel() {
   const takeoffTab = useViewerStore((s) => s.takeoffTab);
   const setTakeoffTab = useViewerStore((s) => s.setTakeoffTab);
   const annotations = useViewerStore((s) => s.annotations);
-  const takeoffItems = useViewerStore((s) => s.takeoffItems);
-  const updateTakeoffItem = useViewerStore((s) => s.updateTakeoffItem);
+  // [refactor jul10 P2.2④] cache-backed; the CSV debounce body below (:187-207 semantics — one
+  // timer per itemId, single-column PUT body, console-only errors) is UNCHANGED and frozen
+  // (TakeoffPanelFreeze TP-1/TP-2).
+  const { takeoffItems, updateTakeoffItem } = useTakeoffItems();
   const pageDimensions = useViewerStore((s) => s.pageDimensions);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);

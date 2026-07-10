@@ -1,6 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
+// [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache. This SACRED file gets (a) the
+// useTakeoffItems hook (data only) replacing the raw selector, and (b) readTakeoffItems(qc,
+// publicId) — a SYNCHRONOUS live-cache read — replacing the 7 handler/effect-time
+// getState().takeoffItems reads. The draw effect's dep array deliberately EXCLUDES takeoffItems
+// (item edits do not redraw the canvas today); the bridge preserves that — do NOT add the hook
+// value or a dep there (TAKEOFF_IMPL/SPEC.md §3.3 :372 row).
+import { useQueryClient } from "@tanstack/react-query";
+import { useTakeoffItems, readTakeoffItems } from "@/queries/useTakeoff";
 import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useYoloTags, useSymbolSearch, useAnnotationFilters } from "@/stores/viewerStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
@@ -107,6 +115,9 @@ export default memo(function AnnotationOverlay({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { pageNumber, mode } = useNavigation();
   const { projectId: projectDbId, publicId, isDemo } = useProject();
+  // [refactor jul10 P2.2④] qc for the readTakeoffItems bridge (handler-time sync reads).
+  // useQueryClient is provider-stable; it adds ZERO subscriptions to this component.
+  const qc = useQueryClient();
   const {
     tableParseStep, setTableParseStep, tableParseRegion, setTableParseRegion,
     tableParseColumnBBs, tableParseRowBBs, showParsedRegions,
@@ -132,7 +143,7 @@ export default memo(function AnnotationOverlay({
   const addAnnotation = useViewerStore((s) => s.addAnnotation);
   const removeAnnotation = useViewerStore((s) => s.removeAnnotation);
   const updateAnnotation = useViewerStore((s) => s.updateAnnotation);
-  const addTakeoffItem = useViewerStore((s) => s.addTakeoffItem);
+  // [refactor jul10 P2.2④ D7] dead `addTakeoffItem` binding deleted — declared, never called.
   const keynotes = useViewerStore((s) => s.keynotes);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
 
@@ -180,7 +191,12 @@ export default memo(function AnnotationOverlay({
   const setTakeoffFilter = useViewerStore((s) => s.setTakeoffFilter);
   const setSearch = useViewerStore((s) => s.setSearch);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
-  const takeoffItems = useViewerStore((s) => s.takeoffItems);
+  // [refactor jul10 P2.2④] cache-backed items subscription (data ONLY — no actions destructured).
+  // Re-render topology is a strict SUBSET of the old raw selector: items-key observers notify on
+  // items CONTENT change only; group ops never reach this component (SPEC §7.3). The hook value
+  // stays in the click-handler closures below (+ their dep arrays) exactly as before — D1-class
+  // one-macrotask refresh lag, sanctioned.
+  const { takeoffItems } = useTakeoffItems();
   const hiddenTakeoffItemIds = useViewerStore((s) => s.hiddenTakeoffItemIds);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   const calibrationMode = useViewerStore((s) => s.calibrationMode);
@@ -369,7 +385,13 @@ export default memo(function AnnotationOverlay({
       if (ann.source === "takeoff" && (ann.data as any)?.type === "count-marker") {
         const itemId = (ann.data as any)?.takeoffItemId;
         if (hiddenTakeoffItemIds.has(itemId)) continue;
-        const items = useViewerStore.getState().takeoffItems;
+        // [refactor jul10 P2.2④] bridge read, NOT the hook value: this draw effect's dep array
+        // (end of effect) deliberately EXCLUDES takeoffItems — item edits (size/color) do not
+        // redraw the canvas today. Using the subscribed hook value here (or adding the dep)
+        // would create a brand-new canvas-redraw trigger class on every item mutation on the
+        // SACRED path. readTakeoffItems reads the live cache synchronously, same as the old
+        // getState(). (TAKEOFF_IMPL/SPEC.md §3.3 :372 row — do not "clean up".)
+        const items = readTakeoffItems(qc, publicId);
         const item = items.find((t) => t.id === itemId || String(t.id) === String(itemId));
         drawCountMarker(ctx, ann, width, height, ann.id === selectedId || multiSelect.isSelected(ann.id), item?.size, cssScale);
         continue;
@@ -817,7 +839,8 @@ export default memo(function AnnotationOverlay({
   /** Save the current in-progress polygon as an area-polygon annotation */
   const savePolygon = useCallback(() => {
     const verts = useViewerStore.getState().polygonVertices;
-    const items = useViewerStore.getState().takeoffItems;
+    // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
+    const items = readTakeoffItems(qc, publicId);
     const activeId = useViewerStore.getState().activeTakeoffItemId;
     if (verts.length < 3) return;
 
@@ -927,8 +950,9 @@ export default memo(function AnnotationOverlay({
     // the free-polygon drawing flow at L780-820 which also commits directly
     // to the active item.
     const activeId = useViewerStore.getState().activeTakeoffItemId;
+    // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
     const activeItem = activeId
-      ? useViewerStore.getState().takeoffItems.find((t) => t.id === activeId)
+      ? readTakeoffItems(qc, publicId).find((t) => t.id === activeId)
       : null;
     if (activeItem && activeItem.shape === "polygon") {
       const polygonData: AreaPolygonData = {
@@ -994,7 +1018,8 @@ export default memo(function AnnotationOverlay({
     if (!preview) return;
 
     const currentAnnotations = useViewerStore.getState().annotations;
-    const currentItems = useViewerStore.getState().takeoffItems;
+    // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
+    const currentItems = readTakeoffItems(qc, publicId);
     const target = currentAnnotations.find((a) => a.id === preview.targetAnnotationId);
     if (!target) {
       useViewerStore.getState().setSplitPreview(null);
@@ -1094,7 +1119,8 @@ export default memo(function AnnotationOverlay({
   /** Save the current in-progress polyline as a linear-polyline annotation */
   const saveLinearPolyline = useCallback(() => {
     const verts = useViewerStore.getState().polygonVertices;
-    const items = useViewerStore.getState().takeoffItems;
+    // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
+    const items = readTakeoffItems(qc, publicId);
     const activeId = useViewerStore.getState().activeTakeoffItemId;
     if (verts.length < 2) return;
 
@@ -2319,7 +2345,9 @@ export default memo(function AnnotationOverlay({
 
       // Determine whether active item is linear or polygon
       const store = useViewerStore.getState();
-      const activeItem = store.takeoffItems.find((t) => t.id === store.activeTakeoffItemId);
+      // [refactor jul10 P2.2④] items via the cache bridge; every OTHER field read on `store`
+      // (activeTakeoffItemId, polygonVertices) stays getState — those fields are still zustand.
+      const activeItem = readTakeoffItems(qc, publicId).find((t) => t.id === store.activeTakeoffItemId);
       const isLinear = activeItem?.shape === "linear";
 
       const finalVerts = store.polygonVertices;
@@ -2394,7 +2422,10 @@ export default memo(function AnnotationOverlay({
         } else if (polygonDrawingMode === "drawing") {
           e.preventDefault();
           const verts = store.polygonVertices;
-          const activeItem = store.takeoffItems.find((t) => t.id === store.activeTakeoffItemId);
+          // [refactor jul10 P2.2④] items via the cache bridge (was store.takeoffItems). publicId
+          // freshness rides this effect's savePolygon/saveLinearPolyline deps (both re-create on
+          // publicId change), so the listener closure is never stale across a project switch.
+          const activeItem = readTakeoffItems(qc, publicId).find((t) => t.id === store.activeTakeoffItemId);
           if (activeItem?.shape === "linear") {
             if (verts.length >= 2) saveLinearPolyline();
           } else {

@@ -2,8 +2,7 @@ import { create } from "zustand";
 import { canPersist, persistFetch } from "@/lib/client-persist";
 import type {
   ClientAnnotation,
-  ClientTakeoffItem,
-  TakeoffGroup,
+  ClientTakeoffItem, // still used: commitBucketFillToItem takes the item as a PARAMETER (④ left it zustand-internal)
   KeynoteShapeData,
   CsiCode,
   TextractPageData,
@@ -271,20 +270,17 @@ interface ViewerState {
   setPageIntelligence: (pageNum: number, data: PageIntelligence) => void;
 
   // ─── Takeoff ────────────────────────────────────────────
+  // [refactor jul10 P2.2④] takeoffItems + takeoffGroups (and their collection actions,
+  // incl. the two-key removeTakeoffGroup ungroup) moved to the TanStack Query cache —
+  // src/queries/useTakeoff.ts (useTakeoffItems/useTakeoffGroups/readTakeoffItems/
+  // seedTakeoffCache). setTakeoffItems/setTakeoffGroups were DELETED, not ported (sole
+  // callers were the loader seeds seedTakeoffCache replaces). Only the UI fields below
+  // stay zustand: panel flag, active pointer, visibility set, tab (+ activeTakeoffFilter
+  // and the ⑥-domain undo/redo stacks elsewhere in this store).
   showTakeoffPanel: boolean;
   toggleTakeoffPanel: () => void;
-  takeoffItems: ClientTakeoffItem[];
-  setTakeoffItems: (items: ClientTakeoffItem[]) => void;
-  addTakeoffItem: (item: ClientTakeoffItem) => void;
-  removeTakeoffItem: (id: number) => void;
-  updateTakeoffItem: (id: number, updates: Partial<ClientTakeoffItem>) => void;
   activeTakeoffItemId: number | null;
   setActiveTakeoffItemId: (id: number | null) => void;
-  takeoffGroups: TakeoffGroup[];
-  setTakeoffGroups: (groups: TakeoffGroup[]) => void;
-  addTakeoffGroup: (g: TakeoffGroup) => void;
-  removeTakeoffGroup: (id: number) => void;
-  updateTakeoffGroup: (id: number, updates: Partial<TakeoffGroup>) => void;
 
   // ─── Takeoff item visibility ─────────────────────────────
   hiddenTakeoffItemIds: Set<number>;
@@ -1019,34 +1015,11 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       ...(s.showTakeoffPanel ? { activeTakeoffItemId: null } : {}),
       ...(s.showChatPanel && !s.showTakeoffPanel ? { showChatPanel: false } : {}),
     })),
-  takeoffItems: [],
-  setTakeoffItems: (takeoffItems) => set({ takeoffItems }),
-  addTakeoffItem: (item) =>
-    set((s) => ({ takeoffItems: [...s.takeoffItems, item] })),
-  removeTakeoffItem: (id) =>
-    set((s) => ({ takeoffItems: s.takeoffItems.filter((t) => t.id !== id) })),
-  updateTakeoffItem: (id, updates) =>
-    set((s) => ({
-      takeoffItems: s.takeoffItems.map((t) =>
-        t.id === id ? { ...t, ...updates } : t
-      ),
-    })),
+  // [refactor jul10 P2.2④] takeoffItems/takeoffGroups collection state + actions moved to the
+  // TanStack cache (src/queries/useTakeoff.ts). The FK-SET-NULL ungroup that lived in
+  // removeTakeoffGroup here is now the facade's two-key notifyManager.batch write.
   activeTakeoffItemId: null,
   setActiveTakeoffItemId: (activeTakeoffItemId) => set({ activeTakeoffItemId, takeoffUndoStack: [], takeoffRedoStack: [] }),
-
-  takeoffGroups: [],
-  setTakeoffGroups: (takeoffGroups) => set({ takeoffGroups }),
-  addTakeoffGroup: (g) => set((s) => ({ takeoffGroups: [...s.takeoffGroups, g] })),
-  removeTakeoffGroup: (id) =>
-    set((s) => ({
-      takeoffGroups: s.takeoffGroups.filter((g) => g.id !== id),
-      // Mirror FK SET NULL: ungroup items that belonged to this group
-      takeoffItems: s.takeoffItems.map((t) => (t.groupId === id ? { ...t, groupId: null } : t)),
-    })),
-  updateTakeoffGroup: (id, updates) =>
-    set((s) => ({
-      takeoffGroups: s.takeoffGroups.map((g) => (g.id === id ? { ...g, ...updates } : g)),
-    })),
 
   hiddenTakeoffItemIds: new Set<number>(),
   toggleTakeoffItemVisibility: (itemId) =>
@@ -1750,8 +1723,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       confidenceThresholds: {},
       hiddenAnnotationIds: new Set<number>(),
       showTakeoffPanel: false,
-      takeoffItems: [],
-      takeoffGroups: [],
+      // takeoffItems/takeoffGroups: cache-backed since P2.2④ — reset deliberately does NOT
+      // touch the query cache (RECIPE step 7; publicId-keyed isolation makes it unnecessary).
+      // hiddenTakeoffItemIds was never in this reset block (pre-existing; do not "fix").
       activeTakeoffItemId: null,
       takeoffTab: "count",
       activeQtoWorkflow: null,

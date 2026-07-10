@@ -2,6 +2,8 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
+import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { AreaUnitSq, ClientTakeoffItem, AreaPolygonData, TakeoffGroup } from "@/types";
 import { computeRealArea } from "@/lib/areaCalc";
@@ -65,10 +67,11 @@ function ScaleStatus() {
 // ─── Area tab main component ────────────────────────────────
 export default memo(function AreaTab() {
   const annotations = useViewerStore((s) => s.annotations);
-  const takeoffItems = useViewerStore((s) => s.takeoffItems);
-  const addTakeoffItem = useViewerStore((s) => s.addTakeoffItem);
-  const removeTakeoffItem = useViewerStore((s) => s.removeTakeoffItem);
-  const updateTakeoffItem = useViewerStore((s) => s.updateTakeoffItem);
+  // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (dual
+  // reader). Handler bodies UNCHANGED — orderings frozen per TAKEOFF_IMPL/SPEC.md §3; NOTE the
+  // group-create failure channel here is the inline `groupError` state, NOT alert (frozen quirk,
+  // TakeoffTabsFreeze TA-3).
+  const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   const setAnnotations = useViewerStore((s) => s.setAnnotations);
@@ -76,10 +79,7 @@ export default memo(function AreaTab() {
   const pageDimensions = useViewerStore((s) => s.pageDimensions);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const isDemo = useViewerStore((s) => s.isDemo);
-  const takeoffGroups = useViewerStore((s) => s.takeoffGroups);
-  const addTakeoffGroup = useViewerStore((s) => s.addTakeoffGroup);
-  const removeTakeoffGroup = useViewerStore((s) => s.removeTakeoffGroup);
-  const updateTakeoffGroup = useViewerStore((s) => s.updateTakeoffGroup);
+  const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();
 
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");

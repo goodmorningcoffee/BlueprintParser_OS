@@ -9,6 +9,8 @@ import { useSearch } from "@/hooks/useSearch";
 import { seedChatCache } from "@/queries/useChatMessages";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; loader seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
+// [refactor jul10 P2.2④] takeoff items+groups moved zustand → TanStack cache; loader seeds both keys.
+import { seedTakeoffCache } from "@/queries/useTakeoff";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
@@ -79,8 +81,6 @@ export default function ProjectPage() {
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const queryClient = useQueryClient();
-  const setTakeoffItems = useViewerStore((s) => s.setTakeoffItems);
-  const setTakeoffGroups = useViewerStore((s) => s.setTakeoffGroups);
   const setScaleCalibration = useViewerStore((s) => s.setScaleCalibration);
   const resetProjectData = useViewerStore((s) => s.resetProjectData);
   const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
@@ -158,13 +158,13 @@ export default function ProjectPage() {
       // this seed always lands before the panel remounts — no stale flash (D5).
       seedChatCache(queryClient, data.id, data.chatMessages);
 
-      // Load takeoff items
-      if (data.takeoffItems) {
-        setTakeoffItems(data.takeoffItems);
-      }
-      if (data.takeoffGroups) {
-        setTakeoffGroups(data.takeoffGroups);
-      }
+      // Load takeoff items + groups into the TanStack Query cache (facade — no longer zustand).
+      // [refactor jul10 P2.2④] ONE UNCONDITIONAL publicId-scoped seed for BOTH keys (`?? []`
+      // inside the helper): reproduces the old reset-then-conditional-set net behavior
+      // (resetProjectData cleared both arrays above; a conditional seed would RETAIN stale
+      // same-key rows when the response omits a collection — SPEC §5-D3). Same sync block as
+      // the setState({publicId}) hydration above, seed-before-reveal like chat/summaries.
+      seedTakeoffCache(queryClient, data.id, data.takeoffItems, data.takeoffGroups);
 
       // Hydrate annotation groups + M:N membership indexes. Both the
       // flat group list and the junction rows come from a single endpoint
@@ -251,8 +251,6 @@ export default function ProjectPage() {
     setAllTrades,
     setAllCsiCodes,
     queryClient,
-    setTakeoffItems,
-    setTakeoffGroups,
     setScaleCalibration,
     resetProjectData,
     csiParam,

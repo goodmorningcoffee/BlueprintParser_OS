@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+// [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade. handleCreateAndAssign
+// below is UNCHANGED — it POSTs the NUMERIC projectId (frozen pre-existing quirk vs CountTab's
+// publicId body to the same endpoint; owner item, SPEC §8.3 — pinned by BF-3, do not "fix").
+import { useTakeoffItems } from "@/queries/useTakeoff";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientTakeoffItem } from "@/types";
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -19,8 +23,7 @@ export default function BucketFillAssignDialog({
   height,
   cssScale,
 }: BucketFillAssignDialogProps) {
-  const takeoffItems = useViewerStore((s) => s.takeoffItems);
-  const addTakeoffItem = useViewerStore((s) => s.addTakeoffItem);
+  const { takeoffItems, addTakeoffItem } = useTakeoffItems();
   const commitBucketFillToItem = useViewerStore((s) => s.commitBucketFillToItem);
   const setBucketFillPendingPolygon = useViewerStore((s) => s.setBucketFillPendingPolygon);
   const publicId = useViewerStore((s) => s.publicId);

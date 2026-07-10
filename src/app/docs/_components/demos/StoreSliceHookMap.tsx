@@ -26,6 +26,12 @@ const SLICES = [
   // already stale); the facade lives in src/queries/useSummaries.ts (summaries → query cache;
   // chunk-loader state loadedPageRange/chunkLoading stays zustand until domain ⑦).
   { name: "useSummaries",            line: 2145, purpose: "→ src/queries facade (P2.2③): summaries in query cache, chunk-loader state stays zustand" },
+  // [refactor jul10 P2.2④] NEW row (takeoff never had a store slice selector — consumers read the
+  // raw fields): items+groups now live in the query cache behind TWO deliberate hooks in
+  // src/queries/useTakeoff.ts (no combined hook — canvas-adjacent items-only readers must not
+  // gain group-write re-renders). UI fields (panel flag, active pointer, visibility set, tab)
+  // stay zustand.
+  { name: "useTakeoffItems/Groups",  line: 94,   purpose: "→ src/queries facade (P2.2④): items+groups in query cache (two hooks), takeoff UI state stays zustand" },
 ];
 
 export function StoreSliceHookMap() {
