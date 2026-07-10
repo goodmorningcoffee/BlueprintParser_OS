@@ -32,7 +32,8 @@ export const queryKeys = {
   summaries: {
     all: (publicId: string) => ["project", publicId, "summaries"] as const,
   },
-  // ④ takeoff items + groups (optimistic mutations w/ rollback land here)
+  // ④ takeoff items + groups — SPLIT write ordering preserved (server-first creates/item-mutations,
+  // optimistic group-ops), NO rollback; see TAKEOFF_IMPL/SPEC.md §3 + takeoff freeze suite before touching.
   takeoff: {
     items: (publicId: string) => ["project", publicId, "takeoff", "items"] as const,
     groups: (publicId: string) => ["project", publicId, "takeoff", "groups"] as const,
