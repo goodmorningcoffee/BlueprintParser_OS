@@ -980,8 +980,15 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
   updateWorkflowStep: (w: QtoWorkflow, u: Partial<QtoWorkflow>) => Promise<void>;
   publicId: string;
 }) {
-  const [mapping, setMapping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // [refactor jul10 MappingStep self-abort fix] The old code kept a `mapping` boolean that served as
+  // BOTH the re-entrancy guard AND an effect dependency, while the effect body called setMapping(true)
+  // — so the effect re-ran on its own state write, and the cleanup it returned (controller.abort())
+  // aborted the just-dispatched map-tags POST. The AbortError is swallowed below, so the spinner spun
+  // forever and completion was nondeterministic. `hasRun` already dedupes the single run, so the flag
+  // was redundant; `retryTick` restores the one thing `mapping`'s dep membership did on purpose —
+  // re-arm the effect when the user clicks Retry.
+  const [retryTick, setRetryTick] = useState(0);
   const hasRun = useRef(false);
 
   const schedule = workflow.parsedSchedule;
@@ -1004,10 +1011,9 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
     : tags;
 
   useEffect(() => {
-    if (hasRun.current || mapping || !schedule) return;
+    if (hasRun.current || !schedule) return;
     if (effectiveTags.length === 0) return;
     hasRun.current = true;
-    setMapping(true);
     setError(null);
 
     const controller = new AbortController();
@@ -1102,11 +1108,12 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
       .catch((err) => {
         if (err.name === "AbortError") return;
         setError(err.message || "Mapping failed");
-        setMapping(false);
       });
 
     return () => controller.abort();
-  }, [tags, effectiveTags, isYoloOnly, schedule, workflow, publicId, updateWorkflowStep, mapping, selectedPages]);
+    // `retryTick` re-arms this effect on Retry (below); it replaces the removed `mapping` dep, which
+    // used to re-trigger the effect as a side effect of setMapping(false) in the Retry handler.
+  }, [tags, effectiveTags, isYoloOnly, schedule, workflow, publicId, updateWorkflowStep, selectedPages, retryTick]);
 
   return (
     <div className="px-3 py-6 flex flex-col items-center gap-3">
@@ -1114,7 +1121,7 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
         <>
           <div className="text-red-400 text-xs text-center">{error}</div>
           <button
-            onClick={() => { hasRun.current = false; setMapping(false); setError(null); }}
+            onClick={() => { hasRun.current = false; setError(null); setRetryTick((t) => t + 1); }}
             className="text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
           >
             Retry

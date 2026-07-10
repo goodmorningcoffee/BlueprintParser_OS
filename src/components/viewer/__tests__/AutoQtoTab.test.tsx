@@ -459,9 +459,9 @@ describe("AutoQtoTab — demo feature gate (Q-17)", () => {
 });
 
 describe("AutoQtoTab — mapping step render-only (Q-18)", () => {
-  // Render-level ONLY. Mapping COMPLETION is deliberately untested: the MappingStep effect
-  // self-aborts its POST (deps include `mapping`, body calls setMapping(true) — pre-existing
-  // bug, probe-confirmed, OWNER-flagged in SPEC §8). Never-resolving fetch = deterministic.
+  // Render-level ONLY: a never-resolving POST keeps the spinner up deterministically. Mapping
+  // COMPLETION is now covered by Q-19/Q-20 below (added with the MappingStep self-abort fix,
+  // jul10) — this case just pins that the spinner renders while the POST is in flight.
   it("map-tags workflow shows the 'Mapping N tags' spinner", async () => {
     useViewerStore.setState({ isDemo: true });
     const mapWf = wf({
@@ -485,6 +485,105 @@ describe("AutoQtoTab — mapping step render-only (Q-18)", () => {
     await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
     fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
     await waitFor(() => expect(screen.getByText("Mapping 2 tags")).toBeInTheDocument());
+  });
+});
+
+// [MappingStep self-abort fix jul10] These two cases were IMPOSSIBLE before the fix: the effect
+// listed `mapping` in its dep array while the body called setMapping(true), so the effect re-ran on
+// its own state write and the returned cleanup aborted the just-dispatched map-tags POST; the
+// AbortError was swallowed, so the spinner spun forever and mapping never completed. The freeze
+// suite's plain fetch mock IGNORES the abort signal, so a naive resolving mock would false-PASS on
+// the buggy code (the aborted promise still resolves). These tests use an ABORT-AWARE mock that
+// rejects with an AbortError when the controller aborts — exactly like real fetch — so they are RED
+// on the pre-fix code and GREEN after. See AutoQtoTab.tsx MappingStep.
+function abortAwareFetch(
+  settle: (attempt: number) => { ok: boolean; status?: number; body?: unknown },
+) {
+  let attempt = 0;
+  return vi.fn((_url: string, opts?: { signal?: AbortSignal }) =>
+    new Promise((resolve, reject) => {
+      const signal = opts?.signal;
+      const fail = () => {
+        const e = new Error("The operation was aborted.");
+        e.name = "AbortError";
+        reject(e);
+      };
+      if (signal?.aborted) return fail();
+      signal?.addEventListener?.("abort", fail);
+      attempt += 1;
+      const thisAttempt = attempt;
+      // Settle on a macrotask so a same-render-tick abort (the bug) always wins the race and the
+      // resolve is suppressed — mirroring real fetch, which rejects an aborted request.
+      setTimeout(() => {
+        if (signal?.aborted) return;
+        const r = settle(thisAttempt);
+        resolve({ ok: r.ok, status: r.status ?? (r.ok ? 200 : 500), json: async () => r.body ?? {} });
+      }, 0);
+    }),
+  );
+}
+
+// One matched YOLO instance per page → isYoloOnly builds a single line item; the review summary
+// line "<n> instances of 1 tags across <p> pages" is the completion signal.
+function mapWorkflow(id: number) {
+  return wf({
+    id,
+    materialLabel: "Doors",
+    step: "map-tags",
+    itemType: "yolo-only",
+    yoloClassFilter: "door_single",
+    parsedSchedule: {
+      headers: ["TAG", "SIZE"],
+      rows: [{ TAG: "D-101", SIZE: "3070" }, { TAG: "D-102", SIZE: "3070" }],
+      tagColumn: "TAG",
+      tableName: "DOOR SCHEDULE",
+      scheduleCategory: "door-schedule",
+      sourcePageNumber: 4,
+    },
+  });
+}
+const MAP_RESULTS = {
+  door_single: [
+    { pageNumber: 4, bbox: [0, 0, 1, 1], confidence: 1, confidenceTier: "high" },
+    { pageNumber: 5, bbox: [0, 0, 1, 1], confidence: 1, confidenceTier: "high" },
+  ],
+};
+
+describe("AutoQtoTab — mapping completes and advances to review (Q-19)", () => {
+  it("POST resolves → line items built → step advances to review (no self-abort)", async () => {
+    useViewerStore.setState({ isDemo: true }); // demo: updateWorkflowStep is local, no PUT
+    seedQtoWorkflows([mapWorkflow(15)]);
+    vi.stubGlobal("fetch", abortAwareFetch(() => ({ ok: true, body: { results: MAP_RESULTS } })));
+    renderTab();
+
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
+    fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
+    // Spinner while the POST is in flight...
+    await waitFor(() => expect(screen.getByText("Mapping 2 tags")).toBeInTheDocument());
+    // ...then completion: the review summary renders and the spinner is gone.
+    await waitFor(() => expect(screen.getByText(/instances of 1 tags/)).toBeInTheDocument());
+    expect(screen.queryByText("Mapping 2 tags")).not.toBeInTheDocument();
+  });
+});
+
+describe("AutoQtoTab — Retry re-arms a failed mapping (Q-20)", () => {
+  it("first attempt errors → Retry → second attempt completes to review (retryTick pin)", async () => {
+    useViewerStore.setState({ isDemo: true });
+    seedQtoWorkflows([mapWorkflow(16)]);
+    // attempt 1 → server error (shows Retry); attempt 2 → success
+    vi.stubGlobal(
+      "fetch",
+      abortAwareFetch((n) =>
+        n === 1 ? { ok: false, status: 500 } : { ok: true, body: { results: MAP_RESULTS } },
+      ),
+    );
+    renderTab();
+
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
+    fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
+    await waitFor(() => expect(screen.getByText("Retry")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Retry"));
+    await waitFor(() => expect(screen.getByText(/instances of 1 tags/)).toBeInTheDocument());
   });
 });
 
