@@ -7,10 +7,9 @@
 // useMultiSelectInteractionFreeze). The §2.2⑤ MIGRATION COMMIT (C3) flips exactly this ONE
 // function body and ZERO call sites:
 //
-//   PRE-migration (NOW):  groups live in viewerStore → setState({annotationGroups}) +
-//                         hydrateGroupMemberships(pairs) (the store's own index rebuild,
-//                         viewerStore.ts:759/:792-803)
-//   POST-migration:       groups live in the TanStack Query cache → the production
+//   PRE-migration:        groups lived in viewerStore → setState({annotationGroups}) +
+//                         hydrateGroupMemberships(pairs) (the store's own index rebuild)
+//   POST-migration (NOW): groups live in the TanStack Query cache → the production
 //                         seedAnnotationGroupsCache(qc, useViewerStore.getState().publicId,
 //                         {groups, memberships: pairs}) — raw pairs in the cache, Sets only in
 //                         the derived layer (SPEC §3.2).
@@ -19,11 +18,12 @@
 // precedent) — every call site's beforeEach satisfies this.
 // Both collection args are REQUIRED, no defaults — the one-key/two-half domain shape stays
 // explicit at every call site and a future third half can't hide behind the signature.
-// `qc` is UNUSED in the pre-form on purpose: it must be threaded from birth so the C3 flip
-// touches only this body (zero call-site churn).
+// `qc` was threaded from birth precisely so this C3 flip touched only this body (zero
+// call-site churn).
 
 import type { QueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { seedAnnotationGroupsCache } from "@/queries/useAnnotationGroups";
 import type { AnnotationGroup, AnnotationGroupMembership } from "@/types";
 
 export function seedAnnotationGroups(
@@ -31,7 +31,9 @@ export function seedAnnotationGroups(
   groups: AnnotationGroup[],
   pairs: AnnotationGroupMembership[],
 ): void {
-  void qc; // pre-form: zustand-backed; qc becomes load-bearing at the C3 flip
-  useViewerStore.setState({ annotationGroups: groups });
-  useViewerStore.getState().hydrateGroupMemberships(pairs);
+  // [refactor jul10 P2.2⑤ C3] flipped zustand → cache; the production seed is the write path.
+  seedAnnotationGroupsCache(qc, useViewerStore.getState().publicId, {
+    groups,
+    memberships: pairs,
+  });
 }

@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useViewerStore, useSelection, useAnnotationGroups } from "@/stores/viewerStore";
+import { useViewerStore, useSelection } from "@/stores/viewerStore";
+// [refactor jul10 P2.2⑤] annotation groups: zustand → TanStack cache facade (import-swap-only
+// surgery; destructure + every handler body byte-identical).
+import { useAnnotationGroups } from "@/queries/useAnnotationGroups";
 import MarkupDialog from "./MarkupDialog";
 import { persistFetch, canPersist } from "@/lib/client-persist";
 import type { AnnotationGroup } from "@/types";

@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { useViewerStore, useSelection, useAnnotationGroups } from "@/stores/viewerStore";
+import { useViewerStore, useSelection } from "@/stores/viewerStore";
+// [refactor jul10 P2.2⑤] annotation groups: zustand → TanStack cache facade (import-swap-only
+// surgery — the destructure below and every callback body are byte-identical; identity
+// semantics of the three group reads are preserved by the facade's sub-reference memoization).
+import { useAnnotationGroups } from "@/queries/useAnnotationGroups";
 import type { ClientAnnotation } from "@/types";
 
 /**
@@ -9,10 +13,12 @@ import type { ClientAnnotation } from "@/types";
  * ViewAllPanel checkboxes. Extracted from AnnotationOverlay so that overlay
  * doesn't accumulate new tool logic (per feedback_code_discipline.md).
  *
- * Callers:
- *   - AnnotationOverlay — delegates annotation-click + lasso mouse events here
- *   - GroupActionsBar — reads selection size + clears selection
- *   - ViewAllPanel — sets selection from tree checkboxes
+ * Sole caller (mount): AnnotationOverlay — delegates annotation-click + lasso
+ * mouse events here. This hook sits on the CANVAS-SACRED path: the overlay's
+ * draw effect depends on the (fresh-per-render) object this hook returns.
+ * [refactor jul10 P2.2⑤] The old "Callers" list here conflated the interaction
+ * CONTRACT with hook mounts — GroupActionsBar and ViewAllPanel never mount this
+ * hook; they use useSelection directly (SPEC §8.9 errata).
  *
  * Lasso state (`lassoRect`) is local React state (not in the Zustand store)
  * because it's ephemeral render-only data. The persistent selection set

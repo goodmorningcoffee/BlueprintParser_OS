@@ -46,7 +46,7 @@ const LANES = [
       { label: "GroupActionsBar appears", sub: "floating bar" },
       { label: "MarkupDialog opens", sub: "name + color" },
       { label: "POST /api/annotation-groups", sub: "auto-CSI from notes" },
-      { label: "hydrateGroupMemberships", sub: "Zustand update" },
+      { label: "hydrateGroupMemberships", sub: "query-cache write (P2.2⑤)" },
       { label: "Canvas ring outline", sub: "groupIdToColor map" },
     ],
   },

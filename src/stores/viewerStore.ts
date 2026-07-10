@@ -16,7 +16,6 @@ import type {
   SymbolSearchResult,
   SymbolSearchMatch,
   QtoWorkflow,
-  AnnotationGroup,
   ParsedRegion,
   TextractLine,
 } from "@/types";
@@ -63,8 +62,8 @@ interface ViewerState {
   // "group" mode powers the new multi-select / lasso tool. In this mode,
   // click-drag on empty canvas starts a marquee that selects every
   // intersecting annotation. Click on an annotation adds/removes it
-  // from `selectedAnnotationIds`. See useSelection + useAnnotationGroups
-  // slices below.
+  // from `selectedAnnotationIds`. See the useSelection slice below + the
+  // useAnnotationGroups facade in src/queries/useAnnotationGroups.ts (P2.2⑤).
   mode: "move" | "pointer" | "markup" | "group";
   setMode: (m: "move" | "pointer" | "markup" | "group") => void;
   tempPanMode: boolean;
@@ -107,22 +106,11 @@ interface ViewerState {
   toggleSelection: (id: number) => void;
   clearSelection: () => void;
 
-  // Project-scoped groups, hydrated at project load via
-  // GET /api/annotation-groups?projectId=X.
-  annotationGroups: AnnotationGroup[];
-  setAnnotationGroups: (groups: AnnotationGroup[]) => void;
-  upsertAnnotationGroup: (group: AnnotationGroup) => void;
-  removeAnnotationGroupLocal: (id: number) => void;
-
-  // M:N membership maintained as two indexes kept in sync by the
-  // mutation helpers: annotation → its groups, and group → its members.
-  // The reverse index (groupMembers) powers O(1) click-highlight —
-  // clicking one member looks up all siblings without scanning memberships.
-  annotationGroupMemberships: Record<number, Set<number>>;
-  groupMembers: Record<number, Set<number>>;
-  hydrateGroupMemberships: (pairs: { annotationId: number; groupId: number }[]) => void;
-  addAnnotationToGroup: (annotationId: number, groupId: number) => void;
-  removeAnnotationFromGroup: (annotationId: number, groupId: number) => void;
+  // [refactor jul10 P2.2⑤] annotation groups + the M:N membership indexes moved to the
+  // TanStack Query cache — see src/queries/useAnnotationGroups.ts (ONE key holds the raw
+  // {groups, memberships} payload; the forward/reverse Set indexes are derived in-hook).
+  // The old fields (annotationGroups / annotationGroupMemberships / groupMembers) and their
+  // 6 actions are DELETED, not bridged; 4 of the 9 selector members were dead surface (E7).
 
   // ─── Page data ───────────────────────────────────────────
   pageNames: Record<number, string>;
@@ -756,77 +744,15 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
     }),
   clearSelection: () => set({ selectedAnnotationIds: new Set<number>() }),
 
-  annotationGroups: [],
-  setAnnotationGroups: (annotationGroups) => set({ annotationGroups }),
-  upsertAnnotationGroup: (group) =>
-    set((s) => {
-      const idx = s.annotationGroups.findIndex((g) => g.id === group.id);
-      if (idx === -1) return { annotationGroups: [...s.annotationGroups, group] };
-      const next = [...s.annotationGroups];
-      next[idx] = group;
-      return { annotationGroups: next };
-    }),
-  removeAnnotationGroupLocal: (id) =>
-    set((s) => {
-      const nextGroups = s.annotationGroups.filter((g) => g.id !== id);
-      // Also drop all membership rows that reference this group.
-      const nextGroupMembers = { ...s.groupMembers };
-      const removedAnnotationIds = nextGroupMembers[id] ?? new Set<number>();
-      delete nextGroupMembers[id];
-      const nextMemberships = { ...s.annotationGroupMemberships };
-      for (const aid of removedAnnotationIds) {
-        const set = new Set(nextMemberships[aid]);
-        set.delete(id);
-        if (set.size === 0) delete nextMemberships[aid];
-        else nextMemberships[aid] = set;
-      }
-      return {
-        annotationGroups: nextGroups,
-        groupMembers: nextGroupMembers,
-        annotationGroupMemberships: nextMemberships,
-      };
-    }),
-
-  annotationGroupMemberships: {},
-  groupMembers: {},
-  hydrateGroupMemberships: (pairs) =>
-    set(() => {
-      const memberships: Record<number, Set<number>> = {};
-      const reverse: Record<number, Set<number>> = {};
-      for (const { annotationId, groupId } of pairs) {
-        if (!memberships[annotationId]) memberships[annotationId] = new Set();
-        memberships[annotationId].add(groupId);
-        if (!reverse[groupId]) reverse[groupId] = new Set();
-        reverse[groupId].add(annotationId);
-      }
-      return { annotationGroupMemberships: memberships, groupMembers: reverse };
-    }),
-  addAnnotationToGroup: (annotationId, groupId) =>
-    set((s) => {
-      const memberships = { ...s.annotationGroupMemberships };
-      const reverse = { ...s.groupMembers };
-      const annSet = new Set(memberships[annotationId] ?? []);
-      annSet.add(groupId);
-      memberships[annotationId] = annSet;
-      const groupSet = new Set(reverse[groupId] ?? []);
-      groupSet.add(annotationId);
-      reverse[groupId] = groupSet;
-      return { annotationGroupMemberships: memberships, groupMembers: reverse };
-    }),
-  removeAnnotationFromGroup: (annotationId, groupId) =>
-    set((s) => {
-      const memberships = { ...s.annotationGroupMemberships };
-      const reverse = { ...s.groupMembers };
-      const annSet = new Set(memberships[annotationId] ?? []);
-      annSet.delete(groupId);
-      if (annSet.size === 0) delete memberships[annotationId];
-      else memberships[annotationId] = annSet;
-      const groupSet = new Set(reverse[groupId] ?? []);
-      groupSet.delete(annotationId);
-      if (groupSet.size === 0) delete reverse[groupId];
-      else reverse[groupId] = groupSet;
-      return { annotationGroupMemberships: memberships, groupMembers: reverse };
-    }),
+  // [refactor jul10 P2.2⑤] annotationGroups init + 6 actions (setAnnotationGroups,
+  // upsertAnnotationGroup, removeAnnotationGroupLocal, hydrateGroupMemberships,
+  // addAnnotationToGroup, removeAnnotationFromGroup) and the two index inits moved/deleted →
+  // src/queries/useAnnotationGroups.ts. upsertAnnotationGroup + the hydrate index-rebuild loop
+  // were ported VERBATIM (facade upsert / deriveGroupIndexes); the other four were dead surface
+  // (grep-verified zero external callers — the loader's setAnnotationGroups call became the
+  // cache seed). NOTE resetProjectData below never cleared these fields — that omission was the
+  // old cross-project stale-retention bug; publicId-keyed cache entries eliminate the class
+  // (SPEC §5-E3), so do NOT add group lines to resetProjectData.
 
   pageNames: {},
   setPageNames: (pageNames) => set({ pageNames }),
@@ -1638,9 +1564,10 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   // inlining field lists so each subsystem stays the owner of its own cleanup
   // shape. Called from parent-panel toggles (Parse, Detection, Table, Keynote)
   // on close, and from cancel buttons inside parse panels. Explicitly does NOT
-  // touch: selectedAnnotationIds, annotationGroups, llmHighlight, showKeynotes
-  // overlay, chat, annotations, takeoffs, parsedKeynoteData. Those survive
-  // panel close so the user's saved work and multi-select state persist.
+  // touch: selectedAnnotationIds, llmHighlight, showKeynotes overlay, chat,
+  // annotations, takeoffs, parsedKeynoteData (annotation groups now live in the
+  // query cache — P2.2⑤ — and are equally untouched). Those survive panel close
+  // so the user's saved work and multi-select state persist.
   resetAllTools: () => {
     const s = get();
     s.setMode("move");          // clears bucket/split/symbol-active/polygon/tempPan
@@ -1883,19 +1810,9 @@ export const useSelection = () =>
     clearSelection: s.clearSelection,
   })));
 
-/** Annotation groups + M:N membership indexes. */
-export const useAnnotationGroups = () =>
-  useViewerStore(useShallow((s) => ({
-    annotationGroups: s.annotationGroups,
-    setAnnotationGroups: s.setAnnotationGroups,
-    upsertAnnotationGroup: s.upsertAnnotationGroup,
-    removeAnnotationGroupLocal: s.removeAnnotationGroupLocal,
-    annotationGroupMemberships: s.annotationGroupMemberships,
-    groupMembers: s.groupMembers,
-    hydrateGroupMemberships: s.hydrateGroupMemberships,
-    addAnnotationToGroup: s.addAnnotationToGroup,
-    removeAnnotationFromGroup: s.removeAnnotationFromGroup,
-  })));
+// [refactor jul10 P2.2⑤] useAnnotationGroups selector DELETED — the facade now lives in
+// src/queries/useAnnotationGroups.ts (same name, 5-member live shape; the 4 dead members
+// dropped per SPEC §5-E7). Consumers changed only their import line.
 
 /** Drawing state (only DrawingPreviewLayer should subscribe) */
 export const useDrawingState = () =>

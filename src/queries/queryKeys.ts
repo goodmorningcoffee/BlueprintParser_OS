@@ -38,7 +38,9 @@ export const queryKeys = {
     items: (publicId: string) => ["project", publicId, "takeoff", "items"] as const,
     groups: (publicId: string) => ["project", publicId, "takeoff", "groups"] as const,
   },
-  // ⑤ annotationGroups + memberships (derived indexes via `select`)
+  // ⑤ annotationGroups + memberships — ONE key, raw {groups, memberships} payload; the Set
+  // indexes are derived in-hook via useMemo on the memberships sub-reference, NOT `select`
+  // (Sets are opaque to structural sharing — ANNGROUPS_IMPL/SPEC.md verdict 4).
   annotationGroups: {
     all: (publicId: string) => ["project", publicId, "annotationGroups"] as const,
   },

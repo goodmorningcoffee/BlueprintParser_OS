@@ -5,13 +5,15 @@ import {
   useViewerStore,
   usePanels,
   useSelection,
-  useAnnotationGroups,
   usePageData,
   useDetection,
   useTextAnnotationDisplay,
 } from "@/stores/viewerStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
+// [refactor jul10 P2.2⑤] annotation groups: zustand → TanStack cache facade (import-swap-only
+// surgery; destructure + edit/toggle/bulk handler bodies byte-identical).
+import { useAnnotationGroups } from "@/queries/useAnnotationGroups";
 import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem, TextAnnotation, ParsedRegion, ScheduleData, KeynoteData, LegendData, NotesData, SpecData } from "@/types";
 import TreeSection from "./TreeSection";
 import MarkupDialog from "./MarkupDialog";

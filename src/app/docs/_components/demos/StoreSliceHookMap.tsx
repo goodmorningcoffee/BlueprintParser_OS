@@ -6,7 +6,10 @@ const SLICES = [
   { name: "useNavigation",           line: 1675, purpose: "pageNumber, numPages, mode" },
   { name: "usePanels",               line: 1686, purpose: "12 showX flags + toggles" },
   { name: "useSelection",            line: 1726, purpose: "multi-select ids + helpers" },
-  { name: "useAnnotationGroups",     line: 1737, purpose: "groups, memberships, upsert" },
+  // [refactor jul10 P2.2⑤] row rewritten: the store selector is deleted (its `line: 1737` was
+  // already stale pre-migration); the facade lives in src/queries/useAnnotationGroups.ts
+  // (groups+memberships in the query cache, Set indexes derived in-hook; selection stays zustand).
+  { name: "useAnnotationGroups",     line: 146,  purpose: "→ src/queries facade (P2.2⑤): groups+memberships in query cache, selection stays zustand" },
   { name: "useDrawingState",         line: 1751, purpose: "_drawing/_drawStart/_drawEnd/_mousePos" },
   { name: "useSymbolSearch",         line: 1764, purpose: "results, confidence, dismissed" },
   { name: "useChat",                 line: 1971, purpose: "chatScope (messages → query cache, P2.2①)" },

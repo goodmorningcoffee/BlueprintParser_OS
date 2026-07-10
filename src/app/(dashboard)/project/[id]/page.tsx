@@ -11,6 +11,8 @@ import { seedChatCache } from "@/queries/useChatMessages";
 import { seedSummariesCache } from "@/queries/useSummaries";
 // [refactor jul10 P2.2④] takeoff items+groups moved zustand → TanStack cache; loader seeds both keys.
 import { seedTakeoffFromBootstrap } from "@/queries/useTakeoff";
+// [refactor jul10 P2.2⑤] annotation groups moved zustand → TanStack cache; loader seeds the one key.
+import { seedAnnotationGroupsCache } from "@/queries/useAnnotationGroups";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
@@ -169,19 +171,22 @@ export default function ProjectPage() {
       // remaining unpinned line; do not inline the mapping back.
       seedTakeoffFromBootstrap(queryClient, data.id, data);
 
-      // Hydrate annotation groups + M:N membership indexes. Both the
-      // flat group list and the junction rows come from a single endpoint
-      // — see /api/annotation-groups GET handler. Non-blocking — a failed
-      // fetch just means no groups show up; core viewer still works.
-      if (groupsRes.ok) {
-        const groupsData = await groupsRes.json().catch(() => null);
-        if (groupsData?.groups) {
-          useViewerStore.getState().setAnnotationGroups(groupsData.groups);
-        }
-        if (groupsData?.memberships) {
-          useViewerStore.getState().hydrateGroupMemberships(groupsData.memberships);
-        }
-      }
+      // Hydrate annotation groups + M:N membership pairs into the TanStack Query cache
+      // (facade — no longer zustand). Both the flat group list and the junction rows come
+      // from a single endpoint — see /api/annotation-groups GET handler. HTTP-non-ok stays
+      // non-blocking (no groups this open; core viewer still works); a NETWORK-level failure
+      // of the Promise.all fetch above stays FATAL (whole-project Retry screen) — preserved
+      // deliberately, do not move the GET out of the Promise.all (SPEC §2.1).
+      // [refactor jul10 P2.2⑤] UNCONDITIONAL atomic publicId-scoped seed (`?? []` inside the
+      // helper, BOTH fields always written): a conditional seed would retain a stale-or-absent
+      // same-key entry and reopen the post-reveal recovery-GET hole. Keyed on data.id
+      // (server-canonical), NEVER the route param. Seed-before-reveal: runs before the
+      // `finally setLoading(false)`, and every group observer is unmounted behind the loading
+      // gate, so groups are painted at first reveal exactly as before (no pop-in). Failure
+      // semantics deltas vs the old retain-on-fail store writes are the pinned E3 ledger
+      // (ANNGROUPS_IMPL/SPEC.md §5-E3: clear-on-fail, leak-class elimination).
+      const groupsData = groupsRes.ok ? await groupsRes.json().catch(() => null) : null;
+      seedAnnotationGroupsCache(queryClient, data.id, groupsData);
 
       // ─── Hydrate initial chunk (already fetched in parallel above) ───
       if (chunkRes.ok) {
