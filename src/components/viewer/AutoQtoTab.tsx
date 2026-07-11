@@ -366,7 +366,14 @@ export default function AutoQtoTab() {
                         } else {
                           setLoadingScheduleKey(key);
                           try {
-                            const res = await fetch(`/api/projects/${publicId}/pages?from=${s.pageNum}&to=${s.pageNum}`);
+                            // [refactor jul11 P2.2⑦ PW-D8] Summary-only schedules can reach this
+                            // exact-page fallback in signed-out demos. The authenticated twin rejects
+                            // that request with 401, so choose the same visibility-aware route as the
+                            // navigation loader. This detail fetch still adopts PI only below.
+                            const detailEndpoint = isDemo
+                              ? `/api/demo/projects/${publicId}/pages?from=${s.pageNum}&to=${s.pageNum}`
+                              : `/api/projects/${publicId}/pages?from=${s.pageNum}&to=${s.pageNum}`;
+                            const res = await fetch(detailEndpoint);
                             if (res.ok) {
                               const data = await res.json();
                               const pageData = data.pages?.[0];
