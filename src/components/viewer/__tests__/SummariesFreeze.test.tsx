@@ -28,6 +28,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { seedAnnotations } from "@/test/seed-annotations";
 import { seedSummaries } from "@/test/seed-summaries";
 import type { ProjectSummaries } from "@/types";
 import SpecIndex from "../SpecIndex";
@@ -312,23 +313,21 @@ describe("KeynotePanel — keynoteTablePages replaces the intel fallback wholesa
 
 describe("ViewerToolbar — YOLO dropdown lists summaries.modelNames, not the fallback (VT-1)", () => {
   it("dropdown shows 'summaryModel' and NOT the annotation-derived 'annModel'", async () => {
-    useViewerStore.setState({
-      showDetections: true,
-      // one real yolo annotation: passes the hasYoloAnnotations gate AND baits the fallback —
-      // the `summaries?...modelNames || [...]` read must suppress it while summaries exist
-      // (incl. the `[] ||` truthiness quirk: even an EMPTY summaries list wins).
-      annotations: [
-        {
-          id: 1,
-          pageNumber: 1,
-          name: "door_single",
-          bbox: [0, 0, 0.1, 0.1],
-          note: null,
-          source: "yolo",
-          data: { modelName: "annModel" },
-        },
-      ],
-    });
+    useViewerStore.setState({ showDetections: true });
+    // one real yolo annotation: passes the hasYoloAnnotations gate AND baits the fallback —
+    // the `summaries?...modelNames || [...]` read must suppress it while summaries exist
+    // (incl. the `[] ||` truthiness quirk: even an EMPTY summaries list wins).
+    seedAnnotations(qc, [
+      {
+        id: 1,
+        pageNumber: 1,
+        name: "door_single",
+        bbox: [0, 0, 0.1, 0.1],
+        note: null,
+        source: "yolo",
+        data: { modelName: "annModel" },
+      },
+    ]);
     seedSummaries(
       qc,
       summariesFixture({

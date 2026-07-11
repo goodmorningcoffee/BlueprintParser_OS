@@ -37,6 +37,7 @@ import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
 import { persistFetch } from "@/lib/client-persist";
 import { TWENTY_COLORS } from "@/types";
@@ -81,6 +82,17 @@ function takeoffAnn(id: number, takeoffItemId: number, name: string): ClientAnno
     note: null,
     source: "takeoff",
     data: { type: "count-marker", shape: "circle", color: "#ef4444", takeoffItemId } as never,
+  };
+}
+function unrelatedAnn(id: number, name: string): ClientAnnotation {
+  return {
+    id,
+    pageNumber: 1,
+    name,
+    bbox: [0.2, 0.2, 0.3, 0.3],
+    note: null,
+    source: "yolo",
+    data: null,
   };
 }
 
@@ -215,13 +227,11 @@ describe("CountTab — create failure is inline formError (TC-3)", () => {
 describe("CountTab — delete item is server-first with annotation sweep (TC-4)", () => {
   it("row survives until the DELETE resolves; then row gone + takeoff-sourced markers filtered", async () => {
     seedTakeoff(qc, [item({ id: 7, name: "Door" })], []);
-    useViewerStore.setState({
-      annotations: [
-        takeoffAnn(100, 7, "Door"),
-        // cross-domain bait: a non-takeoff annotation must SURVIVE the sweep
-        { id: 101, pageNumber: 1, name: "door_single", bbox: [0, 0, 0.1, 0.1], note: null, source: "yolo", data: null },
-      ],
-    });
+    seedAnnotations(qc, [
+      takeoffAnn(100, 7, "Door"),
+      // cross-domain bait: a non-takeoff annotation must SURVIVE the sweep
+      unrelatedAnn(101, "door_single"),
+    ]);
     const d = deferred<unknown>();
     persistFetchMock.mockReturnValueOnce(d.promise);
     render(<CountTab />, { wrapper });
@@ -236,12 +246,21 @@ describe("CountTab — delete item is server-first with annotation sweep (TC-4)"
     await act(async () => {});
     expect(screen.getByText("Door")).toBeInTheDocument(); // positive pre-release signal: nothing removed yet
 
+    // [refactor jul11 P2.2⑥] Load-bearing unpleasant parity: this handler captured the
+    // render's annotation array before the await. A row arriving during the DELETE is visible
+    // now, but the post-await VALUE-REPLACE intentionally overwrites it. Functionalizing this
+    // cache write during ⑥ would be a behavior change, even though it would fix the lost update.
+    await act(async () => {
+      seedAnnotations(qc, [...readSeededAnnotations(qc), unrelatedAnn(102, "concurrent-delete")]);
+    });
+    expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([100, 101, 102]);
+
     d.resolve({ success: true });
 
     await waitFor(() => expect(screen.queryByText("Door")).not.toBeInTheDocument());
     // cross-domain (annotations stay zustand in ④): the takeoff marker was swept, the yolo one kept
     await waitFor(() =>
-      expect(useViewerStore.getState().annotations.map((a) => a.id)).toEqual([101]),
+      expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([101]),
     );
   });
 });
@@ -249,7 +268,7 @@ describe("CountTab — delete item is server-first with annotation sweep (TC-4)"
 describe("CountTab — delete rejection keeps the row (TC-5)", () => {
   it("alert 'Failed to delete item:'; row and annotations untouched", async () => {
     seedTakeoff(qc, [item({ id: 7, name: "Door" })], []);
-    useViewerStore.setState({ annotations: [takeoffAnn(100, 7, "Door")] });
+    seedAnnotations(qc, [takeoffAnn(100, 7, "Door")]);
     persistFetchMock.mockRejectedValueOnce(new Error("boom"));
     render(<CountTab />, { wrapper });
     await waitFor(() => expect(screen.getByText("Door")).toBeInTheDocument());
@@ -258,7 +277,7 @@ describe("CountTab — delete rejection keeps the row (TC-5)", () => {
 
     await waitFor(() => expect(alertMock).toHaveBeenCalledWith("Failed to delete item: boom"));
     expect(screen.getByText("Door")).toBeInTheDocument(); // server-first: nothing to roll back
-    expect(useViewerStore.getState().annotations).toHaveLength(1);
+    expect(readSeededAnnotations(qc)).toHaveLength(1);
   });
 });
 
@@ -267,7 +286,7 @@ describe("CountTab — delete rejection keeps the row (TC-5)", () => {
 describe("CountTab — rename item is server-first, local newName rendered (TC-6)", () => {
   it("edit input stays mounted while the PUT is pending (setEditingId(null) is post-await)", async () => {
     seedTakeoff(qc, [item({ id: 7, name: "Door" })], []);
-    useViewerStore.setState({ annotations: [takeoffAnn(100, 7, "Door")] });
+    seedAnnotations(qc, [takeoffAnn(100, 7, "Door"), unrelatedAnn(101, "stable-yolo")]);
     const d = deferred<unknown>();
     persistFetchMock.mockReturnValueOnce(d.promise);
     render(<CountTab />, { wrapper });
@@ -288,13 +307,25 @@ describe("CountTab — rename item is server-first, local newName rendered (TC-6
     // NOW meaningful: no static row text carries the new name yet (input VALUES don't match text queries)
     expect(screen.queryByText("Door 2")).not.toBeInTheDocument();
 
+    // Same captured-array contract as delete: prove the concurrent row really landed before
+    // resolving, then require the faithful post-await value replacement to drop only that row.
+    await act(async () => {
+      seedAnnotations(qc, [...readSeededAnnotations(qc), unrelatedAnn(102, "concurrent-rename")]);
+    });
+    expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([100, 101, 102]);
+
     // items PUT returns {success:true}, NOT the row — the client renders its LOCAL newName (frozen)
     d.resolve({ success: true });
 
     await waitFor(() => expect(screen.getByText("Door 2")).toBeInTheDocument());
     expect(screen.queryByDisplayValue("Door 2")).not.toBeInTheDocument(); // edit mode exited
-    // annotation name-sync rode along (annotations stay zustand in ④)
-    await waitFor(() => expect(useViewerStore.getState().annotations[0].name).toBe("Door 2"));
+    // annotation name-sync rode along; stable captured rows survive, the concurrent row does not
+    await waitFor(() =>
+      expect(readSeededAnnotations(qc).map((a) => [a.id, a.name])).toEqual([
+        [100, "Door 2"],
+        [101, "stable-yolo"],
+      ]),
+    );
   });
 });
 

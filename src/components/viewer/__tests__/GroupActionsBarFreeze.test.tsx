@@ -49,7 +49,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
-import { seedAnnotations } from "@/test/seed-annotations";
+import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { persistFetch } from "@/lib/client-persist";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
 import type { AnnotationGroup, ClientAnnotation } from "@/types";
@@ -349,12 +349,12 @@ describe("GroupActionsBar — mass delete sweeps ⑥-zustand annotations, indexe
     await act(async () => {});
     // positive pre-release signal: confirm modal busy-spinner text (:358)
     expect(screen.getByRole("button", { name: "Deleting…" })).toBeInTheDocument();
-    expect(useViewerStore.getState().annotations).toHaveLength(3); // server-first: no sweep yet
+    expect(readSeededAnnotations(qc)).toHaveLength(3); // server-first: no sweep yet
 
     d.resolve({ success: true });
 
     // annotations swept via ⑥-zustand removeAnnotation (:159); non-selected survivor kept
-    await waitFor(() => expect(useViewerStore.getState().annotations.map((a) => a.id)).toEqual([10]));
+    await waitFor(() => expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([10]));
     await waitFor(() => expect(screen.queryByText("2 selected")).not.toBeInTheDocument()); // clearSelection → bar unmounts
     // THE stale-index pin (SPEC §6.2 G-5): the deleted annotation's membership pair is NOT
     // pruned client-side — server FK cascades junctions; the draw loop keys on live
@@ -362,6 +362,44 @@ describe("GroupActionsBar — mass delete sweeps ⑥-zustand annotations, indexe
     // here is a behavior change and must fail THIS assert.
     expect(probe.result.current.getGroupOutlineColor(20)).toBe("#ff0000"); // stale-but-harmless
     expect(probe.result.current.getGroupOutlineColor(10)).toBe("#ff0000"); // live member untouched
+  });
+
+  it("rejection alerts and keeps both annotations and selection for an explicit retry", async () => {
+    // [refactor jul11 P2.2⑥] Freeze the existing server-first failure policy before the
+    // annotations array leaves zustand. The future cache facade must not optimistically sweep,
+    // roll back, or silently dismiss this confirmation dialog on a rejected batch delete.
+    seedAnnotations(qc, [ann(10), ann(20), ann(21)]);
+    useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    const d = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(d.promise);
+    render(<GroupActionsBar />, { wrapper });
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete all" }));
+
+    // Anchor beyond the request/observer horizon before claiming the write is server-first.
+    // A pre-rejected mock could skip the meaningful pending state and let an optimistic sweep
+    // briefly occur without this test ever observing it.
+    await waitFor(() =>
+      expect(persistFetchMock).toHaveBeenCalledWith("/api/annotations/batch-delete", {
+        projectId: "pid",
+        annotationIds: [20, 21],
+      }),
+    );
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: "Deleting…" })).toBeInTheDocument();
+    expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([10, 20, 21]);
+    expect(useViewerStore.getState().selectedAnnotationIds).toEqual(new Set([20, 21]));
+
+    d.reject(new Error("batch unavailable"));
+
+    await waitFor(() =>
+      expect(alertMock).toHaveBeenCalledWith("Failed to delete: batch unavailable"),
+    );
+    expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([10, 20, 21]);
+    expect(useViewerStore.getState().selectedAnnotationIds).toEqual(new Set([20, 21]));
+    expect(screen.getByText("Delete 2 annotations?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete all" })).toBeEnabled();
   });
 });
 
@@ -401,7 +439,7 @@ describe("GroupActionsBar — demo never writes at the three guarded sites (G-6)
     await act(async () => {});
     await act(async () => {});
 
-    expect(useViewerStore.getState().annotations).toHaveLength(3); // no sweep
+    expect(readSeededAnnotations(qc)).toHaveLength(3); // no sweep
     expect(screen.getByText("2 selected")).toBeInTheDocument(); // no clearSelection
     expect(persistFetchMock).not.toHaveBeenCalled(); // write channel silent
     expect(fetchMock).not.toHaveBeenCalled(); // raw channel silent (also: zero GETs post-migration)

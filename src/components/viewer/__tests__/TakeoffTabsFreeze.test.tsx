@@ -32,6 +32,7 @@ import { render, screen, fireEvent, cleanup, waitFor, act, within } from "@testi
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
 import { persistFetch } from "@/lib/client-persist";
 import { TWENTY_COLORS } from "@/types";
@@ -82,6 +83,17 @@ function takeoffAnn(id: number, takeoffItemId: number, name: string, type: strin
     data: { type, takeoffItemId, vertices: PENDING_POLYGON.vertices } as never,
   };
 }
+function unrelatedAnn(id: number, name: string): ClientAnnotation {
+  return {
+    id,
+    pageNumber: 1,
+    name,
+    bbox: [0.4, 0.4, 0.5, 0.5],
+    note: null,
+    source: "yolo",
+    data: null,
+  };
+}
 
 // Shared pending polygon for the BF cases — shape of viewerStore.bucketFillPendingPolygon.
 const PENDING_POLYGON = {
@@ -110,6 +122,7 @@ beforeEach(() => {
     publicId: "pid",
     isDemo: false,
     hiddenTakeoffItemIds: new Set<number>(),
+    bucketFillError: null,
     bucketFillPendingPolygon: null,
   });
   fetchMock.mockReset();
@@ -213,14 +226,12 @@ describe("AreaTab — group-create failure is INLINE groupError, not alert (TA-3
 // channels + the local effects (temp ids, annotation sweep/name-sync).
 describe("AreaTab — demo NEVER writes (TA-4)", () => {
   it("rename+delete+create item and create group all land locally; ZERO calls on either channel", async () => {
-    useViewerStore.setState({
-      isDemo: true,
-      annotations: [
-        takeoffAnn(100, 7, "Carpet", "area-polygon"),
-        // cross-domain bait: a non-takeoff annotation must SURVIVE the demo delete sweep
-        { id: 101, pageNumber: 1, name: "door_single", bbox: [0, 0, 0.1, 0.1], note: null, source: "yolo", data: null },
-      ],
-    });
+    useViewerStore.setState({ isDemo: true });
+    seedAnnotations(qc, [
+      takeoffAnn(100, 7, "Carpet", "area-polygon"),
+      // cross-domain bait: a non-takeoff annotation must SURVIVE the demo delete sweep
+      { id: 101, pageNumber: 1, name: "door_single", bbox: [0, 0, 0.1, 0.1], note: null, source: "yolo", data: null },
+    ]);
     seedTakeoff(
       qc,
       [item({ id: 7, name: "Carpet", shape: "polygon", groupId: 5 })],
@@ -235,14 +246,14 @@ describe("AreaTab — demo NEVER writes (TA-4)", () => {
     fireEvent.change(renameInput, { target: { value: "Carpet 2" } });
     fireEvent.keyDown(renameInput, { key: "Enter" });
     await waitFor(() => expect(screen.getByText("Carpet 2")).toBeInTheDocument());
-    expect(useViewerStore.getState().annotations[0].name).toBe("Carpet 2"); // demo name-sync ran
+    expect(readSeededAnnotations(qc)[0].name).toBe("Carpet 2"); // demo name-sync ran
 
     // delete item — demo branch: local remove + sweep, NO DELETE (sole row → title unique)
     fireEvent.click(screen.getByTitle("Delete item and all polygons"));
     await waitFor(() => expect(screen.queryByText("Carpet 2")).not.toBeInTheDocument());
     // sweep kept the yolo bait, dropped the takeoff marker (annotations stay zustand in ④)
     await waitFor(() =>
-      expect(useViewerStore.getState().annotations.map((a) => a.id)).toEqual([101]),
+      expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([101]),
     );
 
     // create item — demo branch: local temp (id: -Date.now()), NO POST
@@ -263,6 +274,70 @@ describe("AreaTab — demo NEVER writes (TA-4)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(persistFetchMock).not.toHaveBeenCalled();
     expect(alertMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("AreaTab — non-demo item writes preserve captured VALUE-REPLACE semantics", () => {
+  it("rename and delete each overwrite an annotation that arrives while persistence awaits", async () => {
+    const rename = deferred<unknown>();
+    const remove = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(rename.promise).mockReturnValueOnce(remove.promise);
+    seedTakeoff(qc, [item({ id: 7, name: "Carpet", shape: "polygon" })], []);
+    seedAnnotations(qc, [
+      takeoffAnn(100, 7, "Carpet", "area-polygon"),
+      unrelatedAnn(101, "stable-area-yolo"),
+    ]);
+    render(<AreaTab />, { wrapper });
+    await waitFor(() => expect(screen.getByText("Carpet")).toBeInTheDocument());
+
+    fireEvent.doubleClick(screen.getByText("Carpet"));
+    const input = screen.getByDisplayValue("Carpet");
+    fireEvent.change(input, { target: { value: "Carpet 2" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(persistFetchMock).toHaveBeenNthCalledWith(
+        1,
+        "/api/takeoff-items/7",
+        { name: "Carpet 2" },
+        "PUT",
+      ),
+    );
+
+    // [refactor jul11 P2.2⑥] Faithful migration pin: AreaTab closes over the render's
+    // annotation array before await. The concurrent row demonstrably lands, then the old
+    // array is VALUE-REPLACED on success. A functional Query updater would preserve 102 and
+    // silently change today's lost-update behavior (ANNOTATIONS-W1).
+    await act(async () => {
+      seedAnnotations(qc, [...readSeededAnnotations(qc), unrelatedAnn(102, "concurrent-area-rename")]);
+    });
+    expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([100, 101, 102]);
+    rename.resolve({ success: true });
+
+    await waitFor(() => expect(screen.getByText("Carpet 2")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(readSeededAnnotations(qc).map((a) => [a.id, a.name])).toEqual([
+        [100, "Carpet 2"],
+        [101, "stable-area-yolo"],
+      ]),
+    );
+
+    fireEvent.click(screen.getByTitle("Delete item and all polygons"));
+    await waitFor(() =>
+      expect(persistFetchMock).toHaveBeenNthCalledWith(
+        2,
+        "/api/takeoff-items/7",
+        undefined,
+        "DELETE",
+      ),
+    );
+    await act(async () => {
+      seedAnnotations(qc, [...readSeededAnnotations(qc), unrelatedAnn(103, "concurrent-area-delete")]);
+    });
+    expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([100, 101, 103]);
+    remove.resolve({ success: true });
+
+    await waitFor(() => expect(screen.queryByText("Carpet 2")).not.toBeInTheDocument());
+    await waitFor(() => expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([101]));
   });
 });
 
@@ -363,14 +438,12 @@ describe("LinearTab — group-create failure is ALERT (TL-2)", () => {
 // (HARD invariant, previously test-invisible in this tab).
 describe("LinearTab — demo NEVER writes (TL-3)", () => {
   it("rename+delete+create item and create group all land locally; ZERO calls on either channel", async () => {
-    useViewerStore.setState({
-      isDemo: true,
-      annotations: [
-        takeoffAnn(100, 7, "Wall Framing", "linear-polyline"),
-        // cross-domain bait: a non-takeoff annotation must SURVIVE the demo delete sweep
-        { id: 101, pageNumber: 1, name: "door_single", bbox: [0, 0, 0.1, 0.1], note: null, source: "yolo", data: null },
-      ],
-    });
+    useViewerStore.setState({ isDemo: true });
+    seedAnnotations(qc, [
+      takeoffAnn(100, 7, "Wall Framing", "linear-polyline"),
+      // cross-domain bait: a non-takeoff annotation must SURVIVE the demo delete sweep
+      { id: 101, pageNumber: 1, name: "door_single", bbox: [0, 0, 0.1, 0.1], note: null, source: "yolo", data: null },
+    ]);
     seedTakeoff(
       qc,
       [item({ id: 7, name: "Wall Framing", shape: "linear", groupId: 5 })],
@@ -385,13 +458,13 @@ describe("LinearTab — demo NEVER writes (TL-3)", () => {
     fireEvent.change(renameInput, { target: { value: "Wall Framing 2" } });
     fireEvent.keyDown(renameInput, { key: "Enter" });
     await waitFor(() => expect(screen.getByText("Wall Framing 2")).toBeInTheDocument());
-    expect(useViewerStore.getState().annotations[0].name).toBe("Wall Framing 2"); // demo name-sync
+    expect(readSeededAnnotations(qc)[0].name).toBe("Wall Framing 2"); // demo name-sync
 
     // delete item — demo branch: local remove + sweep, NO DELETE (sole row → title unique)
     fireEvent.click(screen.getByTitle("Delete item and all lines"));
     await waitFor(() => expect(screen.queryByText("Wall Framing 2")).not.toBeInTheDocument());
     await waitFor(() =>
-      expect(useViewerStore.getState().annotations.map((a) => a.id)).toEqual([101]),
+      expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([101]),
     );
 
     // create item — demo branch: local temp (id: -Date.now()), NO POST
@@ -414,6 +487,68 @@ describe("LinearTab — demo NEVER writes (TL-3)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(persistFetchMock).not.toHaveBeenCalled();
     expect(alertMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("LinearTab — non-demo item writes preserve captured VALUE-REPLACE semantics", () => {
+  it("rename and delete each overwrite an annotation that arrives while persistence awaits", async () => {
+    const rename = deferred<unknown>();
+    const remove = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(rename.promise).mockReturnValueOnce(remove.promise);
+    seedTakeoff(qc, [item({ id: 7, name: "Wall Framing", shape: "linear" })], []);
+    seedAnnotations(qc, [
+      takeoffAnn(100, 7, "Wall Framing", "linear-polyline"),
+      unrelatedAnn(101, "stable-linear-yolo"),
+    ]);
+    render(<LinearTab />, { wrapper });
+    await waitFor(() => expect(screen.getByText("Wall Framing")).toBeInTheDocument());
+
+    fireEvent.doubleClick(screen.getByText("Wall Framing"));
+    const input = screen.getByDisplayValue("Wall Framing");
+    fireEvent.change(input, { target: { value: "Wall Framing 2" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(persistFetchMock).toHaveBeenNthCalledWith(
+        1,
+        "/api/takeoff-items/7",
+        { name: "Wall Framing 2" },
+        "PUT",
+      ),
+    );
+
+    // Same deliberately captured-array contract as Area/Count. Keep this witness distinct:
+    // the three tabs own separate handlers, so a missed LinearTab migration must fail locally.
+    await act(async () => {
+      seedAnnotations(qc, [...readSeededAnnotations(qc), unrelatedAnn(102, "concurrent-linear-rename")]);
+    });
+    expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([100, 101, 102]);
+    rename.resolve({ success: true });
+
+    await waitFor(() => expect(screen.getByText("Wall Framing 2")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(readSeededAnnotations(qc).map((a) => [a.id, a.name])).toEqual([
+        [100, "Wall Framing 2"],
+        [101, "stable-linear-yolo"],
+      ]),
+    );
+
+    fireEvent.click(screen.getByTitle("Delete item and all lines"));
+    await waitFor(() =>
+      expect(persistFetchMock).toHaveBeenNthCalledWith(
+        2,
+        "/api/takeoff-items/7",
+        undefined,
+        "DELETE",
+      ),
+    );
+    await act(async () => {
+      seedAnnotations(qc, [...readSeededAnnotations(qc), unrelatedAnn(103, "concurrent-linear-delete")]);
+    });
+    expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([100, 101, 103]);
+    remove.resolve({ success: true });
+
+    await waitFor(() => expect(screen.queryByText("Wall Framing 2")).not.toBeInTheDocument());
+    await waitFor(() => expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([101]));
   });
 });
 
@@ -535,7 +670,7 @@ describe("BucketFillAssignDialog — demo create&assign is local-only (BF-2)", (
     // temp item added → the (still-mounted, prop-driven) dialog now lists it
     await waitFor(() => expect(screen.getByRole("button", { name: "Room A" })).toBeInTheDocument());
     // commitBucketFillToItem ran its LOCAL branch: annotation appended, pending polygon consumed
-    const anns = useViewerStore.getState().annotations;
+    const anns = readSeededAnnotations(qc);
     expect(anns).toHaveLength(1);
     expect(anns[0].source).toBe("takeoff");
     expect((anns[0].data as { takeoffItemId?: number }).takeoffItemId).toBeLessThan(0); // demo temp id
@@ -550,9 +685,11 @@ describe("BucketFillAssignDialog — non-demo create is server-first with the NU
   it("nothing added pre-release; POST body carries dbId 123 (frozen quirk); commit chain fires", async () => {
     useViewerStore.setState({ projectId: 123, bucketFillPendingPolygon: PENDING_POLYGON, pageNumber: 2 });
     seedTakeoff(qc, [], []);
+    seedAnnotations(qc, []);
     const d = deferred<Response>();
+    const annotationSave = deferred<unknown>();
     mockCreateItemPost(d.promise as Promise<unknown>);
-    persistFetchMock.mockResolvedValueOnce({ id: 900 }); // the /api/annotations POST settles ok
+    persistFetchMock.mockReturnValueOnce(annotationSave.promise);
     render(
       <BucketFillAssignDialog pendingPolygon={PENDING_POLYGON} width={800} height={600} cssScale={1} />,
       { wrapper },
@@ -587,8 +724,73 @@ describe("BucketFillAssignDialog — non-demo create is server-first with the NU
       "/api/annotations",
       expect.objectContaining({ projectId: "pid", pageNumber: 2, name: "Room B", source: "takeoff" }),
     );
+    // [refactor jul11 P2.2⑥] The takeoff item is server-first, but the chained annotation
+    // commit is deliberately optimistic. Pending is consumed and a temp row is visible while
+    // its own POST is unresolved; a server-first rewrite of the hoisted ⑥ action fails here.
+    expect(readSeededAnnotations(qc)).toHaveLength(1);
+    expect(readSeededAnnotations(qc)[0].id).toBeLessThan(0);
+    expect(useViewerStore.getState().bucketFillPendingPolygon).toBeNull();
+
+    annotationSave.resolve({ id: 900 });
     // annotation committed against the SERVER item id, then re-id'd from the annotations response
-    await waitFor(() => expect(useViewerStore.getState().annotations[0]?.id).toBe(900));
-    expect((useViewerStore.getState().annotations[0].data as { takeoffItemId?: number }).takeoffItemId).toBe(42);
+    await waitFor(() => expect(readSeededAnnotations(qc)[0]?.id).toBe(900));
+    expect((readSeededAnnotations(qc)[0].data as { takeoffItemId?: number }).takeoffItemId).toBe(42);
+  });
+});
+
+describe("BucketFillAssignDialog — direct existing-item G6 boundary", () => {
+  it("no publicId keeps the clicked existing-item fill local, consumes pending, and makes no request", async () => {
+    // Set the empty id BEFORE both helpers: after C3 this fixture and the hoisted action must
+    // address the same pre-bootstrap query key, not the default test key "pid".
+    useViewerStore.setState({
+      publicId: "",
+      bucketFillPendingPolygon: PENDING_POLYGON,
+      pageNumber: 4,
+    });
+    seedTakeoff(qc, [item({ id: 7, name: "Existing Room", shape: "polygon" })], []);
+    seedAnnotations(qc, []);
+    render(
+      <BucketFillAssignDialog pendingPolygon={PENDING_POLYGON} width={800} height={600} cssScale={1} />,
+      { wrapper },
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Existing Room" }));
+
+    const anns = readSeededAnnotations(qc);
+    expect(anns).toHaveLength(1);
+    expect(anns[0].id).toBeLessThan(0);
+    expect((anns[0].data as { takeoffItemId?: number }).takeoffItemId).toBe(7);
+    expect(useViewerStore.getState().bucketFillPendingPolygon).toBeNull();
+    expect(useViewerStore.getState().bucketFillError).toMatch(/NOT saved/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(persistFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("persistence failure keeps the optimistic clicked-item fill and surfaces the error", async () => {
+    useViewerStore.setState({ bucketFillPendingPolygon: PENDING_POLYGON, pageNumber: 5 });
+    seedTakeoff(qc, [item({ id: 7, name: "Existing Room", shape: "polygon" })], []);
+    seedAnnotations(qc, []);
+    const save = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(save.promise);
+    render(
+      <BucketFillAssignDialog pendingPolygon={PENDING_POLYGON} width={800} height={600} cssScale={1} />,
+      { wrapper },
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Existing Room" }));
+    await waitFor(() => expect(persistFetchMock).toHaveBeenCalledTimes(1));
+
+    const optimisticId = readSeededAnnotations(qc)[0]?.id;
+    expect(optimisticId).toBeLessThan(0);
+    expect(useViewerStore.getState().bucketFillPendingPolygon).toBeNull();
+
+    save.reject(new Error("annotation service offline"));
+
+    await waitFor(() =>
+      expect(useViewerStore.getState().bucketFillError).toMatch(/NOT saved.*annotation service offline/),
+    );
+    // NO rollback is the faithful existing policy. The exact temp row survives for the session.
+    expect(readSeededAnnotations(qc).map((ann) => ann.id)).toEqual([optimisticId]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
