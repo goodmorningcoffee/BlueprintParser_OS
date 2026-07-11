@@ -13,6 +13,8 @@ import type { ActivePageWindow } from "@/queries/pageWindowCore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ProjectSummaries } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 // Full-shape fixture (same discipline as SummariesFreeze.test.tsx): honest against the real type
 // so a field rename breaks HERE, not silently in a consumer.
@@ -83,11 +85,11 @@ describe("seedSummariesCache (loader/refresher seed)", () => {
 // ── useSummariesData / useSummaries — the cache-backed facade ─────────────────────────────────
 describe("useSummaries hooks", () => {
   beforeEach(() => {
-    useViewerStore.getState().resetProjectData();
+    resetProjectData();
   });
 
   it("null default: fresh client reads summaries === null without fetching or erroring", () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     const { result } = renderHook(() => useSummariesData(), { wrapper: makeWrapper(client) });
     expect(result.current.summaries).toBeNull();
@@ -99,7 +101,7 @@ describe("useSummaries hooks", () => {
   });
 
   it("seed→read round-trip: a pre-mount loader-style seed is what the hook renders", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     const s = summariesFixture({ allTrades: ["Electrical"] });
     seedSummariesCache(client, "p-A", s); // loader runs BEFORE consumers mount (seed-before-reveal)
@@ -110,7 +112,7 @@ describe("useSummaries hooks", () => {
   });
 
   it("setSummaries value-replaces, including back to null (old store-action parity)", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     const { result } = renderHook(() => useSummariesData(), { wrapper: makeWrapper(client) });
     const s1 = summariesFixture({ allTrades: ["One"] });
@@ -130,7 +132,7 @@ describe("useSummaries hooks", () => {
     // Scenario: promote fired for project A, user switched to project B mid-await. The response
     // must seed A's entry (captured per-site publicId) and leave B's view untouched — the old
     // single global store field leaked A's recompute into B here.
-    useViewerStore.setState({ publicId: "B" });
+    setViewerStoreStateForTest({ publicId: "B" });
     const client = freshClient();
     const { result } = renderHook(() => useSummariesData(), { wrapper: makeWrapper(client) });
     expect(result.current.summaries).toBeNull(); // B's null-initialData entry
@@ -152,14 +154,14 @@ describe("useSummaries hooks", () => {
     seedSummariesCache(client, "A", sA);
     seedSummariesCache(client, "B", sB);
 
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
     const { result } = renderHook(() => useSummariesData(), { wrapper: makeWrapper(client) });
     await waitFor(() => expect(result.current.summaries).toEqual(sA));
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     await waitFor(() => expect(result.current.summaries).toEqual(sB));
 
-    act(() => useViewerStore.setState({ publicId: "A" }));
+    act(() => setViewerStoreStateForTest({ publicId: "A" }));
     const sA2 = summariesFixture({ allTrades: ["A-trade-v2"] });
     act(() => result.current.setSummaries(sA2)); // render-captured setter now targets A again
     await waitFor(() => expect(result.current.summaries).toEqual(sA2));
@@ -167,7 +169,7 @@ describe("useSummaries hooks", () => {
   });
 
   it("staleTime:Infinity — a seeded entry is never stale while observed (defensive pin)", () => {
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
     const client = freshClient();
     seedSummariesCache(client, "A", summariesFixture());
     renderHook(() => useSummariesData(), { wrapper: makeWrapper(client) });
@@ -189,7 +191,7 @@ describe("useSummaries hooks", () => {
       const client = freshClient();
       const s = summariesFixture({ allTrades: ["Persist"] });
       seedSummariesCache(client, "A", s);
-      useViewerStore.setState({ publicId: "A" });
+      setViewerStoreStateForTest({ publicId: "A" });
 
       const first = renderHook(() => useSummariesData(), { wrapper: makeWrapper(client) });
       expect(first.result.current.summaries).toEqual(s);
@@ -209,7 +211,7 @@ describe("useSummaries hooks", () => {
   // compatibility hook to the same cache-only surface as useSummariesData so a future edit cannot
   // quietly recreate dual ownership of active range/loading state.
   it("useSummaries exposes only the cache-backed summary pair", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     let renders = 0;
     const { result } = renderHook(() => {

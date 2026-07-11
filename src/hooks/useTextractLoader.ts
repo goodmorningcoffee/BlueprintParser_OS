@@ -8,6 +8,7 @@ import {
   ensureTextractPage,
   setTextractProtectedPages,
 } from "@/queries/textractCache";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore } from "@/stores/viewerStore";
 
 interface TextractBatch {
@@ -42,7 +43,7 @@ export function useTextractLoader(): void {
   const qc = useQueryClient();
   const pageNumber = useViewerStore((state) => state.pageNumber);
   const numPages = useViewerStore((state) => state.numPages);
-  const publicId = useViewerStore((state) => state.publicId);
+  const publicId = useSessionStore((state) => state.publicId);
   const generationRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeBatchRef = useRef<TextractBatch | null>(null);
@@ -100,16 +101,19 @@ export function useTextractLoader(): void {
         return;
       }
 
-      const live = useViewerStore.getState();
+      // Preserve the legacy timer-time snapshot boundary across the session/viewer carve. These
+      // reads stay adjacent and synchronous so identity guards describe the same navigation turn.
+      const liveSession = useSessionStore.getState();
+      const liveViewer = useViewerStore.getState();
       if (
-        live.publicId !== batch.publicId ||
-        live.numPages === 0 ||
+        liveSession.publicId !== batch.publicId ||
+        liveViewer.numPages === 0 ||
         generationRef.current !== batch.generation
       ) {
         return;
       }
 
-      const livePages = pagesAround(live.pageNumber, live.numPages);
+      const livePages = pagesAround(liveViewer.pageNumber, liveViewer.numPages);
       batch.pages = livePages;
       setTextractProtectedPages(qc, batch.publicId, livePages);
 
@@ -119,7 +123,7 @@ export function useTextractLoader(): void {
         if (
           activeBatchRef.current !== batch ||
           generationRef.current !== batch.generation ||
-          useViewerStore.getState().publicId !== batch.publicId
+          useSessionStore.getState().publicId !== batch.publicId
         ) {
           break;
         }

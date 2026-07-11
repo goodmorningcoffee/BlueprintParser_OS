@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useViewerStore, useChat, useProject, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore, useChat, useNavigation } from "@/stores/viewerStore";
+import { useProject } from "@/stores/sessionStore";
 // [refactor jul9 P2.2①] chat message DATA now lives in the TanStack Query cache (facade hook);
 // useChat() is shrunk to the chatScope UI knob. showChatPanel still comes from usePanels().
 import { useChatMessages } from "@/queries/useChatMessages";

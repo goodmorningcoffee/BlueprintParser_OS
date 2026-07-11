@@ -21,6 +21,8 @@ import { readActivePageWindow } from "@/queries/usePageWindow";
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedAnnotations } from "@/test/seed-annotations";
 import type { ClientAnnotation, CsiCode, KeynoteShapeData, TextAnnotation } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 const fetchMock = vi.fn();
@@ -208,8 +210,8 @@ function advance(ms: number): void {
 beforeEach(() => {
   vi.useFakeTimers();
   qc = new QueryClient();
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({
+  resetProjectData();
+  setViewerStoreStateForTest({
     publicId: "pid",
     isDemo: false,
     pageNumber: 20,
@@ -447,7 +449,7 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
     advance(100);
     const aSignal = signalForCall(0);
     act(() => {
-      useViewerStore.setState({ publicId: "project-B", numPages: 0 });
+      setViewerStoreStateForTest({ publicId: "project-B", numPages: 0 });
       seedAnnotations(qc, [annotation(99, "project-B")]);
     });
     expect(aSignal.aborted).toBe(true);
@@ -520,7 +522,7 @@ describe("useChunkLoader navigation freeze — N7 identity-aware dedupe", () => 
     advance(100);
     const firstSignal = signalForCall(0);
 
-    act(() => useViewerStore.setState({ publicId: "project-B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "project-B" }));
     expect(firstSignal.aborted).toBe(true);
     advance(100);
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
@@ -528,7 +530,7 @@ describe("useChunkLoader navigation freeze — N7 identity-aware dedupe", () => 
     );
     const secondSignal = signalForCall(1);
 
-    act(() => useViewerStore.setState({ isDemo: true }));
+    act(() => setViewerStoreStateForTest({ isDemo: true }));
     expect(secondSignal.aborted).toBe(true);
     advance(100);
 

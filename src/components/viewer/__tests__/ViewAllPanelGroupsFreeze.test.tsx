@@ -39,6 +39,8 @@ import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
 import { seedAnnotations } from "@/test/seed-annotations";
 import type { AnnotationGroup, ClientAnnotation } from "@/types";
 import ViewAllPanel from "../ViewAllPanel";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 function wrapper({ children }: { children: ReactNode }) {
@@ -99,10 +101,10 @@ function mockGroupPuts(routes: Record<number, Promise<unknown>>) {
 
 beforeEach(() => {
   qc = new QueryClient(); // pure defaults, matching production Providers.tsx
-  useViewerStore.getState().resetProjectData();
+  resetProjectData();
   // Store-bleed guards — see GroupActionsBarFreeze beforeEach for the rationale (selection +
   // group fields are NOT in resetProjectData; hiddenTakeoffItemIds guard per ④ precedent).
-  useViewerStore.setState({
+  setViewerStoreStateForTest({
     publicId: "pid",
     isDemo: false,
     selectedAnnotationIds: new Set<number>(),

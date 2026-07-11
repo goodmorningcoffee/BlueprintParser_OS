@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useNavigation, usePageData, usePanels, useProject, useDetection } from "@/stores/viewerStore";
+import { useNavigation, usePageData, usePanels, useDetection } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useCsiCodesForPage } from "@/queries/usePageWindow";
+import { useCsiGraph } from "@/queries/useCsiGraph";
 import type { CsiCode } from "@/types";
 import HelpTooltip from "./HelpTooltip";
 
@@ -39,16 +41,19 @@ export default function CsiPanel({ embedded = false }: { embedded?: boolean } = 
   const pageCsiCodes = useCsiCodesForPage(pageNumber);
   const { allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
   const { toggleCsiPanel } = usePanels();
-  const { publicId, projectIntelligenceData } = useProject();
   const { setSearch } = useDetection();
+  const csiGraph = useCsiGraph();
+  // Bootstrap JSON remains deliberately unvalidated until P4. Preserve the old optional-field
+  // tolerance at the render boundary even though the canonical graph type requires these arrays.
+  const csiGraphNodes = csiGraph?.nodes ?? [];
+  const csiGraphEdges = csiGraph?.edges ?? [];
+  const csiGraphClusters = csiGraph?.clusters ?? [];
 
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedDivisions, setExpandedDivisions] = useState<Record<string, boolean>>({});
   const [allExpanded, setAllExpanded] = useState(false);
   const [scope, setScope] = useState<"page" | "project">("page");
   const [showGraph, setShowGraph] = useState(true);
-
-  const csiGraph = projectIntelligenceData?.csiGraph as any;
 
   // Get codes for current scope
   const currentCodes: CsiCode[] = useMemo(() => {
@@ -140,7 +145,7 @@ export default function CsiPanel({ embedded = false }: { embedded?: boolean } = 
       </div>
 
       {/* Network Graph Summary (visible in both page and project scope) */}
-      {csiGraph?.nodes?.length > 0 && (
+      {csiGraphNodes.length > 0 && (
         <div className="border-b border-[var(--border)]">
           <button
             onClick={() => setShowGraph(!showGraph)}
@@ -152,12 +157,12 @@ export default function CsiPanel({ embedded = false }: { embedded?: boolean } = 
           {showGraph && (
             <div className="px-3 pb-2 space-y-1.5">
               <div className="text-[10px] text-[var(--muted)]">
-                {csiGraph.nodes.length} divisions, {csiGraph.edges?.length || 0} connections
+                {csiGraphNodes.length} divisions, {csiGraphEdges.length} connections
               </div>
               {/* Clusters */}
-              {csiGraph.clusters?.length > 0 && (
+              {csiGraphClusters.length > 0 && (
                 <div className="space-y-0.5">
-                  {csiGraph.clusters.map((c: any, i: number) => (
+                  {csiGraphClusters.map((c, i) => (
                     <div key={i} className="text-[10px]">
                       <span className="text-cyan-300 font-medium">{c.name}</span>
                       <span className="text-[var(--muted)]"> [{c.divisions.join(", ")}] {Math.round(c.cohesion * 100)}%</span>
@@ -166,10 +171,10 @@ export default function CsiPanel({ embedded = false }: { embedded?: boolean } = 
                 </div>
               )}
               {/* Top edges */}
-              {csiGraph.edges?.length > 0 && (
+              {csiGraphEdges.length > 0 && (
                 <div className="space-y-0.5">
                   <div className="text-[9px] text-[var(--muted)] font-medium">Strongest connections:</div>
-                  {[...csiGraph.edges].sort((a: any, b: any) => b.weight - a.weight).slice(0, 3).map((e: any, i: number) => (
+                  {[...csiGraphEdges].sort((a, b) => b.weight - a.weight).slice(0, 3).map((e, i) => (
                     <div key={i} className="text-[10px] text-[var(--fg)]">
                       {e.source} ↔ {e.target} <span className="text-[var(--muted)]">({e.pages?.length ?? e.weight} pages)</span>
                     </div>
@@ -177,7 +182,7 @@ export default function CsiPanel({ embedded = false }: { embedded?: boolean } = 
                 </div>
               )}
               {/* Fingerprint */}
-              {csiGraph.fingerprint && (
+              {csiGraph?.fingerprint && (
                 <div className="text-[9px] text-[var(--muted)] font-mono truncate" title={csiGraph.fingerprint}>
                   FP: {csiGraph.fingerprint}
                 </div>
@@ -185,7 +190,12 @@ export default function CsiPanel({ embedded = false }: { embedded?: boolean } = 
               {/* Open full graph link */}
               <HelpTooltip id="csi-network-graph">
                 <button
-                  onClick={() => window.open(`/project/${publicId}/csi-graph`, "_blank")}
+                  // Read identity at click time. useCsiGraph already owns the sole publicId
+                  // subscription; adding another scalar selector here would duplicate it.
+                  onClick={() => window.open(
+                    `/project/${useSessionStore.getState().publicId}/csi-graph`,
+                    "_blank",
+                  )}
                   className="text-[12px] text-sky-300 hover:text-sky-200 font-medium underline"
                 >
                   Open Full Graph →

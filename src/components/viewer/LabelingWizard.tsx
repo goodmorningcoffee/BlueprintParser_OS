@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { apiErrorMessage } from "@/lib/client-persist";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 
 interface LabelingWizardProps {
   onClose: () => void;
@@ -11,17 +12,17 @@ interface LabelingWizardProps {
 }
 
 export default function LabelingWizard({ onClose, projectName, isDemo }: LabelingWizardProps) {
-  const publicId = useViewerStore((s) => s.publicId);
+  const publicId = useSessionStore((s) => s.publicId);
   const numPages = useViewerStore((s) => s.numPages);
   const pageNumber = useViewerStore((s) => s.pageNumber);
 
   // Persistent state in Zustand (survives tab switches)
-  const wizardStep = useViewerStore((s) => s.labelingWizardStep);
-  const setWizardStep = useViewerStore((s) => s.setLabelingWizardStep);
-  const storedSessions = useViewerStore((s) => s.labelingSessions);
-  const setStoredSessions = useViewerStore((s) => s.setLabelingSessions);
-  const storedCreds = useViewerStore((s) => s.labelingCredentials);
-  const setStoredCreds = useViewerStore((s) => s.setLabelingCredentials);
+  const wizardStep = useSessionStore((s) => s.labelingWizardStep);
+  const setWizardStep = useSessionStore((s) => s.setLabelingWizardStep);
+  const storedSessions = useSessionStore((s) => s.labelingSessions);
+  const setStoredSessions = useSessionStore((s) => s.setLabelingSessions);
+  const storedCreds = useSessionStore((s) => s.labelingCredentials);
+  const setStoredCreds = useSessionStore((s) => s.setLabelingCredentials);
 
   // Local form state (OK to reset)
   const [pagesPerProject, setPagesPerProject] = useState(10);

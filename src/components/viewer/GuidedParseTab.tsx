@@ -3,7 +3,8 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { readTextractForPage } from "@/queries/textractCache";
-import { useViewerStore, useTableParse, useNavigation, useProject } from "@/stores/viewerStore";
+import { useViewerStore, useTableParse, useNavigation } from "@/stores/viewerStore";
+import { useProject } from "@/stores/sessionStore";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 

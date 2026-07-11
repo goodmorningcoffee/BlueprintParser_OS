@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (both hooks —
 // CountTab is a dual reader). Handler bodies below are UNCHANGED: the SPLIT write ordering
 // (server-first item ops + group create; optimistic group rename/delete, move, edit-panel save;
@@ -21,8 +22,8 @@ export default memo(function CountTab() {
   const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
-  const publicId = useViewerStore((s) => s.publicId);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
   const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();
 
   const [showForm, setShowForm] = useState(false);

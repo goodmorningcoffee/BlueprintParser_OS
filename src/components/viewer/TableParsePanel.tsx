@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useProject } from "@/stores/viewerStore";
+import { useViewerStore } from "@/stores/viewerStore";
+import { useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
@@ -48,8 +49,8 @@ export default function TableParsePanel() {
   const setPage = useViewerStore((s) => s.setPage);
   const tableParseTab = useViewerStore((s) => s.tableParseTab);
   const setTableParseTab = useViewerStore((s) => s.setTableParseTab);
-  const pageNames = useViewerStore((s) => s.pageNames);
-  const pageDrawingNumbers = useViewerStore((s) => s.pageDrawingNumbers);
+  const pageNames = useSessionStore((s) => s.pageNames);
+  const pageDrawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
   // [refactor jul11 P2.2⑥] Server-owned annotation window now subscribes via its cache facade.
   const { annotations } = useAnnotations();
   // [refactor jul11 P2.2⑨] This orchestrator legitimately renders the full collection. The
@@ -172,10 +173,11 @@ export default function TableParsePanel() {
           }
         } catch { /* CSI detection is best-effort */ }
       }
-      const { publicId: pid, isDemo } = useViewerStore.getState();
+      const store = useViewerStore.getState();
+      const { publicId: pid, isDemo } = useSessionStore.getState();
       if (canPersist(pid, isDemo)) {
         // Use the drawn region bbox for a stable, re-parse-replaces regionId.
-        const bbox = (useViewerStore.getState().tableParseRegion ?? [0, 0, 1, 1]) as [number, number, number, number];
+        const bbox = (store.tableParseRegion ?? [0, 0, 1, 1]) as [number, number, number, number];
         const result = await promoteParsedRegion({
           publicId: pid,
           pageNumber,

@@ -10,6 +10,8 @@ import { useQtoWorkflows } from "@/queries/useQtoWorkflows";
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { QtoWorkflow } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 function makeWrapper(client: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -53,8 +55,8 @@ function mockGet(rowsByPublicId: Record<string, QtoWorkflow[] | { status: number
 }
 
 beforeEach(() => {
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "P", isDemo: false });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "P", isDemo: false });
   vi.stubGlobal("fetch", fetchMock);
   fetchMock.mockReset();
 });
@@ -81,7 +83,7 @@ describe("useQtoWorkflows hook", () => {
   });
 
   it("T-Q2: demo never fetches (enabled:false) and reads [] — temp writes still land in the cache", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     mockGet({ P: [row(1)] }); // present but must never be hit
     const { result } = renderHook(() => useQtoWorkflows(), { wrapper: makeWrapper(freshClient()) });
 
@@ -135,7 +137,7 @@ describe("useQtoWorkflows hook", () => {
     const client = freshClient();
     mockGet({ A: [row(1)], B: [row(2)] });
 
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
     const { result } = renderHook(() => useQtoWorkflows(), { wrapper: makeWrapper(client) });
     // data flipping [] → rows proves the mount fetch SETTLED — only write after settle (a write
     // racing an in-flight GET is replaced by the response, same as the old mount-fetch overwrite)
@@ -145,12 +147,12 @@ describe("useQtoWorkflows hook", () => {
     await waitFor(() => expect(result.current.qtoWorkflows).toEqual([row(1), row(7)]));
     expect(client.getQueryData(queryKeys.qtoWorkflows.all("B"))).toBeUndefined(); // A-write, no B entry
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     await waitFor(() => expect(result.current.qtoWorkflows).toEqual([row(2)]));
     // A's entry (incl. the client write) retained per-key while B is active
     expect(client.getQueryData(queryKeys.qtoWorkflows.all("A"))).toEqual([row(1), row(7)]);
 
-    act(() => useViewerStore.setState({ publicId: "A" }));
+    act(() => setViewerStoreStateForTest({ publicId: "A" }));
     // staleTime:0 → return-to-A refetches and the SERVER list wins over the stale client write
     // (== old world: the mount fetch overwrote whatever was in zustand)
     await waitFor(() => expect(result.current.qtoWorkflows).toEqual([row(1)]));
@@ -189,7 +191,7 @@ describe("useQtoWorkflows hook", () => {
   });
 
   it("T-Q10: empty publicId → disabled, fetch never fires, reads []", async () => {
-    useViewerStore.setState({ publicId: "" });
+    setViewerStoreStateForTest({ publicId: "" });
     mockGet({});
     const { result } = renderHook(() => useQtoWorkflows(), { wrapper: makeWrapper(freshClient()) });
 
@@ -204,12 +206,12 @@ describe("useQtoWorkflows hook", () => {
     // the GLOBAL field (project A's list leaked into B's view); the keyed facade writes A's entry.
     const client = freshClient();
     mockGet({ A: [row(1)], B: [row(2)] });
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
     const { result } = renderHook(() => useQtoWorkflows(), { wrapper: makeWrapper(client) });
     await waitFor(() => expect(result.current.qtoWorkflows).toEqual([row(1)]));
     const capturedWrite = result.current.setQtoWorkflows; // closed over publicId "A"
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     await waitFor(() => expect(result.current.qtoWorkflows).toEqual([row(2)]));
 
     act(() => capturedWrite([row(1), row(9)])); // the in-flight PUT reconcile lands "late"
@@ -246,7 +248,7 @@ describe("useQtoWorkflows hook", () => {
   });
 
   it("T-Q14: activeQtoWorkflow passes through the facade to/from zustand unchanged", async () => {
-    useViewerStore.setState({ isDemo: true }); // no fetch noise
+    setViewerStoreStateForTest({ isDemo: true }); // no fetch noise
     const { result } = renderHook(() => useQtoWorkflows(), { wrapper: makeWrapper(freshClient()) });
     expect(result.current.activeQtoWorkflow).toBeNull();
 
@@ -264,7 +266,7 @@ describe("useQtoWorkflows hook", () => {
     vi.useFakeTimers();
     try {
       const client = freshClient();
-      useViewerStore.setState({ isDemo: true }); // demo: no fetch to race the fake timers
+      setViewerStoreStateForTest({ isDemo: true }); // demo: no fetch to race the fake timers
       const temp = [row(-42, { projectId: 0 })];
       client.setQueryData(queryKeys.qtoWorkflows.all("P"), temp);
 

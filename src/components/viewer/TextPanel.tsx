@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useTextAnnotationDisplay } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePanels, useDetection, useTextAnnotationDisplay } from "@/stores/viewerStore";
+import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { useAnnotations } from "@/queries/useAnnotations";
 import { cancelTextractPage, replaceTextractForPage } from "@/queries/textractCache";
 import { useTextractForPage } from "@/queries/useTextract";
@@ -587,10 +588,11 @@ export function TextractTab({ pageNumber }: { pageNumber: number }) {
     const capturedPageNumber = pageNumber;
     const requestGeneration = ++requestGenerationRef.current;
     const isCurrentRequest = () => {
-      const live = useViewerStore.getState();
+      const liveViewer = useViewerStore.getState();
+      const liveSession = useSessionStore.getState();
       return requestGenerationRef.current === requestGeneration
-        && live.publicId === capturedPublicId
-        && live.pageNumber === capturedPageNumber;
+        && liveSession.publicId === capturedPublicId
+        && liveViewer.pageNumber === capturedPageNumber;
     };
 
     setLoading(true);

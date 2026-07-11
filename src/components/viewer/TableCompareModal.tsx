@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
 import {
@@ -401,7 +402,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     const grid = useViewerStore.getState().tableParsedGrid;
     if (!grid) { toggleModal(); return; }
     const store = useViewerStore.getState();
-    const { publicId, isDemo } = store;
+    const { publicId, isDemo } = useSessionStore.getState();
     const intel = readPageIntelligence(queryClient, publicId, pageNumber) || {};
 
     // Locate the region being edited (match by headers, else by row-count) so
@@ -646,12 +647,12 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
                   onActiveCellChange={setActiveCell}
                   onCellDoubleClick={(_, __, header, value) => {
                     if (!tableParsedGrid?.tagColumn || header !== tableParsedGrid.tagColumn) return;
-                    const store = useViewerStore.getState();
-                    const tag = readYoloTags(queryClient, store.publicId).find(
+                    const { publicId } = useSessionStore.getState();
+                    const tag = readYoloTags(queryClient, publicId).find(
                       (t) => t.tagText === value.trim() && t.source === "schedule"
                     );
                     if (tag && tag.instances.length > 0) {
-                      navigateYoloTag(queryClient, store.publicId, tag.id, 0);
+                      navigateYoloTag(queryClient, publicId, tag.id, 0);
                     }
                   }}
                 />

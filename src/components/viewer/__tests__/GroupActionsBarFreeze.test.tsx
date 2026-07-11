@@ -54,6 +54,8 @@ import { persistFetch } from "@/lib/client-persist";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
 import type { AnnotationGroup, ClientAnnotation } from "@/types";
 import GroupActionsBar from "../GroupActionsBar";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 vi.mock("@/lib/client-persist", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/client-persist")>();
@@ -110,12 +112,12 @@ beforeEach(() => {
   // PURE-DEFAULTS client, matching production (Providers.tsx has no defaultOptions) — freeze
   // nets run against production-equivalent client defaults (③ DETECTOR-closer rationale).
   qc = new QueryClient();
-  useViewerStore.getState().resetProjectData();
+  resetProjectData();
   // Store-bleed guards: resetProjectData clears `annotations` but NOT `selectedAnnotationIds`
   // (never in the reset block) and NOT the three group fields (the E3 reset omission — frozen,
   // do not "fix" the store). Selection resets here; groups reset through the seed helper so the
   // guard itself survives the C3 flip (post-flip it seeds an empty cache entry instead).
-  useViewerStore.setState({ publicId: "pid", isDemo: false, selectedAnnotationIds: new Set<number>() });
+  setViewerStoreStateForTest({ publicId: "pid", isDemo: false, selectedAnnotationIds: new Set<number>() });
   seedAnnotationGroups(qc, [], []); // AFTER publicId — the post-flip cache key derives from it
   fetchMock.mockReset();
   // fail-loud: NO GroupActionsBar write rides raw fetch (all persistFetch). Post-migration this
@@ -412,7 +414,7 @@ describe("GroupActionsBar — mass delete sweeps ⑥-zustand annotations, indexe
 
 describe("GroupActionsBar — demo never writes at the three guarded sites (G-6)", () => {
   it("create / add-to-existing / mass-delete: zero calls on BOTH channels, state untouched", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedAnnotations(qc, [ann(10), ann(20), ann(21)]);
     seedAnnotationGroups(qc, [grp({ id: 1, name: "Demo Group", color: "#ff0000" })], []);
     useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });

@@ -17,6 +17,8 @@ import {
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedTextract } from "@/test/seed-textract";
 import type { TextractPageData } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let queryClient: QueryClient;
 const fetchMock = vi.fn();
@@ -120,8 +122,8 @@ function rejectWhenAborted(signal: AbortSignal): Promise<Response> {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({
+  resetProjectData();
+  setViewerStoreStateForTest({
     projectId: 17, // deliberately irrelevant after the publicId flip
     publicId: "public-project-A",
     pageNumber: 20,
@@ -145,7 +147,7 @@ describe("useTextractLoader C3 — guard, debounce, order, and bounds", () => {
     { label: "missing public identity", state: { publicId: "", numPages: 100 } },
     { label: "empty project page range", state: { publicId: "public-project-A", numPages: 0 } },
   ])("is inert for $label", ({ state }) => {
-    act(() => useViewerStore.setState(state));
+    act(() => setViewerStoreStateForTest(state));
     const view = render(<TextractLoaderController />, { wrapper });
 
     advance(1_000);
@@ -231,7 +233,7 @@ describe("useTextractLoader C3 — guard, debounce, order, and bounds", () => {
 
   it("rechecks live publicId before later siblings if identity changes synchronously", () => {
     fetchMock.mockImplementation(() => {
-      useViewerStore.setState({ publicId: "public-project-B" });
+      setViewerStoreStateForTest({ publicId: "public-project-B" });
       return pendingResponse();
     });
     render(<TextractLoaderController />, { wrapper });
@@ -421,7 +423,7 @@ describe("useTextractLoader C3 — exact cancellation, identity, and lifetime", 
     const oldSignals = [signalForCall(0), signalForCall(1), signalForCall(2)];
     expect(new Set(oldSignals).size).toBe(3);
 
-    act(() => useViewerStore.setState(update));
+    act(() => setViewerStoreStateForTest(update));
     await flushPromises();
     for (const signal of oldSignals) expect(signal.aborted).toBe(true);
 
@@ -461,7 +463,7 @@ describe("useTextractLoader C3 — exact cancellation, identity, and lifetime", 
     advance(200);
     const oldSignals = [signalForCall(0), signalForCall(1), signalForCall(2)];
 
-    act(() => useViewerStore.setState({ publicId: "public-project-B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "public-project-B" }));
     await flushPromises();
     for (const signal of oldSignals) expect(signal.aborted).toBe(true);
 

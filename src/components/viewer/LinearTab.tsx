@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 import { useAnnotations } from "@/queries/useAnnotations";
@@ -74,9 +75,9 @@ export default memo(function LinearTab() {
   const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
-  const publicId = useViewerStore((s) => s.publicId);
+  const publicId = useSessionStore((s) => s.publicId);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const isDemo = useSessionStore((s) => s.isDemo);
   const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();
   // visibility set + toggle STAY zustand in ④ (UI state, not a server collection)
   const hiddenTakeoffItemIds = useViewerStore((s) => s.hiddenTakeoffItemIds);

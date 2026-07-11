@@ -7,6 +7,8 @@ import { useParams, useSearchParams } from "next/navigation";
 // QueryClient context is available here.
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
+import { resetProjectData } from "@/stores/viewerCommands";
 import { seedSummariesCache } from "@/queries/useSummaries";
 // [refactor jul10 P2.2④] takeoff items+groups moved zustand → TanStack cache; loader seeds both keys.
 import { seedTakeoffCache } from "@/queries/useTakeoff";
@@ -17,6 +19,10 @@ import {
   clearYoloTagsProject,
   seedYoloTagsFromBootstrap,
 } from "@/queries/useYoloTags";
+import {
+  clearCsiGraphProject,
+  seedCsiGraphFromBootstrap,
+} from "@/queries/useCsiGraph";
 import { useSearch } from "@/hooks/useSearch";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type { PageWindowResponse } from "@/queries/pageWindowCore";
@@ -54,17 +60,16 @@ export default function DemoProjectPage() {
 
   useSearch();
 
-  const setProjectId = useViewerStore((s) => s.setProjectId);
-  const setPublicId = useViewerStore((s) => s.setPublicId);
-  const setDataUrl = useViewerStore((s) => s.setDataUrl);
+  const setProjectId = useSessionStore((s) => s.setProjectId);
+  const setPublicId = useSessionStore((s) => s.setPublicId);
+  const setDataUrl = useSessionStore((s) => s.setDataUrl);
   const setNumPages = useViewerStore((s) => s.setNumPages);
   const initDetectionModels = useViewerStore((s) => s.initDetectionModels);
-  const setPageNames = useViewerStore((s) => s.setPageNames);
-  const setPageDrawingNumbers = useViewerStore((s) => s.setPageDrawingNumbers);
+  const setPageNames = useSessionStore((s) => s.setPageNames);
+  const setPageDrawingNumbers = useSessionStore((s) => s.setPageDrawingNumbers);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
-  const setIsDemo = useViewerStore((s) => s.setIsDemo);
-  const resetProjectData = useViewerStore((s) => s.resetProjectData);
+  const setIsDemo = useSessionStore((s) => s.setIsDemo);
   const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
   // [refactor jul10 P2.2③] summaries now live in the query cache; the loader seeds it below.
   const queryClient = useQueryClient();
@@ -75,10 +80,11 @@ export default function DemoProjectPage() {
       setError(null);
       // [refactor jul11 P2.2⑧] Match the former reset-owned OCR lifetime with exact-prefix cleanup.
       // Never remove queryKeys.project(previousPublicId): other P2 domains have independent policy.
-      const previousPublicId = useViewerStore.getState().publicId;
+      const previousPublicId = useSessionStore.getState().publicId;
       if (previousPublicId) {
         await clearTextractProject(queryClient, previousPublicId);
         clearYoloTagsProject(queryClient, previousPublicId);
+        clearCsiGraphProject(queryClient, previousPublicId);
       }
       resetProjectData();
       setIsDemo(true);
@@ -108,19 +114,22 @@ export default function DemoProjectPage() {
 
       // [refactor jul11 P2.2⑨] Demo tags are bootstrap-seeded into the same read cache and remain
       // locally editable, while the action facade's captured demo gate prevents every persistence
-      // request. Strip the nested copy before publishing the remaining PI UI data to Zustand.
+      // request. Strip the nested copy before the residual csiGraph-only Query seed; no PI blob
+      // enters Zustand.
       const projectIntelligenceWithoutYoloTags = seedYoloTagsFromBootstrap(
         queryClient,
         data.id,
         data.projectIntelligence,
       );
-      if (projectIntelligenceWithoutYoloTags) {
-        useViewerStore.getState().setProjectIntelligenceData(projectIntelligenceWithoutYoloTags);
-      }
+      seedCsiGraphFromBootstrap(
+        queryClient,
+        data.id,
+        projectIntelligenceWithoutYoloTags,
+      );
 
       // Hydrate demo feature config
       if (data.demoConfig) {
-        useViewerStore.getState().setDemoFeatureConfig(data.demoConfig);
+        useSessionStore.getState().setDemoFeatureConfig(data.demoConfig);
       }
 
       // Load summaries into the TanStack Query cache (facade — no longer a zustand field).
@@ -216,7 +225,7 @@ export default function DemoProjectPage() {
     } finally {
       setLoading(false);
     }
-  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, initDetectionModels, setPageNames, setPageDrawingNumbers, setAllTrades, setAllCsiCodes, setIsDemo, resetProjectData, csiParam, qParam, setCsiFilter, queryClient]);
+  }, [id, setProjectId, setPublicId, setDataUrl, setNumPages, initDetectionModels, setPageNames, setPageDrawingNumbers, setAllTrades, setAllCsiCodes, setIsDemo, csiParam, qParam, setCsiFilter, queryClient]);
 
   useEffect(() => {
     load();

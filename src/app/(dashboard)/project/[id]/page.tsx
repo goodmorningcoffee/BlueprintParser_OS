@@ -5,6 +5,8 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
+import { resetProjectData } from "@/stores/viewerCommands";
 import { useSearch } from "@/hooks/useSearch";
 import { seedChatCache } from "@/queries/useChatMessages";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; loader seeds the cache.
@@ -20,6 +22,10 @@ import {
   clearYoloTagsProject,
   seedYoloTagsFromBootstrap,
 } from "@/queries/useYoloTags";
+import {
+  clearCsiGraphProject,
+  seedCsiGraphFromBootstrap,
+} from "@/queries/useCsiGraph";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type { PageWindowResponse } from "@/queries/pageWindowCore";
 import type {
@@ -68,13 +74,12 @@ export default function ProjectPage() {
   useSearch();
 
   const initDetectionModels = useViewerStore((s) => s.initDetectionModels);
-  const setPageNames = useViewerStore((s) => s.setPageNames);
-  const setPageDrawingNumbers = useViewerStore((s) => s.setPageDrawingNumbers);
+  const setPageNames = useSessionStore((s) => s.setPageNames);
+  const setPageDrawingNumbers = useSessionStore((s) => s.setPageDrawingNumbers);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const queryClient = useQueryClient();
   const setScaleCalibration = useViewerStore((s) => s.setScaleCalibration);
-  const resetProjectData = useViewerStore((s) => s.resetProjectData);
   const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
 
   const load = useCallback(async () => {
@@ -85,12 +90,13 @@ export default function ProjectPage() {
       // [refactor jul11 P2.2⑧] The old store reset discarded every loaded OCR page. Preserve that
       // reopen/switch contract with a TEXTRACT-ONLY cache clear; removing the broad project prefix
       // here would also destroy unrelated annotation/takeoff/chat cache state.
-      const previousPublicId = useViewerStore.getState().publicId;
+      const previousPublicId = useSessionStore.getState().publicId;
       if (previousPublicId) {
         await clearTextractProject(queryClient, previousPublicId);
         // [refactor jul11 P2.2⑨] Exact-key teardown bounds the instance-heavy project array and
         // aborts/cancels its delayed save. Never broaden this to the whole project query prefix.
         clearYoloTagsProject(queryClient, previousPublicId);
+        clearCsiGraphProject(queryClient, previousPublicId);
       }
 
       // Clear stale UI/tool data from any previously viewed project.
@@ -110,25 +116,28 @@ export default function ProjectPage() {
       const data: ProjectResponse = await res.json();
       setProject(data);
 
-      // Hydrate core project state (batched to avoid 4 separate re-renders)
-      useViewerStore.setState({
+      // [refactor jul11 P2.3] Session identity and viewer page count now have separate leaf owners.
+      // Keep the two publications adjacent with no await; P2.5 adds generation-aware openProject.
+      useSessionStore.setState({
         projectId: data.dbId,
         publicId: data.id,
         dataUrl: data.dataUrl,
-        numPages: data.numPages || 0,
       });
+      useViewerStore.setState({ numPages: data.numPages || 0 });
 
       // [refactor jul11 P2.2⑨] Unconditional cache seed preserves reset-then-conditional-set net
       // behavior for omitted/null tags and prevents stale same-key resurrection. The helper also
-      // strips yoloTags from the legacy PI blob so Zustand cannot remain a hidden second owner.
+      // strips yoloTags before the residual csiGraph-only Query seed; no PI blob enters Zustand.
       const projectIntelligenceWithoutYoloTags = seedYoloTagsFromBootstrap(
         queryClient,
         data.id,
         data.projectIntelligence,
       );
-      if (projectIntelligenceWithoutYoloTags) {
-        useViewerStore.getState().setProjectIntelligenceData(projectIntelligenceWithoutYoloTags);
-      }
+      seedCsiGraphFromBootstrap(
+        queryClient,
+        data.id,
+        projectIntelligenceWithoutYoloTags,
+      );
 
       // Load summaries into the TanStack Query cache (facade — no longer a zustand field).
       // [refactor jul10 P2.2③] UNCONDITIONAL publicId-scoped seed with `?? null` inside the
@@ -264,7 +273,6 @@ export default function ProjectPage() {
     setAllCsiCodes,
     queryClient,
     setScaleCalibration,
-    resetProjectData,
     csiParam,
     qParam,
     setCsiFilter,

@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useNavigation, usePanels, useProject, useSymbolSearch } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePanels, useSymbolSearch } from "@/stores/viewerStore";
+import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { useShallow } from "zustand/react/shallow";
 import PDFPage from "./PDFPage";
 import ViewerToolbar from "./ViewerToolbar";
@@ -283,8 +284,9 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
     const doSave = () => {
       if (!hasAppliedRef.current) return;
-      if (useViewerStore.getState().publicId !== publicId) return;
       const current = useViewerStore.getState();
+      const session = useSessionStore.getState();
+      if (session.publicId !== publicId) return;
       saveViewport(publicId, {
         scale: current.scale,
         pageNumber: current.pageNumber,
@@ -312,7 +314,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     const container = containerRef.current;
     if (!container) return;
     const timer = setTimeout(() => {
-      if (useViewerStore.getState().publicId !== publicId) return;
+      if (useSessionStore.getState().publicId !== publicId) return;
       saveViewport(publicId, {
         scale,
         pageNumber,

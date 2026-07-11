@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"; // v5.101 installed
-import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ChatMsg } from "@/types";
 
@@ -44,7 +44,7 @@ export function seedChatCache(
 // data, so ChatPanel changes only its import + destructure. `chatScope`/`showChatPanel` stay in
 // zustand (UI state) — only the server-backed message collection migrates.
 export function useChatMessages() {
-  const publicId = useViewerStore((s) => s.publicId);
+  const publicId = useSessionStore((s) => s.publicId);
   const qc = useQueryClient();
   const key = useMemo(
     () => queryKeys.chatMessages.all(publicId),

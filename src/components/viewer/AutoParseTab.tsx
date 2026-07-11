@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useViewerStore, useTableParse, useNavigation, useProject } from "@/stores/viewerStore";
+import { useViewerStore, useTableParse, useNavigation } from "@/stores/viewerStore";
+import { useProject } from "@/stores/sessionStore";
 import { exportTableCsv } from "@/lib/table-parse-utils";
 // [refactor jul5 S027] apiErrorMessage: table-parse now serves {error:{code,message}}
 // for cascade errors (demo-gate 403 stays flat — apiErrorMessage reads both).

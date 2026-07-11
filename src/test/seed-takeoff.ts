@@ -11,13 +11,13 @@
 //                         seedTakeoffCache writes both publicId-keyed entries
 //                         (queryKeys.takeoff.items/groups — TAKEOFF_IMPL/SPEC.md §2.6).
 //
-// Call AFTER setting `publicId` in the store: the cache keys derive from it — every call site's
+// Call AFTER setting `publicId` in the session store: the cache keys derive from it — every call site's
 // beforeEach satisfies this (qto SPEC §6.1 precedent).
 // Both collection args are REQUIRED, no defaults (SPEC §6.1) — a future third key can't hide
 // behind the signature, and call sites stay explicit about the two-key domain shape.
 
 import type { QueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { seedTakeoffCache } from "@/queries/useTakeoff";
 import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 
@@ -26,5 +26,5 @@ export function seedTakeoff(
   items: ClientTakeoffItem[],
   groups: TakeoffGroup[],
 ): void {
-  seedTakeoffCache(qc, useViewerStore.getState().publicId, items, groups);
+  seedTakeoffCache(qc, useSessionStore.getState().publicId, items, groups);
 }

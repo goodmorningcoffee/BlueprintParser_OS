@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade. handleCreateAndAssign
 // below is UNCHANGED — it POSTs the NUMERIC projectId (frozen pre-existing quirk vs CountTab's
 // publicId body to the same endpoint; owner item, SPEC §8.3 — pinned by BF-3, do not "fix").
@@ -29,9 +30,9 @@ export default function BucketFillAssignDialog({
   // pending zustand polygon; both create-and-assign and existing-item paths share that ordering.
   const { commitBucketFill } = useAnnotations();
   const setBucketFillPendingPolygon = useViewerStore((s) => s.setBucketFillPendingPolygon);
-  const publicId = useViewerStore((s) => s.publicId);
-  const projectId = useViewerStore((s) => s.projectId);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const publicId = useSessionStore((s) => s.publicId);
+  const projectId = useSessionStore((s) => s.projectId);
+  const isDemo = useSessionStore((s) => s.isDemo);
 
   const areaItems = takeoffItems.filter((t) => t.shape === "polygon");
 

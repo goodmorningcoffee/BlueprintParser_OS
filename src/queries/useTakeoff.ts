@@ -7,7 +7,7 @@ import {
   notifyManager,
   type QueryClient,
 } from "@tanstack/react-query"; // v5.101 installed
-import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 
@@ -56,7 +56,7 @@ import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 // cleared both arrays before the loader's conditional sets — SPEC §5-D3).
 //
 // `publicId` is an explicit param (loaders pass `data.id`); call in the same synchronous block
-// as / after `useViewerStore.setState({ publicId })` so the keyed entries match the live project.
+// as / after `useSessionStore.setState({ publicId })` so the keyed entries match the live project.
 // Both collection args are REQUIRED (no defaults) so a future third takeoff key can't hide
 // behind the signature.
 export function seedTakeoffCache(
@@ -119,7 +119,7 @@ export function readTakeoffItems(qc: QueryClient, publicId: string): ClientTakeo
 // per component under [qc, publicId]. Verified: no cross-component identity dependence; the
 // tabs' [isDemo, updateTakeoffItem] dep arrays stay stable. Do not hoist these to module scope.
 export function useTakeoffItems() {
-  const publicId = useViewerStore((s) => s.publicId);
+  const publicId = useSessionStore((s) => s.publicId);
   const qc = useQueryClient();
   const key = queryKeys.takeoff.items(publicId); // ["project", publicId, "takeoff", "items"]
 
@@ -170,7 +170,7 @@ export function useTakeoffItems() {
 // observers (CountTab/AreaTab/LinearTab/ViewAllPanel) are all conditionally mounted, so a
 // finite gcTime would reset groups to initialData [] for REAL projects on panel reopen.
 export function useTakeoffGroups() {
-  const publicId = useViewerStore((s) => s.publicId);
+  const publicId = useSessionStore((s) => s.publicId);
   const qc = useQueryClient();
   const key = queryKeys.takeoff.groups(publicId); // ["project", publicId, "takeoff", "groups"]
 

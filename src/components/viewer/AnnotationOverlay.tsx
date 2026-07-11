@@ -20,7 +20,8 @@ import {
   useYoloTagActions,
   useYoloTagsForPage,
 } from "@/queries/useYoloTags";
-import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useSymbolSearch, useAnnotationFilters } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useTableParse, useKeynoteParse, useSymbolSearch, useAnnotationFilters } from "@/stores/viewerStore";
+import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
@@ -1606,10 +1607,11 @@ export default memo(function AnnotationOverlay({
             e.stopPropagation();
             const model = (ann as any).data?.modelName as string || "unknown";
             const store = useViewerStore.getState();
+            const session = useSessionStore.getState();
             store.setYoloTagPickingMode(false);
 
             // Trigger class scan — fetch all unique texts inside this class
-            const pid = store.publicId;
+            const pid = session.publicId;
             fetch(`/api/projects/${pid}/map-tags-batch`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },

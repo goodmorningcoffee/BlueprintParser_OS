@@ -6,18 +6,18 @@
 //   PRE-migration: annotations lived in viewerStore → setState({ annotations: rows })
 //   POST-migration (C3): this body seeds the ONE windowed cache entry under live publicId.
 //
-// Call AFTER setting `publicId` in the store (the future cache key derives from it — same
+// Call AFTER setting `publicId` in the session store (the future cache key derives from it — same
 // discipline as seed-summaries/seed-takeoff/seed-annotation-groups).
 // `qc` was threaded from birth, so C3 changes only these two bodies and ZERO call sites.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/queries/queryKeys";
 import { readAnnotations } from "@/queries/useAnnotations";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import type { ClientAnnotation } from "@/types";
 
 export function seedAnnotations(qc: QueryClient, rows: ClientAnnotation[]): void {
-  const publicId = useViewerStore.getState().publicId;
+  const publicId = useSessionStore.getState().publicId;
   qc.setQueryData(queryKeys.annotations.all(publicId), rows);
 }
 
@@ -30,5 +30,5 @@ export function seedAnnotations(qc: QueryClient, rows: ClientAnnotation[]): void
  * instead of importing a test helper.
  */
 export function readSeededAnnotations(qc: QueryClient): readonly ClientAnnotation[] {
-  return readAnnotations(qc, useViewerStore.getState().publicId);
+  return readAnnotations(qc, useSessionStore.getState().publicId);
 }

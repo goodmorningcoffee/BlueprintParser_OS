@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useViewerStore, useSelection } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2⑤] annotation groups: zustand → TanStack cache facade (import-swap-only
 // surgery; destructure + every handler body byte-identical).
 import { useAnnotationGroups } from "@/queries/useAnnotationGroups";
@@ -33,8 +34,8 @@ export default function GroupActionsBar() {
   // [refactor jul10 P2.2⑥] Server-first batch delete is unchanged; only its successful local
   // removal target moves from zustand to the publicId-keyed annotation cache.
   const { removeAnnotation } = useAnnotations();
-  const publicId = useViewerStore((s) => s.publicId);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showAddPicker, setShowAddPicker] = useState(false);

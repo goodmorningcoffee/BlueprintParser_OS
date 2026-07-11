@@ -18,6 +18,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import { persistFetch } from "@/lib/client-persist";
 import { queryKeys } from "@/queries/queryKeys";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { YoloTag } from "@/types";
 
@@ -225,8 +226,8 @@ export function readYoloTags(qc: QueryClient, publicId: string): YoloTag[] {
 
 /**
  * Loader adapter: seeds the collection unconditionally and returns PI with its duplicate yoloTags
- * property removed. Only csiGraph is consumed from this legacy Zustand blob; retaining the large
- * nested tag array there would leave a hidden second owner after the top-level field migrates.
+ * property removed. The returned object feeds only the narrow csiGraph Query seed; retaining the
+ * nested tag array there would duplicate the collection even at that one bootstrap boundary.
  */
 export function seedYoloTagsFromBootstrap(
   qc: QueryClient,
@@ -346,7 +347,7 @@ export function navigateYoloTag(
 }
 
 function useRowsQuery<T = YoloTag[]>(select?: (rows: YoloTag[]) => T): T {
-  const publicId = useViewerStore((state) => state.publicId);
+  const publicId = useSessionStore((state) => state.publicId);
   const { data } = useQuery<YoloTag[], Error, T>({
     queryKey: queryKeys.yoloTags.all(publicId),
     queryFn: (): YoloTag[] => {
@@ -422,15 +423,15 @@ export function useYoloTagCatalog(): YoloTagCatalogRow[] {
 /** CRUD callbacks only. This hook intentionally creates ZERO Query observers. */
 export function useYoloTagActions() {
   const qc = useQueryClient();
-  const publicId = useViewerStore((state) => state.publicId);
-  const isDemo = useViewerStore((state) => state.isDemo);
+  const publicId = useSessionStore((state) => state.publicId);
+  const isDemo = useSessionStore((state) => state.isDemo);
   const projectEpoch = currentProjectEpoch(qc, publicId);
 
   // Captured-key callbacks isolate every awaited map-tags producer. A stale component cannot
   // publish project A's late response into project B's active cache after navigation.
   const stillActive = useCallback(
     () => {
-      const live = useViewerStore.getState();
+      const live = useSessionStore.getState();
       return live.publicId === publicId &&
         live.isDemo === isDemo &&
         currentProjectEpoch(qc, publicId) === projectEpoch;

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
@@ -41,9 +42,11 @@ interface PreviewGrid {
  */
 export default function NotesParser() {
   const queryClient = useQueryClient();
-  const projectId = useViewerStore((s) => s.projectId);
-  const publicId = useViewerStore((s) => s.publicId);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  // Use a distinct selector parameter name: the ownership oracle is intentionally conservative
+  // across nested scopes, and this component also has a local viewer snapshot named `s`.
+  const projectId = useSessionStore((session) => session.projectId);
+  const publicId = useSessionStore((session) => session.publicId);
+  const isDemo = useSessionStore((session) => session.isDemo);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const textractData = useTextractForPage(pageNumber);
 

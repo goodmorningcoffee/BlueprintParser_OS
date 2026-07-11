@@ -31,6 +31,8 @@ import {
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { AnnotationGroup, AnnotationGroupMembership } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 function makeWrapper(client: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -66,8 +68,8 @@ const KEY_P = queryKeys.annotationGroups.all("P");
 const fetchMock = vi.fn();
 
 beforeEach(() => {
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "P", isDemo: false });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "P", isDemo: false });
   fetchMock.mockReset();
   fetchMock.mockImplementation((url: unknown) => {
     throw new Error(`unexpected fetch in useAnnotationGroups suite: ${url}`);
@@ -388,14 +390,14 @@ describe("useAnnotationGroups — reads and writes", () => {
     seedAnnotationGroupsCache(client, "A", { groups: [grp({ id: 1, name: "a1" })], memberships: [] });
     seedAnnotationGroupsCache(client, "B", { groups: [grp({ id: 2, name: "b1" })], memberships: [] });
 
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
     const { result } = renderHook(() => useAnnotationGroups(), { wrapper: makeWrapper(client) });
     await waitFor(() => expect(result.current.annotationGroups.map((g) => g.id)).toEqual([1]));
 
     act(() => result.current.upsertAnnotationGroup(grp({ id: 7, name: "a2" })));
     await waitFor(() => expect(result.current.annotationGroups.map((g) => g.id)).toEqual([1, 7]));
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     await waitFor(() => expect(result.current.annotationGroups.map((g) => g.id)).toEqual([2]));
     // A's entry (incl. the client write) retained per-key while B is active
     expect(
@@ -409,12 +411,12 @@ describe("useAnnotationGroups — reads and writes", () => {
     seedAnnotationGroupsCache(client, "A", { groups: [], memberships: [] });
     seedAnnotationGroupsCache(client, "B", { groups: [grp({ id: 2, name: "b1" })], memberships: [] });
 
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
     const { result } = renderHook(() => useAnnotationGroups(), { wrapper: makeWrapper(client) });
     await waitFor(() => expect(result.current.annotationGroups).toEqual([]));
     const capturedUpsert = result.current.upsertAnnotationGroup; // closed over key("A")
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     await waitFor(() => expect(result.current.annotationGroups.map((g) => g.id)).toEqual([2]));
 
     act(() => capturedUpsert(grp({ id: 9, name: "late-landing" }))); // in-flight handler lands "late"
@@ -459,7 +461,7 @@ describe("useAnnotationGroups — config", () => {
   });
 
   it("demo: zero fetches, reads empty — enabled gate is DEFENSE-IN-DEPTH (initialData+staleTime ∞ are the primary dormancy mechanism; the gate's own kill is the M10 invalidation pin below)", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     const { result } = renderHook(() => useAnnotationGroups(), {
       wrapper: makeWrapper(freshClient()),
     });
@@ -476,7 +478,7 @@ describe("useAnnotationGroups — config", () => {
     // staleTime — and the networkMode/retry test below proves invalidateQueries DOES reach
     // the queryFn when enabled, so this zero-call assert is discriminating, not vacuous.
     // Delete `enabled: !!publicId && !isDemo` and this fails.
-    useViewerStore.setState({ isDemo: true }); // publicId stays "P" — gate false via isDemo alone
+    setViewerStoreStateForTest({ isDemo: true }); // publicId stays "P" — gate false via isDemo alone
     const client = freshClient();
     // A seeded demo entry = the exact future-demo-seed world the §7.1 tripwire warns about.
     seedAnnotationGroupsCache(client, "P", {
@@ -495,7 +497,7 @@ describe("useAnnotationGroups — config", () => {
   });
 
   it("empty publicId: zero fetches, reads empty (enabled-gate defense-in-depth — same dormancy note as the demo case)", async () => {
-    useViewerStore.setState({ publicId: "" });
+    setViewerStoreStateForTest({ publicId: "" });
     const { result } = renderHook(() => useAnnotationGroups(), {
       wrapper: makeWrapper(freshClient()),
     });
@@ -540,7 +542,7 @@ describe("useAnnotationGroups — config", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const client = freshClient();
-      useViewerStore.setState({ isDemo: true });
+      setViewerStoreStateForTest({ isDemo: true });
       const payload = { groups: [grp({ id: 1, name: "survivor" })], memberships: [pair(10, 1)] };
       seedAnnotationGroupsCache(client, "P", payload);
 

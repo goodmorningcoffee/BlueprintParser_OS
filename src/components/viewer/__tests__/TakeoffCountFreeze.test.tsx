@@ -43,6 +43,8 @@ import { persistFetch } from "@/lib/client-persist";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientAnnotation, ClientTakeoffItem, TakeoffGroup } from "@/types";
 import CountTab from "../CountTab";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 vi.mock("@/lib/client-persist", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/client-persist")>();
@@ -104,8 +106,8 @@ beforeEach(() => {
   // PURE-DEFAULTS client, matching production (Providers.tsx has no defaultOptions) — the freeze
   // net must run against production-equivalent client defaults (③ DETECTOR-closer rationale).
   qc = new QueryClient();
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "pid", isDemo: false });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "pid", isDemo: false });
   fetchMock.mockReset();
   // fail-loud default: only the create-item POST may use the raw channel, per-test overrides only
   fetchMock.mockImplementation((url: unknown) => {
@@ -181,7 +183,7 @@ describe("CountTab — create item is server-first (TC-1)", () => {
 
 describe("CountTab — demo create never writes (TC-2)", () => {
   it("row immediate, negative temp id, ZERO calls on either mock channel", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedTakeoff(qc, [], []);
     render(<CountTab />, { wrapper });
 
@@ -538,7 +540,7 @@ describe("CountTab — edit panel live update is pure-local, save is optimistic 
 
 describe("CountTab — demo group create/rename/delete are local-only (TC-13)", () => {
   it("all three ops land in the DOM with ZERO calls on either channel", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedTakeoff(qc, [item({ id: -5, name: "Demo Door" })], []);
     render(<CountTab />, { wrapper });
     await waitFor(() => expect(screen.getByText("Demo Door")).toBeInTheDocument());

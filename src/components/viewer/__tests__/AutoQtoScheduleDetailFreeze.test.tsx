@@ -20,6 +20,8 @@ import {
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedSummaries } from "@/test/seed-summaries";
 import type { ProjectSummaries, QtoWorkflow } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 const fetchMock = vi.fn();
@@ -113,8 +115,8 @@ beforeEach(() => {
   qc = new QueryClient();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({
+  resetProjectData();
+  setViewerStoreStateForTest({
     publicId: "pid",
     isDemo: true,
     pageNames: { 9: "A-009" },
@@ -176,7 +178,7 @@ describe("AutoQto schedule detail fallback — P2.2⑦ freeze", () => {
 
   it("uses the authenticated detail route outside demo mode", async () => {
     const serverIntel = matchingPageIntelligence("authenticated");
-    useViewerStore.setState({ isDemo: false });
+    setViewerStoreStateForTest({ isDemo: false });
     fetchMock.mockImplementation(async (url: string) => {
       if (url === "/api/qto-workflows?projectId=pid") {
         return { ok: true, json: async () => [workflow] } as Response;

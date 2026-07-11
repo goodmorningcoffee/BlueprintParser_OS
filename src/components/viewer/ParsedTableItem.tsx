@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
 import { readAnnotations } from "@/queries/useAnnotations";
@@ -74,7 +75,7 @@ export default memo(function ParsedTableItem({
   // but condensed (stacked chip rows inside the existing panel).
   const [mapStrictness, setMapStrictness] = useState<MapTagsStrictness>("balanced");
   const [mapPrefixes, setMapPrefixes] = useState<string[]>([]);
-  const pageDrawingNumbers = useViewerStore((s) => s.pageDrawingNumbers);
+  const pageDrawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
   const availablePrefixes = useMemo(() => {
     const set = new Set<string>();
     for (const num of Object.values(pageDrawingNumbers)) {
@@ -201,7 +202,6 @@ export default memo(function ParsedTableItem({
     category?: string,
   ) => {
     if (!table.region?.id) return;
-    const store = useViewerStore.getState();
     const intel = readPageIntelligence(queryClient, publicId, table.pageNum) || {};
     const regions = ((intel as any)?.parsedRegions || []).map((r: any) =>
       r.id === table.region.id
@@ -214,7 +214,7 @@ export default memo(function ParsedTableItem({
       parsedRegions: regions,
     });
 
-    const { isDemo } = store;
+    const { isDemo } = useSessionStore.getState();
     if (!canPersist(publicId, isDemo)) return; // demo / no publicId: local-only
     const bbox = (table.region.bbox ?? [0, 0, 1, 1]) as [number, number, number, number];
     const result = await promoteParsedRegion({

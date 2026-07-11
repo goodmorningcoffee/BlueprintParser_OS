@@ -1,16 +1,15 @@
 // [refactor jul11 P2.3 S0] One test-side seam for mixed viewer/session setup.
 //
-// The production session slice still lives in viewerStore at this characterization point, so both
-// partitions are deliberately published in one Zustand write. At the S2 ownership flip, only this
-// function needs to route `session` to sessionStore; callers can keep describing one logical setup
-// patch while the two production stores remain explicit (there is no production compatibility
-// proxy). `projectIntelligenceData` is intentionally NOT a session key: the P2.3 census assigns that
-// server bootstrap payload to a Query facade instead of relabeling it as client session state.
+// The helper accepts one logical test setup patch, but publishes the two ownership partitions to
+// their real leaf stores. This keeps tests explicit about production ownership without making every
+// mixed setup repeat routing boilerplate. CSI bootstrap data is intentionally absent because its
+// residual graph now has a dedicated Query facade instead of either Zustand owner.
 
+import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore } from "@/stores/viewerStore";
 
 export type ViewerStoreTestState = ReturnType<typeof useViewerStore.getState>;
-export type ViewerStoreTestPatch = Partial<ViewerStoreTestState>;
+export type SessionStoreTestState = ReturnType<typeof useSessionStore.getState>;
 
 export const SESSION_TEST_STATE_KEYS = [
   "projectId",
@@ -24,17 +23,16 @@ export const SESSION_TEST_STATE_KEYS = [
   "labelingWizardStep",
   "labelingSessions",
   "labelingCredentials",
-] as const satisfies readonly (keyof ViewerStoreTestState)[];
+] as const satisfies readonly (keyof SessionStoreTestState)[];
 
 export type SessionTestStateKey = (typeof SESSION_TEST_STATE_KEYS)[number];
 export type SessionStoreTestPatch = Partial<
-  Pick<ViewerStoreTestState, SessionTestStateKey>
+  Pick<SessionStoreTestState, SessionTestStateKey>
 >;
-export type RemainingViewerStoreTestPatch = Partial<
-  Omit<ViewerStoreTestState, SessionTestStateKey>
->;
+export type RemainingViewerStoreTestPatch = Partial<ViewerStoreTestState>;
+export type ViewerStoreTestPatch = RemainingViewerStoreTestPatch & SessionStoreTestPatch;
 
-const SESSION_TEST_STATE_KEY_SET = new Set<keyof ViewerStoreTestState>(
+const SESSION_TEST_STATE_KEY_SET = new Set<string>(
   SESSION_TEST_STATE_KEYS,
 );
 
@@ -46,7 +44,7 @@ export function partitionViewerStoreTestState(patch: ViewerStoreTestPatch): {
   const viewerEntries: [string, unknown][] = [];
 
   for (const [key, value] of Object.entries(patch)) {
-    const target = SESSION_TEST_STATE_KEY_SET.has(key as keyof ViewerStoreTestState)
+    const target = SESSION_TEST_STATE_KEY_SET.has(key)
       ? sessionEntries
       : viewerEntries;
     target.push([key, value]);
@@ -61,7 +59,8 @@ export function partitionViewerStoreTestState(patch: ViewerStoreTestPatch): {
 export function setViewerStoreStateForTest(patch: ViewerStoreTestPatch): void {
   const { session, viewer } = partitionViewerStoreTestState(patch);
 
-  // Preserve today's one-publication setup semantics while both partitions share one owner. S2
-  // changes this body to two explicit leaf-store writes, in the required session/core order.
-  useViewerStore.setState({ ...viewer, ...session });
+  // Identity/policy must be visible before viewer state is published because Query subscribers can
+  // react to viewer writes and derive keys/guards from the live session store.
+  if (Object.keys(session).length > 0) useSessionStore.setState(session);
+  if (Object.keys(viewer).length > 0) useViewerStore.setState(viewer);
 }

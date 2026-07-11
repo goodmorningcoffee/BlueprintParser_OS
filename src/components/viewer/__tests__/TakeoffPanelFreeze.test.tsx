@@ -37,6 +37,8 @@ import { seedTakeoff } from "@/test/seed-takeoff";
 import { persistFetch } from "@/lib/client-persist";
 import type { ClientTakeoffItem } from "@/types";
 import TakeoffPanel from "../TakeoffPanel";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 vi.mock("@/lib/client-persist", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/client-persist")>();
@@ -73,8 +75,8 @@ function grid() {
 
 beforeEach(() => {
   qc = new QueryClient(); // pure defaults, matching production Providers.tsx
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "pid", isDemo: false });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "pid", isDemo: false });
   fetchMock.mockReset();
   fetchMock.mockImplementation((url: unknown) => {
     throw new Error(`unexpected raw fetch in takeoff freeze test: ${url}`);
@@ -207,7 +209,7 @@ describe("TakeoffPanel — demo temp survives panel unmount across >5min (TP-4)"
     // The gc timer is born during unmount, i.e. UNDER the faked setTimeout — which is why this
     // file installs fake timers in beforeEach, not mid-test. Pre-migration zustand trivially
     // persists; byte-identical test either way.
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedTakeoff(qc, [], []);
     const view = render(<TakeoffPanel />, { wrapper });
     await advance(0);

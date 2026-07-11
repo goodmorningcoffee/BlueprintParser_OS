@@ -30,6 +30,8 @@ import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations"
 import { seedTakeoff } from "@/test/seed-takeoff";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 import TakeoffPanel from "../TakeoffPanel";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 
@@ -123,10 +125,10 @@ const fetchMock = vi.fn();
 
 beforeEach(() => {
   qc = new QueryClient(); // pure production defaults; provider exists from birth for the C3 hook
-  useViewerStore.getState().resetProjectData();
+  resetProjectData();
   // resetProjectData does not clear these history arrays, so reset them explicitly to prevent the
   // module-singleton store from leaking one case's undo history into the next.
-  useViewerStore.setState({
+  setViewerStoreStateForTest({
     publicId: "pid",
     isDemo: false,
     takeoffUndoStack: [],

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { persistFetch, canPersist } from "@/lib/client-persist";
 import {
@@ -35,9 +36,9 @@ type RowAction = "idle" | "promoting" | "rejecting";
  */
 export default function NotesClassifier({ onEditInParser }: NotesClassifierProps) {
   const queryClient = useQueryClient();
-  const projectId = useViewerStore((s) => s.projectId);
-  const publicId = useViewerStore((s) => s.publicId);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const projectId = useSessionStore((s) => s.projectId);
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   // Scoped subscription: rerender only when this page's intel changes,
   // not when any page's intel changes.

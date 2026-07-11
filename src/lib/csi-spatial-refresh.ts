@@ -16,12 +16,12 @@ import {
   readTextAnnotationsForPage,
   updatePageIntelligenceForPage,
 } from "@/queries/usePageWindow";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 
 /**
  * Recompute the CSI spatial map for a given project/page using all available client data.
  *
- * `publicId` is the request identity captured by the caller. Refuse to publish if the viewer has
+ * `publicId` is the request identity captured by the caller. Refuse to publish if the session has
  * since switched projects: mixing one project's live tags into another project's cache would
  * corrupt both projects.
  */
@@ -31,7 +31,7 @@ export function refreshPageCsiSpatialMap(
   pageNumber: number,
   gridConfig?: CsiSpatialGridConfig,
 ): void {
-  const store = useViewerStore.getState();
+  const store = useSessionStore.getState();
   if (store.publicId !== publicId) return;
 
   // Gather data sources

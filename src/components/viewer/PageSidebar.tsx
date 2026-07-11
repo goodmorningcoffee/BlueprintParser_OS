@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useNavigation, useProject, usePageData, useDetection, useTextAnnotationDisplay, useSymbolSearch } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePageData, useDetection, useTextAnnotationDisplay, useSymbolSearch } from "@/stores/viewerStore";
+import { useProject, useSessionStore } from "@/stores/sessionStore";
 import {
   useCsiCodesByPage,
   useKeynotesByPage,
@@ -42,7 +43,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   const { summaries } = useSummaries();
 
   // Fields not in any slice selector — individual selectors
-  const setPageName = useViewerStore((s) => s.setPageName);
+  const setPageName = useSessionStore((s) => s.setPageName);
   const searchResults = useViewerStore((s) => s.searchResults);
   const searchMatches = useViewerStore((s) => s.searchMatches);
   const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);

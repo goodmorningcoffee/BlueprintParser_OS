@@ -38,6 +38,8 @@ import type {
   TextAnnotation,
   TextRegion,
 } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 // Drive TableParsePanel through its real orchestration callback without mounting the large parser
 // child. The grid already has CSI tags, so this isolates the local append path from CSI networking.
@@ -85,8 +87,8 @@ beforeEach(() => {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({
+  resetProjectData();
+  setViewerStoreStateForTest({
     projectId: 1,
     publicId: "pid",
     isDemo: false,
@@ -166,7 +168,7 @@ describe("mixed page-window writer semantics", () => {
 
   it("TableParse local save appends against invocation-live regions and creates one stable id", async () => {
     vi.spyOn(Date, "now").mockReturnValue(12345);
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       isDemo: true,
       tableParseTab: "auto",
       tableParseRegion: [0.1, 0.2, 0.8, 0.7],
@@ -262,7 +264,7 @@ describe("mixed page-window writer semantics", () => {
     // Explicit request identity is rejected after a project switch; even the target cache object
     // remains untouched, rather than recomputing from the newly active project's YOLO store data.
     const sameProjectBeforeMismatch = readActivePageWindow(qc, "pid");
-    useViewerStore.setState({ publicId: "other" });
+    setViewerStoreStateForTest({ publicId: "other" });
     refreshPageCsiSpatialMap(qc, "pid", 4);
     expect(readActivePageWindow(qc, "pid")).toBe(sameProjectBeforeMismatch);
   });

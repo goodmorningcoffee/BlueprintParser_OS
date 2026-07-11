@@ -54,6 +54,8 @@ import type {
   PageIntelligence,
   TextAnnotation,
 } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 const clients = new Set<QueryClient>();
 const unexpectedFetch = vi.fn();
@@ -163,8 +165,8 @@ function watchExplicitOuterBatch(): () => { rootCalls: number; maxDepth: number 
 }
 
 beforeEach(() => {
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "A", isDemo: false, pageNumber: 20 });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "A", isDemo: false, pageNumber: 20 });
   focusManager.setFocused(undefined);
   onlineManager.setOnline(true);
   unexpectedFetch.mockReset();
@@ -321,7 +323,7 @@ describe("narrow and whole-map observers", () => {
     expect(hook.result.current.text[0].text).toBe("A");
     expect(hook.result.current.intelligence).toBe(intelA);
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     await waitFor(() => expect(hook.result.current.keynotes[0].text).toBe("B"));
     expect(hook.result.current.csiCodes[0].code).toBe("B");
     expect(hook.result.current.text[0].text).toBe("B");
@@ -490,7 +492,7 @@ describe("imperative readers and semantic writers", () => {
     const client = freshClient();
     seed(client, "A", active({ keynotes: { 20: [keynote("A")] } }));
     seed(client, "B", active({ keynotes: { 20: [keynote("B")] } }));
-    useViewerStore.setState({ publicId: "B" });
+    setViewerStoreStateForTest({ publicId: "B" });
 
     setKeynotesForPage(client, "A", 20, [keynote("A-new")]);
 

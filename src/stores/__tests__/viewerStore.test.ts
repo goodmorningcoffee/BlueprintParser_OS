@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useViewerStore } from "@/stores/viewerStore";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { useSessionStore } from "@/stores/sessionStore";
 
 // Reset store before each test
 beforeEach(() => {
-  useViewerStore.getState().resetProjectData();
+  resetProjectData();
 });
 
 describe("viewerStore — navigation", () => {
@@ -107,7 +109,7 @@ describe("viewerStore — YOLO tag UI state", () => {
       },
     });
 
-    useViewerStore.getState().resetProjectData();
+    resetProjectData();
     expect(useViewerStore.getState()).toMatchObject({
       yoloTagVisibility: {},
       activeYoloTagId: null,
@@ -121,13 +123,13 @@ describe("viewerStore — YOLO tag UI state", () => {
 
 describe("viewerStore — page drawing numbers", () => {
   it("setPageDrawingNumbers replaces the map", () => {
-    expect(useViewerStore.getState().pageDrawingNumbers).toEqual({});
-    useViewerStore.getState().setPageDrawingNumbers({
+    expect(useSessionStore.getState().pageDrawingNumbers).toEqual({});
+    useSessionStore.getState().setPageDrawingNumbers({
       1: "E-101",
       2: "E-102",
       3: null,
     });
-    expect(useViewerStore.getState().pageDrawingNumbers).toEqual({
+    expect(useSessionStore.getState().pageDrawingNumbers).toEqual({
       1: "E-101",
       2: "E-102",
       3: null,
@@ -135,9 +137,9 @@ describe("viewerStore — page drawing numbers", () => {
   });
 
   it("resetProjectData clears pageDrawingNumbers", () => {
-    useViewerStore.getState().setPageDrawingNumbers({ 1: "A-501" });
-    useViewerStore.getState().resetProjectData();
-    expect(useViewerStore.getState().pageDrawingNumbers).toEqual({});
+    useSessionStore.getState().setPageDrawingNumbers({ 1: "A-501" });
+    resetProjectData();
+    expect(useSessionStore.getState().pageDrawingNumbers).toEqual({});
   });
 });
 
@@ -146,7 +148,7 @@ describe("viewerStore — resetProjectData", () => {
     useViewerStore.getState().setNumPages(20);
     useViewerStore.getState().setPage(10);
 
-    useViewerStore.getState().resetProjectData();
+    resetProjectData();
 
     expect(useViewerStore.getState().pageNumber).toBe(1);
     expect(useViewerStore.getState().tableParseStep).toBe("idle");
@@ -161,7 +163,7 @@ describe("viewerStore — chat scope (UI state; data lives in the query cache)",
   // ── T-C2 (scope half — chatMessages assertion retired with the field) ──────
   it("resetProjectData re-defaults chatScope to 'page'", () => {
     useViewerStore.getState().setChatScope("project");
-    useViewerStore.getState().resetProjectData();
+    resetProjectData();
     expect(useViewerStore.getState().chatScope).toBe("page"); // scope is zustand-owned UI
   });
 

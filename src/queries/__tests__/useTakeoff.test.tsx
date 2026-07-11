@@ -24,6 +24,8 @@ import {
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 // Full-shape fixtures (freeze-suite discipline: honest against the real types).
 function item(over: Partial<ClientTakeoffItem> & { id: number; name: string }): ClientTakeoffItem {
@@ -133,11 +135,11 @@ describe("seedTakeoffFromBootstrap (loader field-mapping adapter)", () => {
 // ── useTakeoffItems / useTakeoffGroups — the cache-backed facade ──────────────────────────────
 describe("useTakeoffItems / useTakeoffGroups", () => {
   beforeEach(() => {
-    useViewerStore.getState().resetProjectData();
+    resetProjectData();
   });
 
   it("[] defaults: fresh client reads empty arrays on BOTH hooks; success/idle — the throwing queryFn never ran", () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     const { result } = renderHook(useBoth, { wrapper: makeWrapper(client) });
     expect(result.current.items.takeoffItems).toEqual([]);
@@ -152,7 +154,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
   });
 
   it("seed→read round-trip: a pre-mount loader-style seed is what both hooks render", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     const items = [item({ id: 1, name: "Door" }), item({ id: 2, name: "Window", groupId: 5 })];
     const groups = [group({ id: 5, name: "Div 08" })];
@@ -163,7 +165,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
   });
 
   it("addTakeoffItem appends to the items key ONLY (store-action mirror)", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     seedTakeoffCache(client, "p-A", [item({ id: 1, name: "Door" })], [group({ id: 5, name: "G" })]);
     const { result } = renderHook(useBoth, { wrapper: makeWrapper(client) });
@@ -178,7 +180,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
   });
 
   it("removeTakeoffItem filters by id (store-action mirror)", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     seedTakeoffCache(client, "p-A", [item({ id: 1, name: "Door" }), item({ id: 2, name: "Window" })], []);
     const { result } = renderHook(useBoth, { wrapper: makeWrapper(client) });
@@ -190,7 +192,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
   });
 
   it("updateTakeoffItem map-merges the patch, preserving unlisted fields (store-action mirror)", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     seedTakeoffCache(client, "p-A", [item({ id: 1, name: "Door", size: 10, color: "#ef4444" })], []);
     const { result } = renderHook(useBoth, { wrapper: makeWrapper(client) });
@@ -203,7 +205,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
   });
 
   it("addTakeoffGroup / updateTakeoffGroup write the groups key ONLY", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     seedTakeoffCache(client, "p-A", [item({ id: 1, name: "Door" })], []);
     const { result } = renderHook(useBoth, { wrapper: makeWrapper(client) });
@@ -222,7 +224,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
   });
 
   it("removeTakeoffGroup ungroups across BOTH keys: group gone AND member items groupId:null (FK-SET-NULL mirror)", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     seedTakeoffCache(
       client,
@@ -246,7 +248,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
   });
 
   it("D6 raw-subscriber pin: no render-equivalent boundary observes groups-final + items-stale (detects an inserted await)", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     seedTakeoffCache(
       client,
@@ -310,12 +312,12 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
     seedTakeoffCache(client, "A", [item({ id: 1, name: "A-item" })], [group({ id: 5, name: "A-g" })]);
     seedTakeoffCache(client, "B", [item({ id: 2, name: "B-item" })], [group({ id: 6, name: "B-g" })]);
 
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
     const { result } = renderHook(useBoth, { wrapper: makeWrapper(client) });
     await waitFor(() => expect(result.current.items.takeoffItems[0].name).toBe("A-item"));
     expect(result.current.groups.takeoffGroups[0].name).toBe("A-g");
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     await waitFor(() => expect(result.current.items.takeoffItems[0].name).toBe("B-item"));
     expect(result.current.groups.takeoffGroups[0].name).toBe("B-g");
 
@@ -330,11 +332,11 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
     // action instance rendered under project A while the store already points at B. The keyed
     // write lands under A — invisible in B's view (vs the old global store field, which leaked).
     const client = freshClient();
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
     const { result } = renderHook(useBoth, { wrapper: makeWrapper(client) });
     const capturedAdd = result.current.items.addTakeoffItem; // closed over publicId "A"
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     act(() => capturedAdd(item({ id: 42, name: "Late reconcile" })));
 
     expect(client.getQueryData(queryKeys.takeoff.items("A"))).toEqual([
@@ -346,7 +348,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
   });
 
   it("staleTime:Infinity — seeded entries are never stale while observed (both keys, defensive pin)", () => {
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
     const client = freshClient();
     seedTakeoffCache(client, "A", [item({ id: 1, name: "Door" })], [group({ id: 5, name: "G" })]);
     renderHook(useBoth, { wrapper: makeWrapper(client) });
@@ -369,7 +371,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
       const items = [item({ id: -123, name: "Demo temp" })];
       const groups = [group({ id: 5, name: "G" })];
       seedTakeoffCache(client, "A", items, groups);
-      useViewerStore.setState({ publicId: "A" });
+      setViewerStoreStateForTest({ publicId: "A" });
 
       const first = renderHook(useBoth, { wrapper: makeWrapper(client) });
       expect(first.result.current.items.takeoffItems).toEqual(items);
@@ -392,7 +394,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
 // ── readTakeoffItems — the AnnotationOverlay getState() bridge (7 sync sites) ─────────────────
 describe("readTakeoffItems bridge", () => {
   beforeEach(() => {
-    useViewerStore.getState().resetProjectData();
+    resetProjectData();
   });
 
   it("empty cache → [] (never undefined — old always-an-array store-field parity)", () => {
@@ -412,7 +414,7 @@ describe("readTakeoffItems bridge", () => {
     // AnnotationOverlay's handler-time reads (savePolygon, split-accept, bucket-fill pre-select…)
     // run synchronously after facade writes elsewhere in the same interaction. getQueryData reads
     // the live cache — only the REACT notification defers by a setTimeout(0) task (D1).
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     seedTakeoffCache(client, "p-A", [], []);
     const { result } = renderHook(useBoth, { wrapper: makeWrapper(client) });

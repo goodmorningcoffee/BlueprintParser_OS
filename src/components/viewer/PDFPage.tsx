@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, memo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore, useKeynoteParse } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
 import SearchHighlightOverlay from "./SearchHighlightOverlay";
@@ -185,7 +186,7 @@ export default memo(function PDFPage({
   }, []);
 
   // Pre-rendered PNG fallback for instant page display while pdf.js renders
-  const dataUrl = useViewerStore((s) => s.dataUrl);
+  const dataUrl = useSessionStore((s) => s.dataUrl);
   const pageKey = String(pageNumber).padStart(4, "0");
   const cdnDomain = typeof window !== "undefined" ? undefined : undefined; // client-side only
   const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";

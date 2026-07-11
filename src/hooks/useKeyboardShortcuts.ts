@@ -2,16 +2,19 @@
 
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { takeoffRedo, takeoffUndo } from "@/queries/useAnnotations";
 import { navigateYoloTag } from "@/queries/useYoloTags";
 
 export function useKeyboardShortcuts() {
   // [refactor jul10 P2.2⑥] Providers constructs this client once. Keep the listener mount-once;
-  // the module actions use qc for annotations and re-read every mutable zustand field on keydown.
+  // the module actions use qc for annotations and re-read both mutable stores on keydown.
   const qc = useQueryClient();
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // Keep identity and UI/tool snapshots adjacent at the original event-time read boundary.
+      const session = useSessionStore.getState();
       const store = useViewerStore.getState();
 
       // Don't capture if user is typing in an input
@@ -28,7 +31,12 @@ export function useKeyboardShortcuts() {
         e.preventDefault();
         // Event-time publicId + exact cache read preserve the mount-once listener without leaving
         // tag collection ownership in Zustand.
-        navigateYoloTag(qc, store.publicId, store.tagBrowseId, store.tagBrowseIndex + (e.key === "ArrowLeft" ? -1 : 1));
+        navigateYoloTag(
+          qc,
+          session.publicId,
+          store.tagBrowseId,
+          store.tagBrowseIndex + (e.key === "ArrowLeft" ? -1 : 1),
+        );
         return;
       }
       if (store.tagBrowseId && e.key === "Escape") {

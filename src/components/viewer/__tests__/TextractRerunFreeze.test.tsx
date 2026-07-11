@@ -26,6 +26,8 @@ import { useViewerStore } from "@/stores/viewerStore";
 import { seedTextract } from "@/test/seed-textract";
 import type { TextractPageData } from "@/types";
 import { TextractTab } from "../TextPanel";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 const PAGE = 7;
 const PROJECT_DB_ID = 417;
@@ -122,8 +124,8 @@ function expectCurrentStats(
 
 beforeEach(() => {
   queryClient = new QueryClient();
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({
+  resetProjectData();
+  setViewerStoreStateForTest({
     projectId: PROJECT_DB_ID,
     publicId: PUBLIC_ID,
     isDemo: false,
@@ -208,7 +210,7 @@ describe("TextractTab rerun writer", () => {
   });
 
   it("TW2 dispatches nothing without a public project id", () => {
-    useViewerStore.setState({ publicId: "" });
+    setViewerStoreStateForTest({ publicId: "" });
     renderTab();
 
     const button = screen.getByRole("button", { name: "Re-run Textract" });
@@ -218,7 +220,7 @@ describe("TextractTab rerun writer", () => {
   });
 
   it("TR-D4 disables demo reruns, explains read-only mode, and dispatches nothing", () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedTextract(queryClient, { [PAGE]: textractFixture(1, 1, 0, "old") });
     renderTab();
 
@@ -362,7 +364,7 @@ describe("TextractTab rerun writer", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
     act(() => {
-      useViewerStore.setState({ publicId: nextPublicId, pageNumber: nextPage });
+      setViewerStoreStateForTest({ publicId: nextPublicId, pageNumber: nextPage });
       view.rerender(<TextractTab pageNumber={nextPage} />);
     });
     await waitFor(() => expectCurrentStats(4, 4, 1, nextPage));
@@ -383,7 +385,7 @@ describe("TextractTab rerun writer", () => {
 
     // Return to the captured identity: no obsolete cache adoption occurred there either.
     act(() => {
-      useViewerStore.setState({ publicId: PUBLIC_ID, pageNumber: PAGE });
+      setViewerStoreStateForTest({ publicId: PUBLIC_ID, pageNumber: PAGE });
       view.rerender(<TextractTab pageNumber={PAGE} />);
     });
     await waitFor(() => expectCurrentStats(2, 2, 0));
@@ -417,7 +419,7 @@ describe("TextractTab rerun writer", () => {
     await waitFor(() => expect(cancelSpy).toHaveBeenCalledTimes(1));
 
     act(() => {
-      useViewerStore.setState({ publicId: "other-project", pageNumber: PAGE + 1 });
+      setViewerStoreStateForTest({ publicId: "other-project", pageNumber: PAGE + 1 });
       view.rerender(<TextractTab pageNumber={PAGE + 1} />);
     });
     await act(async () => {
@@ -428,7 +430,7 @@ describe("TextractTab rerun writer", () => {
     expect(screen.queryByText("Re-run complete")).not.toBeInTheDocument();
 
     act(() => {
-      useViewerStore.setState({ publicId: PUBLIC_ID, pageNumber: PAGE });
+      setViewerStoreStateForTest({ publicId: PUBLIC_ID, pageNumber: PAGE });
       view.rerender(<TextractTab pageNumber={PAGE} />);
     });
     await waitFor(() => expectCurrentStats(2, 2, 0));

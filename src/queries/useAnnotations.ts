@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { canPersist, persistFetch } from "@/lib/client-persist";
 import { queryKeys } from "@/queries/queryKeys";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 
@@ -119,17 +120,20 @@ function reportPersistCreateError(error: Error, label?: string): void {
 
 /** Hoisted store action: remove the last active-item annotation on the current page. */
 export function takeoffUndo(qc: QueryClient): void {
-  const snapshot = useViewerStore.getState();
-  const activeId = snapshot.activeTakeoffItemId;
+  // Identity and tool/page state had one Zustand owner before P2.3. Capture both new owners in
+  // one synchronous block so the cache key and viewer predicate still describe one key event.
+  const sessionSnapshot = useSessionStore.getState();
+  const viewerSnapshot = useViewerStore.getState();
+  const activeId = viewerSnapshot.activeTakeoffItemId;
   if (!activeId) return;
 
   let removed: ClientAnnotation | undefined;
-  writeAnns(qc, snapshot.publicId, (rows) => {
+  writeAnns(qc, sessionSnapshot.publicId, (rows) => {
     const reverseIndex = [...rows].reverse().findIndex(
       (annotation) =>
         annotation.source === "takeoff" &&
         annotation.data?.takeoffItemId === activeId &&
-        annotation.pageNumber === snapshot.pageNumber,
+        annotation.pageNumber === viewerSnapshot.pageNumber,
     );
     if (reverseIndex === -1) return rows;
 
@@ -150,12 +154,13 @@ export function takeoffUndo(qc: QueryClient): void {
 
 /** Hoisted store action: restore the current undo-stack top at the annotation-array tail. */
 export function takeoffRedo(qc: QueryClient): void {
-  const snapshot = useViewerStore.getState();
-  if (snapshot.takeoffUndoStack.length === 0) return;
+  const sessionSnapshot = useSessionStore.getState();
+  const viewerSnapshot = useViewerStore.getState();
+  if (viewerSnapshot.takeoffUndoStack.length === 0) return;
 
   // Deliberately no active-item guard: the old direct action could redo with activeId=null.
-  const restored = snapshot.takeoffUndoStack[snapshot.takeoffUndoStack.length - 1];
-  writeAnns(qc, snapshot.publicId, (rows) => [...rows, restored]);
+  const restored = viewerSnapshot.takeoffUndoStack[viewerSnapshot.takeoffUndoStack.length - 1];
+  writeAnns(qc, sessionSnapshot.publicId, (rows) => [...rows, restored]);
   useViewerStore.setState((state) => ({
     takeoffUndoStack: state.takeoffUndoStack.slice(0, -1),
     takeoffRedoStack: [...state.takeoffRedoStack, restored],
@@ -165,10 +170,11 @@ export function takeoffRedo(qc: QueryClient): void {
 function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void {
   return useCallback(
     (item: ClientTakeoffItem) => {
-      // Invocation-time snapshot preserves the singleton store action's freshness. Use this same
-      // snapshot's publicId/page/pending data for BOTH cache key and request even if navigation races.
-      const snapshot = useViewerStore.getState();
-      const pending = snapshot.bucketFillPendingPolygon;
+      // Invocation-time snapshots preserve the singleton store action's freshness. Capture both
+      // stores adjacently, then use those values for cache key and request if navigation races.
+      const sessionSnapshot = useSessionStore.getState();
+      const viewerSnapshot = useViewerStore.getState();
+      const pending = viewerSnapshot.bucketFillPendingPolygon;
       if (!pending) return;
 
       // `holes` is intentionally conditional. The ViewerState interface's old "dropped" comment is
@@ -185,7 +191,7 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
       const tempId = -Date.now();
       const optimistic: ClientAnnotation = {
         id: tempId,
-        pageNumber: snapshot.pageNumber,
+        pageNumber: viewerSnapshot.pageNumber,
         name: item.name,
         bbox: pending.bbox,
         note: null,
@@ -196,13 +202,13 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
       // [refactor jul11 P2.2⑥] Cache FIRST, then consume pending zustand state. Do not await or
       // reverse these lines: the post-migration dialog unmounts from the pending clear while cache
       // notification is deferred, and this ordering minimizes the sanctioned D8 visual tear.
-      writeAnns(qc, snapshot.publicId, (rows) => [...rows, optimistic]);
+      writeAnns(qc, sessionSnapshot.publicId, (rows) => [...rows, optimistic]);
       useViewerStore.setState({ bucketFillPendingPolygon: null });
 
       // Preserve the original two-tier G6 gate byte-for-behavior: demo is local-only and silent;
       // non-demo with unresolved publicId keeps the local row but exposes a persistent error.
-      if (snapshot.isDemo) return;
-      if (!canPersist(snapshot.publicId, snapshot.isDemo)) {
+      if (sessionSnapshot.isDemo) return;
+      if (!canPersist(sessionSnapshot.publicId, sessionSnapshot.isDemo)) {
         useViewerStore.setState({
           bucketFillError:
             "Project not ready yet — bucket fill was NOT saved. Redraw once the viewer finishes loading.",
@@ -211,8 +217,8 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
       }
 
       void persistFetch("/api/annotations", {
-        projectId: snapshot.publicId,
-        pageNumber: snapshot.pageNumber,
+        projectId: sessionSnapshot.publicId,
+        pageNumber: viewerSnapshot.pageNumber,
         name: item.name,
         bbox: pending.bbox,
         source: "takeoff",
@@ -223,7 +229,7 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
           // ID ONLY. Adopting the whole response here would be an unsanctioned behavior change.
           const savedId = (saved as { id?: number } | null)?.id;
           if (savedId) {
-            writeAnns(qc, snapshot.publicId, (rows) =>
+            writeAnns(qc, sessionSnapshot.publicId, (rows) =>
               rows.map((annotation) =>
                 annotation.id === tempId ? { ...annotation, id: savedId } : annotation,
               ),
@@ -300,8 +306,8 @@ function usePersistCreate(
 }
 
 export function useAnnotations(): UseAnnotationsResult {
-  const publicId = useViewerStore((state) => state.publicId);
-  const isDemo = useViewerStore((state) => state.isDemo);
+  const publicId = useSessionStore((state) => state.publicId);
+  const isDemo = useSessionStore((state) => state.isDemo);
   const qc = useQueryClient();
   const key = queryKeys.annotations.all(publicId);
 

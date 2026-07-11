@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
 import { readAnnotations } from "@/queries/useAnnotations";
@@ -71,7 +72,7 @@ export default function KeynoteItem({
   // Phase 4 — inline strictness + drawing-number-prefix scope.
   const [mapStrictness, setMapStrictness] = useState<MapTagsStrictness>("balanced");
   const [mapPrefixes, setMapPrefixes] = useState<string[]>([]);
-  const pageDrawingNumbers = useViewerStore((s) => s.pageDrawingNumbers);
+  const pageDrawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
   const availablePrefixes = useMemo(() => {
     const set = new Set<string>();
     for (const num of Object.values(pageDrawingNumbers)) {
@@ -99,6 +100,7 @@ export default function KeynoteItem({
     if (!trimmed) return;
     setNameError(null);
     const store = useViewerStore.getState();
+    const session = useSessionStore.getState();
     // This prop is also the promote request identity. Keep both optimistic and authoritative
     // replacements on that same project cache (the default empty id covers pre-project/demo use).
     const identityPublicId = publicId ?? "";
@@ -142,7 +144,7 @@ export default function KeynoteItem({
     // 3. Persist via the transactional promote upsert (same regionId → REPLACE)
     // instead of the old blob-overwrite. Gated on publicId (canPersist), NOT
     // numeric projectId. Surfaces failures instead of fire-and-forget.
-    if (!canPersist(publicId, store.isDemo) || matchedId === null || matchedBbox === null || matchedData === null) {
+    if (!canPersist(publicId, session.isDemo) || matchedId === null || matchedBbox === null || matchedData === null) {
       return; // demo / no publicId / no DB-backed region — local-only update above
     }
     try {
@@ -178,7 +180,8 @@ export default function KeynoteItem({
 
   const handleKeyClick = (key: string) => {
     const store = useViewerStore.getState();
-    const existing = readYoloTags(queryClient, store.publicId).find(
+    const session = useSessionStore.getState();
+    const existing = readYoloTags(queryClient, session.publicId).find(
       (t) => t.tagText === key && t.source === "keynote" && t.pageNumber === keynote.pageNumber,
     );
     if (existing) {
@@ -396,7 +399,7 @@ export default function KeynoteItem({
                     setMapping(true);
                     setMapError(null);
                     try {
-                      const livePublicId = useViewerStore.getState().publicId;
+                      const livePublicId = useSessionStore.getState().publicId;
                       const tags: string[] = [...new Set<string>(
                         keynote.keys.map((k) => k.key.trim()).filter(Boolean)
                       )].filter((tag) => !readYoloTags(queryClient, livePublicId)
@@ -490,7 +493,7 @@ export default function KeynoteItem({
                       e.stopPropagation();
                       // The row prop drives render only; a click reads the just-published cache so
                       // it cannot navigate a tag that was replaced between render and dispatch.
-                      const livePublicId = useViewerStore.getState().publicId;
+                      const livePublicId = useSessionStore.getState().publicId;
                       const tag = readYoloTags(queryClient, livePublicId).find(
                         (t) => t.tagText === k.key && t.source === "keynote",
                       );

@@ -48,6 +48,8 @@ import AnnotationPanel from "../AnnotationPanel";
 import CalibrationInput from "../CalibrationInput";
 import DetectionPanel from "../DetectionPanel";
 import TagBrowseBar from "../TagBrowseBar";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 
@@ -146,8 +148,8 @@ beforeEach(() => {
   // [refactor jul11 P2.2⑥] Production-equivalent QueryClient defaults matter under C3: these
   // visible subscriber witnesses must observe the same notification schedule as the real viewer.
   qc = new QueryClient();
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "pid", isDemo: false });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "pid", isDemo: false });
   seedAnnotations(qc, []); // AFTER publicId — the post-C3 cache key derives from it.
   seedYoloTagsFromBootstrap(qc, "pid", { yoloTags: [] });
 
@@ -178,7 +180,7 @@ describe("TagBrowseBar annotation edit freeze", () => {
     // [refactor jul11 P2.2⑥] Fake only the debounce timers. There is no waitFor under fake time
     // (RTL 16 + Vitest hangs there); `advance(0)` is the C3-safe Query notification barrier.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    useViewerStore.setState({ isDemo: true }); // drain the YoloTag debounce with zero persistence
+    setViewerStoreStateForTest({ isDemo: true }); // drain the YoloTag debounce with zero persistence
 
     const freeBbox: [number, number, number, number] = [0.4, 0.5, 0.6, 0.7];
     const tag: YoloTag = {
@@ -200,7 +202,7 @@ describe("TagBrowseBar annotation edit freeze", () => {
       ann(103, { pageNumber: 3, name: "Unrelated" }),
     ]);
     seedYoloTagsFromBootstrap(qc, "pid", { yoloTags: [tag] });
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       tagBrowseId: tag.id,
       tagBrowseIndex: 0,
       pageNames: { 2: "A-102" },
@@ -254,7 +256,7 @@ describe("TagBrowseBar annotation edit freeze", () => {
 
 describe("CalibrationInput annotation replacement freeze", () => {
   it("demo replaces only the current page's scale row locally, calibrates, and never fetches", async () => {
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       isDemo: true,
       pageNumber: 3,
       calibrationMode: "input",
@@ -542,7 +544,7 @@ describe("AnnotationListItem note-save freeze", () => {
   });
 
   it("still fires raw PUT in demo and publishes locally after a JSON 403 response (intentional hole pin)", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     const row = yoloAnn(71, { note: "Before" });
     seedAnnotations(qc, [row]);
     fetchMock.mockResolvedValueOnce(

@@ -2,7 +2,8 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useProject, useNavigation, isDemoFeatureEnabled } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import { isDemoFeatureEnabled, useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2②] qtoWorkflows collection moved zustand → TanStack cache; the facade hook
 // returns the same 4-field shape the old useQtoWorkflow() store selector did (SPEC §3).
 import { useQtoWorkflows } from "@/queries/useQtoWorkflows";
@@ -110,8 +111,8 @@ export default function AutoQtoTab() {
   const { activeQtoWorkflow, setActiveQtoWorkflow, qtoWorkflows, setQtoWorkflows } = useQtoWorkflows();
   // Genuine whole-map reader: schedule detection and summary fallback span all retained pages.
   const pageIntelligence = usePageIntelligenceByPage();
-  const pageNames = useViewerStore((s) => s.pageNames);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const pageNames = useSessionStore((s) => s.pageNames);
+  const isDemo = useSessionStore((s) => s.isDemo);
   const { summaries } = useSummaries();
 
   const [creating, setCreating] = useState(false);
@@ -1173,7 +1174,7 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
   setPage: (n: number) => void;
 }) {
   const queryClient = useQueryClient();
-  const publicId = useViewerStore((state) => state.publicId);
+  const publicId = useSessionStore((state) => state.publicId);
   // Review is action-only: it reads the live cache in handlers and must not observe the collection.
   const { addYoloTag } = useYoloTagActions();
   const lineItems = workflow.lineItems || [];

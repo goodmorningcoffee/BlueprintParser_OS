@@ -22,6 +22,8 @@ import {
 } from "@/queries/useTextract";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { TextractPageData } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 function freshClient(): QueryClient {
   return new QueryClient();
@@ -47,8 +49,8 @@ function response(body: unknown): Response {
 const fetchMock = vi.fn();
 
 beforeEach(() => {
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "P" });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "P" });
   fetchMock.mockReset();
   fetchMock.mockImplementation((url: unknown) => {
     throw new Error(`unexpected fetch from disabled Textract observer: ${String(url)}`);
@@ -168,14 +170,14 @@ describe("useTextractForPage", () => {
     const dataB = pageData("B");
     await replaceTextractForPage(qc, "A", 1, dataA);
     await replaceTextractForPage(qc, "B", 1, dataB);
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
 
     const { result } = renderHook(() => useTextractForPage(1), {
       wrapper: wrapper(qc),
     });
     expect(result.current).toBe(dataA);
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     await waitFor(() => expect(result.current).toBe(dataB));
     expect(fetchMock).not.toHaveBeenCalled();
   });

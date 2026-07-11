@@ -11,6 +11,8 @@ import { mapChatRows, seedChatCache, useChatMessages } from "@/queries/useChatMe
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ChatMsg } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 describe("mapChatRows (T-A1)", () => {
   it("coerces model null AND '' -> undefined, preserves order/id/content, role is an unchecked cast", () => {
@@ -87,17 +89,17 @@ function freshClient() {
 
 describe("useChatMessages hook", () => {
   beforeEach(() => {
-    useViewerStore.getState().resetProjectData();
+    resetProjectData();
   });
 
   it("T-A2: returns [] before any seed, without throwing / fetching", () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const { result } = renderHook(() => useChatMessages(), { wrapper: makeWrapper(freshClient()) });
     expect(result.current.chatMessages).toEqual([]);
   });
 
   it("T-A3: addChatMessage appends in order, producing a new array identity (no client id/model)", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const { result } = renderHook(() => useChatMessages(), { wrapper: makeWrapper(freshClient()) });
 
     // setQueryData notifies the observer asynchronously — poll via waitFor (the proven ChatPanel
@@ -118,7 +120,7 @@ describe("useChatMessages hook", () => {
   });
 
   it("T-A4: clearChatMessages empties the list", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
+    setViewerStoreStateForTest({ publicId: "p-A" });
     const { result } = renderHook(() => useChatMessages(), { wrapper: makeWrapper(freshClient()) });
     act(() => result.current.addChatMessage({ role: "user", content: "m1" }));
     act(() => result.current.addChatMessage({ role: "assistant", content: "m2" }));
@@ -136,14 +138,14 @@ describe("useChatMessages hook", () => {
     // key shape is exactly the documented tuple
     expect(queryKeys.chatMessages.all("A")).toEqual(["project", "A", "chatMessages"]);
 
-    useViewerStore.setState({ publicId: "A" });
+    setViewerStoreStateForTest({ publicId: "A" });
     const { result } = renderHook(() => useChatMessages(), { wrapper: makeWrapper(client) });
     await waitFor(() => expect(result.current.chatMessages).toEqual([a1]));
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     await waitFor(() => expect(result.current.chatMessages).toEqual([b1]));
 
-    act(() => useViewerStore.setState({ publicId: "A" }));
+    act(() => setViewerStoreStateForTest({ publicId: "A" }));
     act(() => result.current.addChatMessage({ role: "user", content: "a2" }));
     await waitFor(() =>
       expect(result.current.chatMessages).toEqual([a1, { role: "user", content: "a2" }]),
@@ -170,7 +172,7 @@ describe("useChatMessages hook", () => {
         { id: 2, role: "assistant", content: "s2" },
       ];
       client.setQueryData(queryKeys.chatMessages.all("A"), seeded);
-      useViewerStore.setState({ publicId: "A" });
+      setViewerStoreStateForTest({ publicId: "A" });
 
       const first = renderHook(() => useChatMessages(), { wrapper: makeWrapper(client) });
       expect(first.result.current.chatMessages).toEqual(seeded);

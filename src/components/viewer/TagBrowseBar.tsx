@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { writeAnns } from "@/queries/useAnnotations";
 import { useYoloTagActions, useYoloTagById } from "@/queries/useYoloTags";
 
@@ -19,7 +20,7 @@ export default function TagBrowseBar() {
   // cache actions with captured project identity, while the remaining browse UI stays in Zustand.
   const tag = useYoloTagById(tagBrowseId);
   const { updateYoloTag, tagBrowseNavigate } = useYoloTagActions();
-  const pageNames = useViewerStore((s) => s.pageNames);
+  const pageNames = useSessionStore((s) => s.pageNames);
 
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -91,14 +92,14 @@ export default function TagBrowseBar() {
     const trimmed = editValue.trim();
     if (!trimmed || trimmed === tag.tagText) { setEditing(false); return; }
 
-    const store = useViewerStore.getState();
+    const session = useSessionStore.getState();
 
     // Update the YoloTag text + name
     updateYoloTag(tag.id, { tagText: trimmed, name: trimmed });
 
     // [refactor jul11 P2.2⑥] This synchronous handler used a fresh getState read, so preserve its
     // live read-modify-write semantics with the cache's functional bridge (not a captured replace).
-    writeAnns(queryClient, store.publicId, (annotations) =>
+    writeAnns(queryClient, session.publicId, (annotations) =>
       annotations.map((a) => {
         if (a.source !== "takeoff" && a.data?.takeoffItemId) return a;
         // Match by tag's instances — any annotation matching this tag's instances

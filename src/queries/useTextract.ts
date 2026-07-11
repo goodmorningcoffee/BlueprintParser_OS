@@ -7,7 +7,7 @@ import {
   subscribeTextractProject,
   textractPageQueryOptions,
 } from "@/queries/textractCache";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import type { TextractPageData } from "@/types";
 
 // [refactor jul11 P2.2⑧ C2] Disabled observers are deliberate: the future null controller owns the
@@ -22,7 +22,7 @@ function selectPresentTextract(
 
 /** Narrow live observer for one publicId/page payload. */
 export function useTextractForPage(pageNumber: number): TextractPageData | undefined {
-  const publicId = useViewerStore((state) => state.publicId);
+  const publicId = useSessionStore((state) => state.publicId);
   const { data } = useQuery({
     ...textractPageQueryOptions(publicId, pageNumber),
     enabled: false,
@@ -67,7 +67,7 @@ interface PassiveSnapshot {
 export function useCachedTextractForPages(
   requestedPageNumbers: readonly number[],
 ): Readonly<Record<number, TextractPageData>> {
-  const publicId = useViewerStore((state) => state.publicId);
+  const publicId = useSessionStore((state) => state.publicId);
   const qc = useQueryClient();
   const requestedSignature = normalizeRequestedPages(requestedPageNumbers);
   const requestedPages = useMemo(

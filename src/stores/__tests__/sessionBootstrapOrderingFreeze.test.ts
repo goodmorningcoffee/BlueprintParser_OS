@@ -96,6 +96,16 @@ function viewerSetStateCall(node: ts.Node): node is ts.CallExpression {
   );
 }
 
+function sessionSetStateCall(node: ts.Node): node is ts.CallExpression {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === "useSessionStore" &&
+    node.expression.name.text === "setState"
+  );
+}
+
 function objectPropertyMap(
   object: ts.ObjectLiteralExpression,
   source: ts.SourceFile,
@@ -111,10 +121,10 @@ function objectPropertyMap(
 }
 
 describe("P2.3 authenticated session bootstrap ordering", () => {
-  it("hydrates identity and numPages in one synchronous canonical response publication", () => {
+  it("hydrates split identity and numPages in one adjacent no-await block", () => {
     const source = parseLoader(AUTH_LOADER);
     const tryBlock = findLoadTryBlock(source);
-    const hydrationCalls = descendants(tryBlock, viewerSetStateCall).filter((call) => {
+    const sessionHydrations = descendants(tryBlock, sessionSetStateCall).filter((call) => {
       const argument = call.arguments[0];
       return (
         !!argument &&
@@ -127,18 +137,38 @@ describe("P2.3 authenticated session bootstrap ordering", () => {
         )
       );
     });
-    expect(hydrationCalls).toHaveLength(1);
+    expect(sessionHydrations).toHaveLength(1);
 
-    const hydration = hydrationCalls[0];
-    expect(hydration.arguments).toHaveLength(1);
-    expect(ts.isObjectLiteralExpression(hydration.arguments[0])).toBe(true);
-    expect(objectPropertyMap(hydration.arguments[0] as ts.ObjectLiteralExpression, source)).toEqual({
+    const sessionHydration = sessionHydrations[0];
+    expect(sessionHydration.arguments).toHaveLength(1);
+    expect(ts.isObjectLiteralExpression(sessionHydration.arguments[0])).toBe(true);
+    expect(objectPropertyMap(sessionHydration.arguments[0] as ts.ObjectLiteralExpression, source)).toEqual({
       projectId: "data.dbId",
       publicId: "data.id",
       dataUrl: "data.dataUrl",
+    });
+    expect(descendants(directStatement(sessionHydration, tryBlock), ts.isAwaitExpression)).toHaveLength(0);
+
+    const coreHydrations = descendants(tryBlock, viewerSetStateCall).filter((call) => {
+      const argument = call.arguments[0];
+      return (
+        !!argument &&
+        ts.isObjectLiteralExpression(argument) &&
+        argument.properties.some(
+          (property) =>
+            ts.isPropertyAssignment(property) &&
+            ts.isIdentifier(property.name) &&
+            property.name.text === "numPages",
+        )
+      );
+    });
+    expect(coreHydrations).toHaveLength(1);
+    const coreHydration = coreHydrations[0];
+    expect(objectPropertyMap(coreHydration.arguments[0] as ts.ObjectLiteralExpression, source)).toEqual({
       numPages: "data.numPages||0",
     });
-    expect(descendants(directStatement(hydration, tryBlock), ts.isAwaitExpression)).toHaveLength(0);
+    expect(statementIndex(coreHydration, tryBlock)).toBe(statementIndex(sessionHydration, tryBlock) + 1);
+    expect(descendants(directStatement(coreHydration, tryBlock), ts.isAwaitExpression)).toHaveLength(0);
 
     const resets = descendants(tryBlock, (node): node is ts.CallExpression =>
       isIdentifierCall(node, "resetProjectData"),
@@ -155,8 +185,8 @@ describe("P2.3 authenticated session bootstrap ordering", () => {
     expect(dataDeclarations).toHaveLength(1);
     expect(yoloSeeds).toHaveLength(1);
     expect(statementIndex(resets[0], tryBlock)).toBeLessThan(statementIndex(dataDeclarations[0], tryBlock));
-    expect(statementIndex(dataDeclarations[0], tryBlock)).toBeLessThan(statementIndex(hydration, tryBlock));
-    expect(statementIndex(hydration, tryBlock)).toBeLessThan(statementIndex(yoloSeeds[0], tryBlock));
+    expect(statementIndex(dataDeclarations[0], tryBlock)).toBeLessThan(statementIndex(sessionHydration, tryBlock));
+    expect(statementIndex(coreHydration, tryBlock)).toBeLessThan(statementIndex(yoloSeeds[0], tryBlock));
     expect(compact(yoloSeeds[0].arguments[1], source)).toBe("data.id");
   });
 });

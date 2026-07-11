@@ -37,6 +37,9 @@ import type {
 } from "@/types";
 import DetectionPanel from "../DetectionPanel";
 import SymbolSearchPanel from "../SymbolSearchPanel";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { useSessionStore } from "@/stores/sessionStore";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 
@@ -134,7 +137,7 @@ function renderSymbolSaveSurface() {
 }
 
 function seedPendingShape() {
-  setKeynotesForPage(qc, useViewerStore.getState().publicId, 1, [pendingShape]);
+  setKeynotesForPage(qc, useSessionStore.getState().publicId, 1, [pendingShape]);
 }
 
 function seedPendingSymbolSearch() {
@@ -166,10 +169,10 @@ beforeEach(() => {
   );
 
   qc = new QueryClient(); // pure defaults, matching production Providers.tsx
-  useViewerStore.getState().resetProjectData();
+  resetProjectData();
   // resetProjectData intentionally omits a few presentation fields; pin them here so another
   // test cannot hide the model probe or perturb the post-save lifecycle.
-  useViewerStore.setState({
+  setViewerStoreStateForTest({
     publicId: "pid",
     projectId: 41,
     isDemo: false,
@@ -204,7 +207,7 @@ describe("DetectionPanel shape-save — guard, raw-fetch failure, and append+cle
   ])("$label guard keeps pending shapes and performs no annotation write", async ({ publicId, isDemo, error }) => {
     // [refactor jul11 P2.2⑥] The guard is BEFORE raw fetch and BEFORE the annotation-array write.
     // Demo and the unresolved-publicId bootstrap window intentionally share that inert lifecycle.
-    useViewerStore.setState({ publicId, isDemo });
+    setViewerStoreStateForTest({ publicId, isDemo });
     seedAnnotations(qc, [survivor()]);
     seedPendingShape();
     renderDetectionSaveSurface();
@@ -354,7 +357,7 @@ describe("SymbolSearchPanel annotation-save — guard, raw-fetch failure, and ap
   ])("$label guard keeps search results and performs no annotation write", async ({ publicId, isDemo, error }) => {
     // [refactor jul11 P2.2⑥] As with Shape Parse, this guard must remain ahead of both the raw
     // POST and the replace/append write when annotations move to the cache.
-    useViewerStore.setState({ publicId, isDemo });
+    setViewerStoreStateForTest({ publicId, isDemo });
     seedAnnotations(qc, [survivor()]);
     seedPendingSymbolSearch();
     renderSymbolSaveSurface();

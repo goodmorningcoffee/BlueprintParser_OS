@@ -6,18 +6,18 @@
 //   PRE-migration:       page payloads lived in viewerStore → setTextractData(page, payload)
 //   POST-migration NOW:  page payloads live under queryKeys.textract.page(publicId, page)
 //
-// Call after setting the store's publicId. QueryClient is threaded from birth so C3 changes this
+// Call after setting the session store's publicId. QueryClient is threaded from birth so C3 changes this
 // function body and zero freeze-test call sites. Production code must not import this test helper.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/queries/queryKeys";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import type { TextractPageData } from "@/types";
 
 export function seedTextract(
   queryClient: QueryClient,
   pages: Record<number, TextractPageData>,
-  publicId = useViewerStore.getState().publicId,
+  publicId = useSessionStore.getState().publicId,
 ): void {
   for (const [pageNumber, data] of Object.entries(pages)) {
     queryClient.setQueryData(

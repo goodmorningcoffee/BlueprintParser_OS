@@ -5,9 +5,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useViewerStore } from "@/stores/viewerStore";
+import { resetProjectData } from "@/stores/viewerCommands";
 
 beforeEach(() => {
-  useViewerStore.getState().resetProjectData();
+  resetProjectData();
   useViewerStore.setState({ pendingCenter: false });
 });
 
@@ -84,7 +85,7 @@ describe("P2.3 viewerCore characterization", () => {
       pageDimensions: { 8: { width: 900, height: 1200 } },
     });
 
-    useViewerStore.getState().resetProjectData();
+    resetProjectData();
     expect(useViewerStore.getState()).toMatchObject({
       pageNumber: 1,
       numPages: 0,

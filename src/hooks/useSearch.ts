@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { SearchWordMatch } from "@/types";
 
@@ -16,13 +17,13 @@ interface SearchResponse {
 
 /**
  * Debounced search hook.
- * Reads searchQuery and publicId from the store, calls the search API,
- * and updates searchResults + searchMatches in the store.
+ * Reads search UI state and session identity from their owners, calls the search API,
+ * and updates searchResults + searchMatches in the viewer store.
  */
 export function useSearch() {
   const searchQuery = useViewerStore((s) => s.searchQuery);
-  const publicId = useViewerStore((s) => s.publicId);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
   const setSearchResults = useViewerStore((s) => s.setSearchResults);
   const setSearchMatches = useViewerStore((s) => s.setSearchMatches);
   const setSearchLoading = useViewerStore((s) => s.setSearchLoading);

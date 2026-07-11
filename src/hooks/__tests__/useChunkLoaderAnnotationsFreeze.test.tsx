@@ -20,6 +20,8 @@ import {
 import { useViewerStore } from "@/stores/viewerStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import type { ClientAnnotation } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 const fetchMock = vi.fn();
@@ -72,8 +74,8 @@ function seedWindow(
 
 beforeEach(() => {
   qc = new QueryClient();
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({
+  resetProjectData();
+  setViewerStoreStateForTest({
     publicId: "pid",
     isDemo: false,
     pageNumber: 20,
@@ -237,7 +239,7 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
     // A, and generation ownership makes its eventual settlement a total no-op.
     const projectB = [annotation(99, "project-B-sentinel")];
     act(() => {
-      useViewerStore.setState({ publicId: "project-B", numPages: 0 });
+      setViewerStoreStateForTest({ publicId: "project-B", numPages: 0 });
       seedAnnotations(qc, projectB);
     });
     expect(firstSignal?.aborted).toBe(true);

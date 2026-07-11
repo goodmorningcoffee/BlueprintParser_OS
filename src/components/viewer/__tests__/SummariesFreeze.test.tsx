@@ -43,6 +43,8 @@ import TableParsePanel from "../TableParsePanel";
 import KeynotePanel from "../KeynotePanel";
 import ViewerToolbar from "../ViewerToolbar";
 import PageSidebar from "../PageSidebar";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 
@@ -84,8 +86,8 @@ beforeEach(() => {
   // PURE-DEFAULTS client, matching production (Providers.tsx has no defaultOptions) — same
   // rationale as the qto freeze net's DETECTOR closer.
   qc = new QueryClient();
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "pid", isDemo: false, pageNames: {} });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "pid", isDemo: false, pageNames: {} });
   // jsdom gotchas (see header)
   Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal(

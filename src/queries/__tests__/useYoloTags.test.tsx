@@ -27,6 +27,8 @@ import {
 } from "@/queries/useYoloTags";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { YoloTag } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 const fetchMock = vi.fn();
@@ -79,8 +81,8 @@ async function flushPromises() {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "project-A", isDemo: false });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "project-A", isDemo: false });
   fetchMock.mockReset();
   fetchMock.mockResolvedValue(response());
   vi.stubGlobal("fetch", fetchMock);
@@ -219,7 +221,7 @@ describe("yoloTags debounced save coordinator", () => {
     addYoloTagToCache(qc, "project-A", false, tag("one"));
     await vi.advanceTimersByTimeAsync(300);
     addYoloTagToCache(qc, "project-A", false, tag("two"));
-    useViewerStore.setState({ publicId: "project-B" });
+    setViewerStoreStateForTest({ publicId: "project-B" });
 
     await vi.advanceTimersByTimeAsync(499);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -343,7 +345,7 @@ describe("yoloTags observer/action topology and navigation", () => {
     const query = qc.getQueryCache().find({ queryKey: queryKeys.yoloTags.all("project-A"), exact: true });
     expect(query?.getObserversCount()).toBe(0);
 
-    act(() => useViewerStore.setState({ publicId: "project-B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "project-B" }));
     // Invoke the callback captured by an A request before the project switch. `result.current`
     // already contains B's newly-rendered callback here and would correctly target B.
     act(() => staleAddFromA(tag("late-A")));
@@ -356,11 +358,11 @@ describe("yoloTags observer/action topology and navigation", () => {
     const first = renderHook(() => useYoloTagActions(), { wrapper });
     const staleBeforeDemo = first.result.current.addYoloTag;
 
-    act(() => useViewerStore.setState({ isDemo: true }));
+    act(() => setViewerStoreStateForTest({ isDemo: true }));
     act(() => staleBeforeDemo(tag("must-not-write-from-auth-closure")));
     expect(readYoloTags(qc, "project-A")).toEqual([]);
 
-    act(() => useViewerStore.setState({ isDemo: false }));
+    act(() => setViewerStoreStateForTest({ isDemo: false }));
     const freshBeforeReopen = first.result.current.addYoloTag;
     seedYoloTagsFromBootstrap(qc, "project-A", { yoloTags: [] }); // same-id loader epoch
     act(() => freshBeforeReopen(tag("must-not-write-after-reopen")));

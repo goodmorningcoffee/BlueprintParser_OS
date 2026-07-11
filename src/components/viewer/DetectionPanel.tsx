@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useNavigation, usePanels, useProject, useDetection } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePanels, useDetection } from "@/stores/viewerStore";
+import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations, useAnnotations, writeAnns } from "@/queries/useAnnotations";
 import { readYoloTags, useYoloTags } from "@/queries/useYoloTags";
 import {
@@ -79,8 +80,8 @@ export default function DetectionPanel({
   const toggleDetections = useViewerStore((s) => s.toggleDetections);
   const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
-  const projectId = useViewerStore((s) => s.projectId);
-  const publicId = useViewerStore((s) => s.publicId);
+  const projectId = useSessionStore((s) => s.projectId);
+  const publicId = useSessionStore((s) => s.publicId);
 
   const pageKeynotes = keynotes[pageNumber] || [];
   const hasMultiPageKeynotes = useMemo(() => Object.keys(keynotes).length > 1, [keynotes]);
@@ -334,7 +335,7 @@ export default function DetectionPanel({
                     onClick={async () => {
                       setSavingCsi(true);
                       setCsiMessage("");
-                      const publicId = useViewerStore.getState().publicId;
+                      const publicId = useSessionStore.getState().publicId;
                       // Build overrides from edits
                       const overrides: Record<string, Record<string, string[]>> = {};
                       for (const [key, val] of Object.entries(csiEdits)) {
@@ -839,8 +840,7 @@ export default function DetectionPanel({
               <button
                 disabled={shapeSaving}
                 onClick={async () => {
-                  const store = useViewerStore.getState();
-                  const { publicId, isDemo } = store;
+                  const { publicId, isDemo } = useSessionStore.getState();
                   if (!publicId || isDemo) {
                     shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                     return;
@@ -913,8 +913,7 @@ export default function DetectionPanel({
                 <button
                   disabled={shapeSaving}
                   onClick={async () => {
-                    const store = useViewerStore.getState();
-                    const { publicId, isDemo } = store;
+                    const { publicId, isDemo } = useSessionStore.getState();
                     if (!publicId || isDemo) {
                       shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                       return;

@@ -27,6 +27,8 @@ vi.mock("../MarkupDialog", () => ({ default: () => null }));
 import AnnotationOverlay from "../AnnotationOverlay";
 import GuidedParseTab from "../GuidedParseTab";
 import KeynotePanel from "../KeynotePanel";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 const extractMock = vi.mocked(extractCellsFromGrid);
 const fetchMock = vi.fn();
@@ -73,8 +75,8 @@ function noopContext(): CanvasRenderingContext2D {
 
 beforeEach(() => {
   qc = new QueryClient();
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({
+  resetProjectData();
+  setViewerStoreStateForTest({
     publicId: "P",
     projectId: 41,
     isDemo: true,

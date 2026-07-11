@@ -1,22 +1,24 @@
-// [refactor jul11 P2.3 S0] Backing-specific characterization for the legacy viewerStore session
-// slice. This suite flips to sessionStore at the atomic ownership commit; until then it records the
-// exact defaults, reference semantics, reset output, compatibility hook, and live demo policy.
+// [refactor jul11 P2.3] Ownership-flip characterization for the dedicated sessionStore. It pins
+// exact defaults, reference semantics, coordinated reset output, compatibility hooks, and the live
+// demo policy without reaching back through the UI/tool store.
 
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  isDemoFeatureEnabled,
-  useProject,
-  useViewerStore,
-} from "@/stores/viewerStore";
+import { useViewerStore } from "@/stores/viewerStore";
 import {
   SESSION_TEST_STATE_KEYS,
   partitionViewerStoreTestState,
   setViewerStoreStateForTest,
 } from "@/test/viewer-store-state";
+import { resetProjectData } from "@/stores/viewerCommands";
+import {
+  isDemoFeatureEnabled,
+  useProject,
+  useSessionStore,
+} from "@/stores/sessionStore";
 
 function sessionData() {
-  const state = useViewerStore.getState();
+  const state = useSessionStore.getState();
   return {
     projectId: state.projectId,
     publicId: state.publicId,
@@ -33,11 +35,11 @@ function sessionData() {
 }
 
 beforeEach(() => {
-  useViewerStore.getState().resetProjectData();
+  resetProjectData();
 });
 
-describe("P2.3 legacy viewerStore session characterization", () => {
-  it("pins the exact session defaults and the separate PI bootstrap default", () => {
+describe("P2.3 sessionStore ownership characterization", () => {
+  it("pins the exact session defaults", () => {
     expect(SESSION_TEST_STATE_KEYS).toEqual([
       "projectId",
       "publicId",
@@ -64,7 +66,6 @@ describe("P2.3 legacy viewerStore session characterization", () => {
       labelingSessions: [],
       labelingCredentials: null,
     });
-    expect(useViewerStore.getState().projectIntelligenceData).toBeNull();
   });
 
   it("preserves replacement setters and setPageName's immutable one-key merge", () => {
@@ -75,7 +76,7 @@ describe("P2.3 legacy viewerStore session characterization", () => {
       { labelStudioUrl: "https://labels.test/projects/1", pageRange: "1-3", taskCount: 3 },
     ];
     const credentials = { email: "labeler@example.test", password: "secret" };
-    const state = useViewerStore.getState();
+    const state = useSessionStore.getState();
 
     state.setProjectId(42);
     state.setPublicId("project-public-id");
@@ -102,22 +103,22 @@ describe("P2.3 legacy viewerStore session characterization", () => {
       labelingSessions: sessions,
       labelingCredentials: credentials,
     });
-    expect(useViewerStore.getState().pageNames).toBe(pageNames);
-    expect(useViewerStore.getState().pageDrawingNumbers).toBe(drawingNumbers);
-    expect(useViewerStore.getState().demoFeatureConfig).toBe(demoConfig);
-    expect(useViewerStore.getState().labelingSessions).toBe(sessions);
-    expect(useViewerStore.getState().labelingCredentials).toBe(credentials);
+    expect(useSessionStore.getState().pageNames).toBe(pageNames);
+    expect(useSessionStore.getState().pageDrawingNumbers).toBe(drawingNumbers);
+    expect(useSessionStore.getState().demoFeatureConfig).toBe(demoConfig);
+    expect(useSessionStore.getState().labelingSessions).toBe(sessions);
+    expect(useSessionStore.getState().labelingCredentials).toBe(credentials);
 
     state.setPageName(2, "Floor Plans");
     expect(pageNames).toEqual({ 1: "Cover", 2: "Plans" });
-    expect(useViewerStore.getState().pageNames).not.toBe(pageNames);
-    expect(useViewerStore.getState().pageNames).toEqual({ 1: "Cover", 2: "Floor Plans" });
+    expect(useSessionStore.getState().pageNames).not.toBe(pageNames);
+    expect(useSessionStore.getState().pageNames).toEqual({ 1: "Cover", 2: "Floor Plans" });
 
     state.setLabelingCredentials(null);
-    expect(useViewerStore.getState().labelingCredentials).toBeNull();
+    expect(useSessionStore.getState().labelingCredentials).toBeNull();
   });
 
-  it("resetProjectData clears every session field plus PI and allocates fresh containers", () => {
+  it("resetProjectData clears every session field and allocates fresh containers", () => {
     const oldPageNames = { 1: "Old" };
     const oldDrawingNumbers = { 1: "M-101" };
     const oldSessions = [
@@ -135,10 +136,9 @@ describe("P2.3 legacy viewerStore session characterization", () => {
       labelingWizardStep: 4,
       labelingSessions: oldSessions,
       labelingCredentials: { email: "old@example.test", password: "old" },
-      projectIntelligenceData: { csiGraph: { nodes: [1] } },
     });
 
-    useViewerStore.getState().resetProjectData();
+    resetProjectData();
 
     expect(sessionData()).toEqual({
       projectId: 0,
@@ -153,14 +153,12 @@ describe("P2.3 legacy viewerStore session characterization", () => {
       labelingSessions: [],
       labelingCredentials: null,
     });
-    expect(useViewerStore.getState().projectIntelligenceData).toBeNull();
-    expect(useViewerStore.getState().pageNames).not.toBe(oldPageNames);
-    expect(useViewerStore.getState().pageDrawingNumbers).not.toBe(oldDrawingNumbers);
-    expect(useViewerStore.getState().labelingSessions).not.toBe(oldSessions);
+    expect(useSessionStore.getState().pageNames).not.toBe(oldPageNames);
+    expect(useSessionStore.getState().pageDrawingNumbers).not.toBe(oldDrawingNumbers);
+    expect(useSessionStore.getState().labelingSessions).not.toBe(oldSessions);
   });
 
   it("keeps the useProject compatibility projection exact and live", () => {
-    const projectIntelligenceData = { csiGraph: { nodes: ["node-1"] } };
     const hook = renderHook(() => useProject());
 
     act(() => {
@@ -171,7 +169,6 @@ describe("P2.3 legacy viewerStore session characterization", () => {
         isDemo: true,
         demoFeatureConfig: { labeling: false },
         pageNames: { 1: "A-101" },
-        projectIntelligenceData,
       });
     });
 
@@ -182,7 +179,6 @@ describe("P2.3 legacy viewerStore session characterization", () => {
       isDemo: true,
       demoFeatureConfig: { labeling: false },
       pageNames: { 1: "A-101" },
-      projectIntelligenceData,
     });
   });
 });
@@ -195,47 +191,90 @@ describe("P2.3 demo feature compatibility policy", () => {
     });
     expect(isDemoFeatureEnabled("bucketFill")).toBe(true);
 
-    useViewerStore.getState().setIsDemo(true);
-    useViewerStore.setState({ demoFeatureConfig: null });
+    useSessionStore.getState().setIsDemo(true);
+    setViewerStoreStateForTest({ demoFeatureConfig: null });
     expect(isDemoFeatureEnabled("bucketFill")).toBe(true);
 
-    useViewerStore.getState().setDemoFeatureConfig({ chat: false });
+    useSessionStore.getState().setDemoFeatureConfig({ chat: false });
     expect(isDemoFeatureEnabled("bucketFill")).toBe(true);
     expect(isDemoFeatureEnabled("chat")).toBe(false);
 
-    useViewerStore.getState().setDemoFeatureConfig({ chat: true });
+    useSessionStore.getState().setDemoFeatureConfig({ chat: true });
     expect(isDemoFeatureEnabled("chat")).toBe(true);
   });
 });
 
 describe("P2.3 test state partition seam", () => {
-  it("partitions future session keys while keeping PI in the remaining viewer/bootstrap bucket", () => {
-    const projectIntelligenceData = { csiGraph: { nodes: [] } };
+  it("partitions session keys while keeping viewer navigation in the viewer bucket", () => {
     expect(
       partitionViewerStoreTestState({
         publicId: "P",
         isDemo: true,
         pageNumber: 6,
-        projectIntelligenceData,
       }),
     ).toEqual({
       session: { publicId: "P", isDemo: true },
-      viewer: { pageNumber: 6, projectIntelligenceData },
+      viewer: { pageNumber: 6 },
     });
   });
 
-  it("publishes a mixed setup atomically while viewerStore is the sole owner", () => {
-    const listener = vi.fn();
-    const unsubscribe = useViewerStore.subscribe(listener);
+  it("publishes each side of a mixed setup to its real leaf owner", () => {
+    const publications: string[] = [];
+    const sessionListener = vi.fn(() => {
+      publications.push(
+        `session:${useSessionStore.getState().publicId}:${useViewerStore.getState().pageNumber}`,
+      );
+    });
+    const viewerListener = vi.fn(() => {
+      publications.push(
+        `viewer:${useSessionStore.getState().publicId}:${useViewerStore.getState().pageNumber}`,
+      );
+    });
+    const unsubscribeSession = useSessionStore.subscribe(sessionListener);
+    const unsubscribeViewer = useViewerStore.subscribe(viewerListener);
 
     setViewerStoreStateForTest({ publicId: "P", isDemo: true, pageNumber: 6 });
 
-    expect(useViewerStore.getState()).toMatchObject({
+    expect(useSessionStore.getState()).toMatchObject({
       publicId: "P",
       isDemo: true,
+    });
+    expect(useViewerStore.getState()).toMatchObject({
       pageNumber: 6,
     });
-    expect(listener).toHaveBeenCalledTimes(1);
-    unsubscribe();
+    // Zustand accepts undeclared runtime keys, so positive assertions alone would not prove that
+    // the helper stopped republishing a hidden session copy into viewerStore.
+    for (const key of SESSION_TEST_STATE_KEYS) {
+      expect(useViewerStore.getState()).not.toHaveProperty(key);
+    }
+    expect(useSessionStore.getState()).not.toHaveProperty("pageNumber");
+
+    // Query keys/guards read sessionStore from viewer subscribers. Preserve the helper's explicit
+    // session-first contract and prove each logical patch produces exactly one leaf publication.
+    expect(sessionListener).toHaveBeenCalledTimes(1);
+    expect(viewerListener).toHaveBeenCalledTimes(1);
+    expect(publications).toEqual(["session:P:1", "viewer:P:6"]);
+    unsubscribeSession();
+    unsubscribeViewer();
+  });
+
+  it("does not publish an empty sibling-store patch", () => {
+    const sessionListener = vi.fn();
+    const viewerListener = vi.fn();
+    const unsubscribeSession = useSessionStore.subscribe(sessionListener);
+    const unsubscribeViewer = useViewerStore.subscribe(viewerListener);
+
+    setViewerStoreStateForTest({ publicId: "session-only" });
+    expect(sessionListener).toHaveBeenCalledTimes(1);
+    expect(viewerListener).not.toHaveBeenCalled();
+
+    sessionListener.mockClear();
+    viewerListener.mockClear();
+    setViewerStoreStateForTest({ pageNumber: 4 });
+    expect(sessionListener).not.toHaveBeenCalled();
+    expect(viewerListener).toHaveBeenCalledTimes(1);
+
+    unsubscribeSession();
+    unsubscribeViewer();
   });
 });

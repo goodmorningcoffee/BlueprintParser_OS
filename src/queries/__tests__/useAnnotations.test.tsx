@@ -30,6 +30,8 @@ import {
 } from "@/queries/useAnnotations";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 vi.mock("@/lib/client-persist", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/client-persist")>();
@@ -147,9 +149,9 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 beforeEach(() => {
-  useViewerStore.getState().resetProjectData();
+  resetProjectData();
   // resetProjectData intentionally does not own all tool-history fields yet.
-  useViewerStore.setState({
+  setViewerStoreStateForTest({
     publicId: "A",
     isDemo: false,
     pageNumber: 1,
@@ -299,7 +301,7 @@ describe("useAnnotations query configuration and notification profile", () => {
 describe("read/write bridges and collection actions", () => {
   it("bootstrap adapter seeds the passed project key and never the live store key", () => {
     const client = freshClient();
-    useViewerStore.setState({ publicId: "LIVE-WRONG" });
+    setViewerStoreStateForTest({ publicId: "LIVE-WRONG" });
     const liveSentinel = [ann(99, { name: "must remain isolated" })];
     client.setQueryData(queryKeys.annotations.all("LIVE-WRONG"), liveSentinel);
     const seeded = [ann(1), ann(2)];
@@ -330,7 +332,7 @@ describe("read/write bridges and collection actions", () => {
     expect(emptyB).toBe(emptyA);
     expect(Object.isFrozen(emptyA)).toBe(true);
 
-    useViewerStore.setState({ publicId: "B" });
+    setViewerStoreStateForTest({ publicId: "B" });
     const row = ann(1);
     const append: AnnotationUpdater = (rows) => [...rows, row];
     writeAnns(client, "A", append);
@@ -393,7 +395,7 @@ describe("read/write bridges and collection actions", () => {
     await waitFor(() => expect(result.current.annotations.map((row) => row.id)).toEqual([1, 2]));
     const captured = result.current;
 
-    act(() => useViewerStore.setState({ publicId: "B" }));
+    act(() => setViewerStoreStateForTest({ publicId: "B" }));
     await waitFor(() => expect(result.current.annotations.map((row) => row.id)).toEqual([20]));
 
     act(() => {
@@ -524,7 +526,7 @@ describe("persistCreate extensibility seam", () => {
     { label: "demo", publicId: "A", isDemo: true },
     { label: "pre-bootstrap", publicId: "", isDemo: false },
   ])("$label mode stays local and never invokes persistence", async ({ publicId, isDemo }) => {
-    useViewerStore.setState({ publicId, isDemo });
+    setViewerStoreStateForTest({ publicId, isDemo });
     const client = freshClient();
     const { result } = renderHook(() => useAnnotations(), { wrapper: makeWrapper(client) });
 
@@ -612,7 +614,7 @@ describe("persistCreate extensibility seam", () => {
     });
     const bRow = ann(20, { name: "B stays isolated" });
     act(() => {
-      useViewerStore.setState({ publicId: "B" });
+      setViewerStoreStateForTest({ publicId: "B" });
       client.setQueryData(queryKeys.annotations.all("B"), [bRow]);
     });
     await waitFor(() => expect(result.current.annotations).toEqual([bRow]));
@@ -648,7 +650,7 @@ describe("commitBucketFill", () => {
 
   it("writes cache before clearing pending, keeps demo local, and omits empty holes/method", () => {
     const client = freshClient();
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       isDemo: true,
       pageNumber: 3,
       bucketFillPendingPolygon: pendingPolygon({ holes: [] }),
@@ -696,7 +698,7 @@ describe("commitBucketFill", () => {
     const capturedCommit = result.current.commitBucketFill;
 
     act(() => {
-      useViewerStore.setState({
+      setViewerStoreStateForTest({
         publicId: "",
         isDemo: false,
         pageNumber: 9,
@@ -794,7 +796,7 @@ describe("commitBucketFill", () => {
     // while persistence is pending. The live B cache is unrelated and must remain untouched.
     const bRow = ann(900, { name: "project B row" });
     act(() => {
-      useViewerStore.setState({ publicId: "B" });
+      setViewerStoreStateForTest({ publicId: "B" });
       client.setQueryData(queryKeys.annotations.all("B"), [bRow]);
     });
 
@@ -863,7 +865,7 @@ describe("direct takeoff undo/redo bridges", () => {
     const aRows = [takeoffAnn(100)];
     client.setQueryData(queryKeys.annotations.all("A"), aRows);
     client.setQueryData(queryKeys.annotations.all("B"), bRows);
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       publicId: "B",
       activeTakeoffItemId: 7,
       pageNumber: 1,

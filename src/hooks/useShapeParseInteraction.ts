@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore, useNavigation } from "@/stores/viewerStore";
 import {
   appendKeynotesForPage,
@@ -19,8 +20,8 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   const queryClient = useQueryClient();
   const { pageNumber } = useNavigation();
 
-  const projectId = useViewerStore((s) => s.projectId);
-  const publicId = useViewerStore((s) => s.publicId);
+  const projectId = useSessionStore((s) => s.projectId);
+  const publicId = useSessionStore((s) => s.publicId);
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
   const setTableParseStep = useViewerStore((s) => s.setTableParseStep);

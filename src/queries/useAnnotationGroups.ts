@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { AnnotationGroup, AnnotationGroupMembership } from "@/types";
 
@@ -168,8 +168,8 @@ export async function seedAnnotationGroupsFromBootstrap(
 // old useShallow result on change — all three consumers destructure immediately; nothing
 // depends on wrapper identity.
 export function useAnnotationGroups() {
-  const publicId = useViewerStore((s) => s.publicId);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
   const qc = useQueryClient();
   const key = queryKeys.annotationGroups.all(publicId); // ["project", publicId, "annotationGroups"]
 

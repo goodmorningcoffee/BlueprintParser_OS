@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import SpecIndex from "./SpecIndex";
 import SpecClassifier from "./SpecClassifier";
 import SpecParser from "./SpecParser";
@@ -20,7 +21,7 @@ interface SpecPanelProps {
 export default function SpecPanel({ embedded = false }: SpecPanelProps) {
   const [tab, setTab] = useState<SpecSubTab>("index");
   const specParseRegion = useViewerStore((s) => s.specParseRegion);
-  const projectId = useViewerStore((s) => s.projectId);
+  const projectId = useSessionStore((s) => s.projectId);
 
   useEffect(() => {
     if (specParseRegion && tab !== "parser") setTab("parser");

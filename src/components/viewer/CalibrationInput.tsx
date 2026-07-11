@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useAnnotations } from "@/queries/useAnnotations";
 import type { AreaUnit, ClientAnnotation, ScaleCalibrationData } from "@/types";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
@@ -19,8 +20,8 @@ export default function CalibrationInput() {
   // [refactor jul10 P2.2⑥] Both demo and persisted calibration branches retain their original
   // render-captured value replacement, including the post-await concurrent-write hazard.
   const { annotations, setAnnotations } = useAnnotations();
-  const publicId = useViewerStore((s) => s.publicId);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
 
   const [distance, setDistance] = useState("");
   const [unit, setUnit] = useState<AreaUnit>("ft");

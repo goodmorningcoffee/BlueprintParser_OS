@@ -1,6 +1,7 @@
 "use client";
 
-import { useNavigation, useProject } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerStore";
+import { useProject } from "@/stores/sessionStore";
 
 interface CompareEditTabProps {
   allParsedTables: any[];

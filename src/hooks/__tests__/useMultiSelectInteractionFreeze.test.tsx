@@ -32,6 +32,8 @@ import { useViewerStore } from "@/stores/viewerStore";
 import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
 import type { AnnotationGroup } from "@/types";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 function wrapper({ children }: { children: ReactNode }) {
@@ -56,10 +58,10 @@ const fetchMock = vi.fn();
 
 beforeEach(() => {
   qc = new QueryClient(); // pure defaults, matching production Providers.tsx
-  useViewerStore.getState().resetProjectData();
+  resetProjectData();
   // selection + group fields are NOT in resetProjectData (bleed guards; see the ⑤ freeze
   // doctrine header in GroupActionsBarFreeze.test.tsx).
-  useViewerStore.setState({ publicId: "pid", isDemo: false, selectedAnnotationIds: new Set<number>() });
+  setViewerStoreStateForTest({ publicId: "pid", isDemo: false, selectedAnnotationIds: new Set<number>() });
   seedAnnotationGroups(qc, [], []); // AFTER publicId
   fetchMock.mockReset();
   // fail-loud: this hook is READ-ONLY on the groups domain; post-migration this also pins that

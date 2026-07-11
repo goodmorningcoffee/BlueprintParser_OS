@@ -505,7 +505,7 @@ PDFViewer (root — scroll, zoom, keyboard shortcuts)
 
 ### Zustand Store
 
-Single store (~250 fields, 1,100 lines) with 15 slice selectors (`useNavigation()`, `useProject()`, `useTableParse()`, `useYoloTags()`, etc.) using `useShallow()` for memoized subscriptions. Components should use slices rather than direct field access.
+Viewer state is being carved into explicit owners: `sessionStore` owns project identity/demo/page-label/labeling-session metadata; server collections use publicId-keyed Query facades; the remaining `viewerStore` temporarily owns UI, navigation, parse, and tool state. Prefer the domain hook/leaf store over direct cross-domain field access.
 
 ---
 

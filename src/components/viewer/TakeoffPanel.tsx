@@ -3,6 +3,7 @@
 import { useMemo, useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade (items only — this
 // panel never reads groups; do not add useTakeoffGroups here).
 import { useTakeoffItems } from "@/queries/useTakeoff";
@@ -46,7 +47,7 @@ export default function TakeoffPanel() {
   const calibrationMode = useViewerStore((s) => s.calibrationMode);
   const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
   const resetCalibration = useViewerStore((s) => s.resetCalibration);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const isDemo = useSessionStore((s) => s.isDemo);
 
   const [csvModalOpen, setCsvModalOpen] = useState(false);
   const saveTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});

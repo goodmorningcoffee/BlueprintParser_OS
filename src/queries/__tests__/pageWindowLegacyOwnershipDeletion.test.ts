@@ -37,6 +37,33 @@ const LEGACY_PAGE_WINDOW_MEMBERS = [
   "removeYoloTag",
   "updateYoloTag",
   "tagBrowseNavigate",
+  // P2.3 session ownership moved as one unit. Keep identity, demo policy, page metadata, labeling
+  // workflow state, and the retired PI blob inside the same alias/cast/computed-key oracle.
+  "projectId",
+  "setProjectId",
+  "publicId",
+  "setPublicId",
+  "dataUrl",
+  "setDataUrl",
+  "isDemo",
+  "setIsDemo",
+  "demoFeatureConfig",
+  "setDemoFeatureConfig",
+  "pageNames",
+  "setPageNames",
+  "setPageName",
+  "pageDrawingNumbers",
+  "setPageDrawingNumbers",
+  "showLabelingWizard",
+  "setShowLabelingWizard",
+  "labelingWizardStep",
+  "setLabelingWizardStep",
+  "labelingSessions",
+  "setLabelingSessions",
+  "labelingCredentials",
+  "setLabelingCredentials",
+  "projectIntelligenceData",
+  "setProjectIntelligenceData",
 ] as const;
 
 const WHOLE_MAP_HOOK_WHITELIST = {
@@ -766,9 +793,9 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     expectNoLegacyMembers(storeKeys);
   });
 
-  it("keeps resetProjectData and usePageData from republishing legacy ownership", () => {
+  it("keeps resetViewerState and usePageData from republishing legacy ownership", () => {
     const storeObject = findViewerStoreObject(viewerStore);
-    const resetProperty = directProperty(storeObject, "resetProjectData");
+    const resetProperty = directProperty(storeObject, "resetViewerState");
     expect(ts.isPropertyAssignment(resetProperty)).toBe(true);
     const resetInitializer = (resetProperty as ts.PropertyAssignment).initializer;
     const resetSetCalls = descendants(
@@ -783,7 +810,7 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     expect(resetSetCalls).toHaveLength(1);
     const resetObject = resetSetCalls[0].arguments[0] as ts.ObjectLiteralExpression;
     const resetKeys = directObjectKeys(resetObject);
-    expect(resetKeys).toEqual(expect.arrayContaining(["pageNumber", "publicId"]));
+    expect(resetKeys).toEqual(expect.arrayContaining(["pageNumber", "allTrades"]));
     expectNoLegacyMembers(resetKeys);
 
     const pageData = findVariable(viewerStore, "usePageData");
@@ -948,12 +975,12 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
       : undefined;
     expect(getStateCall && ts.isCallExpression(getStateCall)).toBe(true);
     const stringConstants = staticStringConstants(source);
-    const storeHooks = identifierAliases(source, [
-      ...importedLocalNames(source, "@/stores/viewerStore", "useViewerStore"),
+    const sessionHooks = identifierAliases(source, [
+      ...importedLocalNames(source, "@/stores/sessionStore", "useSessionStore"),
     ]);
     const getStateFunctions = methodAliases(
       source,
-      storeHooks,
+      sessionHooks,
       "getState",
       stringConstants,
     );
@@ -962,12 +989,12 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
         ts.isCallExpression(getStateCall) &&
         isMethodCall(
           getStateCall,
-          storeHooks,
+          sessionHooks,
           getStateFunctions,
           "getState",
           stringConstants,
         ),
-      "previousPublicId must capture live viewerStore publicId",
+      "previousPublicId must capture live sessionStore publicId",
     ).toBe(true);
 
     // OCR has no bootstrap payload. A helper seed here would both widen the response and create a

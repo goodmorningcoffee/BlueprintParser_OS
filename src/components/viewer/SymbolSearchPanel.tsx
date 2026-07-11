@@ -3,7 +3,8 @@
 import { useMemo, useEffect, useState, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useSymbolSearch, useProject, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore, useSymbolSearch, useNavigation } from "@/stores/viewerStore";
+import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations } from "@/queries/useAnnotations";
 import { queryKeys } from "@/queries/queryKeys";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
@@ -121,6 +122,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
   const abortRef = useRef<AbortController | null>(null);
   const runSearch = useCallback(async () => {
     const store = useViewerStore.getState();
+    const session = useSessionStore.getState();
     if (!store.symbolSearchTemplateBbox || !store.symbolSearchSourcePage) return;
 
     // Abort any in-flight search
@@ -145,7 +147,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
         headers: { "Content-Type": "application/json" },
         signal: abort.signal,
         body: JSON.stringify({
-          projectId: store.projectId,
+          projectId: session.projectId,
           sourcePageNumber: store.symbolSearchSourcePage,
           templateBbox: { x: bbox[0], y: bbox[1], w: bbox[2] - bbox[0], h: bbox[3] - bbox[1] },
           confidenceThreshold: store.symbolSearchConfidence,
@@ -726,7 +728,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                 disabled={symbolSaving}
                 onClick={async () => {
                   const store = useViewerStore.getState();
-                  const { publicId, isDemo } = store;
+                  const { publicId, isDemo } = useSessionStore.getState();
                   if (!publicId || isDemo) {
                     store.setSymbolSearchError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                     return;

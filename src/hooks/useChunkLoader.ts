@@ -5,6 +5,7 @@ import {
   readActivePageWindow,
   useLoadedPageRange,
 } from "@/queries/usePageWindow";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { PageWindowResponse } from "@/queries/pageWindowCore";
 import type { ScaleCalibrationData } from "@/types";
@@ -44,8 +45,8 @@ export function useChunkLoader() {
   const queryClient = useQueryClient();
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const numPages = useViewerStore((s) => s.numPages);
-  const publicId = useViewerStore((s) => s.publicId);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
   // This is intentionally the loader's one cache observer. Range publication must reschedule the
   // state machine when a completed far-away request evicts the page the user returned to.
   const loadedPageRange = useLoadedPageRange();
@@ -102,12 +103,15 @@ export function useChunkLoader() {
       if (debounceRef.current === timer) debounceRef.current = null;
 
       // Re-check after debounce (page may have changed again)
-      const liveState = useViewerStore.getState();
+      // Project policy and navigation now have separate owners. Read both back-to-back at the
+      // original dispatch boundary; do not move either capture across an await or timer.
+      const liveSession = useSessionStore.getState();
+      const liveViewer = useViewerStore.getState();
       // Effects normally clean up first, but this synchronous identity check closes the small window
       // between an external store identity change and React running that cleanup.
-      if (liveState.publicId !== publicId || liveState.isDemo !== isDemo) return;
+      if (liveSession.publicId !== publicId || liveSession.isDemo !== isDemo) return;
 
-      const currentPage = liveState.pageNumber;
+      const currentPage = liveViewer.pageNumber;
       // Re-read the project-keyed cache at dispatch. The range may have changed during the real
       // 100 ms debounce, and the old state machine suppressed a now-redundant request here.
       const currentRange = readActivePageWindow(queryClient, publicId).loadedRange;

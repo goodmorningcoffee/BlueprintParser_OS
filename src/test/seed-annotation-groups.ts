@@ -10,11 +10,11 @@
 //   PRE-migration:        groups lived in viewerStore → setState({annotationGroups}) +
 //                         hydrateGroupMemberships(pairs) (the store's own index rebuild)
 //   POST-migration (NOW): groups live in the TanStack Query cache → the production
-//                         seedAnnotationGroupsCache(qc, useViewerStore.getState().publicId,
+//                         seedAnnotationGroupsCache(qc, useSessionStore.getState().publicId,
 //                         {groups, memberships: pairs}) — raw pairs in the cache, Sets only in
 //                         the derived layer (SPEC §3.2).
 //
-// Call AFTER setting `publicId` in the store: the cache key derives from it (qto SPEC §6.1
+// Call AFTER setting `publicId` in the session store: the cache key derives from it (qto SPEC §6.1
 // precedent) — every call site's beforeEach satisfies this.
 // Both collection args are REQUIRED, no defaults — the one-key/two-half domain shape stays
 // explicit at every call site and a future third half can't hide behind the signature.
@@ -22,7 +22,7 @@
 // call-site churn).
 
 import type { QueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import { seedAnnotationGroupsCache } from "@/queries/useAnnotationGroups";
 import type { AnnotationGroup, AnnotationGroupMembership } from "@/types";
 
@@ -32,7 +32,7 @@ export function seedAnnotationGroups(
   pairs: AnnotationGroupMembership[],
 ): void {
   // [refactor jul10 P2.2⑤ C3] flipped zustand → cache; the production seed is the write path.
-  seedAnnotationGroupsCache(qc, useViewerStore.getState().publicId, {
+  seedAnnotationGroupsCache(qc, useSessionStore.getState().publicId, {
     groups,
     memberships: pairs,
   });

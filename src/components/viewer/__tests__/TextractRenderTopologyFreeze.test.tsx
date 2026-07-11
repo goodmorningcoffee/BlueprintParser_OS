@@ -34,6 +34,8 @@ vi.mock("../ParsedTableCellOverlay", () => ({ default: () => null }));
 
 import PDFPage from "../PDFPage";
 import PageSidebar from "../PageSidebar";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
 const fetchMock = vi.fn();
@@ -88,8 +90,8 @@ class TestResizeObserver {
 
 beforeEach(() => {
   qc = new QueryClient();
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({
+  resetProjectData();
+  setViewerStoreStateForTest({
     publicId: "P",
     isDemo: false,
     pageNumber: 1,

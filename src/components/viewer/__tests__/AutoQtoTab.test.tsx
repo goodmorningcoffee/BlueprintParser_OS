@@ -28,6 +28,9 @@ import { persistFetch } from "@/lib/client-persist";
 // the ③ migration's single test-side flip point (its body moves store→cache; call sites frozen).
 import { seedSummaries } from "@/test/seed-summaries";
 import type { QtoWorkflow } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { useSessionStore } from "@/stores/sessionStore";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 vi.mock("@/lib/client-persist", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/client-persist")>();
@@ -42,7 +45,7 @@ const persistFetchMock = vi.mocked(persistFetch);
 // the migration. Demo/failure cases only; non-demo cases seed via the GET mock, SPEC §6.1.)
 let qc: QueryClient;
 function seedQtoWorkflows(rows: QtoWorkflow[]) {
-  qc.setQueryData(queryKeys.qtoWorkflows.all(useViewerStore.getState().publicId), rows);
+  qc.setQueryData(queryKeys.qtoWorkflows.all(useSessionStore.getState().publicId), rows);
 }
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -114,8 +117,8 @@ beforeEach(() => {
   // defaultOptions). A test-level retry:false here masked whether the HOOK pins retry itself —
   // the freeze net must run against production-equivalent client defaults.
   qc = new QueryClient();
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "pid", isDemo: false, pageNames: {} });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "pid", isDemo: false, pageNames: {} });
   seedPreflightOk();
   vi.stubGlobal("fetch", fetchMock);
   vi.stubGlobal("alert", alertMock);
@@ -180,7 +183,7 @@ describe("AutoQtoTab — non-ok GET clears the list (Q-2)", () => {
 
 describe("AutoQtoTab — demo never GETs (Q-3)", () => {
   it("isDemo: no qto fetch fires; a seeded list still renders", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedQtoWorkflows([wf({ id: 4, materialLabel: "Equipment", step: "confirm-tags" })]);
     renderTab();
 
@@ -194,7 +197,7 @@ describe("AutoQtoTab — demo never GETs (Q-3)", () => {
 
 describe("AutoQtoTab — open a previous workflow (Q-4)", () => {
   it("click → active view (label + step header); header ← Back returns to the picker with the list intact", async () => {
-    useViewerStore.setState({ isDemo: true }); // demo = no mount fetch; list is purely seeded
+    setViewerStoreStateForTest({ isDemo: true }); // demo = no mount fetch; list is purely seeded
     seedQtoWorkflows([wf({ id: 5, materialLabel: "Doors" })]);
     renderTab();
 
@@ -238,7 +241,7 @@ describe("AutoQtoTab — create workflow, non-demo (Q-5)", () => {
 
 describe("AutoQtoTab — create workflow, demo (Q-6)", () => {
   it("builds a local temp workflow (no API at all), activates + prepends it", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedQtoWorkflows([]);
     renderTab();
 
@@ -260,7 +263,7 @@ describe("AutoQtoTab — demo temp workflow survives unmount/remount (Q-7)", () 
   // this SYNCHRONOUS remount does NOT discriminate gcTime values (no GC timer fires without a
   // timer advance) — the actual gcTime:Infinity pin is the hook suite's T-Q9 fake-timer test.
   it("create temp in demo → unmount → remount → temp still listed", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedQtoWorkflows([]);
     const view = renderTab();
 
@@ -308,7 +311,7 @@ describe("AutoQtoTab — updateWorkflowStep, non-demo (Q-8)", () => {
 
 describe("AutoQtoTab — updateWorkflowStep, demo (Q-9)", () => {
   it("Done from review updates the UI locally; NO PUT (demo never writes)", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedQtoWorkflows([wf({ id: -99, materialLabel: "Doors", step: "review", lineItems: [] })]);
     renderTab();
 
@@ -383,7 +386,7 @@ describe("AutoQtoTab — empty GET renders no list section (Q-12)", () => {
 describe("AutoQtoTab — empty publicId never GETs (Q-13)", () => {
   it("publicId '' (pre-load): no qto fetch fires", async () => {
     // [refactor jul10 P2.2③ closers] across the ③ flip the beforeEach seed lives under "pid", so the empty-publicId key reads null → render is hard-blocked; only the no-fetch assertion is frozen here.
-    useViewerStore.setState({ publicId: "" });
+    setViewerStoreStateForTest({ publicId: "" });
     mockQtoGet({});
     renderTab();
 
@@ -449,7 +452,7 @@ describe("AutoQtoTab — save failure keeps the optimistic update, NO ROLLBACK (
 
 describe("AutoQtoTab — demo feature gate (Q-17)", () => {
   it("isDemo + demoFeatureConfig {autoQto:false} renders the not-available notice, nothing else", async () => {
-    useViewerStore.setState({ isDemo: true, demoFeatureConfig: { autoQto: false } as never });
+    setViewerStoreStateForTest({ isDemo: true, demoFeatureConfig: { autoQto: false } as never });
     renderTab();
 
     expect(screen.getByText(/Auto-QTO is not available in demo mode/)).toBeInTheDocument();
@@ -463,7 +466,7 @@ describe("AutoQtoTab — mapping step render-only (Q-18)", () => {
   // COMPLETION is now covered by Q-19/Q-20 below (added with the MappingStep self-abort fix,
   // jul10) — this case just pins that the spinner renders while the POST is in flight.
   it("map-tags workflow shows the 'Mapping N tags' spinner", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     const mapWf = wf({
       id: 14,
       materialLabel: "Doors",
@@ -551,7 +554,7 @@ const MAP_RESULTS = {
 
 describe("AutoQtoTab — mapping completes and advances to review (Q-19)", () => {
   it("POST resolves → line items built → step advances to review (no self-abort)", async () => {
-    useViewerStore.setState({ isDemo: true }); // demo: updateWorkflowStep is local, no PUT
+    setViewerStoreStateForTest({ isDemo: true }); // demo: updateWorkflowStep is local, no PUT
     seedQtoWorkflows([mapWorkflow(15)]);
     vi.stubGlobal("fetch", abortAwareFetch(() => ({ ok: true, body: { results: MAP_RESULTS } })));
     renderTab();
@@ -568,7 +571,7 @@ describe("AutoQtoTab — mapping completes and advances to review (Q-19)", () =>
 
 describe("AutoQtoTab — Retry re-arms a failed mapping (Q-20)", () => {
   it("first attempt errors → Retry → second attempt completes to review (retryTick pin)", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedQtoWorkflows([mapWorkflow(16)]);
     // attempt 1 → server error (shows Retry); attempt 2 → success
     vi.stubGlobal(
@@ -604,8 +607,8 @@ describe("AutoQtoTab — project switch swaps the visible list (Q-11)", () => {
     });
 
     function openProject(publicId: string) {
-      useViewerStore.getState().resetProjectData();
-      useViewerStore.setState({ publicId, isDemo: false });
+      resetProjectData();
+      setViewerStoreStateForTest({ publicId, isDemo: false });
       seedPreflightOk();
     }
 

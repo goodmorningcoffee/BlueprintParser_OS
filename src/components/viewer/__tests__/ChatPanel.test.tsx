@@ -19,6 +19,9 @@ import ChatPanel from "../ChatPanel";
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ChatMsg } from "@/types";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { useSessionStore } from "@/stores/sessionStore";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 // ── seedChat: THE sanctioned divergence point ────────────────────────────────
 // POST-migration (chat lives in the query cache): seed the per-publicId cache entry the facade
@@ -26,7 +29,7 @@ import type { ChatMsg } from "@/types";
 // ONE helper — nothing else in the file — is the entire test-side delta of the migration.)
 let qc: QueryClient;
 function seedChat(msgs: ChatMsg[]) {
-  qc.setQueryData(queryKeys.chatMessages.all(useViewerStore.getState().publicId), msgs);
+  qc.setQueryData(queryKeys.chatMessages.all(useSessionStore.getState().publicId), msgs);
 }
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -52,8 +55,8 @@ const fetchMock = vi.fn();
 
 beforeEach(() => {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  useViewerStore.getState().resetProjectData();
-  useViewerStore.setState({ publicId: "pid", pageNames: {}, pageNumber: 1 });
+  resetProjectData();
+  setViewerStoreStateForTest({ publicId: "pid", pageNames: {}, pageNumber: 1 });
   // jsdom lacks scrollIntoView — the auto-scroll effect (ChatPanel:53-55) would throw.
   Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
@@ -114,7 +117,7 @@ describe("ChatPanel — seeded history render (T-B1)", () => {
 
 describe("ChatPanel — send success (T-B2)", () => {
   it("appends user echo then the completed assistant message; POST body carries page scope", async () => {
-    useViewerStore.setState({ publicId: "p", chatScope: "page", pageNumber: 2 });
+    setViewerStoreStateForTest({ publicId: "p", chatScope: "page", pageNumber: 2 });
     fetchMock.mockResolvedValueOnce(mockSSE(['{"content":"Hel"}', '{"content":"lo"}', "[DONE]"]));
     renderChatPanel();
 
@@ -131,7 +134,7 @@ describe("ChatPanel — send success (T-B2)", () => {
 
 describe("ChatPanel — send HTTP !ok (T-B3)", () => {
   it("appends user echo then an Error assistant via apiErrorMessage; skips the done-append", async () => {
-    useViewerStore.setState({ publicId: "p" });
+    setViewerStoreStateForTest({ publicId: "p" });
     fetchMock.mockResolvedValueOnce({
       ok: false,
       json: async () => ({ error: { code: "X", message: "nope" } }),
@@ -147,7 +150,7 @@ describe("ChatPanel — send HTTP !ok (T-B3)", () => {
 
 describe("ChatPanel — send fetch rejection, the 4th append site (T-B4)", () => {
   it("appends user echo then the network-catch Error message", async () => {
-    useViewerStore.setState({ publicId: "p" });
+    setViewerStoreStateForTest({ publicId: "p" });
     fetchMock.mockRejectedValueOnce(new Error("down"));
     renderChatPanel();
 
@@ -162,7 +165,7 @@ describe("ChatPanel — send fetch rejection, the 4th append site (T-B4)", () =>
 
 describe("ChatPanel — stream {error} chunk (T-B5)", () => {
   it("folds a stream error into a single assistant bubble", async () => {
-    useViewerStore.setState({ publicId: "p" });
+    setViewerStoreStateForTest({ publicId: "p" });
     fetchMock.mockResolvedValueOnce(mockSSE(['{"error":"boom"}', "[DONE]"]));
     renderChatPanel();
 
@@ -249,7 +252,7 @@ describe("ChatPanel — scope is display UI, NOT a message filter (T-B10/T-B11)"
   });
 
   it("project scope flows into POST body as pageNumber:null (T-B11)", async () => {
-    useViewerStore.setState({ publicId: "p", chatScope: "project", pageNumber: 5 });
+    setViewerStoreStateForTest({ publicId: "p", chatScope: "project", pageNumber: 5 });
     fetchMock.mockResolvedValueOnce(mockSSE(['{"content":"ok"}', "[DONE]"]));
     renderChatPanel();
 
@@ -267,8 +270,8 @@ describe("ChatPanel — navigation between projects swaps the visible list (T-B1
   // see the right list) is only meaningful once chat is cache-backed — that lives in the hook
   // test T-A5, not here, because pre-migration the store is a single flat list.
   function openProject(publicId: string, msgs: ChatMsg[]) {
-    useViewerStore.getState().resetProjectData();
-    useViewerStore.setState({ publicId });
+    resetProjectData();
+    setViewerStoreStateForTest({ publicId });
     seedChat(msgs); // reads the just-set publicId when it becomes cache-backed
   }
 
@@ -289,7 +292,7 @@ describe("ChatPanel — navigation between projects swaps the visible list (T-B1
 
 describe("ChatPanel — auto-scroll fires on message append (T-B13)", () => {
   it("scrollIntoView called for the user echo and the final assistant append", async () => {
-    useViewerStore.setState({ publicId: "p" });
+    setViewerStoreStateForTest({ publicId: "p" });
     const spy = Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>;
     fetchMock.mockResolvedValueOnce(mockSSE(['{"content":"a"}', '{"content":"b"}', "[DONE]"]));
     renderChatPanel();

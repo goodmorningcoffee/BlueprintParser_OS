@@ -99,34 +99,9 @@ interface ViewerState {
   // The old fields (annotationGroups / annotationGroupMemberships / groupMembers) and their
   // 6 actions are DELETED, not bridged; 4 of the 9 selector members were dead surface (E7).
 
-  // ─── Page data ───────────────────────────────────────────
-  pageNames: Record<number, string>;
-  setPageNames: (names: Record<number, string>) => void;
-  setPageName: (pageNum: number, name: string) => void;
-  pageDrawingNumbers: Record<number, string | null>;
-  setPageDrawingNumbers: (map: Record<number, string | null>) => void;
-
-  // ─── Project data ────────────────────────────────────────
-  projectId: number;
-  setProjectId: (id: number) => void;
-  dataUrl: string;
-  setDataUrl: (url: string) => void;
-  publicId: string;
-  setPublicId: (id: string) => void;
-  isDemo: boolean;
-  setIsDemo: (v: boolean) => void;
-  demoFeatureConfig: Record<string, boolean> | null;
-  setDemoFeatureConfig: (config: Record<string, boolean>) => void;
-  projectIntelligenceData: any;
-  setProjectIntelligenceData: (data: any) => void;
-  showLabelingWizard: boolean;
-  setShowLabelingWizard: (v: boolean) => void;
-  labelingWizardStep: number;
-  setLabelingWizardStep: (step: number) => void;
-  labelingSessions: Array<{ labelStudioUrl: string; pageRange: string; taskCount: number }>;
-  setLabelingSessions: (sessions: Array<{ labelStudioUrl: string; pageRange: string; taskCount: number }>) => void;
-  labelingCredentials: { email: string; password: string } | null;
-  setLabelingCredentials: (creds: { email: string; password: string } | null) => void;
+  // [refactor jul11 P2.3] Project identity, demo policy, page labels, and labeling-session state
+  // live in sessionStore. The residual csiGraph bootstrap value lives in useCsiGraph. Do not add
+  // project/session data back to this UI/tool store.
 
   // [refactor jul11 P2.2⑦/⑧] Active page-window maps and per-page Textract OCR are query-owned.
   // Only project-wide CSI/filter metadata from those former server-data slices remains here.
@@ -595,7 +570,8 @@ interface ViewerState {
   resetAllTools: () => void;
 
   // ─── Reset ─────────────────────────────────────────────
-  resetProjectData: () => void;
+  /** Viewer/UI/tool half of the temporary reset command. Call resetProjectData from viewerCommands. */
+  resetViewerState: () => void;
 }
 
 export const useViewerStore = create<ViewerState>((set, get) => ({
@@ -667,37 +643,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   // src/queries/useAnnotationGroups.ts. upsertAnnotationGroup + the hydrate index-rebuild loop
   // were ported VERBATIM (facade upsert / deriveGroupIndexes); the other four were dead surface
   // (grep-verified zero external callers — the loader's setAnnotationGroups call became the
-  // cache seed). NOTE resetProjectData below never cleared these fields — that omission was the
-  // old cross-project stale-retention bug; publicId-keyed cache entries eliminate the class
-  // (SPEC §5-E3), so do NOT add group lines to resetProjectData.
-
-  pageNames: {},
-  setPageNames: (pageNames) => set({ pageNames }),
-  setPageName: (pageNum, name) =>
-    set((s) => ({ pageNames: { ...s.pageNames, [pageNum]: name } })),
-  pageDrawingNumbers: {},
-  setPageDrawingNumbers: (pageDrawingNumbers) => set({ pageDrawingNumbers }),
-
-  projectId: 0,
-  setProjectId: (projectId) => set({ projectId }),
-  dataUrl: "",
-  setDataUrl: (dataUrl) => set({ dataUrl }),
-  publicId: "",
-  setPublicId: (publicId) => set({ publicId }),
-  isDemo: false,
-  setIsDemo: (isDemo) => set({ isDemo }),
-  demoFeatureConfig: null,
-  setDemoFeatureConfig: (demoFeatureConfig) => set({ demoFeatureConfig }),
-  projectIntelligenceData: null,
-  setProjectIntelligenceData: (data) => set({ projectIntelligenceData: data }),
-  showLabelingWizard: false,
-  setShowLabelingWizard: (showLabelingWizard) => set({ showLabelingWizard }),
-  labelingWizardStep: 1,
-  setLabelingWizardStep: (labelingWizardStep) => set({ labelingWizardStep }),
-  labelingSessions: [],
-  setLabelingSessions: (labelingSessions) => set({ labelingSessions }),
-  labelingCredentials: null,
-  setLabelingCredentials: (labelingCredentials) => set({ labelingCredentials }),
+  // cache seed). NOTE the former monolithic reset never cleared these fields — that omission was
+  // the old cross-project stale-retention bug; publicId-keyed cache entries eliminate the class
+  // (SPEC §5-E3), so do NOT add group lines to resetViewerState.
 
   allTrades: [],
   setAllTrades: (allTrades) => set({ allTrades }),
@@ -1335,7 +1283,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   _setDrawEnd: (_drawEnd) => set({ _drawEnd }),
   _setMousePos: (_mousePos) => set({ _mousePos }),
 
-  resetProjectData: () =>
+  resetViewerState: () =>
     set({
       pageNumber: 1,
       numPages: 0,
@@ -1345,23 +1293,13 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       searchMatches: {},
       searchLoading: false,
       // [refactor jul11 P2.2⑥] annotations reset deleted: loader seeds the publicId-keyed cache
-      // unconditionally before reveal; reset changing publicId to "" isolates the previous entry.
-      pageNames: {},
-      pageDrawingNumbers: {},
-      projectId: 0,
-      dataUrl: "",
-      publicId: "",
-      isDemo: false,
-      demoFeatureConfig: null,
-      projectIntelligenceData: null,
+      // unconditionally before reveal; the coordinator's preceding session reset re-keys observers.
+      // [refactor jul11 P2.3] session identity/page-label fields and csiGraph are reset by the
+      // neutral viewerCommands.resetProjectData coordinator, not this leaf store.
       // [refactor jul10 P2.2③] `summaries: null` reset line deleted — summaries live in the query
       // cache now (publicId-keyed entries give free cross-project isolation; the old key's entry
-      // persists but is unobservable: reset sets publicId:"" which re-keys every subscriber, and
-      // consumers are unmounted behind the loaders' `loading` gates until the fresh seed lands).
-      showLabelingWizard: false,
-      labelingWizardStep: 1,
-      labelingSessions: [],
-      labelingCredentials: null,
+      // persists but is unobservable: resetProjectData resets session identity first, and consumers
+      // are unmounted behind the loaders' `loading` gates until the fresh seed lands).
       allTrades: [],
       showTextAnnotations: false,
       activeTextAnnotationTypes: {},
@@ -1663,29 +1601,6 @@ export const useKeynoteParse = () =>
     setGuidedParseCols: s.setGuidedParseCols,
     resetGuidedParse: s.resetGuidedParse,
   })));
-
-/** Project-level context (read-mostly) */
-export const useProject = () =>
-  useViewerStore(useShallow((s) => ({
-    projectId: s.projectId,
-    publicId: s.publicId,
-    dataUrl: s.dataUrl,
-    isDemo: s.isDemo,
-    demoFeatureConfig: s.demoFeatureConfig,
-    pageNames: s.pageNames,
-    projectIntelligenceData: s.projectIntelligenceData,
-  })));
-
-/**
- * Check if a feature is enabled for demo visitors.
- * Non-demo always returns true. Demo checks company config (default: enabled).
- */
-export function isDemoFeatureEnabled(feature: string): boolean {
-  const { isDemo, demoFeatureConfig } = useViewerStore.getState();
-  if (!isDemo) return true;
-  if (!demoFeatureConfig) return true; // no config = all features enabled
-  return demoFeatureConfig[feature] !== false; // default: enabled unless explicitly off
-}
 
 /** Project-wide CSI filter controls. Active-window data lives in usePageWindow (⑦), while heavy
  *  per-page OCR lives in the bounded useTextract facade/coordinator (⑧). */

@@ -41,6 +41,8 @@ import AreaTab from "../AreaTab";
 import LinearTab from "../LinearTab";
 import ViewAllPanel from "../ViewAllPanel";
 import BucketFillAssignDialog from "../BucketFillAssignDialog";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 vi.mock("@/lib/client-persist", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/client-persist")>();
@@ -113,12 +115,12 @@ const alertMock = vi.fn();
 
 beforeEach(() => {
   qc = new QueryClient(); // pure defaults, matching production Providers.tsx
-  useViewerStore.getState().resetProjectData();
+  resetProjectData();
   // [DETECTOR jul10 closer] Store-bleed guard: resetProjectData deliberately EXCLUDES
   // hiddenTakeoffItemIds (census flag 9 — never in the reset block, frozen; do not "fix" in
   // the store) and bucketFillPendingPolygon, so VA-2's hide-toggle and the BF cases' pending
   // polygon would leak into later tests through the module-singleton store. Reset both here.
-  useViewerStore.setState({
+  setViewerStoreStateForTest({
     publicId: "pid",
     isDemo: false,
     hiddenTakeoffItemIds: new Set<number>(),
@@ -226,7 +228,7 @@ describe("AreaTab — group-create failure is INLINE groupError, not alert (TA-3
 // channels + the local effects (temp ids, annotation sweep/name-sync).
 describe("AreaTab — demo NEVER writes (TA-4)", () => {
   it("rename+delete+create item and create group all land locally; ZERO calls on either channel", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedAnnotations(qc, [
       takeoffAnn(100, 7, "Carpet", "area-polygon"),
       // cross-domain bait: a non-takeoff annotation must SURVIVE the demo delete sweep
@@ -438,7 +440,7 @@ describe("LinearTab — group-create failure is ALERT (TL-2)", () => {
 // (HARD invariant, previously test-invisible in this tab).
 describe("LinearTab — demo NEVER writes (TL-3)", () => {
   it("rename+delete+create item and create group all land locally; ZERO calls on either channel", async () => {
-    useViewerStore.setState({ isDemo: true });
+    setViewerStoreStateForTest({ isDemo: true });
     seedAnnotations(qc, [
       takeoffAnn(100, 7, "Wall Framing", "linear-polyline"),
       // cross-domain bait: a non-takeoff annotation must SURVIVE the demo delete sweep
@@ -656,7 +658,7 @@ describe("BucketFillAssignDialog — lists polygon-shape items only (BF-1)", () 
 
 describe("BucketFillAssignDialog — demo create&assign is local-only (BF-2)", () => {
   it("negative temp item + local annotation commit; ZERO calls on either channel", async () => {
-    useViewerStore.setState({ isDemo: true, bucketFillPendingPolygon: PENDING_POLYGON, pageNumber: 3 });
+    setViewerStoreStateForTest({ isDemo: true, bucketFillPendingPolygon: PENDING_POLYGON, pageNumber: 3 });
     seedTakeoff(qc, [], []);
     render(
       <BucketFillAssignDialog pendingPolygon={PENDING_POLYGON} width={800} height={600} cssScale={1} />,
@@ -683,7 +685,7 @@ describe("BucketFillAssignDialog — demo create&assign is local-only (BF-2)", (
 
 describe("BucketFillAssignDialog — non-demo create is server-first with the NUMERIC projectId (BF-3)", () => {
   it("nothing added pre-release; POST body carries dbId 123 (frozen quirk); commit chain fires", async () => {
-    useViewerStore.setState({ projectId: 123, bucketFillPendingPolygon: PENDING_POLYGON, pageNumber: 2 });
+    setViewerStoreStateForTest({ projectId: 123, bucketFillPendingPolygon: PENDING_POLYGON, pageNumber: 2 });
     seedTakeoff(qc, [], []);
     seedAnnotations(qc, []);
     const d = deferred<Response>();
@@ -742,7 +744,7 @@ describe("BucketFillAssignDialog — direct existing-item G6 boundary", () => {
   it("no publicId keeps the clicked existing-item fill local, consumes pending, and makes no request", async () => {
     // Set the empty id BEFORE both helpers: under the cache backing this fixture and hoisted action must
     // address the same pre-bootstrap query key, not the default test key "pid".
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       publicId: "",
       bucketFillPendingPolygon: PENDING_POLYGON,
       pageNumber: 4,

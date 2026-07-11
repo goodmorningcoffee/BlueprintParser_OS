@@ -16,7 +16,7 @@ import {
   type PageWindowResponse,
 } from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import type {
   CsiCode,
   KeynoteShapeData,
@@ -41,7 +41,7 @@ function unavailablePageWindowQuery(): ActivePageWindow {
 
 /** One shared disabled-query configuration; callers track `data` only. */
 function usePageWindowSelection<T>(select: PageWindowSelector<T>): T | undefined {
-  const publicId = useViewerStore((state) => state.publicId);
+  const publicId = useSessionStore((state) => state.publicId);
   const { data } = useQuery({
     queryKey: queryKeys.pagesWindow.active(publicId),
     queryFn: unavailablePageWindowQuery,

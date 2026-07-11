@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useProject } from "@/stores/viewerStore";
+import { useViewerStore } from "@/stores/viewerStore";
+import { useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
@@ -52,7 +53,7 @@ function keynoteDataToGrid(data: any): { headers: string[]; rows: Record<string,
 export default function KeynotePanel({ embedded = false }: { embedded?: boolean } = {}) {
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const setPage = useViewerStore((s) => s.setPage);
-  const pageNames = useViewerStore((s) => s.pageNames);
+  const pageNames = useSessionStore((s) => s.pageNames);
   const pageIntelligence = usePageIntelligenceByPage();
   // Manual parsing intentionally captures the current page payload from this render. Guided parsing
   // below remains an invocation-time read because its grid may stay open while OCR is replaced.
@@ -78,7 +79,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const setActiveKeynoteHighlight = useViewerStore((s) => s.setActiveKeynoteHighlight);
   const resetKeynoteParse = useViewerStore((s) => s.resetKeynoteParse);
   const resetAllTools = useViewerStore((s) => s.resetAllTools);
-  const projectId = useViewerStore((s) => s.projectId);
+  const projectId = useSessionStore((s) => s.projectId);
   // One collection observer owns the whole keynote list. Passing the same row array down avoids
   // creating one query observer per expanded/collapsed KeynoteItem.
   const yoloTags = useYoloTagRows();
@@ -133,6 +134,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     persistToDb: boolean = true,
   ) => {
     const storeState = useViewerStore.getState();
+    const sessionState = useSessionStore.getState();
     const headers = ["Key", "Description"];
     const rows = keys.map((k) => ({ Key: k.key, Description: k.description }));
 
@@ -189,7 +191,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
     if (!persistToDb) return;
     refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
-    if (canPersist(publicId, storeState.isDemo)) {
+    if (canPersist(publicId, sessionState.isDemo)) {
       const result = await promoteParsedRegion({
         publicId,
         pageNumber,
@@ -571,7 +573,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       } catch { /* best-effort */ }
 
       // Save as parsed keynote (optimistic local write).
-      const store = useViewerStore.getState();
+      const session = useSessionStore.getState();
       const bbox = (guidedParseRegion || [0, 0, 1, 1]) as [number, number, number, number];
       const regionId = regionIdFor(pageNumber, bbox);
       const data = {
@@ -613,7 +615,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       // Auto-persist on parse via the transactional promote upsert. Gated on
       // publicId (canPersist), NOT numeric projectId. Throws on failure → we
       // surface it and bail before reset so the user can retry.
-      if (canPersist(publicId, store.isDemo)) {
+      if (canPersist(publicId, session.isDemo)) {
         const promoteResult = await promoteParsedRegion({
           publicId,
           pageNumber,

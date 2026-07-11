@@ -31,13 +31,14 @@
 
 import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { QtoWorkflow } from "@/types";
 
 export function useQtoWorkflows() {
-  const publicId = useViewerStore((s) => s.publicId);
-  const isDemo = useViewerStore((s) => s.isDemo);
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
   const activeQtoWorkflow = useViewerStore((s) => s.activeQtoWorkflow);
   const setActiveQtoWorkflow = useViewerStore((s) => s.setActiveQtoWorkflow);
   const qc = useQueryClient();

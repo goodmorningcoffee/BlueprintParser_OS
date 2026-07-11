@@ -10,6 +10,7 @@ import {
   useDetection,
   useTextAnnotationDisplay,
 } from "@/stores/viewerStore";
+import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 // [refactor jul10 P2.2⑤] annotation groups: zustand → TanStack cache facade (import-swap-only
@@ -137,7 +138,7 @@ export default function ViewAllPanel() {
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   // Drawing numbers per page — join into every row so users see "p.12 · A-201"
   // instead of just "p.12". Hydrated at project load, so no loading state needed.
-  const pageDrawingNumbers = useViewerStore((s) => s.pageDrawingNumbers);
+  const pageDrawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
   const sheetLabel = (pn: number): string => {
     const dn = pageDrawingNumbers[pn];
     return dn ? `p.${pn} · ${dn}` : `p.${pn}`;
@@ -327,7 +328,7 @@ export default function ViewAllPanel() {
     setPage(pageNumber);
     if (focusId === undefined) return;
     setFocusAnnotationId(focusId);
-    const publicId = useViewerStore.getState().publicId;
+    const publicId = useSessionStore.getState().publicId;
     // [refactor jul11 P2.2⑥] Navigation is a handler-time lookup: read the live cache after the
     // state updates above instead of closing over the panel's last rendered annotation array.
     const ann = readAnnotations(queryClient, publicId).find((a) => a.id === focusId);
