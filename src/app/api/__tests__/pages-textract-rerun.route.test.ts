@@ -140,6 +140,37 @@ describe.skipIf(!dbUp)("POST /api/pages/textract-rerun", () => {
     expect(body.error.code).toBe("UNAUTHORIZED");
   });
 
+  it("demo write gate: an authenticated owner gets 403 before S3/Textract work", async () => {
+    // [refactor jul11 P2.2⑧] NO allowDemo only blocks the public/signed-out branch. Before this
+    // closer, any authenticated same-company user could still spend AWS Textract and overwrite a
+    // demo row despite the route comment claiming demos were blocked.
+    const { user, project } = await createWorld({ isDemo: true });
+    await createPage(project.id, 1);
+    asUser(user);
+
+    const { status, body } = await readJson(await req({ projectId: project.id, pageNumber: 1 }));
+
+    expect(status).toBe(403);
+    expect(body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
+    expect(downloadFromS3).not.toHaveBeenCalled();
+    expect(analyzePageImageWithFallback).not.toHaveBeenCalled();
+  });
+
+  it("demo write gate: a cross-company root also gets 403 before S3/Textract work", async () => {
+    const { project } = await createWorld({ isDemo: true });
+    await createPage(project.id, 1);
+    const otherCompany = (await createWorld()).company;
+    const root = await createUser(otherCompany.id, { isRootAdmin: true });
+    asUser(root);
+
+    const { status, body } = await readJson(await req({ publicId: project.publicId, pageNumber: 1 }));
+
+    expect(status).toBe(403);
+    expect(body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
+    expect(downloadFromS3).not.toHaveBeenCalled();
+    expect(analyzePageImageWithFallback).not.toHaveBeenCalled();
+  });
+
   it("cross-tenant → 404", async () => {
     const { project } = await createWorld();
     await createPage(project.id, 1);

@@ -560,8 +560,10 @@ export async function getPageThumbnail(idParam: string, pageParam: string): Prom
 // ── POST /api/pages/textract-rerun ───────────────────────────────────────────────────────────────
 //
 /** Force-refresh the cached Textract result for one page (debug/diagnostic). dbId from the body
- *  `projectId` PLUS a NEW optional `publicId`; NO allowDemo (demo stays blocked). Frozen gate
- *  order: field 400 → access → no-dataUrl 404 → page-not-found 404 → S3 download → Textract →
+ *  `projectId` PLUS a NEW optional `publicId`; NO allowDemo plus an explicit isDemo write gate.
+ *  NO allowDemo alone blocks only public demo access: an authenticated owner/root can still resolve
+ *  the project, so the explicit gate is what prevents an expensive demo DB/AWS write. Gate order:
+ *  field 400 → access → demo 403 → no-dataUrl 404 → page-not-found 404 → S3 download → Textract →
  *  write → success. The S3-download 500 keeps its specific (non-leaking) wording; the Textract
  *  catch drops its err.message leak (sanctioned diff B). */
 export async function rerunPageTextract(body: Record<string, unknown>) {
@@ -576,6 +578,12 @@ export async function rerunPageTextract(body: Record<string, unknown>) {
   }
 
   const { project } = await resolveDual({ publicId, dbId: projectId });
+
+  // [refactor jul11 P2.2⑧] Defense-in-depth for the demo-never-writes/cost invariant. Keeping this
+  // server-side is load-bearing: hiding the TextPanel button cannot protect direct API callers.
+  if (project.isDemo) {
+    throw new ApiError("FORBIDDEN", "Demo projects are read-only");
+  }
 
   if (!project.dataUrl) {
     throw new ApiError("NOT_FOUND", "Project has no dataUrl");
