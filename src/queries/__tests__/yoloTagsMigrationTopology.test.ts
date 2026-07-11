@@ -143,7 +143,7 @@ describe("P2.2⑨ yoloTags migration topology", () => {
       "src/components/viewer/KeynoteItem.tsx": 3,
       "src/components/viewer/ParsedTableItem.tsx": 2,
       "src/components/viewer/TableCompareModal.tsx": 1,
-      "src/lib/csi-spatial-refresh.ts": 1,
+      "src/lib/csi-spatial-refresh-target.ts": 1,
     });
     expect(topology("navigateYoloTag")).toEqual({
       "src/components/viewer/KeynoteItem.tsx": 1,

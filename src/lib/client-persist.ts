@@ -11,7 +11,62 @@
  *   - parsed regions go through the transactional /api/regions/promote (upsert)
  */
 
-export type ParsedRegionKind = "schedule" | "keynote" | "notes" | "spec" | "legend";
+import type {
+  BboxMinMax,
+  PageIntelligence,
+  ParsedRegionType,
+  ProjectSummaries,
+} from "@/types";
+
+export type ParsedRegionKind = ParsedRegionType;
+
+/** The promote route accepts this historical wire subset; full CsiCode requires server enrichment. */
+export interface ParsedRegionPromotionCsiTag {
+  code: string;
+  description: string;
+}
+
+/** Truthful promote-response shape while canonical ParsedRegion.bbox still incorrectly says LTWH. */
+export interface PromotedParsedRegion {
+  id: string;
+  type: ParsedRegionType;
+  category: string;
+  bbox: BboxMinMax;
+  confidence: number;
+  csiTags?: ParsedRegionPromotionCsiTag[];
+  data: Record<string, unknown>;
+  source?: "user" | "auto-detected";
+  sourceTextRegionId?: string;
+}
+
+export interface ParsedRegionParserPromotionRequest {
+  publicId: string;
+  pageNumber: number;
+  type: ParsedRegionKind;
+  regionId: string;
+  bbox: BboxMinMax;
+  data: Record<string, unknown>;
+  category?: string;
+  csiTags?: ParsedRegionPromotionCsiTag[];
+}
+
+export interface ParsedRegionClassifierPromotionRequest {
+  publicId: string;
+  pageNumber: number;
+  type: ParsedRegionKind;
+  sourceTextRegionId: string;
+}
+
+export type PromoteParsedRegionRequest =
+  | ParsedRegionParserPromotionRequest
+  | ParsedRegionClassifierPromotionRequest;
+
+export interface PromoteParsedRegionResponse {
+  ok: true;
+  parsedRegion: PromotedParsedRegion;
+  updatedIntelligence: PageIntelligence;
+  summaries: ProjectSummaries | null;
+}
 
 /** True when the current project can accept DB writes. Gate persistence on this
  *  (publicId-based), NOT on the numeric projectId. */
@@ -81,33 +136,29 @@ export async function persistFetch(
  * — callers should adopt `updatedIntelligence` as the authoritative store value
  * rather than trusting an optimistic local blob.
  */
-export async function promoteParsedRegion(args: {
-  publicId: string;
-  pageNumber: number;
-  type: ParsedRegionKind;
-  regionId: string;
-  bbox: [number, number, number, number];
-  data: Record<string, unknown>;
-  category?: string;
-  csiTags?: { code: string; description: string }[];
-}): Promise<{
-  ok: true;
-  parsedRegion: unknown;
-  updatedIntelligence: Record<string, unknown>;
-  summaries: unknown;
-}> {
-  const { publicId, pageNumber, type, regionId, bbox, data, category, csiTags } = args;
-  return persistFetch("/api/regions/promote", {
-    publicId,
-    pageNumber,
-    type,
-    overrides: { regionId, bbox, data, category, csiTags },
-  }) as Promise<{
-    ok: true;
-    parsedRegion: unknown;
-    updatedIntelligence: Record<string, unknown>;
-    summaries: unknown;
-  }>;
+export async function promoteParsedRegion(
+  args: PromoteParsedRegionRequest,
+): Promise<PromoteParsedRegionResponse> {
+  const request = "sourceTextRegionId" in args
+    ? {
+        publicId: args.publicId,
+        pageNumber: args.pageNumber,
+        type: args.type,
+        sourceTextRegionId: args.sourceTextRegionId,
+      }
+    : {
+        publicId: args.publicId,
+        pageNumber: args.pageNumber,
+        type: args.type,
+        overrides: {
+          regionId: args.regionId,
+          bbox: args.bbox,
+          data: args.data,
+          category: args.category,
+          csiTags: args.csiTags,
+        },
+      };
+  return persistFetch("/api/regions/promote", request) as Promise<PromoteParsedRegionResponse>;
 }
 
 /** Deterministic, stable region id from page + normalized bbox, so re-parsing

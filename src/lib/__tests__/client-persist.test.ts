@@ -212,6 +212,34 @@ describe("promoteParsedRegion current parser request", () => {
       },
     });
   });
+
+  it("posts the exact classifier source request without an overrides object", async () => {
+    const serverObject = {
+      ok: true,
+      parsedRegion: { id: "promoted-source" },
+      updatedIntelligence: { parsedRegions: [{ id: "promoted-source" }] },
+      summaries: null,
+    };
+    fetchMock.mockResolvedValue(response({
+      ok: true,
+      json: vi.fn().mockResolvedValue(serverObject),
+    }));
+
+    const result = await promoteParsedRegion({
+      publicId: "P",
+      pageNumber: 9,
+      type: "spec",
+      sourceTextRegionId: "text-region-4",
+    });
+
+    expect(result).toBe(serverObject);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      publicId: "P",
+      pageNumber: 9,
+      type: "spec",
+      sourceTextRegionId: "text-region-4",
+    });
+  });
 });
 
 describe("client persistence pure helpers", () => {

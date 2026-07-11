@@ -8,14 +8,25 @@
 // file owns the exact semantic caller roster.
 
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, normalize } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const CLIENT_PERSIST_MODULE = "@/lib/client-persist";
 const CLIENT_PERSIST_FILE = "src/lib/client-persist.ts";
+const PARSED_REGIONS_MODULE = "@/queries/parsedRegions";
+const PARSED_REGIONS_FILE = "src/queries/parsedRegions.ts";
+const MAP_TRANSPORT_MODULE = "@/lib/client-map-tags";
+const MAP_TRANSPORT_FILE = "src/lib/client-map-tags.ts";
+const SPATIAL_TARGET_FILE = "src/lib/csi-spatial-refresh-target.ts";
 const PROMOTE_ENDPOINT = "/api/regions/promote";
 const MAP_TAGS_ENDPOINT = "/api/projects/${}/map-tags-batch";
+
+type ClientIoPhase = "F1" | "C1" | "C2" | "C3";
+// C1 is additive and production-dead: old callers stay exact while each future owner has exactly
+// one internal transport call and zero external production borrowers. C2/C3 must flip these
+// assertions atomically rather than accepting an old/new union.
+const CLIENT_IO_PHASE: ClientIoPhase = "C1";
 
 type ImportedProvenance = {
   kind: "imported";
@@ -125,6 +136,12 @@ const EXPECTED_RAW_CLASSIFIER_SITES: Site[] = [
   },
 ];
 
+const EXPECTED_DEAD_PARSED_REGION_SITE: Site = {
+  file: PARSED_REGIONS_FILE,
+  owner: "saveParsedRegion",
+  transport: "@/lib/client-persist.promoteParsedRegion",
+};
+
 const EXPECTED_RAW_MAP_TAGS_SITES: MapSite[] = [
   {
     file: "src/components/viewer/AnnotationOverlay.tsx",
@@ -164,6 +181,13 @@ const EXPECTED_RAW_MAP_TAGS_SITES: MapSite[] = [
   },
 ];
 
+const EXPECTED_DEAD_MAP_TRANSPORT_SITE: MapSite = {
+  file: MAP_TRANSPORT_FILE,
+  owner: "requestMapTagsBatch",
+  transport: "global.fetch",
+  projectExpression: "publicId",
+};
+
 const sourceTextCache = new Map<string, string>();
 const sourceCache = new Map<string, ts.SourceFile>();
 
@@ -186,6 +210,61 @@ function productionFiles(directory = "src"): string[] {
   };
   visit(directory);
   return output.sort();
+}
+
+function resolvesToCandidate(
+  importer: string,
+  specifier: string,
+  moduleName: string,
+  file: string,
+): boolean {
+  const unresolved = specifier === moduleName
+    ? file
+    : specifier.startsWith("@/")
+      ? `src/${specifier.slice(2)}`
+      : specifier.startsWith(".")
+        ? join(dirname(importer), specifier)
+        : "";
+  const withoutExtension = (value: string) => normalize(value).replace(/\.(?:ts|tsx)$/, "");
+  return withoutExtension(unresolved) === withoutExtension(file);
+}
+
+function candidateLoadKinds(
+  path: string,
+  moduleName: string,
+  file: string,
+  source = parse(path),
+): string[] {
+  const loads: string[] = [];
+  for (const statement of source.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      resolvesToCandidate(path, statement.moduleSpecifier.text, moduleName, file)
+    ) loads.push("import");
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      resolvesToCandidate(path, statement.moduleSpecifier.text, moduleName, file)
+    ) loads.push("re-export");
+  }
+  for (const call of descendants(source, ts.isCallExpression)) {
+    const specifier = call.arguments[0];
+    if (!specifier || !ts.isStringLiteralLike(specifier)) continue;
+    if (!resolvesToCandidate(path, specifier.text, moduleName, file)) continue;
+    const callee = unwrap(call.expression);
+    if (callee.kind === ts.SyntaxKind.ImportKeyword) loads.push("dynamic-import");
+    if (ts.isIdentifier(callee) && callee.text === "require") loads.push("require");
+  }
+  for (const importType of descendants(source, ts.isImportTypeNode)) {
+    if (
+      ts.isLiteralTypeNode(importType.argument) &&
+      ts.isStringLiteral(importType.argument.literal) &&
+      resolvesToCandidate(path, importType.argument.literal.text, moduleName, file)
+    ) loads.push("import-type");
+  }
+  return loads;
 }
 
 function textOf(file: string): string {
@@ -705,12 +784,21 @@ function fixtureRecords(sourceText: string): CallRecord[] {
   return callRecordsFromSource(file, source);
 }
 
-describe("P2.4 F1 parse client-I/O topology", () => {
-  it("pins ten parser/edit promote calls to their exact semantic owners", () => {
+describe("P2.4 C1 parse client-I/O topology", () => {
+  it("pins C1 as additive: ten legacy promote owners plus one dead command transport", () => {
+    expect(CLIENT_IO_PHASE).toBe("C1");
     const helperCalls = allCalls.filter((record) =>
       isImported(record, CLIENT_PERSIST_MODULE, "promoteParsedRegion"),
     );
-    expect(sortedSites(helperCalls)).toEqual(EXPECTED_PROMOTE_HELPER_SITES);
+    expect(sortedSites(helperCalls.filter((record) => record.file !== PARSED_REGIONS_FILE)))
+      .toEqual(EXPECTED_PROMOTE_HELPER_SITES);
+    expect(sortedSites(helperCalls.filter((record) => record.file === PARSED_REGIONS_FILE)))
+      .toEqual([EXPECTED_DEAD_PARSED_REGION_SITE]);
+
+    const commandBorrowers = allCalls.filter((record) =>
+      isImported(record, PARSED_REGIONS_MODULE, "saveParsedRegion"),
+    );
+    expect(sortedSites(commandBorrowers), "C1 command must remain production-dead").toEqual([]);
   });
 
   it("pins the two classifier endpoint calls and their persistFetch provenance", () => {
@@ -738,12 +826,105 @@ describe("P2.4 F1 parse client-I/O topology", () => {
     }]);
   });
 
-  it("pins six raw map-tags fetches to their exact semantic owners", () => {
+  it("pins six raw map callers plus one dead low-level transport fetch", () => {
     const mapCalls = allCalls.filter((record) => record.endpoint?.pattern === MAP_TAGS_ENDPOINT);
-    expect(sortedMapSites(mapCalls)).toEqual(EXPECTED_RAW_MAP_TAGS_SITES);
+    expect(sortedMapSites(mapCalls.filter((record) => record.file !== MAP_TRANSPORT_FILE)))
+      .toEqual(EXPECTED_RAW_MAP_TAGS_SITES);
+    expect(sortedMapSites(mapCalls.filter((record) => record.file === MAP_TRANSPORT_FILE)))
+      .toEqual([EXPECTED_DEAD_MAP_TRANSPORT_SITE]);
     expect(mapCalls.every((record) =>
       record.provenance?.kind === "global" && record.provenance.imported === "fetch",
     )).toBe(true);
+
+    const transportBorrowers = allCalls.filter((record) =>
+      isImported(record, MAP_TRANSPORT_MODULE, "requestMapTagsBatch"),
+    );
+    expect(sortedSites(transportBorrowers), "C1 map transport must remain production-dead")
+      .toEqual([]);
+  });
+
+  it("keeps both C1 leaves on their exact dependency boundaries", () => {
+    const imports = (file: string) => parse(file).statements
+      .filter(ts.isImportDeclaration)
+      .map((statement) => ({
+        module: (statement.moduleSpecifier as ts.StringLiteral).text,
+        typeOnly: !!statement.importClause?.isTypeOnly,
+      }))
+      .sort((left, right) => left.module.localeCompare(right.module));
+
+    expect(imports(MAP_TRANSPORT_FILE)).toEqual([
+      { module: "@/lib/tag-mapping", typeOnly: true },
+      { module: "@/types", typeOnly: true },
+    ]);
+    expect(imports(PARSED_REGIONS_FILE)).toEqual([
+      { module: "@/lib/client-persist", typeOnly: false },
+      { module: "@/lib/csi-spatial-refresh-target", typeOnly: false },
+      { module: "@/queries/usePageWindow", typeOnly: false },
+      { module: "@/queries/useSummaries", typeOnly: false },
+      { module: "@/types", typeOnly: true },
+      { module: "@tanstack/react-query", typeOnly: true },
+    ]);
+    expect(imports(SPATIAL_TARGET_FILE)).toEqual([
+      { module: "@/lib/csi-spatial", typeOnly: false },
+      { module: "@/queries/useAnnotations", typeOnly: false },
+      { module: "@/queries/usePageWindow", typeOnly: false },
+      { module: "@/queries/useYoloTags", typeOnly: false },
+      { module: "@tanstack/react-query", typeOnly: true },
+    ]);
+
+    const mapSource = parse(MAP_TRANSPORT_FILE);
+    expect(descendants(mapSource, ts.isTryStatement)).toEqual([]);
+    expect(descendants(mapSource, ts.isNewExpression).filter((expression) =>
+      ts.isIdentifier(expression.expression) && expression.expression.text === "AbortController"
+    )).toEqual([]);
+    // Error reporting belongs to each caller. Ban every direct console dependency so a transport
+    // mutation cannot log and rethrow the same error while still satisfying identity assertions.
+    expect(descendants(mapSource, ts.isIdentifier).filter((identifier) =>
+      identifier.text === "console"
+    )).toEqual([]);
+  });
+
+  it("proves both C1 candidates have zero external production loads", () => {
+    const candidates = [
+      { module: PARSED_REGIONS_MODULE, file: PARSED_REGIONS_FILE },
+      { module: MAP_TRANSPORT_MODULE, file: MAP_TRANSPORT_FILE },
+    ] as const;
+    const loads = candidates.flatMap((candidate) =>
+      productionFiles()
+        .filter((path) => path !== candidate.file)
+        .flatMap((path) => candidateLoadKinds(path, candidate.module, candidate.file)
+          .map((kind) => ({ path, module: candidate.module, kind }))),
+    );
+    expect(loads).toEqual([]);
+
+    const fixturePath = "src/components/c1-load-fixture.ts";
+    const fixture = ts.createSourceFile(
+      fixturePath,
+      `
+        import { saveParsedRegion } from "@/queries/parsedRegions";
+        import { saveParsedRegion as relativeSave } from "../queries/parsedRegions";
+        export { SaveParsedRegionResult } from "@/queries/parsedRegions";
+        const lazy = import("@/queries/parsedRegions");
+        const commonJs = require("../queries/parsedRegions");
+        type Inline = import("@/queries/parsedRegions").SaveParsedRegionResult;
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    expect(candidateLoadKinds(
+      fixturePath,
+      PARSED_REGIONS_MODULE,
+      PARSED_REGIONS_FILE,
+      fixture,
+    )).toEqual([
+      "import",
+      "import",
+      "re-export",
+      "dynamic-import",
+      "require",
+      "import-type",
+    ]);
   });
 
   it("self-calibrates lexical aliases, namespace provenance, and shadowed fetch", () => {
@@ -817,7 +998,7 @@ describe("P2.4 F1 parse client-I/O topology", () => {
     ]);
   });
 
-  // Migration discipline:
+  // Migration discipline after this C1 additive phase:
   // - C2 flips the first two manifests atomically to twelve calls imported from
   //   `@/queries/parsedRegions`, with zero component promoteParsedRegion/raw endpoint calls.
   // - C3 flips the six-owner map manifest atomically to `requestMapTagsBatch`, with zero raw
