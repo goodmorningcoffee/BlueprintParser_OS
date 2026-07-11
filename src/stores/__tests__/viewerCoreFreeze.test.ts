@@ -34,6 +34,17 @@ describe("P2.3 viewerCore characterization", () => {
     expect(useViewerStore.getState().pageNumber).toBe(4);
   });
 
+  it("keeps setNumPages raw and lets setScale bypass the interactive zoom caps", () => {
+    useViewerStore.setState({ pageNumber: 9, numPages: 20 });
+    useViewerStore.getState().setNumPages(3);
+    expect(useViewerStore.getState()).toMatchObject({ pageNumber: 9, numPages: 3 });
+
+    useViewerStore.getState().setScale(25);
+    expect(useViewerStore.getState().scale).toBe(25);
+    useViewerStore.getState().setScale(-4);
+    expect(useViewerStore.getState().scale).toBe(-4);
+  });
+
   it("pins zoom factor/caps and fit's flag-only behavior", () => {
     useViewerStore.getState().setScale(9.99);
     useViewerStore.getState().zoomIn();
@@ -73,6 +84,54 @@ describe("P2.3 viewerCore characterization", () => {
     expect(useViewerStore.getState().pageDimensions).not.toBe(firstMap);
     expect(useViewerStore.getState().pageDimensions[2]).toEqual({ width: 1001, height: 700 });
     expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it("preserves unrelated dimension entries and their object references", () => {
+    useViewerStore.getState().setPageDimensions(1, 800, 600);
+    const firstEntry = useViewerStore.getState().pageDimensions[1];
+
+    useViewerStore.getState().setPageDimensions(2, 1000, 700);
+    const withSecond = useViewerStore.getState().pageDimensions;
+    expect(withSecond).toEqual({
+      1: { width: 800, height: 600 },
+      2: { width: 1000, height: 700 },
+    });
+    expect(withSecond[1]).toBe(firstEntry);
+
+    useViewerStore.getState().setPageDimensions(2, 1001, 700);
+    expect(useViewerStore.getState().pageDimensions[1]).toBe(firstEntry);
+  });
+
+  it("publishes same/clamped values and repeated cap/fit/clear actions", () => {
+    useViewerStore.setState({
+      pageNumber: 1,
+      numPages: 0,
+      scale: 10,
+      pendingCenter: false,
+    });
+    const listener = vi.fn();
+    const unsubscribe = useViewerStore.subscribe(listener);
+    const actions = useViewerStore.getState();
+
+    actions.setPage(1);
+    actions.setPage(99);
+    actions.setNumPages(0);
+    actions.zoomIn();
+    actions.setScale(0.2);
+    actions.zoomOut();
+    actions.zoomFit();
+    actions.zoomFit();
+    actions.clearPendingCenter();
+    actions.clearPendingCenter();
+
+    expect(listener).toHaveBeenCalledTimes(10);
+    expect(useViewerStore.getState()).toMatchObject({
+      pageNumber: 1,
+      numPages: 0,
+      scale: 0.2,
+      pendingCenter: false,
+    });
     unsubscribe();
   });
 
