@@ -24,11 +24,11 @@ import GuidedParseTab from "./GuidedParseTab";
 import ManualParseTab from "./ManualParseTab";
 import CompareEditTab from "./CompareEditTab";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
+import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { regionIdFor, canPersist } from "@/lib/client-persist";
 import ExportCsvModal from "./ExportCsvModal";
 import type { MapTagsStrictness } from "./MapTagsSection";
 import type { YoloTag, QtoItemType } from "@/types";
-import type { ScoredMatch } from "@/lib/tag-mapping";
 
 type TableGrid = {
   headers: string[];
@@ -307,7 +307,7 @@ export default function TableParsePanel() {
   }, [tableParseRegion, annotations, pageNumber]);
 
   // ─── Map Tags: create YoloTags from parsed tag column ─────
-  // Phase 3: fetch the server-side /api/map-tags-batch route so scoring
+  // Phase 3: call the shared server-side map-tags-batch transport so scoring
   // (pattern inference + scope + strictness) applies to the manual flow.
   // AbortController cancels the in-flight request on rapid re-clicks or
   // unmount. All results flow through addYoloTagsBulk as a single store
@@ -344,27 +344,23 @@ export default function TableParsePanel() {
     mapTagsAbortRef.current = controller;
 
     try {
-      const res = await fetch(`/api/projects/${publicId}/map-tags-batch`, {
-        method: "POST",
-        signal: controller.signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const result = await requestMapTagsBatch(
+        publicId,
+        {
           tags: uniqueTags,
           yoloClass: tagYoloClass?.className || undefined,
           yoloModel: tagYoloClass?.model || undefined,
           itemType,
           strictnessMode: mapTagsStrictness,
           drawingNumberPrefixes,
-        }),
-      });
-      if (!res.ok) {
-        console.error(`[TableParsePanel] Map Tags failed: HTTP ${res.status}`);
+        },
+        { signal: controller.signal },
+      );
+      if (!result.ok) {
+        console.error(`[TableParsePanel] Map Tags failed: HTTP ${result.status}`);
         return; // leave tagMappingDone as-is so user can retry
       }
-      const { results, dropCounts } = (await res.json()) as {
-        results: Record<string, ScoredMatch[]>;
-        dropCounts: Record<string, number>;
-      };
+      const { results, dropCounts } = result.data;
       const newTags: YoloTag[] = uniqueTags
         .filter((t) => results[t]?.length > 0)
         .map((t) => ({

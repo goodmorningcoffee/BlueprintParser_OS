@@ -17,9 +17,9 @@ import {
   useYoloTagActions,
 } from "@/queries/useYoloTags";
 import { canPersist } from "@/lib/client-persist";
+import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { saveParsedRegion } from "@/queries/parsedRegions";
 import type { YoloTag } from "@/types";
-import type { ScoredMatch } from "@/lib/tag-mapping";
 import type { MapTagsStrictness } from "./MapTagsSection";
 
 /** Convert keynote parsedRegion data to grid format for TableCompareModal */
@@ -407,20 +407,19 @@ export default function KeynoteItem({
 
                       if (tags.length === 0) { setShowMapTags(false); return; }
 
-                      const res = await fetch(`/api/projects/${identityPublicId}/map-tags-batch`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
+                      const result = await requestMapTagsBatch(
+                        identityPublicId,
+                        {
                           tags,
                           yoloClass: mapTagType === "yolo" ? mapYoloClass?.className : undefined,
                           yoloModel: mapTagType === "yolo" ? mapYoloClass?.model : undefined,
                           itemType: mapTagType === "yolo" ? "yolo-with-inner-text" : "text-only",
                           strictnessMode: mapStrictness,
                           drawingNumberPrefixes: mapPrefixes,
-                        }),
-                      });
-                      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-                      const { results }: { results: Record<string, ScoredMatch[]> } = await res.json();
+                        },
+                      );
+                      if (!result.ok) throw new Error(`Server error: ${result.status}`);
+                      const { results } = result.data;
 
                       const newTags: YoloTag[] = tags
                         .filter((t) => (results[t]?.length ?? 0) > 0)

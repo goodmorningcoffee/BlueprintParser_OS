@@ -21,7 +21,8 @@ import {
   usePageIntelligenceByPage,
 } from "@/queries/usePageWindow";
 import type { QtoWorkflow, QtoLineItem, QtoFlag, QtoItemType } from "@/types";
-import type { ScoredMatch, DropReason } from "@/lib/tag-mapping";
+import type { ScoredMatch } from "@/lib/tag-mapping";
+import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
 import { escCsv } from "@/lib/table-parse-utils";
 import { computeScheduleDetections } from "@/lib/auto-qto/schedule-detections";
@@ -1163,17 +1164,12 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
     const stillCurrent = () =>
       activeAttemptRef.current === attempt && !controller.signal.aborted;
 
-    fetch(`/api/projects/${input.publicId}/map-tags-batch`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input.request),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-        return res.json();
+    requestMapTagsBatch(input.publicId, input.request, { signal: controller.signal })
+      .then((result) => {
+        if (!result.ok) throw new Error(`Server error ${result.status}`);
+        return result.data;
       })
-      .then(({ results }: { results: Record<string, ScoredMatch[]> }) => {
+      .then(({ results }) => {
         if (!stillCurrent()) return;
         // Build QtoLineItems. Auto-QTO filters to tier=high server-side, so
         // everything arriving here is kept. We preserve confidenceTier +

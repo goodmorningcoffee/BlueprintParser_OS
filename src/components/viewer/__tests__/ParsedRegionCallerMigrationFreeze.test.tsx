@@ -12,7 +12,11 @@ import KeynotePanel from "@/components/viewer/KeynotePanel";
 import { EMPTY_ACTIVE_PAGE_WINDOW } from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
 import { readPageIntelligence } from "@/queries/usePageWindow";
-import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
+import {
+  clearYoloTagsProject,
+  readYoloTags,
+  seedYoloTagsFromBootstrap,
+} from "@/queries/useYoloTags";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 import type { PageIntelligence, ProjectSummaries } from "@/types";
@@ -93,6 +97,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  clearYoloTagsProject(queryClient, PUBLIC_ID);
   queryClient.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -141,7 +146,18 @@ describe("C2 ParsedRegion real caller convergence", () => {
         return promotion.promise;
       }
       if (url === `/api/projects/${PUBLIC_ID}/map-tags-batch`) {
-        return Promise.resolve(response({ results: {} }));
+        return Promise.resolve(response({
+          results: {
+            D1: [{
+              pageNumber: PAGE,
+              annotationId: 41,
+              bbox: [0.2, 0.3, 0.25, 0.35],
+              confidence: 0.96,
+            }],
+          },
+          dropCounts: {},
+          strictnessMode: "balanced",
+        }));
       }
       throw new Error(`unexpected Keynote wizard fetch: ${url}`);
     });
@@ -169,6 +185,24 @@ describe("C2 ParsedRegion real caller convergence", () => {
     );
     expect(codes).toContain("08 11 13");
     expect(queryClient.getQueryData(queryKeys.summaries.all(PUBLIC_ID))).toEqual(serverSummaries);
+    await waitFor(() => expect(readYoloTags(queryClient, PUBLIC_ID)).toHaveLength(1));
+    const mapCall = fetchMock.mock.calls.find(([url]) =>
+      url === `/api/projects/${PUBLIC_ID}/map-tags-batch`
+    );
+    if (!mapCall) throw new Error("Expected KeynotePanel map transport call");
+    expect(JSON.parse(String((mapCall[1] as RequestInit).body))).toEqual({
+      tags: ["D1"],
+      itemType: "text-only",
+      selectedPages: [PAGE],
+    });
+    expect(readYoloTags(queryClient, PUBLIC_ID)[0]).toMatchObject({
+      tagText: "D1",
+      source: "keynote",
+      scope: "page",
+      pageNumber: PAGE,
+      description: "Door",
+      instances: [{ annotationId: 41 }],
+    });
   });
 
   it("keeps the Keynote demo wizard on its synchronous local O -> X branch", async () => {
@@ -179,6 +213,8 @@ describe("C2 ParsedRegion real caller convergence", () => {
       keynoteParseRegion: BBOX,
     });
     const trace: string[] = [];
+    const nonOkJson = vi.fn().mockRejectedValue(new Error("must not parse"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     fetchMock.mockImplementation((url: string) => {
       if (url === "/api/table-parse") {
         return Promise.resolve(response({
@@ -188,7 +224,11 @@ describe("C2 ParsedRegion real caller convergence", () => {
         }));
       }
       if (url === `/api/projects/${PUBLIC_ID}/map-tags-batch`) {
-        return Promise.resolve(response({ results: {} }));
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          json: nonOkJson,
+        } as unknown as Response);
       }
       throw new Error(`unexpected demo wizard fetch: ${url}`);
     });
@@ -208,8 +248,15 @@ describe("C2 ParsedRegion real caller convergence", () => {
     fireEvent.click(screen.getByRole("button", { name: "Auto Parse Keynotes" }));
 
     await waitFor(() => expect(trace).toEqual(["O", "X", "microtask"]));
+    await waitFor(() => expect(consoleError).toHaveBeenCalledWith(
+      "[KeynotePanel] Map Tags failed: HTTP 503",
+    ));
     unsubscribe();
+    expect(nonOkJson).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain("/api/regions/promote");
+    expect(readYoloTags(queryClient, PUBLIC_ID)).toEqual([]);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Auto Parse Keynotes" }))
+      .not.toBeInTheDocument());
     const codes = readPageIntelligence(queryClient, PUBLIC_ID, PAGE)?.csiSpatialMap?.zones.flatMap(
       (zone) => zone.divisions.flatMap((division) => division.codes),
     );

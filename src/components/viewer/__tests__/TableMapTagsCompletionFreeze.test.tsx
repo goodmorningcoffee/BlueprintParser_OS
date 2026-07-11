@@ -253,6 +253,12 @@ describe("TableParsePanel Map Tags completion identity", () => {
     expect(pendingRequests).toHaveLength(2);
     expect((pendingRequests[0].init.signal as AbortSignal).aborted).toBe(true);
     expect((pendingRequests[1].init.signal as AbortSignal).aborted).toBe(false);
+    expect(JSON.parse(String(pendingRequests[1].init.body))).toEqual({
+      tags: ["D1"],
+      itemType: "text-only",
+      strictnessMode: "balanced",
+      drawingNumberPrefixes: [],
+    });
 
     await act(async () => {
       pendingRequests[1].response.resolve(mapResponse([302, 303], { newest: 2 }));
@@ -261,6 +267,13 @@ describe("TableParsePanel Map Tags completion identity", () => {
     await waitFor(() => expectLocalCompletion(true, 1, { newest: 2 }));
     const newestRows = readYoloTags(queryClient, PROJECT_A);
     expect(newestRows[0].instances.map((instance) => instance.annotationId)).toEqual([302, 303]);
+    expect(newestRows[0]).toMatchObject({
+      tagText: "D1",
+      source: "schedule",
+      scope: "project",
+      description: "Door one",
+      mapScope: { strictness: "balanced" },
+    });
 
     await act(async () => {
       pendingRequests[0].response.resolve(mapResponse([301], { superseded: 9 }));

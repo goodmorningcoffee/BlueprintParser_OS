@@ -36,6 +36,7 @@ import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
+import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
 import { splitPolygonByLine, findSplittablePolygons } from "@/lib/polygon-split";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
@@ -1632,7 +1633,7 @@ export default memo(function AnnotationOverlay({
             const session = useSessionStore.getState();
             store.setYoloTagPickingMode(false);
 
-            // Trigger class scan — fetch all unique texts inside this class
+            // Trigger class scan — request all unique texts inside this class.
             const pid = session.publicId;
             const yoloClass = ann.name;
             const yoloModel = model;
@@ -1640,13 +1641,15 @@ export default memo(function AnnotationOverlay({
             tagScanControllerRef.current?.abort();
             const controller = new AbortController();
             tagScanControllerRef.current = controller;
-            fetch(`/api/projects/${pid}/map-tags-batch`, {
-              method: "POST",
-              signal: controller.signal,
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action: "scanClass", yoloClass, yoloModel }),
-            })
-              .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+            requestMapTagsBatch(
+              pid,
+              { action: "scanClass", yoloClass, yoloModel },
+              { signal: controller.signal },
+            )
+              .then((result) => {
+                if (!result.ok) throw new Error(`HTTP ${result.status}`);
+                return result.data;
+              })
               .then(({ texts }) => {
                 if (tagScanControllerRef.current !== controller || controller.signal.aborted) return;
                 if (useSessionStore.getState().publicId !== pid) return;

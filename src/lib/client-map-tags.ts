@@ -6,11 +6,11 @@ import type {
 } from "@/lib/tag-mapping";
 
 /**
- * [refactor jul11 P2.4 C1] Store-free wire boundary for map-tags-batch.
+ * [refactor jul11 P2.4 C1/C3] Store-free wire boundary for map-tags-batch.
  *
  * Payload construction, request ownership, retry/abort policy, result interpretation, cache
- * publication, and UI errors stay with callers. This leaf owns only the shared HTTP mechanics so
- * C3 can remove six hand-written fetch copies without creating a cross-feature command object.
+ * publication, and UI errors stay with callers. This leaf owns only shared HTTP mechanics; C3
+ * converged six callers here without creating a cross-feature command object.
  */
 
 export type MapTagsStrictnessMode = "strict" | "balanced" | "lenient";

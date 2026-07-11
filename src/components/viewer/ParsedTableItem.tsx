@@ -17,9 +17,9 @@ import {
 } from "@/queries/usePageWindow";
 // [refactor jul6 S029] apiErrorMessage: table-structure non-OK now serves the envelope
 import { canPersist, apiErrorMessage } from "@/lib/client-persist";
+import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { saveParsedRegion } from "@/queries/parsedRegions";
 import type { YoloTag } from "@/types";
-import type { ScoredMatch } from "@/lib/tag-mapping";
 import type { MapTagsStrictness } from "./MapTagsSection";
 
 interface ParsedTableItemProps {
@@ -670,20 +670,19 @@ export default memo(function ParsedTableItem({
                       if (tags.length === 0) { setShowMapTags(false); return; }
 
                       // Use batch API for full-project scanning (server loads ALL textractData from DB)
-                      const res = await fetch(`/api/projects/${publicId}/map-tags-batch`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
+                      const result = await requestMapTagsBatch(
+                        publicId,
+                        {
                           tags,
                           yoloClass: mapTagType === "yolo" ? mapYoloClass?.className : undefined,
                           yoloModel: mapTagType === "yolo" ? mapYoloClass?.model : undefined,
                           itemType: mapTagType === "yolo" ? "yolo-with-inner-text" : "text-only",
                           strictnessMode: mapStrictness,
                           drawingNumberPrefixes: mapPrefixes,
-                        }),
-                      });
-                      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-                      const { results }: { results: Record<string, ScoredMatch[]> } = await res.json();
+                        },
+                      );
+                      if (!result.ok) throw new Error(`Server error: ${result.status}`);
+                      const { results } = result.data;
 
                       // Build YoloTag[] from results and bulk-add in one cache publication.
                       const newTags: YoloTag[] = tags

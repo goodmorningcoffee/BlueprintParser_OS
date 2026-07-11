@@ -23,9 +23,9 @@ const PROMOTE_ENDPOINT = "/api/regions/promote";
 const MAP_TAGS_ENDPOINT = "/api/projects/${}/map-tags-batch";
 
 type ClientIoPhase = "F1" | "C1" | "C2" | "C3";
-// C2 atomically replaces all ten parser/edit plus two classifier tails. The map leaf remains
-// production-dead until C3; never accept a mixed old/new roster for either migration.
-const CLIENT_IO_PHASE: ClientIoPhase = "C2";
+// C3 atomically replaces all six raw map fetches. Both migrations are now converged; never accept
+// a mixed old/new roster for either boundary.
+const CLIENT_IO_PHASE: ClientIoPhase = "C3";
 
 type ImportedProvenance = {
   kind: "imported";
@@ -259,50 +259,129 @@ const EXPECTED_COMMAND_HELPER_SITE: Site = {
   transport: "@/lib/client-persist.promoteParsedRegion",
 };
 
-const EXPECTED_RAW_MAP_TAGS_SITES: MapSite[] = [
+const EXPECTED_MAP_TRANSPORT_SITES: MapSite[] = [
   {
     file: "src/components/viewer/AnnotationOverlay.tsx",
     owner: "handleMouseDown",
-    transport: "global.fetch",
+    transport: "@/lib/client-map-tags.requestMapTagsBatch",
     projectExpression: "pid",
   },
   {
     file: "src/components/viewer/AutoQtoTab.tsx",
     owner: "MappingStep",
-    transport: "global.fetch",
+    transport: "@/lib/client-map-tags.requestMapTagsBatch",
     projectExpression: "input.publicId",
   },
   {
     file: "src/components/viewer/KeynoteItem.tsx",
     owner: "KeynoteItem:onClick[Run Mapping]",
-    transport: "global.fetch",
+    transport: "@/lib/client-map-tags.requestMapTagsBatch",
     projectExpression: "identityPublicId",
   },
   {
     file: "src/components/viewer/KeynotePanel.tsx",
     owner: "mapKeynoteKeysToYoloTags",
-    transport: "global.fetch",
+    transport: "@/lib/client-map-tags.requestMapTagsBatch",
     projectExpression: "publicId",
   },
   {
     file: "src/components/viewer/ParsedTableItem.tsx",
     owner: "ParsedTableItem:onClick[Run Mapping]",
-    transport: "global.fetch",
+    transport: "@/lib/client-map-tags.requestMapTagsBatch",
     projectExpression: "publicId",
   },
   {
     file: "src/components/viewer/TableParsePanel.tsx",
     owner: "handleMapTags",
-    transport: "global.fetch",
+    transport: "@/lib/client-map-tags.requestMapTagsBatch",
     projectExpression: "publicId",
   },
 ];
 
-const EXPECTED_DEAD_MAP_TRANSPORT_SITE: MapSite = {
+const EXPECTED_LOW_LEVEL_MAP_TRANSPORT_SITE: MapSite = {
   file: MAP_TRANSPORT_FILE,
   owner: "requestMapTagsBatch",
   transport: "global.fetch",
   projectExpression: "publicId",
+};
+
+const EXPECTED_MAP_TRANSPORT_IMPORT_FILES = [
+  "src/components/viewer/AnnotationOverlay.tsx",
+  "src/components/viewer/AutoQtoTab.tsx",
+  "src/components/viewer/KeynoteItem.tsx",
+  "src/components/viewer/KeynotePanel.tsx",
+  "src/components/viewer/ParsedTableItem.tsx",
+  "src/components/viewer/TableParsePanel.tsx",
+] as const;
+
+type MapTransportArguments = {
+  project: string;
+  request: Record<string, string>;
+  options: Record<string, string>;
+  awaited: boolean;
+};
+
+const EXPECTED_MAP_TRANSPORT_ARGUMENTS: Record<string, MapTransportArguments> = {
+  "src/components/viewer/AnnotationOverlay.tsx:handleMouseDown": {
+    project: "pid",
+    request: {
+      action: '"scanClass"', yoloClass: "yoloClass", yoloModel: "yoloModel",
+    },
+    options: { signal: "controller.signal" },
+    awaited: false,
+  },
+  "src/components/viewer/AutoQtoTab.tsx:MappingStep": {
+    project: "input.publicId",
+    request: { __expression: "input.request" },
+    options: { signal: "controller.signal" },
+    awaited: false,
+  },
+  "src/components/viewer/KeynoteItem.tsx:KeynoteItem:onClick[Run Mapping]": {
+    project: "identityPublicId",
+    request: {
+      tags: "tags",
+      yoloClass: 'mapTagType==="yolo"?mapYoloClass?.className:undefined',
+      yoloModel: 'mapTagType==="yolo"?mapYoloClass?.model:undefined',
+      itemType: 'mapTagType==="yolo"?"yolo-with-inner-text":"text-only"',
+      strictnessMode: "mapStrictness",
+      drawingNumberPrefixes: "mapPrefixes",
+    },
+    options: {},
+    awaited: true,
+  },
+  "src/components/viewer/KeynotePanel.tsx:mapKeynoteKeysToYoloTags": {
+    project: "publicId",
+    request: {
+      tags: "uniqueKeys", yoloClass: "yoloClass||undefined",
+      yoloModel: "yoloModel||undefined", itemType: "itemType",
+      selectedPages: "[pageNumber]",
+    },
+    options: {},
+    awaited: true,
+  },
+  "src/components/viewer/ParsedTableItem.tsx:ParsedTableItem:onClick[Run Mapping]": {
+    project: "publicId",
+    request: {
+      tags: "tags",
+      yoloClass: 'mapTagType==="yolo"?mapYoloClass?.className:undefined',
+      yoloModel: 'mapTagType==="yolo"?mapYoloClass?.model:undefined',
+      itemType: 'mapTagType==="yolo"?"yolo-with-inner-text":"text-only"',
+      strictnessMode: "mapStrictness",
+      drawingNumberPrefixes: "mapPrefixes",
+    },
+    options: {},
+    awaited: true,
+  },
+  "src/components/viewer/TableParsePanel.tsx:handleMapTags": {
+    project: "publicId",
+    request: {
+      tags: "uniqueTags", yoloClass: "tagYoloClass?.className||undefined",
+      yoloModel: "tagYoloClass?.model||undefined", itemType: "itemType",
+      strictnessMode: "mapTagsStrictness", drawingNumberPrefixes: "drawingNumberPrefixes",
+    },
+    options: { signal: "controller.signal" },
+    awaited: true,
+  },
 };
 
 const sourceTextCache = new Map<string, string>();
@@ -463,6 +542,14 @@ function objectArgumentContract(expression: ts.Expression | undefined): Record<s
     }
     return [`__unsupported_${property.pos}`, property.getText(current.getSourceFile())];
   }));
+}
+
+function expressionOrObjectContract(expression: ts.Expression | undefined): Record<string, string> {
+  if (!expression) return {};
+  const current = unwrap(expression);
+  return ts.isObjectLiteralExpression(current)
+    ? objectArgumentContract(current)
+    : { __expression: compactExpression(current) };
 }
 
 function nearestCanPersistBranch(node: ts.Node): ts.IfStatement | null {
@@ -921,7 +1008,10 @@ function sortedSites(records: CallRecord[]): Site[] {
 function mapSite(record: CallRecord): MapSite {
   return {
     ...site(record),
-    projectExpression: record.endpoint?.interpolations.join(",") ?? "",
+    projectExpression: isImported(record, MAP_TRANSPORT_MODULE, "requestMapTagsBatch") &&
+      record.node.arguments[0]
+      ? compactExpression(record.node.arguments[0])
+      : record.endpoint?.interpolations.join(",") ?? "",
   };
 }
 
@@ -946,9 +1036,9 @@ function fixtureRecords(sourceText: string): CallRecord[] {
   return callRecordsFromSource(file, source);
 }
 
-describe("P2.4 C2 parse client-I/O topology", () => {
+describe("P2.4 C3 parse client-I/O topology", () => {
   it("pins the atomic twelve-owner command roster and sole internal helper transport", () => {
-    expect(CLIENT_IO_PHASE).toBe("C2");
+    expect(CLIENT_IO_PHASE).toBe("C3");
     const helperCalls = allCalls.filter((record) =>
       isImported(record, CLIENT_PERSIST_MODULE, "promoteParsedRegion"),
     );
@@ -1014,12 +1104,12 @@ describe("P2.4 C2 parse client-I/O topology", () => {
     }]);
   });
 
-  it("pins six raw map callers plus one dead low-level transport fetch", () => {
+  it("pins six typed map callers, zero raw component fetches, and one low-level fetch", () => {
     const mapCalls = allCalls.filter((record) => record.endpoint?.pattern === MAP_TAGS_ENDPOINT);
     expect(sortedMapSites(mapCalls.filter((record) => record.file !== MAP_TRANSPORT_FILE)))
-      .toEqual(EXPECTED_RAW_MAP_TAGS_SITES);
+      .toEqual([]);
     expect(sortedMapSites(mapCalls.filter((record) => record.file === MAP_TRANSPORT_FILE)))
-      .toEqual([EXPECTED_DEAD_MAP_TRANSPORT_SITE]);
+      .toEqual([EXPECTED_LOW_LEVEL_MAP_TRANSPORT_SITE]);
     expect(mapCalls.every((record) =>
       record.provenance?.kind === "global" && record.provenance.imported === "fetch",
     )).toBe(true);
@@ -1027,8 +1117,19 @@ describe("P2.4 C2 parse client-I/O topology", () => {
     const transportBorrowers = allCalls.filter((record) =>
       isImported(record, MAP_TRANSPORT_MODULE, "requestMapTagsBatch"),
     );
-    expect(sortedSites(transportBorrowers), "C2 map transport must remain production-dead")
-      .toEqual([]);
+    expect(sortedMapSites(transportBorrowers)).toEqual(EXPECTED_MAP_TRANSPORT_SITES);
+    const transportArguments = Object.fromEntries(transportBorrowers.map((record) => [
+      `${record.file}:${record.owner}`,
+      {
+        project: record.node.arguments[0]
+          ? compactExpression(record.node.arguments[0])
+          : "missing",
+        request: expressionOrObjectContract(record.node.arguments[1]),
+        options: expressionOrObjectContract(record.node.arguments[2]),
+        awaited: ts.isAwaitExpression(record.node.parent),
+      },
+    ]));
+    expect(transportArguments).toEqual(EXPECTED_MAP_TRANSPORT_ARGUMENTS);
   });
 
   it("keeps both I/O leaves on their exact dependency boundaries", () => {
@@ -1215,7 +1316,9 @@ describe("P2.4 C2 parse client-I/O topology", () => {
     expect(tableLocalWrites[0].node.getStart()).toBeLessThan(tableSpatial!.node.getStart());
   });
 
-  it("pins nine value-importing command files while the C3 map candidate stays unloaded", () => {
+  // This deliberately parses every production TS/TSX file. Keep a local budget above Vitest's
+  // 5s default so parallel full-suite load cannot turn the architecture scan into a timing flake.
+  it("pins the exact nine command and six map-transport value-import files", () => {
     const parsedRegionLoads = productionFiles()
       .filter((path) => path !== PARSED_REGIONS_FILE)
       .flatMap((path) => candidateLoadKinds(
@@ -1248,7 +1351,22 @@ describe("P2.4 C2 parse client-I/O topology", () => {
       .filter((path) => path !== MAP_TRANSPORT_FILE)
       .flatMap((path) => candidateLoadKinds(path, MAP_TRANSPORT_MODULE, MAP_TRANSPORT_FILE)
         .map((kind) => ({ path, kind })));
-    expect(mapLoads).toEqual([]);
+    expect(mapLoads).toEqual(EXPECTED_MAP_TRANSPORT_IMPORT_FILES.map((path) => ({
+      path,
+      kind: "import",
+    })));
+    const mapImports = EXPECTED_MAP_TRANSPORT_IMPORT_FILES.map((path) => {
+      const declaration = parse(path).statements.find((statement): statement is ts.ImportDeclaration =>
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(statement.moduleSpecifier) &&
+        resolvesToCandidate(path, statement.moduleSpecifier.text, MAP_TRANSPORT_MODULE, MAP_TRANSPORT_FILE)
+      );
+      return { path, typeOnly: declaration?.importClause?.isTypeOnly ?? null };
+    });
+    expect(mapImports).toEqual(EXPECTED_MAP_TRANSPORT_IMPORT_FILES.map((path) => ({
+      path,
+      typeOnly: false,
+    })));
 
     const fixturePath = "src/components/c2-load-fixture.ts";
     const fixture = ts.createSourceFile(
@@ -1278,7 +1396,7 @@ describe("P2.4 C2 parse client-I/O topology", () => {
       "require",
       "import-type",
     ]);
-  });
+  }, 15_000);
 
   it("self-calibrates lexical aliases, namespace provenance, and shadowed fetch", () => {
     const records = fixtureRecords(`
@@ -1351,10 +1469,10 @@ describe("P2.4 C2 parse client-I/O topology", () => {
     ]);
   });
 
-  // Migration discipline at the completed C2 boundary:
+  // Migration discipline at the completed C3 boundary:
   // - the first manifests stay atomically fixed at twelve `@/queries/parsedRegions` calls with
   //   zero component promoteParsedRegion/raw endpoint calls;
-  // - C3 flips the six-owner map manifest atomically to `requestMapTagsBatch`, with zero raw
+  // - the six-owner map manifest stays atomically fixed at `requestMapTagsBatch`, with zero raw
   //   component fetches. Do not weaken these assertions to accept a union of old and new phases;
   //   such a union would let a partial migration ship while appearing green.
 });

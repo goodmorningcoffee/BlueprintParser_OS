@@ -25,11 +25,11 @@ import HelpTooltip from "./HelpTooltip";
 import KeynoteItem from "./KeynoteItem";
 import CompareEditTab from "./CompareEditTab";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
+import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import { regionIdFor, canPersist } from "@/lib/client-persist";
 import ExportCsvModal from "./ExportCsvModal";
 import type { YoloTag, QtoItemType } from "@/types";
-import type { ScoredMatch } from "@/lib/tag-mapping";
 // CSI detection runs server-side (csi-detect.ts uses fs); client components can't import it directly
 
 /** Convert keynote parsedRegion data to grid format for TableCompareModal */
@@ -322,8 +322,8 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   }, [yoloFullyInTagColumn]);
 
   // ─── Map keynote keys → YoloTag[] via the server route ─────
-  // Phase 4: replaces the legacy client-side mapYoloToOcrText loop with a
-  // single fetch to /api/map-tags-batch per parse. Preserves scope:"page"
+  // Phase 4: replaces the legacy client-side mapYoloToOcrText loop with one typed
+  // map-tags-batch request per parse. Preserves scope:"page"
   // semantics by passing `selectedPages: [pageNumber]`. Results come back
   // as ScoredMatch[] which is a structural superset of YoloTagInstance.
   const mapKeynoteKeysToYoloTags = useCallback(async (params: {
@@ -344,24 +344,21 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     }
     const itemType: QtoItemType = yoloClass ? "yolo-with-inner-text" : "text-only";
     try {
-      const res = await fetch(`/api/projects/${publicId}/map-tags-batch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const result = await requestMapTagsBatch(
+        publicId,
+        {
           tags: uniqueKeys,
           yoloClass: yoloClass || undefined,
           yoloModel: yoloModel || undefined,
           itemType,
           selectedPages: [pageNumber],
-        }),
-      });
-      if (!res.ok) {
-        console.error(`[KeynotePanel] Map Tags failed: HTTP ${res.status}`);
+        },
+      );
+      if (!result.ok) {
+        console.error(`[KeynotePanel] Map Tags failed: HTTP ${result.status}`);
         return;
       }
-      const { results } = (await res.json()) as {
-        results: Record<string, ScoredMatch[]>;
-      };
+      const { results } = result.data;
       const newTags: YoloTag[] = uniqueKeys
         .filter((k) => results[k]?.length > 0)
         .map((k) => ({

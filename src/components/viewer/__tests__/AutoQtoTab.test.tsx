@@ -1131,6 +1131,7 @@ describe("AutoQtoTab — Retry re-arms a failed mapping (Q-20)", () => {
     await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
     fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
     await waitFor(() => expect(screen.getByText("Retry")).toBeInTheDocument());
+    expect(screen.getByText("Server error 500")).toBeInTheDocument();
     expect(retryFetch).toHaveBeenCalledTimes(1);
     const expectedRequest = {
       tags: ["door_single"],
