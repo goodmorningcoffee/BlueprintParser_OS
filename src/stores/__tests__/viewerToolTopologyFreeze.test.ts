@@ -561,12 +561,10 @@ function callTopology(importedName: string): Record<string, number> {
     .filter(([, count]) => count > 0));
 }
 
-function hookShape(name: string, firstMember: string): string[] {
-  const declarations = [VIEWER_STORE_FILE, TOOL_STORE_FILE]
-    .filter(existsRelative)
-    .flatMap((path) => descendants(parse(path), (node): node is ts.VariableDeclaration =>
-      ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name)
-      .map((declaration) => ({ source: parse(path), declaration })));
+function hookShape(name: string, firstMember: string, ownerFile: string): string[] {
+  const declarations = descendants(parse(ownerFile), (node): node is ts.VariableDeclaration =>
+    ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name)
+    .map((declaration) => ({ source: parse(ownerFile), declaration }));
   expect(declarations, `${name} owner`).toHaveLength(1);
   const { source, declaration } = declarations[0];
   const objects = descendants(declaration, ts.isObjectLiteralExpression)
@@ -651,7 +649,8 @@ describe("P2.3 T0 flat tool ownership", () => {
 
 describe("P2.3 T0 grouped tool surfaces", () => {
   it("pins the exact 23-member useSymbolSearch hook and its four callers", () => {
-    expect(hookShape("useSymbolSearch", "symbolSearchActive")).toEqual(SYMBOL_HOOK_SHAPE);
+    expect(hookShape("useSymbolSearch", "symbolSearchActive", ACTIVE_TOOL_OWNER.file))
+      .toEqual(SYMBOL_HOOK_SHAPE);
     expect(callTopology("useSymbolSearch")).toEqual(SYMBOL_HOOK_CALLERS);
   });
 
@@ -669,7 +668,7 @@ describe("P2.3 T0 grouped tool surfaces", () => {
 
   it("keeps useDrawingState production-dead", () => {
     expect(callTopology("useDrawingState")).toEqual({});
-    expect(hookShape("useDrawingState", "_drawing")).toEqual([
+    expect(hookShape("useDrawingState", "_drawing", VIEWER_STORE_FILE)).toEqual([
       "_drawing", "_drawStart", "_drawEnd", "_mousePos",
       "_setDrawing", "_setDrawStart", "_setDrawEnd", "_setMousePos",
     ]);
