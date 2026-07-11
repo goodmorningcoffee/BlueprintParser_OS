@@ -1,5 +1,5 @@
 // @vitest-environment node
-// [refactor jul11 P2.4 F0] Source-exact topology freeze for parse ownership before the carve.
+// [refactor jul11 P2.4 S1] Source-exact topology freeze for the additive parse owner.
 //
 // This suite is intentionally narrower than the fail-closed owner oracle. It pins the known
 // grouped surfaces, canvas-adjacent subscriptions, cross-kind borrowers, neutral-command home,
@@ -7,11 +7,12 @@
 // not broaden any projection or leave a viewerStore compatibility bridge behind.
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useSessionStore } from "@/stores/sessionStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -62,12 +63,18 @@ const PARSE_OWNER = {
 
 type ParseOwnershipPhase = "F0" | "S1" | "S2";
 type OwnerDefinitionExpectation = "module-absent" | "exact-ledger" | "ledger-absent";
+type OwnershipPhaseConfig = {
+  readonly active: typeof VIEWER_OWNER | typeof PARSE_OWNER;
+  readonly inactive: typeof VIEWER_OWNER | typeof PARSE_OWNER;
+  readonly inactiveDefinition: OwnerDefinitionExpectation;
+  readonly inactiveAccessAllowlist: readonly string[];
+};
 
-// This is the only phase switch. S1 keeps viewer active but permits only its isolated parity test
-// to touch the production-dead candidate. S2 flips the owners and removes that exception. When S1
-// adds useParseFlowStore, add its runtime reader beside useViewerStore below; the gate deliberately
-// fails until both the phase manifest and runtime witness are updated together.
-const PARSE_OWNERSHIP_PHASE: ParseOwnershipPhase = "F0";
+// This is the only phase switch. S1 keeps viewer active and permits only the dual-owner parity
+// suite plus this topology/runtime witness to touch the production-dead candidate. S2 flips the
+// owners and removes both exceptions; the gate fails until manifest, reader, and imports move
+// together.
+const PARSE_OWNERSHIP_PHASE: ParseOwnershipPhase = "S1";
 const OWNERSHIP_PHASES = {
   F0: {
     active: VIEWER_OWNER,
@@ -79,7 +86,10 @@ const OWNERSHIP_PHASES = {
     active: VIEWER_OWNER,
     inactive: PARSE_OWNER,
     inactiveDefinition: "exact-ledger",
-    inactiveAccessAllowlist: ["src/stores/__tests__/parseFlowStoreFreeze.test.ts"],
+    inactiveAccessAllowlist: [
+      "src/stores/__tests__/parseFlowStoreFreeze.test.ts",
+      "src/stores/__tests__/parseFlowTopologyFreeze.test.ts",
+    ],
   },
   S2: {
     active: PARSE_OWNER,
@@ -87,14 +97,13 @@ const OWNERSHIP_PHASES = {
     inactiveDefinition: "ledger-absent",
     inactiveAccessAllowlist: [],
   },
-} as const satisfies Record<ParseOwnershipPhase, {
-  readonly active: typeof VIEWER_OWNER | typeof PARSE_OWNER;
-  readonly inactive: typeof VIEWER_OWNER | typeof PARSE_OWNER;
-  readonly inactiveDefinition: OwnerDefinitionExpectation;
-  readonly inactiveAccessAllowlist: readonly string[];
-}>;
+} as const satisfies Record<ParseOwnershipPhase, OwnershipPhaseConfig>;
 
-const OWNERSHIP = OWNERSHIP_PHASES[PARSE_OWNERSHIP_PHASE];
+function ownershipForPhase(phase: ParseOwnershipPhase): OwnershipPhaseConfig {
+  return OWNERSHIP_PHASES[phase];
+}
+
+const OWNERSHIP = ownershipForPhase(PARSE_OWNERSHIP_PHASE);
 const ACTIVE_PARSE_OWNER = OWNERSHIP.active;
 const INACTIVE_PARSE_OWNER = OWNERSHIP.inactive;
 // Drawing never joins parseFlowStore during P2.4. This independent owner is intentionally the same
@@ -273,7 +282,8 @@ type RuntimeStateReader = () => Readonly<Record<string, unknown>>;
 const RUNTIME_OWNER_STATE_READERS: Partial<Record<string, RuntimeStateReader>> = {
   [VIEWER_OWNER.module]: () =>
     useViewerStore.getState() as unknown as Readonly<Record<string, unknown>>,
-  // S1: import useParseFlowStore and add PARSE_OWNER.module here. S2 then reuses that same witness.
+  [PARSE_OWNER.module]: () =>
+    useParseFlowStore.getState() as unknown as Readonly<Record<string, unknown>>,
 };
 
 const textCache = new Map<string, string>();
@@ -438,6 +448,33 @@ function expectOwnerLedgerDefinition(
     );
     expect(declarations, `${typeName} definition ownership`).toHaveLength(present ? 1 : 0);
   }
+  if (owner.module === PARSE_OWNER.module && expectation === "exact-ledger") {
+    const expected = [...ALL_PARSE_KEYS, "resetProjectParseState"].sort();
+    const candidateSource = parse(owner.file);
+    const candidateInterface = findInterface(candidateSource, owner.interfaceName);
+    const candidateObject = findStoreObject(candidateSource, owner.storeName);
+    expect(candidateInterface.heritageClauses ?? [], "candidate interface has no inherited surface")
+      .toEqual([]);
+    expect(candidateInterface.members, "candidate raw interface member count")
+      .toHaveLength(expected.length);
+    expect(candidateInterface.members.every((member) =>
+      ts.isPropertySignature(member) && staticName(member.name) !== null
+    ), "candidate interface uses only named property signatures").toBe(true);
+    expect(candidateObject.properties, "candidate raw implementation member count")
+      .toHaveLength(expected.length);
+    expect(candidateObject.properties.every((property) =>
+      ts.isPropertyAssignment(property) && staticName(property.name) !== null
+    ), "candidate store uses only named property assignments").toBe(true);
+    expect(new Set(definitions.interfaceKeys).size, "candidate interface keys unique")
+      .toBe(definitions.interfaceKeys.length);
+    expect(new Set(definitions.objectKeys).size, "candidate store keys unique")
+      .toBe(definitions.objectKeys.length);
+    expect([...definitions.interfaceKeys].sort(), "candidate exact interface ledger")
+      .toEqual(expected);
+    expect([...definitions.objectKeys].sort(), "candidate exact implementation ledger")
+      .toEqual(expected);
+    expect(Object.keys(runtimeState).sort(), "candidate exact runtime ledger").toEqual(expected);
+  }
 }
 
 function typeScriptSourceFiles(directory = "src"): string[] {
@@ -571,8 +608,12 @@ function exportedVariableCount(source: ts.SourceFile, name: string): number {
   ).length;
 }
 
-function hookShape(name: string, expectedShape: readonly string[]): string[] {
-  const source = parse(ACTIVE_PARSE_OWNER.file);
+function hookShape(
+  name: string,
+  expectedShape: readonly string[],
+  owner: typeof VIEWER_OWNER | typeof PARSE_OWNER = ACTIVE_PARSE_OWNER,
+): string[] {
+  const source = parse(owner.file);
   const declaration = findVariable(source, name);
   const initializer = declaration.initializer && unwrap(declaration.initializer);
   expect(initializer && ts.isArrowFunction(initializer), `${name} hook arrow`).toBe(true);
@@ -580,7 +621,7 @@ function hookShape(name: string, expectedShape: readonly string[]): string[] {
   expect(ts.isCallExpression(body), `${name} active-owner call`).toBe(true);
   const ownerCall = body as ts.CallExpression;
   expect(compact(ownerCall.expression, source), `${name} active owner`).toBe(
-    ACTIVE_PARSE_OWNER.exportName,
+    owner.exportName,
   );
   expect(ownerCall.arguments, `${name} active-owner arguments`).toHaveLength(1);
 
@@ -780,6 +821,52 @@ function importsModule(source: ts.SourceFile, moduleName: string): boolean {
   );
 }
 
+function resolvesToParseOwner(importerPath: string, specifier: string): boolean {
+  const unresolved = specifier === PARSE_OWNER.module
+    ? PARSE_OWNER.file.slice(0, -3)
+    : specifier.startsWith("@/")
+      ? `src/${specifier.slice(2)}`
+      : specifier.startsWith(".")
+        ? join(dirname(importerPath), specifier)
+        : "";
+  const withoutExtension = unresolved.replace(/\.(?:ts|tsx)$/, "");
+  return withoutExtension === PARSE_OWNER.file.replace(/\.ts$/, "");
+}
+
+function parseOwnerLoadKinds(path: string, source = parse(path)): string[] {
+  const loads: string[] = [];
+  for (const statement of source.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      resolvesToParseOwner(path, statement.moduleSpecifier.text)
+    ) loads.push("import");
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      resolvesToParseOwner(path, statement.moduleSpecifier.text)
+    ) loads.push("re-export");
+  }
+  for (const call of descendants(source, ts.isCallExpression)) {
+    const specifier = call.arguments[0];
+    if (!specifier || !ts.isStringLiteralLike(specifier)) continue;
+    const callee = unwrap(call.expression);
+    if (!resolvesToParseOwner(path, specifier.text)) continue;
+    if (callee.kind === ts.SyntaxKind.ImportKeyword) loads.push("dynamic-import");
+    if (ts.isIdentifier(callee) && callee.text === "require") loads.push("require");
+  }
+  for (const importType of descendants(source, ts.isImportTypeNode)) {
+    const argument = importType.argument;
+    if (
+      ts.isLiteralTypeNode(argument) &&
+      ts.isStringLiteral(argument.literal) &&
+      resolvesToParseOwner(path, argument.literal.text)
+    ) loads.push("import-type");
+  }
+  return loads;
+}
+
 function activeOwnerBorrowerFiles(members: readonly string[]): string[] {
   return productionSourceFiles
     .filter((path) => path !== ACTIVE_PARSE_OWNER.file && path !== VIEWER_COMMANDS_FILE)
@@ -809,12 +896,13 @@ function restoreStores(): void {
   useUiStore.setState(useUiStore.getInitialState(), true);
   useViewerCoreStore.setState(useViewerCoreStore.getInitialState(), true);
   useToolStore.setState(useToolStore.getInitialState(), true);
+  useParseFlowStore.setState(useParseFlowStore.getInitialState(), true);
   useViewerStore.setState(useViewerStore.getInitialState(), true);
 }
 
 beforeEach(restoreStores);
 
-describe("P2.4 F0 active parse owner and compatibility surfaces", () => {
+describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
   const activeSource = parse(ACTIVE_PARSE_OWNER.file);
   const activeInterfaceKeys = interfaceKeys(findInterface(activeSource, ACTIVE_PARSE_OWNER.interfaceName));
   const activeObjectKeys = directObjectKeys(findStoreObject(activeSource, ACTIVE_PARSE_OWNER.storeName));
@@ -833,6 +921,66 @@ describe("P2.4 F0 active parse owner and compatibility surfaces", () => {
       expect(existsRelative(INACTIVE_PARSE_OWNER.file)).toBe(true);
       expectOwnerLedgerDefinition(INACTIVE_PARSE_OWNER, OWNERSHIP.inactiveDefinition);
     }
+
+    if (existsRelative(PARSE_OWNER.file)) {
+      const candidateDefinitions = ownerDefinitionKeys(PARSE_OWNER);
+      const candidateRuntime = RUNTIME_OWNER_STATE_READERS[PARSE_OWNER.module]!();
+      expect(candidateDefinitions.interfaceKeys.includes("resetProjectParseState")).toBe(true);
+      expect(candidateDefinitions.objectKeys.includes("resetProjectParseState")).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(candidateRuntime, "resetProjectParseState"))
+        .toBe(true);
+    }
+    const viewerDefinitions = ownerDefinitionKeys(VIEWER_OWNER);
+    expect(viewerDefinitions.interfaceKeys.includes("resetProjectParseState")).toBe(false);
+    expect(viewerDefinitions.objectKeys.includes("resetProjectParseState")).toBe(false);
+  });
+
+  it("keeps the additive parse owner dependency-free and production-dead in S1", () => {
+    expect(PARSE_OWNERSHIP_PHASE).toBe("S1");
+    const source = parse(PARSE_OWNER.file);
+    const imports = source.statements
+      .filter(ts.isImportDeclaration)
+      .map((statement) => ({
+        module: (statement.moduleSpecifier as ts.StringLiteral).text,
+        typeOnly: !!statement.importClause?.isTypeOnly,
+      }))
+      .sort((left, right) => left.module.localeCompare(right.module));
+    expect(imports).toEqual([
+      { module: "@/types", typeOnly: true },
+      { module: "zustand", typeOnly: false },
+      { module: "zustand/react/shallow", typeOnly: false },
+    ]);
+    const dynamicLoads = descendants(source, ts.isCallExpression).filter((call) => {
+      const callee = unwrap(call.expression);
+      return callee.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(callee) && callee.text === "require");
+    });
+    expect(dynamicLoads).toEqual([]);
+    const loadFixturePath = "src/components/parse-owner-load-fixture.ts";
+    const loadFixture = ts.createSourceFile(
+      loadFixturePath,
+      `
+        import { useParseFlowStore } from "@/stores/parseFlowStore";
+        import { useParseFlowStore as relativeStore } from "../stores/parseFlowStore";
+        export { ParseFlowState } from "@/stores/parseFlowStore";
+        const lazy = import("@/stores/parseFlowStore");
+        const commonJs = require("../stores/parseFlowStore");
+        type InlineState = import("@/stores/parseFlowStore").ParseFlowState;
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    expect(parseOwnerLoadKinds(loadFixturePath, loadFixture)).toEqual([
+      "import",
+      "import",
+      "re-export",
+      "dynamic-import",
+      "require",
+      "import-type",
+    ]);
+    expect(productionSourceFiles.filter((path) => parseOwnerLoadKinds(path).length > 0))
+      .toEqual([]);
   });
 
   it("keeps the four step writers out of the leaf and defined only by the neutral command module", () => {
@@ -855,11 +1003,15 @@ describe("P2.4 F0 active parse owner and compatibility surfaces", () => {
   });
 });
 
-describe("P2.4 F0 grouped parse hook contract", () => {
+describe("P2.4 phase-aware grouped parse hook contract", () => {
   it("pins useTableParse's exact 17-member shape and six calls across four files", () => {
     expect(hookShape("useTableParse", TABLE_HOOK_SHAPE)).toEqual(TABLE_HOOK_SHAPE);
     expect(exportedVariableCount(parse(ACTIVE_PARSE_OWNER.file), "useTableParse")).toBe(1);
-    if (existsRelative(INACTIVE_PARSE_OWNER.file)) {
+    if (OWNERSHIP.inactiveDefinition === "exact-ledger") {
+      expect(hookShape("useTableParse", TABLE_HOOK_SHAPE, INACTIVE_PARSE_OWNER))
+        .toEqual(TABLE_HOOK_SHAPE);
+      expect(exportedVariableCount(parse(INACTIVE_PARSE_OWNER.file), "useTableParse")).toBe(1);
+    } else if (existsRelative(INACTIVE_PARSE_OWNER.file)) {
       expect(exportedVariableCount(parse(INACTIVE_PARSE_OWNER.file), "useTableParse")).toBe(0);
     }
     expect(importedCallTopology("useTableParse", ACTIVE_PARSE_OWNER)).toEqual(TABLE_HOOK_CALLERS);
@@ -869,7 +1021,11 @@ describe("P2.4 F0 grouped parse hook contract", () => {
   it("pins useKeynoteParse's exact 21-member shape and two calls", () => {
     expect(hookShape("useKeynoteParse", KEYNOTE_HOOK_SHAPE)).toEqual(KEYNOTE_HOOK_SHAPE);
     expect(exportedVariableCount(parse(ACTIVE_PARSE_OWNER.file), "useKeynoteParse")).toBe(1);
-    if (existsRelative(INACTIVE_PARSE_OWNER.file)) {
+    if (OWNERSHIP.inactiveDefinition === "exact-ledger") {
+      expect(hookShape("useKeynoteParse", KEYNOTE_HOOK_SHAPE, INACTIVE_PARSE_OWNER))
+        .toEqual(KEYNOTE_HOOK_SHAPE);
+      expect(exportedVariableCount(parse(INACTIVE_PARSE_OWNER.file), "useKeynoteParse")).toBe(1);
+    } else if (existsRelative(INACTIVE_PARSE_OWNER.file)) {
       expect(exportedVariableCount(parse(INACTIVE_PARSE_OWNER.file), "useKeynoteParse")).toBe(0);
     }
     expect(importedCallTopology("useKeynoteParse", ACTIVE_PARSE_OWNER)).toEqual(KEYNOTE_HOOK_CALLERS);
@@ -877,7 +1033,7 @@ describe("P2.4 F0 grouped parse hook contract", () => {
   });
 });
 
-describe("P2.4 F0 sacred parse subscription topology", () => {
+describe("P2.4 phase-aware sacred parse subscription topology", () => {
   it("keeps AnnotationOverlay on both grouped hooks plus exactly three direct parse primitives and zero drawing subscriptions", () => {
     const source = parse(ANNOTATION_OVERLAY);
     expect(importedCalls(source, [ACTIVE_PARSE_OWNER.module], "useTableParse"))
@@ -978,7 +1134,7 @@ describe("P2.4 F0 sacred parse subscription topology", () => {
   });
 });
 
-describe("P2.4 F0 mixed test-helper parse ledger", () => {
+describe("P2.4 phase-aware mixed test-helper parse ledger", () => {
   it("partitions one logical patch into the exact six domains", () => {
     const resetTableParse = vi.fn();
     expect(partitionViewerStoreTestState({
@@ -1054,7 +1210,7 @@ describe("P2.4 F0 mixed test-helper parse ledger", () => {
   });
 });
 
-describe("P2.4 F0 shared borrower manifests", () => {
+describe("P2.4 phase-aware shared borrower manifests", () => {
   it("pins the direct shared-guided borrower set", () => {
     expect(activeOwnerBorrowerFiles([
       "guidedParseActive",
@@ -1171,7 +1327,7 @@ describe("P2.4 F0 shared borrower manifests", () => {
   });
 });
 
-describe("P2.4 F0 guided-Spec tombstone", () => {
+describe("P2.4 phase-aware guided-Spec tombstone", () => {
   it("keeps the dead field/action in the exact owner/reset while proving zero external production borrowers", () => {
     const source = parse(VIEWER_STORE_FILE);
     const store = findStoreObject(source, "useViewerStore");
@@ -1195,7 +1351,7 @@ describe("P2.4 F0 guided-Spec tombstone", () => {
   });
 });
 
-describe("P2.4 F0 shared owner-oracle integration", () => {
+describe("P2.4 phase-aware shared owner-oracle integration", () => {
   it("uses one deduped production + real-test + src/test corpus for the inactive owner", () => {
     expect(allSourceCorpus).toEqual(everyTypeScriptSourceFile);
     expect(new Set(allSourceCorpus).size).toBe(allSourceCorpus.length);
@@ -1215,6 +1371,16 @@ describe("P2.4 F0 shared owner-oracle integration", () => {
     const allowlist = new Set<string>(OWNERSHIP.inactiveAccessAllowlist);
     const unexpected = inactiveByFile.filter(({ path }) => !allowlist.has(path));
     const observedAllowlist = inactiveByFile.map(({ path }) => path).filter((path) => allowlist.has(path));
+
+    if (PARSE_OWNERSHIP_PHASE === "S1") {
+      const candidateLoads = allSourceCorpus
+        .filter((path) => parseOwnerLoadKinds(path).length > 0);
+      expect(candidateLoads).toEqual([...allowlist].sort());
+      expect(candidateLoads.map((path) => ({
+        path,
+        kinds: parseOwnerLoadKinds(path),
+      }))).toEqual(candidateLoads.map((path) => ({ path, kinds: ["import"] })));
+    }
 
     const accessed = new Set(activeKnown.map((finding) => finding.member));
     for (const representative of [

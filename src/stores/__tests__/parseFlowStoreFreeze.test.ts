@@ -1,19 +1,31 @@
 // @vitest-environment node
-// [refactor jul11 P2.4 F0] Exact parse-state characterization BEFORE ownership moves.
+// [refactor jul11 P2.4 S1] Exact isolated contract for the production-dead parse owner.
 //
-// F0 intentionally imports the current viewerStore owner. S1 parity-tests a production-dead
-// parseFlowStore against this contract; S2 flips this one import/restore seam while keeping every
-// case and literal ledger unchanged.
+// F0 committed this entire behavior matrix against viewerStore. S1 now instantiates that same
+// matrix against both the live legacy owner and the production-dead candidate, with only the two
+// coordinator witnesses injected. S2 wires the neutral commands/helper atomically.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useParseFlowStore, type ParseFlowState } from "@/stores/parseFlowStore";
 import { resetAllTools, resetProjectData } from "@/stores/viewerCommands";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerStore as useLegacyViewerStore } from "@/stores/viewerStore";
 import {
   PARSE_TEST_ACTION_KEYS,
   PARSE_TEST_STATE_KEYS,
 } from "@/test/viewer-store-state";
 
-type ParseState = ReturnType<typeof useViewerStore.getState>;
+type ParseState = ParseFlowState;
+
+// One test body, two real Zustand owners. The Proxy forwards each access at execution time, after
+// the enclosing owner-case beforeEach selects the live legacy store or isolated candidate. Keeping
+// one matrix prevents the two parity suites from drifting apart.
+let activeStore = useParseFlowStore;
+const useViewerStore = new Proxy({} as typeof useParseFlowStore, {
+  get: (_target, property) => activeStore[property as keyof typeof activeStore],
+});
+let activeResetAll = (): void => undefined;
+let activeProjectReset = (): void => undefined;
+let activeOwnerIsExactLeaf = false;
 
 export const PARSE_DATA_KEYS = [
   "tableParseStep",
@@ -130,6 +142,23 @@ const RESET_ARRAY_KEYS = [
 
 type ParseDataKey = (typeof PARSE_DATA_KEYS)[number];
 type ParseActionKey = (typeof PARSE_ACTION_KEYS)[number];
+type LegacyParseContract = Pick<
+  ReturnType<typeof useLegacyViewerStore.getState>,
+  ParseDataKey | ParseActionKey
+>;
+type CandidateParseContract = Pick<ParseFlowState, ParseDataKey | ParseActionKey>;
+type ExactTypeEqual<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends
+    (<Value>() => Value extends Right ? 1 : 2)
+    ? (<Value>() => Value extends Right ? 1 : 2) extends
+        (<Value>() => Value extends Left ? 1 : 2)
+      ? true
+      : false
+    : false;
+const PARSE_CONTRACT_TYPES_MATCH: ExactTypeEqual<
+  LegacyParseContract,
+  CandidateParseContract
+> = true;
 
 const BBOX_A = [0.1, 0.2, 0.7, 0.8] as const;
 const BBOX_B = [0.2, 0.3, 0.8, 0.9] as const;
@@ -203,6 +232,14 @@ const CLIPBOARD: NonNullable<ParseState["paragraphClipboard"]> = {
 
 function restoreOwner(): void {
   useViewerStore.setState(useViewerStore.getInitialState(), true);
+}
+
+function resetAllParseForIsolatedOwner(): void {
+  activeResetAll();
+}
+
+function resetProjectParseForIsolatedOwner(): void {
+  activeProjectReset();
 }
 
 function pickParseData(state: ParseState): Pick<ParseState, ParseDataKey> {
@@ -306,9 +343,25 @@ function nonDefaultParsePatch(): Pick<ParseState, ParseDataKey> {
   };
 }
 
-beforeEach(restoreOwner);
+type ParseOwnerCase = {
+  readonly label: string;
+  readonly store: typeof useParseFlowStore;
+  readonly exactLeaf: boolean;
+  readonly resetAll: () => void;
+  readonly resetProject: () => void;
+};
 
-describe("P2.4 F0 parse boundary and defaults", () => {
+function defineParseOwnerContract(ownerCase: ParseOwnerCase): void {
+  describe(ownerCase.label, () => {
+    beforeEach(() => {
+      activeStore = ownerCase.store;
+      activeResetAll = ownerCase.resetAll;
+      activeProjectReset = ownerCase.resetProject;
+      activeOwnerIsExactLeaf = ownerCase.exactLeaf;
+      restoreOwner();
+    });
+
+describe("P2.4 shared parse boundary and defaults", () => {
   it("owns an independent unique 35-data / 41-leaf-action contract", () => {
     expect(PARSE_DATA_KEYS).toHaveLength(35);
     expect(new Set(PARSE_DATA_KEYS).size).toBe(35);
@@ -318,8 +371,25 @@ describe("P2.4 F0 parse boundary and defaults", () => {
     expect(PARSE_TEST_ACTION_KEYS).toEqual(PARSE_ACTION_KEYS);
     expect(PROJECT_PARSE_RETAINED_KEYS).toHaveLength(3);
     expect(RESET_ALL_PARSE_RETAINED_KEYS).toHaveLength(8);
+    expect(PARSE_CONTRACT_TYPES_MATCH).toBe(true);
     const state = useViewerStore.getState();
     for (const action of PARSE_ACTION_KEYS) expect(state[action]).toBeTypeOf("function");
+    if (activeOwnerIsExactLeaf) {
+      expect(Object.entries(state)
+        .filter(([, value]) => typeof value !== "function")
+        .map(([key]) => key)
+        .sort()).toEqual([...PARSE_DATA_KEYS].sort());
+      expect(Object.entries(state)
+        .filter(([, value]) => typeof value === "function")
+        .map(([key]) => key)
+        .sort()).toEqual([...PARSE_ACTION_KEYS, "resetProjectParseState"].sort());
+      expect(state.resetProjectParseState).toBeTypeOf("function");
+    } else {
+      for (const key of PARSE_DATA_KEYS) {
+        expect(Object.prototype.hasOwnProperty.call(state, key), `${key} remains live`).toBe(true);
+      }
+      expect(Object.prototype.hasOwnProperty.call(state, "resetProjectParseState")).toBe(false);
+    }
   });
 
   it("freezes every construction default", () => {
@@ -472,7 +542,7 @@ const SPECIAL_ACTION_KEYS = [
   "resetGuidedParse",
 ] as const satisfies readonly ParseActionKey[];
 
-describe("P2.4 F0 legacy leaf publications", () => {
+describe("P2.4 shared legacy leaf publications", () => {
   it("covers every action once and in the independent ledger order", () => {
     expect(PUBLICATION_CASES.map(({ name }) => name)).toEqual(PARSE_ACTION_KEYS);
     expect([
@@ -495,7 +565,7 @@ describe("P2.4 F0 legacy leaf publications", () => {
   });
 });
 
-describe("P2.4 F0 simple action destinations", () => {
+describe("P2.4 shared simple action destinations", () => {
   it.each(SIMPLE_DESTINATION_CASES)("$name changes exactly $key to its requested destination", ({ key, invoke, expected }) => {
     const before = useViewerStore.getState();
     invoke();
@@ -506,7 +576,7 @@ describe("P2.4 F0 simple action destinations", () => {
   });
 });
 
-describe("P2.4 F0 compound actions and identity", () => {
+describe("P2.4 shared compound actions and identity", () => {
   it("setTableCellStructure retains the caller object and derives visibility in one publication", () => {
     const listener = vi.fn();
     const unsubscribe = useViewerStore.subscribe(listener);
@@ -803,7 +873,7 @@ const RESET_CASES = [
   touched: readonly ParseDataKey[];
 }[];
 
-describe("P2.4 F0 reset matrices", () => {
+describe("P2.4 shared reset matrices", () => {
   it.each(RESET_CASES)("$name reset touches only its exact matrix and allocates reset containers", ({ action, touched }) => {
     useViewerStore.setState(nonDefaultParsePatch());
     const before = useViewerStore.getState();
@@ -865,7 +935,7 @@ describe("P2.4 F0 reset matrices", () => {
     const publications: Array<Pick<ParseState, ParseDataKey>> = [];
     const unsubscribe = useViewerStore.subscribe((state) => publications.push(pickParseData(state)));
 
-    resetAllTools();
+    resetAllParseForIsolatedOwner();
     const after = useViewerStore.getState();
 
     expect(publications).toHaveLength(5);
@@ -926,7 +996,7 @@ describe("P2.4 F0 reset matrices", () => {
     const listener = vi.fn();
     const unsubscribe = useViewerStore.subscribe(listener);
 
-    resetProjectData();
+    resetProjectParseForIsolatedOwner();
     const after = useViewerStore.getState();
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -953,4 +1023,30 @@ describe("P2.4 F0 reset matrices", () => {
     expectParseActionsStable(actionsBefore, after);
     unsubscribe();
   });
+});
+
+  });
+}
+
+defineParseOwnerContract({
+  label: "live viewer parse owner",
+  store: useLegacyViewerStore as unknown as typeof useParseFlowStore,
+  exactLeaf: false,
+  resetAll: resetAllTools,
+  resetProject: resetProjectData,
+});
+
+defineParseOwnerContract({
+  label: "production-dead parseFlowStore candidate",
+  store: useParseFlowStore,
+  exactLeaf: true,
+  resetAll: () => {
+    const owner = useParseFlowStore.getState();
+    owner.resetTableParse();
+    owner.resetKeynoteParse();
+    owner.resetNotesParse();
+    owner.resetSpecParse();
+    owner.resetGuidedParse();
+  },
+  resetProject: () => useParseFlowStore.getState().resetProjectParseState(),
 });
