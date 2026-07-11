@@ -15,6 +15,7 @@ vi.mock("@/lib/auth", async () => {
 import { GET } from "@/app/api/projects/[id]/pages/route";
 import { db } from "@/lib/db";
 import { annotations } from "@/lib/db/schema";
+import { serializePageWindowIntelligence } from "@/server/services/page-window-serialization";
 import {
   asUser,
   createCompany,
@@ -39,6 +40,58 @@ async function seedAnnotation(projectId: number, pageNumber: number, creatorId: 
     minX: 0.1, minY: 0.1, maxX: 0.2, maxY: 0.2,
   });
 }
+
+function s4PageIntelligenceFixture() {
+  return {
+    classifiedRegions: { tables: [{ id: "server-classified" }] },
+    yoloHeatmap: { confidentRegions: [{ id: "server-heatmap" }] },
+    csiSpatialMap: { summary: "server spatial context", zones: [] },
+    autoTableProposals: [{ id: "legacy-proposal" }],
+    ensembleRegions: [{ id: "ensemble-1", category: "door-schedule", tableProbability: 0.94 }],
+    parsedRegions: [{ id: "user-region", type: "schedule", data: { rows: [{ Mark: "D1" }] } }],
+    rejectedTextRegionIds: ["user-rejected-1"],
+    classification: { discipline: "architectural" },
+    unknownFutureKey: { nested: ["must", "survive"] },
+  };
+}
+
+describe("serializePageWindowIntelligence", () => {
+  it("clones without mutation, removes only the four response keys, and preserves runtime shapes", () => {
+    const source = Object.freeze(s4PageIntelligenceFixture());
+    const serialized = serializePageWindowIntelligence(source) as Record<string, unknown>;
+
+    expect(serialized).not.toBe(source);
+    expect(serialized).not.toHaveProperty("classifiedRegions");
+    expect(serialized).not.toHaveProperty("yoloHeatmap");
+    expect(serialized).not.toHaveProperty("csiSpatialMap");
+    expect(serialized).not.toHaveProperty("autoTableProposals");
+    expect(serialized).toMatchObject({
+      ensembleRegions: source.ensembleRegions,
+      parsedRegions: source.parsedRegions,
+      rejectedTextRegionIds: source.rejectedTextRegionIds,
+      classification: source.classification,
+      unknownFutureKey: source.unknownFutureKey,
+    });
+    // Shallow response clone: retained nested JSON stays byte/reference-identical, and the frozen
+    // input still owns every denied field (an in-place delete would throw or fail these assertions).
+    expect(serialized.unknownFutureKey).toBe(source.unknownFutureKey);
+    expect(source).toHaveProperty("classifiedRegions");
+    expect(source).toHaveProperty("yoloHeatmap");
+    expect(source).toHaveProperty("csiSpatialMap");
+    expect(source).toHaveProperty("autoTableProposals");
+    expect(Buffer.byteLength(JSON.stringify(serialized))).toBeLessThan(
+      Buffer.byteLength(JSON.stringify(source)),
+    );
+
+    const arrayValue = [{ classifiedRegions: "nested-array-value-is-not-top-level-trimmed" }];
+    expect(serializePageWindowIntelligence(arrayValue)).toBe(arrayValue);
+    expect(serializePageWindowIntelligence("legacy-scalar")).toBe("legacy-scalar");
+    expect(serializePageWindowIntelligence(true)).toBe(true);
+    for (const falsy of [null, undefined, false, 0, ""]) {
+      expect(serializePageWindowIntelligence(falsy)).toBeNull();
+    }
+  });
+});
 
 describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
   it("returns the window payload shape with per-page jsonb fields", async () => {
@@ -237,6 +290,43 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
       textAnnotations: ta, // truthy → || null keeps it
       pageIntelligence: pi, // truthy → || null keeps it
     });
+  });
+
+  it("S4 trims exactly four top-level PI keys while retaining ensemble/user/unknown and legacy JSON shapes", async () => {
+    const { user, project } = await createWorld();
+    const source = s4PageIntelligenceFixture();
+    const legacyArray = [{ classifiedRegions: "nested value survives because the top-level is an array" }];
+    await createPage(project.id, 1, { pageIntelligence: source as any });
+    await createPage(project.id, 2, { pageIntelligence: legacyArray as any });
+    await createPage(project.id, 3, { pageIntelligence: "legacy-scalar" as any });
+    await createPage(project.id, 4, { pageIntelligence: false as any });
+    asUser(user);
+
+    const res = await GET(windowReq(project.publicId, 1, 4), params({ id: project.publicId }));
+    expect(res.headers.get("Cache-Control")).toBe("private, max-age=300, stale-while-revalidate=600");
+    const { status, body } = await readJson(res);
+    expect(status).toBe(200);
+    const byPage = Object.fromEntries(
+      body.pages.map((page: { pageNumber: number; pageIntelligence: unknown }) => [page.pageNumber, page.pageIntelligence]),
+    );
+
+    expect(byPage[1]).toEqual({
+      ensembleRegions: source.ensembleRegions,
+      parsedRegions: source.parsedRegions,
+      rejectedTextRegionIds: source.rejectedTextRegionIds,
+      classification: source.classification,
+      unknownFutureKey: source.unknownFutureKey,
+    });
+    expect(byPage[1]).not.toHaveProperty("classifiedRegions");
+    expect(byPage[1]).not.toHaveProperty("yoloHeatmap");
+    expect(byPage[1]).not.toHaveProperty("csiSpatialMap");
+    expect(byPage[1]).not.toHaveProperty("autoTableProposals");
+    expect(byPage[2]).toEqual(legacyArray);
+    expect(byPage[3]).toBe("legacy-scalar");
+    expect(byPage[4]).toBeNull();
+    expect(Buffer.byteLength(JSON.stringify(byPage[1]))).toBeLessThan(
+      Buffer.byteLength(JSON.stringify(source)),
+    );
   });
 
   it("annotation output: full 6-field shape, bbox order [minX,minY,maxX,maxY], raw note, data uses ?? null (not || null)", async () => {

@@ -66,6 +66,7 @@ import { downloadFromS3 } from "@/lib/s3";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { logger } from "@/lib/logger";
 import type { CsiCode, TextractPageData, ClientAnnotation } from "@/types";
+import { serializePageWindowIntelligence } from "@/server/services/page-window-serialization";
 
 // ── shared dual-ID resolvers ───────────────────────────────────────────────────────────────
 // [refactor jul8 P1-review PR-C1] resolveByPublicId / resolveByDbId / resolveDual were defined
@@ -250,11 +251,12 @@ export async function getPageTextract(req: Request) {
  *  message]); the two queries run in PARALLEL; the annotation visibility OR() (own + the 3
  *  project-scoped machine sources, NOT another member's hand-drawn); the page query's 7 explicit
  *  cols + orderBy; the annotations query's bare db.select() (all cols) then a 6-field map; the
- *  ||null (falsy) coalesce on the two jsonb page cols vs the ??null (nullish) on data vs the raw
- *  passthrough on note. Sanctioned diffs: A (error-envelope flip), B (leak-drop — legacy had ZERO
+ *  ||null (falsy) normalization on the two jsonb page cols vs the ??null (nullish) on data vs the
+ *  raw passthrough on note. Sanctioned diffs: A (error-envelope flip), B (leak-drop — legacy had ZERO
  *  try/catch, so an unexpected DB error escaped as a raw leaky 500; now the shell's generic INTERNAL
- *  500), C (non-uuid id → clean 400 via resolveByPublicId's zPublicId, was a pg-uuid-cast 500). The
- *  200 body + Cache-Control are byte-identical. */
+ *  500), C (non-uuid id → clean 400 via resolveByPublicId's zPublicId, was a pg-uuid-cast 500), and
+ *  later PW-D9 (four server/legacy-only PI keys omitted from the response). Every other 200 field and
+ *  the Cache-Control contract remain frozen. */
 export async function getPageWindow(req: Request, idParam: string): Promise<Response> {
   const url = new URL(req.url);
   const from = parseInt(url.searchParams.get("from") || "1", 10);
@@ -313,7 +315,8 @@ export async function getPageWindow(req: Request, idParam: string): Promise<Resp
       ),
   ]);
 
-  // Raw NextResponse → Cache-Control survives the shell passthrough. Body byte-identical to legacy.
+  // Raw NextResponse → Cache-Control survives the shell passthrough. PW-D9 changes only the four
+  // response-only PI keys below; every other body field remains frozen.
   const response = NextResponse.json({
     from,
     to,
@@ -324,7 +327,9 @@ export async function getPageWindow(req: Request, idParam: string): Promise<Resp
       keynotes: p.keynotes,
       csiCodes: p.csiCodes,
       textAnnotations: p.textAnnotations || null,
-      pageIntelligence: p.pageIntelligence || null,
+      // [refactor jul11 P2.2⑦ C4 / PW-D9] Wire-only trim. The DB object stays intact for server
+      // consumers; ensemble/user/unknown keys remain available to the viewer.
+      pageIntelligence: serializePageWindowIntelligence(p.pageIntelligence),
     })),
     annotations: rangeAnnotations.map((a) => ({
       id: a.id,
@@ -357,7 +362,8 @@ export async function getPageWindow(req: Request, idParam: string): Promise<Resp
  *  two error paths, messages verbatim), B (leak-drop — legacy's only try/catch were the two
  *  migration-safety swallows, KEPT; an unexpected throw was a raw leaky 500, now the shell's generic
  *  INTERNAL 500), C (non-uuid id → clean 400 via zPublicId, was a pg-uuid-cast 500, gated AFTER the
- *  range check). The 200 body is byte-identical. */
+ *  range check), and later PW-D9 (the same four response-only PI omissions as the authenticated
+ *  twin). Every other 200 field remains frozen. */
 export async function getPageWindowDemo(req: Request, idParam: string) {
   const url = new URL(req.url);
   const from = parseInt(url.searchParams.get("from") || "1", 10);
@@ -464,7 +470,7 @@ export async function getPageWindowDemo(req: Request, idParam: string) {
     );
 
   // PLAIN object — the shell json-envelopes it at 200 with NO extra headers (legacy set no
-  // Cache-Control; pinned by the char test). Body byte-identical to legacy.
+  // Cache-Control; pinned by the char test). PW-D9 changes only the four response-only PI keys.
   return {
     from,
     to,
@@ -475,7 +481,9 @@ export async function getPageWindowDemo(req: Request, idParam: string) {
       keynotes: p.keynotes,
       csiCodes: p.csiCodes,
       textAnnotations: textAnnotationsMap[p.pageNumber] || null,
-      pageIntelligence: pageIntelligenceMap[p.pageNumber] || null,
+      // Same response-only serializer as the authenticated twin; do not otherwise collapse these
+      // services (their auth, query cadence, visibility, and cache contracts intentionally differ).
+      pageIntelligence: serializePageWindowIntelligence(pageIntelligenceMap[p.pageNumber]),
     })),
     annotations: rangeAnnotations.map((a) => ({
       id: a.id,

@@ -30,6 +30,7 @@ vi.mock("@/lib/auth", async () => {
 import { GET } from "@/app/api/demo/projects/[id]/pages/route";
 import { db } from "@/lib/db";
 import { annotations } from "@/lib/db/schema";
+import { serializePageWindowIntelligence } from "@/server/services/page-window-serialization";
 import {
   asUser,
   createPage,
@@ -66,6 +67,20 @@ async function seedAnnotation(
     })
     .returning();
   return row;
+}
+
+function s4PageIntelligenceFixture() {
+  return {
+    classifiedRegions: { tables: [{ id: "server-classified" }] },
+    yoloHeatmap: { confidentRegions: [{ id: "server-heatmap" }] },
+    csiSpatialMap: { summary: "server spatial context", zones: [] },
+    autoTableProposals: [{ id: "legacy-proposal" }],
+    ensembleRegions: [{ id: "ensemble-1", category: "door-schedule", tableProbability: 0.94 }],
+    parsedRegions: [{ id: "user-region", type: "schedule", data: { rows: [{ Mark: "D1" }] } }],
+    rejectedTextRegionIds: ["user-rejected-1"],
+    classification: { discipline: "architectural" },
+    unknownFutureKey: { nested: ["must", "survive"] },
+  };
 }
 
 describe.skipIf(!dbUp)("GET /api/demo/projects/[id]/pages", () => {
@@ -130,6 +145,52 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]/pages", () => {
     expect(status).toBe(200);
     const names = body.annotations.map((a: { name: string }) => a.name).sort();
     expect(names).toEqual(["null-creator", "shape", "symbol", "yolo-owned"]); // no "hand-drawn"
+  });
+
+  it("S4 trims exactly four top-level PI keys while retaining ensemble/user/unknown and legacy JSON shapes", async () => {
+    const { project } = await createWorld({ isDemo: true });
+    const source = s4PageIntelligenceFixture();
+    const legacyArray = [{ yoloHeatmap: "nested value survives because the top-level is an array" }];
+    await createPage(project.id, 1, { pageIntelligence: source as any });
+    await createPage(project.id, 2, { pageIntelligence: legacyArray as any });
+    await createPage(project.id, 3, { pageIntelligence: "legacy-scalar" as any });
+    await createPage(project.id, 4, { pageIntelligence: false as any });
+    signedOut();
+
+    const res = await win(project.publicId, "?from=1&to=4");
+    expect(res.headers.get("cache-control")).toBeNull();
+    const { status, body } = await readJson(res);
+    expect(status).toBe(200);
+    const byPage = Object.fromEntries(
+      body.pages.map((page: { pageNumber: number; pageIntelligence: unknown }) => [page.pageNumber, page.pageIntelligence]),
+    );
+
+    expect(byPage[1]).toEqual({
+      ensembleRegions: source.ensembleRegions,
+      parsedRegions: source.parsedRegions,
+      rejectedTextRegionIds: source.rejectedTextRegionIds,
+      classification: source.classification,
+      unknownFutureKey: source.unknownFutureKey,
+    });
+    expect(byPage[1]).not.toHaveProperty("classifiedRegions");
+    expect(byPage[1]).not.toHaveProperty("yoloHeatmap");
+    expect(byPage[1]).not.toHaveProperty("csiSpatialMap");
+    expect(byPage[1]).not.toHaveProperty("autoTableProposals");
+    expect(byPage[2]).toEqual(legacyArray);
+    expect(byPage[3]).toBe("legacy-scalar");
+    expect(byPage[4]).toBeNull();
+    expect(Buffer.byteLength(JSON.stringify(byPage[1]))).toBeLessThan(
+      Buffer.byteLength(JSON.stringify(source)),
+    );
+
+    // The helper is pure even when a caller hands it a frozen DB-shaped object. This protects the
+    // server-only fields for later pipeline/context consumers while the demo wire value is slimmed.
+    const frozen = Object.freeze(s4PageIntelligenceFixture());
+    const direct = serializePageWindowIntelligence(frozen) as Record<string, unknown>;
+    expect(direct).not.toBe(frozen);
+    expect(frozen).toHaveProperty("classifiedRegions");
+    expect(direct).not.toHaveProperty("classifiedRegions");
+    expect(direct.ensembleRegions).toBe(frozen.ensembleRegions);
   });
 
   it("range 400 fires BEFORE the project lookup, message verbatim (NaN + to<from + >50 span)", async () => {
