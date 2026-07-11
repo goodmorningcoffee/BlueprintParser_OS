@@ -15,6 +15,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ClientAnnotation } from "@/types";
 import type { ToolTagScanResults } from "@/stores/toolStore";
 import { useToolStore } from "@/stores/toolStore";
+import { useViewerStore } from "@/stores/viewerStore";
 import { EMPTY_ACTIVE_PAGE_WINDOW } from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
 import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
@@ -203,6 +204,63 @@ function renderCanvas(): HTMLCanvasElement {
 }
 
 describe("AnnotationOverlay scanClass request ownership", () => {
+  it("publishes select-region completion as drawing close -> region -> idle step -> tool move", () => {
+    act(() => {
+      useToolStore.setState({ yoloTagPickingMode: false, mode: "pointer" });
+    });
+    const canvas = renderCanvas();
+    // AnnotationOverlay's page-change effect intentionally tears down any parse flow present at
+    // mount. Start this interaction after mount, exactly as the panel command does in production.
+    act(() => {
+      useViewerStore.setState({
+        tableParseStep: "select-region",
+        tableParseRegion: null,
+        _drawing: true,
+        _drawStart: { x: 10, y: 20 },
+        _drawEnd: { x: 70, y: 80 },
+      });
+    });
+    expect(useViewerStore.getState().tableParseStep).toBe("select-region");
+    const trace: Array<
+      | {
+          owner: "viewer";
+          drawing: boolean;
+          region: [number, number, number, number] | null;
+          step: string;
+        }
+      | { owner: "tool"; mode: string }
+    > = [];
+    const unsubscribeViewer = useViewerStore.subscribe((state) => trace.push({
+      owner: "viewer",
+      drawing: state._drawing,
+      region: state.tableParseRegion,
+      step: state.tableParseStep,
+    }));
+    const unsubscribeTool = useToolStore.subscribe((state) => trace.push({
+      owner: "tool",
+      mode: state.mode,
+    }));
+
+    fireEvent.mouseUp(canvas);
+
+    expect(trace).toEqual([
+      { owner: "viewer", drawing: false, region: null, step: "select-region" },
+      {
+        owner: "viewer",
+        drawing: false,
+        region: [0.1, 0.2, 0.7, 0.8],
+        step: "select-region",
+      },
+      { owner: "viewer", drawing: false, region: [0.1, 0.2, 0.7, 0.8], step: "idle" },
+      { owner: "tool", mode: "move" },
+    ]);
+    expect(useViewerStore.getState().tableParseRegion).toEqual([0.1, 0.2, 0.7, 0.8]);
+    expect(useViewerStore.getState().tableParseStep).toBe("idle");
+    expect(useToolStore.getState().mode).toBe("move");
+    unsubscribeViewer();
+    unsubscribeTool();
+  });
+
   it("publishes the exact successful scan for the active project", async () => {
     const canvas = renderCanvas();
     clickAt(canvas, 20, 20);

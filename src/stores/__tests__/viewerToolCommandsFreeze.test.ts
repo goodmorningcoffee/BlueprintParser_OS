@@ -40,21 +40,25 @@ const PARSE_CASES = [
     label: "table",
     key: "tableParseStep",
     action: "setTableParseStep",
+    targets: ["select-region", "define-column", "define-row", "review"],
   },
   {
     label: "keynote",
     key: "keynoteParseStep",
     action: "setKeynoteParseStep",
+    targets: ["select-region", "define-column", "define-row", "review"],
   },
   {
     label: "notes",
     key: "notesParseStep",
     action: "setNotesParseStep",
+    targets: ["select-region", "define-column", "define-row", "review"],
   },
   {
     label: "spec",
     key: "specParseStep",
     action: "setSpecParseStep",
+    targets: ["select-region", "define-sections", "review"],
   },
 ] as const;
 
@@ -225,6 +229,65 @@ beforeEach(() => {
 
 describe("P2.3 T2 parse-step cross-boundary characterization", () => {
   for (const parseCase of PARSE_CASES) {
+    it(`${parseCase.label}: every non-idle target uses the same tool-first entry boundary`, () => {
+      for (const target of parseCase.targets) {
+        restoreViewerStore();
+        seedCompetingTools();
+        useViewerStore.setState({ [parseCase.key]: "idle" } as Partial<ViewerState>);
+        const beforeTool = useToolStore.getState();
+        const beforeViewer = useViewerStore.getState();
+        const trace: string[] = [];
+        const unsubscribeTool = useToolStore.subscribe(() => trace.push("tool"));
+        const unsubscribeViewer = useViewerStore.subscribe(() => trace.push("viewer"));
+
+        invokeParseStep(parseCase.action, target);
+
+        expect(trace, `${parseCase.label} -> ${target}`).toEqual(["tool", "viewer"]);
+        const afterTool = useToolStore.getState();
+        const afterViewer = useViewerStore.getState();
+        expect(changedValueKeys(beforeTool, afterTool)).toEqual([...PARSE_ENTRY_TOOL_KEYS].sort());
+        expect(changedValueKeys(beforeViewer, afterViewer)).toEqual([parseCase.key]);
+        expect(afterViewer[parseCase.key]).toBe(target);
+        expect(afterTool).toMatchObject({
+          mode: "move",
+          bucketFillActive: false,
+          bucketFillPreview: null,
+          bucketFillLoading: false,
+          bucketFillBarrierMode: false,
+          splitAreaActive: false,
+          symbolSearchActive: false,
+        });
+        unsubscribeTool();
+        unsubscribeViewer();
+      }
+    });
+
+    it(`${parseCase.label}: idle entry publishes tool first even when all seven tool values already match`, () => {
+      useToolStore.setState({
+        mode: "move",
+        bucketFillActive: false,
+        bucketFillPreview: null,
+        bucketFillLoading: false,
+        bucketFillBarrierMode: false,
+        splitAreaActive: false,
+        symbolSearchActive: false,
+      });
+      useViewerStore.setState({ [parseCase.key]: "idle" } as Partial<ViewerState>);
+      const beforeTool = useToolStore.getState();
+      const beforeViewer = useViewerStore.getState();
+      const trace: string[] = [];
+      const unsubscribeTool = useToolStore.subscribe(() => trace.push("tool"));
+      const unsubscribeViewer = useViewerStore.subscribe(() => trace.push("viewer"));
+
+      invokeParseStep(parseCase.action, parseCase.targets[0]);
+
+      expect(trace).toEqual(["tool", "viewer"]);
+      expect(changedValueKeys(beforeTool, useToolStore.getState())).toEqual([]);
+      expect(changedValueKeys(beforeViewer, useViewerStore.getState())).toEqual([parseCase.key]);
+      unsubscribeTool();
+      unsubscribeViewer();
+    });
+
     it(`${parseCase.label}: idle -> active publishes tool first, then the residual parse owner`, () => {
       const retained = seedCompetingTools();
       useViewerStore.setState({ [parseCase.key]: "idle" } as Partial<ViewerState>);
@@ -305,6 +368,12 @@ describe("P2.3 T2 parse-step cross-boundary characterization", () => {
       });
       expect(after.polygonVertices).toBe(retained.polygonVertices);
       expect(after.bucketFillBarriers).toBe(retained.bucketFillBarriers);
+
+      const beforeRepeatedIdle = useViewerStore.getState();
+      invokeParseStep(parseCase.action, "idle");
+      expect(viewerListener).toHaveBeenCalledTimes(4);
+      expect(toolListener).not.toHaveBeenCalled();
+      expect(changedValueKeys(beforeRepeatedIdle, useViewerStore.getState())).toEqual([]);
       unsubscribeViewer();
       unsubscribeTool();
     });
@@ -579,6 +648,65 @@ describe("P2.3 T2 resetAllTools characterization", () => {
 
 describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
   const source = parseSource(ANNOTATION_OVERLAY);
+
+  it("pins all four select-region completion branches as region -> idle step -> raw tool move", () => {
+    const declarations = descendants(
+      source,
+      (node): node is ts.VariableDeclaration =>
+        ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "handleMouseUp",
+    );
+    expect(declarations).toHaveLength(1);
+    const initializer = declarations[0].initializer;
+    if (!initializer || !ts.isCallExpression(initializer)) throw new Error("Expected handleMouseUp useCallback");
+    const callback = initializer.arguments[0];
+    if (!callback || !ts.isArrowFunction(callback) || !ts.isBlock(callback.body)) {
+      throw new Error("Expected block-bodied handleMouseUp callback");
+    }
+    const branch = (condition: string) => {
+      const matches = descendants(callback.body, ts.isIfStatement)
+        .filter((statement) => compact(statement.expression, source) === condition);
+      expect(matches, condition).toHaveLength(1);
+      const body = matches[0].thenStatement;
+      if (!ts.isBlock(body)) throw new Error(`Expected block for ${condition}`);
+      return body.statements.flatMap((statement) => {
+        if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) return [];
+        return [{
+          callee: compact(statement.expression.expression, source),
+          arguments: statement.expression.arguments.map((argument) => compact(argument, source)),
+        }];
+      });
+    };
+
+    expect(branch('tableParseStep==="select-region"')).toEqual([
+      { callee: "setTableParseRegion", arguments: ["[minX,minY,maxX,maxY]"] },
+      { callee: "setTableParseStep", arguments: ['"idle"'] },
+      { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
+    ]);
+    expect(branch('keynoteParseStep==="select-region"')).toEqual([
+      {
+        callee: "useViewerStore.getState().setKeynoteParseRegion",
+        arguments: ["[minX,minY,maxX,maxY]"],
+      },
+      { callee: "setKeynoteParseStep", arguments: ['"idle"'] },
+      { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
+    ]);
+    expect(branch('notesStep==="select-region"')).toEqual([
+      {
+        callee: "useViewerStore.getState().setNotesParseRegion",
+        arguments: ["[minX,minY,maxX,maxY]"],
+      },
+      { callee: "setNotesParseStep", arguments: ['"idle"'] },
+      { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
+    ]);
+    expect(branch('specStep==="select-region"')).toEqual([
+      {
+        callee: "useViewerStore.getState().setSpecParseRegion",
+        arguments: ["[minX,minY,maxX,maxY]"],
+      },
+      { callee: "setSpecParseStep", arguments: ['"idle"'] },
+      { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
+    ]);
+  });
 
   it("pins the Escape priority, live/captured split, and exact branch action order", () => {
     const handler = findNamedFunction(source, "handleEscape");

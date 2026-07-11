@@ -1,7 +1,8 @@
 // [refactor jul11 P2.3 S0] One test-side seam for mixed viewer/session setup.
 //
-// The helper accepts one logical test setup patch, but publishes the five ownership partitions to
-// sessionStore, uiStore, viewerCoreStore, toolStore, then the residual viewer store. This keeps tests
+// The helper accepts one logical test setup patch and partitions session, UI, core, tool, parse,
+// then residual viewer state. During P2.4 F0 parse + residual are coalesced into their current one
+// physical viewerStore publication; S2 makes the logical boundary physical. This keeps tests
 // explicit about production ownership without repeating routing boilerplate. CSI bootstrap data is
 // intentionally absent because its residual graph has a dedicated Query facade.
 
@@ -164,12 +165,111 @@ export const TOOL_TEST_STATE_KEYS = [
 
 export type ToolTestStateKey = (typeof TOOL_TEST_STATE_KEYS)[number];
 export type ToolStoreTestPatch = Partial<Pick<ToolStoreTestState, ToolTestStateKey>>;
-export type RemainingViewerStoreTestPatch = Partial<ViewerStoreTestState>;
+
+// [refactor jul11 P2.4 F0] Exact logical parse-data ledger. Parse still physically lives in
+// viewerStore during F0, but partitioning it now gives mixed test setup the final deterministic
+// session -> UI -> core -> tool -> parse -> residual order. S2 changes only this partition's
+// physical target to parseFlowStore; test call sites and the 35-key contract remain fixed.
+export const PARSE_TEST_STATE_KEYS = [
+  "tableParseStep",
+  "tableParseRegion",
+  "tableParsedGrid",
+  "tableParseMeta",
+  "tableCellStructure",
+  "showTableCellStructure",
+  "tableParseColumnBBs",
+  "tableParseColumnNames",
+  "tableParseRowBBs",
+  "tableParseTab",
+  "tableParseOptions",
+  "keynoteParseTab",
+  "keynoteParseStep",
+  "keynoteParseRegion",
+  "keynoteColumnBBs",
+  "keynoteRowBBs",
+  "keynoteYoloClass",
+  "parsedKeynoteData",
+  "notesParseStep",
+  "notesParseRegion",
+  "guidedNotesRows",
+  "guidedNotesCols",
+  "notesFastManualActive",
+  "notesFastManualGrid",
+  "parseDraftRegion",
+  "specParseStep",
+  "specParseRegion",
+  "guidedSpecSectionBBs",
+  "paragraphOverlayActive",
+  "paragraphBatch",
+  "paragraphClipboard",
+  "guidedParseActive",
+  "guidedParseRegion",
+  "guidedParseRows",
+  "guidedParseCols",
+] as const satisfies readonly (keyof ViewerStoreTestState)[];
+
+export type ParseTestStateKey = (typeof PARSE_TEST_STATE_KEYS)[number];
+
+// Action overrides are uncommon, but they must never fall through to the residual viewer
+// partition. Keeping the action ledger independent also makes a stale helper override fail at the
+// same ownership seam as ordinary parse data during S2.
+export const PARSE_TEST_ACTION_KEYS = [
+  "setTableParseRegion",
+  "setTableParsedGrid",
+  "setTableParseMeta",
+  "setTableCellStructure",
+  "toggleCellHighlight",
+  "setShowTableCellStructure",
+  "addTableParseColumnBB",
+  "setTableParseColumnNames",
+  "addTableParseRowBB",
+  "setTableParseRowBBs",
+  "resetTableParse",
+  "setTableParseTab",
+  "setTableParseOptions",
+  "setKeynoteParseTab",
+  "setKeynoteParseRegion",
+  "addKeynoteColumnBB",
+  "addKeynoteRowBB",
+  "setKeynoteYoloClass",
+  "setParsedKeynoteData",
+  "addParsedKeynote",
+  "resetKeynoteParse",
+  "setNotesParseRegion",
+  "addGuidedNotesRow",
+  "addGuidedNotesCol",
+  "resetNotesParse",
+  "setNotesFastManualActive",
+  "setNotesFastManualGrid",
+  "setParseDraftRegion",
+  "setSpecParseRegion",
+  "addGuidedSpecSectionBB",
+  "resetSpecParse",
+  "setParagraphOverlayActive",
+  "setParagraphBatch",
+  "upsertPendingParagraph",
+  "removePendingParagraph",
+  "setParagraphClipboard",
+  "setGuidedParseActive",
+  "setGuidedParseRegion",
+  "setGuidedParseRows",
+  "setGuidedParseCols",
+  "resetGuidedParse",
+] as const satisfies readonly (keyof ViewerStoreTestState)[];
+
+export type ParseTestActionKey = (typeof PARSE_TEST_ACTION_KEYS)[number];
+export type ParseStoreTestPatch = Partial<
+  Pick<ViewerStoreTestState, ParseTestStateKey | ParseTestActionKey>
+>;
+export type RemainingViewerStoreTestPatch = Partial<
+  Omit<ViewerStoreTestState, ParseTestStateKey | ParseTestActionKey>
+>;
 export type ViewerStoreTestPatch = RemainingViewerStoreTestPatch &
   SessionStoreTestPatch &
   UiStoreTestPatch &
   ViewerCoreStoreTestPatch &
-  ToolStoreTestPatch;
+  ToolStoreTestPatch &
+  ParseStoreTestPatch;
 
 const SESSION_TEST_STATE_KEY_SET = new Set<string>(
   SESSION_TEST_STATE_KEYS,
@@ -177,18 +277,24 @@ const SESSION_TEST_STATE_KEY_SET = new Set<string>(
 const UI_TEST_STATE_KEY_SET = new Set<string>(UI_TEST_STATE_KEYS);
 const CORE_TEST_STATE_KEY_SET = new Set<string>(CORE_TEST_STATE_KEYS);
 const TOOL_TEST_STATE_KEY_SET = new Set<string>(TOOL_TEST_STATE_KEYS);
+const PARSE_TEST_KEY_SET = new Set<string>([
+  ...PARSE_TEST_STATE_KEYS,
+  ...PARSE_TEST_ACTION_KEYS,
+]);
 
 export function partitionViewerStoreTestState(patch: ViewerStoreTestPatch): {
   session: SessionStoreTestPatch;
   ui: UiStoreTestPatch;
   core: ViewerCoreStoreTestPatch;
   tool: ToolStoreTestPatch;
+  parse: ParseStoreTestPatch;
   viewer: RemainingViewerStoreTestPatch;
 } {
   const sessionEntries: [string, unknown][] = [];
   const uiEntries: [string, unknown][] = [];
   const coreEntries: [string, unknown][] = [];
   const toolEntries: [string, unknown][] = [];
+  const parseEntries: [string, unknown][] = [];
   const viewerEntries: [string, unknown][] = [];
 
   for (const [key, value] of Object.entries(patch)) {
@@ -200,7 +306,9 @@ export function partitionViewerStoreTestState(patch: ViewerStoreTestPatch): {
           ? coreEntries
           : TOOL_TEST_STATE_KEY_SET.has(key)
             ? toolEntries
-            : viewerEntries;
+            : PARSE_TEST_KEY_SET.has(key)
+              ? parseEntries
+              : viewerEntries;
     target.push([key, value]);
   }
 
@@ -209,18 +317,23 @@ export function partitionViewerStoreTestState(patch: ViewerStoreTestPatch): {
     ui: Object.fromEntries(uiEntries) as UiStoreTestPatch,
     core: Object.fromEntries(coreEntries) as ViewerCoreStoreTestPatch,
     tool: Object.fromEntries(toolEntries) as ToolStoreTestPatch,
+    parse: Object.fromEntries(parseEntries) as ParseStoreTestPatch,
     viewer: Object.fromEntries(viewerEntries) as RemainingViewerStoreTestPatch,
   };
 }
 
 export function setViewerStoreStateForTest(patch: ViewerStoreTestPatch): void {
-  const { session, ui, core, tool, viewer } = partitionViewerStoreTestState(patch);
+  const { session, ui, core, tool, parse, viewer } = partitionViewerStoreTestState(patch);
 
-  // Identity/policy must be visible before presentation, geometry, and tool state. Empty
-  // partitions are skipped so a one-owner setup remains exactly one publication.
+  // Identity/policy must be visible before presentation, geometry, tool, parse, and residual state.
+  // Empty partitions are skipped so a one-owner setup remains exactly one publication.
   if (Object.keys(session).length > 0) useSessionStore.setState(session);
   if (Object.keys(ui).length > 0) useUiStore.setState(ui);
   if (Object.keys(core).length > 0) useViewerCoreStore.setState(core);
   if (Object.keys(tool).length > 0) useToolStore.setState(tool);
-  if (Object.keys(viewer).length > 0) useViewerStore.setState(viewer);
+  // F0's logical parse and residual partitions still share one physical owner. Coalesce them to
+  // preserve the legacy one-publication setup contract; S2 replaces this line with parse-owner
+  // then residual-viewer publications without changing the partition or any caller.
+  const currentViewerPatch = { ...parse, ...viewer };
+  if (Object.keys(currentViewerPatch).length > 0) useViewerStore.setState(currentViewerPatch);
 }

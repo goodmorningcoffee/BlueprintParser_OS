@@ -218,6 +218,7 @@ describe("P2.3 test state partition seam", () => {
       ui: {},
       core: { pageNumber: 6 },
       tool: {},
+      parse: {},
       viewer: {},
     });
   });

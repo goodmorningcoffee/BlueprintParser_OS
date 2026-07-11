@@ -298,7 +298,7 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     });
   });
 
-  it("routes exact UI/core/tool seams session -> UI -> core -> tool -> viewer and skips empty owners", () => {
+  it("routes exact seams through the logical parse partition and skips empty owners", () => {
     expect(UI_TEST_STATE_KEYS).toEqual(UI_FIELDS);
     expect(CORE_TEST_STATE_KEYS).toEqual([
       "pageNumber",
@@ -383,6 +383,7 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       searchQuery: "needle",
       pageNumber: 7,
       ...toolPatch,
+      tableParseStep: "review" as const,
       allTrades: ["Concrete"],
     };
     const partitions = partitionViewerStoreTestState(mixedPatch);
@@ -391,6 +392,7 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       ui: { searchQuery: "needle" },
       core: { pageNumber: 7 },
       tool: toolPatch,
+      parse: { tableParseStep: "review" },
       viewer: { allTrades: ["Concrete"] },
     });
 
@@ -402,7 +404,13 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     const unsubscribeViewer = useResidualViewerStore.subscribe(() => publications.push("viewer"));
 
     setViewerStoreStateForTest(mixedPatch);
+    // During F0 parse + residual still share viewerStore, so the helper coalesces them into this
+    // one final publication. S2 splits that final position into parse then residual viewer.
     expect(publications).toEqual(["session", "ui", "core", "tool", "viewer"]);
+    expect(useResidualViewerStore.getState()).toMatchObject({
+      tableParseStep: "review",
+      allTrades: ["Concrete"],
+    });
 
     publications.length = 0;
     setViewerStoreStateForTest({ searchQuery: "ui-only" });
