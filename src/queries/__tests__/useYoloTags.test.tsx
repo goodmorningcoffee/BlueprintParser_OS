@@ -339,6 +339,23 @@ describe("yoloTags debounced save coordinator", () => {
 });
 
 describe("yoloTags observer/action topology and navigation", () => {
+  it("bulk action reports whether its captured project/demo/epoch identity accepted the write", () => {
+    seedYoloTagsFromBootstrap(qc, "project-A", { yoloTags: [] });
+    const actions = renderHook(() => useYoloTagActions(), { wrapper });
+
+    // Empty input is still a successfully handled current-project mapping (zero matches).
+    expect(actions.result.current.addYoloTagsBulk([])).toBe(true);
+
+    const staleAcrossProject = actions.result.current.addYoloTagsBulk;
+    act(() => setViewerStoreStateForTest({ publicId: "project-B" }));
+    expect(staleAcrossProject([])).toBe(false);
+
+    act(() => setViewerStoreStateForTest({ publicId: "project-A" }));
+    const staleAcrossReopen = actions.result.current.addYoloTagsBulk;
+    seedYoloTagsFromBootstrap(qc, "project-A", { yoloTags: [] });
+    expect(staleAcrossReopen([])).toBe(false);
+  });
+
   it("action-only hook creates no Query observer and refuses late A adoption after B becomes active", () => {
     seedYoloTagsFromBootstrap(qc, "project-A", { yoloTags: [] });
     const { result } = renderHook(() => useYoloTagActions(), { wrapper });

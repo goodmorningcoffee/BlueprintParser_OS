@@ -104,8 +104,13 @@ export default function TableParsePanel() {
   const [drawingNumberPrefixes, setDrawingNumberPrefixes] = useState<string[]>([]);
   const [lastDropCounts, setLastDropCounts] = useState<Record<string, number> | null>(null);
   const mapTagsAbortRef = useRef<AbortController | null>(null);
-  // Cleanup any in-flight fetch if the panel unmounts mid-request.
-  useEffect(() => () => { mapTagsAbortRef.current?.abort(); }, []);
+  // Invalidate before abort: an already-queued/abort-ignoring response must not publish after the
+  // panel unmounts. Controller identity is also the latest-run token for local completion state.
+  useEffect(() => () => {
+    const controller = mapTagsAbortRef.current;
+    mapTagsAbortRef.current = null;
+    controller?.abort();
+  }, []);
   // Derive available drawing-number prefixes from loaded pages. Leading
   // non-digit chars up to the first digit, uppercased. `""` represents
   // pages without a drawingNumber (or ones starting with a digit) —
@@ -390,12 +395,18 @@ export default function TableParsePanel() {
             strictness: mapTagsStrictness,
           },
         }));
-      addYoloTagsBulk(newTags);
+      // Cache adoption already owns project/demo/bootstrap-epoch validation. Couple the local
+      // "Mapped N" state to that decision, and require this to remain the latest mounted run on
+      // both sides of the synchronous cache action.
+      if (mapTagsAbortRef.current !== controller || controller.signal.aborted) return;
+      const applied = addYoloTagsBulk(newTags);
+      if (!applied || mapTagsAbortRef.current !== controller || controller.signal.aborted) return;
       setTagMappingCount(newTags.length);
       setLastDropCounts(dropCounts);
       setTagMappingDone(true);
     } catch (e) {
       if ((e as Error).name === "AbortError") return;
+      if (mapTagsAbortRef.current !== controller) return;
       console.error("[TableParsePanel] Map Tags error", e);
     }
   }, [tableParsedGrid, tagYoloClass, pageNumber, publicId,

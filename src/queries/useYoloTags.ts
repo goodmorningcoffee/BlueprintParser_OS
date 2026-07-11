@@ -449,8 +449,10 @@ export function useYoloTagActions() {
     [qc, publicId, isDemo, stillActive],
   );
   const addYoloTagsBulk = useCallback(
-    (tags: YoloTag[]) => {
-      if (stillActive()) addYoloTagsBulkToCache(qc, publicId, isDemo, tags);
+    (tags: YoloTag[]): boolean => {
+      if (!stillActive()) return false;
+      addYoloTagsBulkToCache(qc, publicId, isDemo, tags);
+      return true;
     },
     [qc, publicId, isDemo, stillActive],
   );
