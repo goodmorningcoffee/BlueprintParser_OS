@@ -54,9 +54,9 @@ export const queryKeys = {
   },
   // ⑦ pagesWindow (replaces useChunkLoader internals — SAME ±7/buffer/debounce)
   pagesWindow: {
-    window: (publicId: string, center: number) =>
-      ["project", publicId, "pagesWindow", center] as const,
     all: (publicId: string) => ["project", publicId, "pagesWindow"] as const,
+    active: (publicId: string) =>
+      ["project", publicId, "pagesWindow", "active"] as const,
   },
   // ⑧ textract per-page (LRU cap kills the unbounded growth)
   textract: {

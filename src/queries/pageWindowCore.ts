@@ -85,13 +85,20 @@ export function normalizePageWindowPages(
   const pageIntelligence: Record<number, PageIntelligence> = {};
 
   for (const page of pages) {
-    if (page.keynotes) keynotes[page.pageNumber] = page.keynotes;
-    if (page.csiCodes) csiCodes[page.pageNumber] = page.csiCodes;
-    if (page.textAnnotations) {
-      textAnnotations[page.pageNumber] = page.textAnnotations.annotations || [];
+    // Snapshot each sparse wire field exactly once. Besides avoiding redundant proxy/getter work,
+    // this makes one normalization pass genuinely one deterministic read of the response row.
+    const pageNumber = page.pageNumber;
+    const pageKeynotes = page.keynotes;
+    const pageCsiCodes = page.csiCodes;
+    const pageTextAnnotations = page.textAnnotations;
+    const intelligence = page.pageIntelligence;
+    if (pageKeynotes) keynotes[pageNumber] = pageKeynotes;
+    if (pageCsiCodes) csiCodes[pageNumber] = pageCsiCodes;
+    if (pageTextAnnotations) {
+      textAnnotations[pageNumber] = pageTextAnnotations.annotations || [];
     }
-    if (page.pageIntelligence) {
-      pageIntelligence[page.pageNumber] = page.pageIntelligence;
+    if (intelligence) {
+      pageIntelligence[pageNumber] = intelligence;
     }
   }
 
@@ -169,7 +176,27 @@ export function mergeNavigationPageWindow(
   actualFrom: number,
   actualTo: number,
 ): ActivePageWindow {
-  const incoming = normalizePageWindowPages(response.pages);
+  return mergeNormalizedNavigationPageWindow(
+    oldWindow,
+    normalizePageWindowPages(response.pages),
+    actualFrom,
+    actualTo,
+  );
+}
+
+/**
+ * Merge an already-normalized navigation payload.
+ *
+ * Paired cache publication uses this entry after completing the one wire walk before its first
+ * annotation write. Keeping this pure layer separate avoids a second getter/proxy walk inside the
+ * active-cache updater while the response-shaped convenience entry above remains available.
+ */
+export function mergeNormalizedNavigationPageWindow(
+  oldWindow: ActivePageWindow,
+  incoming: PageWindowMaps,
+  actualFrom: number,
+  actualTo: number,
+): ActivePageWindow {
   const evictFrom = actualFrom - PAGE_WINDOW_RETENTION_BUFFER;
   const evictTo = actualTo + PAGE_WINDOW_RETENTION_BUFFER;
 

@@ -6,6 +6,7 @@ import {
   deriveBootstrapLoadedRange,
   EMPTY_ACTIVE_PAGE_WINDOW,
   mergeNavigationPageWindow,
+  mergeNormalizedNavigationPageWindow,
   normalizePageWindowPages,
   PAGE_WINDOW_RETENTION_BUFFER,
   type ActivePageWindow,
@@ -184,6 +185,22 @@ describe("pageWindowCore — eager bootstrap range", () => {
 });
 
 describe("pageWindowCore — response-time navigation merge", () => {
+  it("accepts pre-normalized maps without needing the wire response again", () => {
+    const incoming = normalizePageWindowPages([
+      page(20, { keynotes: [keynote("normalized")] }),
+    ]);
+
+    const next = mergeNormalizedNavigationPageWindow(
+      EMPTY_ACTIVE_PAGE_WINDOW,
+      incoming,
+      13,
+      27,
+    );
+
+    expect(next.loadedRange).toEqual({ from: 13, to: 27 });
+    expect(next.keynotes[20]?.[0].text).toBe("normalized");
+  });
+
   it("retains the inclusive middle ±5 boundary and evicts one page beyond it", () => {
     expect(PAGE_WINDOW_RETENTION_BUFFER).toBe(5);
     const keepLow = [keynote("keep-low")];
