@@ -50,7 +50,26 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
       { method: "POST", path: "/api/projects/[id]/classify-regions", auth: "session", desc: "Re-run spatial classification using current YOLO + OCR data." },
       { method: "GET", path: "/api/projects/[id]/thumbnail/[page]", auth: "session", desc: "Pre-signed redirect to the page thumbnail on CloudFront." },
       { method: "POST", path: "/api/pages/intelligence", auth: "session", desc: "Re-run analyzePageIntelligence on a specific page." },
-      { method: "POST", path: "/api/pages/textract", auth: "session", desc: "Re-run Textract on a specific page." },
+      {
+        method: "GET",
+        path: "/api/pages/textract",
+        auth: "session",
+        desc: "Lazy-load cached Textract OCR for one page. Public demo reads are also allowed.",
+        params: [
+          { name: "publicId", type: "string", required: true, desc: "Public project id." },
+          { name: "pageNumber", type: "number", required: true, desc: "1-indexed page." },
+        ],
+      },
+      {
+        method: "POST",
+        path: "/api/pages/textract-rerun",
+        auth: "session",
+        desc: "Force a fresh Textract analysis for one page and replace its stored OCR; demo projects are read-only.",
+        params: [
+          { name: "publicId", type: "string", required: true, desc: "Public project id." },
+          { name: "pageNumber", type: "number", required: true, desc: "1-indexed page." },
+        ],
+      },
       { method: "POST", path: "/api/pages/update", auth: "session", desc: "Bulk update page names, drawing numbers, series." },
     ],
   },

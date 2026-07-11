@@ -2,9 +2,9 @@
  *  collections now sit behind project-keyed query facades. Keeping both families visible here
  *  prevents future features from reaching around their domain's public API. */
 const SLICES = [
-  { name: "useNavigation",           line: 1601, purpose: "pageNumber, numPages, mode" },
-  { name: "usePanels",               line: 1612, purpose: "12 showX flags + toggles" },
-  { name: "useSelection",            line: 1652, purpose: "multi-select ids + helpers" },
+  { name: "useNavigation",           line: 1590, purpose: "pageNumber, numPages, mode" },
+  { name: "usePanels",               line: 1601, purpose: "12 showX flags + toggles" },
+  { name: "useSelection",            line: 1641, purpose: "multi-select ids + helpers" },
   // [refactor jul10 P2.2⑤] row rewritten: the store selector is deleted (its `line: 1737` was
   // already stale pre-migration); the facade lives in src/queries/useAnnotationGroups.ts
   // (groups+memberships in the query cache, Set indexes derived in-hook; selection stays zustand).
@@ -12,19 +12,19 @@ const SLICES = [
   // [refactor jul11 P2.2⑥] Flat chunk-windowed annotation data + CRUD moved to the facade;
   // focus/selection/visibility/tool history remain zustand-owned.
   { name: "useAnnotations",          line: 302,  purpose: "→ src/queries facade (P2.2⑥): annotations in query cache; UI/tool state stays zustand" },
-  { name: "useDrawingState",         line: 1667, purpose: "_drawing/_drawStart/_drawEnd/_mousePos" },
-  { name: "useSymbolSearch",         line: 1680, purpose: "results, confidence, dismissed" },
-  { name: "useChat",                 line: 1709, purpose: "chatScope (messages → query cache, P2.2①)" },
-  { name: "useTableParse",           line: 1716, purpose: "step, region, grid, col/row BBs" },
-  { name: "useKeynoteParse",         line: 1745, purpose: "step, region, yolo-class bind" },
-  { name: "useProject",              line: 1772, purpose: "projectId, publicId, dataUrl, isDemo" },
-  // [refactor jul11 P2.2⑦] This store slice is intentionally small after the page-window carve:
-  // extraction/OCR remains for domain ⑧; active-window maps live in the query facade below.
-  { name: "usePageData",             line: 1796, purpose: "textract cache + project-wide CSI filter controls" },
-  { name: "useDetection",            line: 1806, purpose: "detection models + visibility/search filters (annotation data → query cache)" },
-  { name: "useYoloTags",             line: 1825, purpose: "tags, activeId, visibility, picking mode" },
-  { name: "useTextAnnotationDisplay",line: 1844, purpose: "shown types + colors + hidden set" },
-  { name: "useAnnotationFilters",    line: 1860, purpose: "active filter, csi filter, trade filter" },
+  { name: "useDrawingState",         line: 1656, purpose: "_drawing/_drawStart/_drawEnd/_mousePos" },
+  { name: "useSymbolSearch",         line: 1669, purpose: "results, confidence, dismissed" },
+  { name: "useChat",                 line: 1698, purpose: "chatScope (messages → query cache, P2.2①)" },
+  { name: "useTableParse",           line: 1705, purpose: "step, region, grid, col/row BBs" },
+  { name: "useKeynoteParse",         line: 1734, purpose: "step, region, yolo-class bind" },
+  { name: "useProject",              line: 1761, purpose: "projectId, publicId, dataUrl, isDemo" },
+  // [refactor jul11 P2.2⑦/⑧] Both server-data owners are gone; this compatibility slice now carries
+  // only project-wide CSI UI/filter controls.
+  { name: "usePageData",             line: 1785, purpose: "project-wide CSI filter controls only" },
+  { name: "useDetection",            line: 1793, purpose: "detection models + visibility/search filters (annotation data → query cache)" },
+  { name: "useYoloTags",             line: 1812, purpose: "tags, activeId, visibility, picking mode" },
+  { name: "useTextAnnotationDisplay",line: 1831, purpose: "shown types + colors + hidden set" },
+  { name: "useAnnotationFilters",    line: 1847, purpose: "active filter, csi filter, trade filter" },
   // [refactor jul10 P2.2②] row rewritten: the old entry was doubly stale (line pointed at useChat;
   // purpose described table-parse state). The store selector is deleted; the facade lives in
   // src/queries/useQtoWorkflows.ts (list → query cache; activeQtoWorkflow stays zustand).
@@ -33,6 +33,9 @@ const SLICES = [
   // active page window are independent cache domains with independent narrow subscriptions.
   { name: "useSummaries",            line: 104,  purpose: "→ src/queries facade (P2.2③): cache-only project summaries" },
   { name: "usePageWindow",           line: 43,   purpose: "→ src/queries facade (P2.2⑦): range + per-page keynote/CSI/text/PI maps" },
+  // [refactor jul11 P2.2⑧] Heavy OCR is one Query per project/page with central 12-page+8MiB rails;
+  // page readers are narrow and PageSidebar is the sole passive bounded-map exception.
+  { name: "useTextractForPage",      line: 24,   purpose: "→ src/queries facade (P2.2⑧): bounded per-page OCR; headless 200ms loader" },
   // [refactor jul10 P2.2④] NEW row (takeoff never had a store slice selector — consumers read the
   // raw fields): items+groups now live in the query cache behind TWO deliberate hooks in
   // src/queries/useTakeoff.ts (no combined hook — canvas-adjacent items-only readers must not
@@ -62,7 +65,7 @@ export function StoreSliceHookMap() {
         <g>
           <circle cx="480" cy="400" r="78" fill="none" stroke="#60a5fa" strokeWidth="2.5" />
           <text x="480" y="390" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#60a5fa">useViewerStore</text>
-          <text x="480" y="408" textAnchor="middle" fontSize="10" opacity="0.75" fontFamily="monospace">L642</text>
+          <text x="480" y="408" textAnchor="middle" fontSize="10" opacity="0.75" fontFamily="monospace">L636</text>
           <text x="480" y="424" textAnchor="middle" fontSize="9" opacity="0.6">(UI/tool state; server collections use Query)</text>
         </g>
 

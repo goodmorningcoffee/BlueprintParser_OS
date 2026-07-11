@@ -10,6 +10,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTakeoffItems, readTakeoffItems } from "@/queries/useTakeoff";
 import { useAnnotations, readAnnotations } from "@/queries/useAnnotations";
+import { readTextractForPage } from "@/queries/textractCache";
 import {
   readPageIntelligence,
   useKeynotesForPage,
@@ -1359,7 +1360,9 @@ export default memo(function AnnotationOverlay({
         // a future feature will add the real-world area of fully-enclosed
         // text bboxes back to the reported sqft. Keep passing the payload so
         // Tier 2 is a one-line re-adoption; do not delete as "unused."
-        const textractWords = bfState.textractData[pageNumber]?.words ?? [];
+        // Invocation-time cache read only: bucket fill must not add a Textract observer/redraw source
+        // to this sacred canvas surface.
+        const textractWords = readTextractForPage(qc, publicId, pageNumber)?.words ?? [];
         const textBboxes = textractWords.map((w: { bbox: [number, number, number, number] }) => ({
           x: w.bbox[0], y: w.bbox[1], w: w.bbox[2], h: w.bbox[3],
         }));
@@ -1755,7 +1758,9 @@ export default memo(function AnnotationOverlay({
           }
 
           // No parsed region hit — try OCR word fallback
-          const pageWords = useViewerStore.getState().textractData[pageNumber]?.words;
+          // Double-click OCR fallback is also action-only and must see the live replacement without
+          // subscribing the canvas to Textract cache updates.
+          const pageWords = readTextractForPage(qc, publicId, pageNumber)?.words;
           if (pageWords) {
             const normX = pos.x / width;
             const normY = pos.y / height;
@@ -2033,7 +2038,7 @@ export default memo(function AnnotationOverlay({
       setDrawStart(pos);
       setDrawEnd(pos);
     },
-    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, projectDbId, pageNumber, persistCreate, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError, splitAreaActive, splitLineA, splitPreview, setSplitLineEndpoint, setSplitPreview, setSplitError]
+    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, qc, publicId, projectDbId, pageNumber, persistCreate, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError, splitAreaActive, splitLineA, splitPreview, setSplitLineEndpoint, setSplitPreview, setSplitError]
   );
 
   const handleMouseMove = useCallback(

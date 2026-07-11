@@ -15,6 +15,7 @@ import { seedTakeoffFromBootstrap } from "@/queries/useTakeoff";
 import { seedAnnotationGroupsFromBootstrap } from "@/queries/useAnnotationGroups";
 // [refactor jul11 P2.2⑦] One paired helper publishes annotations + the active page window.
 import { publishBootstrapPageWindow } from "@/queries/usePageWindow";
+import { clearTextractProject } from "@/queries/textractCache";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type { PageWindowResponse } from "@/queries/pageWindowCore";
 import type {
@@ -77,7 +78,13 @@ export default function ProjectPage() {
       setLoading(true);
       setError(null);
 
-      // Clear stale data from any previously viewed project
+      // [refactor jul11 P2.2⑧] The old store reset discarded every loaded OCR page. Preserve that
+      // reopen/switch contract with a TEXTRACT-ONLY cache clear; removing the broad project prefix
+      // here would also destroy unrelated annotation/takeoff/chat cache state.
+      const previousPublicId = useViewerStore.getState().publicId;
+      if (previousPublicId) await clearTextractProject(queryClient, previousPublicId);
+
+      // Clear stale UI/tool data from any previously viewed project.
       resetProjectData();
 
       // ─── Fetch metadata + initial chunk + annotation groups in parallel ───

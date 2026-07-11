@@ -12,6 +12,7 @@ import { seedSummariesCache } from "@/queries/useSummaries";
 import { seedTakeoffCache } from "@/queries/useTakeoff";
 // [refactor jul11 P2.2⑦] One paired helper publishes annotations + the active page window.
 import { publishBootstrapPageWindow } from "@/queries/usePageWindow";
+import { clearTextractProject } from "@/queries/textractCache";
 import { useSearch } from "@/hooks/useSearch";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type { PageWindowResponse } from "@/queries/pageWindowCore";
@@ -68,6 +69,10 @@ export default function DemoProjectPage() {
     try {
       setLoading(true);
       setError(null);
+      // [refactor jul11 P2.2⑧] Match the former reset-owned OCR lifetime with exact-prefix cleanup.
+      // Never remove queryKeys.project(previousPublicId): other P2 domains have independent policy.
+      const previousPublicId = useViewerStore.getState().publicId;
+      if (previousPublicId) await clearTextractProject(queryClient, previousPublicId);
       resetProjectData();
       setIsDemo(true);
       useViewerStore.getState().setConfidenceThreshold(0);

@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
+import { useTextractForPage } from "@/queries/useTextract";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import { unionBboxes } from "@/lib/specnote-parser";
 // [refactor jul5 S026] apiErrorMessage: notes-parse now serves {error:{code,message}}
@@ -44,7 +45,7 @@ export default function NotesParser() {
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const textractData = useViewerStore((s) => s.textractData[pageNumber]);
+  const textractData = useTextractForPage(pageNumber);
 
   const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
   const setNotesParseRegion = useViewerStore((s) => s.setNotesParseRegion);

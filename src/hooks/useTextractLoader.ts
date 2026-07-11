@@ -1,55 +1,141 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  cancelTextractPage,
+  clearTextractProject,
+  ensureTextractPage,
+  setTextractProtectedPages,
+} from "@/queries/textractCache";
 import { useViewerStore } from "@/stores/viewerStore";
 
+interface TextractBatch {
+  generation: number;
+  publicId: string;
+  pages: number[];
+}
+
+function pagesAround(pageNumber: number, numPages: number): number[] {
+  return [pageNumber, pageNumber + 1, pageNumber - 1].filter(
+    (page) => page >= 1 && page <= numPages,
+  );
+}
+
+function cancelBatch(qc: QueryClient, batch: TextractBatch | null): void {
+  if (!batch) return;
+  for (const pageNumber of batch.pages) {
+    // Each page owns its own Query/fetch signal; cancellation must stay exact so a sibling that a
+    // newer batch still needs is deduped or restarted by that batch rather than broadly invalidated.
+    void cancelTextractPage(qc, batch.publicId, pageNumber);
+  }
+}
+
 /**
- * Own the legacy per-page Textract transport while its payloads are still Zustand-backed.
+ * The one automatic Textract transport owner.
  *
- * [refactor jul11 P2.2⑧ C1] This is a literal extraction from PDFViewer: the 200 ms trailing
- * debounce, numeric project-id URL, current/+1/-1 order, live cache-hit check, shared batch abort,
- * and silent failure policy are intentionally unchanged. C2/C3 replace the backing and identity;
- * keeping scheduling behind one null controller gives that migration one transport owner.
+ * Component hooks are disabled data observers. This headless state machine preserves the legacy
+ * trailing 200 ms and current/+1/-1 cadence while Query owns publicId provenance, dedupe,
+ * cancellation, null/error cleanup, and bounded retention.
  */
 export function useTextractLoader(): void {
+  const qc = useQueryClient();
   const pageNumber = useViewerStore((state) => state.pageNumber);
   const numPages = useViewerStore((state) => state.numPages);
-  const projectId = useViewerStore((state) => state.projectId);
-  const textractTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const textractAbortRef = useRef<AbortController | null>(null);
+  const publicId = useViewerStore((state) => state.publicId);
+  const generationRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeBatchRef = useRef<TextractBatch | null>(null);
+
+  // Project identity/unmount is the ownership boundary for this heavy domain. Clear only the exact
+  // Textract prefix; broader project removal would destroy sibling cache semantics established by
+  // earlier P2.2 migrations.
+  useEffect(() => {
+    const capturedPublicId = publicId;
+    return () => {
+      generationRef.current += 1;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+
+      const activeBatch = activeBatchRef.current;
+      activeBatchRef.current = null;
+      cancelBatch(qc, activeBatch);
+      if (capturedPublicId) void clearTextractProject(qc, capturedPublicId);
+    };
+  }, [publicId, qc]);
 
   useEffect(() => {
-    if (!projectId) return;
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
 
-    if (textractTimerRef.current) clearTimeout(textractTimerRef.current);
-    if (textractAbortRef.current) textractAbortRef.current.abort();
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
 
-    textractTimerRef.current = setTimeout(() => {
-      const controller = new AbortController();
-      textractAbortRef.current = controller;
-      const pagesToLoad = [pageNumber, pageNumber + 1, pageNumber - 1].filter(
-        (page) => page >= 1 && page <= numPages,
-      );
+    // Install the new intent before cancellation. Abort-aware old attempts may settle immediately;
+    // they must already be obsolete when their cancellation path runs.
+    const previousBatch = activeBatchRef.current;
+    const batch: TextractBatch | null =
+      publicId && numPages !== 0 ? { generation, publicId, pages: [] } : null;
+    activeBatchRef.current = batch;
+    cancelBatch(qc, previousBatch);
 
-      for (const page of pagesToLoad) {
-        const store = useViewerStore.getState();
-        if (store.textractData[page]) continue;
-        fetch(`/api/pages/textract?projectId=${projectId}&pageNumber=${page}`, {
-          signal: controller.signal,
-        })
-          .then((response) => (response.ok ? response.json() : null))
-          .then((data) => {
-            if (data?.textractData) {
-              useViewerStore.getState().setTextractData(page, data.textractData);
-            }
-          })
-          .catch(() => {});
+    if (!batch) {
+      if (publicId) setTextractProtectedPages(qc, publicId, []);
+      return;
+    }
+
+    // Publish protection at intent time so a late old settlement during the real debounce prunes
+    // against the newly navigated working set. Dispatch re-reads and republishes the live bounds.
+    setTextractProtectedPages(qc, publicId, pagesAround(pageNumber, numPages));
+
+    const timer = setTimeout(() => {
+      if (
+        activeBatchRef.current !== batch ||
+        generationRef.current !== batch.generation
+      ) {
+        return;
+      }
+
+      const live = useViewerStore.getState();
+      if (
+        live.publicId !== batch.publicId ||
+        live.numPages === 0 ||
+        generationRef.current !== batch.generation
+      ) {
+        return;
+      }
+
+      const livePages = pagesAround(live.pageNumber, live.numPages);
+      batch.pages = livePages;
+      setTextractProtectedPages(qc, batch.publicId, livePages);
+
+      for (const livePage of livePages) {
+        // A synchronous transport/test double can change project identity during an earlier sibling
+        // dispatch. Recheck before every ensure so no later old-project sibling can start afterward.
+        if (
+          activeBatchRef.current !== batch ||
+          generationRef.current !== batch.generation ||
+          useViewerStore.getState().publicId !== batch.publicId
+        ) {
+          break;
+        }
+
+        void ensureTextractPage(qc, {
+          publicId: batch.publicId,
+          pageNumber: livePage,
+          protectedPages: livePages,
+        });
       }
     }, 200);
+    timerRef.current = timer;
 
     return () => {
-      if (textractTimerRef.current) clearTimeout(textractTimerRef.current);
-      if (textractAbortRef.current) textractAbortRef.current.abort();
+      clearTimeout(timer);
+      if (timerRef.current === timer) timerRef.current = null;
     };
-  }, [pageNumber, projectId, numPages]);
+  }, [pageNumber, numPages, publicId, qc]);
 }

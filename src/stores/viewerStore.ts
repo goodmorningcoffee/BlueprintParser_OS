@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import type {
   ClientAnnotation,
-  TextractPageData,
   SearchWordMatch,
   TakeoffTab,
   ScaleCalibrationData,
@@ -130,13 +129,8 @@ interface ViewerState {
   labelingCredentials: { email: string; password: string } | null;
   setLabelingCredentials: (creds: { email: string; password: string } | null) => void;
 
-  // ─── Textract data per page ──────────────────────────────
-  textractData: Record<number, TextractPageData>;
-  setTextractData: (pageNum: number, data: TextractPageData) => void;
-
-  // [refactor jul11 P2.2⑦] The active page window (loaded range, loading status, per-page
-  // keynotes/CSI/text annotations/page intelligence) is query-owned. See usePageWindow.ts and
-  // PageWindowLoaderController.tsx. Only project-wide CSI filter metadata remains in this store.
+  // [refactor jul11 P2.2⑦/⑧] Active page-window maps and per-page Textract OCR are query-owned.
+  // Only project-wide CSI/filter metadata from those former server-data slices remains here.
   allTrades: string[];
   setAllTrades: (trades: string[]) => void;
 
@@ -739,10 +733,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setLabelingSessions: (labelingSessions) => set({ labelingSessions }),
   labelingCredentials: null,
   setLabelingCredentials: (labelingCredentials) => set({ labelingCredentials }),
-
-  textractData: {},
-  setTextractData: (pageNum, data) =>
-    set((s) => ({ textractData: { ...s.textractData, [pageNum]: data } })),
 
   allTrades: [],
   setAllTrades: (allTrades) => set({ allTrades }),
@@ -1469,7 +1459,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       labelingWizardStep: 1,
       labelingSessions: [],
       labelingCredentials: null,
-      textractData: {},
       allTrades: [],
       showTextAnnotations: false,
       activeTextAnnotationTypes: {},
@@ -1791,12 +1780,10 @@ export function isDemoFeatureEnabled(feature: string): boolean {
   return demoFeatureConfig[feature] !== false; // default: enabled unless explicitly off
 }
 
-/** Remaining per-page extraction data + project-wide CSI filter controls.
- *  Active-window data lives behind src/queries/usePageWindow.ts (P2.2⑦). */
+/** Project-wide CSI filter controls. Active-window data lives in usePageWindow (⑦), while heavy
+ *  per-page OCR lives in the bounded useTextract facade/coordinator (⑧). */
 export const usePageData = () =>
   useViewerStore(useShallow((s) => ({
-    textractData: s.textractData,
-    setTextractData: s.setTextractData,
     allCsiCodes: s.allCsiCodes,
     activeCsiFilter: s.activeCsiFilter,
     setCsiFilter: s.setCsiFilter,

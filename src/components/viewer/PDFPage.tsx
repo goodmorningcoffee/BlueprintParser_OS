@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback, memo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore, useKeynoteParse } from "@/stores/viewerStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
+import { useTextractForPage } from "@/queries/useTextract";
 import SearchHighlightOverlay from "./SearchHighlightOverlay";
 import TextAnnotationOverlay from "./TextAnnotationOverlay";
 import KeynoteOverlay from "./KeynoteOverlay";
@@ -63,7 +64,8 @@ const NotesFastManualOverlaySlot = memo(function NotesFastManualOverlaySlot(prop
 }) {
   const active = useViewerStore((s) => s.notesFastManualActive);
   const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
-  const textractData = useViewerStore((s) => s.textractData[props.pageNumber]);
+  // Keep the exact-page observer inside this memo slot so adjacent OCR cannot invalidate it.
+  const textractData = useTextractForPage(props.pageNumber);
   const setNotesFastManualGrid = useViewerStore((s) => s.setNotesFastManualGrid);
   const lines = textractData?.lines ?? [];
   return (
@@ -88,7 +90,8 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
   const active = useViewerStore((s) => s.paragraphOverlayActive);
   const specParseRegion = useViewerStore((s) => s.specParseRegion);
   const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
-  const textractData = useViewerStore((s) => s.textractData[props.pageNumber]);
+  // This slot owns a separate exact-page observer because its render inputs/lifetime are independent.
+  const textractData = useTextractForPage(props.pageNumber);
   const pageIntel = usePageIntelligenceForPage(props.pageNumber);
   const paragraphBatch = useViewerStore((s) => s.paragraphBatch);
   const paragraphClipboard = useViewerStore((s) => s.paragraphClipboard);

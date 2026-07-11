@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { readTextractForPage } from "@/queries/textractCache";
 import { useViewerStore, useTableParse, useNavigation, useProject } from "@/stores/viewerStore";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
@@ -34,7 +36,9 @@ export default function GuidedParseTab({
   // lastDropCounts intentionally unused here — audit line lives in AutoParseTab
 }: GuidedParseTabProps) {
   const { pageNumber } = useNavigation();
-  const { projectId } = useProject();
+  const { projectId, publicId } = useProject();
+  // Context-only handle: guided parsing reads Textract at click time and creates zero observers.
+  const queryClient = useQueryClient();
   const {
     tableParseRegion, setTableParseRegion,
     tableParsedGrid, setTableParsedGrid,
@@ -123,7 +127,7 @@ export default function GuidedParseTab({
 
   // ─── Parse from grid ───────────────────────────────────────
   const handleParse = useCallback(async () => {
-    const pageTextract = useViewerStore.getState().textractData[pageNumber];
+    const pageTextract = readTextractForPage(queryClient, publicId, pageNumber);
     if (!pageTextract?.words || guidedParseRows.length < 2 || guidedParseCols.length < 2) return;
 
     const result = extractCellsFromGrid(pageTextract.words, guidedParseRows, guidedParseCols);
@@ -155,7 +159,7 @@ export default function GuidedParseTab({
     resetGuidedParse();
     setParsed(true);
     useViewerStore.getState().setMode("move");
-  }, [pageNumber, guidedParseRows, guidedParseCols, resetGuidedParse, detectCsiAndPersist,
+  }, [queryClient, publicId, pageNumber, guidedParseRows, guidedParseCols, resetGuidedParse, detectCsiAndPersist,
     setTableParsedGrid, setTableParseStep]);
 
   // ─── Repeat row down ───────────────────────────────────────

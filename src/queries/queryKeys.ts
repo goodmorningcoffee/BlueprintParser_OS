@@ -58,7 +58,8 @@ export const queryKeys = {
     active: (publicId: string) =>
       ["project", publicId, "pagesWindow", "active"] as const,
   },
-  // ⑧ textract per-page (LRU cap kills the unbounded growth)
+  // ⑧ Textract — one heavy payload per project/page. A QueryClient coordinator enforces both a
+  // 12-page LRU and an 8 MiB serialized-size rail; PageSidebar is the sole passive map exception.
   textract: {
     all: (publicId: string) => ["project", publicId, "textract"] as const,
     page: (publicId: string, pageNumber: number) =>

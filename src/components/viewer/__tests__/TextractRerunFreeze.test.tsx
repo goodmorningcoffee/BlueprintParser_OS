@@ -1,12 +1,12 @@
 // [refactor jul11 P2.2⑧ C1] TEXTRACT RERUN DOM FREEZE (TW1-TW4 + TR-D4).
 //
-// Written green against the current Zustand-backed writer and intentionally kept unchanged when
-// C3 moves Textract pages to one Query entry per publicId/page. `seedTextract` is the only backing
-// flip point: assertions observe the real TextractTab DOM and never inspect viewerStore data.
+// Written green against the original Zustand-backed writer and kept backing-agnostic when C3 moved
+// Textract to one Query entry per publicId/page. `seedTextract` remains the only seed flip point:
+// assertions observe the real TextractTab DOM and never inspect viewerStore payload data.
 //
-// Scope: exact numeric pre-migration POST/body, server-first truthy replacement, result stats,
-// loading/missing-id/demo dispatch gates, and old-data retention on HTTP/network/null responses.
-// Lazy GET scheduling and the future Query facade/coordinator are covered by their own lanes.
+// Scope: sanctioned publicId POST/body, server-first authoritative replacement, result stats,
+// loading/missing-id/demo gates, old-data retention, and rerun-vs-GET/identity race closure.
+// Lazy GET scheduling and coordinator policy remain covered by their own lanes.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom";
@@ -21,6 +21,7 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { queryKeys } from "@/queries/queryKeys";
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedTextract } from "@/test/seed-textract";
 import type { TextractPageData } from "@/types";
@@ -28,6 +29,7 @@ import { TextractTab } from "../TextPanel";
 
 const PAGE = 7;
 const PROJECT_DB_ID = 417;
+const PUBLIC_ID = "project-public-id";
 
 let queryClient: QueryClient;
 const fetchMock = vi.fn();
@@ -90,8 +92,8 @@ function response(body: unknown, ok = true, status = 200): Response {
   } as unknown as Response;
 }
 
-function renderTab() {
-  return render(<TextractTab pageNumber={PAGE} />, { wrapper });
+function renderTab(pageNumber = PAGE) {
+  return render(<TextractTab pageNumber={pageNumber} />, { wrapper });
 }
 
 function statsCard(title: string): HTMLElement {
@@ -106,8 +108,13 @@ function expectStat(card: HTMLElement, label: string, value: string | number): v
   expect(labelNode.nextElementSibling).toHaveTextContent(String(value));
 }
 
-function expectCurrentStats(words: number, lines: number, tables: number): void {
-  const card = statsCard(`Current cached stats — page ${PAGE}`);
+function expectCurrentStats(
+  words: number,
+  lines: number,
+  tables: number,
+  pageNumber = PAGE,
+): void {
+  const card = statsCard(`Current cached stats — page ${pageNumber}`);
   expectStat(card, "Words", words);
   expectStat(card, "Lines", lines);
   expectStat(card, "Tables", tables);
@@ -118,7 +125,7 @@ beforeEach(() => {
   useViewerStore.getState().resetProjectData();
   useViewerStore.setState({
     projectId: PROJECT_DB_ID,
-    publicId: "project-public-id",
+    publicId: PUBLIC_ID,
     isDemo: false,
     pageNumber: PAGE,
     numPages: 20,
@@ -135,7 +142,7 @@ afterEach(() => {
 });
 
 describe("TextractTab rerun writer", () => {
-  it("TW1 sends the exact numeric request, stays server-first, then replaces truthy data and shows response stats", async () => {
+  it("TW1 sends the exact publicId request, stays server-first, then replaces truthy data and shows response stats", async () => {
     const oldPage = textractFixture(1, 2, 0, "old");
     const newPage = textractFixture(3, 4, 1, "new");
     seedTextract(queryClient, { [PAGE]: oldPage });
@@ -152,7 +159,7 @@ describe("TextractTab rerun writer", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/pages/textract-rerun", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: PROJECT_DB_ID, pageNumber: PAGE }),
+      body: JSON.stringify({ publicId: PUBLIC_ID, pageNumber: PAGE }),
     });
     expect(screen.getByRole("button", { name: "Re-running Textract…" })).toBeDisabled();
     expectCurrentStats(1, 2, 0);
@@ -200,9 +207,8 @@ describe("TextractTab rerun writer", () => {
     await waitFor(() => expect(screen.getByText("Re-run complete")).toBeInTheDocument());
   });
 
-  it("TW2 dispatches nothing without a numeric project id", () => {
-    useViewerStore.setState({ projectId: 0 });
-    seedTextract(queryClient, { [PAGE]: textractFixture(1, 1, 0, "old") });
+  it("TW2 dispatches nothing without a public project id", () => {
+    useViewerStore.setState({ publicId: "" });
     renderTab();
 
     const button = screen.getByRole("button", { name: "Re-run Textract" });
@@ -276,5 +282,182 @@ describe("TextractTab rerun writer", () => {
     expectStat(resultCard, "New line count", 800);
     expectStat(resultCard, "New table count", 900);
     expect(screen.queryByText("Re-run failed")).not.toBeInTheDocument();
+  });
+
+  it("I4 cancels GETs both before POST and before adoption so an abort-ignoring stale GET cannot overwrite rerun", async () => {
+    const oldPage = textractFixture(1, 1, 0, "old");
+    const rerunPage = textractFixture(3, 3, 1, "rerun-authoritative");
+    const stalePage = textractFixture(9, 9, 0, "late-get-stale");
+    seedTextract(queryClient, { [PAGE]: oldPage });
+    const key = queryKeys.textract.page(PUBLIC_ID, PAGE);
+
+    let earlySignal: AbortSignal | undefined;
+    const earlyGet = deferred<TextractPageData>();
+    const earlyRequest = queryClient.fetchQuery({
+      queryKey: key,
+      queryFn: ({ signal }) => {
+        earlySignal = signal;
+        return earlyGet.promise;
+      },
+      staleTime: 0,
+      retry: false,
+    }).catch(() => undefined);
+
+    const rerunResponse = deferred<Response>();
+    fetchMock.mockReturnValueOnce(rerunResponse.promise);
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Re-run Textract" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(earlySignal?.aborted).toBe(true);
+
+    // A new lazy GET may begin while Textract is doing the expensive POST. The facade replacement's
+    // second exact cancel must defeat it even when its transport ignores AbortSignal physically.
+    let lateSignal: AbortSignal | undefined;
+    const lateGet = deferred<TextractPageData>();
+    const lateRequest = queryClient.fetchQuery({
+      queryKey: key,
+      queryFn: ({ signal }) => {
+        lateSignal = signal;
+        return lateGet.promise;
+      },
+      staleTime: 0,
+      retry: false,
+    }).catch(() => undefined);
+    expect(lateSignal?.aborted).toBe(false);
+
+    rerunResponse.resolve(
+      response({
+        textractData: rerunPage,
+        durationMs: 100,
+        stats: { wordCount: 3, lineCount: 3, tableCount: 1 },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText("Re-run complete")).toBeInTheDocument());
+    expect(lateSignal?.aborted).toBe(true);
+    expectCurrentStats(3, 3, 1);
+
+    await act(async () => {
+      earlyGet.resolve(stalePage);
+      lateGet.resolve(stalePage);
+      await Promise.all([earlyRequest, lateRequest]);
+    });
+    expectCurrentStats(3, 3, 1);
+  });
+
+  it.each([
+    { name: "project", nextPublicId: "other-project", nextPage: PAGE },
+    { name: "page", nextPublicId: PUBLIC_ID, nextPage: PAGE + 1 },
+  ])("I5 makes a pending rerun a total no-op after a $name switch", async ({ nextPublicId, nextPage }) => {
+    const oldPage = textractFixture(2, 2, 0, "old-origin");
+    const nextPageData = textractFixture(4, 4, 1, "new-identity");
+    const obsoleteResponse = textractFixture(8, 8, 1, "obsolete-response");
+    seedTextract(queryClient, { [PAGE]: oldPage }, PUBLIC_ID);
+    seedTextract(queryClient, { [nextPage]: nextPageData }, nextPublicId);
+    const pending = deferred<Response>();
+    fetchMock.mockReturnValueOnce(pending.promise);
+    const view = renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: "Re-run Textract" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useViewerStore.setState({ publicId: nextPublicId, pageNumber: nextPage });
+      view.rerender(<TextractTab pageNumber={nextPage} />);
+    });
+    await waitFor(() => expectCurrentStats(4, 4, 1, nextPage));
+    expect(screen.getByRole("button", { name: "Re-run Textract" })).toBeEnabled();
+
+    await act(async () => {
+      pending.resolve(
+        response({
+          textractData: obsoleteResponse,
+          durationMs: 200,
+          stats: { wordCount: 8, lineCount: 8, tableCount: 1 },
+        }),
+      );
+      await pending.promise;
+    });
+    expect(screen.queryByText("Re-run complete")).not.toBeInTheDocument();
+    expectCurrentStats(4, 4, 1, nextPage);
+
+    // Return to the captured identity: no obsolete cache adoption occurred there either.
+    act(() => {
+      useViewerStore.setState({ publicId: PUBLIC_ID, pageNumber: PAGE });
+      view.rerender(<TextractTab pageNumber={PAGE} />);
+    });
+    await waitFor(() => expectCurrentStats(2, 2, 0));
+  });
+
+  it("I5 rechecks identity after the second cancel so teardown cannot be followed by stale adoption", async () => {
+    const oldPage = textractFixture(2, 2, 0, "old-origin");
+    const obsoleteResponse = textractFixture(8, 8, 1, "obsolete-response");
+    seedTextract(queryClient, { [PAGE]: oldPage }, PUBLIC_ID);
+    const pending = deferred<Response>();
+    fetchMock.mockReturnValueOnce(pending.promise);
+    const view = renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: "Re-run Textract" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // The first cancel has already completed because POST started. Hold only the facade's second
+    // cancel, then switch identity at that exact async boundary. Without the post-cancel generation
+    // guard the obsolete response recreates the old prefix after teardown.
+    const secondCancel = deferred<void>();
+    const cancelSpy = vi
+      .spyOn(queryClient, "cancelQueries")
+      .mockImplementationOnce(() => secondCancel.promise);
+    pending.resolve(
+      response({
+        textractData: obsoleteResponse,
+        durationMs: 200,
+        stats: { wordCount: 8, lineCount: 8, tableCount: 1 },
+      }),
+    );
+    await waitFor(() => expect(cancelSpy).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useViewerStore.setState({ publicId: "other-project", pageNumber: PAGE + 1 });
+      view.rerender(<TextractTab pageNumber={PAGE + 1} />);
+    });
+    await act(async () => {
+      secondCancel.resolve();
+      await secondCancel.promise;
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("Re-run complete")).not.toBeInTheDocument();
+
+    act(() => {
+      useViewerStore.setState({ publicId: PUBLIC_ID, pageNumber: PAGE });
+      view.rerender(<TextractTab pageNumber={PAGE} />);
+    });
+    await waitFor(() => expectCurrentStats(2, 2, 0));
+  });
+
+  it("I5 makes a completion after unmount a cache and UI no-op", async () => {
+    const oldPage = textractFixture(2, 2, 0, "old");
+    seedTextract(queryClient, { [PAGE]: oldPage });
+    const pending = deferred<Response>();
+    fetchMock.mockReturnValueOnce(pending.promise);
+    const view = renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: "Re-run Textract" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    view.unmount();
+
+    await act(async () => {
+      pending.resolve(
+        response({
+          textractData: textractFixture(7, 7, 1, "obsolete-unmounted"),
+          durationMs: 300,
+          stats: { wordCount: 7, lineCount: 7, tableCount: 1 },
+        }),
+      );
+      await pending.promise;
+    });
+
+    renderTab();
+    await waitFor(() => expectCurrentStats(2, 2, 0));
+    expect(screen.queryByText("Re-run complete")).not.toBeInTheDocument();
   });
 });

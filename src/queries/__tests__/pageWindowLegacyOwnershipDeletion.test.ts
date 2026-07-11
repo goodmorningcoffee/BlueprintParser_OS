@@ -1,5 +1,5 @@
 // @vitest-environment node
-// [refactor jul11 P2.2⑦ M6] Deletion tripwire for the retired viewerStore ownership path.
+// [refactor jul11 P2.2⑦/⑧] Deletion tripwire for retired viewerStore server-data ownership paths.
 //
 // Runtime hook tests prove the new page-window facade works. This focused AST contract proves the
 // inverse: the old fields/actions cannot quietly return through a store default, reset, selector,
@@ -24,6 +24,10 @@ const LEGACY_PAGE_WINDOW_MEMBERS = [
   "setCsiCodes",
   "setTextAnnotations",
   "setPageIntelligence",
+  // ⑧ Textract is a separate per-page Query domain, but shares this self-calibrating store-access
+  // oracle so casts/aliases cannot recreate either retired owner through the same escape hatches.
+  "textractData",
+  "setTextractData",
 ] as const;
 
 const WHOLE_MAP_HOOK_WHITELIST = {
@@ -46,17 +50,59 @@ const WHOLE_MAP_HOOK_WHITELIST = {
     "src/components/viewer/TableParsePanel.tsx",
     "src/components/viewer/ViewAllPanel.tsx",
   ],
+  useCachedTextractForPages: [
+    "src/components/viewer/PageSidebar.tsx",
+  ],
 } as const;
 
+// Exact ⑧ topology. Counts are deliberate: PDFPage has two independently memoized slots and
+// TextPanel has a parent OCR reader plus the directly mountable TextractTab reader.
+const TEXTRACT_PAGE_HOOK_TOPOLOGY: Record<string, number> = {
+  "src/components/viewer/KeynotePanel.tsx": 1,
+  "src/components/viewer/ManualParseTab.tsx": 1,
+  "src/components/viewer/NotesParser.tsx": 1,
+  "src/components/viewer/PDFPage.tsx": 2,
+  "src/components/viewer/SearchHighlightOverlay.tsx": 1,
+  "src/components/viewer/TableCompareModal.tsx": 1,
+  "src/components/viewer/TextAnnotationOverlay.tsx": 1,
+  "src/components/viewer/TextPanel.tsx": 2,
+};
+
+const TEXTRACT_ACTION_READ_TOPOLOGY: Record<string, number> = {
+  "src/components/viewer/AnnotationOverlay.tsx": 2,
+  "src/components/viewer/GuidedParseTab.tsx": 1,
+  "src/components/viewer/KeynotePanel.tsx": 1,
+};
+
+const TEXTRACT_BOOTSTRAP_OR_LOADER_FILES = [
+  "src/app/(dashboard)/project/[id]/page.tsx",
+  "src/app/demo/project/[id]/page.tsx",
+  "src/hooks/useTextractLoader.ts",
+] as const;
+
+const parsedSourceCache = new Map<string, ts.SourceFile>();
+
 function parse(relativePath: string): ts.SourceFile {
+  const cached = parsedSourceCache.get(relativePath);
+  if (cached) return cached;
   const absolutePath = join(process.cwd(), relativePath);
-  return ts.createSourceFile(
+  const source = ts.createSourceFile(
     absolutePath,
     readFileSync(absolutePath, "utf8"),
     ts.ScriptTarget.Latest,
     true,
     relativePath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
+  parsedSourceCache.set(relativePath, source);
+  return source;
+}
+
+function canContainViewerStoreAccess(relativePath: string): boolean {
+  if (relativePath === "src/stores/viewerStore.ts") return true;
+  // Every sanctioned hook/getState path is defined by or imported from viewerStore. Pre-filtering
+  // the ~700-file tree by raw module/name text keeps this AST tripwire below its full-suite timeout
+  // without weakening aliases/casts/computed-key analysis inside any plausible consumer.
+  return readFileSync(join(process.cwd(), relativePath), "utf8").includes("viewerStore");
 }
 
 function descendants<T extends ts.Node>(
@@ -72,7 +118,10 @@ function descendants<T extends ts.Node>(
   return matches;
 }
 
-function staticName(name: ts.PropertyName | ts.BindingName | undefined): string | null {
+function staticName(
+  name: ts.PropertyName | ts.BindingName | undefined,
+  stringConstants: ReadonlyMap<string, string> = new Map(),
+): string | null {
   if (!name) return null;
   if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
     return name.text;
@@ -82,13 +131,19 @@ function staticName(name: ts.PropertyName | ts.BindingName | undefined): string 
     if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
       return expression.text;
     }
+    if (ts.isIdentifier(expression)) return stringConstants.get(expression.text) ?? null;
   }
   return null;
 }
 
-function directObjectKeys(object: ts.ObjectLiteralExpression): string[] {
+function directObjectKeys(
+  object: ts.ObjectLiteralExpression,
+  stringConstants: ReadonlyMap<string, string> = new Map(),
+): string[] {
   return object.properties
-    .map((property) => ("name" in property ? staticName(property.name) : null))
+    .map((property) =>
+      "name" in property ? staticName(property.name, stringConstants) : null,
+    )
     .filter((name): name is string => name !== null);
 }
 
@@ -143,25 +198,6 @@ function sourceFilesUnder(relativeDirectory: string): string[] {
 
 const legacyNames = new Set<string>(LEGACY_PAGE_WINDOW_MEMBERS);
 
-function bindingLegacyNames(name: ts.BindingName): string[] {
-  if (!ts.isObjectBindingPattern(name)) return [];
-  return name.elements
-    .map((element) => staticName(element.propertyName ?? element.name))
-    .filter((candidate): candidate is string => !!candidate && legacyNames.has(candidate));
-}
-
-function isViewerStoreMethodCall(
-  node: ts.CallExpression,
-  method: "getState" | "setState",
-): boolean {
-  return (
-    ts.isPropertyAccessExpression(node.expression) &&
-    ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === "useViewerStore" &&
-    node.expression.name.text === method
-  );
-}
-
 function unwrapExpression(expression: ts.Expression): ts.Expression {
   let current = expression;
   while (
@@ -174,6 +210,197 @@ function unwrapExpression(expression: ts.Expression): ts.Expression {
     current = current.expression;
   }
   return current;
+}
+
+function staticStringConstants(root: ts.Node): Map<string, string> {
+  const constants = new Map<string, string>();
+  // This lightweight source oracle is intentionally scope-insensitive. The same local identifier
+  // can therefore appear with different literal values in unrelated functions. Treat that name as
+  // ambiguous instead of oscillating forever between its values during fixed-point propagation.
+  const ambiguous = new Set<string>();
+  const declarations = descendants(root, ts.isVariableDeclaration);
+  const publish = (name: string, value: string): boolean => {
+    if (ambiguous.has(name)) return false;
+    const existing = constants.get(name);
+    if (existing === value) return false;
+    if (existing !== undefined) {
+      constants.delete(name);
+      ambiguous.add(name);
+      return true;
+    }
+    constants.set(name, value);
+    return true;
+  };
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const declaration of declarations) {
+      if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+      const initializer = unwrapExpression(declaration.initializer);
+      let value: string | undefined;
+      if (ts.isStringLiteral(initializer) || ts.isNoSubstitutionTemplateLiteral(initializer)) {
+        value = initializer.text;
+      } else if (ts.isIdentifier(initializer)) {
+        value = constants.get(initializer.text);
+      }
+      if (value !== undefined) changed = publish(declaration.name.text, value) || changed;
+    }
+  }
+  return constants;
+}
+
+function elementAccessName(
+  access: ts.ElementAccessExpression,
+  stringConstants: ReadonlyMap<string, string>,
+): string | null {
+  const argument = access.argumentExpression && unwrapExpression(access.argumentExpression);
+  if (!argument) return null;
+  if (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) {
+    return argument.text;
+  }
+  return ts.isIdentifier(argument) ? stringConstants.get(argument.text) ?? null : null;
+}
+
+function expressionMemberName(
+  expression: ts.Expression,
+  stringConstants: ReadonlyMap<string, string>,
+): string | null {
+  const unwrapped = unwrapExpression(expression);
+  if (ts.isPropertyAccessExpression(unwrapped)) return unwrapped.name.text;
+  if (ts.isElementAccessExpression(unwrapped)) {
+    return elementAccessName(unwrapped, stringConstants);
+  }
+  return null;
+}
+
+function importedLocalNames(
+  source: ts.SourceFile,
+  moduleName: string,
+  importedName: string,
+): Set<string> {
+  const names = new Set<string>();
+  for (const declaration of source.statements) {
+    if (
+      !ts.isImportDeclaration(declaration) ||
+      !ts.isStringLiteral(declaration.moduleSpecifier) ||
+      declaration.moduleSpecifier.text !== moduleName
+    ) {
+      continue;
+    }
+    const bindings = declaration.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if ((element.propertyName ?? element.name).text === importedName) {
+        names.add(element.name.text);
+      }
+    }
+  }
+  return names;
+}
+
+function identifierAliases(root: ts.Node, seeds: Iterable<string>): Set<string> {
+  const aliases = new Set(seeds);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const declaration of descendants(root, ts.isVariableDeclaration)) {
+      if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+      const initializer = unwrapExpression(declaration.initializer);
+      if (
+        ts.isIdentifier(initializer) &&
+        aliases.has(initializer.text) &&
+        !aliases.has(declaration.name.text)
+      ) {
+        aliases.add(declaration.name.text);
+        changed = true;
+      }
+    }
+    for (const assignment of descendants(
+      root,
+      (node): node is ts.BinaryExpression =>
+        ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken,
+    )) {
+      const left = unwrapExpression(assignment.left);
+      const right = unwrapExpression(assignment.right);
+      if (
+        ts.isIdentifier(left) &&
+        ts.isIdentifier(right) &&
+        aliases.has(right.text) &&
+        !aliases.has(left.text)
+      ) {
+        aliases.add(left.text);
+        changed = true;
+      }
+    }
+  }
+  return aliases;
+}
+
+function methodAliases(
+  root: ts.Node,
+  objectAliases: ReadonlySet<string>,
+  method: "getState" | "setState",
+  stringConstants: ReadonlyMap<string, string>,
+): Set<string> {
+  const aliases = new Set<string>();
+  for (const declaration of descendants(root, ts.isVariableDeclaration)) {
+    if (!declaration.initializer) continue;
+    const initializer = unwrapExpression(declaration.initializer);
+    if (ts.isIdentifier(declaration.name)) {
+      if (
+        (ts.isPropertyAccessExpression(initializer) ||
+          ts.isElementAccessExpression(initializer)) &&
+        ts.isIdentifier(unwrapExpression(initializer.expression)) &&
+        objectAliases.has((unwrapExpression(initializer.expression) as ts.Identifier).text) &&
+        expressionMemberName(initializer, stringConstants) === method
+      ) {
+        aliases.add(declaration.name.text);
+      }
+    } else if (ts.isObjectBindingPattern(declaration.name)) {
+      const sourceObject = unwrapExpression(declaration.initializer);
+      if (!ts.isIdentifier(sourceObject) || !objectAliases.has(sourceObject.text)) continue;
+      for (const element of declaration.name.elements) {
+        if (
+          staticName(element.propertyName ?? element.name, stringConstants) === method &&
+          ts.isIdentifier(element.name)
+        ) {
+          aliases.add(element.name.text);
+        }
+      }
+    }
+  }
+  return identifierAliases(root, aliases);
+}
+
+function isMethodCall(
+  call: ts.CallExpression,
+  objectAliases: ReadonlySet<string>,
+  functionAliases: ReadonlySet<string>,
+  method: "getState" | "setState",
+  stringConstants: ReadonlyMap<string, string>,
+): boolean {
+  const expression = unwrapExpression(call.expression);
+  if (ts.isIdentifier(expression)) return functionAliases.has(expression.text);
+  if (!ts.isPropertyAccessExpression(expression) && !ts.isElementAccessExpression(expression)) {
+    return false;
+  }
+  const receiver = unwrapExpression(expression.expression);
+  return (
+    ts.isIdentifier(receiver) &&
+    objectAliases.has(receiver.text) &&
+    expressionMemberName(expression, stringConstants) === method
+  );
+}
+
+function bindingLegacyNames(
+  name: ts.BindingName,
+  stringConstants: ReadonlyMap<string, string>,
+): string[] {
+  if (!ts.isObjectBindingPattern(name)) return [];
+  return name.elements
+    .map((element) => staticName(element.propertyName ?? element.name, stringConstants))
+    .filter((candidate): candidate is string => !!candidate && legacyNames.has(candidate));
 }
 
 function consumerOutsideTransparentCasts(expression: ts.Expression): ts.Node {
@@ -192,14 +419,6 @@ function consumerOutsideTransparentCasts(expression: ts.Expression): ts.Node {
   return current.parent;
 }
 
-function elementAccessName(access: ts.ElementAccessExpression): string | null {
-  const argument = access.argumentExpression && unwrapExpression(access.argumentExpression);
-  return argument &&
-    (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))
-    ? argument.text
-    : null;
-}
-
 /**
  * Catch consumer-side resurrection as well as declarations. TypeScript normally catches a direct
  * stale member after deletion, but this source oracle also covers `as any`, handler-time aliases,
@@ -208,11 +427,67 @@ function elementAccessName(access: ts.ElementAccessExpression): string | null {
  */
 function legacyConsumerAccesses(source: ts.SourceFile): string[] {
   const violations: string[] = [];
-  const getStateAliases = new Set<string>();
+  const stringConstants = staticStringConstants(source);
+  const viewerStoreHooks = identifierAliases(source, [
+    "useViewerStore",
+    ...importedLocalNames(source, "@/stores/viewerStore", "useViewerStore"),
+  ]);
+  const pageDataHooks = identifierAliases(source, [
+    "usePageData",
+    ...importedLocalNames(source, "@/stores/viewerStore", "usePageData"),
+  ]);
+  const getStateFunctions = methodAliases(
+    source,
+    viewerStoreHooks,
+    "getState",
+    stringConstants,
+  );
+  const setStateFunctions = methodAliases(
+    source,
+    viewerStoreHooks,
+    "setState",
+    stringConstants,
+  );
   const calls = descendants(source, ts.isCallExpression);
+  const isGetStateCall = (call: ts.CallExpression) =>
+    isMethodCall(
+      call,
+      viewerStoreHooks,
+      getStateFunctions,
+      "getState",
+      stringConstants,
+    );
+  const isSetStateCall = (call: ts.CallExpression) =>
+    isMethodCall(
+      call,
+      viewerStoreHooks,
+      setStateFunctions,
+      "setState",
+      stringConstants,
+    );
+  const isPageDataCall = (call: ts.CallExpression) => {
+    const expression = unwrapExpression(call.expression);
+    return ts.isIdentifier(expression) && pageDataHooks.has(expression.text);
+  };
+
+  const getStateResults = new Set<string>();
+  const pageDataResults = new Set<string>();
+  for (const declaration of descendants(source, ts.isVariableDeclaration)) {
+    if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+    const initializer = unwrapExpression(declaration.initializer);
+    if (ts.isCallExpression(initializer) && isGetStateCall(initializer)) {
+      getStateResults.add(declaration.name.text);
+    }
+    if (ts.isCallExpression(initializer) && isPageDataCall(initializer)) {
+      pageDataResults.add(declaration.name.text);
+    }
+  }
+  const getStateAliases = identifierAliases(source, getStateResults);
+  const pageDataAliases = identifierAliases(source, pageDataResults);
 
   for (const call of calls) {
-    if (ts.isIdentifier(call.expression) && call.expression.text === "useViewerStore") {
+    const callExpression = unwrapExpression(call.expression);
+    if (ts.isIdentifier(callExpression) && viewerStoreHooks.has(callExpression.text)) {
       const selector = call.arguments[0];
       if (
         selector &&
@@ -221,15 +496,17 @@ function legacyConsumerAccesses(source: ts.SourceFile): string[] {
       ) {
         const parameterBinding = selector.parameters[0].name;
         violations.push(
-          ...bindingLegacyNames(parameterBinding).map((name) => `selector-parameter:${name}`),
+          ...bindingLegacyNames(parameterBinding, stringConstants).map(
+            (name) => `selector-parameter:${name}`,
+          ),
         );
         if (ts.isIdentifier(parameterBinding)) {
-          const parameter = parameterBinding.text;
+          const stateAliases = identifierAliases(selector.body, [parameterBinding.text]);
           for (const access of descendants(selector.body, ts.isPropertyAccessExpression)) {
             const root = unwrapExpression(access.expression);
             if (
               ts.isIdentifier(root) &&
-              root.text === parameter &&
+              stateAliases.has(root.text) &&
               legacyNames.has(access.name.text)
             ) {
               violations.push(`selector:${access.name.text}`);
@@ -237,10 +514,10 @@ function legacyConsumerAccesses(source: ts.SourceFile): string[] {
           }
           for (const access of descendants(selector.body, ts.isElementAccessExpression)) {
             const root = unwrapExpression(access.expression);
-            const name = elementAccessName(access);
+            const name = elementAccessName(access, stringConstants);
             if (
               ts.isIdentifier(root) &&
-              root.text === parameter &&
+              stateAliases.has(root.text) &&
               name &&
               legacyNames.has(name)
             ) {
@@ -250,9 +527,9 @@ function legacyConsumerAccesses(source: ts.SourceFile): string[] {
           for (const declaration of descendants(selector.body, ts.isVariableDeclaration)) {
             if (declaration.initializer) {
               const initializer = unwrapExpression(declaration.initializer);
-              if (ts.isIdentifier(initializer) && initializer.text === parameter) {
+              if (ts.isIdentifier(initializer) && stateAliases.has(initializer.text)) {
                 violations.push(
-                  ...bindingLegacyNames(declaration.name).map(
+                  ...bindingLegacyNames(declaration.name, stringConstants).map(
                     (name) => `selector-destructure:${name}`,
                   ),
                 );
@@ -263,43 +540,46 @@ function legacyConsumerAccesses(source: ts.SourceFile): string[] {
       }
     }
 
-    if (isViewerStoreMethodCall(call, "getState")) {
+    if (isGetStateCall(call)) {
       const consumer = consumerOutsideTransparentCasts(call);
       if (ts.isPropertyAccessExpression(consumer) && legacyNames.has(consumer.name.text)) {
         violations.push(`getState-direct:${consumer.name.text}`);
       }
       if (ts.isElementAccessExpression(consumer)) {
-        const name = elementAccessName(consumer);
+        const name = elementAccessName(consumer, stringConstants);
         if (name && legacyNames.has(name)) violations.push(`getState-direct-element:${name}`);
       }
       if (ts.isVariableDeclaration(consumer)) {
-        if (ts.isIdentifier(consumer.name)) getStateAliases.add(consumer.name.text);
         violations.push(
-          ...bindingLegacyNames(consumer.name).map((name) => `getState-destructure:${name}`),
+          ...bindingLegacyNames(consumer.name, stringConstants).map(
+            (name) => `getState-destructure:${name}`,
+          ),
         );
       }
     }
 
-    if (isViewerStoreMethodCall(call, "setState") && call.arguments[0]) {
+    if (isSetStateCall(call) && call.arguments[0]) {
       for (const object of descendants(call.arguments[0], ts.isObjectLiteralExpression)) {
-        for (const key of directObjectKeys(object)) {
+        for (const key of directObjectKeys(object, stringConstants)) {
           if (legacyNames.has(key)) violations.push(`setState:${key}`);
         }
       }
     }
 
-    if (ts.isIdentifier(call.expression) && call.expression.text === "usePageData") {
+    if (isPageDataCall(call)) {
       const consumer = consumerOutsideTransparentCasts(call);
       if (ts.isVariableDeclaration(consumer)) {
         violations.push(
-          ...bindingLegacyNames(consumer.name).map((name) => `usePageData:${name}`),
+          ...bindingLegacyNames(consumer.name, stringConstants).map(
+            (name) => `usePageData:${name}`,
+          ),
         );
       }
       if (ts.isPropertyAccessExpression(consumer) && legacyNames.has(consumer.name.text)) {
         violations.push(`usePageData-direct:${consumer.name.text}`);
       }
       if (ts.isElementAccessExpression(consumer)) {
-        const name = elementAccessName(consumer);
+        const name = elementAccessName(consumer, stringConstants);
         if (name && legacyNames.has(name)) violations.push(`usePageData-element:${name}`);
       }
     }
@@ -314,10 +594,17 @@ function legacyConsumerAccesses(source: ts.SourceFile): string[] {
     ) {
       violations.push(`getState-alias:${root.text}.${access.name.text}`);
     }
+    if (
+      ts.isIdentifier(root) &&
+      pageDataAliases.has(root.text) &&
+      legacyNames.has(access.name.text)
+    ) {
+      violations.push(`usePageData-alias:${root.text}.${access.name.text}`);
+    }
   }
   for (const access of descendants(source, ts.isElementAccessExpression)) {
     const root = unwrapExpression(access.expression);
-    const name = elementAccessName(access);
+    const name = elementAccessName(access, stringConstants);
     if (
       ts.isIdentifier(root) &&
       getStateAliases.has(root.text) &&
@@ -325,6 +612,14 @@ function legacyConsumerAccesses(source: ts.SourceFile): string[] {
       legacyNames.has(name)
     ) {
       violations.push(`getState-alias-element:${root.text}[${name}]`);
+    }
+    if (
+      ts.isIdentifier(root) &&
+      pageDataAliases.has(root.text) &&
+      name &&
+      legacyNames.has(name)
+    ) {
+      violations.push(`usePageData-alias-element:${root.text}[${name}]`);
     }
   }
   return violations;
@@ -339,6 +634,104 @@ function directProperty(
   );
   expect(matches, `${name} property`).toHaveLength(1);
   return matches[0];
+}
+
+function isProductionSource(relativePath: string): boolean {
+  return (
+    !relativePath.includes("/__tests__/") &&
+    !/\.test\.(?:ts|tsx)$/.test(relativePath) &&
+    !relativePath.startsWith("src/test/")
+  );
+}
+
+function importedSymbolCalls(
+  root: ts.Node,
+  source: ts.SourceFile,
+  moduleName: string,
+  importedName: string,
+): ts.CallExpression[] {
+  const importedNames = importedLocalNames(source, moduleName, importedName);
+  const aliases = identifierAliases(root, importedNames);
+  return descendants(root, ts.isCallExpression).filter((call) => {
+    const expression = unwrapExpression(call.expression);
+    return ts.isIdentifier(expression) && aliases.has(expression.text);
+  });
+}
+
+function importedSymbolCallCount(
+  root: ts.Node,
+  source: ts.SourceFile,
+  moduleName: string,
+  importedName: string,
+): number {
+  return importedSymbolCalls(root, source, moduleName, importedName).length;
+}
+
+function importedCallTopology(
+  relativePaths: readonly string[],
+  moduleName: string,
+  importedName: string,
+): Record<string, number> {
+  const topology: Record<string, number> = {};
+  for (const relativePath of relativePaths) {
+    const source = parse(relativePath);
+    const count = importedSymbolCallCount(source, source, moduleName, importedName);
+    if (count > 0) topology[relativePath] = count;
+  }
+  return topology;
+}
+
+function callMemberNames(root: ts.Node): string[] {
+  const constants = staticStringConstants(root);
+  return descendants(root, ts.isCallExpression)
+    .map((call) => expressionMemberName(call.expression, constants))
+    .filter((name): name is string => name !== null);
+}
+
+function textractKeyReferenceCount(source: ts.SourceFile): number {
+  const constants = staticStringConstants(source);
+  const queryKeyNames = identifierAliases(
+    source,
+    importedLocalNames(source, "@/queries/queryKeys", "queryKeys"),
+  );
+  let count = 0;
+  for (const access of [
+    ...descendants(source, ts.isPropertyAccessExpression),
+    ...descendants(source, ts.isElementAccessExpression),
+  ]) {
+    const receiver = unwrapExpression(access.expression);
+    if (
+      ts.isIdentifier(receiver) &&
+      queryKeyNames.has(receiver.text) &&
+      expressionMemberName(access, constants) === "textract"
+    ) {
+      count += 1;
+    }
+  }
+  for (const array of descendants(source, ts.isArrayLiteralExpression)) {
+    if (
+      array.elements.some((element) => {
+        const value = unwrapExpression(element);
+        return (
+          (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) &&
+          value.text === "textract"
+        );
+      })
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function routeLiteralCount(source: ts.SourceFile, route: string): number {
+  return descendants(
+    source,
+    (node): node is ts.StringLiteral | ts.NoSubstitutionTemplateLiteral | ts.TemplateExpression =>
+      ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isTemplateExpression(node),
+  ).filter((node) => node.getText(source).includes(route)).length;
 }
 
 describe("P2.2⑦ legacy page-window ownership deletion", () => {
@@ -387,13 +780,11 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     const pageData = findVariable(viewerStore, "usePageData");
     const selectorObjects = descendants(pageData, ts.isObjectLiteralExpression).filter((object) => {
       const keys = directObjectKeys(object);
-      return keys.includes("textractData") && keys.includes("setTextractData");
+      return keys.includes("allCsiCodes") && keys.includes("setCsiFilter");
     });
     expect(selectorObjects, "usePageData selector result").toHaveLength(1);
     const selectorObject = selectorObjects[0];
     expect(directObjectKeys(selectorObject)).toEqual([
-      "textractData",
-      "setTextractData",
       "allCsiCodes",
       "activeCsiFilter",
       "setCsiFilter",
@@ -448,6 +839,10 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     const fixture = ts.createSourceFile(
       "legacy-escape-fixture.tsx",
       `
+        import {
+          useViewerStore as importedStoreHook,
+          usePageData as importedPageData,
+        } from "@/stores/viewerStore";
         useViewerStore(({ pageIntelligence }: any) => pageIntelligence);
         useViewerStore((state: any) => state["keynotes"]);
         const { csiCodes } = useViewerStore.getState() as any;
@@ -455,6 +850,24 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
         store["textAnnotations"];
         (usePageData() as any)["loadedPageRange"];
         useViewerStore.setState({ ["chunkLoading"]: true });
+        useViewerStore((state: any) => state.textractData);
+        const { setTextractData } = useViewerStore.getState() as any;
+
+        const hookAlias = importedStoreHook;
+        const computedTextract = "textractData";
+        hookAlias((state: any) => {
+          const selectorAlias = state as any;
+          return selectorAlias[computedTextract];
+        });
+        const getStateAlias = importedStoreHook.getState;
+        getStateAlias().setTextractData;
+        const storeAlias = getStateAlias() as any;
+        storeAlias[computedTextract];
+        const pageHookAlias = importedPageData;
+        const pageResultAlias = pageHookAlias() as any;
+        pageResultAlias.setTextractData;
+        const setStateAlias = importedStoreHook.setState;
+        setStateAlias({ [computedTextract]: {} });
       `,
       ts.ScriptTarget.Latest,
       true,
@@ -468,13 +881,20 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
         "getState-alias-element:store[textAnnotations]",
         "usePageData-element:loadedPageRange",
         "setState:chunkLoading",
+        "selector:textractData",
+        "getState-destructure:setTextractData",
+        "selector-element:textractData",
+        "getState-direct:setTextractData",
+        "getState-alias-element:storeAlias[textractData]",
+        "usePageData-alias:pageResultAlias.setTextractData",
+        "setState:textractData",
       ]),
     );
   });
 
-  it("keeps every client production/test consumer off direct, aliased, and casted store access", () => {
+  it("keeps store declarations and every client consumer off direct, aliased, and casted access", () => {
     const violations = sourceFilesUnder("src")
-      .filter((relativePath) => relativePath !== "src/stores/viewerStore.ts")
+      .filter(canContainViewerStoreAccess)
       .flatMap((relativePath) =>
         legacyConsumerAccesses(parse(relativePath)).map(
           (violation) => `${relativePath}:${violation}`,
@@ -483,24 +903,199 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     expect(violations).toEqual([]);
   }, 15_000);
 
-  it("pins whole-map observers to the approved scan-all product surfaces", () => {
-    const productionSources = sourceFilesUnder("src").filter(
-      (relativePath) => !relativePath.includes("/__tests__/") && !relativePath.endsWith(".test.tsx"),
+  it.each([
+    "src/app/(dashboard)/project/[id]/page.tsx",
+    "src/app/demo/project/[id]/page.tsx",
+  ])("clears only the previous Textract prefix before %s resets UI state", (relativePath) => {
+    const source = parse(relativePath);
+    const clearCalls = importedSymbolCalls(
+      source,
+      source,
+      "@/queries/textractCache",
+      "clearTextractProject",
     );
+    const resetCalls = descendants(source, ts.isCallExpression).filter(
+      (call) => ts.isIdentifier(call.expression) && call.expression.text === "resetProjectData",
+    );
+
+    expect(clearCalls).toHaveLength(1);
+    expect(resetCalls).toHaveLength(1);
+    expect(clearCalls[0].getStart(source)).toBeLessThan(resetCalls[0].getStart(source));
+    expect(ts.isAwaitExpression(clearCalls[0].parent), "clear must finish before reset").toBe(true);
+    expect(clearCalls[0].arguments).toHaveLength(2);
+    expect(
+      ts.isIdentifier(clearCalls[0].arguments[0]) && clearCalls[0].arguments[0].text,
+    ).toBe("queryClient");
+    expect(
+      ts.isIdentifier(clearCalls[0].arguments[1]) && clearCalls[0].arguments[1].text,
+    ).toBe("previousPublicId");
+
+    const previousPublicId = findVariable(source, "previousPublicId");
+    expect(previousPublicId.initializer).toBeTruthy();
+    const capture = unwrapExpression(previousPublicId.initializer!);
+    expect(ts.isPropertyAccessExpression(capture) && capture.name.text).toBe("publicId");
+    const getStateCall = ts.isPropertyAccessExpression(capture)
+      ? unwrapExpression(capture.expression)
+      : undefined;
+    expect(getStateCall && ts.isCallExpression(getStateCall)).toBe(true);
+    const stringConstants = staticStringConstants(source);
+    const storeHooks = identifierAliases(source, [
+      ...importedLocalNames(source, "@/stores/viewerStore", "useViewerStore"),
+    ]);
+    const getStateFunctions = methodAliases(
+      source,
+      storeHooks,
+      "getState",
+      stringConstants,
+    );
+    expect(
+      getStateCall &&
+        ts.isCallExpression(getStateCall) &&
+        isMethodCall(
+          getStateCall,
+          storeHooks,
+          getStateFunctions,
+          "getState",
+          stringConstants,
+        ),
+      "previousPublicId must capture live viewerStore publicId",
+    ).toBe(true);
+
+    // OCR has no bootstrap payload. A helper seed here would both widen the response and create a
+    // second automatic transport owner beside the preserved 200 ms controller.
+    expect(
+      importedSymbolCallCount(source, source, "@/test/seed-textract", "seedTextract"),
+    ).toBe(0);
+    expect(
+      importedSymbolCallCount(
+        source,
+        source,
+        "@/queries/textractCache",
+        "replaceTextractForPage",
+      ),
+    ).toBe(0);
+    expect(textractKeyReferenceCount(source)).toBe(0);
+    expect(callMemberNames(source)).not.toContain("setQueryData");
+  });
+
+  it("pins exact per-page, action-only, and passive Textract consumer topology", () => {
+    const productionSources = sourceFilesUnder("src").filter(isProductionSource);
+    expect(
+      importedCallTopology(
+        productionSources,
+        "@/queries/useTextract",
+        "useTextractForPage",
+      ),
+    ).toEqual(TEXTRACT_PAGE_HOOK_TOPOLOGY);
+    expect(
+      importedCallTopology(
+        productionSources,
+        "@/queries/textractCache",
+        "readTextractForPage",
+      ),
+    ).toEqual(TEXTRACT_ACTION_READ_TOPOLOGY);
+    expect(
+      importedCallTopology(
+        productionSources,
+        "@/queries/useTextract",
+        "useCachedTextractForPages",
+      ),
+    ).toEqual({ "src/components/viewer/PageSidebar.tsx": 1 });
+  }, 15_000);
+
+  it("pins the sole GET owner and the facade-only rerun writer", () => {
+    const productionSources = sourceFilesUnder("src").filter(isProductionSource);
+    const getOwners = productionSources.flatMap((relativePath) => {
+      const source = parse(relativePath);
+      return Array.from(
+        { length: routeLiteralCount(source, "/api/pages/textract?") },
+        () => relativePath,
+      );
+    });
+    expect(getOwners).toEqual(["src/queries/textractCache.ts"]);
+
+    expect(
+      importedCallTopology(
+        productionSources,
+        "@/queries/textractCache",
+        "replaceTextractForPage",
+      ),
+    ).toEqual({ "src/components/viewer/TextPanel.tsx": 1 });
+    expect(
+      importedCallTopology(
+        productionSources,
+        "@/queries/textractCache",
+        "ensureTextractPage",
+      ),
+    ).toEqual({ "src/hooks/useTextractLoader.ts": 1 });
+
+    const textPanel = parse("src/components/viewer/TextPanel.tsx");
+    const textractTab = findFunction(textPanel, "TextractTab");
+    expect(
+      importedSymbolCallCount(
+        textractTab,
+        textPanel,
+        "@/queries/textractCache",
+        "cancelTextractPage",
+      ),
+    ).toBe(1);
+    expect(
+      importedSymbolCallCount(
+        textractTab,
+        textPanel,
+        "@/queries/textractCache",
+        "replaceTextractForPage",
+      ),
+    ).toBe(1);
+    const rerunMemberCalls = callMemberNames(textractTab);
+    for (const forbidden of ["invalidateQueries", "setQueryData", "removeQueries", "setData"]) {
+      expect(rerunMemberCalls, forbidden).not.toContain(forbidden);
+    }
+  }, 15_000);
+
+  it("keeps controller and project bootstraps free of direct Textract cache writers", () => {
+    for (const relativePath of TEXTRACT_BOOTSTRAP_OR_LOADER_FILES) {
+      const source = parse(relativePath);
+      expect(
+        importedSymbolCallCount(
+          source,
+          source,
+          "@/test/seed-textract",
+          "seedTextract",
+        ),
+        relativePath,
+      ).toBe(0);
+      expect(
+        importedSymbolCallCount(
+          source,
+          source,
+          "@/queries/textractCache",
+          "replaceTextractForPage",
+        ),
+        relativePath,
+      ).toBe(0);
+      expect(textractKeyReferenceCount(source), relativePath).toBe(0);
+      expect(callMemberNames(source), relativePath).not.toContain("setQueryData");
+    }
+  });
+
+  it("pins whole-map observers to the approved scan-all product surfaces", () => {
+    const productionSources = sourceFilesUnder("src").filter(isProductionSource);
     const actual = Object.fromEntries(
       Object.keys(WHOLE_MAP_HOOK_WHITELIST).map((hookName) => [hookName, [] as string[]]),
     ) as Record<keyof typeof WHOLE_MAP_HOOK_WHITELIST, string[]>;
 
     for (const relativePath of productionSources) {
       const source = parse(relativePath);
-      for (const call of descendants(source, ts.isCallExpression)) {
-        if (
-          ts.isIdentifier(call.expression) &&
-          call.expression.text in WHOLE_MAP_HOOK_WHITELIST
-        ) {
-          actual[call.expression.text as keyof typeof WHOLE_MAP_HOOK_WHITELIST].push(
-            relativePath,
-          );
+      for (const hookName of Object.keys(WHOLE_MAP_HOOK_WHITELIST) as Array<
+        keyof typeof WHOLE_MAP_HOOK_WHITELIST
+      >) {
+        const moduleName = hookName === "useCachedTextractForPages"
+          ? "@/queries/useTextract"
+          : "@/queries/usePageWindow";
+        const count = importedSymbolCallCount(source, source, moduleName, hookName);
+        for (let index = 0; index < count; index += 1) {
+          actual[hookName].push(relativePath);
         }
       }
     }

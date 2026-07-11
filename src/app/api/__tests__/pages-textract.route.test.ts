@@ -49,13 +49,15 @@ describe.skipIf(!dbUp)("GET /api/pages/textract", () => {
     expect(body).toEqual({ textractData: SEED });
   });
 
-  it("allowDemo: a signed-out reader can fetch a demo project's textract", async () => {
+  it("allowDemo: a signed-out reader can fetch demo Textract through numeric and controller publicId", async () => {
     const { project } = await createWorld({ isDemo: true });
     await createPage(project.id, 1, { textractData: SEED as any });
     signedOut();
-    const { status, body } = await readJson(await get(`projectId=${project.id}&pageNumber=1`));
-    expect(status).toBe(200);
-    expect(body).toEqual({ textractData: SEED });
+    for (const identity of [`projectId=${project.id}`, `publicId=${project.publicId}`]) {
+      const { status, body } = await readJson(await get(`${identity}&pageNumber=1`));
+      expect(status).toBe(200);
+      expect(body).toEqual({ textractData: SEED });
+    }
   });
 
   it("missing pageNumber → 400 VALIDATION (exact message)", async () => {

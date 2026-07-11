@@ -8,6 +8,7 @@ import {
   useKeynotesByPage,
   useTextAnnotationsByPage,
 } from "@/queries/usePageWindow";
+import { useCachedTextractForPages } from "@/queries/useTextract";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
@@ -28,7 +29,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   const keynotes = useKeynotesByPage();
   const csiCodes = useCsiCodesByPage();
   const textAnnotations = useTextAnnotationsByPage();
-  const { textractData, activeCsiFilter, setCsiFilter } = usePageData();
+  const { activeCsiFilter, setCsiFilter } = usePageData();
   const { activeAnnotationFilter, setAnnotationFilter, searchQuery } = useDetection();
   // [refactor jul11 P2.2⑥] Page derivations follow the publicId-keyed annotation cache; the
   // filter/search controls remain in useDetection's zustand UI slice.
@@ -144,6 +145,10 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   }, [activeCsiFilter, summaries, csiCodes]);
   const isCsiFiltered = activeCsiFilter !== null && csiFilteredPages.length > 0;
 
+  // [refactor jul11 P2.2⑧ C3] Exact whole-map exception: CSI phrase fallback needs multiple
+  // already-retained pages. This passive bounded view creates no per-page observers or fetch fan-out.
+  const cachedTextractForCsiPages = useCachedTextractForPages(csiFilteredPages);
+
   // Count of distinct CSI codes per page that match the active trade filter.
   // Meaningful number: "this page has N CSI codes for this trade."
   // Fast: no runtime text matching — just array filters over cached CSI data.
@@ -174,14 +179,14 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
         total = matchingCode.triggers.length;
       } else {
         // Fallback: runtime phrase matching (old cached data)
-        const pageWords = textractData[pageNum]?.words;
+        const pageWords = cachedTextractForCsiPages[pageNum]?.words;
         if (!pageWords?.length) continue;
         total = findPhraseMatches(pageWords, matchingCode.description).length;
       }
       if (total > 0) counts[pageNum] = total;
     }
     return counts;
-  }, [activeCsiFilter, csiFilteredPages, csiCodes, textractData]);
+  }, [activeCsiFilter, csiFilteredPages, csiCodes, cachedTextractForCsiPages]);
 
   // Compute text annotation-filtered pages (use summary index when available)
   const textAnnotationFilteredPages = useMemo(() => {

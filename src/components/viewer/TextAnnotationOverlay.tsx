@@ -3,6 +3,7 @@
 import { useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useTextAnnotationsForPage } from "@/queries/usePageWindow";
+import { useTextractForPage } from "@/queries/useTextract";
 import { TEXT_ANNOTATION_COLORS } from "@/types";
 import type { TextAnnotation } from "@/types";
 
@@ -28,7 +29,7 @@ export default memo(function TextAnnotationOverlay({
   const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
   const setFilter = useViewerStore((s) => s.setTextAnnotationFilter);
   const mode = useViewerStore((s) => s.mode);
-  const textractData = useViewerStore((s) => s.textractData);
+  const textractData = useTextractForPage(pageNumber);
   const setSearch = useViewerStore((s) => s.setSearch);
   const searchQuery = useViewerStore((s) => s.searchQuery);
 
@@ -65,7 +66,7 @@ export default memo(function TextAnnotationOverlay({
 
       // Double-click: search for OCR word under cursor
       if (e.detail === 2) {
-        const pageWords = textractData[pageNumber]?.words;
+        const pageWords = textractData?.words;
         if (pageWords) {
           for (const word of pageWords) {
             const [left, top, w, h] = word.bbox;

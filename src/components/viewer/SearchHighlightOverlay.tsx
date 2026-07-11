@@ -3,6 +3,7 @@
 import { useEffect, useRef, useMemo, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useCsiCodesForPage } from "@/queries/usePageWindow";
+import { useTextractForPage } from "@/queries/useTextract";
 import type { SearchWordMatch, TextractWord } from "@/types";
 
 interface SearchHighlightOverlayProps {
@@ -85,7 +86,7 @@ export default memo(function SearchHighlightOverlay({
   const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
   const activeTradeFilter = useViewerStore((s) => s.activeTradeFilter);
   const pageCsiCodes = useCsiCodesForPage(pageNumber);
-  const textractData = useViewerStore((s) => s.textractData);
+  const textractData = useTextractForPage(pageNumber);
 
   const searchHits = searchMatches[pageNumber] || [];
 
@@ -94,7 +95,7 @@ export default memo(function SearchHighlightOverlay({
     if (!searchQuery || searchQuery.trim().length === 0) return [];
     if (searchHits.length > 0) return []; // API results available, don't double-draw
 
-    const pageWords = textractData[pageNumber]?.words;
+    const pageWords = textractData?.words;
     if (!pageWords || pageWords.length === 0) return [];
 
     const queryLower = searchQuery.toLowerCase().trim();
@@ -130,7 +131,7 @@ export default memo(function SearchHighlightOverlay({
     }
 
     // Fallback for old cached data (pre-trigger): runtime phrase matching
-    const pageWords = textractData[pageNumber]?.words;
+    const pageWords = textractData?.words;
     if (!pageWords || pageWords.length === 0) return [];
     const phraseHits = findPhraseMatches(pageWords, matchingCode.description);
     if (phraseHits.length > 0) return phraseHits;
@@ -154,7 +155,7 @@ export default memo(function SearchHighlightOverlay({
         }
       } else {
         // Fallback for old cached data (pre-trigger): runtime phrase matching
-        const pageWords = textractData[pageNumber]?.words;
+        const pageWords = textractData?.words;
         if (!pageWords?.length) continue;
         const phraseHits = findPhraseMatches(pageWords, code.description);
         if (phraseHits.length > 0) {
@@ -168,7 +169,7 @@ export default memo(function SearchHighlightOverlay({
     // Always also match the trade name itself as individual words — trade names
     // aren't in the CSI description (e.g., "Mechanical" isn't in "HVAC"), so
     // they don't show up in the stored triggers either way.
-    const pageWords = textractData[pageNumber]?.words;
+    const pageWords = textractData?.words;
     if (pageWords?.length) {
       const tradeWords = activeTradeFilter.toLowerCase().split(/\s+/);
       for (const word of pageWords) {

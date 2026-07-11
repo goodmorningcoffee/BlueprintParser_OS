@@ -478,12 +478,17 @@ export async function replaceTextractForPage(
   pageNumber: number,
   data: TextractPageData,
   protectedPages?: Iterable<number>,
+  canAdopt?: () => boolean,
 ): Promise<void> {
   if (!publicId) return;
   const coordinator = getCoordinator(qc);
   if (protectedPages) updateProtectedPages(coordinator, publicId, protectedPages);
 
   await cancelTextractPage(qc, publicId, pageNumber);
+  // Cancellation is an async boundary. A rerun owner can lose its project/page/unmount generation
+  // while the second exact cancel settles; recheck before the authoritative write so an obsolete
+  // completion cannot recreate a prefix that project teardown just removed.
+  if (canAdopt && !canAdopt()) return;
   const query = configuredPageQuery(qc, publicId, pageNumber);
   query.setData(data, { manual: true });
   touchTextractPage(qc, publicId, pageNumber);

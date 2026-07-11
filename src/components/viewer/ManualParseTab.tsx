@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useViewerStore, useTableParse, useNavigation, usePageData } from "@/stores/viewerStore";
+import { useViewerStore, useTableParse, useNavigation } from "@/stores/viewerStore";
+import { useTextractForPage } from "@/queries/useTextract";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 
 interface ManualParseTabProps {
@@ -35,7 +36,7 @@ export default function ManualParseTab({
   availablePrefixes,
 }: ManualParseTabProps) {
   const { pageNumber } = useNavigation();
-  const { textractData } = usePageData();
+  const pageTextract = useTextractForPage(pageNumber);
   const {
     tableParseStep, setTableParseStep,
     tableParseRegion,
@@ -75,8 +76,6 @@ export default function ManualParseTab({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [rowBBsBackup, restoreRowBBs]);
-
-  const pageTextract = textractData[pageNumber];
 
   // ─── Repeat BB: tile column BB rightward ──────────────────
   const repeatColumnRight = useCallback(

@@ -11,6 +11,8 @@ import {
   updatePageIntelligenceForPage,
   usePageIntelligenceByPage,
 } from "@/queries/usePageWindow";
+import { readTextractForPage } from "@/queries/textractCache";
+import { useTextractForPage } from "@/queries/useTextract";
 import HelpTooltip from "./HelpTooltip";
 import KeynoteItem from "./KeynoteItem";
 import CompareEditTab from "./CompareEditTab";
@@ -51,7 +53,9 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const setPage = useViewerStore((s) => s.setPage);
   const pageNames = useViewerStore((s) => s.pageNames);
   const pageIntelligence = usePageIntelligenceByPage();
-  const textractData = useViewerStore((s) => s.textractData);
+  // Manual parsing intentionally captures the current page payload from this render. Guided parsing
+  // below remains an invocation-time read because its grid may stay open while OCR is replaced.
+  const pageTextract = useTextractForPage(pageNumber);
   // [refactor jul11 P2.2⑥] Subscribe to the one chunk-windowed cache entry, not viewerStore.
   const { annotations } = useAnnotations();
   const toggleKeynoteParsePanel = useViewerStore((s) => s.toggleKeynoteParsePanel);
@@ -374,7 +378,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   // ─── Parse keynotes from column/row intersections ───────
   const parseKeynotes = useCallback(async () => {
     if (isSavingRef.current) return;
-    const pageTextract = textractData[pageNumber];
     if (!pageTextract?.words || keynoteColumnBBs.length < 2 || keynoteRowBBs.length === 0) return;
 
     const cols = keynoteColumnBBs; // draw order = column order
@@ -440,7 +443,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         isSavingRef.current = false;
       }
     }
-  }, [textractData, pageNumber, keynoteColumnBBs, keynoteRowBBs, keynoteYoloClass, addParsedKeynote, saveKeynoteToIntelligence, mapKeynoteKeysToYoloTags, resetKeynoteParse]);
+  }, [pageTextract, pageNumber, keynoteColumnBBs, keynoteRowBBs, keynoteYoloClass, addParsedKeynote, saveKeynoteToIntelligence, mapKeynoteKeysToYoloTags, resetKeynoteParse]);
 
   // ─── Auto parse via API ─────────────────────────────────
   const autoParseKeynote = useCallback(async (bbox: [number, number, number, number]) => {
@@ -536,7 +539,9 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   // ─── Guided parse: parse from grid ─────────────────────
   const parseFromGuidedGrid = useCallback(async () => {
     if (isSavingRef.current) return;
-    const pageTextract = useViewerStore.getState().textractData[pageNumber];
+    // Unlike the manual path, guided parsing is a live action read: a user can leave the grid open
+    // across an OCR replacement. The imperative facade touches LRU recency without an observer.
+    const pageTextract = readTextractForPage(queryClient, publicId, pageNumber);
     if (!pageTextract?.words || guidedParseRows.length < 2 || guidedParseCols.length < 2) return;
 
     const result = extractCellsFromGrid(pageTextract.words, guidedParseRows, guidedParseCols);

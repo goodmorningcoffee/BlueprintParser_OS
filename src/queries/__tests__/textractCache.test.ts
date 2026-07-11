@@ -17,6 +17,7 @@ import {
   clearTextractProject,
   ensureTextractPage,
   fetchTextractPage,
+  getCachedTextractForPages,
   getTextractProjectRevision,
   getTextractRetentionStats,
   readTextractForPage,
@@ -73,6 +74,8 @@ afterEach(() => {
 describe("Textract page options and transport", () => {
   it("Q1/Q2 pins the exact publicId/page key and every domain option", () => {
     const options = textractPageQueryOptions("project-A", 7);
+    expect(MAX_RETAINED_TEXTRACT_BYTES).toBe(8 * 1024 * 1024);
+    expect(TEXTRACT_GC_TIME_MS).toBe(600_000);
     expect(options.queryKey).toEqual(["project", "project-A", "textract", 7]);
     expect(options.staleTime).toBe(Infinity);
     expect(options.gcTime).toBe(TEXTRACT_GC_TIME_MS);
@@ -255,6 +258,68 @@ describe("central count/byte retention and live eligibility", () => {
     expect(getTextractRetentionStats(qc, "P").retainedPageNumbers).toEqual([
       1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
     ]);
+  });
+
+  it("Q7 a truthy ensure hit performs no transport and refreshes exact LRU order", async () => {
+    const qc = freshClient();
+    for (let page = 1; page <= MAX_RETAINED_TEXTRACT_PAGES; page += 1) {
+      await replaceTextractForPage(qc, "P", page, pageData(String(page)));
+    }
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pageOne = qc.getQueryData<TextractPageData>(queryKeys.textract.page("P", 1));
+    await expect(
+      ensureTextractPage(qc, { publicId: "P", pageNumber: 1 }),
+    ).resolves.toBe(pageOne);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await replaceTextractForPage(qc, "P", 13, pageData("13"));
+    expect(qc.getQueryData(queryKeys.textract.page("P", 1))).toBe(pageOne);
+    expect(qc.getQueryData(queryKeys.textract.page("P", 2))).toBeUndefined();
+  });
+
+  it("Q7 passive aggregate reads do not refresh LRU order", async () => {
+    const qc = freshClient();
+    for (let page = 1; page <= MAX_RETAINED_TEXTRACT_PAGES; page += 1) {
+      await replaceTextractForPage(qc, "P", page, pageData(String(page)));
+    }
+    const pageOne = qc.getQueryData<TextractPageData>(queryKeys.textract.page("P", 1));
+
+    expect(getCachedTextractForPages(qc, "P", new Set([1]))[1]).toBe(pageOne);
+    await replaceTextractForPage(qc, "P", 13, pageData("13"));
+
+    expect(qc.getQueryData(queryKeys.textract.page("P", 1))).toBeUndefined();
+    expect(qc.getQueryData(queryKeys.textract.page("P", 2))).toBeDefined();
+  });
+
+  it("Q8 measures UTF-8 bytes, reports them exactly, and evicts at the literal 8 MiB rail", async () => {
+    const qc = freshClient();
+    const literalByteLimit = 8 * 1024 * 1024;
+    const multibyte = pageData("é".repeat(512));
+    const multibyteJson = JSON.stringify(multibyte);
+    const multibyteUtf8Bytes = new TextEncoder().encode(multibyteJson).byteLength;
+    expect(multibyteUtf8Bytes).toBeGreaterThan(multibyteJson.length);
+
+    // Make the two serialized payloads exactly 8 MiB in UTF-16 code units. A code-unit estimator
+    // would retain both, while the required UTF-8 estimator crosses the byte rail and evicts page 1.
+    const asciiProbe = pageData("oldest", 1);
+    const asciiJsonOverhead = JSON.stringify(asciiProbe).length - 1;
+    const asciiPayloadLength =
+      literalByteLimit - multibyteJson.length - asciiJsonOverhead;
+    const oldest = pageData("oldest", asciiPayloadLength);
+    const oldestJson = JSON.stringify(oldest);
+    expect(oldestJson.length + multibyteJson.length).toBe(literalByteLimit);
+    expect(
+      new TextEncoder().encode(oldestJson).byteLength + multibyteUtf8Bytes,
+    ).toBeGreaterThan(literalByteLimit);
+
+    await replaceTextractForPage(qc, "P", 1, oldest);
+    await replaceTextractForPage(qc, "P", 2, multibyte);
+
+    const stats = getTextractRetentionStats(qc, "P");
+    expect(stats.retainedPageNumbers).toEqual([2]);
+    expect(stats.estimatedBytes).toBe(multibyteUtf8Bytes);
   });
 
   it("Q8 byte rail evicts below 12; one oversized protected current page survives honest overage", async () => {

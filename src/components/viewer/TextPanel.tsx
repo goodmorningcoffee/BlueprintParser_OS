@@ -2,8 +2,10 @@
 
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useNavigation, usePageData, usePanels, useProject, useDetection, useTextAnnotationDisplay } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useTextAnnotationDisplay } from "@/stores/viewerStore";
 import { useAnnotations } from "@/queries/useAnnotations";
+import { cancelTextractPage, replaceTextractForPage } from "@/queries/textractCache";
+import { useTextractForPage } from "@/queries/useTextract";
 import {
   setCsiCodesForPage,
   useCsiCodesForPage,
@@ -38,7 +40,6 @@ const CATEGORY_LABELS: Record<AnnotationCategory, string> = {
  */
 export default function TextPanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
-  const { textractData } = usePageData();
   const annotations = useTextAnnotationsForPage(pageNumber);
   const { textPanelTab: tab, setTextPanelTab: setTab } = usePanels();
   const { searchQuery } = useDetection();
@@ -47,7 +48,6 @@ export default function TextPanel({ embedded = false }: { embedded?: boolean } =
   const { annotations: allAnnotations } = useAnnotations();
   const userMarkups = allAnnotations.filter((a) => a.source === "user");
 
-  const pageData = textractData[pageNumber];
   const TAB_LABELS: Record<string, string> = {
     ocr: "OCR",
     annotations: `Annotations (${annotations.length})`,
@@ -78,7 +78,7 @@ export default function TextPanel({ embedded = false }: { embedded?: boolean } =
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
-        {tab === "ocr" && <OcrTab pageData={pageData} searchQuery={searchQuery} pageNumber={pageNumber} />}
+        {tab === "ocr" && <OcrTab searchQuery={searchQuery} pageNumber={pageNumber} />}
         {tab === "annotations" && <AnnotationsTab annotations={annotations} pageNumber={pageNumber} />}
         {tab === "markups" && <MarkupsTab markups={userMarkups} />}
         {tab === "graph" && <GraphTab pageNumber={pageNumber} />}
@@ -90,7 +90,10 @@ export default function TextPanel({ embedded = false }: { embedded?: boolean } =
 
 // ─── OCR Tab ──────────────────────────────────────────────────
 
-function OcrTab({ pageData, searchQuery, pageNumber }: { pageData: any; searchQuery: string; pageNumber: number }) {
+function OcrTab({ searchQuery, pageNumber }: { searchQuery: string; pageNumber: number }) {
+  // Keep the heavy page observer inside the mounted data surface. TextPanel's annotations/markups
+  // tabs should not retain an OCR observer, and TextractTab owns its own single matching observer.
+  const pageData = useTextractForPage(pageNumber);
   // Each line returns { text, highlighted, isHtml } — `isHtml === true` means
   // the `text` field is pre-escaped HTML containing <mark> tags; the render
   // path below uses `dangerouslySetInnerHTML` for those. When no search query
@@ -552,15 +555,25 @@ function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
 // ─── Textract Tab ────────────────────────────────────────────────
 
 export function TextractTab({ pageNumber }: { pageNumber: number }) {
-  // [refactor jul11 P2.2⑧ C1] Keep this read inside the narrow testable tab so the rerun freeze
-  // mounts only its real UI. C3 swaps this one selector to useTextractForPage; the DOM tests and
-  // their shared seed helper remain unchanged across that ownership flip.
-  const pageData = useViewerStore((s) => s.textractData[pageNumber]);
-  const { projectId: projectDbId, isDemo } = useProject();
-  const setTextractData = useViewerStore((s) => s.setTextractData);
+  const pageData = useTextractForPage(pageNumber);
+  const { publicId, isDemo } = useProject();
+  const queryClient = useQueryClient();
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ durationMs: number; stats: { wordCount: number; lineCount: number; tableCount: number } } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const requestGenerationRef = useRef(0);
+
+  // A tab instance survives page/project navigation. Invalidate the old request before the new
+  // identity can display its loading/result/error state; cleanup also makes unmount completions inert.
+  useEffect(() => {
+    requestGenerationRef.current += 1;
+    setLoading(false);
+    setResult(null);
+    setError(null);
+    return () => {
+      requestGenerationRef.current += 1;
+    };
+  }, [publicId, pageNumber]);
 
   const currentStats = {
     words: pageData?.words?.length ?? 0,
@@ -569,27 +582,56 @@ export function TextractTab({ pageNumber }: { pageNumber: number }) {
   };
 
   const handleRerun = async () => {
-    if (loading || !projectDbId || isDemo) return;
+    if (loading || !publicId || isDemo) return;
+    const capturedPublicId = publicId;
+    const capturedPageNumber = pageNumber;
+    const requestGeneration = ++requestGenerationRef.current;
+    const isCurrentRequest = () => {
+      const live = useViewerStore.getState();
+      return requestGenerationRef.current === requestGeneration
+        && live.publicId === capturedPublicId
+        && live.pageNumber === capturedPageNumber;
+    };
+
     setLoading(true);
     setError(null);
     setResult(null);
     try {
+      // First exact cancel closes any GET already racing this authoritative server action.
+      await cancelTextractPage(queryClient, capturedPublicId, capturedPageNumber);
+      if (!isCurrentRequest()) return;
+
       const res = await fetch("/api/pages/textract-rerun", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: projectDbId, pageNumber }),
+        body: JSON.stringify({ publicId: capturedPublicId, pageNumber: capturedPageNumber }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(apiErrorMessage(body) || `HTTP ${res.status}`);
       }
       const data = await res.json();
+      if (!isCurrentRequest()) return;
+
+      if (data.textractData) {
+        // replaceTextractForPage performs the required SECOND exact cancel before adopting the
+        // server payload. Do not invalidate/refetch: this response is authoritative and must win.
+        await replaceTextractForPage(
+          queryClient,
+          capturedPublicId,
+          capturedPageNumber,
+          data.textractData,
+          undefined,
+          isCurrentRequest,
+        );
+        if (!isCurrentRequest()) return;
+      }
+
       setResult({ durationMs: data.durationMs, stats: data.stats });
-      if (data.textractData) setTextractData(pageNumber, data.textractData);
     } catch (e: any) {
-      setError(e?.message || "Re-run failed");
+      if (isCurrentRequest()) setError(e?.message || "Re-run failed");
     } finally {
-      setLoading(false);
+      if (isCurrentRequest()) setLoading(false);
     }
   };
 
@@ -598,11 +640,11 @@ export function TextractTab({ pageNumber }: { pageNumber: number }) {
       <div>
         <button
           onClick={handleRerun}
-          disabled={loading || !projectDbId || isDemo}
+          disabled={loading || !publicId || isDemo}
           className={`w-full px-3 py-2 rounded border text-sm font-medium transition-colors ${
             loading
               ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
-              : !projectDbId || isDemo
+              : !publicId || isDemo
               ? "border-[var(--border)] text-[var(--muted)]/50 cursor-not-allowed"
               : "border-[var(--accent)]/60 text-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20"
           }`}

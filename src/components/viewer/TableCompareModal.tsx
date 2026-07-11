@@ -10,6 +10,7 @@ import {
   readPageIntelligence,
   setPageIntelligenceForPage,
 } from "@/queries/usePageWindow";
+import { useTextractForPage } from "@/queries/useTextract";
 import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import EditableGrid from "./EditableGrid";
 
@@ -32,7 +33,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const tableParsedGrid = useViewerStore((s) => s.tableParsedGrid);
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
   const tableParseMeta = useViewerStore((s) => s.tableParseMeta);
-  const textractData = useViewerStore((s) => s.textractData);
+  const textractData = useTextractForPage(pageNumber);
 
   // Source picker — "merged" (default) or a method name from tableParseMeta.methodResults.
   // Swapping rewrites tableParsedGrid's headers/rows so edits apply to the chosen source.
@@ -117,12 +118,12 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   // Maps "r{row}c{col}" to [minX, minY, maxX, maxY] relative to the crop region
   const cellBboxes = useMemo(() => {
     const map: Record<string, [number, number, number, number]> = {};
-    if (!tableParseRegion || !tableParsedGrid || !textractData[pageNumber]?.words) return map;
+    if (!tableParseRegion || !tableParsedGrid || !textractData?.words) return map;
 
     const [rMinX, rMinY, rMaxX, rMaxY] = tableParseRegion;
     const rW = rMaxX - rMinX;
     const rH = rMaxY - rMinY;
-    const words = textractData[pageNumber].words;
+    const words = textractData.words;
 
     // Get words inside region
     const regionWords = words.filter((w: any) => {
