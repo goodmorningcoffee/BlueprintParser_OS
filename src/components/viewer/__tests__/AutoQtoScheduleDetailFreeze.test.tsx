@@ -158,6 +158,40 @@ describe("AutoQto schedule detail fallback — P2.2⑦ freeze", () => {
     expect(useViewerStore.getState().loadedPageRange).toEqual({ from: 1, to: 15 });
   });
 
+  it("uses the authenticated detail route outside demo mode", async () => {
+    const serverIntel = matchingPageIntelligence("authenticated");
+    useViewerStore.setState({ isDemo: false });
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === "/api/qto-workflows?projectId=pid") {
+        return { ok: true, json: async () => [workflow] } as Response;
+      }
+      if (url === "/api/projects/pid/pages?from=9&to=9") {
+        return {
+          ok: true,
+          json: async () => ({
+            pages: [{ pageNumber: 9, pageIntelligence: serverIntel }],
+            annotations: [],
+          }),
+        } as Response;
+      }
+      if (url === "/api/qto-workflows/-71") {
+        return {
+          ok: true,
+          json: async () => ({ ...workflow, step: "confirm-tags" }),
+        } as Response;
+      }
+      throw new Error(`unexpected authenticated AutoQto request: ${url}`);
+    });
+    renderActiveSchedule();
+
+    clickSummarySchedule();
+
+    await waitFor(() => expect(screen.getByText("Step: confirm-tags")).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledWith("/api/projects/pid/pages?from=9&to=9");
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/demo/projects/pid/pages?from=9&to=9");
+    expect(useViewerStore.getState().pageIntelligence[9]).toEqual(serverIntel);
+  });
+
   it("adopts truthy PI even when the named region is still absent, then shows the no-data result", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
