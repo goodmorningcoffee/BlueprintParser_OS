@@ -14,13 +14,10 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
-import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
+import { useSummaries } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
-import {
-  setPageIntelligenceForPage,
-  updatePageIntelligenceForPage,
-  usePageIntelligenceByPage,
-} from "@/queries/usePageWindow";
+import { updatePageIntelligenceForPage, usePageIntelligenceByPage } from "@/queries/usePageWindow";
+import { saveParsedRegion } from "@/queries/parsedRegions";
 import { readTextractForPage } from "@/queries/textractCache";
 import { useTextractForPage } from "@/queries/useTextract";
 import { useYoloTagActions, useYoloTagRows } from "@/queries/useYoloTags";
@@ -29,7 +26,7 @@ import KeynoteItem from "./KeynoteItem";
 import CompareEditTab from "./CompareEditTab";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
-import { promoteParsedRegion, regionIdFor, canPersist } from "@/lib/client-persist";
+import { regionIdFor, canPersist } from "@/lib/client-persist";
 import ExportCsvModal from "./ExportCsvModal";
 import type { YoloTag, QtoItemType } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
@@ -96,8 +93,8 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const setTableParsedGrid = useParseFlowStore((s) => s.setTableParsedGrid);
   const setTableParseRegion = useParseFlowStore((s) => s.setTableParseRegion);
   const { publicId } = useProject();
-  // [refactor jul10 P2.2③] context-only handle for the two promote-refresher cache seeds below
-  // (saveKeynoteToIntelligence + the guided-parse save) — zero subscription.
+  // Context-only handle for optimistic page writes and both C2 shared save-command paths — zero
+  // subscription; summaries publication happens inside the captured-target command.
   const queryClient = useQueryClient();
 
   // Guided parse state
@@ -196,29 +193,26 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     }));
 
     if (!persistToDb) return;
-    refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
     if (canPersist(publicId, sessionState.isDemo)) {
-      const result = await promoteParsedRegion({
-        publicId,
-        pageNumber,
-        type: "keynote",
-        regionId,
-        bbox,
-        data,
-        category: "keynote-table",
-        csiTags: csiTags || [],
-      });
-      // Adopt the server's authoritative intelligence + summaries.
-      setPageIntelligenceForPage(
+      // C2 correction: persistent spatial recompute belongs after authoritative adoption. The
+      // command owns P -> A -> S? -> X; local/demo keeps the original wrapper path below.
+      await saveParsedRegion(
         queryClient,
-        publicId,
-        pageNumber,
-        result.updatedIntelligence as any,
+        { publicId, isDemo: sessionState.isDemo, pageNumber },
+        {
+          via: "parser",
+          type: "keynote",
+          regionId,
+          bboxMinMax: bbox,
+          data,
+          category: "keynote-table",
+          csiTags: csiTags || [],
+        },
       );
-      // [refactor jul10 P2.2③] cache seed under the render `publicId` (useProject) — the same id
-      // the promote request above used (SPEC §5-S3). Guard KEPT: promote returns summaries:null
-      // on real paths (compute-reject swallow) and must not clear live data.
-      if (result.summaries) seedSummariesCache(queryClient, publicId, result.summaries as any);
+    } else {
+      // Preserve the synchronous local/demo spatial publication; do not await the command's local
+      // result and insert a microtask into the existing UI sequence.
+      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
     }
   }, [pageNumber, keynoteParseRegion, publicId, queryClient]);
 
@@ -615,34 +609,25 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         addParsedKeynote({ pageNumber, keys, tableName: `Keynotes p.${pageNumber}` });
       }
 
-      // Refresh spatial map
-      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
-
       // Auto-persist on parse via the transactional promote upsert. Gated on
       // publicId (canPersist), NOT numeric projectId. Throws on failure → we
       // surface it and bail before reset so the user can retry.
       if (canPersist(publicId, session.isDemo)) {
-        const promoteResult = await promoteParsedRegion({
-          publicId,
-          pageNumber,
-          type: "keynote",
-          regionId,
-          bbox,
-          data,
-          category: "keynote-table",
-          csiTags,
-        });
-        setPageIntelligenceForPage(
+        await saveParsedRegion(
           queryClient,
-          publicId,
-          pageNumber,
-          promoteResult.updatedIntelligence as any,
+          { publicId, isDemo: session.isDemo, pageNumber },
+          {
+            via: "parser",
+            type: "keynote",
+            regionId,
+            bboxMinMax: bbox,
+            data,
+            category: "keynote-table",
+            csiTags,
+          },
         );
-        // [refactor jul10 P2.2③] was the ODD site: `store.setSummaries(...)` off the :542
-        // getState() capture, not the getState().setSummaries form. Now the shared cache seed
-        // under the render `publicId` — the same id the promote above used (SPEC §4.2, §5-S3).
-        // Guard KEPT (summaries:null on real paths must not clear live data).
-        if (promoteResult.summaries) seedSummariesCache(queryClient, publicId, promoteResult.summaries as any);
+      } else {
+        refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
       }
 
       if (keys.length > 0) {

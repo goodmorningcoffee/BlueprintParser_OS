@@ -6,8 +6,6 @@ import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
-// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
-import { seedSummariesCache } from "@/queries/useSummaries";
 import { readAnnotations } from "@/queries/useAnnotations";
 import {
   readPageIntelligence,
@@ -18,7 +16,8 @@ import {
   readYoloTags,
   useYoloTagActions,
 } from "@/queries/useYoloTags";
-import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
+import { canPersist } from "@/lib/client-persist";
+import { saveParsedRegion } from "@/queries/parsedRegions";
 import type { YoloTag } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 import type { MapTagsStrictness } from "./MapTagsSection";
@@ -57,8 +56,8 @@ export default function KeynoteItem({
   publicId,
   yoloTags,
 }: KeynoteItemProps) {
-  // [refactor jul10 P2.2③] context-only handle for the summaries cache seed (zero subscription —
-  // per-item list component; a useQuery here would re-render every row on every summaries write).
+  // Context-only handle for optimistic page writes and the C2 shared save command. This remains
+  // subscription-free: a per-row Query observer would fan every summaries write across the list.
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -150,26 +149,21 @@ export default function KeynoteItem({
       return; // demo / no publicId / no DB-backed region — local-only update above
     }
     try {
-      const result = await promoteParsedRegion({
-        publicId: publicId!,
-        pageNumber: keynote.pageNumber,
-        type: "keynote",
-        regionId: matchedId,
-        bbox: matchedBbox,
-        data: matchedData,
-        category: trimmed,
-        csiTags: matchedCsiTags,
-      });
-      setPageIntelligenceForPage(
+      // C2: the shared command owns persistent P -> A -> S? -> X. This edit keeps its optimistic
+      // write above and local-only early return exactly where they were.
+      await saveParsedRegion(
         queryClient,
-        publicId!,
-        keynote.pageNumber,
-        result.updatedIntelligence as any,
+        { publicId: publicId!, isDemo: session.isDemo, pageNumber: keynote.pageNumber },
+        {
+          via: "parser",
+          type: "keynote",
+          regionId: matchedId,
+          bboxMinMax: matchedBbox,
+          data: matchedData,
+          category: trimmed,
+          csiTags: matchedCsiTags,
+        },
       );
-      // [refactor jul10 P2.2③] cache seed under the `publicId` PROP (the id the promote used;
-      // SPEC §5-S3) — non-null assertion is safe: canPersist gated above. Guard KEPT (promote
-      // returns summaries:null on real paths; must not clear live data).
-      if (result.summaries) seedSummariesCache(queryClient, publicId!, result.summaries as any);
     } catch (err) {
       setNameError(err instanceof Error ? err.message : "Could not save name");
     }

@@ -225,17 +225,17 @@ describe("TableParsePanel — All Tables merges summaries with loaded intel, ded
   });
 });
 
-// ─── TableParsePanel — refresher null-retention: the `if (result.summaries)` guard (TPP-R) ───
+// ─── TableParsePanel — shared-command null-summary retention (TPP-R) ───
 
-// [refactor jul10 P2.2③ closers] THE executable pin for SPEC §5-S4. Before this case, all 6
-// promote-refresher guards were deletable with a green suite: the server-side pin
+// [refactor jul10 P2.2③ closers; jul11 P2.4 C2 repoint] THE executable pin for SPEC §5-S4.
+// Before this case, all six original promote-refresher guards were deletable with a green suite:
+// the server-side pin
 // (regions-promote.route.test.ts:524) only proves the API RETURNS summaries:null on the
 // compute-reject swallow, and AQT-R only pins imperative-write→subscribed-read propagation —
-// neither exercises the CLIENT's guarded write. This case drives TableParsePanel's REAL save
-// handler (detectCsiAndPersist → promoteParsedRegion → fetch("/api/regions/promote")) against a
-// mocked response whose summaries is null, then asserts the previously-seeded catalog STILL
-// renders. Discrimination (verified against the handler at TableParsePanel.tsx:194): deleting the
-// guard makes the seed unconditional → seedSummariesCache(qc, pid, null) nulls the "pid" cache
+// neither exercises the CLIENT's guarded write. This case drives TableParsePanel's real save
+// handler through `saveParsedRegion` and the promote fetch against a mocked null summary, then
+// asserts the previously seeded catalog still renders. Deleting the one converged command guard
+// makes the seed unconditional → seedSummariesCache(qc, pid, null) nulls the "pid" cache
 // entry → allParsedTables loses its summary-only row → the final asserts fail ("No parsed tables
 // found." replaces "Door Schedule"). The grid carries non-empty csiTags so the best-effort
 // /api/csi/detect pre-fetch is skipped — the ONLY network hop is the promote itself.

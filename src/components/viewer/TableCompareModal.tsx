@@ -7,15 +7,14 @@ import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
-// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
-import { seedSummariesCache } from "@/queries/useSummaries";
 import {
   readPageIntelligence,
   setPageIntelligenceForPage,
 } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
 import { navigateYoloTag, readYoloTags } from "@/queries/useYoloTags";
-import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
+import { canPersist } from "@/lib/client-persist";
+import { saveParsedRegion } from "@/queries/parsedRegions";
 import EditableGrid from "./EditableGrid";
 
 interface TableCompareModalProps {
@@ -29,7 +28,7 @@ interface TableCompareModalProps {
  * Mode B: Overlay — parsed text overlaid on original image with adjustable opacity.
  */
 export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
-  // [refactor jul10 P2.2③] context-only handle for the summaries cache seed (zero subscription).
+  // Context-only handle for optimistic page writes and the C2 shared save command (zero observer).
   const queryClient = useQueryClient();
   const toggleModal = useUiStore((s) => s.toggleTableCompareModal);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
@@ -477,25 +476,18 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     setSavingDone(true);
     try {
       const edited = (updatedIntel.parsedRegions as any[]).find((r) => r.id === matchedId);
-      const result = await promoteParsedRegion({
-        publicId,
-        pageNumber,
-        type: matchedType,
-        regionId: matchedId,
-        bbox: matchedBbox,
-        data: edited?.data ?? {},
-        csiTags: matchedCsiTags,
-      });
-      setPageIntelligenceForPage(
+      await saveParsedRegion(
         queryClient,
-        publicId,
-        pageNumber,
-        result.updatedIntelligence as any,
+        { publicId, isDemo, pageNumber },
+        {
+          via: "parser",
+          type: matchedType,
+          regionId: matchedId,
+          bboxMinMax: matchedBbox,
+          data: edited?.data ?? {},
+          csiTags: matchedCsiTags,
+        },
       );
-      // [refactor jul10 P2.2③] cache seed under the handler-time `publicId` (destructured from
-      // the getState() `store` capture above — the id the promote request used; SPEC §5-S3).
-      // Guard KEPT: promote returns summaries:null on real paths; must not clear live data.
-      if (result.summaries) seedSummariesCache(queryClient, publicId, result.summaries as any);
       toggleModal();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Could not save edits");

@@ -13,21 +13,18 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
-import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
+import { useSummaries } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
 import { useYoloTagActions, useYoloTagRows } from "@/queries/useYoloTags";
-import {
-  setPageIntelligenceForPage,
-  updatePageIntelligenceForPage,
-  usePageIntelligenceByPage,
-} from "@/queries/usePageWindow";
+import { updatePageIntelligenceForPage, usePageIntelligenceByPage } from "@/queries/usePageWindow";
+import { saveParsedRegion } from "@/queries/parsedRegions";
 import ParsedTableItem from "./ParsedTableItem";
 import AutoParseTab from "./AutoParseTab";
 import GuidedParseTab from "./GuidedParseTab";
 import ManualParseTab from "./ManualParseTab";
 import CompareEditTab from "./CompareEditTab";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
-import { promoteParsedRegion, regionIdFor, canPersist } from "@/lib/client-persist";
+import { regionIdFor, canPersist } from "@/lib/client-persist";
 import ExportCsvModal from "./ExportCsvModal";
 import type { MapTagsStrictness } from "./MapTagsSection";
 import type { YoloTag, QtoItemType } from "@/types";
@@ -56,8 +53,8 @@ type TableSaveTarget = {
  * All Tables tab is rendered inline (small).
  */
 export default function TableParsePanel() {
-  // [refactor jul10 P2.2③] context-only handle for the promote-refresher cache seed below —
-  // useQueryClient carries ZERO subscription (no re-render on summaries writes).
+  // Context-only handle for the C2 save command and local page writes. useQueryClient carries
+  // zero subscription, so summaries publication cannot add a panel render.
   const queryClient = useQueryClient();
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const pageIntelligence = usePageIntelligenceByPage();
@@ -227,40 +224,32 @@ export default function TableParsePanel() {
 
       if (canPersist(target.publicId, target.isDemo)) {
         // Use the drawn region bbox for a stable, re-parse-replaces regionId.
-        const result = await promoteParsedRegion({
-          publicId: target.publicId,
-          pageNumber: target.pageNumber,
-          type: "schedule",
-          regionId: regionIdFor(target.pageNumber, target.bbox),
-          bbox: target.bbox,
-          data: {
-            headers: commitGrid.headers,
-            rows: commitGrid.rows,
-            tagColumn: commitGrid.tagColumn,
-            tableName: commitGrid.tableName,
-            rowCount: commitGrid.rows.length,
-            columnCount: commitGrid.headers.length,
-            ...(commitGrid.colBoundaries ? { colBoundaries: commitGrid.colBoundaries } : {}),
-            ...(commitGrid.rowBoundaries ? { rowBoundaries: commitGrid.rowBoundaries } : {}),
-          },
-          category: commitGrid.tableName || undefined,
-          csiTags: commitGrid.csiTags || [],
-        });
-        // Adopt the server's authoritative intelligence + summaries.
-        setPageIntelligenceForPage(
+        await saveParsedRegion(
           queryClient,
-          target.publicId,
-          target.pageNumber,
-          result.updatedIntelligence as any,
+          {
+            publicId: target.publicId,
+            isDemo: target.isDemo,
+            pageNumber: target.pageNumber,
+          },
+          {
+            via: "parser",
+            type: "schedule",
+            regionId: regionIdFor(target.pageNumber, target.bbox),
+            bboxMinMax: target.bbox,
+            data: {
+              headers: commitGrid.headers,
+              rows: commitGrid.rows,
+              tagColumn: commitGrid.tagColumn,
+              tableName: commitGrid.tableName,
+              rowCount: commitGrid.rows.length,
+              columnCount: commitGrid.headers.length,
+              ...(commitGrid.colBoundaries ? { colBoundaries: commitGrid.colBoundaries } : {}),
+              ...(commitGrid.rowBoundaries ? { rowBoundaries: commitGrid.rowBoundaries } : {}),
+            },
+            category: commitGrid.tableName || undefined,
+            csiTags: commitGrid.csiTags || [],
+          },
         );
-        // [refactor jul10 P2.2③] cache seed under the handler-time publicId the promote
-        // request itself used — NOT a render-captured id (a mid-await project switch must not leak
-        // this response into another project's entry; SPEC §5-S3). Guard KEPT: promote returns
-        // summaries:null on real paths (compute-reject swallow) and must not clear live data.
-        if (result.summaries) {
-          seedSummariesCache(queryClient, target.publicId, result.summaries as any);
-        }
-        refreshPageCsiSpatialMap(queryClient, target.publicId, target.pageNumber);
       } else {
         // Demo / no publicId: optimistic local-only save so the region renders.
         saveParsedToIntelligence(commitGrid, target);

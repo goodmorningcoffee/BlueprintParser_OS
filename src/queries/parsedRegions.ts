@@ -14,10 +14,10 @@ import type { BboxMinMax } from "@/types";
 /**
  * [refactor jul11 P2.4 C1] Query-aware ParsedRegion commit tail.
  *
- * This command is intentionally production-dead until the atomic C2 caller flip. It accepts a
- * fully captured target and request description, reads no live store/UI/tool state, and owns only
- * persistence plus authoritative cache adoption. Optimistic/local writes, CSI detection, busy
- * state, errors, wizard reset, map-tags, and modal close remain caller policy.
+ * C2 routes all twelve save tails here. The command accepts a fully captured target and request
+ * description, reads no live store/UI/tool state, and owns only persistence plus authoritative
+ * cache adoption. Optimistic/local writes, CSI detection, busy state, errors, wizard reset,
+ * map-tags, and modal close remain caller policy.
  */
 
 export interface SaveParsedRegionTarget {

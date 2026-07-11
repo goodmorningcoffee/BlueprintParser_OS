@@ -7,14 +7,13 @@ import { useToolStore } from "@/stores/toolStore";
 import { setNotesParseStep } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
-import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
-import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
+import { saveParsedRegion } from "@/queries/parsedRegions";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import { unionBboxes } from "@/lib/specnote-parser";
 // [refactor jul5 S026] apiErrorMessage: notes-parse now serves {error:{code,message}}
-import { promoteParsedRegion, canPersist, regionIdFor, apiErrorMessage } from "@/lib/client-persist";
-import type { BboxLTWH, NotesData, PageIntelligence, ParsedRegion } from "@/types";
+import { canPersist, regionIdFor, apiErrorMessage } from "@/lib/client-persist";
+import type { BboxLTWH, NotesData, ParsedRegion } from "@/types";
 
 type NotesSubMode = "auto" | "guided" | "paragraph" | "fast-manual" | "manual";
 
@@ -314,22 +313,18 @@ export default function NotesParser() {
         columnCount: headers.length,
         rowBoundaries,
       };
-      const payload = await promoteParsedRegion({
-        publicId,
-        pageNumber,
-        type: "notes",
-        regionId: regionIdFor(pageNumber, unionBbox),
-        bbox: unionBbox,
-        data: data as unknown as Record<string, unknown>,
-        category: "notes",
-      });
-      setPageIntelligenceForPage(
+      await saveParsedRegion(
         queryClient,
-        publicId,
-        pageNumber,
-        payload.updatedIntelligence as PageIntelligence,
+        { publicId, isDemo, pageNumber },
+        {
+          via: "parser",
+          type: "notes",
+          regionId: regionIdFor(pageNumber, unionBbox),
+          bboxMinMax: unionBbox,
+          data: data as unknown as Record<string, unknown>,
+          category: "notes",
+        },
       );
-      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
       setParagraphBatch([]);
       resetNotesParse();
       setPreview(null);
@@ -364,23 +359,19 @@ export default function NotesParser() {
         rowBoundaries: grid.rowBoundaries,
         colBoundaries: grid.colBoundaries,
       };
-      const payload = await promoteParsedRegion({
-        publicId,
-        pageNumber,
-        type: "notes",
-        regionId: regionIdFor(pageNumber, region),
-        bbox: region,
-        data: data as unknown as Record<string, unknown>,
-        category: "notes",
-        csiTags: grid.csiTags ?? [],
-      });
-      setPageIntelligenceForPage(
+      await saveParsedRegion(
         queryClient,
-        publicId,
-        pageNumber,
-        payload.updatedIntelligence as PageIntelligence,
+        { publicId, isDemo, pageNumber },
+        {
+          via: "parser",
+          type: "notes",
+          regionId: regionIdFor(pageNumber, region),
+          bboxMinMax: region,
+          data: data as unknown as Record<string, unknown>,
+          category: "notes",
+          csiTags: grid.csiTags ?? [],
+        },
       );
-      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
       resetNotesParse();
       setPreview(null);
     } catch (err) {

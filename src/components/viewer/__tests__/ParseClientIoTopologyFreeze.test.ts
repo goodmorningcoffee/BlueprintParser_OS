@@ -1,5 +1,5 @@
 // @vitest-environment node
-// [refactor jul11 P2.4 F1] Exact client-I/O migration topology before C1-C3 convergence.
+// [refactor jul11 P2.4 C2] Exact client-I/O topology after atomic save-tail convergence.
 //
 // This is deliberately an AST/provenance contract rather than a text-count test. A duplicate dead
 // call in one handler must not compensate for a missing live call in another handler, imported
@@ -23,10 +23,9 @@ const PROMOTE_ENDPOINT = "/api/regions/promote";
 const MAP_TAGS_ENDPOINT = "/api/projects/${}/map-tags-batch";
 
 type ClientIoPhase = "F1" | "C1" | "C2" | "C3";
-// C1 is additive and production-dead: old callers stay exact while each future owner has exactly
-// one internal transport call and zero external production borrowers. C2/C3 must flip these
-// assertions atomically rather than accepting an old/new union.
-const CLIENT_IO_PHASE: ClientIoPhase = "C1";
+// C2 atomically replaces all ten parser/edit plus two classifier tails. The map leaf remains
+// production-dead until C3; never accept a mixed old/new roster for either migration.
+const CLIENT_IO_PHASE: ClientIoPhase = "C2";
 
 type ImportedProvenance = {
   kind: "imported";
@@ -70,73 +69,191 @@ type MapSite = Site & {
   projectExpression: string;
 };
 
-const EXPECTED_PROMOTE_HELPER_SITES: Site[] = [
+const EXPECTED_SAVE_COMMAND_SITES: Site[] = [
   {
     file: "src/components/viewer/KeynoteItem.tsx",
     owner: "saveName",
-    transport: "@/lib/client-persist.promoteParsedRegion",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
   },
   {
     file: "src/components/viewer/KeynotePanel.tsx",
     owner: "parseFromGuidedGrid",
-    transport: "@/lib/client-persist.promoteParsedRegion",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
   },
   {
     file: "src/components/viewer/KeynotePanel.tsx",
     owner: "saveKeynoteToIntelligence",
-    transport: "@/lib/client-persist.promoteParsedRegion",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
+  },
+  {
+    file: "src/components/viewer/NotesClassifier.tsx",
+    owner: "handleAccept",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
   },
   {
     file: "src/components/viewer/NotesParser.tsx",
     owner: "persistPreviewGrid",
-    transport: "@/lib/client-persist.promoteParsedRegion",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
   },
   {
     file: "src/components/viewer/NotesParser.tsx",
     owner: "saveFromParagraphBatch",
-    transport: "@/lib/client-persist.promoteParsedRegion",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
   },
   {
     file: "src/components/viewer/ParsedTableItem.tsx",
     owner: "persistRegionEdit",
-    transport: "@/lib/client-persist.promoteParsedRegion",
-  },
-  {
-    file: "src/components/viewer/SpecParser.tsx",
-    owner: "persistPreview",
-    transport: "@/lib/client-persist.promoteParsedRegion",
-  },
-  {
-    file: "src/components/viewer/SpecParser.tsx",
-    owner: "saveFromBatch",
-    transport: "@/lib/client-persist.promoteParsedRegion",
-  },
-  {
-    file: "src/components/viewer/TableCompareModal.tsx",
-    owner: "handleDone",
-    transport: "@/lib/client-persist.promoteParsedRegion",
-  },
-  {
-    file: "src/components/viewer/TableParsePanel.tsx",
-    owner: "detectCsiAndPersist",
-    transport: "@/lib/client-persist.promoteParsedRegion",
-  },
-];
-
-const EXPECTED_RAW_CLASSIFIER_SITES: Site[] = [
-  {
-    file: "src/components/viewer/NotesClassifier.tsx",
-    owner: "handleAccept",
-    transport: "@/lib/client-persist.persistFetch",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
   },
   {
     file: "src/components/viewer/SpecClassifier.tsx",
     owner: "handleAccept",
-    transport: "@/lib/client-persist.persistFetch",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
+  },
+  {
+    file: "src/components/viewer/SpecParser.tsx",
+    owner: "persistPreview",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
+  },
+  {
+    file: "src/components/viewer/SpecParser.tsx",
+    owner: "saveFromBatch",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
+  },
+  {
+    file: "src/components/viewer/TableCompareModal.tsx",
+    owner: "handleDone",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
+  },
+  {
+    file: "src/components/viewer/TableParsePanel.tsx",
+    owner: "detectCsiAndPersist",
+    transport: "@/queries/parsedRegions.saveParsedRegion",
   },
 ];
 
-const EXPECTED_DEAD_PARSED_REGION_SITE: Site = {
+const EXPECTED_PARSED_REGION_IMPORT_FILES = [
+  "src/components/viewer/KeynoteItem.tsx",
+  "src/components/viewer/KeynotePanel.tsx",
+  "src/components/viewer/NotesClassifier.tsx",
+  "src/components/viewer/NotesParser.tsx",
+  "src/components/viewer/ParsedTableItem.tsx",
+  "src/components/viewer/SpecClassifier.tsx",
+  "src/components/viewer/SpecParser.tsx",
+  "src/components/viewer/TableCompareModal.tsx",
+  "src/components/viewer/TableParsePanel.tsx",
+] as const;
+
+type CommandArguments = {
+  queryClient: string;
+  target: Record<string, string>;
+  promotion: Record<string, string>;
+};
+
+const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
+  "src/components/viewer/KeynoteItem.tsx:saveName": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "session.isDemo", pageNumber: "keynote.pageNumber" },
+    promotion: {
+      via: '"parser"', type: '"keynote"', regionId: "matchedId", bboxMinMax: "matchedBbox",
+      data: "matchedData", category: "trimmed", csiTags: "matchedCsiTags",
+    },
+  },
+  "src/components/viewer/KeynotePanel.tsx:parseFromGuidedGrid": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "session.isDemo", pageNumber: "pageNumber" },
+    promotion: {
+      via: '"parser"', type: '"keynote"', regionId: "regionId", bboxMinMax: "bbox",
+      data: "data", category: '"keynote-table"', csiTags: "csiTags",
+    },
+  },
+  "src/components/viewer/KeynotePanel.tsx:saveKeynoteToIntelligence": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "sessionState.isDemo", pageNumber: "pageNumber" },
+    promotion: {
+      via: '"parser"', type: '"keynote"', regionId: "regionId", bboxMinMax: "bbox",
+      data: "data", category: '"keynote-table"', csiTags: "csiTags||[]",
+    },
+  },
+  "src/components/viewer/NotesClassifier.tsx:handleAccept": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    promotion: {
+      via: '"classifier"', type: '"notes"', sourceTextRegionId: "tr.id",
+    },
+  },
+  "src/components/viewer/NotesParser.tsx:persistPreviewGrid": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    promotion: {
+      via: '"parser"', type: '"notes"', regionId: "regionIdFor(pageNumber,region)",
+      bboxMinMax: "region", data: "data", category: '"notes"', csiTags: "grid.csiTags??[]",
+    },
+  },
+  "src/components/viewer/NotesParser.tsx:saveFromParagraphBatch": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    promotion: {
+      via: '"parser"', type: '"notes"', regionId: "regionIdFor(pageNumber,unionBbox)",
+      bboxMinMax: "unionBbox", data: "data", category: '"notes"',
+    },
+  },
+  "src/components/viewer/ParsedTableItem.tsx:persistRegionEdit": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "table.pageNum" },
+    promotion: {
+      via: '"parser"', type: 'table.region.type==="keynote"?"keynote":"schedule"',
+      regionId: "table.region.id", bboxMinMax: "bbox", data: "nextData", category: "category",
+      csiTags: "table.region.csiTags??[]",
+    },
+  },
+  "src/components/viewer/SpecClassifier.tsx:handleAccept": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    promotion: {
+      via: '"classifier"', type: '"spec"', sourceTextRegionId: "tr.id",
+    },
+  },
+  "src/components/viewer/SpecParser.tsx:persistPreview": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    promotion: {
+      via: '"parser"', type: '"spec"', regionId: "regionIdFor(pageNumber,region)",
+      bboxMinMax: "region", data: "data", category: '"spec-dense-columns"',
+      csiTags: "p.csiTags??[]",
+    },
+  },
+  "src/components/viewer/SpecParser.tsx:saveFromBatch": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    promotion: {
+      via: '"parser"', type: '"spec"', regionId: "regionIdFor(pageNumber,unionBbox)",
+      bboxMinMax: "unionBbox", data: "data", category: '"spec-dense-columns"',
+    },
+  },
+  "src/components/viewer/TableCompareModal.tsx:handleDone": {
+    queryClient: "queryClient",
+    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    promotion: {
+      via: '"parser"', type: "matchedType", regionId: "matchedId", bboxMinMax: "matchedBbox",
+      data: "edited?.data??{}", csiTags: "matchedCsiTags",
+    },
+  },
+  "src/components/viewer/TableParsePanel.tsx:detectCsiAndPersist": {
+    queryClient: "queryClient",
+    target: {
+      publicId: "target.publicId", isDemo: "target.isDemo", pageNumber: "target.pageNumber",
+    },
+    promotion: {
+      via: '"parser"', type: '"schedule"',
+      regionId: "regionIdFor(target.pageNumber,target.bbox)", bboxMinMax: "target.bbox",
+      data: "object:headers,rows,tagColumn,tableName,rowCount,columnCount,...,...",
+      category: "commitGrid.tableName||undefined", csiTags: "commitGrid.csiTags||[]",
+    },
+  },
+};
+
+const EXPECTED_COMMAND_HELPER_SITE: Site = {
   file: PARSED_REGIONS_FILE,
   owner: "saveParsedRegion",
   transport: "@/lib/client-persist.promoteParsedRegion",
@@ -317,6 +434,51 @@ function unwrap(expression: ts.Expression): ts.Expression {
     }
     return current;
   }
+}
+
+function compactExpression(expression: ts.Expression): string {
+  const current = unwrap(expression);
+  if (ts.isObjectLiteralExpression(current)) {
+    const keys = current.properties.map((property) => {
+      if (ts.isSpreadAssignment(property)) return "...";
+      return property.name?.getText(current.getSourceFile()) ?? "unknown";
+    });
+    return `object:${keys.join(",")}`;
+  }
+  return current.getText(current.getSourceFile()).replace(/\s+/g, "");
+}
+
+function objectArgumentContract(expression: ts.Expression | undefined): Record<string, string> {
+  if (!expression) return { __error: "missing" };
+  const current = unwrap(expression);
+  if (!ts.isObjectLiteralExpression(current)) {
+    return { __error: `non-literal:${compactExpression(current)}` };
+  }
+  return Object.fromEntries(current.properties.map((property) => {
+    if (ts.isShorthandPropertyAssignment(property)) {
+      return [property.name.text, property.name.text];
+    }
+    if (ts.isPropertyAssignment(property)) {
+      return [property.name.getText(current.getSourceFile()), compactExpression(property.initializer)];
+    }
+    return [`__unsupported_${property.pos}`, property.getText(current.getSourceFile())];
+  }));
+}
+
+function nearestCanPersistBranch(node: ts.Node): ts.IfStatement | null {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (
+      ts.isIfStatement(current) &&
+      compactExpression(current.expression).startsWith("canPersist(")
+    ) return current;
+    current = current.parent;
+  }
+  return null;
+}
+
+function isWithin(node: ts.Node, container: ts.Node | undefined): boolean {
+  return !!container && container.pos <= node.pos && node.end <= container.end;
 }
 
 type LexicalBinding = {
@@ -784,31 +946,57 @@ function fixtureRecords(sourceText: string): CallRecord[] {
   return callRecordsFromSource(file, source);
 }
 
-describe("P2.4 C1 parse client-I/O topology", () => {
-  it("pins C1 as additive: ten legacy promote owners plus one dead command transport", () => {
-    expect(CLIENT_IO_PHASE).toBe("C1");
+describe("P2.4 C2 parse client-I/O topology", () => {
+  it("pins the atomic twelve-owner command roster and sole internal helper transport", () => {
+    expect(CLIENT_IO_PHASE).toBe("C2");
     const helperCalls = allCalls.filter((record) =>
       isImported(record, CLIENT_PERSIST_MODULE, "promoteParsedRegion"),
     );
     expect(sortedSites(helperCalls.filter((record) => record.file !== PARSED_REGIONS_FILE)))
-      .toEqual(EXPECTED_PROMOTE_HELPER_SITES);
+      .toEqual([]);
     expect(sortedSites(helperCalls.filter((record) => record.file === PARSED_REGIONS_FILE)))
-      .toEqual([EXPECTED_DEAD_PARSED_REGION_SITE]);
+      .toEqual([EXPECTED_COMMAND_HELPER_SITE]);
 
     const commandBorrowers = allCalls.filter((record) =>
       isImported(record, PARSED_REGIONS_MODULE, "saveParsedRegion"),
     );
-    expect(sortedSites(commandBorrowers), "C1 command must remain production-dead").toEqual([]);
+    expect(sortedSites(commandBorrowers)).toEqual(EXPECTED_SAVE_COMMAND_SITES);
+    expect(commandBorrowers.every((record) => ts.isAwaitExpression(record.node.parent))).toBe(true);
+
+    const commandArguments = Object.fromEntries(commandBorrowers.map((record) => [
+      `${record.file}:${record.owner}`,
+      {
+        queryClient: record.node.arguments[0]
+          ? compactExpression(record.node.arguments[0])
+          : "missing",
+        target: objectArgumentContract(record.node.arguments[1]),
+        promotion: objectArgumentContract(record.node.arguments[2]),
+      },
+    ]));
+    expect(commandArguments).toEqual(EXPECTED_COMMAND_ARGUMENTS);
+
+    const promotionKinds = commandBorrowers.map((record) => {
+      const argument = record.node.arguments[2];
+      if (!argument) return "missing";
+      const promotion = unwrap(argument);
+      if (!ts.isObjectLiteralExpression(promotion)) return "non-literal";
+      const via = promotion.properties.find((property): property is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(property) && property.name.getText() === "via"
+      );
+      return via && ts.isStringLiteralLike(via.initializer) ? via.initializer.text : "missing-via";
+    }).sort();
+    expect(promotionKinds).toEqual([
+      "classifier",
+      "classifier",
+      ...Array.from({ length: 10 }, () => "parser"),
+    ]);
   });
 
-  it("pins the two classifier endpoint calls and their persistFetch provenance", () => {
+  it("removes every raw component promotion endpoint call", () => {
     const rawPromotionCalls = allCalls.filter((record) =>
       record.file !== CLIENT_PERSIST_FILE && record.endpoint?.pattern === PROMOTE_ENDPOINT,
     );
-    expect(sortedSites(rawPromotionCalls)).toEqual(EXPECTED_RAW_CLASSIFIER_SITES);
-    expect(rawPromotionCalls.every((record) =>
-      isImported(record, CLIENT_PERSIST_MODULE, "persistFetch"),
-    )).toBe(true);
+    expect(sortedSites(rawPromotionCalls)).toEqual([]);
   });
 
   it("keeps the low-level promote URL inside promoteParsedRegion alone", () => {
@@ -839,11 +1027,11 @@ describe("P2.4 C1 parse client-I/O topology", () => {
     const transportBorrowers = allCalls.filter((record) =>
       isImported(record, MAP_TRANSPORT_MODULE, "requestMapTagsBatch"),
     );
-    expect(sortedSites(transportBorrowers), "C1 map transport must remain production-dead")
+    expect(sortedSites(transportBorrowers), "C2 map transport must remain production-dead")
       .toEqual([]);
   });
 
-  it("keeps both C1 leaves on their exact dependency boundaries", () => {
+  it("keeps both I/O leaves on their exact dependency boundaries", () => {
     const imports = (file: string) => parse(file).statements
       .filter(ts.isImportDeclaration)
       .map((statement) => ({
@@ -884,20 +1072,185 @@ describe("P2.4 C1 parse client-I/O topology", () => {
     )).toEqual([]);
   });
 
-  it("proves both C1 candidates have zero external production loads", () => {
-    const candidates = [
-      { module: PARSED_REGIONS_MODULE, file: PARSED_REGIONS_FILE },
-      { module: MAP_TRANSPORT_MODULE, file: MAP_TRANSPORT_FILE },
-    ] as const;
-    const loads = candidates.flatMap((candidate) =>
-      productionFiles()
-        .filter((path) => path !== candidate.file)
-        .flatMap((path) => candidateLoadKinds(path, candidate.module, candidate.file)
-          .map((kind) => ({ path, module: candidate.module, kind }))),
-    );
-    expect(loads).toEqual([]);
+  it("removes legacy A/S/X tails while retaining only explicit optimistic/local publications", () => {
+    const saveOwnerKeys = new Set(EXPECTED_SAVE_COMMAND_SITES.map((entry) =>
+      `${entry.file}:${entry.owner}`
+    ));
+    const inSaveOwner = (record: CallRecord) => saveOwnerKeys.has(`${record.file}:${record.owner}`);
 
-    const fixturePath = "src/components/c1-load-fixture.ts";
+    const directAdoptions = allCalls.filter((record) =>
+      inSaveOwner(record) &&
+      isImported(record, "@/queries/usePageWindow", "setPageIntelligenceForPage"),
+    );
+    expect(sortedSites(directAdoptions)).toEqual([
+      {
+        file: "src/components/viewer/KeynoteItem.tsx",
+        owner: "saveName",
+        transport: "@/queries/usePageWindow.setPageIntelligenceForPage",
+      },
+      {
+        file: "src/components/viewer/ParsedTableItem.tsx",
+        owner: "persistRegionEdit",
+        transport: "@/queries/usePageWindow.setPageIntelligenceForPage",
+      },
+      {
+        file: "src/components/viewer/TableCompareModal.tsx",
+        owner: "handleDone",
+        transport: "@/queries/usePageWindow.setPageIntelligenceForPage",
+      },
+    ]);
+
+    const directOptimisticUpdates = allCalls.filter((record) =>
+      inSaveOwner(record) &&
+      isImported(record, "@/queries/usePageWindow", "updatePageIntelligenceForPage"),
+    );
+    expect(sortedSites(directOptimisticUpdates)).toEqual([
+      {
+        file: "src/components/viewer/KeynotePanel.tsx",
+        owner: "parseFromGuidedGrid",
+        transport: "@/queries/usePageWindow.updatePageIntelligenceForPage",
+      },
+      {
+        file: "src/components/viewer/KeynotePanel.tsx",
+        owner: "saveKeynoteToIntelligence",
+        transport: "@/queries/usePageWindow.updatePageIntelligenceForPage",
+      },
+    ]);
+
+    // Every persistent optimistic write must precede its command. Otherwise a late local write
+    // could overwrite authoritative A while retaining the same call-count topology.
+    for (const optimistic of [...directAdoptions, ...directOptimisticUpdates]) {
+      const command = allCalls.find((record) =>
+        record.file === optimistic.file &&
+        record.owner === optimistic.owner &&
+        isImported(record, PARSED_REGIONS_MODULE, "saveParsedRegion")
+      );
+      expect(command, `${optimistic.file}:${optimistic.owner} command`).toBeDefined();
+      expect(optimistic.node.getStart()).toBeLessThan(command!.node.getStart());
+    }
+
+    const directSummaries = allCalls.filter((record) =>
+      inSaveOwner(record) && isImported(record, "@/queries/useSummaries", "seedSummariesCache"),
+    );
+    expect(sortedSites(directSummaries)).toEqual([]);
+
+    const directSpatial = allCalls.filter((record) =>
+      inSaveOwner(record) &&
+      isImported(record, "@/lib/csi-spatial-refresh", "refreshPageCsiSpatialMap"),
+    );
+    expect(sortedSites(directSpatial)).toEqual([
+      {
+        file: "src/components/viewer/KeynotePanel.tsx",
+        owner: "parseFromGuidedGrid",
+        transport: "@/lib/csi-spatial-refresh.refreshPageCsiSpatialMap",
+      },
+      {
+        file: "src/components/viewer/KeynotePanel.tsx",
+        owner: "saveKeynoteToIntelligence",
+        transport: "@/lib/csi-spatial-refresh.refreshPageCsiSpatialMap",
+      },
+      {
+        file: "src/components/viewer/TableParsePanel.tsx",
+        owner: "detectCsiAndPersist",
+        transport: "@/lib/csi-spatial-refresh.refreshPageCsiSpatialMap",
+      },
+    ]);
+
+    const spatialBranchContracts = directSpatial.map((refresh) => {
+      const branch = nearestCanPersistBranch(refresh.node);
+      const command = allCalls.find((record) =>
+        record.file === refresh.file &&
+        record.owner === refresh.owner &&
+        isImported(record, PARSED_REGIONS_MODULE, "saveParsedRegion")
+      );
+      return {
+        file: refresh.file,
+        owner: refresh.owner,
+        condition: branch ? compactExpression(branch.expression) : "missing",
+        commandInConsequent: !!command && isWithin(command.node, branch?.thenStatement),
+        refreshInAlternative: isWithin(refresh.node, branch?.elseStatement),
+        refreshInConsequent: isWithin(refresh.node, branch?.thenStatement),
+      };
+    }).sort((left, right) =>
+      left.file.localeCompare(right.file) || left.owner.localeCompare(right.owner)
+    );
+    expect(spatialBranchContracts).toEqual([
+      {
+        file: "src/components/viewer/KeynotePanel.tsx",
+        owner: "parseFromGuidedGrid",
+        condition: "canPersist(publicId,session.isDemo)",
+        commandInConsequent: true,
+        refreshInAlternative: true,
+        refreshInConsequent: false,
+      },
+      {
+        file: "src/components/viewer/KeynotePanel.tsx",
+        owner: "saveKeynoteToIntelligence",
+        condition: "canPersist(publicId,sessionState.isDemo)",
+        commandInConsequent: true,
+        refreshInAlternative: true,
+        refreshInConsequent: false,
+      },
+      {
+        file: "src/components/viewer/TableParsePanel.tsx",
+        owner: "detectCsiAndPersist",
+        condition: "canPersist(target.publicId,target.isDemo)",
+        commandInConsequent: true,
+        refreshInAlternative: true,
+        refreshInConsequent: false,
+      },
+    ]);
+
+    const tableLocalWrites = allCalls.filter((record) =>
+      record.file === "src/components/viewer/TableParsePanel.tsx" &&
+      record.owner === "detectCsiAndPersist" &&
+      record.calleeText === "saveParsedToIntelligence"
+    );
+    expect(tableLocalWrites).toHaveLength(1);
+    const tableSpatial = directSpatial.find((record) =>
+      record.file === "src/components/viewer/TableParsePanel.tsx"
+    );
+    const tableBranch = tableSpatial ? nearestCanPersistBranch(tableSpatial.node) : null;
+    expect(isWithin(tableLocalWrites[0].node, tableBranch?.elseStatement)).toBe(true);
+    expect(tableLocalWrites[0].node.getStart()).toBeLessThan(tableSpatial!.node.getStart());
+  });
+
+  it("pins nine value-importing command files while the C3 map candidate stays unloaded", () => {
+    const parsedRegionLoads = productionFiles()
+      .filter((path) => path !== PARSED_REGIONS_FILE)
+      .flatMap((path) => candidateLoadKinds(
+        path,
+        PARSED_REGIONS_MODULE,
+        PARSED_REGIONS_FILE,
+      ).map((kind) => ({ path, kind })));
+    expect(parsedRegionLoads).toEqual(EXPECTED_PARSED_REGION_IMPORT_FILES.map((path) => ({
+      path,
+      kind: "import",
+    })));
+
+    const parsedRegionImports = EXPECTED_PARSED_REGION_IMPORT_FILES.map((path) => {
+      const declaration = parse(path).statements.find((statement): statement is ts.ImportDeclaration =>
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(statement.moduleSpecifier) &&
+        resolvesToCandidate(path, statement.moduleSpecifier.text, PARSED_REGIONS_MODULE, PARSED_REGIONS_FILE)
+      );
+      return {
+        path,
+        typeOnly: declaration?.importClause?.isTypeOnly ?? null,
+      };
+    });
+    expect(parsedRegionImports).toEqual(EXPECTED_PARSED_REGION_IMPORT_FILES.map((path) => ({
+      path,
+      typeOnly: false,
+    })));
+
+    const mapLoads = productionFiles()
+      .filter((path) => path !== MAP_TRANSPORT_FILE)
+      .flatMap((path) => candidateLoadKinds(path, MAP_TRANSPORT_MODULE, MAP_TRANSPORT_FILE)
+        .map((kind) => ({ path, kind })));
+    expect(mapLoads).toEqual([]);
+
+    const fixturePath = "src/components/c2-load-fixture.ts";
     const fixture = ts.createSourceFile(
       fixturePath,
       `
@@ -998,9 +1351,9 @@ describe("P2.4 C1 parse client-I/O topology", () => {
     ]);
   });
 
-  // Migration discipline after this C1 additive phase:
-  // - C2 flips the first two manifests atomically to twelve calls imported from
-  //   `@/queries/parsedRegions`, with zero component promoteParsedRegion/raw endpoint calls.
+  // Migration discipline at the completed C2 boundary:
+  // - the first manifests stay atomically fixed at twelve `@/queries/parsedRegions` calls with
+  //   zero component promoteParsedRegion/raw endpoint calls;
   // - C3 flips the six-owner map manifest atomically to `requestMapTagsBatch`, with zero raw
   //   component fetches. Do not weaken these assertions to accept a union of old and new phases;
   //   such a union would let a partial migration ship while appearing green.

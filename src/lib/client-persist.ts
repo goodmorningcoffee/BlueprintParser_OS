@@ -132,9 +132,9 @@ export async function persistFetch(
  * transactional /api/regions/promote route. Pass a STABLE `regionId` so that
  * re-parsing the same region REPLACES the prior region instead of duplicating.
  *
- * Returns the server response `{ ok, parsedRegion, updatedIntelligence, summaries }`
- * — callers should adopt `updatedIntelligence` as the authoritative store value
- * rather than trusting an optimistic local blob.
+ * Returns `{ ok, parsedRegion, updatedIntelligence, summaries }`. The C2 Query-aware command is
+ * the sole production caller and adopts that authoritative response; components do not rebuild
+ * the persistence tail around this low-level wire helper.
  */
 export async function promoteParsedRegion(
   args: PromoteParsedRegionRequest,

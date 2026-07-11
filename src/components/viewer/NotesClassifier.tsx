@@ -5,8 +5,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
-import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { persistFetch, canPersist } from "@/lib/client-persist";
+import { saveParsedRegion } from "@/queries/parsedRegions";
 import {
   setPageIntelligenceForPage,
   usePageIntelligenceForPage,
@@ -119,14 +119,11 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
     try {
       setRowState(tr.id, "promoting");
       setRowError(tr.id, null);
-      const payload = (await persistFetch("/api/regions/promote", {
-        publicId,
-        pageNumber,
-        type: "notes",
-        sourceTextRegionId: tr.id,
-      })) as { updatedIntelligence: PageIntelligence };
-      setPageIntelligenceForPage(queryClient, publicId, pageNumber, payload.updatedIntelligence);
-      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
+      await saveParsedRegion(
+        queryClient,
+        { publicId, isDemo, pageNumber },
+        { via: "classifier", type: "notes", sourceTextRegionId: tr.id },
+      );
     } catch (err) {
       setRowError(tr.id, err instanceof Error ? err.message : "Promote failed");
     } finally {

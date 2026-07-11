@@ -6,8 +6,6 @@ import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
-// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
-import { seedSummariesCache } from "@/queries/useSummaries";
 import { readAnnotations } from "@/queries/useAnnotations";
 import {
   readYoloTags,
@@ -18,7 +16,8 @@ import {
   setPageIntelligenceForPage,
 } from "@/queries/usePageWindow";
 // [refactor jul6 S029] apiErrorMessage: table-structure non-OK now serves the envelope
-import { promoteParsedRegion, canPersist, apiErrorMessage } from "@/lib/client-persist";
+import { canPersist, apiErrorMessage } from "@/lib/client-persist";
+import { saveParsedRegion } from "@/queries/parsedRegions";
 import type { YoloTag } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 import type { MapTagsStrictness } from "./MapTagsSection";
@@ -47,7 +46,7 @@ export default memo(function ParsedTableItem({
   onDelete,
   focusedParsedRegionId,
 }: ParsedTableItemProps) {
-  // [refactor jul10 P2.2③] context-only handle for the summaries cache seed (zero subscription).
+  // Context-only handle for optimistic page writes and the C2 shared save command (zero observer).
   const queryClient = useQueryClient();
   // [refactor jul11 P2.2⑨] Action callbacks carry the mounted project epoch across awaits but add
   // no Query observer per table row. Render data still arrives once through the parent prop.
@@ -219,28 +218,21 @@ export default memo(function ParsedTableItem({
     const { isDemo } = useSessionStore.getState();
     if (!canPersist(publicId, isDemo)) return; // demo / no publicId: local-only
     const bbox = (table.region.bbox ?? [0, 0, 1, 1]) as [number, number, number, number];
-    const result = await promoteParsedRegion({
-      publicId,
-      pageNumber: table.pageNum,
-      type: table.region.type === "keynote" ? "keynote" : "schedule",
-      regionId: table.region.id,
-      bbox,
-      data: nextData,
-      category,
-      csiTags: table.region.csiTags ?? [],
-    });
-    // Adopt server-authoritative intelligence + summaries.
-    setPageIntelligenceForPage(
+    // C2: retain the optimistic write/local return above; the shared persistent tail now also
+    // refreshes spatial for edits after authoritative adoption.
+    await saveParsedRegion(
       queryClient,
-      publicId,
-      table.pageNum,
-      result.updatedIntelligence as any,
+      { publicId, isDemo, pageNumber: table.pageNum },
+      {
+        via: "parser",
+        type: table.region.type === "keynote" ? "keynote" : "schedule",
+        regionId: table.region.id,
+        bboxMinMax: bbox,
+        data: nextData,
+        category,
+        csiTags: table.region.csiTags ?? [],
+      },
     );
-    // [refactor jul10 P2.2③] cache seed under the `publicId` PROP — the id the promote request
-    // used (SPEC §5-S3). Guard KEPT: promote returns summaries:null on real paths and must not
-    // clear live data. useQueryClient is context-only — no per-item subscription (perf: this is a
-    // per-row list component; a useQuery here would re-render every row on every summaries write).
-    if (result.summaries) seedSummariesCache(queryClient, publicId, result.summaries as any);
   }, [publicId, table.pageNum, table.region, queryClient]);
 
   const saveName = async () => {

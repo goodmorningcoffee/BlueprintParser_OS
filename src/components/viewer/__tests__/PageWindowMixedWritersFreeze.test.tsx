@@ -34,6 +34,7 @@ import type {
   ClientAnnotation,
   KeynoteShapeData,
   PageIntelligence,
+  ProjectSummaries,
   TextAnnotation,
   TextRegion,
 } from "@/types";
@@ -161,30 +162,77 @@ describe("mixed page-window writer semantics", () => {
     expect(readPageIntelligence(qc, "pid", 4)?.rejectedTextRegionIds).toBeUndefined();
   });
 
-  it("classifier server adoption replaces the whole page before spatial refresh merges its field", async () => {
-    setPageIntelligenceForPage(qc, "pid", 4, {
+  it("classifier adopts A, seeds its summaries, and recomputes A spatial after switching to B", async () => {
+    const projectA = "pid";
+    const projectB = "other";
+    const serverRegion = {
+      id: "promoted-note",
+      type: "notes",
+      category: "notes",
+      bbox: [0.1, 0.1, 0.3, 0.2],
+      confidence: 0.95,
+      csiTags: [{ code: "08 11 13", description: "Hollow Metal Doors" }],
+      data: { headers: ["Key"], rows: [{ Key: "N1" }] },
+      source: "user",
+      sourceTextRegionId: noteRegion.id,
+    };
+    const authoritative = {
+      rejectedTextRegionIds: ["server-authoritative"],
+      parsedRegions: [serverRegion as never],
+    } satisfies PageIntelligence;
+    const serverSummaries = { marker: "server-A" } as unknown as ProjectSummaries;
+    const stableBSummaries = { marker: "stable-B" } as unknown as ProjectSummaries;
+
+    setPageIntelligenceForPage(qc, projectA, 4, {
       textRegions: [noteRegion],
       classifiedTables: [{ category: "stale-server-deleted-field" }] as never,
     });
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        updatedIntelligence: { rejectedTextRegionIds: ["server-authoritative"] },
-      }),
-    } as Response);
+    seedWindow(projectB, {
+      pageIntelligence: { 4: { rejectedTextRegionIds: ["B-sentinel"] } },
+    });
+    qc.setQueryData(queryKeys.summaries.all(projectB), stableBSummaries);
+    const bWindowBefore = readActivePageWindow(qc, projectB);
+
+    let resolvePromotion!: (response: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => {
+      resolvePromotion = resolve;
+    }));
     render(<NotesClassifier onEditInParser={() => undefined} />, { wrapper });
 
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      setViewerStoreStateForTest({ projectId: 2, publicId: projectB });
+    });
+    await act(async () => {
+      resolvePromotion({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          parsedRegion: serverRegion,
+          updatedIntelligence: authoritative,
+          summaries: serverSummaries,
+        }),
+      } as Response);
+    });
 
     await waitFor(() => {
-      expect(readPageIntelligence(qc, "pid", 4)?.rejectedTextRegionIds).toEqual([
+      expect(readPageIntelligence(qc, projectA, 4)?.rejectedTextRegionIds).toEqual([
         "server-authoritative",
       ]);
     });
-    const adopted = readPageIntelligence(qc, "pid", 4);
+    const adopted = readPageIntelligence(qc, projectA, 4);
     expect(adopted?.classifiedTables).toBeUndefined();
     expect(adopted).toHaveProperty("csiSpatialMap");
+    const codes = adopted?.csiSpatialMap?.zones.flatMap((zone) =>
+      zone.divisions.flatMap((division) => division.codes),
+    );
+    expect(codes).toContain("08 11 13");
+    expect(qc.getQueryData(queryKeys.summaries.all(projectA))).toBe(serverSummaries);
+    expect(readActivePageWindow(qc, projectB)).toBe(bWindowBefore);
+    expect(qc.getQueryData(queryKeys.summaries.all(projectB))).toBe(stableBSummaries);
   });
 
   it("TableParse local save appends against invocation-live regions and creates one stable id", async () => {

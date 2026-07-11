@@ -7,12 +7,11 @@ import { useToolStore } from "@/stores/toolStore";
 import { setSpecParseStep } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
-import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
-import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
+import { saveParsedRegion } from "@/queries/parsedRegions";
 import { unionBboxes } from "@/lib/specnote-parser";
 // [refactor jul5 S026] apiErrorMessage: spec-parse now serves {error:{code,message}}
-import { promoteParsedRegion, canPersist, regionIdFor, apiErrorMessage } from "@/lib/client-persist";
-import type { CsiCode, PageIntelligence, ParsedRegion, SpecData } from "@/types";
+import { canPersist, regionIdFor, apiErrorMessage } from "@/lib/client-persist";
+import type { CsiCode, ParsedRegion, SpecData } from "@/types";
 
 type SpecSubMode = "auto" | "paragraph" | "manual";
 
@@ -160,23 +159,19 @@ export default function SpecParser() {
         tableName: `Spec p.${pageNumber}`,
         csiTags: p.csiTags,
       };
-      const payload = await promoteParsedRegion({
-        publicId,
-        pageNumber,
-        type: "spec",
-        regionId: regionIdFor(pageNumber, region),
-        bbox: region,
-        data: data as unknown as Record<string, unknown>,
-        category: "spec-dense-columns",
-        csiTags: p.csiTags ?? [],
-      });
-      setPageIntelligenceForPage(
+      await saveParsedRegion(
         queryClient,
-        publicId,
-        pageNumber,
-        payload.updatedIntelligence as PageIntelligence,
+        { publicId, isDemo, pageNumber },
+        {
+          via: "parser",
+          type: "spec",
+          regionId: regionIdFor(pageNumber, region),
+          bboxMinMax: region,
+          data: data as unknown as Record<string, unknown>,
+          category: "spec-dense-columns",
+          csiTags: p.csiTags ?? [],
+        },
       );
-      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
       resetSpecParse();
       setPreview(null);
     } catch (err) {
@@ -206,22 +201,18 @@ export default function SpecParser() {
         })),
         tableName: `Spec p.${pageNumber} — ${paragraphBatch.length} section${paragraphBatch.length === 1 ? "" : "s"}`,
       };
-      const payload = await promoteParsedRegion({
-        publicId,
-        pageNumber,
-        type: "spec",
-        regionId: regionIdFor(pageNumber, unionBbox),
-        bbox: unionBbox,
-        data: data as unknown as Record<string, unknown>,
-        category: "spec-dense-columns",
-      });
-      setPageIntelligenceForPage(
+      await saveParsedRegion(
         queryClient,
-        publicId,
-        pageNumber,
-        payload.updatedIntelligence as PageIntelligence,
+        { publicId, isDemo, pageNumber },
+        {
+          via: "parser",
+          type: "spec",
+          regionId: regionIdFor(pageNumber, unionBbox),
+          bboxMinMax: unionBbox,
+          data: data as unknown as Record<string, unknown>,
+          category: "spec-dense-columns",
+        },
       );
-      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
       setParagraphBatch([]);
       resetSpecParse();
       setPreview(null);

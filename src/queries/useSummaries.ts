@@ -14,8 +14,8 @@ import type { ProjectSummaries } from "@/types";
 // data.projectIntelligence.summaries" is WRONG for ③ — erratum filed in SPEC §8 + RECIPE.
 //
 // Three exports:
-//   • seedSummariesCache — the ONE write helper for all 8 production seed sites (2 loaders
-//     unconditional, 6 promote-refreshers guarded — see the two-semantics note below).
+//   • seedSummariesCache — the ONE write helper for all 3 production seed sites (2 loaders
+//     unconditional, the shared ParsedRegion command guarded — see the two-semantics note below).
 //   • useSummariesData   — narrow cache-only read { summaries, setSummaries }. SpecIndex and
 //     NotesIndex use the explicit narrow name to document that they observe summaries only;
 //     active page-window transport/range data does not compose into this cache hook.
@@ -30,15 +30,15 @@ import type { ProjectSummaries } from "@/types";
 //     `if (data === void 0) return`), so without the coercion an omitted-summaries load response
 //     would silently RETAIN the previous visit's cache entry — the exact stale bug the old
 //     reset-then-conditional-set flow prevented. Same rationale as seedChatCache.
-//   • REFRESHERS (the 6 promote sites) call it inside their KEPT `if (result.summaries)` guards:
+//   • REFRESHER (`queries/parsedRegions`) calls it inside the converged truthy-summaries guard:
 //     the promote API returns `summaries: null` on real paths (compute-reject swallow, pinned by
 //     regions-promote.route.test.ts) and an unconditional write there would CLEAR live panel data
-//     on a server recompute hiccup. Do NOT "simplify" the guards away.
+//     on a server recompute hiccup. Do NOT "simplify" the command guard away.
 //
-// `publicId` is an explicit param (never read from the store here): refreshers must seed under the
-// SAME publicId the promote request used — a mid-await project switch would otherwise leak project
-// A's recomputed summaries into project B's cache entry (SPEC §5-S3, qto-S6 precedent). Loaders
-// pass `data.id` (the fresh project's publicId).
+// `publicId` is an explicit param (never read from the store here): the refresher must seed under the
+// SAME captured publicId the promote request used — a mid-await project switch would otherwise
+// leak project A's recomputed summaries into project B's cache entry (SPEC §5-S3, qto-S6
+// precedent). Loaders pass `data.id` (the fresh project's publicId).
 export function seedSummariesCache(
   qc: QueryClient,
   publicId: string,
