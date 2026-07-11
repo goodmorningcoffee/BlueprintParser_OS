@@ -33,6 +33,23 @@ import type { MapTagsStrictness } from "./MapTagsSection";
 import type { YoloTag, QtoItemType } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 
+type TableGrid = {
+  headers: string[];
+  rows: Record<string, string>[];
+  tagColumn?: string;
+  tableName?: string;
+  csiTags?: { code: string; description: string }[];
+  colBoundaries?: number[];
+  rowBoundaries?: number[];
+};
+
+type TableSaveTarget = {
+  publicId: string;
+  isDemo: boolean;
+  pageNumber: number;
+  bbox: [number, number, number, number];
+};
+
 /**
  * TableParsePanel — Orchestrator for table/schedule parsing.
  * Delegates to tab components: AutoParseTab, ManualParseTab, CompareEditTab.
@@ -105,15 +122,14 @@ export default function TableParsePanel() {
   const intel = pageIntelligence[pageNumber] as any;
 
   // ─── Save parsed grid to pageIntelligence ─────────────────
-  const saveParsedToIntelligence = useCallback((grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] }, identityPublicId: string) => {
-    const currentRegion = useViewerStore.getState().tableParseRegion;
+  const saveParsedToIntelligence = useCallback((grid: TableGrid, target: TableSaveTarget) => {
     // Create the region once per invocation. Keeping Date.now() outside the updater makes the
     // append's identity explicit and stable at the call-site boundary.
     const newRegion = {
       id: `parsed-${Date.now()}`,
       type: "schedule" as const,
       category: grid.tableName || "unknown-table",
-      bbox: currentRegion || [0, 0, 1, 1],
+      bbox: target.bbox,
       confidence: 0.9,
       csiTags: grid.csiTags || [],
       data: {
@@ -127,12 +143,12 @@ export default function TableParsePanel() {
         ...(grid.rowBoundaries ? { rowBoundaries: grid.rowBoundaries } : {}),
       },
     };
-    updatePageIntelligenceForPage(queryClient, identityPublicId, pageNumber, (current) => ({
+    updatePageIntelligenceForPage(queryClient, target.publicId, target.pageNumber, (current) => ({
       ...(current ?? {}),
       // /csi/detect returns the historical code/description subset; promotion enriches it.
       parsedRegions: [...(current?.parsedRegions ?? []), newRegion as any],
     }));
-  }, [pageNumber, queryClient]);
+  }, [queryClient]);
 
   // ─── CSI detect + persist to DB ───────────────────────────
   // Routes the parsed table through the transactional /api/regions/promote
@@ -155,7 +171,7 @@ export default function TableParsePanel() {
   // its idle step, so double-click saves can't stack N identical rows and the
   // user lands back at "pick a parse mode" ready to start the next one.
   const detectCsiAndPersist = useCallback(async (
-    grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] },
+    grid: TableGrid,
     opts?: { resetAfter?: boolean },
   ) => {
     // resetAfter (default true) reverts the tab to idle after a save — what the
@@ -165,60 +181,85 @@ export default function TableParsePanel() {
     if (isSavingRef.current) return;
     isSavingRef.current = true;
     try {
-      if (!grid.csiTags || grid.csiTags.length === 0) {
+      // The best-effort CSI request is an async boundary. Freeze every persistence input before
+      // crossing it: a project/page switch must not combine A's table with B's identity or region.
+      // Clone nested grid values as well; Auto/Manual pass their Zustand-owned object directly.
+      const targetSession = useSessionStore.getState();
+      const liveRegion = useViewerStore.getState().tableParseRegion;
+      const target: TableSaveTarget = {
+        publicId: targetSession.publicId,
+        isDemo: targetSession.isDemo,
+        pageNumber,
+        bbox: liveRegion
+          ? [liveRegion[0], liveRegion[1], liveRegion[2], liveRegion[3]]
+          : [0, 0, 1, 1],
+      };
+      const frozenGrid: TableGrid = {
+        headers: [...grid.headers],
+        rows: grid.rows.map((row) => ({ ...row })),
+        tagColumn: grid.tagColumn,
+        tableName: grid.tableName,
+        csiTags: grid.csiTags?.map((tag) => ({ ...tag })),
+        colBoundaries: grid.colBoundaries ? [...grid.colBoundaries] : undefined,
+        rowBoundaries: grid.rowBoundaries ? [...grid.rowBoundaries] : undefined,
+      };
+      let detectedCsiTags = frozenGrid.csiTags ?? [];
+
+      if (detectedCsiTags.length === 0) {
         try {
           const resp = await fetch("/api/csi/detect", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ headers: grid.headers, rows: grid.rows }),
+            body: JSON.stringify({ headers: frozenGrid.headers, rows: frozenGrid.rows }),
           });
           if (resp.ok) {
             const data = await resp.json();
-            grid.csiTags = data.csiTags || [];
+            detectedCsiTags = data.csiTags || [];
           }
         } catch { /* CSI detection is best-effort */ }
       }
-      const store = useViewerStore.getState();
-      const { publicId: pid, isDemo } = useSessionStore.getState();
-      if (canPersist(pid, isDemo)) {
+      const commitGrid: TableGrid = { ...frozenGrid, csiTags: detectedCsiTags };
+
+      if (canPersist(target.publicId, target.isDemo)) {
         // Use the drawn region bbox for a stable, re-parse-replaces regionId.
-        const bbox = (store.tableParseRegion ?? [0, 0, 1, 1]) as [number, number, number, number];
         const result = await promoteParsedRegion({
-          publicId: pid,
-          pageNumber,
+          publicId: target.publicId,
+          pageNumber: target.pageNumber,
           type: "schedule",
-          regionId: regionIdFor(pageNumber, bbox),
-          bbox,
+          regionId: regionIdFor(target.pageNumber, target.bbox),
+          bbox: target.bbox,
           data: {
-            headers: grid.headers,
-            rows: grid.rows,
-            tagColumn: grid.tagColumn,
-            tableName: grid.tableName,
-            rowCount: grid.rows.length,
-            columnCount: grid.headers.length,
-            ...(grid.colBoundaries ? { colBoundaries: grid.colBoundaries } : {}),
-            ...(grid.rowBoundaries ? { rowBoundaries: grid.rowBoundaries } : {}),
+            headers: commitGrid.headers,
+            rows: commitGrid.rows,
+            tagColumn: commitGrid.tagColumn,
+            tableName: commitGrid.tableName,
+            rowCount: commitGrid.rows.length,
+            columnCount: commitGrid.headers.length,
+            ...(commitGrid.colBoundaries ? { colBoundaries: commitGrid.colBoundaries } : {}),
+            ...(commitGrid.rowBoundaries ? { rowBoundaries: commitGrid.rowBoundaries } : {}),
           },
-          category: grid.tableName || undefined,
-          csiTags: grid.csiTags || [],
+          category: commitGrid.tableName || undefined,
+          csiTags: commitGrid.csiTags || [],
         });
         // Adopt the server's authoritative intelligence + summaries.
         setPageIntelligenceForPage(
           queryClient,
-          pid,
-          pageNumber,
+          target.publicId,
+          target.pageNumber,
           result.updatedIntelligence as any,
         );
-        // [refactor jul10 P2.2③] cache seed under `pid` — the handler-time publicId the promote
+        // [refactor jul10 P2.2③] cache seed under the handler-time publicId the promote
         // request itself used — NOT a render-captured id (a mid-await project switch must not leak
         // this response into another project's entry; SPEC §5-S3). Guard KEPT: promote returns
         // summaries:null on real paths (compute-reject swallow) and must not clear live data.
-        if (result.summaries) seedSummariesCache(queryClient, pid, result.summaries as any);
-        refreshPageCsiSpatialMap(queryClient, pid, pageNumber);
+        if (result.summaries) {
+          seedSummariesCache(queryClient, target.publicId, result.summaries as any);
+        }
+        refreshPageCsiSpatialMap(queryClient, target.publicId, target.pageNumber);
       } else {
         // Demo / no publicId: optimistic local-only save so the region renders.
-        saveParsedToIntelligence(grid, pid);
-        refreshPageCsiSpatialMap(queryClient, pid, pageNumber);
+        saveParsedToIntelligence(commitGrid, target);
+        refreshPageCsiSpatialMap(queryClient, target.publicId, target.pageNumber);
       }
 
       // Success: revert the tab to its idle step so another parse can start

@@ -41,21 +41,38 @@ import type {
 import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
+const tableSaveHarness = vi.hoisted(() => ({
+  delayedGrid: {
+    headers: ["Tag", "Description"],
+    rows: [{ Tag: "A-101", Description: "Project A door" }],
+    tagColumn: "Tag",
+    tableName: "Project A Schedule",
+    csiTags: [] as { code: string; description: string }[],
+  },
+}));
+
 // Drive TableParsePanel through its real orchestration callback without mounting the large parser
 // child. The grid already has CSI tags, so this isolates the local append path from CSI networking.
 vi.mock("@/components/viewer/AutoParseTab", () => ({
   default: ({ detectCsiAndPersist }: { detectCsiAndPersist: (grid: unknown, opts: unknown) => Promise<void> }) => (
-    <button
-      onClick={() => void detectCsiAndPersist({
-        headers: ["Tag", "Description"],
-        rows: [{ Tag: "D1", Description: "Door" }],
-        tagColumn: "Tag",
-        tableName: "Door Schedule",
-        csiTags: [{ code: "08 10 00", description: "Doors" }],
-      }, { resetAfter: false })}
-    >
-      save local table
-    </button>
+    <>
+      <button
+        onClick={() => void detectCsiAndPersist({
+          headers: ["Tag", "Description"],
+          rows: [{ Tag: "D1", Description: "Door" }],
+          tagColumn: "Tag",
+          tableName: "Door Schedule",
+          csiTags: [{ code: "08 10 00", description: "Doors" }],
+        }, { resetAfter: false })}
+      >
+        save local table
+      </button>
+      <button
+        onClick={() => void detectCsiAndPersist(tableSaveHarness.delayedGrid, { resetAfter: false })}
+      >
+        save table after CSI
+      </button>
+    </>
   ),
 }));
 
@@ -86,6 +103,11 @@ const noteRegion = {
 beforeEach(() => {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   fetchMock.mockReset();
+  tableSaveHarness.delayedGrid.headers = ["Tag", "Description"];
+  tableSaveHarness.delayedGrid.rows = [{ Tag: "A-101", Description: "Project A door" }];
+  tableSaveHarness.delayedGrid.tagColumn = "Tag";
+  tableSaveHarness.delayedGrid.tableName = "Project A Schedule";
+  tableSaveHarness.delayedGrid.csiTags = [];
   vi.stubGlobal("fetch", fetchMock);
   resetProjectData();
   setViewerStoreStateForTest({
@@ -186,6 +208,131 @@ describe("mixed page-window writer semantics", () => {
         "concurrent-existing",
         "parsed-12345",
       ]);
+    });
+  });
+
+  it("TableParse captures project, page, region, and grid before delayed CSI detection", async () => {
+    const projectA = "project-A";
+    const projectB = "project-B";
+    const pageA = 4;
+    const pageB = 9;
+    const regionA = [0.1, 0.2, 0.8, 0.7] as [number, number, number, number];
+    const regionB = [0.25, 0.3, 0.9, 0.95] as [number, number, number, number];
+
+    seedWindow(projectA, {
+      pageIntelligence: { [pageA]: { rejectedTextRegionIds: ["A-before"] } },
+    });
+    seedWindow(projectB, {
+      // The stale A completion currently targets B at A's render-captured page. Seed that exact
+      // key so the adoption assertion cannot pass merely because B's visible page changed.
+      pageIntelligence: { [pageA]: { rejectedTextRegionIds: ["B-sentinel"] } },
+    });
+    const projectBPageBefore = readPageIntelligence(qc, projectB, pageA);
+    setViewerStoreStateForTest({
+      projectId: 101,
+      publicId: projectA,
+      pageNumber: pageA,
+      tableParseTab: "auto",
+      tableParseRegion: regionA,
+      tableParsedGrid: {
+        headers: ["Tag"],
+        rows: [{ Tag: "A-store-grid" }],
+      },
+    });
+
+    let resolveCsi!: (response: Response) => void;
+    const delayedCsi = new Promise<Response>((resolve) => {
+      resolveCsi = resolve;
+    });
+    fetchMock.mockImplementation((url: unknown) => {
+      if (url === "/api/csi/detect") return delayedCsi;
+      if (url === "/api/regions/promote") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            parsedRegion: {},
+            updatedIntelligence: { rejectedTextRegionIds: ["server-A"] },
+            summaries: null,
+          }),
+        } as Response);
+      }
+      throw new Error(`unexpected fetch in delayed-CSI identity test: ${String(url)}`);
+    });
+
+    render(<TableParsePanel />, { wrapper });
+    fireEvent.click(screen.getByRole("button", { name: "save table after CSI" }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/csi/detect");
+
+    // Switch every live identity/input while A's CSI request is unresolved. The in-flight save
+    // must continue using its invocation snapshot; it must never combine A's grid with B's project
+    // or region, nor adopt A's server response into B's cache.
+    act(() => {
+      setViewerStoreStateForTest({
+        projectId: 202,
+        publicId: projectB,
+        isDemo: true,
+        pageNumber: pageB,
+        tableParseRegion: regionB,
+        tableParsedGrid: {
+          headers: ["Tag"],
+          rows: [{ Tag: "B-store-grid" }],
+        },
+      });
+      // The caller owns this same object in production. A later edit must not change the pending
+      // request payload, and CSI detection must not mutate it behind Zustand's publication model.
+      tableSaveHarness.delayedGrid.rows[0].Tag = "B-mutated-input";
+      tableSaveHarness.delayedGrid.tableName = "Project B mutated input";
+    });
+
+    await act(async () => {
+      resolveCsi({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          csiTags: [{ code: "08 11 13", description: "Hollow Metal Doors" }],
+        }),
+      } as Response);
+    });
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([url]) => url === "/api/regions/promote"))
+        .toHaveLength(1);
+    });
+    const promoteCall = fetchMock.mock.calls.find(([url]) => url === "/api/regions/promote");
+    if (!promoteCall) throw new Error("Expected the delayed save to promote");
+    const request = JSON.parse(String((promoteCall[1] as RequestInit).body));
+
+    expect(request).toMatchObject({
+      publicId: projectA,
+      pageNumber: pageA,
+      type: "schedule",
+      overrides: {
+        regionId: "pr-4-100-200-800-700",
+        bbox: regionA,
+        data: {
+          headers: ["Tag", "Description"],
+          rows: [{ Tag: "A-101", Description: "Project A door" }],
+          tagColumn: "Tag",
+          tableName: "Project A Schedule",
+        },
+        csiTags: [{ code: "08 11 13", description: "Hollow Metal Doors" }],
+      },
+    });
+    await waitFor(() => {
+      expect(readPageIntelligence(qc, projectA, pageA)?.rejectedTextRegionIds)
+        .toEqual(["server-A"]);
+    });
+    expect(readPageIntelligence(qc, projectB, pageA)).toBe(projectBPageBefore);
+    expect(tableSaveHarness.delayedGrid).toEqual({
+      headers: ["Tag", "Description"],
+      rows: [{ Tag: "B-mutated-input", Description: "Project A door" }],
+      tagColumn: "Tag",
+      tableName: "Project B mutated input",
+      csiTags: [],
     });
   });
 
