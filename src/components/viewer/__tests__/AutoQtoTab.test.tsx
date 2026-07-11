@@ -583,7 +583,13 @@ describe("AutoQtoTab — Retry re-arms a failed mapping (Q-20)", () => {
     fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
     await waitFor(() => expect(screen.getByText("Retry")).toBeInTheDocument());
     fireEvent.click(screen.getByText("Retry"));
-    await waitFor(() => expect(screen.getByText(/instances of 1 tags/)).toBeInTheDocument());
+    // Full-suite worker contention can delay the abort-aware zero-timeout mock beyond RTL's 1s
+    // default even though the focused case completes immediately. This remains an eventual-state
+    // contract, not a latency assertion (the 3s ceiling only removes scheduler flake).
+    await waitFor(
+      () => expect(screen.getByText(/instances of 1 tags/)).toBeInTheDocument(),
+      { timeout: 3_000 },
+    );
   });
 });
 

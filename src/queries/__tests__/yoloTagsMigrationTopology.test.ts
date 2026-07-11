@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 const FACADE = "src/queries/useYoloTags.ts";
 const AUTH_LOADER = "src/app/(dashboard)/project/[id]/page.tsx";
 const DEMO_LOADER = "src/app/demo/project/[id]/page.tsx";
+const sourceText = new Map<string, string>();
 
 function sourceFiles(directory = "src"): string[] {
   const output: string[] = [];
@@ -34,10 +35,19 @@ function sourceFiles(directory = "src"): string[] {
 }
 
 const parsed = new Map<string, ts.SourceFile>();
+const productionFiles = sourceFiles();
+function textOf(relativePath: string): string {
+  const cached = sourceText.get(relativePath);
+  if (cached !== undefined) return cached;
+  const text = readFileSync(join(process.cwd(), relativePath), "utf8");
+  sourceText.set(relativePath, text);
+  return text;
+}
+
 function parse(relativePath: string): ts.SourceFile {
   const cached = parsed.get(relativePath);
   if (cached) return cached;
-  const text = readFileSync(join(process.cwd(), relativePath), "utf8");
+  const text = textOf(relativePath);
   const result = ts.createSourceFile(
     relativePath,
     text,
@@ -74,8 +84,11 @@ function callCount(relativePath: string, name: string): number {
 
 function topology(name: string): Record<string, number> {
   return Object.fromEntries(
-    sourceFiles()
+    productionFiles
       .filter((path) => path !== FACADE)
+      // Parse only plausible owners. This keeps the oracle well below the 5s full-suite timeout
+      // while preserving exact AST call counting (aliases would also make the expected call vanish).
+      .filter((path) => textOf(path).includes(name))
       .map((path) => [path, callCount(path, name)] as const)
       .filter(([, count]) => count > 0),
   );
@@ -155,12 +168,12 @@ describe("P2.2⑨ yoloTags migration topology", () => {
   });
 
   it("keeps the full-array persistence endpoint owned by the facade alone", () => {
-    const owners = sourceFiles()
-      .filter((path) => readFileSync(join(process.cwd(), path), "utf8")
+    const owners = productionFiles
+      .filter((path) => textOf(path)
         .includes("{ yoloTags: snapshot }"));
     expect(owners).toEqual([FACADE]);
-    const legacyDirectWriters = sourceFiles()
-      .filter((path) => readFileSync(join(process.cwd(), path), "utf8")
+    const legacyDirectWriters = productionFiles
+      .filter((path) => textOf(path)
         .includes("JSON.stringify({ yoloTags"));
     expect(legacyDirectWriters).toEqual([]);
   });

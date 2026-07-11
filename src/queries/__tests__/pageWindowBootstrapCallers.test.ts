@@ -190,7 +190,15 @@ function promiseFetchArguments(
   return (members as ts.ArrayLiteralExpression).elements.map((member) => {
     expect(isIdentifierCall(member, "fetch")).toBe(true);
     const fetchCall = member as ts.CallExpression;
-    expect(fetchCall.arguments).toHaveLength(1);
+    // [refactor jul11 P2.2⑨] The authenticated metadata request deliberately bypasses its
+    // max-age=60 browser cache so a quick reopen cannot rehydrate pre-save yoloTags. Keep every
+    // other eager member one-argument/exact, and pin this sole options exception here.
+    if (fetchCall.arguments.length === 2) {
+      expect(compact(fetchCall.arguments[0], source)).toBe("`/api/projects/${id}`");
+      expect(compact(fetchCall.arguments[1], source)).toBe('{cache:"no-store"}');
+    } else {
+      expect(fetchCall.arguments).toHaveLength(1);
+    }
     return compact(fetchCall.arguments[0], source);
   });
 }
