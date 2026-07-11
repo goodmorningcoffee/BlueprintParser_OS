@@ -36,6 +36,9 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
   const setSpecParseRegion = useViewerStore((s) => s.setSpecParseRegion);
   const [rowStates, setRowStates] = useState<Record<string, RowAction>>({});
   const [errorByRow, setErrorByRow] = useState<Record<string, string>>({});
+  // React commits the disabled button state after the event. This keyed synchronous barrier closes
+  // the same-task double-click window without serializing promotions for different classifier rows.
+  const acceptingRegionKeysRef = useRef(new Set<string>());
 
   const prunedKeyRef = useRef<string | null>(null);
   useEffect(() => {
@@ -91,9 +94,16 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
 
   const handleAccept = async (tr: TextRegion) => {
     if (!canPersist(publicId, isDemo)) return;
-    setRowState(tr.id, "promoting");
-    setRowError(tr.id, null);
+
+    // Include the request/cache identity so an old target's completion cannot release a same-id
+    // promotion admitted for a newly rendered project or page.
+    const promotionKey = JSON.stringify([publicId, pageNumber, tr.id]);
+    if (acceptingRegionKeysRef.current.has(promotionKey)) return;
+    acceptingRegionKeysRef.current.add(promotionKey);
+
     try {
+      setRowState(tr.id, "promoting");
+      setRowError(tr.id, null);
       const payload = (await persistFetch("/api/regions/promote", {
         publicId,
         pageNumber,
@@ -105,6 +115,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
     } catch (err) {
       setRowError(tr.id, err instanceof Error ? err.message : "Promote failed");
     } finally {
+      acceptingRegionKeysRef.current.delete(promotionKey);
       setRowState(tr.id, "idle");
     }
   };
