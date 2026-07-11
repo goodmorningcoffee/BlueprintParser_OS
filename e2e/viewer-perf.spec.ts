@@ -186,19 +186,40 @@ test("viewer perf baseline on the synthetic 100-page set", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (e) => pageErrors.push(String(e)));
 
+  // Fetch the real bootstrap once, then replay the identical populated payload for each measured
+  // reload. Without this cache, the perf loop measures/consumes middleware's shared API budget;
+  // once that bucket fills, a later reload renders "Failed to load project" instead of a canvas.
+  // The server response is still exercised once, while every timed pass gets the same input.
+  let cachedProjectBody: Record<string, unknown> | null = null;
   await page.route(`**/api/projects/${world.publicId}`, async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
-    await route.fulfill({
-      response,
-      json: {
+    if (route.request().method() !== "GET") return route.continue();
+    if (!cachedProjectBody) {
+      const response = await route.fetch();
+      expect(response.ok(), "perf project bootstrap should succeed").toBe(true);
+      const body = (await response.json()) as Record<string, unknown> & {
+        projectIntelligence?: Record<string, unknown>;
+      };
+      cachedProjectBody = {
         ...body,
         projectIntelligence: {
           ...(body.projectIntelligence ?? {}),
           yoloTags: PERF_YOLO_TAGS,
         },
-      },
-    });
+      };
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", json: cachedProjectBody });
+  });
+  // Page-window reads are repeated across the warmup and three reloads too. Cache each distinct
+  // range after its first real response so later passes cannot turn into 429-driven blank pages.
+  const cachedPageWindows = new Map<string, unknown>();
+  await page.route(`**/api/projects/${world.publicId}/pages?*`, async (route) => {
+    const key = route.request().url();
+    if (!cachedPageWindows.has(key)) {
+      const response = await route.fetch();
+      expect(response.ok(), `perf page window should succeed: ${key}`).toBe(true);
+      cachedPageWindows.set(key, await response.json());
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", json: cachedPageWindows.get(key) });
   });
   // The offline fixture intentionally has no thumbnails. Fulfill that known 404 at the browser
   // boundary so three reloads × virtualized thumbnail windows do not consume the middleware's
