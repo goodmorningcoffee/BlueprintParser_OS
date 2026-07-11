@@ -7,7 +7,7 @@ import {
 } from "@/queries/usePageWindow";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import type { PageWindowResponse } from "@/queries/pageWindowCore";
 import type { ScaleCalibrationData } from "@/types";
 
@@ -190,7 +190,7 @@ export function useChunkLoader() {
           // paired publication; stale responses can never hydrate it.
           for (const ann of chunk.annotations) {
             if (ann.source === "takeoff-scale" && (ann.data as any)?.type === "scale-calibration") {
-              useViewerStore.getState().setScaleCalibration(
+              useToolStore.getState().setScaleCalibration(
                 ann.pageNumber,
                 ann.data as unknown as ScaleCalibrationData
               );

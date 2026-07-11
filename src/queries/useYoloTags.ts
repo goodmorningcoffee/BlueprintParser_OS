@@ -21,7 +21,7 @@ import { queryKeys } from "@/queries/queryKeys";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import type { YoloTag } from "@/types";
 
 const EMPTY_YOLO_TAGS = Object.freeze([]) as unknown as YoloTag[];
@@ -493,7 +493,7 @@ export function useYoloTags() {
     setYoloTagVisibility: state.setYoloTagVisibility,
     setYoloTagFilter: state.setYoloTagFilter,
   })));
-  const tool = useViewerStore(useShallow((state) => ({
+  const tool = useToolStore(useShallow((state) => ({
     yoloTagPickingMode: state.yoloTagPickingMode,
     setYoloTagPickingMode: state.setYoloTagPickingMode,
     tagScanResults: state.tagScanResults,

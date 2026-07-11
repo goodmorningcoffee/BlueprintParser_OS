@@ -93,10 +93,10 @@ export function Section12ForLlms() {
             [<InlineCode key="a8">streamChatWithTools</InlineCode>, "src/lib/llm/anthropic.ts:85-169", "Agentic tool-use loop. maxRounds=10."],
             [<InlineCode key="a9">BP_TOOLS</InlineCode>, "src/lib/llm/tools-defs.ts", "20 tool definitions. Client-safe (no db/fs)."],
             [<InlineCode key="a10">executeToolCall</InlineCode>, "src/lib/llm/tools.ts", "Server-side tool executors. Full db + fs access."],
-            [<InlineCode key="a11">canvasWantsEvents</InlineCode>, "src/components/viewer/AnnotationOverlay.tsx:2510", "Render-gate condition #1. Also touch L2521, L2550, L2554."],
-            [<InlineCode key="a12">useViewerStore</InlineCode>, "src/stores/viewerStore.ts:609", "Zustand store. 17 slice hooks, L1675 onward."],
-            [<InlineCode key="a13">resetAllTools</InlineCode>, "src/stores/viewerStore.ts", "Canonical tool reset. Compose into when adding a new tool."],
-            [<InlineCode key="a14">focusAnnotationId</InlineCode>, "src/stores/viewerStore.ts", "One-shot signal. Read-and-clear pattern."],
+            [<InlineCode key="a11">canvasWantsEvents</InlineCode>, "src/components/viewer/AnnotationOverlay.tsx:2609", "Render-gate condition #1. Also touch L2620, L2649, L2653."],
+            [<InlineCode key="a12">domain stores</InlineCode>, "src/stores/{sessionStore,uiStore,viewerCoreStore,toolStore,viewerStore}.ts", "Use the owning leaf; viewerStore is residual parse/drawing state."],
+            [<InlineCode key="a13">resetAllTools</InlineCode>, "src/stores/viewerCommands.ts", "Neutral tool/parse reset command; leaf stores do not import siblings."],
+            [<InlineCode key="a14">focusAnnotationId</InlineCode>, "src/stores/uiStore.ts", "One-shot UI signal. Read-and-clear pattern."],
             [<InlineCode key="a15">assembleContextWithConfig</InlineCode>, "src/lib/context-builder.ts", "LLM prompt assembly. Priority-sorted section packing."],
             [<InlineCode key="a16">ALL_DETECTORS</InlineCode>, "src/lib/detectors/registry.ts:21", "10 text-annotation detectors. Add here + wire to enable config."],
             [<InlineCode key="a17">QTO_STRICT_EXCLUSION_CLASSES</InlineCode>, "src/components/viewer/AutoQtoTab.tsx:52", "tables, title_block, drawings. Required for Auto-QTO."],
@@ -107,21 +107,20 @@ export function Section12ForLlms() {
         />
       </SubSection>
 
-      <SubSection title="The 17 Zustand slice hooks">
+      <SubSection title="Domain stores and Query facades">
         <p>
           <InlineCode>[LLM-NAV:store-slices]</InlineCode>
         </p>
         <p>
-          Every panel, every toolbar button, every canvas overlay reads from
-          one of these slices. Subscribing at the slice level &mdash; rather
-          than with a raw <InlineCode>useViewerStore(s =&gt; s.field)</InlineCode>{" "}
-          &mdash; is how the 1,986-line store doesn&apos;t cause cascading
-          re-renders. If you&apos;re adding UI that needs state from the
-          store, check this map for the existing slice before creating a new one.
+          Every panel, toolbar button, and canvas overlay reads from an explicit owner. Use a
+          primitive selector on the relevant Zustand leaf, or the domain&apos;s Query facade for
+          server rows. Cross-owner product behavior lives in neutral commands. Check this map
+          before adding state so a feature does not recreate duplicate ownership or a broad canvas
+          subscription.
         </p>
         <Figure
           kind="live"
-          caption="17 slice hooks fan out from useViewerStore. Line numbers are from the current viewerStore.ts."
+          caption="Viewer state surfaces fan out from explicit Zustand and Query owners."
           size="full"
         >
           <StoreSliceHookMap />
@@ -142,12 +141,12 @@ export function Section12ForLlms() {
           rows={[
             ["Project overview / disciplines", <InlineCode key="t1">getProjectOverview</InlineCode>, "One call, returns cluster summary. Always cheaper than scanning pages."],
             ["A specific page", <InlineCode key="t2">getPageDetails(pageNumber)</InlineCode>, "Structured summary first, then raw OCR only if needed."],
-            ["Pages containing Division X", <InlineCode key="t3">lookupPagesByIndex({"{"}index:\"csi\", key:\"X\"{"}"})</InlineCode>, "O(1). Don't iterate every page."],
+            ["Pages containing Division X", <InlineCode key="t3">{"lookupPagesByIndex({index:\"csi\", key:\"X\"})"}</InlineCode>, "O(1). Don't iterate every page."],
             ["Cross-references / hub pages", <InlineCode key="t4">getCrossReferences</InlineCode>, "Returns edges and ranked hubs from the graph."],
             ["Text location on a page", <InlineCode key="t5">searchPages / getOcrTextInRegion</InlineCode>, "Search is ts_vector; in-region is bbox-scoped OCR."],
             ["Parsed schedules", <InlineCode key="t6">getParsedSchedule(pageNumber)</InlineCode>, "Headers + rows, already structured. Don't re-parse from OCR."],
             ["Spatial layout of a page", <InlineCode key="t7">getCsiSpatialMap / getSpatialContext</InlineCode>, "9×9 heatmap + YOLO-joined text."],
-            ["YOLO detections", <InlineCode key="t8">getAnnotations({"{"}source:\"yolo\"{"}"})</InlineCode>, "Filter-based, returns bboxes + classes + confidence."],
+            ["YOLO detections", <InlineCode key="t8">{"getAnnotations({source:\"yolo\"})"}</InlineCode>, "Filter-based, returns bboxes + classes + confidence."],
             ["Tag instances across project", <InlineCode key="t9">mapTagsToPages</InlineCode>, "Bridges schedule rows to drawing shapes. Cached per tag list."],
             ["CSI code for arbitrary text", <InlineCode key="t10">detectCsiFromText(text)</InlineCode>, "Runs the 3-tier matcher on input you provide."],
             ["Jump the viewer to page X", <InlineCode key="t11">navigateToPage({"{"}pageNumber{"}"})</InlineCode>, "Side-effecting action. The user sees it happen."],
@@ -216,7 +215,7 @@ objectAdjacencyBoost: 0,  // not yet produced by matchers; future refinement`}
           rows={[
             [
               "Canvas render gate drift",
-              "AnnotationOverlay.tsx:2510-2527 + :2550 + :2554",
+              "AnnotationOverlay.tsx:2609 + :2620 + :2649 + :2653",
               "Adding a new canvas mode without touching all four conditions → silent event loss / wrong cursor.",
             ],
             [
@@ -236,7 +235,7 @@ objectAdjacencyBoost: 0,  // not yet produced by matchers; future refinement`}
             ],
             [
               "focusAnnotationId is one-shot",
-              "viewerStore.ts — read + clear",
+              "uiStore.ts — read + clear",
               "Setting it twice to the same value won't fire the effect unless you clear it between.",
             ],
             [
@@ -275,10 +274,10 @@ objectAdjacencyBoost: 0,  // not yet produced by matchers; future refinement`}
           <div>
             <h4 className="text-[var(--fg)] font-semibold mb-1">Add a new canvas tool mode</h4>
             <ol className="list-decimal pl-5 space-y-0.5 text-[13px]">
-              <li>Add state to <InlineCode>viewerStore.ts</InlineCode> and compose into the right slice hook.</li>
-              <li>Touch ALL FOUR conditions in <InlineCode>AnnotationOverlay.tsx</InlineCode>: <InlineCode>canvasWantsEvents</InlineCode> (L2510), <InlineCode>canvasShouldRender</InlineCode> (L2521), <InlineCode>pointerEvents</InlineCode> (L2550), <InlineCode>cursor</InlineCode> (L2554).</li>
+              <li>Add flat interaction/session state to <InlineCode>toolStore.ts</InlineCode>; keep server rows in Query and parse state in its residual owner.</li>
+              <li>Touch ALL FOUR conditions in <InlineCode>AnnotationOverlay.tsx</InlineCode>: <InlineCode>canvasWantsEvents</InlineCode> (L2609), <InlineCode>canvasShouldRender</InlineCode> (L2620), <InlineCode>pointerEvents</InlineCode> (L2649), <InlineCode>cursor</InlineCode> (L2653).</li>
               <li>Add branches in <InlineCode>handleMouseDown/Move/Up</InlineCode>.</li>
-              <li>Compose the tool&apos;s state reset into <InlineCode>resetAllTools()</InlineCode>.</li>
+              <li>For cross-owner cleanup, compose the operation in <InlineCode>viewerCommands.resetAllTools()</InlineCode>; never import sibling stores into a leaf.</li>
             </ol>
           </div>
           <div>

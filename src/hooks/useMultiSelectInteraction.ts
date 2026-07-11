@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useSelectionUi, useSelectionUiActions } from "@/stores/uiStore";
 // [refactor jul10 P2.2⑤] annotation groups: zustand → TanStack cache facade (import-swap-only
 // surgery — the destructure below and every callback body are byte-identical; identity
@@ -26,7 +26,7 @@ import type { ClientAnnotation } from "@/types";
  * lives in useSelection().selectedAnnotationIds.
  */
 export function useMultiSelectInteraction() {
-  const mode = useViewerStore((s) => s.mode);
+  const mode = useToolStore((s) => s.mode);
   const { selectedAnnotationIds } = useSelectionUi();
   const { toggleSelection, setSelectedAnnotationIds, clearSelection } = useSelectionUiActions();
   const {

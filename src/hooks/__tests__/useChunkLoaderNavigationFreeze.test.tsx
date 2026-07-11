@@ -18,7 +18,7 @@ import {
 import { queryKeys } from "@/queries/queryKeys";
 import { readAnnotations } from "@/queries/useAnnotations";
 import { readActivePageWindow } from "@/queries/usePageWindow";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { seedAnnotations } from "@/test/seed-annotations";
 import type { ClientAnnotation, CsiCode, KeynoteShapeData, TextAnnotation } from "@/types";
@@ -439,7 +439,7 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
     expect(currentWindow().textAnnotations[20]).toBeUndefined();
     expect(currentWindow().pageIntelligence[20]).toBeUndefined();
     expect(currentWindow().loadedRange).toBeNull();
-    expect(useViewerStore.getState().scaleCalibrations[20]).toBeUndefined();
+    expect(useToolStore.getState().scaleCalibrations[20]).toBeUndefined();
   });
 
   it("aborts and invalidates A on project identity switch", async () => {
@@ -763,7 +763,7 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
       if (key === annotationsKey) events.push("annotations");
       if (key === activeKey) events.push("range");
     });
-    const unsubscribeStore = useViewerStore.subscribe((state, previous) => {
+    const unsubscribeStore = useToolStore.subscribe((state, previous) => {
       if (state.scaleCalibrations !== previous.scaleCalibrations) events.push("scale");
     });
 

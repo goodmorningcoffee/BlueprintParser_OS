@@ -28,7 +28,7 @@ import {
   type NewAnnotationDraft,
   type PersistCreateOptions,
 } from "@/queries/useAnnotations";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
@@ -113,8 +113,8 @@ const takeoffItem: ClientTakeoffItem = {
   groupId: null,
 };
 
-type ViewerSnapshot = ReturnType<typeof useViewerStore.getState>;
-type PendingPolygon = NonNullable<ViewerSnapshot["bucketFillPendingPolygon"]>;
+type ToolSnapshot = ReturnType<typeof useToolStore.getState>;
+type PendingPolygon = NonNullable<ToolSnapshot["bucketFillPendingPolygon"]>;
 
 function pendingPolygon(overrides: Partial<PendingPolygon> = {}): PendingPolygon {
   return {
@@ -639,12 +639,12 @@ describe("commitBucketFill", () => {
     client.setQueryData(queryKeys.annotations.all("A"), [ann(1)]);
     const { result } = renderHook(() => useAnnotations(), { wrapper: makeWrapper(client) });
     const rowsBefore = readAnnotations(client, "A");
-    const storeBefore = useViewerStore.getState();
+    const storeBefore = useToolStore.getState();
 
     act(() => result.current.commitBucketFill(takeoffItem));
 
     expect(readAnnotations(client, "A")).toBe(rowsBefore);
-    expect(useViewerStore.getState()).toBe(storeBefore);
+    expect(useToolStore.getState()).toBe(storeBefore);
     expect(persistFetchMock).not.toHaveBeenCalled();
   });
 
@@ -658,7 +658,7 @@ describe("commitBucketFill", () => {
     });
     const { result } = renderHook(() => useAnnotations(), { wrapper: makeWrapper(client) });
     let rowsObservedAtPendingClear: ClientAnnotation[] | undefined;
-    const unsubscribe = useViewerStore.subscribe((state, previous) => {
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
       if (previous.bucketFillPendingPolygon && state.bucketFillPendingPolygon === null) {
         rowsObservedAtPendingClear = readAnnotations(client, "A");
       }
@@ -668,8 +668,8 @@ describe("commitBucketFill", () => {
     unsubscribe();
 
     expect(rowsObservedAtPendingClear?.map((row) => row.id)).toEqual([TEMP_ID]);
-    expect(useViewerStore.getState().bucketFillPendingPolygon).toBeNull();
-    expect(useViewerStore.getState().bucketFillError).toBeNull();
+    expect(useToolStore.getState().bucketFillPendingPolygon).toBeNull();
+    expect(useToolStore.getState().bucketFillError).toBeNull();
     expect(persistFetchMock).not.toHaveBeenCalled();
     const created = readAnnotations(client, "A")[0];
     expect(created).toMatchObject({
@@ -710,7 +710,7 @@ describe("commitBucketFill", () => {
 
     expect(readAnnotations(client, "")).toHaveLength(1);
     expect(readAnnotations(client, "A")).toEqual([]);
-    expect(useViewerStore.getState().bucketFillError).toBe(
+    expect(useToolStore.getState().bucketFillError).toBe(
       "Project not ready yet — bucket fill was NOT saved. Redraw once the viewer finishes loading.",
     );
     expect(persistFetchMock).not.toHaveBeenCalled();
@@ -728,13 +728,13 @@ describe("commitBucketFill", () => {
 
     act(() => result.current.commitBucketFill(takeoffItem));
     expect(readAnnotations(client, "A").map((row) => row.id)).toEqual([TEMP_ID]);
-    expect(useViewerStore.getState().bucketFillPendingPolygon).toBeNull();
+    expect(useToolStore.getState().bucketFillPendingPolygon).toBeNull();
 
     failure.reject(new Error("Forbidden"));
     await failure.promise.catch(() => undefined);
     await flushMicrotasks();
 
-    expect(useViewerStore.getState().bucketFillError).toBe(
+    expect(useToolStore.getState().bucketFillError).toBe(
       "Bucket fill drawn locally but NOT saved: Forbidden",
     );
     expect(readAnnotations(client, "A").map((row) => row.id)).toEqual([TEMP_ID]);
@@ -816,7 +816,7 @@ describe("commitBucketFill", () => {
       },
     ]);
     expect(readAnnotations(client, "B")).toEqual([bRow]);
-    expect(useViewerStore.getState().bucketFillError).toBeNull();
+    expect(useToolStore.getState().bucketFillError).toBeNull();
   });
 });
 
@@ -836,16 +836,16 @@ describe("direct takeoff undo/redo bridges", () => {
 
     takeoffUndo(client);
     expect(readAnnotations(client, "A")).toBe(rowsBefore);
-    expect(useViewerStore.getState().takeoffUndoStack).toBe(priorUndo);
-    expect(useViewerStore.getState().takeoffRedoStack).toBe(priorRedo);
+    expect(useToolStore.getState().takeoffUndoStack).toBe(priorUndo);
+    expect(useToolStore.getState().takeoffRedoStack).toBe(priorRedo);
 
     setViewerStoreStateForTest({ activeTakeoffItemId: 7, pageNumber: 2 });
-    const undoBeforeNoMatch = useViewerStore.getState().takeoffUndoStack;
-    const redoBeforeNoMatch = useViewerStore.getState().takeoffRedoStack;
+    const undoBeforeNoMatch = useToolStore.getState().takeoffUndoStack;
+    const redoBeforeNoMatch = useToolStore.getState().takeoffRedoStack;
     takeoffUndo(client);
     expect(readAnnotations(client, "A")).toBe(rowsBefore);
-    expect(useViewerStore.getState().takeoffUndoStack).toBe(undoBeforeNoMatch);
-    expect(useViewerStore.getState().takeoffRedoStack).toBe(redoBeforeNoMatch);
+    expect(useToolStore.getState().takeoffUndoStack).toBe(undoBeforeNoMatch);
+    expect(useToolStore.getState().takeoffRedoStack).toBe(redoBeforeNoMatch);
   });
 
   it("undo removes the last matching row from the live project and writes cache before stacks", () => {
@@ -873,7 +873,7 @@ describe("direct takeoff undo/redo bridges", () => {
       takeoffRedoStack: [staleRedo],
     });
     let cacheIdsAtStackWrite: number[] | undefined;
-    const unsubscribe = useViewerStore.subscribe((state, previous) => {
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
       if (state.takeoffUndoStack !== previous.takeoffUndoStack) {
         cacheIdsAtStackWrite = readAnnotations(client, "B").map((row) => row.id);
       }
@@ -886,24 +886,24 @@ describe("direct takeoff undo/redo bridges", () => {
     expect(readAnnotations(client, "B").map((row) => row.id)).toEqual([1, 2, 3, 4, 6]);
     expect(readAnnotations(client, "B")[1]).toBe(earlierMatch);
     expect(readAnnotations(client, "A")).toEqual(aRows);
-    expect(useViewerStore.getState().takeoffUndoStack).toEqual([priorUndo, removed]);
-    expect(useViewerStore.getState().takeoffUndoStack[1]).toBe(removed);
-    expect(useViewerStore.getState().takeoffRedoStack).toEqual([]);
+    expect(useToolStore.getState().takeoffUndoStack).toEqual([priorUndo, removed]);
+    expect(useToolStore.getState().takeoffUndoStack[1]).toBe(removed);
+    expect(useToolStore.getState().takeoffRedoStack).toEqual([]);
   });
 
   it("redo with an empty undo stack is an exact no-op even when redo history exists", () => {
     const client = freshClient();
     client.setQueryData(queryKeys.annotations.all("A"), [ann(1)]);
     const priorRedo = [takeoffAnn(91)];
-    useViewerStore.setState({ takeoffUndoStack: [], takeoffRedoStack: priorRedo });
+    useToolStore.setState({ takeoffUndoStack: [], takeoffRedoStack: priorRedo });
     const rowsBefore = readAnnotations(client, "A");
-    const undoBefore = useViewerStore.getState().takeoffUndoStack;
+    const undoBefore = useToolStore.getState().takeoffUndoStack;
 
     takeoffRedo(client);
 
     expect(readAnnotations(client, "A")).toBe(rowsBefore);
-    expect(useViewerStore.getState().takeoffUndoStack).toBe(undoBefore);
-    expect(useViewerStore.getState().takeoffRedoStack).toBe(priorRedo);
+    expect(useToolStore.getState().takeoffUndoStack).toBe(undoBefore);
+    expect(useToolStore.getState().takeoffRedoStack).toBe(priorRedo);
   });
 
   it("redo appends the exact undo top and writes cache before moving stack history", () => {
@@ -912,13 +912,13 @@ describe("direct takeoff undo/redo bridges", () => {
     const restored = takeoffAnn(5);
     const priorRedo = takeoffAnn(91);
     client.setQueryData(queryKeys.annotations.all("A"), [existing]);
-    useViewerStore.setState({
+    useToolStore.setState({
       activeTakeoffItemId: null,
       takeoffUndoStack: [restored],
       takeoffRedoStack: [priorRedo],
     });
     let cacheIdsAtStackWrite: number[] | undefined;
-    const unsubscribe = useViewerStore.subscribe((state, previous) => {
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
       if (state.takeoffUndoStack !== previous.takeoffUndoStack) {
         cacheIdsAtStackWrite = readAnnotations(client, "A").map((row) => row.id);
       }
@@ -930,8 +930,8 @@ describe("direct takeoff undo/redo bridges", () => {
     expect(cacheIdsAtStackWrite).toEqual([1, 5]);
     expect(readAnnotations(client, "A")).toEqual([existing, restored]);
     expect(readAnnotations(client, "A")[1]).toBe(restored);
-    expect(useViewerStore.getState().takeoffUndoStack).toEqual([]);
-    expect(useViewerStore.getState().takeoffRedoStack).toEqual([priorRedo, restored]);
-    expect(useViewerStore.getState().takeoffRedoStack[1]).toBe(restored);
+    expect(useToolStore.getState().takeoffUndoStack).toEqual([]);
+    expect(useToolStore.getState().takeoffRedoStack).toEqual([priorRedo, restored]);
+    expect(useToolStore.getState().takeoffRedoStack[1]).toBe(restored);
   });
 });

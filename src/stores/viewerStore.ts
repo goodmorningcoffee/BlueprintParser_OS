@@ -1,9 +1,5 @@
 import { create } from "zustand";
 import type {
-  ClientAnnotation,
-  ScaleCalibrationData,
-  SymbolSearchResult,
-  SymbolSearchMatch,
   QtoWorkflow,
   ParsedRegion,
   TextractLine,
@@ -25,24 +21,7 @@ export interface ParagraphTemplate {
   headers: string[];
 }
 
-interface TagScanResults {
-  yoloClass: string;
-  yoloModel: string;
-  texts: { text: string; count: number; pages: number[]; instances: { pageNumber: number; annotationId: number; bbox: [number, number, number, number]; confidence: number }[] }[];
-}
-
 interface ViewerState {
-  // ─── Mode ────────────────────────────────────────────────
-  // "group" mode powers the new multi-select / lasso tool. In this mode,
-  // click-drag on empty canvas starts a marquee that selects every
-  // intersecting annotation. Click on an annotation adds/removes it
-  // from `selectedAnnotationIds` in uiStore. See useMultiSelectInteraction + the
-  // useAnnotationGroups facade in src/queries/useAnnotationGroups.ts (P2.2⑤).
-  mode: "move" | "pointer" | "markup" | "group";
-  setMode: (m: "move" | "pointer" | "markup" | "group") => void;
-  tempPanMode: boolean;
-  setTempPanMode: (v: boolean) => void;
-
   // [refactor jul10 P2.2⑤] annotation groups + the M:N membership indexes moved to the
   // TanStack Query cache — see src/queries/useAnnotationGroups.ts (ONE key holds the raw
   // {groups, memberships} payload; the forward/reverse Set indexes are derived in-hook).
@@ -51,7 +30,7 @@ interface ViewerState {
 
   // [refactor jul11 P2.3] Project identity, demo policy, page labels, and labeling-session state
   // live in sessionStore. The residual csiGraph bootstrap value lives in useCsiGraph. Do not add
-  // project/session data back to this UI/tool store.
+  // project/session data back to this residual metadata/parse/drawing store.
 
   // [refactor jul11 P2.2⑦/⑧] Active page-window maps and per-page Textract OCR are query-owned.
   // Only project-wide bootstrap metadata from those former server-data slices remains here.
@@ -62,105 +41,6 @@ interface ViewerState {
   allCsiCodes: { code: string; description: string }[];
   setAllCsiCodes: (codes: { code: string; description: string }[]) => void;
 
-  // ─── Takeoff ────────────────────────────────────────────
-  // [refactor jul10 P2.2④] takeoffItems + takeoffGroups (and their collection actions,
-  // incl. the two-key removeTakeoffGroup ungroup) moved to the TanStack Query cache —
-  // src/queries/useTakeoff.ts (useTakeoffItems/useTakeoffGroups/readTakeoffItems/
-  // seedTakeoffCache). setTakeoffItems/setTakeoffGroups were DELETED, not ported (sole
-  // callers were the loader seeds seedTakeoffCache replaces). Only the UI fields below
-  // stay Zustand but are split by responsibility: the active pointer and undo/redo stacks remain
-  // tool state here; panel/filter/visibility/tab presentation lives in uiStore.
-  activeTakeoffItemId: number | null;
-  setActiveTakeoffItemId: (id: number | null) => void;
-
-  // ─── Takeoff Area ──────────────────────────────────────
-  scaleCalibrations: Record<number, ScaleCalibrationData>;
-  setScaleCalibration: (pageNum: number, cal: ScaleCalibrationData) => void;
-  calibrationMode: "idle" | "point1" | "point2" | "input";
-  setCalibrationMode: (mode: "idle" | "point1" | "point2" | "input") => void;
-  calibrationPoints: { p1?: { x: number; y: number }; p2?: { x: number; y: number } };
-  setCalibrationPoint: (which: "p1" | "p2", point: { x: number; y: number }) => void;
-  resetCalibration: () => void;
-  polygonDrawingMode: "idle" | "drawing";
-  setPolygonDrawingMode: (mode: "idle" | "drawing") => void;
-  polygonVertices: { x: number; y: number }[];
-  addPolygonVertex: (v: { x: number; y: number }) => void;
-  undoLastVertex: () => void;
-  resetPolygonDrawing: () => void;
-  // Bucket fill
-  bucketFillActive: boolean;
-  setBucketFillActive: (active: boolean) => void;
-  bucketFillPreview: {
-    vertices: { x: number; y: number }[];
-    /** Inner holes (courtyards inside the filled region). Empty when none. */
-    holes?: { vertices: { x: number; y: number }[] }[];
-    method: string;
-  } | null;
-  setBucketFillPreview: (v: ViewerState["bucketFillPreview"]) => void;
-  bucketFillLoading: boolean;
-  setBucketFillLoading: (v: boolean) => void;
-  bucketFillError: string | null;
-  setBucketFillError: (msg: string | null) => void;
-  bucketFillTolerance: number;
-  setBucketFillTolerance: (n: number) => void;
-  bucketFillDilatePx: number;
-  setBucketFillDilatePx: (n: number) => void;
-  /** Resolution knob for the bucket-fill worker — passed directly as
-   *  `maxDimension` into `clientBucketFill`. Snap values: 1000 (instant,
-   *  downscales heavily on high-DPI plans so thin walls vanish), 2000, 3000,
-   *  4000 (near-native PDF.js canvas resolution, preserves 1-pixel walls,
-   *  ~150-250ms worst case on big room fills). Session-scoped; resets to
-   *  1000 on project switch. */
-  bucketFillResolution: 1000 | 2000 | 3000 | 4000;
-  setBucketFillResolution: (r: 1000 | 2000 | 3000 | 4000) => void;
-  bucketFillPendingPolygon: {
-    vertices: { x: number; y: number }[];
-    /** Inner holes (courtyards) excluded from net area and rendered as evenodd cutouts.
-     *  Non-empty holes are persisted in annotation JSONB; empty/missing holes are omitted. */
-    holes?: { vertices: { x: number; y: number }[] }[];
-    method: string;
-    bbox: [number, number, number, number];
-    areaSqUnits: number;
-    unit: string;
-  } | null;
-  setBucketFillPendingPolygon: (v: ViewerState["bucketFillPendingPolygon"]) => void;
-  // ─── Split Area tool ────────────────────────────────────
-  splitAreaActive: boolean;
-  setSplitAreaActive: (v: boolean) => void;
-  splitLineA: { x: number; y: number } | null;
-  splitLineB: { x: number; y: number } | null;
-  setSplitLineEndpoint: (which: "a" | "b", pt: { x: number; y: number } | null) => void;
-  splitPreview: {
-    targetAnnotationId: number;
-    original: { x: number; y: number }[];
-    left: { x: number; y: number }[];
-    right: { x: number; y: number }[];
-    lineA: { x: number; y: number };
-    lineB: { x: number; y: number };
-  } | null;
-  setSplitPreview: (p: {
-    targetAnnotationId: number;
-    original: { x: number; y: number }[];
-    left: { x: number; y: number }[];
-    right: { x: number; y: number }[];
-    lineA: { x: number; y: number };
-    lineB: { x: number; y: number };
-  } | null) => void;
-  splitError: string | null;
-  setSplitError: (msg: string | null) => void;
-  bucketFillBarriers: { x1: number; y1: number; x2: number; y2: number }[];
-  addBucketFillBarrier: (line: { x1: number; y1: number; x2: number; y2: number }) => void;
-  undoLastBarrier: () => void;
-  clearBucketFillBarriers: () => void;
-  bucketFillBarrierMode: boolean;
-  setBucketFillBarrierMode: (v: boolean) => void;
-  barrierPendingPoint: { x: number; y: number } | null;
-  setBarrierPendingPoint: (v: { x: number; y: number } | null) => void;
-  // Takeoff undo/redo history stays UI/tool state. The cross-backend operations themselves live
-  // beside the annotation cache (`takeoffUndo/Redo(qc)` in queries/useAnnotations.ts).
-  takeoffUndoStack: ClientAnnotation[];
-  takeoffRedoStack: ClientAnnotation[];
-
   // ─── Auto-QTO ────────────────────────────────────────────
   // [refactor jul10 P2.2②] qtoWorkflows COLLECTION moved to the TanStack cache
   // (src/queries/useQtoWorkflows.ts). The active pointer stays here: it is a UI-selection /
@@ -170,7 +50,6 @@ interface ViewerState {
 
   // ─── Table Parse ───────────────────────────────────────
   tableParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
-  setTableParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
   tableParseRegion: [number, number, number, number] | null; // [minX, minY, maxX, maxY] normalized
   setTableParseRegion: (bbox: [number, number, number, number] | null) => void;
   tableParsedGrid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] } | null;
@@ -228,7 +107,6 @@ interface ViewerState {
   keynoteParseTab: "all" | "auto" | "guided" | "manual" | "compare";
   setKeynoteParseTab: (tab: "all" | "auto" | "guided" | "manual" | "compare") => void;
   keynoteParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
-  setKeynoteParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
   keynoteParseRegion: [number, number, number, number] | null;
   setKeynoteParseRegion: (bbox: [number, number, number, number] | null) => void;
   keynoteColumnBBs: [number, number, number, number][];
@@ -244,7 +122,6 @@ interface ViewerState {
 
   // ─── Notes Parse (Stage 3 scaffold — consumed by Stage 4 UI) ───
   notesParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
-  setNotesParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
   notesParseRegion: [number, number, number, number] | null;
   setNotesParseRegion: (bbox: [number, number, number, number] | null) => void;
   guidedNotesRows: [number, number, number, number][];
@@ -284,7 +161,6 @@ interface ViewerState {
 
   // ─── Spec Parse (Stage 3 scaffold — consumed by Stage 5 UI) ────
   specParseStep: "idle" | "select-region" | "define-sections" | "review";
-  setSpecParseStep: (step: "idle" | "select-region" | "define-sections" | "review") => void;
   specParseRegion: [number, number, number, number] | null;
   setSpecParseRegion: (bbox: [number, number, number, number] | null) => void;
   guidedSpecSectionBBs: [number, number, number, number][];
@@ -305,46 +181,6 @@ interface ViewerState {
    *  tool exits; cleared only by resetProjectData. */
   paragraphClipboard: ParagraphTemplate | null;
   setParagraphClipboard: (t: ParagraphTemplate | null) => void;
-  // ─── YOLO Tag tool state (collection lives in Query; presentation lives in uiStore) ──────
-  yoloTagPickingMode: boolean;
-  setYoloTagPickingMode: (v: boolean) => void;
-  // Class-scan flow: scan results pending user selection
-  tagScanResults: TagScanResults | null;
-  setTagScanResults: (r: TagScanResults | null) => void;
-  // Add-instance mode: draw BB to add to a specific tag
-  tagAddingMode: string | null; // tagId when active
-  setTagAddingMode: (tagId: string | null) => void;
-
-  // ─── Symbol Search ────────────────────────────────────
-  symbolSearchActive: boolean;                    // draw mode active (crosshair cursor)
-  setSymbolSearchActive: (active: boolean) => void;
-  symbolSearchLoading: boolean;
-  setSymbolSearchLoading: (loading: boolean) => void;
-  symbolSearchProgress: { page: number; pageIndex: number; totalPages: number; matches: number } | null;
-  setSymbolSearchProgress: (p: { page: number; pageIndex: number; totalPages: number; matches: number } | null) => void;
-  symbolSearchResults: SymbolSearchResult | null;
-  setSymbolSearchResults: (results: SymbolSearchResult | null) => void;
-  symbolSearchConfidence: number;                 // slider value for filtering
-  setSymbolSearchConfidence: (val: number) => void;
-  dismissedSymbolMatches: Set<string>;            // dismissed match IDs
-  dismissSymbolMatch: (matchId: string) => void;
-  symbolSearchError: string | null;
-  setSymbolSearchError: (error: string | null) => void;
-  symbolSearchTemplateBbox: [number, number, number, number] | null;
-  setSymbolSearchTemplateBbox: (bbox: [number, number, number, number] | null) => void;
-  symbolSearchSourcePage: number | null;
-  setSymbolSearchSourcePage: (page: number | null) => void;
-  symbolSearchConfig: { multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null; scaleMin: number; scaleMax: number; nmsThreshold: number; maxMatchesPerPage: number };
-  setSymbolSearchConfig: (patch: Partial<{ multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null; scaleMin: number; scaleMax: number; nmsThreshold: number; maxMatchesPerPage: number }>) => void;
-  /** Preset bundling scaleMin/scaleMax/nmsThreshold. "lite" is fast default
-   *  (0.8-1.5, NMS 0.3). "power" widens recall (0.5-2.0, NMS 0.2) at ~2x
-   *  per-page runtime. UI shows a third derived "custom" state when the
-   *  advanced sliders have been hand-tuned to values that don't match
-   *  either preset — see SymbolSearchPanel for the derivation. */
-  symbolSearchPreset: "lite" | "power";
-  setSymbolSearchPreset: (preset: "lite" | "power") => void;
-  clearSymbolSearch: () => void;
-
   // ─── Drawing State (used by DrawingPreviewLayer, NOT subscribed by AnnotationOverlay) ──
   _drawing: boolean;
   _drawStart: { x: number; y: number };
@@ -366,24 +202,12 @@ interface ViewerState {
   setGuidedParseCols: (cols: number[]) => void;
   resetGuidedParse: () => void;
 
-  // Universal tool-state tear-down — compose of setMode("move") +
-  // resetTableParse + resetKeynoteParse + resetGuidedParse + clearSymbolSearch.
-  // Called from parent-panel toggles on close and from cancel buttons.
-  resetAllTools: () => void;
-
   // ─── Reset ─────────────────────────────────────────────
-  /** Remaining viewer/tool/parse half of reset. Call resetProjectData from viewerCommands. */
+  /** Remaining metadata/parse/drawing reset. Call resetProjectData from viewerCommands. */
   resetViewerState: () => void;
 }
 
-export const useViewerStore = create<ViewerState>((set, get) => ({
-  mode: "move",
-  // Switching modes disengages every competing tool so mode="markup" can't coexist
-  // with bucketFillActive=true / symbolSearchActive=true / etc.
-  setMode: (mode) => set({ mode, activeTakeoffItemId: null, polygonDrawingMode: "idle", polygonVertices: [], bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarriers: [], bucketFillBarrierMode: false, splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null, symbolSearchActive: false, tempPanMode: false }),
-  tempPanMode: false,
-  setTempPanMode: (tempPanMode) => set({ tempPanMode }),
-
+export const useViewerStore = create<ViewerState>((set) => ({
   // [refactor jul10 P2.2⑤] annotationGroups init + 6 actions (setAnnotationGroups,
   // upsertAnnotationGroup, removeAnnotationGroupLocal, hydrateGroupMemberships,
   // addAnnotationToGroup, removeAnnotationFromGroup) and the two index inits moved/deleted →
@@ -399,107 +223,12 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
 
   allCsiCodes: [],
   setAllCsiCodes: (allCsiCodes) => set({ allCsiCodes }),
-  // [refactor jul10 P2.2④] takeoffItems/takeoffGroups collection state + actions moved to the
-  // TanStack cache (src/queries/useTakeoff.ts). The FK-SET-NULL ungroup that lived in
-  // removeTakeoffGroup here is now the facade's two-key notifyManager.batch write.
-  activeTakeoffItemId: null,
-  setActiveTakeoffItemId: (activeTakeoffItemId) => set({ activeTakeoffItemId, takeoffUndoStack: [], takeoffRedoStack: [] }),
-
-  scaleCalibrations: {},
-  setScaleCalibration: (pageNum, cal) =>
-    set((s) => ({ scaleCalibrations: { ...s.scaleCalibrations, [pageNum]: cal } })),
-  calibrationMode: "idle",
-  setCalibrationMode: (calibrationMode) => set({ calibrationMode }),
-  calibrationPoints: {},
-  setCalibrationPoint: (which, point) =>
-    set((s) => ({ calibrationPoints: { ...s.calibrationPoints, [which]: point } })),
-  resetCalibration: () =>
-    set({ calibrationMode: "idle", calibrationPoints: {} }),
-  polygonDrawingMode: "idle",
-  setPolygonDrawingMode: (polygonDrawingMode) => set({ polygonDrawingMode }),
-  polygonVertices: [],
-  addPolygonVertex: (v) =>
-    set((s) => ({ polygonVertices: [...s.polygonVertices, v] })),
-  undoLastVertex: () =>
-    set((s) => ({ polygonVertices: s.polygonVertices.slice(0, -1) })),
-  resetPolygonDrawing: () =>
-    set({ polygonDrawingMode: "idle", polygonVertices: [] }),
-  // Bucket fill
-  bucketFillActive: false,
-  setBucketFillActive: (bucketFillActive) =>
-    set({
-      bucketFillActive,
-      bucketFillPreview: null,
-      bucketFillLoading: false,
-      bucketFillError: null,
-      bucketFillBarrierMode: false,
-      bucketFillPendingPolygon: null,
-      ...(bucketFillActive
-        ? { mode: "move" as const, splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null, symbolSearchActive: false, tempPanMode: false }
-        : { bucketFillBarriers: [] }),
-    }),
-  bucketFillPreview: null,
-  setBucketFillPreview: (bucketFillPreview) => set({ bucketFillPreview }),
-  bucketFillLoading: false,
-  setBucketFillLoading: (bucketFillLoading) => set({ bucketFillLoading }),
-  bucketFillError: null,
-  setBucketFillError: (bucketFillError) => set({ bucketFillError }),
-  bucketFillTolerance: 30,
-  setBucketFillTolerance: (bucketFillTolerance) => set({ bucketFillTolerance }),
-  bucketFillDilatePx: 3,
-  setBucketFillDilatePx: (bucketFillDilatePx) => set({ bucketFillDilatePx }),
-  bucketFillResolution: 1000,
-  setBucketFillResolution: (bucketFillResolution) => set({ bucketFillResolution }),
-  bucketFillPendingPolygon: null,
-  setBucketFillPendingPolygon: (bucketFillPendingPolygon) => set({ bucketFillPendingPolygon }),
-  // [refactor jul11 P2.2⑥] Cross-backend commit moved to useAnnotations().commitBucketFill.
-  splitAreaActive: false,
-  setSplitAreaActive: (splitAreaActive) =>
-    set({
-      splitAreaActive,
-      splitLineA: null,
-      splitLineB: null,
-      splitPreview: null,
-      splitError: null,
-      ...(splitAreaActive
-        ? { mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillError: null, bucketFillBarrierMode: false, bucketFillBarriers: [], symbolSearchActive: false, activeTakeoffItemId: null }
-        : {}),
-    }),
-  splitLineA: null,
-  splitLineB: null,
-  setSplitLineEndpoint: (which, pt) =>
-    set((s) => (which === "a" ? { splitLineA: pt } : { splitLineB: pt })),
-  splitPreview: null,
-  setSplitPreview: (splitPreview) => set({ splitPreview }),
-  splitError: null,
-  setSplitError: (splitError) => set({ splitError }),
-  bucketFillBarriers: [],
-  addBucketFillBarrier: (line) =>
-    set((s) => ({ bucketFillBarriers: [...s.bucketFillBarriers, line] })),
-  undoLastBarrier: () =>
-    set((s) => ({ bucketFillBarriers: s.bucketFillBarriers.slice(0, -1) })),
-  clearBucketFillBarriers: () => set({ bucketFillBarriers: [] }),
-  bucketFillBarrierMode: false,
-  setBucketFillBarrierMode: (bucketFillBarrierMode) => set({ bucketFillBarrierMode, barrierPendingPoint: null }),
-  barrierPendingPoint: null,
-  setBarrierPendingPoint: (barrierPendingPoint) => set({ barrierPendingPoint }),
-  // Takeoff undo/redo history; cache+stack operations live in useAnnotations.
-  takeoffUndoStack: [],
-  takeoffRedoStack: [],
 
   // ─── Auto-QTO ──────────────────────────────────────────── (collection → query cache, P2.2②)
   activeQtoWorkflow: null,
   setActiveQtoWorkflow: (activeQtoWorkflow) => set({ activeQtoWorkflow }),
 
   tableParseStep: "idle",
-  setTableParseStep: (tableParseStep) =>
-    set((s) => ({
-      tableParseStep,
-      // Entering table-parse flow (idle → any other step): disengage markup/bucket-fill/etc.
-      ...(s.tableParseStep === "idle" && tableParseStep !== "idle"
-        ? { mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarrierMode: false, splitAreaActive: false, symbolSearchActive: false }
-        : {}),
-    })),
   tableParseRegion: null,
   setTableParseRegion: (tableParseRegion) => set({ tableParseRegion }),
   tableParsedGrid: null,
@@ -557,14 +286,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   keynoteParseTab: "all",
   setKeynoteParseTab: (keynoteParseTab) => set({ keynoteParseTab }),
   keynoteParseStep: "idle",
-  setKeynoteParseStep: (keynoteParseStep) =>
-    set((s) => ({
-      keynoteParseStep,
-      // Entering keynote-parse flow (idle → any other step): disengage markup/bucket-fill/etc.
-      ...(s.keynoteParseStep === "idle" && keynoteParseStep !== "idle"
-        ? { mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarrierMode: false, splitAreaActive: false, symbolSearchActive: false }
-        : {}),
-    })),
   keynoteParseRegion: null,
   setKeynoteParseRegion: (keynoteParseRegion) => set({ keynoteParseRegion }),
   keynoteColumnBBs: [],
@@ -588,13 +309,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
 
   // ─── Notes Parse (Stage 3 scaffold) ─────────────────────
   notesParseStep: "idle",
-  setNotesParseStep: (notesParseStep) =>
-    set((s) => ({
-      notesParseStep,
-      ...(s.notesParseStep === "idle" && notesParseStep !== "idle"
-        ? { mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarrierMode: false, splitAreaActive: false, symbolSearchActive: false }
-        : {}),
-    })),
   notesParseRegion: null,
   setNotesParseRegion: (notesParseRegion) => set({ notesParseRegion }),
   guidedNotesRows: [],
@@ -621,13 +335,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
 
   // ─── Spec Parse (Stage 3 scaffold) ──────────────────────
   specParseStep: "idle",
-  setSpecParseStep: (specParseStep) =>
-    set((s) => ({
-      specParseStep,
-      ...(s.specParseStep === "idle" && specParseStep !== "idle"
-        ? { mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarrierMode: false, splitAreaActive: false, symbolSearchActive: false }
-        : {}),
-    })),
   specParseRegion: null,
   setSpecParseRegion: (specParseRegion) => set({ specParseRegion }),
   guidedSpecSectionBBs: [],
@@ -659,76 +366,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   paragraphClipboard: null,
   setParagraphClipboard: (paragraphClipboard) => set({ paragraphClipboard }),
 
-  yoloTagPickingMode: false,
-  setYoloTagPickingMode: (yoloTagPickingMode) => set({ yoloTagPickingMode }),
-  tagScanResults: null,
-  setTagScanResults: (tagScanResults) => set({ tagScanResults }),
-  tagAddingMode: null,
-  setTagAddingMode: (tagAddingMode) => set({ tagAddingMode }),
-
-  symbolSearchActive: false,
-  setSymbolSearchActive: (symbolSearchActive) =>
-    set(
-      symbolSearchActive
-        ? { symbolSearchActive, mode: "move" as const, bucketFillActive: false, bucketFillPreview: null, bucketFillLoading: false, bucketFillBarrierMode: false, splitAreaActive: false, splitLineA: null, splitLineB: null, splitPreview: null, splitError: null }
-        : { symbolSearchActive }
-    ),
-  symbolSearchLoading: false,
-  setSymbolSearchLoading: (symbolSearchLoading) => set({ symbolSearchLoading }),
-  symbolSearchProgress: null,
-  setSymbolSearchProgress: (symbolSearchProgress) => set({ symbolSearchProgress }),
-  symbolSearchResults: null,
-  setSymbolSearchResults: (symbolSearchResults) => set({ symbolSearchResults }),
-  symbolSearchConfidence: 0.75,
-  setSymbolSearchConfidence: (symbolSearchConfidence) => set({ symbolSearchConfidence }),
-  dismissedSymbolMatches: new Set<string>(),
-  dismissSymbolMatch: (matchId) =>
-    set((s) => {
-      const next = new Set(s.dismissedSymbolMatches);
-      next.add(matchId);
-      return { dismissedSymbolMatches: next };
-    }),
-  symbolSearchError: null,
-  setSymbolSearchError: (symbolSearchError) => set({ symbolSearchError }),
-  symbolSearchTemplateBbox: null,
-  setSymbolSearchTemplateBbox: (symbolSearchTemplateBbox) => set({ symbolSearchTemplateBbox }),
-  symbolSearchSourcePage: null,
-  setSymbolSearchSourcePage: (symbolSearchSourcePage) => set({ symbolSearchSourcePage }),
-  symbolSearchConfig: {
-    multiScale: true,
-    useSiftFallback: true,
-    searchPages: null as number[] | null,
-    scaleMin: 0.8,
-    scaleMax: 1.5,
-    nmsThreshold: 0.3,
-    maxMatchesPerPage: 50,
-  },
-  setSymbolSearchConfig: (patch: Partial<{ multiScale: boolean; useSiftFallback: boolean; searchPages: number[] | null; scaleMin: number; scaleMax: number; nmsThreshold: number; maxMatchesPerPage: number }>) =>
-    set((s) => ({ symbolSearchConfig: { ...s.symbolSearchConfig, ...patch } })),
-  symbolSearchPreset: "lite",
-  setSymbolSearchPreset: (preset) => {
-    const config = preset === "power"
-      ? { scaleMin: 0.5, scaleMax: 2.0, nmsThreshold: 0.2 }
-      : { scaleMin: 0.8, scaleMax: 1.5, nmsThreshold: 0.3 };
-    set((s) => ({
-      symbolSearchPreset: preset,
-      symbolSearchConfig: { ...s.symbolSearchConfig, ...config },
-    }));
-  },
-  clearSymbolSearch: () =>
-    set({
-      symbolSearchActive: false,
-      symbolSearchLoading: false,
-      symbolSearchProgress: null,
-      symbolSearchResults: null,
-      symbolSearchConfidence: 0.75,
-      dismissedSymbolMatches: new Set<string>(),
-      symbolSearchError: null,
-      symbolSearchTemplateBbox: null,
-      symbolSearchSourcePage: null,
-      symbolSearchConfig: { multiScale: true, useSiftFallback: true, searchPages: null, scaleMin: 0.8, scaleMax: 1.5, nmsThreshold: 0.3, maxMatchesPerPage: 50 },
-    }),
-
   guidedParseActive: false,
   guidedParseRegion: null,
   guidedParseRows: [],
@@ -738,24 +375,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setGuidedParseRows: (guidedParseRows) => set({ guidedParseRows }),
   setGuidedParseCols: (guidedParseCols) => set({ guidedParseCols }),
   resetGuidedParse: () => set({ guidedParseActive: false, guidedParseRegion: null, guidedParseRows: [], guidedParseCols: [] }),
-
-  // Universal tool-state tear-down. Composes the reset primitives instead of
-  // inlining field lists so each subsystem stays the owner of its own cleanup
-  // shape. Called from parent-panel toggles (Parse, Detection, Table, Keynote)
-  // on close, and from cancel buttons inside parse panels. Explicitly does NOT
-  // touch uiStore presentation, takeoffs, or parsedKeynoteData. Annotation groups + annotations
-  // live in project-keyed Query caches (P2.2⑤/⑥) and are equally untouched. Saved work and
-  // multi-select presentation therefore survive a tool reset exactly as before.
-  resetAllTools: () => {
-    const s = get();
-    s.setMode("move");          // clears bucket/split/symbol-active/polygon/tempPan
-    s.resetTableParse();
-    s.resetKeynoteParse();
-    s.resetNotesParse();
-    s.resetSpecParse();
-    s.resetGuidedParse();
-    s.clearSymbolSearch();
-  },
 
   _drawing: false,
   _drawStart: { x: 0, y: 0 },
@@ -778,17 +397,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       // are unmounted behind the loaders' `loading` gates until the fresh seed lands).
       allTrades: [],
       allCsiCodes: [],
-      // takeoffItems/takeoffGroups: cache-backed since P2.2④ — reset deliberately does NOT
-      // touch the query cache (RECIPE step 7; publicId-keyed isolation makes it unnecessary).
-      activeTakeoffItemId: null,
       activeQtoWorkflow: null,
       // qtoWorkflows: cache-backed since P2.2② — reset deliberately does NOT touch the query
       // cache (RECIPE step 7; publicId-keyed isolation makes it unnecessary, SPEC §7).
-      scaleCalibrations: {},
-      calibrationMode: "idle",
-      calibrationPoints: {},
-      polygonDrawingMode: "idle",
-      polygonVertices: [],
       tableParseTab: "all",
       tableParseStep: "idle",
       tableParseRegion: null,
@@ -818,26 +429,10 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       paragraphOverlayActive: false,
       paragraphBatch: [],
       paragraphClipboard: null,
-      yoloTagPickingMode: false,
-      tagScanResults: null,
-      tagAddingMode: null,
-      symbolSearchActive: false,
-      symbolSearchLoading: false,
-      symbolSearchProgress: null,
-      symbolSearchResults: null,
-      symbolSearchConfidence: 0.75,
-      dismissedSymbolMatches: new Set<string>(),
-      symbolSearchError: null,
-      symbolSearchTemplateBbox: null,
-      symbolSearchSourcePage: null,
-      symbolSearchConfig: { multiScale: true, useSiftFallback: true, searchPages: null, scaleMin: 0.8, scaleMax: 1.5, nmsThreshold: 0.3, maxMatchesPerPage: 50 },
-      symbolSearchPreset: "lite" as const,
-      bucketFillResolution: 1000 as const,
       guidedParseActive: false,
       guidedParseRegion: null,
       guidedParseRows: [],
       guidedParseCols: [],
-      tempPanMode: false,
     }),
 }));
 
@@ -845,8 +440,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
 // Typed Slice Selectors
 // ═══════════════════════════════════════════════════════════════════
 //
-// These remaining grouped selectors cover residual tool/parse sessions. Page/zoom/dimensions live
-// in viewerCoreStore and presentation lives in uiStore; do not rebuild cross-owner mega-slices here.
+// These grouped selectors cover residual parse sessions. Tool state lives in toolStore,
+// page/zoom/dimensions in viewerCoreStore, and presentation in uiStore.
 //
 // Per REFACTORING_RESEARCH.md Part 1: "Store Slices + Bridge"
 
@@ -869,39 +464,10 @@ export const useDrawingState = () =>
     _setMousePos: s._setMousePos,
   })));
 
-/** Symbol search state */
-export const useSymbolSearch = () =>
-  useViewerStore(useShallow((s) => ({
-    symbolSearchActive: s.symbolSearchActive,
-    setSymbolSearchActive: s.setSymbolSearchActive,
-    symbolSearchLoading: s.symbolSearchLoading,
-    setSymbolSearchLoading: s.setSymbolSearchLoading,
-    symbolSearchProgress: s.symbolSearchProgress,
-    setSymbolSearchProgress: s.setSymbolSearchProgress,
-    symbolSearchResults: s.symbolSearchResults,
-    setSymbolSearchResults: s.setSymbolSearchResults,
-    symbolSearchConfidence: s.symbolSearchConfidence,
-    setSymbolSearchConfidence: s.setSymbolSearchConfidence,
-    symbolSearchError: s.symbolSearchError,
-    setSymbolSearchError: s.setSymbolSearchError,
-    symbolSearchTemplateBbox: s.symbolSearchTemplateBbox,
-    setSymbolSearchTemplateBbox: s.setSymbolSearchTemplateBbox,
-    symbolSearchSourcePage: s.symbolSearchSourcePage,
-    setSymbolSearchSourcePage: s.setSymbolSearchSourcePage,
-    dismissedSymbolMatches: s.dismissedSymbolMatches,
-    dismissSymbolMatch: s.dismissSymbolMatch,
-    clearSymbolSearch: s.clearSymbolSearch,
-    symbolSearchConfig: s.symbolSearchConfig,
-    setSymbolSearchConfig: s.setSymbolSearchConfig,
-    symbolSearchPreset: s.symbolSearchPreset,
-    setSymbolSearchPreset: s.setSymbolSearchPreset,
-  })));
-
 /** Table parse state */
 export const useTableParse = () =>
   useViewerStore(useShallow((s) => ({
     tableParseStep: s.tableParseStep,
-    setTableParseStep: s.setTableParseStep,
     tableParseRegion: s.tableParseRegion,
     setTableParseRegion: s.setTableParseRegion,
     tableParsedGrid: s.tableParsedGrid,
@@ -924,7 +490,6 @@ export const useTableParse = () =>
 export const useKeynoteParse = () =>
   useViewerStore(useShallow((s) => ({
     keynoteParseStep: s.keynoteParseStep,
-    setKeynoteParseStep: s.setKeynoteParseStep,
     keynoteParseRegion: s.keynoteParseRegion,
     setKeynoteParseRegion: s.setKeynoteParseRegion,
     keynoteColumnBBs: s.keynoteColumnBBs,

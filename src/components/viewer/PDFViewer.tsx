@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useSymbolSearch } from "@/stores/viewerStore";
+import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
 import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
 import {
   useUiStore,
@@ -53,10 +53,10 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   // Slice selectors — grouped subscriptions prevent cascading re-renders
   const { pageNumber, numPages, setPage, setNumPages } = useNavigation();
-  const mode = useViewerStore((s) => s.mode);
-  const setMode = useViewerStore((s) => s.setMode);
+  const mode = useToolStore((s) => s.mode);
+  const setMode = useToolStore((s) => s.setMode);
   const { scale, setScale } = useViewerCoreStore(useShallow((s) => ({ scale: s.scale, setScale: s.setScale })));
-  const tempPanMode = useViewerStore((s) => s.tempPanMode);
+  const tempPanMode = useToolStore((s) => s.tempPanMode);
   const { publicId, dataUrl } = useProject();
   const {
     symbolSearchActive, symbolSearchResults, symbolSearchLoading,
@@ -127,7 +127,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       if (e.key === "a") setMode("pointer");
       else if (e.key === "v") {
         if (e.repeat) return;
-        const s = useViewerStore.getState();
+        const s = useToolStore.getState();
         const toolActive = s.activeTakeoffItemId !== null || s.bucketFillActive || s.splitAreaActive
           || s.polygonDrawingMode === "drawing" || s.calibrationMode !== "idle";
         if (toolActive) {
@@ -139,7 +139,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     }
     function handleKeyUp(e: KeyboardEvent) {
       if (e.key !== "v") return;
-      const s = useViewerStore.getState();
+      const s = useToolStore.getState();
       if (!s.tempPanMode) return;
       if (isPanningRef.current) {
         vReleasedDuringPanRef.current = true;
@@ -148,7 +148,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       }
     }
     function handleBlur() {
-      useViewerStore.getState().setTempPanMode(false);
+      useToolStore.getState().setTempPanMode(false);
     }
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
@@ -434,7 +434,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      const shouldPan = mode === "move" || useViewerStore.getState().tempPanMode;
+      const shouldPan = mode === "move" || useToolStore.getState().tempPanMode;
       if (!shouldPan) return;
       if (e.button !== 0) return;
 
@@ -473,11 +473,11 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     setIsPanning(false);
     isPanningRef.current = false;
     const container = containerRef.current;
-    const tempPan = useViewerStore.getState().tempPanMode;
+    const tempPan = useToolStore.getState().tempPanMode;
     if (container) container.style.cursor = (mode === "move" || tempPan) ? "grab" : "default";
     if (vReleasedDuringPanRef.current) {
       vReleasedDuringPanRef.current = false;
-      useViewerStore.getState().setTempPanMode(false);
+      useToolStore.getState().setTempPanMode(false);
       if (container) container.style.cursor = "default";
     }
   }, [mode]);

@@ -5,7 +5,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
+import { setTableParseStep } from "@/stores/viewerCommands";
 import {
   appendKeynotesForPage,
   mergeKeynotesByPage,
@@ -26,8 +28,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   const publicId = useSessionStore((s) => s.publicId);
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
-  const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
-  const setMode = useViewerStore((s) => s.setMode);
+  const setMode = useToolStore((s) => s.setMode);
   const showKeynotes = useUiStore((s) => s.showKeynotes);
   const toggleKeynotes = useUiStore((s) => s.toggleKeynotes);
 
@@ -77,7 +78,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
       setTableParseStep("idle");
       setMode("move");
     }
-  }, [detectionTab, drawing, setTableParseStep, setMode]);
+  }, [detectionTab, drawing, setMode]);
 
   const startRegionDraw = useCallback(() => {
     // Click-to-toggle: if already engaged (drawing mode OR region already
@@ -92,7 +93,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
       setTableParseStep("select-region");
       setMode("pointer");
     }
-  }, [drawing, region, setMode, setTableParseStep]);
+  }, [drawing, region, setMode]);
 
   const runOnPage = useCallback(async () => {
     if (!projectId || !publicId || loading) return;

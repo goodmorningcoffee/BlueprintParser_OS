@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-type Mode = "pointer" | "move" | "markup";
+type Mode = "pointer" | "move" | "markup" | "group";
 
 export function ModeToggleDemo() {
   const [mode, setMode] = useState<Mode>("pointer");
@@ -31,6 +31,17 @@ export function ModeToggleDemo() {
         >
           <span className="block">Pan</span>
           <span className="block">Zoom</span>
+        </button>
+        <button
+          onClick={() => setMode("group")}
+          className={`px-2 py-0.5 text-[10px] leading-tight text-center ${
+            mode === "group"
+              ? "bg-[var(--accent)] text-white"
+              : "text-[var(--muted)] hover:text-[var(--fg)]"
+          }`}
+        >
+          <span className="block">Group</span>
+          <span className="block">Select</span>
         </button>
         <button
           onClick={() => setMode("markup")}

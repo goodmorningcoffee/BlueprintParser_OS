@@ -38,7 +38,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { ClientAnnotation, YoloTag } from "@/types";
 import { useUiStore } from "@/stores/uiStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import {
   readYoloTags,
@@ -289,14 +289,14 @@ describe("CalibrationInput annotation replacement freeze", () => {
     expect(screen.getByRole("button", { name: "Keep pg4 scale 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Keep markup 1" })).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(useViewerStore.getState().scaleCalibrations[3]).toEqual({
+    expect(useToolStore.getState().scaleCalibrations[3]).toEqual({
       type: "scale-calibration",
       point1: { x: 0.2, y: 0.3 },
       point2: { x: 0.7, y: 0.8 },
       realDistance: 25,
       unit: "m",
     });
-    expect(useViewerStore.getState().calibrationPoints).toEqual({});
+    expect(useToolStore.getState().calibrationPoints).toEqual({});
     expect(screen.getByPlaceholderText("Distance...")).toHaveValue(null);
   });
 
@@ -374,7 +374,7 @@ describe("CalibrationInput annotation replacement freeze", () => {
       },
     });
     expect(screen.getByRole("button", { name: "Old scale A 1" })).toBeInTheDocument();
-    expect(useViewerStore.getState().scaleCalibrations[3]).toBeUndefined();
+    expect(useToolStore.getState().scaleCalibrations[3]).toBeUndefined();
 
     // [refactor jul11 P2.2⑥] Captured VALUE-REPLACE concurrency pin. handleOk closed over
     // `capturedRows` when the user clicked OK. Publish a genuine concurrent domain row while the
@@ -397,8 +397,8 @@ describe("CalibrationInput annotation replacement freeze", () => {
     expect(screen.getByRole("button", { name: "Keep other page 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Keep user row 1" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Concurrent in-flight row 1" })).not.toBeInTheDocument();
-    expect(useViewerStore.getState().scaleCalibrations[3]?.realDistance).toBe(12.5);
-    expect(useViewerStore.getState().calibrationPoints).toEqual({});
+    expect(useToolStore.getState().scaleCalibrations[3]?.realDistance).toBe(12.5);
+    expect(useToolStore.getState().calibrationPoints).toEqual({});
     expect(screen.getByPlaceholderText("Distance...")).toHaveValue(null);
   });
 
@@ -449,11 +449,11 @@ describe("CalibrationInput annotation replacement freeze", () => {
     expect(screen.getByRole("button", { name: "Still here 1" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Scale (pg 5) 1" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("Distance...")).toHaveValue(10);
-    expect(useViewerStore.getState().calibrationPoints).toEqual({
+    expect(useToolStore.getState().calibrationPoints).toEqual({
       p1: { x: 0.1, y: 0.2 },
       p2: { x: 0.9, y: 0.2 },
     });
-    expect(useViewerStore.getState().scaleCalibrations[5]).toBeUndefined();
+    expect(useToolStore.getState().scaleCalibrations[5]).toBeUndefined();
     expect(screen.getByRole("button", { name: "OK" })).toBeEnabled();
   });
 });

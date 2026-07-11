@@ -3,9 +3,15 @@
 import { useMemo, useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
+import {
+  resetAllTools,
+  setKeynoteParseStep,
+  setTableParseStep,
+  toggleKeynoteParsePanel,
+} from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
-import { toggleKeynoteParsePanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
@@ -66,7 +72,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const keynoteParseTab = useViewerStore((s) => s.keynoteParseTab);
   const setKeynoteParseTab = useViewerStore((s) => s.setKeynoteParseTab);
   const keynoteParseStep = useViewerStore((s) => s.keynoteParseStep);
-  const setKeynoteParseStep = useViewerStore((s) => s.setKeynoteParseStep);
   const keynoteParseRegion = useViewerStore((s) => s.keynoteParseRegion);
   const setKeynoteParseRegion = useViewerStore((s) => s.setKeynoteParseRegion);
   const keynoteColumnBBs = useViewerStore((s) => s.keynoteColumnBBs);
@@ -80,7 +85,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const activeKeynoteHighlight = useUiStore((s) => s.activeKeynoteHighlight);
   const setActiveKeynoteHighlight = useUiStore((s) => s.setActiveKeynoteHighlight);
   const resetKeynoteParse = useViewerStore((s) => s.resetKeynoteParse);
-  const resetAllTools = useViewerStore((s) => s.resetAllTools);
   const projectId = useSessionStore((s) => s.projectId);
   // One collection observer owns the whole keynote list. Passing the same row array down avoids
   // creating one query observer per expanded/collapsed KeynoteItem.
@@ -289,8 +293,8 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       tagColumn: grid.tagColumn,
       tableName: grid.tableName,
     });
-    useViewerStore.getState().setTableParseStep("review");
-    useViewerStore.getState().setMode("move");
+    setTableParseStep("review");
+    useToolStore.getState().setMode("move");
   }, [setTableParseRegion, setTableParsedGrid]);
 
   // ─── YOLO annotations inside Column A (tag column) ──────
@@ -447,7 +451,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         // Revert to idle so the Save button vanishes and the user can start
         // a new parse without stacking duplicates on the previous region.
         resetKeynoteParse();
-        useViewerStore.getState().setMode("move");
+        useToolStore.getState().setMode("move");
       } finally {
         isSavingRef.current = false;
       }
@@ -490,7 +494,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           // Auto-parse doesn't pick a YOLO class, so we map as text-only.
           await mapKeynoteKeysToYoloTags({ keys, pageNumber });
           resetKeynoteParse();
-          useViewerStore.getState().setMode("move");
+          useToolStore.getState().setMode("move");
         }
       }
     } catch (err) {
@@ -649,7 +653,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       // reverts to idle.
       resetGuidedParse();
       resetKeynoteParse();
-      useViewerStore.getState().setMode("move");
+      useToolStore.getState().setMode("move");
     } catch (err) {
       setKeynoteSaveError(err instanceof Error ? err.message : "Could not save keynotes");
     } finally {
@@ -735,7 +739,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                 resetKeynoteParse();
                 setKeynoteParseRegion(null);
                 resetGuidedParse();
-                useViewerStore.getState().setMode("move");
+                useToolStore.getState().setMode("move");
               }
               setKeynoteParseTab(tab);
             }}
@@ -928,7 +932,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                     resetGuidedParse();
                     setKeynoteParseRegion(null);
                     setKeynoteParseStep("idle");
-                    useViewerStore.getState().setMode("move");
+                    useToolStore.getState().setMode("move");
                   }}
                   className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
                 >
@@ -941,7 +945,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
             {keynoteParseStep !== "review" && !guidedParseActive && keynoteParseRegion && (
               <div className="space-y-2">
                 <div className="text-[11px] text-[var(--muted)] px-1">
-                  <span className="text-amber-300">Region selected. Click "Propose Grid" to auto-detect rows and columns.</span>
+                  <span className="text-amber-300">Region selected. Click &quot;Propose Grid&quot; to auto-detect rows and columns.</span>
                 </div>
                 <button
                   onClick={proposeGrid}
@@ -955,7 +959,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                   onClick={() => {
                     setKeynoteParseRegion(null);
                     setKeynoteParseStep("idle");
-                    useViewerStore.getState().setMode("move");
+                    useToolStore.getState().setMode("move");
                   }}
                   className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
                 >
@@ -968,14 +972,14 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
             {keynoteParseStep !== "review" && !guidedParseActive && !keynoteParseRegion && (
               <div className="space-y-2">
                 <div className="text-[11px] text-[var(--muted)] px-1">
-                  Draw a bounding box around the keynote table, then click "Propose Grid".
-                  <br /><span className="text-[9px]">Exclude any title text (e.g. "KEYNOTES") that sits above the table.</span>
+                  Draw a bounding box around the keynote table, then click &quot;Propose Grid&quot;.
+                  <br /><span className="text-[9px]">Exclude any title text (e.g. &quot;KEYNOTES&quot;) that sits above the table.</span>
                 </div>
                 <HelpTooltip id="keynote-guided-draw"><button
                   onClick={() => {
                     const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
                     setKeynoteParseStep(next);
-                    useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                    useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
                   }}
                   className={`w-full text-xs px-3 py-2 rounded border ${
                     keynoteParseStep === "select-region"
@@ -1028,7 +1032,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                 onClick={() => {
                   const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
                   setKeynoteParseStep(next);
-                  useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                  useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
                 }}
                 className={`w-full text-xs px-3 py-1.5 rounded border ${
                   keynoteParseStep === "select-region"
@@ -1065,7 +1069,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                   onClick={() => {
                     const next = keynoteParseStep === "define-column" ? "idle" : "define-column";
                     setKeynoteParseStep(next);
-                    useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                    useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
                   }}
                   className={`w-full text-xs px-3 py-1.5 rounded border ${
                     keynoteParseStep === "define-column"
@@ -1122,13 +1126,13 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
               <>
                 <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1 mt-2">Step 3: Draw Rows</div>
                 <div className="text-[9px] text-[var(--muted)] px-1">
-                  Draw a BB around each row. Use "Repeat Down" after the first to auto-fill evenly spaced rows.
+                  Draw a BB around each row. Use &quot;Repeat Down&quot; after the first to auto-fill evenly spaced rows.
                 </div>
                 <button
                   onClick={() => {
                     const next = keynoteParseStep === "define-row" ? "idle" : "define-row";
                     setKeynoteParseStep(next);
-                    useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                    useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
                   }}
                   className={`w-full text-xs px-3 py-1.5 rounded border ${
                     keynoteParseStep === "define-row"
@@ -1200,7 +1204,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
             ) : keynoteParseRegion ? (
               <div className="space-y-2">
                 <div className="text-[11px] text-[var(--muted)] px-1">
-                  <span className="text-amber-300">Region selected.</span> Click "Auto Parse" to detect rows and columns automatically.
+                  <span className="text-amber-300">Region selected.</span> Click &quot;Auto Parse&quot; to detect rows and columns automatically.
                 </div>
                 <button
                   onClick={() => autoParseKeynote(keynoteParseRegion as [number, number, number, number])}
@@ -1219,14 +1223,14 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
             ) : (
               <div className="space-y-2">
                 <div className="text-[11px] text-[var(--muted)] px-1">
-                  Draw a bounding box around the keynote table, then click "Auto Parse".
+                  Draw a bounding box around the keynote table, then click &quot;Auto Parse&quot;.
                   <br /><span className="text-[9px]">Exclude any title text above the table.</span>
                 </div>
                 <button
                   onClick={() => {
                     const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
                     setKeynoteParseStep(next);
-                    useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                    useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
                   }}
                   className={`w-full text-xs px-3 py-2 rounded border ${
                     keynoteParseStep === "select-region"

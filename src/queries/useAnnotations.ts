@@ -6,7 +6,7 @@ import { canPersist, persistFetch } from "@/lib/client-persist";
 import { queryKeys } from "@/queries/queryKeys";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 
 // [refactor jul11 P2.2⑥] ANNOTATIONS cache facade. It landed production-dead in C2, then C3
@@ -122,11 +122,11 @@ function reportPersistCreateError(error: Error, label?: string): void {
 /** Hoisted store action: remove the last active-item annotation on the current page. */
 export function takeoffUndo(qc: QueryClient): void {
   // Identity and tool/page state had one Zustand owner before P2.3. Capture all three new owners in
-  // one synchronous block so the cache key and viewer predicate still describe one key event.
+  // one synchronous block so the cache key and tool/page predicate still describe one key event.
   const sessionSnapshot = useSessionStore.getState();
   const coreSnapshot = useViewerCoreStore.getState();
-  const viewerSnapshot = useViewerStore.getState();
-  const activeId = viewerSnapshot.activeTakeoffItemId;
+  const toolSnapshot = useToolStore.getState();
+  const activeId = toolSnapshot.activeTakeoffItemId;
   if (!activeId) return;
 
   let removed: ClientAnnotation | undefined;
@@ -148,7 +148,7 @@ export function takeoffUndo(qc: QueryClient): void {
   // active item or no matching annotation is a no-op on BOTH cache and stacks.
   if (!removed) return;
   const removedRow = removed;
-  useViewerStore.setState((state) => ({
+  useToolStore.setState((state) => ({
     takeoffUndoStack: [...state.takeoffUndoStack, removedRow],
     takeoffRedoStack: [],
   }));
@@ -157,13 +157,13 @@ export function takeoffUndo(qc: QueryClient): void {
 /** Hoisted store action: restore the current undo-stack top at the annotation-array tail. */
 export function takeoffRedo(qc: QueryClient): void {
   const sessionSnapshot = useSessionStore.getState();
-  const viewerSnapshot = useViewerStore.getState();
-  if (viewerSnapshot.takeoffUndoStack.length === 0) return;
+  const toolSnapshot = useToolStore.getState();
+  if (toolSnapshot.takeoffUndoStack.length === 0) return;
 
   // Deliberately no active-item guard: the old direct action could redo with activeId=null.
-  const restored = viewerSnapshot.takeoffUndoStack[viewerSnapshot.takeoffUndoStack.length - 1];
+  const restored = toolSnapshot.takeoffUndoStack[toolSnapshot.takeoffUndoStack.length - 1];
   writeAnns(qc, sessionSnapshot.publicId, (rows) => [...rows, restored]);
-  useViewerStore.setState((state) => ({
+  useToolStore.setState((state) => ({
     takeoffUndoStack: state.takeoffUndoStack.slice(0, -1),
     takeoffRedoStack: [...state.takeoffRedoStack, restored],
   }));
@@ -176,12 +176,12 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
       // owners adjacently, then use those values for cache key and request if navigation races.
       const sessionSnapshot = useSessionStore.getState();
       const coreSnapshot = useViewerCoreStore.getState();
-      const viewerSnapshot = useViewerStore.getState();
-      const pending = viewerSnapshot.bucketFillPendingPolygon;
+      const toolSnapshot = useToolStore.getState();
+      const pending = toolSnapshot.bucketFillPendingPolygon;
       if (!pending) return;
 
-      // `holes` is intentionally conditional. The ViewerState interface's old "dropped" comment is
-      // stale; executable viewerStore behavior persists non-empty courtyard holes and C3 fixes it.
+      // `holes` is intentionally conditional. The legacy interface's old "dropped" comment was
+      // stale; executable behavior persists non-empty courtyard holes and C3 fixes it.
       const polygonData = {
         type: "area-polygon" as const,
         takeoffItemId: item.id,
@@ -206,13 +206,13 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
       // reverse these lines: the post-migration dialog unmounts from the pending clear while cache
       // notification is deferred, and this ordering minimizes the sanctioned D8 visual tear.
       writeAnns(qc, sessionSnapshot.publicId, (rows) => [...rows, optimistic]);
-      useViewerStore.setState({ bucketFillPendingPolygon: null });
+      useToolStore.setState({ bucketFillPendingPolygon: null });
 
       // Preserve the original two-tier G6 gate byte-for-behavior: demo is local-only and silent;
       // non-demo with unresolved publicId keeps the local row but exposes a persistent error.
       if (sessionSnapshot.isDemo) return;
       if (!canPersist(sessionSnapshot.publicId, sessionSnapshot.isDemo)) {
-        useViewerStore.setState({
+        useToolStore.setState({
           bucketFillError:
             "Project not ready yet — bucket fill was NOT saved. Redraw once the viewer finishes loading.",
         });
@@ -241,7 +241,7 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
         })
         .catch((error: Error) => {
           // NO rollback by design: the user still sees locally drawn geometry and a clear warning.
-          useViewerStore.setState({
+          useToolStore.setState({
             bucketFillError: `Bucket fill drawn locally but NOT saved: ${error.message}`,
           });
         });

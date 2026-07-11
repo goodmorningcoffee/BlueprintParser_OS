@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, memo } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (both hooks —
@@ -21,8 +21,8 @@ export default memo(function CountTab() {
   // profile of server-first delete/rename; this backing-store move must not repair it implicitly.
   const { annotations, setAnnotations } = useAnnotations();
   const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
-  const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
-  const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
+  const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
+  const setActiveTakeoffItemId = useToolStore((s) => s.setActiveTakeoffItemId);
   const publicId = useSessionStore((s) => s.publicId);
   const isDemo = useSessionStore((s) => s.isDemo);
   const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();

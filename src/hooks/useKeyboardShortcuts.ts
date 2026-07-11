@@ -5,13 +5,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { takeoffRedo, takeoffUndo } from "@/queries/useAnnotations";
 import { navigateYoloTag } from "@/queries/useYoloTags";
 
 export function useKeyboardShortcuts() {
   // [refactor jul10 P2.2⑥] Providers constructs this client once. Keep the listener mount-once;
-  // the module actions use qc for annotations and re-read both mutable stores on keydown.
+  // the module actions use qc for annotations and re-read the mutable owners on keydown.
   const qc = useQueryClient();
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -19,7 +19,7 @@ export function useKeyboardShortcuts() {
       const session = useSessionStore.getState();
       const ui = useUiStore.getState();
       const core = useViewerCoreStore.getState();
-      const viewer = useViewerStore.getState();
+      const tool = useToolStore.getState();
 
       // Don't capture if user is typing in an input
       if (
@@ -72,7 +72,7 @@ export function useKeyboardShortcuts() {
       }
 
       // Takeoff undo/redo (Z/W keys, only when placing)
-      if (viewer.activeTakeoffItemId !== null && !e.ctrlKey && !e.metaKey) {
+      if (tool.activeTakeoffItemId !== null && !e.ctrlKey && !e.metaKey) {
         if (e.key === "z" || e.key === "Z") {
           e.preventDefault();
           takeoffUndo(qc);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useMemo, useCallback, memo } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useTextAnnotationsForPage } from "@/queries/usePageWindow";
@@ -30,7 +30,7 @@ export default memo(function TextAnnotationOverlay({
   const activeFilter = useUiStore((s) => s.activeTextAnnotationFilter);
   const activeCsiFilter = useUiStore((s) => s.activeCsiFilter);
   const setFilter = useUiStore((s) => s.setTextAnnotationFilter);
-  const mode = useViewerStore((s) => s.mode);
+  const mode = useToolStore((s) => s.mode);
   const textractData = useTextractForPage(pageNumber);
   const setSearch = useUiStore((s) => s.setSearch);
   const searchQuery = useUiStore((s) => s.searchQuery);

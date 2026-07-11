@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade (data only). This layer
 // is CANVAS-ADJACENT: items-key observers re-render only on items CONTENT change (structural
@@ -38,29 +39,29 @@ export default memo(function DrawingPreviewLayer({
   const mousePos = useViewerStore((s) => s._mousePos);
 
   // Other store reads
-  const symbolSearchActive = useViewerStore((s) => s.symbolSearchActive);
+  const symbolSearchActive = useToolStore((s) => s.symbolSearchActive);
   const tableParseStep = useViewerStore((s) => s.tableParseStep);
   const keynoteParseStep = useViewerStore((s) => s.keynoteParseStep);
-  const calibrationMode = useViewerStore((s) => s.calibrationMode);
-  const calibrationPoints = useViewerStore((s) => s.calibrationPoints);
-  const polygonDrawingMode = useViewerStore((s) => s.polygonDrawingMode);
-  const polygonVertices = useViewerStore((s) => s.polygonVertices);
-  const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
+  const calibrationMode = useToolStore((s) => s.calibrationMode);
+  const calibrationPoints = useToolStore((s) => s.calibrationPoints);
+  const polygonDrawingMode = useToolStore((s) => s.polygonDrawingMode);
+  const polygonVertices = useToolStore((s) => s.polygonVertices);
+  const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
   const { takeoffItems } = useTakeoffItems(); // [refactor jul10 P2.2④] cache-backed; draw-effect dep at the bottom keeps `takeoffItems`
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
-  const bucketFillActive = useViewerStore((s) => s.bucketFillActive);
-  const bucketFillPreview = useViewerStore((s) => s.bucketFillPreview);
-  const bucketFillLoading = useViewerStore((s) => s.bucketFillLoading);
-  const bucketFillError = useViewerStore((s) => s.bucketFillError);
-  const bucketFillBarriers = useViewerStore((s) => s.bucketFillBarriers);
-  const bucketFillBarrierMode = useViewerStore((s) => s.bucketFillBarrierMode);
-  const barrierPendingPoint = useViewerStore((s) => s.barrierPendingPoint);
-  const splitAreaActive = useViewerStore((s) => s.splitAreaActive);
-  const splitLineA = useViewerStore((s) => s.splitLineA);
-  const splitLineB = useViewerStore((s) => s.splitLineB);
-  const splitPreview = useViewerStore((s) => s.splitPreview);
-  const splitError = useViewerStore((s) => s.splitError);
-  const bucketFillPendingPolygon = useViewerStore((s) => s.bucketFillPendingPolygon);
+  const bucketFillActive = useToolStore((s) => s.bucketFillActive);
+  const bucketFillPreview = useToolStore((s) => s.bucketFillPreview);
+  const bucketFillLoading = useToolStore((s) => s.bucketFillLoading);
+  const bucketFillError = useToolStore((s) => s.bucketFillError);
+  const bucketFillBarriers = useToolStore((s) => s.bucketFillBarriers);
+  const bucketFillBarrierMode = useToolStore((s) => s.bucketFillBarrierMode);
+  const barrierPendingPoint = useToolStore((s) => s.barrierPendingPoint);
+  const splitAreaActive = useToolStore((s) => s.splitAreaActive);
+  const splitLineA = useToolStore((s) => s.splitLineA);
+  const splitLineB = useToolStore((s) => s.splitLineB);
+  const splitPreview = useToolStore((s) => s.splitPreview);
+  const splitError = useToolStore((s) => s.splitError);
+  const bucketFillPendingPolygon = useToolStore((s) => s.bucketFillPendingPolygon);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -597,7 +598,7 @@ export default memo(function DrawingPreviewLayer({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              useViewerStore.getState().setBucketFillPreview(null);
+              useToolStore.getState().setBucketFillPreview(null);
             }}
             style={{
               padding: "4px 12px",
@@ -652,7 +653,7 @@ export default memo(function DrawingPreviewLayer({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                useViewerStore.getState().setSplitPreview(null);
+                useToolStore.getState().setSplitPreview(null);
               }}
               style={{
                 padding: "4px 12px",
@@ -758,7 +759,7 @@ export default memo(function DrawingPreviewLayer({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              useViewerStore.getState().setBucketFillBarrierMode(false);
+              useToolStore.getState().setBucketFillBarrierMode(false);
             }}
             style={{
               padding: "3px 10px",
@@ -801,7 +802,7 @@ export default memo(function DrawingPreviewLayer({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              useViewerStore.getState().setBucketFillActive(false);
+              useToolStore.getState().setBucketFillActive(false);
             }}
             style={{
               padding: "3px 10px",

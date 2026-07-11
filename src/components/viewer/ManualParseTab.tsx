@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useViewerStore, useTableParse } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
+import { setTableParseStep } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useTextractForPage } from "@/queries/useTextract";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
@@ -39,7 +41,7 @@ export default function ManualParseTab({
   const { pageNumber } = useNavigation();
   const pageTextract = useTextractForPage(pageNumber);
   const {
-    tableParseStep, setTableParseStep,
+    tableParseStep,
     tableParseRegion,
     tableParsedGrid, setTableParsedGrid,
     tableParseColumnBBs, addTableParseColumnBB,
@@ -187,7 +189,7 @@ export default function ManualParseTab({
     // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
     useViewerStore.getState().setTableParseMeta(null);
     setTableParseStep("review");
-    useViewerStore.getState().setMode("move");
+    useToolStore.getState().setMode("move");
     // Auto-persist immediately (no separate Save click). resetAfter:false keeps
     // the parsed result + Map Tags review mounted. Await + surface failures so
     // a parsed table is never silently lost (was previously fire-and-forget).
@@ -196,7 +198,7 @@ export default function ManualParseTab({
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Save failed");
     }
-  }, [pageTextract, tableParseColumnBBs, tableParseRowBBs, tableParseColumnNames, setTableParsedGrid, setTableParseStep, detectCsiAndPersist]);
+  }, [pageTextract, tableParseColumnBBs, tableParseRowBBs, tableParseColumnNames, setTableParsedGrid, detectCsiAndPersist]);
 
   return (
     <div className="space-y-2">
@@ -208,7 +210,7 @@ export default function ManualParseTab({
           onClick={() => {
             const next = tableParseStep === "select-region" ? "idle" : "select-region";
             setTableParseStep(next);
-            useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+            useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
           }}
           className={`w-full text-xs px-3 py-1.5 rounded border ${
             tableParseStep === "select-region"
@@ -224,8 +226,8 @@ export default function ManualParseTab({
           <button
             onClick={() => {
               useViewerStore.getState().setTableParseRegion(null);
-              useViewerStore.getState().setTableParseStep("idle");
-              useViewerStore.getState().setMode("move");
+              setTableParseStep("idle");
+              useToolStore.getState().setMode("move");
             }}
             className="text-[9px] text-[var(--muted)] hover:text-red-400"
           >
@@ -245,7 +247,7 @@ export default function ManualParseTab({
             onClick={() => {
               const next = tableParseStep === "define-column" ? "idle" : "define-column";
               setTableParseStep(next);
-              useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+              useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
             }}
             className={`w-full text-xs px-3 py-1.5 rounded border ${
               tableParseStep === "define-column"
@@ -292,13 +294,13 @@ export default function ManualParseTab({
         <>
           <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1 mt-2">Step 3: Define Rows</div>
           <div className="text-[9px] text-[var(--muted)] px-1">
-            Draw a BB around each row. Use "Repeat Down" after the first to auto-fill evenly spaced rows.
+            Draw a BB around each row. Use &quot;Repeat Down&quot; after the first to auto-fill evenly spaced rows.
           </div>
           <button
             onClick={() => {
               const next = tableParseStep === "define-row" ? "idle" : "define-row";
               setTableParseStep(next);
-              useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+              useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
             }}
             className={`w-full text-xs px-3 py-1.5 rounded border ${
               tableParseStep === "define-row"

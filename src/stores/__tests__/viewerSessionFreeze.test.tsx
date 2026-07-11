@@ -217,6 +217,7 @@ describe("P2.3 test state partition seam", () => {
       session: { publicId: "P", isDemo: true },
       ui: {},
       core: { pageNumber: 6 },
+      tool: {},
       viewer: {},
     });
   });

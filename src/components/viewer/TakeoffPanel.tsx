@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -41,14 +41,14 @@ export default function TakeoffPanel() {
   // (TakeoffPanelFreeze TP-1/TP-2).
   const { takeoffItems, updateTakeoffItem } = useTakeoffItems();
   const pageDimensions = useViewerCoreStore((s) => s.pageDimensions);
-  const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
-  const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
-  const takeoffUndoStack = useViewerStore((s) => s.takeoffUndoStack);
-  const takeoffRedoStack = useViewerStore((s) => s.takeoffRedoStack);
+  const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
+  const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
+  const takeoffUndoStack = useToolStore((s) => s.takeoffUndoStack);
+  const takeoffRedoStack = useToolStore((s) => s.takeoffRedoStack);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
-  const calibrationMode = useViewerStore((s) => s.calibrationMode);
-  const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
-  const resetCalibration = useViewerStore((s) => s.resetCalibration);
+  const calibrationMode = useToolStore((s) => s.calibrationMode);
+  const setCalibrationMode = useToolStore((s) => s.setCalibrationMode);
+  const resetCalibration = useToolStore((s) => s.resetCalibration);
   const isDemo = useSessionStore((s) => s.isDemo);
 
   const [csvModalOpen, setCsvModalOpen] = useState(false);
@@ -340,9 +340,9 @@ export default function TakeoffPanel() {
           </button>
           <button
             onClick={() => {
-              useViewerStore.getState().setActiveTakeoffItemId(null);
-              useViewerStore.getState().resetPolygonDrawing();
-              useViewerStore.getState().setMode("move");
+              useToolStore.getState().setActiveTakeoffItemId(null);
+              useToolStore.getState().resetPolygonDrawing();
+              useToolStore.getState().setMode("move");
             }}
             className="text-xs px-2 py-0.5 rounded border border-red-400/30 text-red-400/60 hover:text-red-400"
           >
@@ -377,7 +377,7 @@ export default function TakeoffPanel() {
                   {!collapsedGroups.count && countItems.map((item) => {
                     const s = allSummary.counts[item.id];
                     return (
-                      <div key={item.id} onClick={() => { useViewerStore.getState().setActiveTakeoffItemId(item.id); setTakeoffTab("count"); }}
+                      <div key={item.id} onClick={() => { useToolStore.getState().setActiveTakeoffItemId(item.id); setTakeoffTab("count"); }}
                         className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-[var(--surface-hover)] text-xs">
                         <ColorDot color={item.color} />
                         <span className="flex-1 truncate">{item.name}</span>
@@ -406,7 +406,7 @@ export default function TakeoffPanel() {
                             // Toggle expand + set as active item. Click on
                             // the chevron area or item row both expand.
                             toggleAreaItem(item.id);
-                            useViewerStore.getState().setActiveTakeoffItemId(item.id);
+                            useToolStore.getState().setActiveTakeoffItemId(item.id);
                             setTakeoffTab("area");
                           }}
                           className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-[var(--surface-hover)] text-xs"
@@ -455,7 +455,7 @@ export default function TakeoffPanel() {
                   {!collapsedGroups.linear && linearItems.map((item) => {
                     const s = allSummary.linears[item.id];
                     return (
-                      <div key={item.id} onClick={() => { useViewerStore.getState().setActiveTakeoffItemId(item.id); setTakeoffTab("linear"); }}
+                      <div key={item.id} onClick={() => { useToolStore.getState().setActiveTakeoffItemId(item.id); setTakeoffTab("linear"); }}
                         className="flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-[var(--surface-hover)] text-xs">
                         <ColorDot color={item.color} />
                         <span className="flex-1 truncate">{item.name}</span>

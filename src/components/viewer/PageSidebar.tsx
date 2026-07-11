@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useSymbolSearch } from "@/stores/viewerStore";
+import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
@@ -651,7 +651,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
               Symbol: {symbolSearchResults!.totalMatches} match{symbolSearchResults!.totalMatches !== 1 ? "es" : ""} ({symbolSearchFilteredPages.length} pg)
             </span>
             <button
-              onClick={() => useViewerStore.getState().clearSymbolSearch()}
+              onClick={() => useToolStore.getState().clearSymbolSearch()}
               className="text-[var(--muted)] hover:text-[var(--fg)] ml-1"
             >
               x

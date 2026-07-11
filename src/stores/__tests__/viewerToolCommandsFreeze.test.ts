@@ -1,5 +1,5 @@
 // @vitest-environment node
-// [refactor jul11 P2.3 T0] Pre-carve characterization for the flat tool-store command seams.
+// [refactor jul11 P2.3 T2] Post-carve characterization for the flat tool-store command seams.
 //
 // The first tool ownership flip splits actions that are currently one Zustand publication across
 // the residual parse owner and toolStore. These tests freeze the legacy transition predicates,
@@ -9,9 +9,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useToolStore } from "@/stores/toolStore";
+import {
+  resetAllTools,
+  setKeynoteParseStep,
+  setNotesParseStep,
+  setSpecParseStep,
+  setTableParseStep,
+} from "@/stores/viewerCommands";
 import { useViewerStore } from "@/stores/viewerStore";
 
 type ViewerState = ReturnType<typeof useViewerStore.getState>;
+type ToolState = ReturnType<typeof useToolStore.getState>;
 
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
 const PDF_VIEWER = "src/components/viewer/PDFViewer.tsx";
@@ -50,6 +59,7 @@ const PARSE_CASES = [
 ] as const;
 
 function restoreViewerStore(): void {
+  useToolStore.setState(useToolStore.getInitialState(), true);
   useViewerStore.setState(useViewerStore.getInitialState(), true);
 }
 
@@ -62,12 +72,12 @@ function changedValueKeys(before: object, after: object): string[] {
 }
 
 function seedCompetingTools(): {
-  polygonVertices: ViewerState["polygonVertices"];
-  bucketFillBarriers: ViewerState["bucketFillBarriers"];
+  polygonVertices: ToolState["polygonVertices"];
+  bucketFillBarriers: ToolState["bucketFillBarriers"];
 } {
   const polygonVertices = [{ x: 0.2, y: 0.3 }];
   const bucketFillBarriers = [{ x1: 0.1, y1: 0.2, x2: 0.8, y2: 0.9 }];
-  useViewerStore.setState({
+  useToolStore.setState({
     mode: "markup",
     activeTakeoffItemId: 41,
     polygonDrawingMode: "drawing",
@@ -97,8 +107,13 @@ function invokeParseStep(
   actionName: (typeof PARSE_CASES)[number]["action"],
   step: string,
 ): void {
-  const action = useViewerStore.getState()[actionName] as unknown as (next: string) => void;
-  action(step);
+  const actions = {
+    setTableParseStep,
+    setKeynoteParseStep,
+    setNotesParseStep,
+    setSpecParseStep,
+  };
+  (actions[actionName] as (next: string) => void)(step);
 }
 
 function parseSource(relativePath: string): ts.SourceFile {
@@ -208,24 +223,26 @@ beforeEach(() => {
   restoreViewerStore();
 });
 
-describe("P2.3 T0 parse-step cross-boundary characterization", () => {
+describe("P2.3 T2 parse-step cross-boundary characterization", () => {
   for (const parseCase of PARSE_CASES) {
-    it(`${parseCase.label}: idle -> active publishes once and changes exactly the seven shared tool fields`, () => {
+    it(`${parseCase.label}: idle -> active publishes tool first, then the residual parse owner`, () => {
       const retained = seedCompetingTools();
       useViewerStore.setState({ [parseCase.key]: "idle" } as Partial<ViewerState>);
-      const before = useViewerStore.getState();
-      const listener = vi.fn();
-      const unsubscribe = useViewerStore.subscribe(listener);
+      const beforeTool = useToolStore.getState();
+      const beforeViewer = useViewerStore.getState();
+      const trace: string[] = [];
+      const unsubscribeTool = useToolStore.subscribe(() => trace.push("tool"));
+      const unsubscribeViewer = useViewerStore.subscribe(() => trace.push("viewer"));
 
       invokeParseStep(parseCase.action, "select-region");
 
-      const after = useViewerStore.getState();
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(changedValueKeys(before, after)).toEqual(
-        [...PARSE_ENTRY_TOOL_KEYS, parseCase.key].sort(),
-      );
-      expect(after[parseCase.key]).toBe("select-region");
-      expect(after).toMatchObject({
+      const afterTool = useToolStore.getState();
+      const afterViewer = useViewerStore.getState();
+      expect(trace).toEqual(["tool", "viewer"]);
+      expect(changedValueKeys(beforeTool, afterTool)).toEqual([...PARSE_ENTRY_TOOL_KEYS].sort());
+      expect(changedValueKeys(beforeViewer, afterViewer)).toEqual([parseCase.key]);
+      expect(afterViewer[parseCase.key]).toBe("select-region");
+      expect(afterTool).toMatchObject({
         mode: "move",
         bucketFillActive: false,
         bucketFillPreview: null,
@@ -243,33 +260,39 @@ describe("P2.3 T0 parse-step cross-boundary characterization", () => {
         symbolSearchError: "retain-symbol-error",
         tempPanMode: true,
       });
-      expect(after.polygonVertices).toBe(retained.polygonVertices);
-      expect(after.bucketFillBarriers).toBe(retained.bucketFillBarriers);
-      unsubscribe();
+      expect(afterTool.polygonVertices).toBe(retained.polygonVertices);
+      expect(afterTool.bucketFillBarriers).toBe(retained.bucketFillBarriers);
+      unsubscribeTool();
+      unsubscribeViewer();
     });
 
     it(`${parseCase.label}: non-entry transitions publish but never clear tool state`, () => {
       const retained = seedCompetingTools();
       useViewerStore.setState({ [parseCase.key]: "select-region" } as Partial<ViewerState>);
-      const listener = vi.fn();
-      const unsubscribe = useViewerStore.subscribe(listener);
+      const viewerListener = vi.fn();
+      const toolListener = vi.fn();
+      const unsubscribeViewer = useViewerStore.subscribe(viewerListener);
+      const unsubscribeTool = useToolStore.subscribe(toolListener);
 
       const beforeReview = useViewerStore.getState();
       invokeParseStep(parseCase.action, "review");
-      expect(listener).toHaveBeenCalledTimes(1);
+      expect(viewerListener).toHaveBeenCalledTimes(1);
+      expect(toolListener).not.toHaveBeenCalled();
       expect(changedValueKeys(beforeReview, useViewerStore.getState())).toEqual([parseCase.key]);
 
       const beforeRepeatedReview = useViewerStore.getState();
       invokeParseStep(parseCase.action, "review");
-      expect(listener).toHaveBeenCalledTimes(2);
+      expect(viewerListener).toHaveBeenCalledTimes(2);
+      expect(toolListener).not.toHaveBeenCalled();
       expect(changedValueKeys(beforeRepeatedReview, useViewerStore.getState())).toEqual([]);
 
       const beforeIdle = useViewerStore.getState();
       invokeParseStep(parseCase.action, "idle");
-      expect(listener).toHaveBeenCalledTimes(3);
+      expect(viewerListener).toHaveBeenCalledTimes(3);
+      expect(toolListener).not.toHaveBeenCalled();
       expect(changedValueKeys(beforeIdle, useViewerStore.getState())).toEqual([parseCase.key]);
 
-      const after = useViewerStore.getState();
+      const after = useToolStore.getState();
       expect(after).toMatchObject({
         mode: "markup",
         bucketFillActive: true,
@@ -282,20 +305,16 @@ describe("P2.3 T0 parse-step cross-boundary characterization", () => {
       });
       expect(after.polygonVertices).toBe(retained.polygonVertices);
       expect(after.bucketFillBarriers).toBe(retained.bucketFillBarriers);
-      unsubscribe();
+      unsubscribeViewer();
+      unsubscribeTool();
     });
   }
 });
 
-describe("P2.3 T0 resetAllTools characterization", () => {
-  it("calls seven leaf actions in order, and every call publishes synchronously", () => {
-    useViewerStore.setState({
+describe("P2.3 T2 resetAllTools characterization", () => {
+  it("calls seven leaf actions in order across both owners, and every call publishes synchronously", () => {
+    useToolStore.setState({
       mode: "markup",
-      tableParseStep: "review",
-      keynoteParseStep: "review",
-      notesParseStep: "review",
-      specParseStep: "review",
-      guidedParseActive: true,
       symbolSearchResults: {
         templateBbox: [0.1, 0.2, 0.3, 0.4],
         sourcePageNumber: 2,
@@ -305,63 +324,75 @@ describe("P2.3 T0 resetAllTools characterization", () => {
         searchedAt: "sentinel",
       },
     });
-    const real = useViewerStore.getState();
-    const trace: string[] = [];
     useViewerStore.setState({
+      tableParseStep: "review",
+      keynoteParseStep: "review",
+      notesParseStep: "review",
+      specParseStep: "review",
+      guidedParseActive: true,
+    });
+    const realTool = useToolStore.getState();
+    const realViewer = useViewerStore.getState();
+    const trace: string[] = [];
+    useToolStore.setState({
       setMode: (mode) => {
         trace.push("call:setMode");
-        real.setMode(mode);
-      },
-      resetTableParse: () => {
-        trace.push("call:resetTableParse");
-        real.resetTableParse();
-      },
-      resetKeynoteParse: () => {
-        trace.push("call:resetKeynoteParse");
-        real.resetKeynoteParse();
-      },
-      resetNotesParse: () => {
-        trace.push("call:resetNotesParse");
-        real.resetNotesParse();
-      },
-      resetSpecParse: () => {
-        trace.push("call:resetSpecParse");
-        real.resetSpecParse();
-      },
-      resetGuidedParse: () => {
-        trace.push("call:resetGuidedParse");
-        real.resetGuidedParse();
+        realTool.setMode(mode);
       },
       clearSymbolSearch: () => {
         trace.push("call:clearSymbolSearch");
-        real.clearSymbolSearch();
+        realTool.clearSymbolSearch();
       },
     });
-    const unsubscribe = useViewerStore.subscribe(() => trace.push("publication"));
+    useViewerStore.setState({
+      resetTableParse: () => {
+        trace.push("call:resetTableParse");
+        realViewer.resetTableParse();
+      },
+      resetKeynoteParse: () => {
+        trace.push("call:resetKeynoteParse");
+        realViewer.resetKeynoteParse();
+      },
+      resetNotesParse: () => {
+        trace.push("call:resetNotesParse");
+        realViewer.resetNotesParse();
+      },
+      resetSpecParse: () => {
+        trace.push("call:resetSpecParse");
+        realViewer.resetSpecParse();
+      },
+      resetGuidedParse: () => {
+        trace.push("call:resetGuidedParse");
+        realViewer.resetGuidedParse();
+      },
+    });
+    const unsubscribeTool = useToolStore.subscribe(() => trace.push("publication:tool"));
+    const unsubscribeViewer = useViewerStore.subscribe(() => trace.push("publication:viewer"));
 
-    useViewerStore.getState().resetAllTools();
+    resetAllTools();
 
     expect(trace).toEqual([
       "call:setMode",
-      "publication",
+      "publication:tool",
       "call:resetTableParse",
-      "publication",
+      "publication:viewer",
       "call:resetKeynoteParse",
-      "publication",
+      "publication:viewer",
       "call:resetNotesParse",
-      "publication",
+      "publication:viewer",
       "call:resetSpecParse",
-      "publication",
+      "publication:viewer",
       "call:resetGuidedParse",
-      "publication",
+      "publication:viewer",
       "call:clearSymbolSearch",
-      "publication",
+      "publication:tool",
     ]);
-    unsubscribe();
+    unsubscribeTool();
+    unsubscribeViewer();
   });
 
   it("pins reset output and the deliberately retained tool/parse omissions", () => {
-    const scaleCalibrations: ViewerState["scaleCalibrations"] = {
+    const scaleCalibrations: ToolState["scaleCalibrations"] = {
       2: {
         type: "scale-calibration",
         point1: { x: 0.1, y: 0.1 },
@@ -370,9 +401,9 @@ describe("P2.3 T0 resetAllTools characterization", () => {
         unit: "ft",
       },
     };
-    const takeoffUndoStack: ViewerState["takeoffUndoStack"] = [];
-    const takeoffRedoStack: ViewerState["takeoffRedoStack"] = [];
-    const pendingPolygon: NonNullable<ViewerState["bucketFillPendingPolygon"]> = {
+    const takeoffUndoStack: ToolState["takeoffUndoStack"] = [];
+    const takeoffRedoStack: ToolState["takeoffRedoStack"] = [];
+    const pendingPolygon: NonNullable<ToolState["bucketFillPendingPolygon"]> = {
       vertices: [{ x: 0.1, y: 0.1 }],
       method: "sentinel",
       bbox: [0.1, 0.1, 0.8, 0.8],
@@ -391,7 +422,7 @@ describe("P2.3 T0 resetAllTools characterization", () => {
       { pageNumber: 2, keys: [{ key: "1", description: "Door" }] },
     ];
 
-    useViewerStore.setState({
+    useToolStore.setState({
       mode: "markup",
       activeTakeoffItemId: 41,
       takeoffUndoStack,
@@ -424,6 +455,23 @@ describe("P2.3 T0 resetAllTools characterization", () => {
         lineB: { x: 0.9, y: 0.9 },
       },
       splitError: "split-error",
+      yoloTagPickingMode: true,
+      tagScanResults: { yoloClass: "door", yoloModel: "model", texts: [] },
+      tagAddingMode: "tag-1",
+      symbolSearchActive: true,
+      symbolSearchLoading: true,
+      symbolSearchResults: {
+        templateBbox: [0.1, 0.2, 0.3, 0.4],
+        sourcePageNumber: 2,
+        matches: [],
+        totalMatches: 0,
+        pagesWithMatches: [],
+        searchedAt: "sentinel",
+      },
+      symbolSearchPreset: "power",
+      tempPanMode: true,
+    });
+    useViewerStore.setState({
       tableParseTab: "compare",
       tableParseStep: "review",
       tableParseRegion: [0.1, 0.1, 0.9, 0.9],
@@ -457,27 +505,13 @@ describe("P2.3 T0 resetAllTools characterization", () => {
       guidedParseRegion: [0.1, 0.1, 0.9, 0.9],
       guidedParseRows: [0.25],
       guidedParseCols: [0.75],
-      yoloTagPickingMode: true,
-      tagScanResults: { yoloClass: "door", yoloModel: "model", texts: [] },
-      tagAddingMode: "tag-1",
-      symbolSearchActive: true,
-      symbolSearchLoading: true,
-      symbolSearchResults: {
-        templateBbox: [0.1, 0.2, 0.3, 0.4],
-        sourcePageNumber: 2,
-        matches: [],
-        totalMatches: 0,
-        pagesWithMatches: [],
-        searchedAt: "sentinel",
-      },
-      symbolSearchPreset: "power",
-      tempPanMode: true,
     });
 
-    useViewerStore.getState().resetAllTools();
+    resetAllTools();
 
-    const after = useViewerStore.getState();
-    expect(after).toMatchObject({
+    const afterTool = useToolStore.getState();
+    const afterViewer = useViewerStore.getState();
+    expect(afterTool).toMatchObject({
       mode: "move",
       activeTakeoffItemId: null,
       polygonDrawingMode: "idle",
@@ -492,6 +526,12 @@ describe("P2.3 T0 resetAllTools characterization", () => {
       splitLineB: null,
       splitPreview: null,
       splitError: null,
+      symbolSearchActive: false,
+      symbolSearchLoading: false,
+      symbolSearchResults: null,
+      tempPanMode: false,
+    });
+    expect(afterViewer).toMatchObject({
       tableParseStep: "idle",
       tableParseRegion: null,
       tableParsedGrid: null,
@@ -506,20 +546,16 @@ describe("P2.3 T0 resetAllTools characterization", () => {
       guidedParseRegion: null,
       guidedParseRows: [],
       guidedParseCols: [],
-      symbolSearchActive: false,
-      symbolSearchLoading: false,
-      symbolSearchResults: null,
-      tempPanMode: false,
     });
 
-    expect(after.scaleCalibrations).toBe(scaleCalibrations);
-    expect(after.takeoffUndoStack).toBe(takeoffUndoStack);
-    expect(after.takeoffRedoStack).toBe(takeoffRedoStack);
-    expect(after.bucketFillPendingPolygon).toBe(pendingPolygon);
-    expect(after.paragraphClipboard).toBe(paragraphClipboard);
-    expect(after.notesFastManualGrid).toBe(notesFastManualGrid);
-    expect(after.parsedKeynoteData).toBe(parsedKeynoteData);
-    expect(after).toMatchObject({
+    expect(afterTool.scaleCalibrations).toBe(scaleCalibrations);
+    expect(afterTool.takeoffUndoStack).toBe(takeoffUndoStack);
+    expect(afterTool.takeoffRedoStack).toBe(takeoffRedoStack);
+    expect(afterTool.bucketFillPendingPolygon).toBe(pendingPolygon);
+    expect(afterViewer.paragraphClipboard).toBe(paragraphClipboard);
+    expect(afterViewer.notesFastManualGrid).toBe(notesFastManualGrid);
+    expect(afterViewer.parsedKeynoteData).toBe(parsedKeynoteData);
+    expect(afterTool).toMatchObject({
       calibrationMode: "input",
       calibrationPoints: { p1: { x: 0.1, y: 0.2 } },
       bucketFillError: "retain-bucket-error",
@@ -527,19 +563,21 @@ describe("P2.3 T0 resetAllTools characterization", () => {
       bucketFillDilatePx: 9,
       bucketFillResolution: 4000,
       barrierPendingPoint: { x: 0.4, y: 0.5 },
-      tableParseTab: "compare",
-      showTableCellStructure: true,
-      keynoteParseTab: "compare",
-      notesFastManualActive: true,
       yoloTagPickingMode: true,
       tagScanResults: { yoloClass: "door", yoloModel: "model", texts: [] },
       tagAddingMode: "tag-1",
       symbolSearchPreset: "power",
     });
+    expect(afterViewer).toMatchObject({
+      tableParseTab: "compare",
+      showTableCellStructure: true,
+      keynoteParseTab: "compare",
+      notesFastManualActive: true,
+    });
   });
 });
 
-describe("P2.3 T0 AnnotationOverlay event-command characterization", () => {
+describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
   const source = parseSource(ANNOTATION_OVERLAY);
 
   it("pins the Escape priority, live/captured split, and exact branch action order", () => {
@@ -554,48 +592,51 @@ describe("P2.3 T0 AnnotationOverlay event-command characterization", () => {
 
     const escapeBlock = escapeIf.thenStatement;
     const snapshotDeclarations = escapeBlock.statements.filter(ts.isVariableStatement);
-    expect(snapshotDeclarations).toHaveLength(1);
-    expect(compact(snapshotDeclarations[0], source)).toContain(
-      "conststore=useViewerStore.getState()",
-    );
+    expect(snapshotDeclarations.map((statement) => compact(statement, source))).toEqual([
+      "consttool=useToolStore.getState();",
+      "constviewer=useViewerStore.getState();",
+    ]);
     const cascade = escapeBlock.statements.find(ts.isIfStatement);
     if (!cascade) throw new Error("Expected the Escape priority cascade");
     const branches = ifChain(cascade);
 
     expect(branches.map(({ condition }) => compact(condition, source))).toEqual([
-      "store.splitPreview",
-      "store.splitAreaActive",
-      "store.bucketFillPendingPolygon",
-      "store.bucketFillPreview",
-      "store.bucketFillBarrierMode",
-      "store.bucketFillActive",
-      'store.tableParseStep!=="idle"',
-      'store.keynoteParseStep!=="idle"',
+      "tool.splitPreview",
+      "tool.splitAreaActive",
+      "tool.bucketFillPendingPolygon",
+      "tool.bucketFillPreview",
+      "tool.bucketFillBarrierMode",
+      "tool.bucketFillActive",
+      'viewer.tableParseStep!=="idle"',
+      'viewer.keynoteParseStep!=="idle"',
       'polygonDrawingMode==="drawing"',
       'calibrationMode!=="idle"',
       "activeTakeoffItemId!==null",
     ]);
     expect(branches.map(({ body }) => directBranchCalls(body, source))).toEqual([
-      ["store.setSplitPreview"],
-      ["store.setSplitAreaActive"],
-      ["store.setBucketFillPendingPolygon"],
-      ["store.setBucketFillPreview"],
-      ["store.setBucketFillBarrierMode", "store.setBarrierPendingPoint"],
-      ["store.setBucketFillActive"],
-      ["store.setTableParseStep", "store.setMode"],
-      ["store.setKeynoteParseStep", "store.setMode"],
+      ["tool.setSplitPreview"],
+      ["tool.setSplitAreaActive"],
+      ["tool.setBucketFillPendingPolygon"],
+      ["tool.setBucketFillPreview"],
+      ["tool.setBucketFillBarrierMode", "tool.setBarrierPendingPoint"],
+      ["tool.setBucketFillActive"],
+      ["setTableParseStep", "tool.setMode"],
+      ["setKeynoteParseStep", "tool.setMode"],
       ["resetPolygonDrawing", "setMousePos"],
       ["resetCalibration"],
       ["setActiveTakeoffItemId"],
     ]);
 
-    // First eight predicates are one event-time getState snapshot; the final three deliberately use
-    // render-captured primitive subscriptions. Notes/spec/guided are not Escape participants today.
+    // First six predicates use the live tool snapshot, the next two the live residual viewer
+    // snapshot, and the final three deliberately use render-captured primitive subscriptions.
     expect(
-      branches.slice(0, 8).every(({ condition }) => compact(condition, source).startsWith("store.")),
+      branches.slice(0, 6).every(({ condition }) => compact(condition, source).startsWith("tool.")),
     ).toBe(true);
     expect(
-      branches.slice(8).some(({ condition }) => compact(condition, source).startsWith("store.")),
+      branches.slice(6, 8).every(({ condition }) => compact(condition, source).startsWith("viewer.")),
+    ).toBe(true);
+    expect(
+      branches.slice(8).some(({ condition }) => /^(?:tool|viewer)\./.test(compact(condition, source))),
     ).toBe(false);
     const conditions = branches.map(({ condition }) => compact(condition, source)).join("|");
     expect(conditions).not.toMatch(/notesParseStep|specParseStep|guidedParse/);
@@ -606,18 +647,18 @@ describe("P2.3 T0 AnnotationOverlay event-command characterization", () => {
   });
 
   it("pins the barrier Escape branch's deliberately duplicated null publication", () => {
-    useViewerStore.setState({
+    useToolStore.setState({
       bucketFillBarrierMode: true,
       barrierPendingPoint: { x: 0.4, y: 0.5 },
     });
     const publications: Array<{ mode: boolean; point: { x: number; y: number } | null }> = [];
-    const unsubscribe = useViewerStore.subscribe((state) => {
+    const unsubscribe = useToolStore.subscribe((state) => {
       publications.push({
         mode: state.bucketFillBarrierMode,
         point: state.barrierPendingPoint,
       });
     });
-    const snapshot = useViewerStore.getState();
+    const snapshot = useToolStore.getState();
 
     snapshot.setBucketFillBarrierMode(false);
     snapshot.setBarrierPendingPoint(null);
@@ -655,15 +696,16 @@ describe("P2.3 T0 AnnotationOverlay event-command characterization", () => {
       "call:setSelectedId",
       'if:polygonDrawingMode==="drawing"=>resetPolygonDrawing,setMousePos',
       'if:calibrationMode!=="idle"=>resetCalibration',
-      "snapshot:store=useViewerStore.getState()",
-      'if:store.tableParseStep!=="idle"=>store.resetTableParse,store.setMode',
-      'if:store.keynoteParseStep!=="idle"=>store.resetKeynoteParse,store.setKeynoteParseRegion,store.setMode',
-      "if:store.symbolSearchActive=>store.setSymbolSearchActive",
+      "snapshot:viewer=useViewerStore.getState()",
+      "snapshot:tool=useToolStore.getState()",
+      'if:viewer.tableParseStep!=="idle"=>viewer.resetTableParse,tool.setMode',
+      'if:viewer.keynoteParseStep!=="idle"=>viewer.resetKeynoteParse,viewer.setKeynoteParseRegion,tool.setMode',
+      "if:tool.symbolSearchActive=>tool.setSymbolSearchActive",
     ]);
     expect(dependencyTexts(pageEffect, source)).toEqual(["pageNumber"]);
     expect(
-      callLabels(block, source).filter((label) => label === "useViewerStore.getState"),
-    ).toHaveLength(1);
+      callLabels(block, source).filter((label) => /use(?:Viewer|Tool)Store\.getState/.test(label)),
+    ).toEqual(["useViewerStore.getState", "useToolStore.getState"]);
 
     const conditions = block.statements
       .filter(ts.isIfStatement)
@@ -673,9 +715,9 @@ describe("P2.3 T0 AnnotationOverlay event-command characterization", () => {
       'calibrationMode!=="idle"',
     ]);
     expect(conditions.slice(2)).toEqual([
-      'store.tableParseStep!=="idle"',
-      'store.keynoteParseStep!=="idle"',
-      "store.symbolSearchActive",
+      'viewer.tableParseStep!=="idle"',
+      'viewer.keynoteParseStep!=="idle"',
+      "tool.symbolSearchActive",
     ]);
     expect(conditions.join("|")).not.toMatch(
       /bucketFill|splitArea|notesParseStep|specParseStep|guidedParse/,
@@ -683,7 +725,7 @@ describe("P2.3 T0 AnnotationOverlay event-command characterization", () => {
   });
 });
 
-describe("P2.3 T0 PDFViewer temporary-pan command characterization", () => {
+describe("P2.3 T2 PDFViewer temporary-pan command characterization", () => {
   const source = parseSource(PDF_VIEWER);
   const keyboardEffect = useEffectCalls(source).find((effect) => {
     const callback = effect.arguments[0];
@@ -711,7 +753,7 @@ describe("P2.3 T0 PDFViewer temporary-pan command characterization", () => {
     const calls = descendants(keyDown.body, ts.isCallExpression)
       .filter((call) => {
         const label = compact(call.expression, source);
-        return label === "setMode" || label === "s.setTempPanMode" || label === "useViewerStore.getState";
+        return label === "setMode" || label === "s.setTempPanMode" || label === "useToolStore.getState";
       })
       .map((call) => ({
         callee: compact(call.expression, source),
@@ -719,7 +761,7 @@ describe("P2.3 T0 PDFViewer temporary-pan command characterization", () => {
       }));
     expect(calls).toEqual([
       { callee: "setMode", args: ['"pointer"'] },
-      { callee: "useViewerStore.getState", args: [] },
+      { callee: "useToolStore.getState", args: [] },
       { callee: "s.setTempPanMode", args: ["true"] },
       { callee: "setMode", args: ['"move"'] },
     ]);
@@ -745,7 +787,7 @@ describe("P2.3 T0 PDFViewer temporary-pan command characterization", () => {
     ]);
     expect(compact(keyUp.body, source)).toContain("vReleasedDuringPanRef.current=true");
     expect(compact(keyUp.body, source)).toContain("s.setTempPanMode(false)");
-    expect(compact(blur.body, source)).toBe("{useViewerStore.getState().setTempPanMode(false);}");
+    expect(compact(blur.body, source)).toBe("{useToolStore.getState().setTempPanMode(false);}");
     expect(dependencyTexts(keyboardEffect, source)).toEqual(["setMode"]);
   });
 });

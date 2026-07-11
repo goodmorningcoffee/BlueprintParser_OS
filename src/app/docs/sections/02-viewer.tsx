@@ -31,7 +31,7 @@ export function Section02Viewer() {
       <p>
         The viewer lives at <InlineCode>/project/[id]</InlineCode> and is the
         primary surface for every user-facing feature in BP. It is a single React
-        tree driven by a Zustand store with 17 slice selectors, backed by a
+        tree driven by domain-owned Zustand leaves and Query facades, backed by a
         client-side pdf.js rasterizer for the canvas and a series of overlay
         layers for annotations, markups, YOLO detections, keynotes, parse
         regions, and search highlights. Everything you do inside a project flows
@@ -137,8 +137,8 @@ export function Section02Viewer() {
                 <div className="text-[var(--muted)]">Symmetric bracketed zoom; Fit recalculates for the current page dimensions.</div>
               </li>
               <li>
-                Mode toggle (Pointer / Pan / Markup)
-                <div className="text-[var(--muted)]">3-state button; keyboard shortcuts A, V.</div>
+                Mode toggle (Pointer / Pan / Group / Markup)
+                <div className="text-[var(--muted)]">4-state button; keyboard shortcuts A, V.</div>
               </li>
               <li>
                 Symbol Search button
@@ -412,7 +412,7 @@ export function Section02Viewer() {
           the project name is click-to-rename; the <InlineCode>-</InlineCode>{" "}
           and <InlineCode>+</InlineCode> buttons bracket the current zoom percentage
           and the <InlineCode>Fit</InlineCode> button auto-fits the page; the
-          3-state mode toggle selects Pointer / Pan / Markup; the Symbol button
+          4-state mode toggle selects Pointer / Pan / Group / Markup; the Symbol button
           opens a draw-a-bbox-to-find-all-instances workflow; the <InlineCode>Menu</InlineCode>{" "}
           button opens the dropdown (shown below). The right half of the toolbar
           carries the text search, the trade filter, the CSI code filter, the
@@ -421,13 +421,13 @@ export function Section02Viewer() {
         </p>
       </SubSection>
 
-      <SubSection title="Modes: pointer, move, markup">
+      <SubSection title="Modes: pointer, move, markup, group">
         <p>
-          The canvas has three mutually-exclusive modes, controlled by{" "}
-          <InlineCode>setMode()</InlineCode> in the viewer store. The internal mode
+          The canvas has four mutually-exclusive modes, controlled by{" "}
+          <InlineCode>setMode()</InlineCode> in <InlineCode>toolStore</InlineCode>. The internal mode
           values are <InlineCode>&quot;pointer&quot;</InlineCode>,{" "}
           <InlineCode>&quot;move&quot;</InlineCode>, and{" "}
-          <InlineCode>&quot;markup&quot;</InlineCode>. Keyboard shortcuts are{" "}
+          <InlineCode>&quot;markup&quot;</InlineCode>, plus <InlineCode>&quot;group&quot;</InlineCode> for lasso selection. Keyboard shortcuts are{" "}
           <InlineCode>A</InlineCode> (pointer), <InlineCode>V</InlineCode> (pan/move),
           and switching to Markup mode activates the drawing tools. Pointer mode
           clicks on overlays to select them; move mode click-drags the canvas to
@@ -436,7 +436,7 @@ export function Section02Viewer() {
         </p>
         <Figure
           kind="live"
-          caption="ModeToggleDemo — click to cycle through pointer / move / markup."
+          caption="ModeToggleDemo — click to switch between pointer / move / group / markup."
           size="sm"
         >
           <ModeToggleDemo />
@@ -561,18 +561,18 @@ export function Section02Viewer() {
         </ul>
       </SubSection>
 
-      <SubSection title="State management: the 17 slice hooks">
+      <SubSection title="State management: explicit domain owners">
         <p>
-          The viewer&apos;s state lives in a single Zustand store at{" "}
-          <InlineCode>src/stores/viewerStore.ts</InlineCode> (1,986 lines). The
-          store is large but access is scoped through seventeen{" "}
-          <em>slice hooks</em> &mdash; each hook returns a narrow set of fields
-          memoized by <InlineCode>useShallow</InlineCode>, so components only
-          re-render on changes to their own slice.
+          Client state is split across <InlineCode>sessionStore</InlineCode>,{" "}
+          <InlineCode>uiStore</InlineCode>, <InlineCode>viewerCoreStore</InlineCode>, and{" "}
+          <InlineCode>toolStore</InlineCode>. Server collections use project-keyed Query facades;
+          the residual <InlineCode>viewerStore</InlineCode> carries parse flows and the drawing
+          quarantine until their later phases. Primitive selectors and narrow shallow hooks keep
+          canvas surfaces isolated from unrelated publications.
         </p>
         <Figure
           kind="live"
-          caption="17 slice hooks fan out from useViewerStore. Line numbers are from the current viewerStore.ts."
+          caption="Viewer state surfaces fan out from explicit Zustand and Query owners."
           size="full"
         >
           <StoreSliceHookMap />

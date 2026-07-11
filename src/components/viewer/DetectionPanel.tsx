@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import {
   useUiStore,
@@ -88,7 +88,7 @@ export default function DetectionPanel({
   // Whole-map subscription is intentional: Save All and the multi-page totals traverse every
   // retained pending-shape page. Cache actions below remain explicit and project-keyed.
   const keynotes = useKeynotesByPage();
-  const setMode = useViewerStore((s) => s.setMode);
+  const setMode = useToolStore((s) => s.setMode);
   const showKeynotes = useUiStore((s) => s.showKeynotes);
   const toggleKeynotes = useUiStore((s) => s.toggleKeynotes);
   const showDetections = useUiStore((s) => s.showDetections);
@@ -470,7 +470,7 @@ export default function DetectionPanel({
               onClick={() => {
                 const next = !yoloTagPickingMode;
                 setYoloTagPickingMode(next);
-                if (next) useViewerStore.getState().setMode("pointer");
+                if (next) useToolStore.getState().setMode("pointer");
               }}
               className={`w-full px-2 py-1.5 text-[11px] rounded border ${
                 yoloTagPickingMode
@@ -704,7 +704,7 @@ export default function DetectionPanel({
                                               } else {
                                                 setTagAddingMode(tag.id);
                                                 setActiveYoloTagId(tag.id);
-                                                useViewerStore.getState().setMode("pointer");
+                                                useToolStore.getState().setMode("pointer");
                                               }
                                             }}
                                             className={`w-full text-left px-2 py-1 text-[9px] rounded border mt-1 ${

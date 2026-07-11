@@ -3,7 +3,7 @@
 import { useMemo, useEffect, useState, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useSymbolSearch } from "@/stores/viewerStore";
+import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations } from "@/queries/useAnnotations";
@@ -122,7 +122,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
   // Run search — fires the API with current config
   const abortRef = useRef<AbortController | null>(null);
   const runSearch = useCallback(async () => {
-    const store = useViewerStore.getState();
+    const store = useToolStore.getState();
     const session = useSessionStore.getState();
     if (!store.symbolSearchTemplateBbox || !store.symbolSearchSourcePage) return;
 
@@ -192,14 +192,14 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
             continue; // skip malformed JSON lines
           }
           if (msg.type === "progress") {
-            useViewerStore.getState().setSymbolSearchProgress({
+            useToolStore.getState().setSymbolSearchProgress({
               page: msg.page as number,
               pageIndex: msg.pageIndex as number,
               totalPages: msg.totalPages as number,
               matches: msg.matches as number,
             });
           } else if (msg.type === "done") {
-            useViewerStore.getState().setSymbolSearchResults({
+            useToolStore.getState().setSymbolSearchResults({
               templateBbox: msg.templateBbox as [number, number, number, number],
               sourcePageNumber: msg.sourcePageNumber as number,
               totalMatches: msg.totalMatches as number,
@@ -216,18 +216,18 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
       clearTimeout(timeout);
       if ((err as Error).name === "AbortError") {
         if (timedOut) {
-          useViewerStore.getState().setSymbolSearchError("Search timed out — try searching fewer pages");
+          useToolStore.getState().setSymbolSearchError("Search timed out — try searching fewer pages");
         }
         return;
       }
       console.error("[SYMBOL_SEARCH] Failed:", err);
-      useViewerStore.getState().setSymbolSearchError(
+      useToolStore.getState().setSymbolSearchError(
         err instanceof Error ? err.message : "Symbol search failed"
       );
     } finally {
       clearTimeout(timeout);
-      useViewerStore.getState().setSymbolSearchLoading(false);
-      useViewerStore.getState().setSymbolSearchProgress(null);
+      useToolStore.getState().setSymbolSearchLoading(false);
+      useToolStore.getState().setSymbolSearchProgress(null);
     }
   }, []);
 
@@ -345,7 +345,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
             <button
               type="button"
               onClick={() => {
-                const s = useViewerStore.getState();
+                const s = useToolStore.getState();
                 s.setSymbolSearchActive(true);
                 s.setMode("pointer");
               }}
@@ -590,9 +590,9 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
           {/* Redraw button */}
           <button
             onClick={() => {
-              useViewerStore.getState().setSymbolSearchResults(null);
-              useViewerStore.getState().setSymbolSearchTemplateBbox(null);
-              useViewerStore.getState().setSymbolSearchActive(true);
+              useToolStore.getState().setSymbolSearchResults(null);
+              useToolStore.getState().setSymbolSearchTemplateBbox(null);
+              useToolStore.getState().setSymbolSearchActive(true);
             }}
             className="w-full text-[9px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/40"
           >
@@ -637,7 +637,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
           <div className="flex gap-1">
             <button
               onClick={() => {
-                useViewerStore.getState().setSymbolSearchError(null);
+                useToolStore.getState().setSymbolSearchError(null);
               }}
               className="flex-1 text-[9px] px-2 py-1 rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
             >
@@ -645,9 +645,9 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
             </button>
             <button
               onClick={() => {
-                useViewerStore.getState().setSymbolSearchError(null);
-                useViewerStore.getState().setSymbolSearchTemplateBbox(null);
-                useViewerStore.getState().setSymbolSearchActive(true);
+                useToolStore.getState().setSymbolSearchError(null);
+                useToolStore.getState().setSymbolSearchTemplateBbox(null);
+                useToolStore.getState().setSymbolSearchActive(true);
               }}
               className="flex-1 text-[9px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
             >
@@ -728,7 +728,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
               <button
                 disabled={symbolSaving}
                 onClick={async () => {
-                  const store = useViewerStore.getState();
+                  const store = useToolStore.getState();
                   const { publicId, isDemo } = useSessionStore.getState();
                   if (!publicId || isDemo) {
                     store.setSymbolSearchError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
@@ -809,9 +809,9 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
             </button>
             <button
               onClick={() => {
-                useViewerStore.getState().setSymbolSearchResults(null);
-                useViewerStore.getState().setSymbolSearchTemplateBbox(null);
-                useViewerStore.getState().setSymbolSearchActive(true);
+                useToolStore.getState().setSymbolSearchResults(null);
+                useToolStore.getState().setSymbolSearchTemplateBbox(null);
+                useToolStore.getState().setSymbolSearchActive(true);
               }}
               className="w-full text-[9px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
             >

@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -81,7 +82,7 @@ export default function ProjectPage() {
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const queryClient = useQueryClient();
-  const setScaleCalibration = useViewerStore((s) => s.setScaleCalibration);
+  const setScaleCalibration = useToolStore((s) => s.setScaleCalibration);
   const setCsiFilter = useUiStore((s) => s.setCsiFilter);
 
   const load = useCallback(async () => {

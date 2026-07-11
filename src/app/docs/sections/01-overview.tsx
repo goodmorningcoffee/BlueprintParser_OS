@@ -73,7 +73,7 @@ export function Section01Overview() {
           <li>
             <strong>Viewer</strong> (user surface, <InlineCode>/project/[id]</InlineCode>):
             canvas with pdf.js rasterizer + nine overlay layers, a dense toolbar,
-            three mutually-exclusive modes (pointer/move/markup), a stack of toggleable
+            four mutually-exclusive modes (pointer/move/group/markup), a stack of toggleable
             right-side panels (Text, CSI, LLM Chat, QTO, Schedules/Tables, Keynotes,
             Specs/Notes, Page Intelligence, View All), a bottom Annotation Panel, and
             user-driven parsing tools (Table Parse, Keynote Parse, Notes Parse, Spec Parse
@@ -105,13 +105,13 @@ export function Section01Overview() {
         <p className="pt-2">
           <strong>How they connect</strong>: Preprocessing runs once per upload and
           populates JSONB blobs on <InlineCode>pages</InlineCode>. YOLO Post-Pipeline
-          augments those blobs on admin trigger. The Viewer reads them into a Zustand
-          store (17 slice hooks) and renders overlays; user parsing tools write back
+          augments those blobs on admin trigger. The Viewer reads server collections through
+          project-keyed Query facades and keeps client state in explicit Zustand owners: session,
+          UI, viewer core, tools, and a residual parse/drawing store. User parsing tools write back
           to the same blobs via the generic <InlineCode>/api/regions/promote</InlineCode>{" "}
-          commit route. The Graph/Output layer re-derives summaries on every commit and
-          serves them to Chat and the Admin dashboard. The whole stack is one database
-          shape with one write path per mutation, which is why every number in the UI
-          traces back to a pixel on a page.
+          commit route. The Graph/Output layer re-derives summaries on every commit and serves them
+          to Chat and the Admin dashboard. The whole stack is one database shape with one write path
+          per mutation, which is why every number in the UI traces back to a pixel on a page.
         </p>
       </SubSection>
 
@@ -160,8 +160,9 @@ export function Section01Overview() {
         <p>
           BP is a single Next.js 16 application (App Router, React 19, TypeScript)
           backed by PostgreSQL 16 via <InlineCode>drizzle-orm</InlineCode>. State in
-          the viewer lives in a single <InlineCode>zustand</InlineCode> store with
-          slice selectors. LLM access goes through a thin adapter layer over the
+          the viewer is partitioned across explicit <InlineCode>zustand</InlineCode> owners for
+          session, UI, viewer core, tools, and residual parse/drawing state; project-keyed TanStack
+          Query facades own server collections. LLM access goes through a thin adapter layer over the
           Anthropic, OpenAI, and Groq SDKs, plus a generic OpenAI-compatible
           endpoint for Ollama and self-hosted models. The CSI network graph is
           rendered with <InlineCode>d3-force</InlineCode>. Python sidecars

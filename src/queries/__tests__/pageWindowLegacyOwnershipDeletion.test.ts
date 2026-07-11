@@ -785,13 +785,13 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     const interfaceKeys = interfaces[0].members
       .map((member) => ("name" in member ? staticName(member.name) : null))
       .filter((name): name is string => name !== null);
-    // P2.3 moved page navigation to viewerCore; keep a residual tool sentinel so this test still
+    // P2.3 moved page navigation and tools to leaf owners; keep a residual metadata sentinel so this test still
     // proves it parsed the live ViewerState rather than an empty/wrong interface.
-    expect(interfaceKeys).toEqual(expect.arrayContaining(["mode", "setMode"]));
+    expect(interfaceKeys).toEqual(expect.arrayContaining(["allTrades", "setAllTrades"]));
     expectNoLegacyMembers(interfaceKeys);
 
     const storeKeys = directObjectKeys(findViewerStoreObject(viewerStore));
-    expect(storeKeys).toEqual(expect.arrayContaining(["mode", "setMode"]));
+    expect(storeKeys).toEqual(expect.arrayContaining(["allTrades", "setAllTrades"]));
     expectNoLegacyMembers(storeKeys);
   });
 

@@ -1,6 +1,6 @@
 // @vitest-environment node
-// [refactor jul11 P2.3 T1] Additive-owner topology: the leaf is exact and production-dead while
-// viewerStore remains the sole live tool owner. T2 deliberately reverses the ownership assertions.
+// [refactor jul11 P2.3 T2] Active-owner topology: the exact leaf is now the sole tool owner and the
+// legacy viewerStore declarations/implementation are deletion targets.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -162,7 +162,7 @@ function importsFrom(source: ts.SourceFile, moduleName: string): boolean {
   );
 }
 
-describe("toolStore T1 — additive source contract", () => {
+describe("toolStore T2 — active source contract", () => {
   const toolSource = parse(TOOL_FILE);
   const viewerSource = parse(VIEWER_FILE);
   const toolObject = storeObject(toolSource, "useToolStore");
@@ -211,26 +211,28 @@ describe("toolStore T1 — additive source contract", () => {
     expect(objectKeys(objects[0])).toEqual(SYMBOL_HOOK_KEYS);
   });
 
-  it("leaves the complete legacy contract active in viewerStore", () => {
+  it("makes toolStore the sole owner and deletes the complete legacy viewer contract", () => {
     const viewerInterface = new Set(interfaceKeys(viewerSource, "ViewerState"));
     const viewerKeys = new Set(objectKeys(viewerObject));
     for (const key of [...DATA_KEYS, ...LEGACY_ACTION_KEYS]) {
-      expect(viewerInterface, `${key} legacy interface owner`).toContain(key);
-      expect(viewerKeys, `${key} legacy implementation owner`).toContain(key);
+      expect(viewerInterface, `${key} deleted legacy interface owner`).not.toContain(key);
+      expect(viewerKeys, `${key} deleted legacy implementation owner`).not.toContain(key);
     }
     expect(viewerInterface).not.toContain("resetProjectToolState");
     expect(viewerKeys).not.toContain("resetProjectToolState");
   });
 
-  it("has zero production or real-test consumers outside the isolated T1 suite", () => {
+  it("is active in production and has no legacy viewerStore alias import", () => {
     const imports = sourceFiles()
       .filter((path) => path !== TOOL_FILE)
       .filter((path) => importsFrom(parse(path), TOOL_MODULE));
-    expect(imports).toEqual(["src/stores/__tests__/toolStore.test.ts"]);
-
     const productionImports = imports.filter(
       (path) => !path.includes("/__tests__/") && !/\.(?:test|spec)\.(?:ts|tsx)$/.test(path),
     );
-    expect(productionImports).toEqual([]);
-  });
+    expect(productionImports.length).toBeGreaterThan(0);
+    expect(imports).toContain("src/stores/viewerCommands.ts");
+    expect(sourceFiles().filter((path) =>
+      /import\s*\{\s*useViewerStore\s+as\s+useToolStore\s*\}\s*from\s*["']@\/stores\/viewerStore["']/.test(textOf(path)),
+    )).toEqual([]);
+  }, 15_000);
 });

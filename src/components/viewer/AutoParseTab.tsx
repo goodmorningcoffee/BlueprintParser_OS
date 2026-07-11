@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useViewerStore, useTableParse } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
+import { setTableParseStep } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useProject } from "@/stores/sessionStore";
@@ -84,7 +86,7 @@ export default function AutoParseTab({
   const { pageNumber } = useNavigation();
   const { projectId, isDemo } = useProject();
   const {
-    tableParseStep, setTableParseStep,
+    tableParseStep,
     tableParseRegion, setTableParseRegion,
     tableParsedGrid, setTableParsedGrid,
     resetTableParse, tableParseTab, setTableParseTab,
@@ -233,7 +235,7 @@ export default function AutoParseTab({
           Math.max(...allRegions.map((r) => r[3])),
         ]);
         setTableParseStep("review");
-        useViewerStore.getState().setMode("move");
+        useToolStore.getState().setMode("move");
         setProposedRegions([]);
         // Auto-persist on successful parse (no separate Save click required).
         // Only when an actual table was detected — skip empty results so we
@@ -252,12 +254,12 @@ export default function AutoParseTab({
         setAutoParseError(err.message || "Auto-parse failed");
         setTableParsedGrid({ headers: [], rows: [] });
         setTableParseStep("review");
-        useViewerStore.getState().setMode("move");
+        useToolStore.getState().setMode("move");
       } finally {
         setAutoParsing(false);
       }
     },
-    [proposedRegions, projectId, pageNumber, isDemo, setTableParsedGrid, setTableParseStep, detectCsiAndPersist]
+    [proposedRegions, projectId, pageNumber, isDemo, setTableParsedGrid, detectCsiAndPersist]
   );
 
   const exportCsv = () => {
@@ -273,7 +275,7 @@ export default function AutoParseTab({
         <>
           <div className="text-[11px] text-[var(--muted)] px-1">
             {tableParseStep === "select-region" ? (
-              <span className="text-pink-300">Drawing — draw a BB around only the table grid. Do NOT include the title (e.g. "DOOR SCHEDULE") if it sits above the table.</span>
+              <span className="text-pink-300">Drawing — draw a BB around only the table grid. Do NOT include the title (e.g. &quot;DOOR SCHEDULE&quot;) if it sits above the table.</span>
             ) : (
               "Draw a BB around only the table grid. Exclude any title text that floats above the table — it will break header detection."
             )}
@@ -283,7 +285,7 @@ export default function AutoParseTab({
             onClick={() => {
               const next = tableParseStep === "select-region" ? "idle" : "select-region";
               setTableParseStep(next);
-              useViewerStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+              useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
             }}
             className={`w-full text-xs px-3 py-2 rounded border ${
               tableParseStep === "select-region"
@@ -338,7 +340,7 @@ export default function AutoParseTab({
                   <span className="font-medium text-[var(--fg)]">{t.category}</span>
                   <span className="text-[var(--muted)]"> ({Math.round(t.confidence * 100)}%)</span>
                   {t.headerText && (
-                    <div className="text-[10px] text-[var(--muted)]/70 truncate">"{t.headerText}"</div>
+                    <div className="text-[10px] text-[var(--muted)]/70 truncate">&quot;{t.headerText}&quot;</div>
                   )}
                 </div>
               ))}

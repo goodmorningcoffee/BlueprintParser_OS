@@ -3,9 +3,14 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
+import {
+  resetAllTools,
+  setTableParseStep,
+  toggleTableParsePanel,
+} from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
-import { toggleTableParsePanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
@@ -44,9 +49,7 @@ export default function TableParsePanel() {
   const tableParsedGrid = useViewerStore((s) => s.tableParsedGrid);
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
   const resetTableParse = useViewerStore((s) => s.resetTableParse);
-  const resetAllTools = useViewerStore((s) => s.resetAllTools);
   const tableParseStep = useViewerStore((s) => s.tableParseStep);
-  const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
   const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
   const setPage = useViewerCoreStore((s) => s.setPage);
   const tableParseTab = useViewerStore((s) => s.tableParseTab);
@@ -372,9 +375,9 @@ export default function TableParsePanel() {
       // merger, so the per-method results from a prior parse are stale.
       useViewerStore.getState().setTableParseMeta(null);
       setTableParseStep("review");
-      useViewerStore.getState().setMode("move");
+      useToolStore.getState().setMode("move");
     },
-    [setTableParseRegion, setTableParsedGrid, setTableParseStep]
+    [setTableParseRegion, setTableParsedGrid]
   );
 
   const { summaries } = useSummaries();
@@ -506,7 +509,7 @@ export default function TableParsePanel() {
             key={tab}
             onClick={() => {
               setTableParseTab(tab);
-              useViewerStore.getState().setMode("move");
+              useToolStore.getState().setMode("move");
             }}
             className={`flex-1 px-1.5 py-1.5 text-[9px] font-medium ${
               tableParseTab === tab

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, memo } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -18,10 +18,10 @@ import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist"
 // ─── Scale status bar (reuse pattern from AreaTab) ──────────
 function ScaleStatus() {
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
-  const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
-  const calibrationMode = useViewerStore((s) => s.calibrationMode);
-  const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
-  const resetCalibration = useViewerStore((s) => s.resetCalibration);
+  const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
+  const calibrationMode = useToolStore((s) => s.calibrationMode);
+  const setCalibrationMode = useToolStore((s) => s.setCalibrationMode);
+  const resetCalibration = useToolStore((s) => s.resetCalibration);
 
   const hasScale = !!scaleCalibrations[pageNumber];
 
@@ -75,10 +75,10 @@ export default memo(function LinearTab() {
   // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (dual
   // reader). Handler bodies UNCHANGED — orderings frozen per TAKEOFF_IMPL/SPEC.md §3.
   const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
-  const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
-  const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
+  const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
+  const setActiveTakeoffItemId = useToolStore((s) => s.setActiveTakeoffItemId);
   const publicId = useSessionStore((s) => s.publicId);
-  const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
+  const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
   const isDemo = useSessionStore((s) => s.isDemo);
   const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();
   // Visibility is presentation state; the server collection remains in Query.

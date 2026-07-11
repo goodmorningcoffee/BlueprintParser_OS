@@ -3,9 +3,9 @@ import { useShallow } from "zustand/react/shallow";
 
 import type { ClientAnnotation, ScaleCalibrationData, SymbolSearchResult } from "@/types";
 
-// [refactor jul11 P2.3 T1] Mechanically-flat interaction/tool owner. This additive leaf is
-// production-dead until the atomic T2 flip. Parse flows, server drafts, UI, viewer geometry, and
-// the four high-frequency drawing fields deliberately remain outside this boundary.
+// [refactor jul11 P2.3 T2] Mechanically-flat interaction/tool owner. Production consumers read
+// this leaf directly after the atomic ownership flip. Parse flows, server drafts, UI, viewer
+// geometry, and the four high-frequency drawing fields deliberately remain outside this boundary.
 
 export interface ToolTagScanResults {
   yoloClass: string;

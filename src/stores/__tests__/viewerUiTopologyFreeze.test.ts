@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 const VIEWER_STORE_FILE = "src/stores/viewerStore.ts";
 const UI_STORE_FILE = "src/stores/uiStore.ts";
 const CORE_STORE_FILE = "src/stores/viewerCoreStore.ts";
+const TOOL_STORE_FILE = "src/stores/toolStore.ts";
 const VIEWER_COMMANDS_FILE = "src/stores/viewerCommands.ts";
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
 const YOLO_FACADE = "src/queries/useYoloTags.ts";
@@ -889,14 +890,17 @@ describe("P2.3 U2 pure UI ownership contract", () => {
   const uiSource = parse(UI_STORE_FILE);
   const viewerSource = parse(VIEWER_STORE_FILE);
   const coreSource = parse(CORE_STORE_FILE);
+  const toolSource = parse(TOOL_STORE_FILE);
   const uiData = findInterface(uiSource, "UiData");
   const uiActions = findInterface(uiSource, "UiActions");
   const viewerState = findInterface(viewerSource, "ViewerState");
   const coreData = findInterface(coreSource, "ViewerCoreData");
+  const toolData = findInterface(toolSource, "ToolStoreData");
   const uiStoreObject = findStoreObject(uiSource, "useUiStore");
   const viewerStoreObject = findStoreObject(viewerSource, "useViewerStore");
   const defaultsObject = findFunctionReturnObject(uiSource, "freshUiState");
   const coreDefaultsObject = findFunctionReturnObject(coreSource, "freshViewerCoreState");
+  const toolDefaultsObject = findStoreObject(toolSource, "useToolStore");
   const interfaceKeys = [...uiData.members, ...uiActions.members]
     .map((member) => ("name" in member ? staticName(member.name) : null))
     .filter((name): name is string => name !== null);
@@ -904,6 +908,9 @@ describe("P2.3 U2 pure UI ownership contract", () => {
     .map((member) => ("name" in member ? staticName(member.name) : null))
     .filter((name): name is string => name !== null);
   const coreInterfaceKeys = coreData.members
+    .map((member) => ("name" in member ? staticName(member.name) : null))
+    .filter((name): name is string => name !== null);
+  const toolInterfaceKeys = toolData.members
     .map((member) => ("name" in member ? staticName(member.name) : null))
     .filter((name): name is string => name !== null);
 
@@ -935,6 +942,10 @@ describe("P2.3 U2 pure UI ownership contract", () => {
       if ((UI_BOUNDARY_EXCLUSIONS.viewerCore as readonly string[]).includes(field)) {
         expect(coreInterfaceKeys, `${field} remains on core owner`).toContain(field);
         expect(() => directProperty(coreDefaultsObject, field)).not.toThrow();
+        expect(viewerInterfaceKeys, `${field} deleted residual owner`).not.toContain(field);
+      } else if ((UI_BOUNDARY_EXCLUSIONS.toolInteraction as readonly string[]).includes(field)) {
+        expect(toolInterfaceKeys, `${field} remains on tool owner`).toContain(field);
+        expect(() => directProperty(toolDefaultsObject, field)).not.toThrow();
         expect(viewerInterfaceKeys, `${field} deleted residual owner`).not.toContain(field);
       } else {
         expect(viewerInterfaceKeys, `${field} remains on residual viewer owner`).toContain(field);

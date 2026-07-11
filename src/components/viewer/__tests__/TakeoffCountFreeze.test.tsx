@@ -36,7 +36,7 @@ import "@testing-library/jest-dom";
 import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
 import { persistFetch } from "@/lib/client-persist";
@@ -175,7 +175,7 @@ describe("CountTab — create item is server-first (TC-1)", () => {
     expect(screen.queryByPlaceholderText("Item name...")).not.toBeInTheDocument(); // form closed
     expect(screen.getByText("Door")).toBeInTheDocument(); // the ROW now
     // server-id pin: the SERVER row (not a local temp) is activated (activeTakeoffItemId stays zustand in ④)
-    await waitFor(() => expect(useViewerStore.getState().activeTakeoffItemId).toBe(42));
+    await waitFor(() => expect(useToolStore.getState().activeTakeoffItemId).toBe(42));
   });
 });
 
@@ -193,7 +193,7 @@ describe("CountTab — demo create never writes (TC-2)", () => {
 
     await waitFor(() => expect(screen.getByText("0 total across 1 items")).toBeInTheDocument());
     expect(screen.getByText("Demo Door")).toBeInTheDocument();
-    expect(useViewerStore.getState().activeTakeoffItemId).toBeLessThan(0); // id: -Date.now()
+    expect(useToolStore.getState().activeTakeoffItemId).toBeLessThan(0); // id: -Date.now()
     expect(fetchMock).not.toHaveBeenCalled();
     expect(persistFetchMock).not.toHaveBeenCalled();
   });

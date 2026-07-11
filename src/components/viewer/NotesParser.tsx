@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
+import { setNotesParseStep } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
@@ -53,7 +55,6 @@ export default function NotesParser() {
 
   const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
   const setNotesParseRegion = useViewerStore((s) => s.setNotesParseRegion);
-  const setNotesParseStep = useViewerStore((s) => s.setNotesParseStep);
 
   const guidedNotesRows = useViewerStore((s) => s.guidedNotesRows);
   const guidedNotesCols = useViewerStore((s) => s.guidedNotesCols);
@@ -441,7 +442,7 @@ export default function NotesParser() {
             <button
               onClick={() => {
                 setNotesParseStep("select-region");
-                useViewerStore.getState().setMode("pointer");
+                useToolStore.getState().setMode("pointer");
               }}
               className="text-[10px] px-2 py-0.5 rounded border border-blue-500/40 text-blue-300 hover:bg-blue-500/10"
             >
@@ -452,7 +453,7 @@ export default function NotesParser() {
               onClick={() => {
                 resetNotesParse();
                 setNotesParseStep("select-region");
-                useViewerStore.getState().setMode("pointer");
+                useToolStore.getState().setMode("pointer");
               }}
               className="text-[9px] px-1.5 py-0.5 rounded text-[var(--muted)] hover:text-red-400"
             >
@@ -584,7 +585,7 @@ export default function NotesParser() {
               <button
                 onClick={() => {
                   setNotesParseStep("define-column");
-                  useViewerStore.getState().setMode("pointer");
+                  useToolStore.getState().setMode("pointer");
                 }}
                 disabled={!regionReady}
                 className="flex-1 text-[10px] px-2 py-1 rounded border border-sky-500/40 text-sky-300 hover:bg-sky-500/10 disabled:opacity-40"
@@ -594,7 +595,7 @@ export default function NotesParser() {
               <button
                 onClick={() => {
                   setNotesParseStep("define-row");
-                  useViewerStore.getState().setMode("pointer");
+                  useToolStore.getState().setMode("pointer");
                 }}
                 disabled={!regionReady}
                 className="flex-1 text-[10px] px-2 py-1 rounded border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 disabled:opacity-40"

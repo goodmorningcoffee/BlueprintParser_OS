@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { useSessionStore } from "@/stores/sessionStore";
+import { useToolStore } from "@/stores/toolStore";
 import { resetProjectData } from "@/stores/viewerCommands";
 // Keep the U0 fixture's local store variable stable while flipping its imported owner. The module
 // path is the ownership assertion: every data/action exercise below now runs against uiStore.
@@ -11,10 +12,12 @@ import {
   CORE_TEST_STATE_KEYS,
   partitionViewerStoreTestState,
   setViewerStoreStateForTest,
+  TOOL_TEST_STATE_KEYS,
   UI_TEST_STATE_KEYS,
 } from "@/test/viewer-store-state";
 
 type ViewerState = ReturnType<typeof useViewerStore.getState>;
+type ToolState = ReturnType<typeof useToolStore.getState>;
 
 // P2.3 U2: this is the exact mechanically-pure uiStore owner. Tool activation,
 // parse drafts/tabs, project data, and mutable server-row drafts deliberately stay out.
@@ -82,6 +85,49 @@ const UI_FIELDS = [
 ] as const satisfies readonly (keyof ViewerState)[];
 
 type UiField = (typeof UI_FIELDS)[number];
+
+const TOOL_FIELDS = [
+  "mode",
+  "tempPanMode",
+  "activeTakeoffItemId",
+  "scaleCalibrations",
+  "calibrationMode",
+  "calibrationPoints",
+  "polygonDrawingMode",
+  "polygonVertices",
+  "bucketFillActive",
+  "bucketFillPreview",
+  "bucketFillLoading",
+  "bucketFillError",
+  "bucketFillTolerance",
+  "bucketFillDilatePx",
+  "bucketFillResolution",
+  "bucketFillPendingPolygon",
+  "splitAreaActive",
+  "splitLineA",
+  "splitLineB",
+  "splitPreview",
+  "splitError",
+  "bucketFillBarriers",
+  "bucketFillBarrierMode",
+  "barrierPendingPoint",
+  "takeoffUndoStack",
+  "takeoffRedoStack",
+  "yoloTagPickingMode",
+  "tagScanResults",
+  "tagAddingMode",
+  "symbolSearchActive",
+  "symbolSearchLoading",
+  "symbolSearchProgress",
+  "symbolSearchResults",
+  "symbolSearchConfidence",
+  "dismissedSymbolMatches",
+  "symbolSearchError",
+  "symbolSearchTemplateBbox",
+  "symbolSearchSourcePage",
+  "symbolSearchConfig",
+  "symbolSearchPreset",
+] as const satisfies readonly (keyof ToolState)[];
 
 const UI_ACTION_FIELDS = [
   "setSearch",
@@ -252,7 +298,7 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     });
   });
 
-  it("routes exact UI/core seams session -> UI -> core -> viewer and skips empty owners", () => {
+  it("routes exact UI/core/tool seams session -> UI -> core -> tool -> viewer and skips empty owners", () => {
     expect(UI_TEST_STATE_KEYS).toEqual(UI_FIELDS);
     expect(CORE_TEST_STATE_KEYS).toEqual([
       "pageNumber",
@@ -261,32 +307,102 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       "pendingCenter",
       "pageDimensions",
     ]);
-    const partitions = partitionViewerStoreTestState({
+    expect(TOOL_TEST_STATE_KEYS).toEqual(TOOL_FIELDS);
+    const toolPatch = {
+      mode: "markup",
+      tempPanMode: true,
+      activeTakeoffItemId: 41,
+      scaleCalibrations: {},
+      calibrationMode: "point1",
+      calibrationPoints: { p1: { x: 0.1, y: 0.2 } },
+      polygonDrawingMode: "drawing",
+      polygonVertices: [{ x: 0.2, y: 0.3 }],
+      bucketFillActive: true,
+      bucketFillPreview: {
+        vertices: [{ x: 0.1, y: 0.1 }],
+        method: "fixture",
+      },
+      bucketFillLoading: true,
+      bucketFillError: "bucket-fixture",
+      bucketFillTolerance: 31,
+      bucketFillDilatePx: 4,
+      bucketFillResolution: 2000,
+      bucketFillPendingPolygon: {
+        vertices: [{ x: 0.1, y: 0.1 }],
+        method: "fixture",
+        bbox: [0.1, 0.1, 0.8, 0.8],
+        areaSqUnits: 12,
+        unit: "SF",
+      },
+      splitAreaActive: true,
+      splitLineA: { x: 0.1, y: 0.2 },
+      splitLineB: { x: 0.8, y: 0.9 },
+      splitPreview: {
+        targetAnnotationId: 17,
+        original: [{ x: 0.1, y: 0.1 }],
+        left: [{ x: 0.1, y: 0.1 }],
+        right: [{ x: 0.8, y: 0.9 }],
+        lineA: { x: 0.1, y: 0.2 },
+        lineB: { x: 0.8, y: 0.9 },
+      },
+      splitError: "split-fixture",
+      bucketFillBarriers: [{ x1: 0.1, y1: 0.2, x2: 0.8, y2: 0.9 }],
+      bucketFillBarrierMode: true,
+      barrierPendingPoint: { x: 0.4, y: 0.5 },
+      takeoffUndoStack: [],
+      takeoffRedoStack: [],
+      yoloTagPickingMode: true,
+      tagScanResults: {
+        yoloClass: "door",
+        yoloModel: "fixture-model",
+        texts: [],
+      },
+      tagAddingMode: "tag-fixture",
+      symbolSearchActive: true,
+      symbolSearchLoading: true,
+      symbolSearchProgress: { page: 3, pageIndex: 2, totalPages: 9, matches: 4 },
+      symbolSearchResults: null,
+      symbolSearchConfidence: 0.8,
+      dismissedSymbolMatches: new Set(["match-fixture"]),
+      symbolSearchError: "symbol-fixture",
+      symbolSearchTemplateBbox: [0.1, 0.2, 0.3, 0.4],
+      symbolSearchSourcePage: 3,
+      symbolSearchConfig: {
+        multiScale: false,
+        useSiftFallback: false,
+        searchPages: [3],
+        scaleMin: 0.7,
+        scaleMax: 1.7,
+        nmsThreshold: 0.25,
+        maxMatchesPerPage: 25,
+      },
+      symbolSearchPreset: "power",
+    } satisfies Pick<ToolState, (typeof TOOL_FIELDS)[number]>;
+    const mixedPatch = {
       publicId: "destination",
       searchQuery: "needle",
       pageNumber: 7,
-      mode: "markup",
-    });
+      ...toolPatch,
+      allTrades: ["Concrete"],
+    };
+    const partitions = partitionViewerStoreTestState(mixedPatch);
     expect(partitions).toEqual({
       session: { publicId: "destination" },
       ui: { searchQuery: "needle" },
       core: { pageNumber: 7 },
-      viewer: { mode: "markup" },
+      tool: toolPatch,
+      viewer: { allTrades: ["Concrete"] },
     });
 
     const publications: string[] = [];
     const unsubscribeSession = useSessionStore.subscribe(() => publications.push("session"));
     const unsubscribeUi = useViewerStore.subscribe(() => publications.push("ui"));
     const unsubscribeCore = useViewerCoreStore.subscribe(() => publications.push("core"));
+    const unsubscribeTool = useToolStore.subscribe(() => publications.push("tool"));
     const unsubscribeViewer = useResidualViewerStore.subscribe(() => publications.push("viewer"));
 
-    setViewerStoreStateForTest({
-      publicId: "destination",
-      searchQuery: "needle",
-      pageNumber: 7,
-      mode: "markup",
-    });
-    expect(publications).toEqual(["session", "ui", "core", "viewer"]);
+    setViewerStoreStateForTest(mixedPatch);
+    expect(publications).toEqual(["session", "ui", "core", "tool", "viewer"]);
 
     publications.length = 0;
     setViewerStoreStateForTest({ searchQuery: "ui-only" });
@@ -298,6 +414,7 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     unsubscribeSession();
     unsubscribeUi();
     unsubscribeCore();
+    unsubscribeTool();
     unsubscribeViewer();
   });
 

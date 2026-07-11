@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade. handleCreateAndAssign
 // below is UNCHANGED — it POSTs the NUMERIC projectId (frozen pre-existing quirk vs CountTab's
@@ -13,7 +13,7 @@ import type { ClientTakeoffItem } from "@/types";
 import { apiErrorMessage } from "@/lib/client-persist";
 
 interface BucketFillAssignDialogProps {
-  pendingPolygon: NonNullable<ReturnType<typeof useViewerStore.getState>["bucketFillPendingPolygon"]>;
+  pendingPolygon: NonNullable<ReturnType<typeof useToolStore.getState>["bucketFillPendingPolygon"]>;
   width: number;
   height: number;
   cssScale: number;
@@ -29,7 +29,7 @@ export default function BucketFillAssignDialog({
   // [refactor jul10 P2.2⑥] Facade commit writes the annotation cache before consuming the
   // pending zustand polygon; both create-and-assign and existing-item paths share that ordering.
   const { commitBucketFill } = useAnnotations();
-  const setBucketFillPendingPolygon = useViewerStore((s) => s.setBucketFillPendingPolygon);
+  const setBucketFillPendingPolygon = useToolStore((s) => s.setBucketFillPendingPolygon);
   const publicId = useSessionStore((s) => s.publicId);
   const projectId = useSessionStore((s) => s.projectId);
   const isDemo = useSessionStore((s) => s.isDemo);

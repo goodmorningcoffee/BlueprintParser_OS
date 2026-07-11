@@ -1,12 +1,11 @@
 // @vitest-environment node
-// [refactor jul11 P2.3 T0] V0 characterization of the flat tool candidate while it still lives in
-// viewerStore. Keep the local owner alias stable: the atomic ownership flip should change this one
-// import path/name, not rewrite the behavior contract below.
+// [refactor jul11 P2.3 T2] The characterized flat tool candidate now lives in its dedicated owner.
+// Keeping this suite owner-local proves the atomic move retained the frozen behavior contract.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetProjectData } from "@/stores/viewerCommands";
-import { useViewerStore as useToolStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import type { ClientAnnotation, ScaleCalibrationData } from "@/types";
 
 type ToolState = ReturnType<typeof useToolStore.getState>;

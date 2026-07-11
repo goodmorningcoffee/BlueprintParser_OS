@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 const VIEWER_STORE_FILE = "src/stores/viewerStore.ts";
 const CORE_STORE_FILE = "src/stores/viewerCoreStore.ts";
+const TOOL_STORE_FILE = "src/stores/toolStore.ts";
 
 const VIEWER_OWNER = {
   file: VIEWER_STORE_FILE,
@@ -20,6 +21,11 @@ const CORE_OWNER = {
   file: CORE_STORE_FILE,
   module: "@/stores/viewerCoreStore",
   exportName: "useViewerCoreStore",
+} as const;
+const TOOL_OWNER = {
+  file: TOOL_STORE_FILE,
+  module: "@/stores/toolStore",
+  exportName: "useToolStore",
 } as const;
 
 const ACTIVE_CORE_OWNER = CORE_OWNER;
@@ -568,14 +574,19 @@ function importedCallCount(
 describe("P2.3 V2 viewerCore ownership", () => {
   const viewerSource = parse(VIEWER_STORE_FILE);
   const coreSource = parse(CORE_STORE_FILE);
+  const toolSource = parse(TOOL_STORE_FILE);
   const viewerInterface = findInterface(viewerSource, "ViewerState");
   const coreData = findInterface(coreSource, "ViewerCoreData");
   const coreActions = findInterface(coreSource, "ViewerCoreActions");
+  const toolData = findInterface(toolSource, "ToolStoreData");
+  const toolActions = findInterface(toolSource, "ToolStoreActions");
   const viewerKeys = interfaceKeys(viewerInterface);
   const coreDataKeys = interfaceKeys(coreData);
   const coreActionKeys = interfaceKeys(coreActions);
+  const toolKeys = [...interfaceKeys(toolData), ...interfaceKeys(toolActions)];
   const viewerObject = findStoreObject(viewerSource, "useViewerStore");
   const coreObject = findStoreObject(coreSource, "useViewerCoreStore");
+  const toolObject = findStoreObject(toolSource, "useToolStore");
   const coreDefaults = findFunctionReturnObject(coreSource, "freshViewerCoreState");
   const coreReset = findFunctionReturnObject(coreSource, "freshViewerCoreReset");
 
@@ -625,8 +636,10 @@ describe("P2.3 V2 viewerCore ownership", () => {
   it("keeps tool interaction and calibration state outside the live core", () => {
     const coreKeys = new Set([...coreDataKeys, ...coreActionKeys]);
     for (const member of CORE_BOUNDARY_EXCLUSIONS) {
-      expect(viewerKeys, `${member} remains on viewer/tool owner`).toContain(member);
-      expect(() => directProperty(viewerObject, member)).not.toThrow();
+      expect(toolKeys, `${member} remains on tool owner`).toContain(member);
+      expect(() => directProperty(toolObject, member)).not.toThrow();
+      expect(viewerKeys, `${member} deleted viewer owner`).not.toContain(member);
+      expect(directObjectKeys(viewerObject), `${member} deleted viewer implementation`).not.toContain(member);
       expect(coreKeys, `${member} excluded from viewerCore`).not.toContain(member);
       expect(directObjectKeys(coreDefaults), `${member} absent from core defaults`).not.toContain(member);
       expect(directObjectKeys(coreObject), `${member} absent from core actions`).not.toContain(member);
@@ -682,13 +695,13 @@ describe("P2.3 V2 split useNavigation topology", () => {
     expect(topology).toEqual(CURRENT_NAVIGATION_CALL_TOPOLOGY);
   });
 
-  it("keeps AnnotationOverlay on primitive page and mode selectors", () => {
+  it("keeps AnnotationOverlay on primitive page and tool-mode selectors", () => {
     const path = "src/components/viewer/AnnotationOverlay.tsx";
     const source = parse(path);
     expect(
       importedCallCount(
         source,
-        [VIEWER_OWNER.module, CORE_OWNER.module],
+        [VIEWER_OWNER.module, CORE_OWNER.module, TOOL_OWNER.module],
         "useNavigation",
       ),
     ).toBe(0);
@@ -700,7 +713,7 @@ describe("P2.3 V2 split useNavigation topology", () => {
     expect(coreAccesses).toEqual([{ kind: "selector", member: "pageNumber" }]);
     const modeAccesses = storeMemberAccesses(
       source,
-      VIEWER_OWNER,
+      TOOL_OWNER,
       new Set(["mode"]),
     );
     expect(modeAccesses).toEqual([{ kind: "selector", member: "mode" }]);

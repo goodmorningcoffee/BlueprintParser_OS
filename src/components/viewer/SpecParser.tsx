@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
+import { setSpecParseStep } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
@@ -39,7 +41,6 @@ export default function SpecParser() {
 
   const specParseRegion = useViewerStore((s) => s.specParseRegion);
   const setSpecParseRegion = useViewerStore((s) => s.setSpecParseRegion);
-  const setSpecParseStep = useViewerStore((s) => s.setSpecParseStep);
   const resetSpecParse = useViewerStore((s) => s.resetSpecParse);
 
   const paragraphBatch = useViewerStore((s) => s.paragraphBatch);
@@ -297,7 +298,7 @@ export default function SpecParser() {
             <button
               onClick={() => {
                 setSpecParseStep("select-region");
-                useViewerStore.getState().setMode("pointer");
+                useToolStore.getState().setMode("pointer");
               }}
               className="text-[10px] px-2 py-0.5 rounded border border-violet-500/40 text-violet-300 hover:bg-violet-500/10"
             >
@@ -308,7 +309,7 @@ export default function SpecParser() {
               onClick={() => {
                 resetSpecParse();
                 setSpecParseStep("select-region");
-                useViewerStore.getState().setMode("pointer");
+                useToolStore.getState().setMode("pointer");
               }}
               className="text-[9px] px-1.5 py-0.5 rounded text-[var(--muted)] hover:text-red-400"
             >

@@ -25,7 +25,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
@@ -88,9 +88,9 @@ function readCurrentAnnotations(): readonly ClientAnnotation[] {
 }
 
 // [refactor jul11 P2.2⑥] The history arrays intentionally bypass the annotation helper: unlike the
-// annotation collection, both stacks remain zustand UI/session state after C3.
+// annotation collection, both stacks remain zustand tool state after C3.
 function readHistory() {
-  const { takeoffUndoStack, takeoffRedoStack } = useViewerStore.getState();
+  const { takeoffUndoStack, takeoffRedoStack } = useToolStore.getState();
   return { takeoffUndoStack, takeoffRedoStack };
 }
 

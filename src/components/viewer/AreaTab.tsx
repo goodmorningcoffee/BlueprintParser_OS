@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, memo } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -19,10 +19,10 @@ import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist"
 // ─── Scale status bar (top of area tab) ─────────────────────
 function ScaleStatus() {
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
-  const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
-  const calibrationMode = useViewerStore((s) => s.calibrationMode);
-  const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
-  const resetCalibration = useViewerStore((s) => s.resetCalibration);
+  const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
+  const calibrationMode = useToolStore((s) => s.calibrationMode);
+  const setCalibrationMode = useToolStore((s) => s.setCalibrationMode);
+  const resetCalibration = useToolStore((s) => s.resetCalibration);
 
   const hasScale = !!scaleCalibrations[pageNumber];
 
@@ -78,11 +78,11 @@ export default memo(function AreaTab() {
   // group-create failure channel here is the inline `groupError` state, NOT alert (frozen quirk,
   // TakeoffTabsFreeze TA-3).
   const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
-  const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
-  const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
+  const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
+  const setActiveTakeoffItemId = useToolStore((s) => s.setActiveTakeoffItemId);
   const publicId = useSessionStore((s) => s.publicId);
   const pageDimensions = useViewerCoreStore((s) => s.pageDimensions);
-  const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
+  const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
   const isDemo = useSessionStore((s) => s.isDemo);
   const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();
 
@@ -392,20 +392,20 @@ export default memo(function AreaTab() {
     );
   };
 
-  const bucketFillActive = useViewerStore((s) => s.bucketFillActive);
-  const setBucketFillActive = useViewerStore((s) => s.setBucketFillActive);
-  const bucketFillBarrierMode = useViewerStore((s) => s.bucketFillBarrierMode);
-  const setBucketFillBarrierMode = useViewerStore((s) => s.setBucketFillBarrierMode);
-  const bucketFillBarriers = useViewerStore((s) => s.bucketFillBarriers);
-  const clearBucketFillBarriers = useViewerStore((s) => s.clearBucketFillBarriers);
-  const bucketFillTolerance = useViewerStore((s) => s.bucketFillTolerance);
-  const setBucketFillTolerance = useViewerStore((s) => s.setBucketFillTolerance);
-  const bucketFillDilatePx = useViewerStore((s) => s.bucketFillDilatePx);
-  const setBucketFillDilatePx = useViewerStore((s) => s.setBucketFillDilatePx);
-  const bucketFillResolution = useViewerStore((s) => s.bucketFillResolution);
-  const setBucketFillResolution = useViewerStore((s) => s.setBucketFillResolution);
-  const splitAreaActive = useViewerStore((s) => s.splitAreaActive);
-  const setSplitAreaActive = useViewerStore((s) => s.setSplitAreaActive);
+  const bucketFillActive = useToolStore((s) => s.bucketFillActive);
+  const setBucketFillActive = useToolStore((s) => s.setBucketFillActive);
+  const bucketFillBarrierMode = useToolStore((s) => s.bucketFillBarrierMode);
+  const setBucketFillBarrierMode = useToolStore((s) => s.setBucketFillBarrierMode);
+  const bucketFillBarriers = useToolStore((s) => s.bucketFillBarriers);
+  const clearBucketFillBarriers = useToolStore((s) => s.clearBucketFillBarriers);
+  const bucketFillTolerance = useToolStore((s) => s.bucketFillTolerance);
+  const setBucketFillTolerance = useToolStore((s) => s.setBucketFillTolerance);
+  const bucketFillDilatePx = useToolStore((s) => s.bucketFillDilatePx);
+  const setBucketFillDilatePx = useToolStore((s) => s.setBucketFillDilatePx);
+  const bucketFillResolution = useToolStore((s) => s.bucketFillResolution);
+  const setBucketFillResolution = useToolStore((s) => s.setBucketFillResolution);
+  const splitAreaActive = useToolStore((s) => s.splitAreaActive);
+  const setSplitAreaActive = useToolStore((s) => s.setSplitAreaActive);
 
   return (
     <>

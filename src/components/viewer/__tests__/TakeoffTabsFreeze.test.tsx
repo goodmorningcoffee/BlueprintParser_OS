@@ -32,7 +32,7 @@ import { render, screen, fireEvent, cleanup, waitFor, act, within } from "@testi
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useUiStore } from "@/stores/uiStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
 import { persistFetch } from "@/lib/client-persist";
@@ -98,7 +98,7 @@ function unrelatedAnn(id: number, name: string): ClientAnnotation {
   };
 }
 
-// Shared pending polygon for the BF cases — shape of viewerStore.bucketFillPendingPolygon.
+// Shared pending polygon for the BF cases — shape of toolStore.bucketFillPendingPolygon.
 const PENDING_POLYGON = {
   vertices: [
     { x: 0.1, y: 0.1 },
@@ -264,7 +264,7 @@ describe("AreaTab — demo NEVER writes (TA-4)", () => {
     fireEvent.change(screen.getByPlaceholderText("Area item name..."), { target: { value: "Demo Tile" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(screen.getByText("Demo Tile")).toBeInTheDocument());
-    await waitFor(() => expect(useViewerStore.getState().activeTakeoffItemId).toBeLessThan(0));
+    await waitFor(() => expect(useToolStore.getState().activeTakeoffItemId).toBeLessThan(0));
 
     // create group — demo branch: local temp group, NO POST
     fireEvent.click(screen.getByRole("button", { name: "+ New Group" }));
@@ -477,7 +477,7 @@ describe("LinearTab — demo NEVER writes (TL-3)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(screen.getByText("Demo Pipe")).toBeInTheDocument());
-    await waitFor(() => expect(useViewerStore.getState().activeTakeoffItemId).toBeLessThan(0));
+    await waitFor(() => expect(useToolStore.getState().activeTakeoffItemId).toBeLessThan(0));
 
     // create group — demo branch: local temp group, NO POST
     fireEvent.click(screen.getByRole("button", { name: "+ New Group" }));
@@ -678,7 +678,7 @@ describe("BucketFillAssignDialog — demo create&assign is local-only (BF-2)", (
     expect(anns[0].source).toBe("takeoff");
     expect((anns[0].data as { takeoffItemId?: number }).takeoffItemId).toBeLessThan(0); // demo temp id
     expect(anns[0].pageNumber).toBe(3);
-    expect(useViewerStore.getState().bucketFillPendingPolygon).toBeNull();
+    expect(useToolStore.getState().bucketFillPendingPolygon).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(persistFetchMock).not.toHaveBeenCalled();
   });
@@ -732,7 +732,7 @@ describe("BucketFillAssignDialog — non-demo create is server-first with the NU
     // its own POST is unresolved; a server-first rewrite of the hoisted ⑥ action fails here.
     expect(readSeededAnnotations(qc)).toHaveLength(1);
     expect(readSeededAnnotations(qc)[0].id).toBeLessThan(0);
-    expect(useViewerStore.getState().bucketFillPendingPolygon).toBeNull();
+    expect(useToolStore.getState().bucketFillPendingPolygon).toBeNull();
 
     annotationSave.resolve({ id: 900 });
     // annotation committed against the SERVER item id, then re-id'd from the annotations response
@@ -763,8 +763,8 @@ describe("BucketFillAssignDialog — direct existing-item G6 boundary", () => {
     expect(anns).toHaveLength(1);
     expect(anns[0].id).toBeLessThan(0);
     expect((anns[0].data as { takeoffItemId?: number }).takeoffItemId).toBe(7);
-    expect(useViewerStore.getState().bucketFillPendingPolygon).toBeNull();
-    expect(useViewerStore.getState().bucketFillError).toMatch(/NOT saved/);
+    expect(useToolStore.getState().bucketFillPendingPolygon).toBeNull();
+    expect(useToolStore.getState().bucketFillError).toMatch(/NOT saved/);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(persistFetchMock).not.toHaveBeenCalled();
   });
@@ -785,12 +785,12 @@ describe("BucketFillAssignDialog — direct existing-item G6 boundary", () => {
 
     const optimisticId = readSeededAnnotations(qc)[0]?.id;
     expect(optimisticId).toBeLessThan(0);
-    expect(useViewerStore.getState().bucketFillPendingPolygon).toBeNull();
+    expect(useToolStore.getState().bucketFillPendingPolygon).toBeNull();
 
     save.reject(new Error("annotation service offline"));
 
     await waitFor(() =>
-      expect(useViewerStore.getState().bucketFillError).toMatch(/NOT saved.*annotation service offline/),
+      expect(useToolStore.getState().bucketFillError).toMatch(/NOT saved.*annotation service offline/),
     );
     // NO rollback is the faithful existing policy. The exact temp row survives for the session.
     expect(readSeededAnnotations(qc).map((ann) => ann.id)).toEqual([optimisticId]);

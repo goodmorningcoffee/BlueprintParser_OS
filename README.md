@@ -505,7 +505,7 @@ PDFViewer (root — scroll, zoom, keyboard shortcuts)
 
 ### Zustand Store
 
-Viewer state is split into explicit owners: `sessionStore` owns project identity/demo/page-label/labeling-session metadata; `uiStore` owns presentation state; `viewerCoreStore` owns page navigation, zoom, and page dimensions; server collections use publicId-keyed Query facades. The residual `viewerStore` temporarily owns parse, tool, calibration, and drawing state. Prefer the domain hook or leaf store over direct cross-domain field access.
+Viewer state is split into explicit owners: `sessionStore` owns project identity/demo/page-label/labeling-session metadata; `uiStore` owns presentation state; `viewerCoreStore` owns page navigation, zoom, and page dimensions; `toolStore` owns interaction mode, calibration, takeoff placement, bucket/split/tag/symbol sessions, and tool history; server collections use publicId-keyed Query facades. The residual `viewerStore` temporarily owns parse flows, mutable server drafts/metadata, and the quarantined drawing cursor. Prefer the domain hook or leaf store over direct cross-domain field access; cross-owner behavior belongs in `viewerCommands`.
 
 ---
 
@@ -619,7 +619,7 @@ Works without AWS credentials — PDF viewing, annotations, QTO, search all func
 | | |
 |-|-|
 | **Runtime** | Next.js 16 (App Router), React 19, TypeScript 5 |
-| **State** | Zustand 5 (single store, 15 slice selectors, `useShallow()` memoization) |
+| **State** | Zustand 5 (session/UI/core/tool/residual owners with narrow selectors) + TanStack Query (project-keyed server collections) |
 | **Rendering** | pdfjs-dist 4 (PDF), HTML5 Canvas (7 overlay layers), CSS transform zoom |
 | **Styling** | Tailwind 4, 3 dark themes (Midnight/Slate/Graphite) |
 | **Database** | PostgreSQL 16, Drizzle ORM, 15 migrations |

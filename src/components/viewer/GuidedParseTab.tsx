@@ -4,6 +4,8 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { readTextractForPage } from "@/queries/textractCache";
 import { useViewerStore, useTableParse } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
+import { setTableParseStep } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useProject } from "@/stores/sessionStore";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
@@ -44,7 +46,6 @@ export default function GuidedParseTab({
   const {
     tableParseRegion, setTableParseRegion,
     tableParsedGrid, setTableParsedGrid,
-    setTableParseStep,
   } = useTableParse();
 
   // Guided parse store fields
@@ -160,9 +161,9 @@ export default function GuidedParseTab({
 
     resetGuidedParse();
     setParsed(true);
-    useViewerStore.getState().setMode("move");
+    useToolStore.getState().setMode("move");
   }, [queryClient, publicId, pageNumber, guidedParseRows, guidedParseCols, resetGuidedParse, detectCsiAndPersist,
-    setTableParsedGrid, setTableParseStep]);
+    setTableParsedGrid]);
 
   // ─── Repeat row down ───────────────────────────────────────
   const repeatRowDown = useCallback(() => {
@@ -199,14 +200,14 @@ export default function GuidedParseTab({
     setProposalInfo(null);
     setError(null);
     setParsed(false);
-    useViewerStore.getState().setMode("move");
+    useToolStore.getState().setMode("move");
   }, [resetGuidedParse, setTableParseRegion]);
 
   // ─── Set drawing mode on mount ─────────────────────────────
   useEffect(() => {
     if (!tableParseRegion && !guidedParseActive && !parsed) {
       setTableParseStep("select-region");
-      useViewerStore.getState().setMode("pointer");
+      useToolStore.getState().setMode("pointer");
     }
     return () => {
       resetGuidedParse();

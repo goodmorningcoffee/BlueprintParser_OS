@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useViewerStore, usePageData } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
 import {
   useUiStore,
@@ -37,8 +38,8 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const [editName, setEditName] = useState(projectName);
   // Slice selectors
   const { pageNumber, numPages, setPage } = useNavigation();
-  const mode = useViewerStore((s) => s.mode);
-  const setMode = useViewerStore((s) => s.setMode);
+  const mode = useToolStore((s) => s.mode);
+  const setMode = useToolStore((s) => s.setMode);
   const scale = useViewerCoreStore((s) => s.scale);
   const { publicId, isDemo, demoFeatureConfig } = useProject();
   const {

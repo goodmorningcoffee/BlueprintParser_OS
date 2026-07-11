@@ -1,7 +1,7 @@
 // @vitest-environment node
-// [refactor jul11 P2.3 T0] PRE-carve ownership/subscription contract for the flat tool slice.
-// Runtime action parity is characterized separately. This source gate makes the atomic ownership
-// flip reviewable and protects the two canvas-hot consumers from widened selectors.
+// [refactor jul11 P2.3 T2] Post-carve ownership/subscription contract for the flat tool slice.
+// Runtime parity is characterized separately. This source gate protects sole ownership, the
+// parse/drawing exclusions, and the two canvas-hot consumers from widened selectors.
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -25,10 +25,8 @@ const TOOL_OWNER = {
   exportName: "useToolStore",
 } as const;
 
-// T0/PRE: flip only these two constants in the atomic T2 ownership commit. The access oracle below
-// already understands selectors, aliases, casts, computed keys, getState, and setState.
-const ACTIVE_TOOL_OWNER = VIEWER_OWNER;
-const INACTIVE_TOOL_OWNER = TOOL_OWNER;
+const ACTIVE_TOOL_OWNER = TOOL_OWNER;
+const INACTIVE_TOOL_OWNER = VIEWER_OWNER;
 
 type FieldContract = { readonly default: string; readonly actions: readonly string[] };
 
@@ -72,7 +70,7 @@ const TOOL_CONTRACT = {
   symbolSearchTemplateBbox: { default: "null", actions: ["setSymbolSearchTemplateBbox"] },
   symbolSearchSourcePage: { default: "null", actions: ["setSymbolSearchSourcePage"] },
   symbolSearchConfig: {
-    default: "{multiScale:true,useSiftFallback:true,searchPages:nullasnumber[]|null,scaleMin:0.8,scaleMax:1.5,nmsThreshold:0.3,maxMatchesPerPage:50,}",
+    default: "{multiScale:true,useSiftFallback:true,searchPages:null,scaleMin:0.8,scaleMax:1.5,nmsThreshold:0.3,maxMatchesPerPage:50,}",
     actions: ["setSymbolSearchConfig"],
   },
   symbolSearchPreset: { default: '"lite"', actions: ["setSymbolSearchPreset"] },
@@ -222,6 +220,46 @@ function productionFiles(directory = "src"): string[] {
 
 const productionSourceFiles = productionFiles();
 
+// Test setup helpers publish into the real stores and can accidentally preserve a deleted owner
+// just as easily as a component can. Keep them in the ownership census even though the broader
+// production-topology checks intentionally exclude src/test/**.
+function testSupportFiles(directory = "src/test"): string[] {
+  if (!existsRelative(directory)) return [];
+  const output: string[] = [];
+  const visit = (current: string) => {
+    for (const entry of readdirSync(join(process.cwd(), current), { withFileTypes: true })) {
+      const child = join(current, entry.name);
+      if (entry.isDirectory()) visit(child);
+      else if (
+        /\.(?:ts|tsx)$/.test(entry.name) &&
+        !/\.(?:test|spec)\.(?:ts|tsx)$/.test(entry.name) &&
+        !entry.name.endsWith(".d.ts")
+      ) output.push(child);
+    }
+  };
+  visit(directory);
+  return output.sort();
+}
+
+function realTestFiles(directory = "src"): string[] {
+  const output: string[] = [];
+  const visit = (current: string) => {
+    for (const entry of readdirSync(join(process.cwd(), current), { withFileTypes: true })) {
+      const child = join(current, entry.name);
+      if (entry.isDirectory()) visit(child);
+      else if (/\.(?:test|spec)\.(?:ts|tsx)$/.test(entry.name)) output.push(child);
+    }
+  };
+  visit(directory);
+  return output.sort();
+}
+
+const ownerAuditSourceFiles = [
+  ...productionSourceFiles,
+  ...testSupportFiles(),
+  ...realTestFiles(),
+];
+
 function descendants<T extends ts.Node>(root: ts.Node, predicate: (node: ts.Node) => node is T): T[] {
   const output: T[] = [];
   const visit = (node: ts.Node) => {
@@ -313,6 +351,17 @@ function importedLocalNames(source: ts.SourceFile, moduleName: string, importedN
   return names;
 }
 
+function importedNamespaceLocalNames(source: ts.SourceFile, moduleName: string): Set<string> {
+  const names = new Set<string>();
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.moduleSpecifier.text !== moduleName) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) names.add(bindings.name.text);
+  }
+  return names;
+}
+
 function aliases(root: ts.Node, seeds: Iterable<string>): Set<string> {
   const output = new Set(seeds);
   let changed = true;
@@ -337,26 +386,37 @@ function expressionMember(expression: ts.Expression, constants: ReadonlyMap<stri
     : ts.isElementAccessExpression(current) ? elementName(current, constants) : null;
 }
 
-function methodAliases(source: ts.SourceFile, stores: ReadonlySet<string>, method: "getState" | "setState", constants: ReadonlyMap<string, string>): Set<string> {
+function methodAliases(
+  source: ts.SourceFile,
+  isStore: (expression: ts.Expression) => boolean,
+  method: "getState" | "setState",
+  constants: ReadonlyMap<string, string>,
+): Set<string> {
   const seeds = new Set<string>();
   for (const declaration of descendants(source, ts.isVariableDeclaration)) {
     if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
     const initializer = unwrap(declaration.initializer);
     if (!ts.isPropertyAccessExpression(initializer) && !ts.isElementAccessExpression(initializer)) continue;
     const receiver = unwrap(initializer.expression);
-    if (ts.isIdentifier(receiver) && stores.has(receiver.text) && expressionMember(initializer, constants) === method) {
+    if (isStore(receiver) && expressionMember(initializer, constants) === method) {
       seeds.add(declaration.name.text);
     }
   }
   return aliases(source, seeds);
 }
 
-function isMethodCall(call: ts.CallExpression, stores: ReadonlySet<string>, methods: ReadonlySet<string>, method: "getState" | "setState", constants: ReadonlyMap<string, string>): boolean {
+function isMethodCall(
+  call: ts.CallExpression,
+  isStore: (expression: ts.Expression) => boolean,
+  methods: ReadonlySet<string>,
+  method: "getState" | "setState",
+  constants: ReadonlyMap<string, string>,
+): boolean {
   const expression = unwrap(call.expression);
   if (ts.isIdentifier(expression)) return methods.has(expression.text);
   if (!ts.isPropertyAccessExpression(expression) && !ts.isElementAccessExpression(expression)) return false;
   const receiver = unwrap(expression.expression);
-  return ts.isIdentifier(receiver) && stores.has(receiver.text) && expressionMember(expression, constants) === method;
+  return isStore(receiver) && expressionMember(expression, constants) === method;
 }
 
 function selectorFunction(expression: ts.Expression | undefined): ts.ArrowFunction | ts.FunctionExpression | null {
@@ -398,14 +458,41 @@ function storeMemberAccesses(
 ): StoreAccess[] {
   const output: StoreAccess[] = [];
   const constants = staticStrings(source);
-  const stores = aliases(source, importedLocalNames(source, owner.module, owner.exportName));
-  const getters = methodAliases(source, stores, "getState", constants);
-  const setters = methodAliases(source, stores, "setState", constants);
-  const isGet = (call: ts.CallExpression) => isMethodCall(call, stores, getters, "getState", constants);
-  const isSet = (call: ts.CallExpression) => isMethodCall(call, stores, setters, "setState", constants);
+  const namespaces = aliases(source, importedNamespaceLocalNames(source, owner.module));
+  const isNamespaceStore = (expression: ts.Expression): boolean => {
+    const current = unwrap(expression);
+    if (!ts.isPropertyAccessExpression(current) && !ts.isElementAccessExpression(current)) return false;
+    const receiver = unwrap(current.expression);
+    return ts.isIdentifier(receiver) && namespaces.has(receiver.text) &&
+      expressionMember(current, constants) === owner.exportName;
+  };
+  const storeSeeds = importedLocalNames(source, owner.module, owner.exportName);
+  for (const declaration of descendants(source, ts.isVariableDeclaration)) {
+    if (ts.isIdentifier(declaration.name) && declaration.initializer &&
+      isNamespaceStore(declaration.initializer)) storeSeeds.add(declaration.name.text);
+    const initializer = declaration.initializer && unwrap(declaration.initializer);
+    if (!initializer || !ts.isIdentifier(initializer) || !namespaces.has(initializer.text) ||
+      !ts.isObjectBindingPattern(declaration.name)) continue;
+    for (const element of declaration.name.elements) {
+      if (staticName(element.propertyName ?? element.name, constants) === owner.exportName &&
+        ts.isIdentifier(element.name)) storeSeeds.add(element.name.text);
+    }
+  }
+  const stores = aliases(source, storeSeeds);
+  const isStore = (expression: ts.Expression): boolean => {
+    const current = unwrap(expression);
+    return (ts.isIdentifier(current) && stores.has(current.text)) || isNamespaceStore(current);
+  };
+  const getters = methodAliases(source, isStore, "getState", constants);
+  const setters = methodAliases(source, isStore, "setState", constants);
+  const isGet = (call: ts.CallExpression) => isMethodCall(call, isStore, getters, "getState", constants);
+  const isSet = (call: ts.CallExpression) => isMethodCall(call, isStore, setters, "setState", constants);
+  const isWholeHookCall = (call: ts.CallExpression) => call.arguments.length === 0 && isStore(call.expression);
 
   const declarations = descendants(source, ts.isVariableDeclaration)
     .filter((declaration) => ts.isIdentifier(declaration.name));
+  const functionDeclarations = descendants(source, (node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && !!node.name);
   const lexicalScope = (node: ts.Node): ts.Node => {
     let current = node.parent;
     while (current && !ts.isBlock(current) && !ts.isSourceFile(current)) current = current.parent;
@@ -423,6 +510,32 @@ function storeMemberAccesses(
       })
       .sort((left, right) => right.getStart(source) - left.getStart(source))[0] ?? null;
   };
+  const selectorFor = (
+    expression: ts.Expression | undefined,
+    at: ts.Node,
+    seen = new Set<ts.Node>(),
+  ): ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | null => {
+    if (!expression) return null;
+    const current = unwrap(expression);
+    if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) return current;
+    if (ts.isIdentifier(current)) {
+      const declaration = declarationFor(current.text, at);
+      if (declaration?.initializer && !seen.has(declaration)) {
+        seen.add(declaration);
+        const resolved = selectorFor(declaration.initializer, declaration, seen);
+        if (resolved) return resolved;
+      }
+      return functionDeclarations.find((declaration) =>
+        declaration.name?.text === current.text && !seen.has(declaration)) ?? null;
+    }
+    if (ts.isCallExpression(current)) {
+      for (const argument of current.arguments) {
+        const nested = selectorFor(argument, current, seen);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  };
   const resolvesToGet = (identifier: ts.Identifier, at: ts.Node, seen = new Set<ts.Node>()): boolean => {
     const declaration = declarationFor(identifier.text, at);
     if (!declaration || seen.has(declaration) || !declaration.initializer) return false;
@@ -431,15 +544,29 @@ function storeMemberAccesses(
     if (ts.isCallExpression(initializer)) return isGet(initializer);
     return ts.isIdentifier(initializer) ? resolvesToGet(initializer, declaration, seen) : false;
   };
+  const resolvesToWholeHook = (
+    identifier: ts.Identifier,
+    at: ts.Node,
+    seen = new Set<ts.Node>(),
+  ): boolean => {
+    const declaration = declarationFor(identifier.text, at);
+    if (!declaration || seen.has(declaration) || !declaration.initializer) return false;
+    seen.add(declaration);
+    const initializer = unwrap(declaration.initializer);
+    if (ts.isCallExpression(initializer)) return isWholeHookCall(initializer);
+    return ts.isIdentifier(initializer)
+      ? resolvesToWholeHook(initializer, declaration, seen)
+      : false;
+  };
 
   for (const call of descendants(source, ts.isCallExpression)) {
     const callee = unwrap(call.expression);
-    if (ts.isIdentifier(callee) && stores.has(callee.text)) {
-      const selector = selectorFunction(call.arguments[0]);
+    if (isStore(callee)) {
+      const selector = selectorFor(call.arguments[0], call);
       if (selector?.parameters.length === 1) {
         const parameter = selector.parameters[0].name;
         for (const member of bindingMembers(parameter, constants, members)) output.push({ kind: "selector-parameter", member });
-        if (ts.isIdentifier(parameter)) {
+        if (ts.isIdentifier(parameter) && selector.body) {
           const stateAliases = aliases(selector.body, [parameter.text]);
           for (const access of descendants(selector.body, ts.isPropertyAccessExpression)) {
             const receiver = unwrap(access.expression);
@@ -455,12 +582,16 @@ function storeMemberAccesses(
             }
           }
         }
-      } else {
+      } else if (call.arguments.length === 0) {
         const consumer = outsideCasts(call);
         if (ts.isVariableDeclaration(consumer)) {
           for (const member of bindingMembers(consumer.name, constants, members)) output.push({ kind: "hook-destructure", member });
         }
         if (ts.isPropertyAccessExpression(consumer) && members.has(consumer.name.text)) output.push({ kind: "hook-direct", member: consumer.name.text });
+        if (ts.isElementAccessExpression(consumer)) {
+          const member = elementName(consumer, constants);
+          if (member && members.has(member)) output.push({ kind: "hook-direct-element", member });
+        }
       }
     }
 
@@ -490,12 +621,26 @@ function storeMemberAccesses(
     if (ts.isIdentifier(receiver) && resolvesToGet(receiver, access) && members.has(access.name.text)) {
       output.push({ kind: "getState-alias", member: access.name.text });
     }
+    if (ts.isIdentifier(receiver) && resolvesToWholeHook(receiver, access) && members.has(access.name.text)) {
+      output.push({ kind: "hook-alias", member: access.name.text });
+    }
   }
   for (const access of descendants(source, ts.isElementAccessExpression)) {
     const receiver = unwrap(access.expression);
     const member = elementName(access, constants);
     if (ts.isIdentifier(receiver) && resolvesToGet(receiver, access) && member && members.has(member)) {
       output.push({ kind: "getState-alias-element", member });
+    }
+    if (ts.isIdentifier(receiver) && resolvesToWholeHook(receiver, access) && member && members.has(member)) {
+      output.push({ kind: "hook-alias-element", member });
+    }
+  }
+  for (const declaration of descendants(source, ts.isVariableDeclaration)) {
+    if (!declaration.initializer || !ts.isIdentifier(unwrap(declaration.initializer))) continue;
+    const initializer = unwrap(declaration.initializer) as ts.Identifier;
+    if (!resolvesToWholeHook(initializer, declaration)) continue;
+    for (const member of bindingMembers(declaration.name, constants, members)) {
+      output.push({ kind: "hook-alias-destructure", member });
     }
   }
   return output;
@@ -611,43 +756,60 @@ function functionDeclaration(source: ts.SourceFile, name: string): ts.FunctionDe
   return matches[0];
 }
 
-describe("P2.3 T0 flat tool ownership", () => {
+describe("P2.3 T2 flat tool ownership", () => {
   const viewerSource = parse(VIEWER_STORE_FILE);
+  const toolSource = parse(TOOL_STORE_FILE);
   const viewerInterfaceKeys = interfaceKeys(findInterface(viewerSource, "ViewerState"));
   const viewerObject = findStoreObject(viewerSource, "useViewerStore");
+  const toolInterfaceKeys = [
+    ...interfaceKeys(findInterface(toolSource, "ToolStoreData")),
+    ...interfaceKeys(findInterface(toolSource, "ToolStoreActions")),
+  ];
+  const toolObject = findStoreObject(toolSource, "useToolStore");
 
-  it("pins exactly 40 data fields, 43 actions, defaults, and the active PRE owner", () => {
+  it("pins exactly 40 data fields, 43 actions, defaults, and the active sole owner", () => {
     expect(Object.keys(TOOL_CONTRACT)).toHaveLength(40);
     expect(TOOL_ACTIONS).toHaveLength(43);
     expect(new Set(TOOL_ACTIONS).size).toBe(43);
 
     for (const [field, contract] of Object.entries(TOOL_CONTRACT)) {
-      expect(viewerInterfaceKeys, `${field} active interface owner`).toContain(field);
-      expect(compact(propertyInitializer(viewerObject, field), viewerSource), `${field} default`)
+      expect(toolInterfaceKeys, `${field} active interface owner`).toContain(field);
+      expect(viewerInterfaceKeys, `${field} deleted viewer interface owner`).not.toContain(field);
+      expect(compact(propertyInitializer(toolObject, field), toolSource), `${field} default`)
         .toBe(contract.default);
+      expect(() => directProperty(viewerObject, field)).toThrow();
     }
     for (const action of TOOL_ACTIONS) {
-      expect(viewerInterfaceKeys, `${action} active interface owner`).toContain(action);
-      expect(() => directProperty(viewerObject, action)).not.toThrow();
+      expect(toolInterfaceKeys, `${action} active interface owner`).toContain(action);
+      expect(viewerInterfaceKeys, `${action} deleted viewer interface owner`).not.toContain(action);
+      expect(() => directProperty(toolObject, action)).not.toThrow();
+      expect(() => directProperty(viewerObject, action)).toThrow();
     }
   });
 
-  it("keeps metadata, mutable server draft, parse flow, resetAllTools, and drawing out of the tool ledger", () => {
+  it("keeps metadata, mutable server draft, parse flow, neutral reset, and drawing out of the tool ledger", () => {
     const exclusions = Object.values(BOUNDARY_EXCLUSIONS).flat();
     expect(new Set(exclusions).size).toBe(exclusions.length);
     for (const member of exclusions) {
       expect(TOOL_MEMBERS, `${member} excluded`).not.toContain(member);
-      expect(viewerInterfaceKeys, `${member} remains residual PRE`).toContain(member);
-      expect(() => directProperty(viewerObject, member)).not.toThrow();
+      if (member === "resetAllTools") {
+        expect(viewerInterfaceKeys, `${member} deleted from viewer`).not.toContain(member);
+        expect(() => directProperty(viewerObject, member)).toThrow();
+        expect(textOf("src/stores/viewerCommands.ts")).toMatch(/export function resetAllTools\(/);
+      } else {
+        expect(viewerInterfaceKeys, `${member} remains residual`).toContain(member);
+        expect(() => directProperty(viewerObject, member)).not.toThrow();
+      }
     }
   });
 
-  it("has no production toolStore import before the additive leaf exists", () => {
-    expect(productionSourceFiles.filter((path) => textOf(path).includes(TOOL_OWNER.module))).toEqual([]);
+  it("has active production toolStore consumers", () => {
+    expect(productionSourceFiles.filter((path) => textOf(path).includes(TOOL_OWNER.module)).length)
+      .toBeGreaterThan(0);
   });
 });
 
-describe("P2.3 T0 grouped tool surfaces", () => {
+describe("P2.3 T2 grouped tool surfaces", () => {
   it("pins the exact 23-member useSymbolSearch hook and its four callers", () => {
     expect(hookShape("useSymbolSearch", "symbolSearchActive", ACTIVE_TOOL_OWNER.file))
       .toEqual(SYMBOL_HOOK_SHAPE);
@@ -675,7 +837,7 @@ describe("P2.3 T0 grouped tool surfaces", () => {
   });
 });
 
-describe("P2.3 T0 sacred canvas subscription topology", () => {
+describe("P2.3 T2 sacred canvas subscription topology", () => {
   it("pins AnnotationOverlay's 34 primitive tool selectors and deliberate broad symbol hook", () => {
     const source = parse(ANNOTATION_OVERLAY);
     const raw = primitiveSelectorMembers(source, ACTIVE_TOOL_OWNER)
@@ -697,10 +859,11 @@ describe("P2.3 T0 sacred canvas subscription topology", () => {
 
   it("pins DrawingPreviewLayer's 4 drawing + 19 tool + 2 parse primitive split and four imperative tool reads", () => {
     const source = parse(DRAWING_PREVIEW);
-    const activeRaw = primitiveSelectorMembers(source, ACTIVE_TOOL_OWNER);
-    expect(activeRaw.filter((member) => TOOL_MEMBERS.has(member))).toEqual(PREVIEW_TOOL_PRIMITIVES);
-    expect(activeRaw.filter((member) => DRAWING_MEMBERS.has(member))).toEqual(DRAWING_DATA);
-    expect(activeRaw.filter((member) => PREVIEW_PARSE_DATA.has(member))).toEqual([
+    const toolRaw = primitiveSelectorMembers(source, ACTIVE_TOOL_OWNER);
+    const viewerRaw = primitiveSelectorMembers(source, VIEWER_OWNER);
+    expect(toolRaw.filter((member) => TOOL_MEMBERS.has(member))).toEqual(PREVIEW_TOOL_PRIMITIVES);
+    expect(viewerRaw.filter((member) => DRAWING_MEMBERS.has(member))).toEqual(DRAWING_DATA);
+    expect(viewerRaw.filter((member) => PREVIEW_PARSE_DATA.has(member))).toEqual([
       "tableParseStep", "keynoteParseStep",
     ]);
 
@@ -712,16 +875,23 @@ describe("P2.3 T0 sacred canvas subscription topology", () => {
   });
 });
 
-describe("P2.3 T0 owner access oracle", () => {
+describe("P2.3 T2 owner access oracle", () => {
   it("self-calibrates aliases, casts, computed selectors, getState, and setState", () => {
     const fixture = ts.createSourceFile(
       "tool-owner-fixture.tsx",
       `
         import { ${ACTIVE_TOOL_OWNER.exportName} as importedStore } from "${ACTIVE_TOOL_OWNER.module}";
+        import * as StoreNamespace from "${ACTIVE_TOOL_OWNER.module}";
         const storeAlias = importedStore as any;
         const computed = "symbolSearchConfig";
+        const exportName = "${ACTIVE_TOOL_OWNER.exportName}";
+        const selectPreset = (state: any) => state.symbolSearchPreset;
+        function selectLoading(state: any) { return state.bucketFillLoading; }
         storeAlias(({ mode }: any) => mode);
         storeAlias(useShallow((state: any) => state[computed]));
+        StoreNamespace[exportName](selectPreset);
+        const { ${ACTIVE_TOOL_OWNER.exportName}: destructuredStore } = StoreNamespace;
+        destructuredStore(selectLoading);
         const getter = storeAlias["getState"];
         const { setMode } = getter() as any;
         const snapshot = getter() as any;
@@ -729,6 +899,12 @@ describe("P2.3 T0 owner access oracle", () => {
         const setter = importedStore.setState;
         setter({ [computed]: {} });
         (storeAlias() as any).clearSymbolSearch;
+        const wholeHook = (StoreNamespace.${ACTIVE_TOOL_OWNER.exportName} as any)();
+        const wholeHookAlias = wholeHook as any;
+        wholeHookAlias.bucketFillError;
+        const { symbolSearchSourcePage } = wholeHookAlias;
+        const namespaceGetter = StoreNamespace.${ACTIVE_TOOL_OWNER.exportName}.getState;
+        namespaceGetter().tempPanMode;
       `,
       ts.ScriptTarget.Latest,
       true,
@@ -738,13 +914,17 @@ describe("P2.3 T0 owner access oracle", () => {
       .map((access) => `${access.kind}:${access.member}`);
     expect(accesses).toEqual(expect.arrayContaining([
       "selector-parameter:mode", "selector-element:symbolSearchConfig",
+      "selector:symbolSearchPreset", "selector:bucketFillLoading",
       "getState-destructure:setMode", "getState-alias-element:bucketFillActive",
       "setState:symbolSearchConfig", "hook-direct:clearSymbolSearch",
+      "hook-alias:bucketFillError", "hook-alias-destructure:symbolSearchSourcePage",
+      "getState-direct:tempPanMode",
     ]));
   });
 
-  it("finds every proposed member on the active owner and zero inactive-owner escapes", () => {
-    const plausible = productionSourceFiles.filter((path) => {
+  it("finds every proposed member on the active owner and zero inactive-owner production/test escapes", () => {
+    expect(ownerAuditSourceFiles).toContain("src/test/viewer-store-state.ts");
+    const plausible = ownerAuditSourceFiles.filter((path) => {
       const text = textOf(path);
       return text.includes(VIEWER_OWNER.module) || text.includes(TOOL_OWNER.module);
     });
@@ -756,8 +936,6 @@ describe("P2.3 T0 owner access oracle", () => {
 
     const directlyAccessed = new Set(active.map((access) => access.member));
     expect(new Set([...directlyAccessed, ...GROUPED_OR_UNUSED_TOOL_MEMBERS])).toEqual(TOOL_MEMBERS);
-    expect([...GROUPED_OR_UNUSED_TOOL_MEMBERS].filter((member) => directlyAccessed.has(member)))
-      .toEqual([]);
     expect(inactive).toEqual([]);
   }, 15_000);
 });

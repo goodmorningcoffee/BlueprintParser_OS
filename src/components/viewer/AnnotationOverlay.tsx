@@ -20,10 +20,17 @@ import {
   useYoloTagActions,
   useYoloTagsForPage,
 } from "@/queries/useYoloTags";
-import { useViewerStore, useTableParse, useKeynoteParse, useSymbolSearch } from "@/stores/viewerStore";
+import { useViewerStore, useTableParse, useKeynoteParse } from "@/stores/viewerStore";
+import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore, useAnnotationFiltersUi } from "@/stores/uiStore";
-import { toggleTableParsePanel } from "@/stores/viewerCommands";
+import {
+  setKeynoteParseStep,
+  setNotesParseStep,
+  setSpecParseStep,
+  setTableParseStep,
+  toggleTableParsePanel,
+} from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
@@ -129,13 +136,13 @@ export default memo(function AnnotationOverlay({
 }: AnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
-  const mode = useViewerStore((s) => s.mode);
+  const mode = useToolStore((s) => s.mode);
   const { projectId: projectDbId, publicId, isDemo } = useProject();
   // [refactor jul10 P2.2④] qc for the readTakeoffItems bridge (handler-time sync reads).
   // useQueryClient is provider-stable; it adds ZERO subscriptions to this component.
   const qc = useQueryClient();
   const {
-    tableParseStep, setTableParseStep, tableParseRegion, setTableParseRegion,
+    tableParseStep, tableParseRegion, setTableParseRegion,
     tableParseColumnBBs, tableParseRowBBs,
   } = useTableParse();
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
@@ -152,8 +159,8 @@ export default memo(function AnnotationOverlay({
   const setActiveYoloTagId = useUiStore((s) => s.setActiveYoloTagId);
   const setYoloTagFilter = useUiStore((s) => s.setYoloTagFilter);
   const yoloTagVisibility = useUiStore((s) => s.yoloTagVisibility);
-  const yoloTagPickingMode = useViewerStore((s) => s.yoloTagPickingMode);
-  const setYoloTagPickingMode = useViewerStore((s) => s.setYoloTagPickingMode);
+  const yoloTagPickingMode = useToolStore((s) => s.yoloTagPickingMode);
+  const setYoloTagPickingMode = useToolStore((s) => s.setYoloTagPickingMode);
   const {
     symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches,
   } = useSymbolSearch();
@@ -222,7 +229,7 @@ export default memo(function AnnotationOverlay({
   const setAnnotationFilter = useUiStore((s) => s.setAnnotationFilter);
   const setTakeoffFilter = useUiStore((s) => s.setTakeoffFilter);
   const setSearch = useUiStore((s) => s.setSearch);
-  const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
+  const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
   // [refactor jul10 P2.2④] cache-backed items subscription (data ONLY — no actions destructured).
   // Re-render topology is a strict SUBSET of the old raw selector: items-key observers notify on
   // items CONTENT change only; group ops never reach this component (SPEC §7.3). The hook value
@@ -230,37 +237,37 @@ export default memo(function AnnotationOverlay({
   // one-macrotask refresh lag, sanctioned.
   const { takeoffItems } = useTakeoffItems();
   const hiddenTakeoffItemIds = useUiStore((s) => s.hiddenTakeoffItemIds);
-  const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
-  const calibrationMode = useViewerStore((s) => s.calibrationMode);
-  const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
-  const setCalibrationPoint = useViewerStore((s) => s.setCalibrationPoint);
-  const resetCalibration = useViewerStore((s) => s.resetCalibration);
-  const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
-  const polygonDrawingMode = useViewerStore((s) => s.polygonDrawingMode);
-  const setPolygonDrawingMode = useViewerStore((s) => s.setPolygonDrawingMode);
-  const polygonVertices = useViewerStore((s) => s.polygonVertices);
-  const addPolygonVertex = useViewerStore((s) => s.addPolygonVertex);
-  const resetPolygonDrawing = useViewerStore((s) => s.resetPolygonDrawing);
-  const undoLastVertex = useViewerStore((s) => s.undoLastVertex);
-  const bucketFillActive = useViewerStore((s) => s.bucketFillActive);
-  const bucketFillPreview = useViewerStore((s) => s.bucketFillPreview);
-  const bucketFillLoading = useViewerStore((s) => s.bucketFillLoading);
-  const setBucketFillPreview = useViewerStore((s) => s.setBucketFillPreview);
-  const setBucketFillLoading = useViewerStore((s) => s.setBucketFillLoading);
-  const setBucketFillError = useViewerStore((s) => s.setBucketFillError);
-  const bucketFillBarrierMode = useViewerStore((s) => s.bucketFillBarrierMode);
-  const addBucketFillBarrier = useViewerStore((s) => s.addBucketFillBarrier);
-  const setBucketFillActive = useViewerStore((s) => s.setBucketFillActive);
-  const splitAreaActive = useViewerStore((s) => s.splitAreaActive);
-  const setSplitAreaActive = useViewerStore((s) => s.setSplitAreaActive);
-  const splitLineA = useViewerStore((s) => s.splitLineA);
-  const splitLineB = useViewerStore((s) => s.splitLineB);
-  const setSplitLineEndpoint = useViewerStore((s) => s.setSplitLineEndpoint);
-  const splitPreview = useViewerStore((s) => s.splitPreview);
-  const setSplitPreview = useViewerStore((s) => s.setSplitPreview);
-  const setSplitError = useViewerStore((s) => s.setSplitError);
+  const setActiveTakeoffItemId = useToolStore((s) => s.setActiveTakeoffItemId);
+  const calibrationMode = useToolStore((s) => s.calibrationMode);
+  const setCalibrationMode = useToolStore((s) => s.setCalibrationMode);
+  const setCalibrationPoint = useToolStore((s) => s.setCalibrationPoint);
+  const resetCalibration = useToolStore((s) => s.resetCalibration);
+  const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
+  const polygonDrawingMode = useToolStore((s) => s.polygonDrawingMode);
+  const setPolygonDrawingMode = useToolStore((s) => s.setPolygonDrawingMode);
+  const polygonVertices = useToolStore((s) => s.polygonVertices);
+  const addPolygonVertex = useToolStore((s) => s.addPolygonVertex);
+  const resetPolygonDrawing = useToolStore((s) => s.resetPolygonDrawing);
+  const undoLastVertex = useToolStore((s) => s.undoLastVertex);
+  const bucketFillActive = useToolStore((s) => s.bucketFillActive);
+  const bucketFillPreview = useToolStore((s) => s.bucketFillPreview);
+  const bucketFillLoading = useToolStore((s) => s.bucketFillLoading);
+  const setBucketFillPreview = useToolStore((s) => s.setBucketFillPreview);
+  const setBucketFillLoading = useToolStore((s) => s.setBucketFillLoading);
+  const setBucketFillError = useToolStore((s) => s.setBucketFillError);
+  const bucketFillBarrierMode = useToolStore((s) => s.bucketFillBarrierMode);
+  const addBucketFillBarrier = useToolStore((s) => s.addBucketFillBarrier);
+  const setBucketFillActive = useToolStore((s) => s.setBucketFillActive);
+  const splitAreaActive = useToolStore((s) => s.splitAreaActive);
+  const setSplitAreaActive = useToolStore((s) => s.setSplitAreaActive);
+  const splitLineA = useToolStore((s) => s.splitLineA);
+  const splitLineB = useToolStore((s) => s.splitLineB);
+  const setSplitLineEndpoint = useToolStore((s) => s.setSplitLineEndpoint);
+  const splitPreview = useToolStore((s) => s.splitPreview);
+  const setSplitPreview = useToolStore((s) => s.setSplitPreview);
+  const setSplitError = useToolStore((s) => s.setSplitError);
   const showTakeoffPanel = useUiStore((s) => s.showTakeoffPanel);
-  const tempPanMode = useViewerStore((s) => s.tempPanMode);
+  const tempPanMode = useToolStore((s) => s.tempPanMode);
   // During keynote Step 2 with Column A drawn: only show YOLO fully inside Column A
   const isKeynoteYoloPicking = keynoteParseStep === "define-column" && keynoteColumnBBs.length >= 1;
   const keynoteColA = keynoteColumnBBs.length >= 1 ? keynoteColumnBBs[0] : null;
@@ -867,10 +874,10 @@ export default memo(function AnnotationOverlay({
 
   /** Save the current in-progress polygon as an area-polygon annotation */
   const savePolygon = useCallback(() => {
-    const verts = useViewerStore.getState().polygonVertices;
+    const verts = useToolStore.getState().polygonVertices;
     // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
     const items = readTakeoffItems(qc, publicId);
-    const activeId = useViewerStore.getState().activeTakeoffItemId;
+    const activeId = useToolStore.getState().activeTakeoffItemId;
     if (verts.length < 3) return;
 
     const activeItem = items.find((t) => t.id === activeId);
@@ -912,10 +919,10 @@ export default memo(function AnnotationOverlay({
       data: polygonData as unknown as Record<string, unknown>,
     }, {
       onError: (err) => {
-        useViewerStore.getState().setBucketFillError(
+        useToolStore.getState().setBucketFillError(
           err instanceof Error ? `Failed to save area: ${err.message}` : "Failed to save area",
         );
-        setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+        setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
       },
     });
 
@@ -925,7 +932,7 @@ export default memo(function AnnotationOverlay({
 
   /** Prepare bucket fill preview for item assignment (doesn't create annotation yet) */
   const prepareBucketFillPolygon = useCallback(() => {
-    const preview = useViewerStore.getState().bucketFillPreview;
+    const preview = useToolStore.getState().bucketFillPreview;
     if (!preview || preview.vertices.length < 3) return;
 
     const verts = preview.vertices;
@@ -960,7 +967,7 @@ export default memo(function AnnotationOverlay({
     // there's no context; pre-selecting the item IS that context. This matches
     // the free-polygon drawing flow at L780-820 which also commits directly
     // to the active item.
-    const activeId = useViewerStore.getState().activeTakeoffItemId;
+    const activeId = useToolStore.getState().activeTakeoffItemId;
     // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
     const activeItem = activeId
       ? readTakeoffItems(qc, publicId).find((t) => t.id === activeId)
@@ -987,10 +994,10 @@ export default memo(function AnnotationOverlay({
         data: polygonData as unknown as Record<string, unknown>,
       }, {
         onError: (err) => {
-          useViewerStore.getState().setBucketFillError(
+          useToolStore.getState().setBucketFillError(
             err instanceof Error ? `Failed to save area: ${err.message}` : "Failed to save area",
           );
-          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+          setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
         },
       });
       setBucketFillPreview(null);
@@ -998,7 +1005,7 @@ export default memo(function AnnotationOverlay({
     }
 
     // No active area item — fall through to the assign dialog flow.
-    useViewerStore.getState().setBucketFillPendingPolygon({
+    useToolStore.getState().setBucketFillPendingPolygon({
       vertices: [...verts],
       holes: holes.length > 0 ? holes.map((h) => ({ vertices: [...h.vertices] })) : undefined,
       method: preview.method,
@@ -1011,7 +1018,7 @@ export default memo(function AnnotationOverlay({
 
   /** Accept a pending Split Area preview: both halves stay under same takeoff item. */
   const acceptSplit = useCallback(() => {
-    const preview = useViewerStore.getState().splitPreview;
+    const preview = useToolStore.getState().splitPreview;
     if (!preview) return;
 
     // [refactor jul11 P2.2⑥] Accept runs after an arbitrary preview lifetime, so it must read
@@ -1021,13 +1028,13 @@ export default memo(function AnnotationOverlay({
     const currentItems = readTakeoffItems(qc, publicId);
     const target = currentAnnotations.find((a) => a.id === preview.targetAnnotationId);
     if (!target) {
-      useViewerStore.getState().setSplitPreview(null);
-      useViewerStore.getState().setSplitLineEndpoint("a", null as unknown as { x: number; y: number });
+      useToolStore.getState().setSplitPreview(null);
+      useToolStore.getState().setSplitLineEndpoint("a", null as unknown as { x: number; y: number });
       return;
     }
     const parentItem = currentItems.find((t) => t.id === (target.data as AreaPolygonData).takeoffItemId);
     if (!parentItem) {
-      useViewerStore.getState().setSplitPreview(null);
+      useToolStore.getState().setSplitPreview(null);
       return;
     }
 
@@ -1104,16 +1111,16 @@ export default memo(function AnnotationOverlay({
           }) as { id?: number } | null;
           if (saved?.id) updateAnnotation(tempAnnId, { id: saved.id });
         } catch (err) {
-          useViewerStore.getState().setSplitError(
+          useToolStore.getState().setSplitError(
             err instanceof Error ? `Failed to save split: ${err.message}` : "Failed to save split",
           );
-          setTimeout(() => useViewerStore.getState().setSplitError(null), 5000);
+          setTimeout(() => useToolStore.getState().setSplitError(null), 5000);
         }
       })();
     }
 
     // 4. Stay in split mode — clear preview + line, ready for next split. Escape exits.
-    const store = useViewerStore.getState();
+    const store = useToolStore.getState();
     store.setSplitPreview(null);
     store.setSplitLineEndpoint("a", null);
     store.setSplitLineEndpoint("b", null);
@@ -1121,10 +1128,10 @@ export default memo(function AnnotationOverlay({
 
   /** Save the current in-progress polyline as a linear-polyline annotation */
   const saveLinearPolyline = useCallback(() => {
-    const verts = useViewerStore.getState().polygonVertices;
+    const verts = useToolStore.getState().polygonVertices;
     // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
     const items = readTakeoffItems(qc, publicId);
-    const activeId = useViewerStore.getState().activeTakeoffItemId;
+    const activeId = useToolStore.getState().activeTakeoffItemId;
     if (verts.length < 2) return;
 
     const activeItem = items.find((t) => t.id === activeId);
@@ -1165,10 +1172,10 @@ export default memo(function AnnotationOverlay({
       data: polylineData as unknown as Record<string, unknown>,
     }, {
       onError: (err) => {
-        useViewerStore.getState().setBucketFillError(
+        useToolStore.getState().setBucketFillError(
           err instanceof Error ? `Failed to save line: ${err.message}` : "Failed to save line",
         );
-        setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+        setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
       },
     });
 
@@ -1196,10 +1203,10 @@ export default memo(function AnnotationOverlay({
               { projectId: publicId, annotationIds: persistedIds },
             );
           } catch (err) {
-            useViewerStore.getState().setBucketFillError(
+            useToolStore.getState().setBucketFillError(
               err instanceof Error ? `Failed to delete: ${err.message}` : "Failed to delete annotations",
             );
-            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+            setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
           }
         })();
       }
@@ -1215,10 +1222,10 @@ export default memo(function AnnotationOverlay({
         try {
           await persistFetch(`/api/annotations/${deleteId}`, undefined, "DELETE");
         } catch (err) {
-          useViewerStore.getState().setBucketFillError(
+          useToolStore.getState().setBucketFillError(
             err instanceof Error ? `Failed to delete: ${err.message}` : "Failed to delete annotation",
           );
-          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+          setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
         }
       })();
     }
@@ -1239,10 +1246,10 @@ export default memo(function AnnotationOverlay({
         try {
           await persistFetch(`/api/annotations/${annId}`, { bbox: ann.bbox }, "PUT");
         } catch (err) {
-          useViewerStore.getState().setBucketFillError(
+          useToolStore.getState().setBucketFillError(
             err instanceof Error ? `Failed to save move: ${err.message}` : "Failed to save move",
           );
-          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+          setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
         }
       })();
     }
@@ -1260,10 +1267,10 @@ export default memo(function AnnotationOverlay({
       try {
         await persistFetch(`/api/annotations/${annId}`, { bbox: ann.bbox, data: ann.data }, "PUT");
       } catch (err) {
-        useViewerStore.getState().setBucketFillError(
+        useToolStore.getState().setBucketFillError(
           err instanceof Error ? `Failed to save edit: ${err.message}` : "Failed to save edit",
         );
-        setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+        setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
       }
     })();
   }, [annotations, isDemo, publicId]);
@@ -1339,7 +1346,7 @@ export default memo(function AnnotationOverlay({
       }
 
       // Bucket fill mode — independent of item selection
-      const bfState = useViewerStore.getState();
+      const bfState = useToolStore.getState();
       if (bfState.bucketFillActive) {
         e.stopPropagation();
         const normX = pos.x / width;
@@ -1388,7 +1395,7 @@ export default memo(function AnnotationOverlay({
           holes?: { vertices: { x: number; y: number }[] }[];
           method: string;
         }) => {
-          useViewerStore.setState({
+          useToolStore.setState({
             bucketFillLoading: false,
             bucketFillPreview: {
               vertices: data.vertices,
@@ -1427,17 +1434,17 @@ export default memo(function AnnotationOverlay({
                   method: data.method || "server-raster",
                 });
               } else if (data?.type === "error") {
-                useViewerStore.getState().setBucketFillLoading(false);
-                useViewerStore.getState().setBucketFillError(data.error || "Bucket fill failed");
-                setTimeout(() => useViewerStore.getState().setBucketFillError(null), 4000);
+                useToolStore.getState().setBucketFillLoading(false);
+                useToolStore.getState().setBucketFillError(data.error || "Bucket fill failed");
+                setTimeout(() => useToolStore.getState().setBucketFillError(null), 4000);
               } else {
-                useViewerStore.getState().setBucketFillLoading(false);
+                useToolStore.getState().setBucketFillLoading(false);
               }
             })
             .catch((err) => {
-              useViewerStore.getState().setBucketFillLoading(false);
-              useViewerStore.getState().setBucketFillError(err?.message || "Bucket fill failed");
-              setTimeout(() => useViewerStore.getState().setBucketFillError(null), 4000);
+              useToolStore.getState().setBucketFillLoading(false);
+              useToolStore.getState().setBucketFillError(err?.message || "Bucket fill failed");
+              setTimeout(() => useToolStore.getState().setBucketFillError(null), 4000);
             });
         };
 
@@ -1571,10 +1578,10 @@ export default memo(function AnnotationOverlay({
           data: markerData as unknown as Record<string, unknown>,
         }, {
           onError: (err) => {
-            useViewerStore.getState().setBucketFillError(
+            useToolStore.getState().setBucketFillError(
               err instanceof Error ? `Failed to save marker: ${err.message}` : "Failed to save marker",
             );
-            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+            setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
           },
         });
 
@@ -1611,7 +1618,7 @@ export default memo(function AnnotationOverlay({
           if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
             e.stopPropagation();
             const model = (ann as any).data?.modelName as string || "unknown";
-            const store = useViewerStore.getState();
+            const store = useToolStore.getState();
             const session = useSessionStore.getState();
             store.setYoloTagPickingMode(false);
 
@@ -1624,7 +1631,7 @@ export default memo(function AnnotationOverlay({
             })
               .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
               .then(({ texts }) => {
-                useViewerStore.getState().setTagScanResults({
+                useToolStore.getState().setTagScanResults({
                   yoloClass: ann.name,
                   yoloModel: model,
                   texts: texts || [],
@@ -2047,7 +2054,7 @@ export default memo(function AnnotationOverlay({
       }
 
       // Start drawing in markup mode or tag-adding mode
-      if (mode !== "markup" && !useViewerStore.getState().tagAddingMode) return;
+      if (mode !== "markup" && !useToolStore.getState().tagAddingMode) return;
       e.stopPropagation();
       setSelectedId(null);
       setDrawing(true);
@@ -2210,7 +2217,7 @@ export default memo(function AnnotationOverlay({
 
     // Symbol search: capture template BB — don't auto-fire, let panel show config first
     if (symbolSearchActive) {
-      const store = useViewerStore.getState();
+      const store = useToolStore.getState();
       store.setSymbolSearchActive(false);
       store.setSymbolSearchTemplateBbox([minX, minY, maxX, maxY]);
       store.setSymbolSearchSourcePage(pageNumber);
@@ -2220,8 +2227,8 @@ export default memo(function AnnotationOverlay({
     // Table parse: finalize BB as region or column
     if (tableParseStep === "select-region") {
       setTableParseRegion([minX, minY, maxX, maxY]);
-      useViewerStore.getState().setTableParseStep("idle");
-      useViewerStore.getState().setMode("move");
+      setTableParseStep("idle");
+      useToolStore.getState().setMode("move");
       return;
     }
     if (tableParseStep === "define-column") {
@@ -2236,8 +2243,8 @@ export default memo(function AnnotationOverlay({
     // Keynote parse BBs
     if (keynoteParseStep === "select-region") {
       useViewerStore.getState().setKeynoteParseRegion([minX, minY, maxX, maxY]);
-      useViewerStore.getState().setKeynoteParseStep("idle");
-      useViewerStore.getState().setMode("move");
+      setKeynoteParseStep("idle");
+      useToolStore.getState().setMode("move");
       return;
     }
     if (keynoteParseStep === "define-column") {
@@ -2253,8 +2260,8 @@ export default memo(function AnnotationOverlay({
     const notesStep = useViewerStore.getState().notesParseStep;
     if (notesStep === "select-region") {
       useViewerStore.getState().setNotesParseRegion([minX, minY, maxX, maxY]);
-      useViewerStore.getState().setNotesParseStep("idle");
-      useViewerStore.getState().setMode("move");
+      setNotesParseStep("idle");
+      useToolStore.getState().setMode("move");
       return;
     }
     if (notesStep === "define-column") {
@@ -2270,15 +2277,15 @@ export default memo(function AnnotationOverlay({
     const specStep = useViewerStore.getState().specParseStep;
     if (specStep === "select-region") {
       useViewerStore.getState().setSpecParseRegion([minX, minY, maxX, maxY]);
-      useViewerStore.getState().setSpecParseStep("idle");
-      useViewerStore.getState().setMode("move");
+      setSpecParseStep("idle");
+      useToolStore.getState().setMode("move");
       return;
     }
 
     // Tag adding mode: drawn BB becomes a new instance of the active tag
-    const tagAddingId = useViewerStore.getState().tagAddingMode;
+    const tagAddingId = useToolStore.getState().tagAddingMode;
     if (tagAddingId) {
-      const store = useViewerStore.getState();
+      const store = useToolStore.getState();
       // This is an event-time read-modify-write. Read the exact live project cache rather than the
       // render-captured page projection so a same-tick producer cannot have its instances erased.
       const tag = readYoloTags(qc, publicId).find((t) => t.id === tagAddingId);
@@ -2307,7 +2314,7 @@ export default memo(function AnnotationOverlay({
   const handleDoubleClick = useCallback(() => {
     // Close polygon or linear polyline on double-click
     if (polygonDrawingMode === "drawing") {
-      const verts = useViewerStore.getState().polygonVertices;
+      const verts = useToolStore.getState().polygonVertices;
       // Remove duplicate vertex from the first mousedown of the double-click
       if (verts.length >= 2) {
         const last = verts[verts.length - 1];
@@ -2318,7 +2325,7 @@ export default memo(function AnnotationOverlay({
       }
 
       // Determine whether active item is linear or polygon
-      const store = useViewerStore.getState();
+      const store = useToolStore.getState();
       // [refactor jul10 P2.2④] items via the cache bridge; every OTHER field read on `store`
       // (activeTakeoffItemId, polygonVertices) stays getState — those fields are still zustand.
       // [DETECTOR jul10 closer] publicId freshness rides this callback's savePolygon/
@@ -2352,32 +2359,33 @@ export default memo(function AnnotationOverlay({
   useEffect(() => {
     function handleEscape(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        const store = useViewerStore.getState();
-        if (store.splitPreview) {
+        const tool = useToolStore.getState();
+        const viewer = useViewerStore.getState();
+        if (tool.splitPreview) {
           // Discard split preview, stay in split mode (line endpoints preserved)
-          store.setSplitPreview(null);
-        } else if (store.splitAreaActive) {
+          tool.setSplitPreview(null);
+        } else if (tool.splitAreaActive) {
           // Exit split area mode entirely
-          store.setSplitAreaActive(false);
-        } else if (store.bucketFillPendingPolygon) {
+          tool.setSplitAreaActive(false);
+        } else if (tool.bucketFillPendingPolygon) {
           // Dismiss item assignment dialog
-          store.setBucketFillPendingPolygon(null);
-        } else if (store.bucketFillPreview) {
+          tool.setBucketFillPendingPolygon(null);
+        } else if (tool.bucketFillPreview) {
           // Cancel bucket fill preview
-          store.setBucketFillPreview(null);
-        } else if (store.bucketFillBarrierMode) {
+          tool.setBucketFillPreview(null);
+        } else if (tool.bucketFillBarrierMode) {
           // Exit barrier mode back to fill mode
-          store.setBucketFillBarrierMode(false);
-          store.setBarrierPendingPoint(null);
-        } else if (store.bucketFillActive) {
+          tool.setBucketFillBarrierMode(false);
+          tool.setBarrierPendingPoint(null);
+        } else if (tool.bucketFillActive) {
           // Deactivate bucket fill entirely
-          store.setBucketFillActive(false);
-        } else if (store.tableParseStep !== "idle") {
-          store.setTableParseStep("idle");
-          store.setMode("move");
-        } else if (store.keynoteParseStep !== "idle") {
-          store.setKeynoteParseStep("idle");
-          store.setMode("move");
+          tool.setBucketFillActive(false);
+        } else if (viewer.tableParseStep !== "idle") {
+          setTableParseStep("idle");
+          tool.setMode("move");
+        } else if (viewer.keynoteParseStep !== "idle") {
+          setKeynoteParseStep("idle");
+          tool.setMode("move");
         } else if (polygonDrawingMode === "drawing") {
           resetPolygonDrawing();
           setMousePos(null);
@@ -2389,7 +2397,7 @@ export default memo(function AnnotationOverlay({
       }
       // Enter: accept bucket fill preview OR split preview OR close polygon/finish polyline
       if (e.key === "Enter") {
-        const store = useViewerStore.getState();
+        const store = useToolStore.getState();
         if (store.splitPreview) {
           e.preventDefault();
           acceptSplit();
@@ -2413,7 +2421,7 @@ export default memo(function AnnotationOverlay({
       // B: toggle barrier mode (when bucket fill is active)
       if (e.key === "b" || e.key === "B") {
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-        const store = useViewerStore.getState();
+        const store = useToolStore.getState();
         if (store.bucketFillActive && !store.bucketFillPreview) {
           e.preventDefault();
           store.setBucketFillBarrierMode(!store.bucketFillBarrierMode);
@@ -2421,7 +2429,7 @@ export default memo(function AnnotationOverlay({
       }
       // Ctrl+Z: undo last barrier (in barrier mode) or last polygon vertex
       if ((e.ctrlKey || e.metaKey) && e.key === "z") {
-        const store = useViewerStore.getState();
+        const store = useToolStore.getState();
         if (store.bucketFillActive && store.bucketFillBarriers.length > 0) {
           e.preventDefault();
           store.undoLastBarrier();
@@ -2454,10 +2462,10 @@ export default memo(function AnnotationOverlay({
             try {
               await persistFetch(`/api/annotations/${deleteId}`, undefined, "DELETE");
             } catch (err) {
-              useViewerStore.getState().setBucketFillError(
+              useToolStore.getState().setBucketFillError(
                 err instanceof Error ? `Failed to delete: ${err.message}` : "Failed to delete annotation",
               );
-              setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+              setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
             }
           })();
         }
@@ -2488,18 +2496,19 @@ export default memo(function AnnotationOverlay({
       resetCalibration();
     }
     // Reset table/keynote parse drawing state on page change
-    const store = useViewerStore.getState();
-    if (store.tableParseStep !== "idle") {
-      store.resetTableParse();
-      store.setMode("move");
+    const viewer = useViewerStore.getState();
+    const tool = useToolStore.getState();
+    if (viewer.tableParseStep !== "idle") {
+      viewer.resetTableParse();
+      tool.setMode("move");
     }
-    if (store.keynoteParseStep !== "idle") {
-      store.resetKeynoteParse();
-      store.setKeynoteParseRegion(null);
-      store.setMode("move");
+    if (viewer.keynoteParseStep !== "idle") {
+      viewer.resetKeynoteParse();
+      viewer.setKeynoteParseRegion(null);
+      tool.setMode("move");
     }
-    if (store.symbolSearchActive) {
-      store.setSymbolSearchActive(false);
+    if (tool.symbolSearchActive) {
+      tool.setSymbolSearchActive(false);
     }
   }, [pageNumber]);
 
@@ -2561,10 +2570,10 @@ export default memo(function AnnotationOverlay({
               "PUT",
             );
           } catch (err) {
-            useViewerStore.getState().setBucketFillError(
+            useToolStore.getState().setBucketFillError(
               err instanceof Error ? `Failed to save markup: ${err.message}` : "Failed to save markup",
             );
-            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+            setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
           }
         })();
       }
@@ -2580,10 +2589,10 @@ export default memo(function AnnotationOverlay({
         ...(annotationData ? { data: annotationData } : {}),
       }, {
         onError: (err) => {
-          useViewerStore.getState().setBucketFillError(
+          useToolStore.getState().setBucketFillError(
             err instanceof Error ? `Failed to save markup: ${err.message}` : "Failed to save markup",
           );
-          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+          setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
         },
       });
     }

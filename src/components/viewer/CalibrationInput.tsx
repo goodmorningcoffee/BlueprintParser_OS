@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useAnnotations } from "@/queries/useAnnotations";
@@ -15,9 +15,9 @@ const AREA_UNITS: AreaUnit[] = ["ft", "in", "m", "cm"];
 /** Scale calibration distance input — used by AreaTab, reusable by future tools. */
 export default function CalibrationInput() {
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
-  const calibrationPoints = useViewerStore((s) => s.calibrationPoints);
-  const setScaleCalibration = useViewerStore((s) => s.setScaleCalibration);
-  const resetCalibration = useViewerStore((s) => s.resetCalibration);
+  const calibrationPoints = useToolStore((s) => s.calibrationPoints);
+  const setScaleCalibration = useToolStore((s) => s.setScaleCalibration);
+  const resetCalibration = useToolStore((s) => s.resetCalibration);
   // [refactor jul10 P2.2⑥] Both demo and persisted calibration branches retain their original
   // render-captured value replacement, including the post-await concurrent-write hazard.
   const { annotations, setAnnotations } = useAnnotations();

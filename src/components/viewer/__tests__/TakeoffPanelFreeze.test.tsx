@@ -32,7 +32,7 @@ import "@testing-library/jest-dom";
 import { render, screen, fireEvent, cleanup, act, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { seedTakeoff } from "@/test/seed-takeoff";
 import { persistFetch } from "@/lib/client-persist";
 import type { ClientTakeoffItem } from "@/types";
@@ -189,7 +189,7 @@ describe("TakeoffPanel — same-row second edit <500ms CANCELS the first column'
 describe("TakeoffPanel — active status bar joins takeoff items with zustand activeTakeoffItemId (TP-3)", () => {
   it("seeded item + active id → status bar renders the item name and Stop", async () => {
     seedTakeoff(qc, [item({ id: 7, name: "Door" })], []);
-    useViewerStore.setState({ activeTakeoffItemId: 7 }); // STAYS zustand in ④ — the join at :44
+    useToolStore.setState({ activeTakeoffItemId: 7 }); // STAYS zustand in ④ — the join at :44
     render(<TakeoffPanel />, { wrapper });
     await advance(0);
 
@@ -225,7 +225,7 @@ describe("TakeoffPanel — demo temp survives panel unmount across >5min (TP-4)"
     view.unmount(); // panel closed — no takeoff read surface mounted anywhere
     // clear the active pointer (zustand, survives unmount) so the remount asserts the ROW only —
     // AutoQtoTab Q-7 precedent
-    useViewerStore.setState({ activeTakeoffItemId: null });
+    useToolStore.setState({ activeTakeoffItemId: null });
 
     await advance(6 * 60 * 1000); // > the 5min default gcTime a forgotten Infinity would fall back to
 

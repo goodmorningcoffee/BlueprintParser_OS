@@ -8,7 +8,7 @@
 // must stay unchanged across that backing-store flip. `seedAnnotations` is the only sanctioned seed
 // divergence point. A second,
 // models-locked DetectionPanel is deliberately used as the annotation observer instead of reading
-// `useViewerStore.getState().annotations`, so the assertions exercise a real subscribed production
+// the deleted viewer-store annotations field, so the assertions exercise a real subscribed production
 // read path and stayed backing-agnostic through C3.
 //
 // The default global fetch mock is FAIL-LOUD. Each success/failure case opens only the exact raw
@@ -27,7 +27,7 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useToolStore } from "@/stores/toolStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { setKeynotesForPage } from "@/queries/usePageWindow";
 import type {
@@ -141,7 +141,7 @@ function seedPendingShape() {
 }
 
 function seedPendingSymbolSearch() {
-  useViewerStore.setState({
+  useToolStore.setState({
     symbolSearchActive: true,
     symbolSearchLoading: false,
     symbolSearchResults: symbolResults,
