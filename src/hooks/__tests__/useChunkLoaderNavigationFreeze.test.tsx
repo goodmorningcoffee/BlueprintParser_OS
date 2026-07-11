@@ -8,6 +8,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useChunkLoader } from "@/hooks/useChunkLoader";
+import { queryKeys } from "@/queries/queryKeys";
 import { readAnnotations } from "@/queries/useAnnotations";
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedAnnotations } from "@/test/seed-annotations";
@@ -240,6 +241,40 @@ describe("useChunkLoader navigation freeze — N1/N2 cadence and range", () => {
       expect.any(Object),
     );
   });
+
+  it("reacts to a completed range that no longer covers the live page", async () => {
+    const a = deferred<Response>();
+    const recovery = deferred<Response>();
+    fetchMock.mockReturnValueOnce(a.promise).mockReturnValueOnce(recovery.promise);
+    act(() =>
+      useViewerStore.setState({
+        pageNumber: 50,
+        loadedPageRange: { from: 1, to: 15 },
+      }),
+    );
+    render(<LoaderOnly />, { wrapper });
+
+    advance(100);
+    const aSignal = signalForCall(0);
+    act(() => useViewerStore.setState({ pageNumber: 5 }));
+    // Page 5 is still covered by the old range, so returning there creates no B intent and does not
+    // abort A. When A replaces the range, range reactivity must schedule the recovery request.
+    advance(500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(aSignal.aborted).toBe(false);
+
+    a.resolve(okResponse(emptyChunk({ from: 43, to: 57 })));
+    await flushPromises();
+    expect(useViewerStore.getState().loadedPageRange).toEqual({ from: 43, to: 57 });
+
+    advance(99);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    advance(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "/api/projects/pid/pages?from=1&to=12",
+    );
+  });
 });
 
 describe("useChunkLoader navigation freeze — N3/N4 overlapping ownership", () => {
@@ -267,6 +302,7 @@ describe("useChunkLoader navigation freeze — N3/N4 overlapping ownership", () 
   });
 
   it("prevents abort-aware A catch from clearing B loading or exact-range dedupe", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const b = deferred<Response>();
     fetchMock
       .mockImplementationOnce((_url: string, init?: RequestInit) =>
@@ -292,6 +328,7 @@ describe("useChunkLoader navigation freeze — N3/N4 overlapping ownership", () 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(signalForCall(1).aborted).toBe(false);
     expect(useViewerStore.getState().chunkLoading).toBe(true);
+    expect(consoleError).not.toHaveBeenCalled();
   });
 });
 
@@ -647,5 +684,47 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
     await flushPromises();
 
     expect(useViewerStore.getState().loadedPageRange).toEqual({ from: 13, to: 27 });
+  });
+
+  it("keeps physical publication order annotations then range then scale", async () => {
+    const events: string[] = [];
+    const scale = annotation(50, "scale", 20, {
+      source: "takeoff-scale",
+      data: {
+        type: "scale-calibration",
+        point1: { x: 0, y: 0 },
+        point2: { x: 1, y: 0 },
+        realDistance: 10,
+        unit: "ft",
+      },
+    });
+    fetchMock.mockResolvedValueOnce(
+      okResponse(emptyChunk({ annotations: [scale] })),
+    );
+
+    const unsubscribeQuery = qc.getQueryCache().subscribe((event) => {
+      if (
+        event.type === "updated" &&
+        JSON.stringify(event.query.queryKey) ===
+          JSON.stringify(queryKeys.annotations.all("pid"))
+      ) {
+        events.push("annotations");
+      }
+    });
+    const unsubscribeStore = useViewerStore.subscribe((state, previous) => {
+      if (state.loadedPageRange !== previous.loadedPageRange) events.push("range");
+      if (state.scaleCalibrations !== previous.scaleCalibrations) events.push("scale");
+    });
+
+    try {
+      render(<LoaderOnly />, { wrapper });
+      advance(100);
+      await flushPromises();
+    } finally {
+      unsubscribeStore();
+      unsubscribeQuery();
+    }
+
+    expect(events).toEqual(["annotations", "range", "scale"]);
   });
 });
