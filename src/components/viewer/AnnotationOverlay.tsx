@@ -135,9 +135,18 @@ export default memo(function AnnotationOverlay({
   cssScale,
 }: AnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // scanClass writes project-agnostic tool preview state, so controller identity is its request
+  // token. A newer scan or project lifecycle invalidates the old completion without subscribing
+  // this sacred canvas to any additional store field.
+  const tagScanControllerRef = useRef<AbortController | null>(null);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const mode = useToolStore((s) => s.mode);
   const { projectId: projectDbId, publicId, isDemo } = useProject();
+  useEffect(() => () => {
+    const controller = tagScanControllerRef.current;
+    tagScanControllerRef.current = null;
+    controller?.abort();
+  }, [publicId]);
   // [refactor jul10 P2.2④] qc for the readTakeoffItems bridge (handler-time sync reads).
   // useQueryClient is provider-stable; it adds ZERO subscriptions to this component.
   const qc = useQueryClient();
@@ -1624,20 +1633,33 @@ export default memo(function AnnotationOverlay({
 
             // Trigger class scan — fetch all unique texts inside this class
             const pid = session.publicId;
+            const yoloClass = ann.name;
+            const yoloModel = model;
+            if (!pid) return;
+            tagScanControllerRef.current?.abort();
+            const controller = new AbortController();
+            tagScanControllerRef.current = controller;
             fetch(`/api/projects/${pid}/map-tags-batch`, {
               method: "POST",
+              signal: controller.signal,
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action: "scanClass", yoloClass: ann.name, yoloModel: model }),
+              body: JSON.stringify({ action: "scanClass", yoloClass, yoloModel }),
             })
               .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
               .then(({ texts }) => {
+                if (tagScanControllerRef.current !== controller || controller.signal.aborted) return;
+                if (useSessionStore.getState().publicId !== pid) return;
                 useToolStore.getState().setTagScanResults({
-                  yoloClass: ann.name,
-                  yoloModel: model,
+                  yoloClass,
+                  yoloModel,
                   texts: texts || [],
                 });
               })
-              .catch((err) => console.error("[YOLO_TAG] Class scan failed:", err));
+              .catch((err) => {
+                if ((err as Error).name === "AbortError") return;
+                if (tagScanControllerRef.current !== controller) return;
+                console.error("[YOLO_TAG] Class scan failed:", err);
+              });
             return;
           }
         }
