@@ -82,7 +82,7 @@ export default function TextPanel({ embedded = false }: { embedded?: boolean } =
         {tab === "annotations" && <AnnotationsTab annotations={annotations} pageNumber={pageNumber} />}
         {tab === "markups" && <MarkupsTab markups={userMarkups} />}
         {tab === "graph" && <GraphTab pageNumber={pageNumber} />}
-        {tab === "textract" && <TextractTab pageData={pageData} pageNumber={pageNumber} />}
+        {tab === "textract" && <TextractTab pageNumber={pageNumber} />}
       </div>
     </div>
   );
@@ -551,8 +551,12 @@ function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
 
 // ─── Textract Tab ────────────────────────────────────────────────
 
-function TextractTab({ pageData, pageNumber }: { pageData: any; pageNumber: number }) {
-  const { projectId: projectDbId } = useProject();
+export function TextractTab({ pageNumber }: { pageNumber: number }) {
+  // [refactor jul11 P2.2⑧ C1] Keep this read inside the narrow testable tab so the rerun freeze
+  // mounts only its real UI. C3 swaps this one selector to useTextractForPage; the DOM tests and
+  // their shared seed helper remain unchanged across that ownership flip.
+  const pageData = useViewerStore((s) => s.textractData[pageNumber]);
+  const { projectId: projectDbId, isDemo } = useProject();
   const setTextractData = useViewerStore((s) => s.setTextractData);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ durationMs: number; stats: { wordCount: number; lineCount: number; tableCount: number } } | null>(null);
@@ -565,7 +569,7 @@ function TextractTab({ pageData, pageNumber }: { pageData: any; pageNumber: numb
   };
 
   const handleRerun = async () => {
-    if (loading || !projectDbId) return;
+    if (loading || !projectDbId || isDemo) return;
     setLoading(true);
     setError(null);
     setResult(null);
@@ -594,22 +598,28 @@ function TextractTab({ pageData, pageNumber }: { pageData: any; pageNumber: numb
       <div>
         <button
           onClick={handleRerun}
-          disabled={loading || !projectDbId}
+          disabled={loading || !projectDbId || isDemo}
           className={`w-full px-3 py-2 rounded border text-sm font-medium transition-colors ${
             loading
               ? "border-[var(--border)] text-[var(--muted)] cursor-wait"
-              : !projectDbId
+              : !projectDbId || isDemo
               ? "border-[var(--border)] text-[var(--muted)]/50 cursor-not-allowed"
               : "border-[var(--accent)]/60 text-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20"
           }`}
         >
           {loading ? "Re-running Textract…" : "Re-run Textract"}
         </button>
-        <p className="mt-1 text-[10px] text-[var(--muted)] leading-snug">
-          Clears the cached result for page {pageNumber} and calls AnalyzeDocument fresh
-          with LAYOUT + TABLES. Overwrites <code className="font-mono">pages.textractData</code>.
-          Downstream CSI/text-annotation derivations stay cached — re-run reprocess separately to refresh those.
-        </p>
+        {isDemo ? (
+          <p className="mt-1 text-[10px] text-[var(--muted)] leading-snug">
+            Demo projects are read-only. Textract re-runs are unavailable in demo mode.
+          </p>
+        ) : (
+          <p className="mt-1 text-[10px] text-[var(--muted)] leading-snug">
+            Clears the cached result for page {pageNumber} and calls AnalyzeDocument fresh
+            with LAYOUT + TABLES. Overwrites <code className="font-mono">pages.textractData</code>.
+            Downstream CSI/text-annotation derivations stay cached — re-run reprocess separately to refresh those.
+          </p>
+        )}
       </div>
 
       <div className="border border-[var(--border)] rounded p-2 space-y-1">
