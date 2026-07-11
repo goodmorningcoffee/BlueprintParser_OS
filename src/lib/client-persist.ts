@@ -42,6 +42,7 @@ export async function persistFetch(
   url: string,
   body: unknown,
   method: "POST" | "PUT" | "PATCH" | "DELETE" = "POST",
+  signal?: AbortSignal,
 ): Promise<unknown> {
   let resp: Response;
   try {
@@ -49,6 +50,7 @@ export async function persistFetch(
       method,
       headers: { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
   } catch (err) {
     throw new Error(`Network error while saving: ${err instanceof Error ? err.message : String(err)}`);
