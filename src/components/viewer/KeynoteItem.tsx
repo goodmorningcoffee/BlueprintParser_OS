@@ -10,6 +10,11 @@ import {
   readPageIntelligence,
   setPageIntelligenceForPage,
 } from "@/queries/usePageWindow";
+import {
+  navigateYoloTag,
+  readYoloTags,
+  useYoloTagActions,
+} from "@/queries/useYoloTags";
 import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import type { YoloTag } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
@@ -33,6 +38,7 @@ interface KeynoteItemProps {
   onDelete: () => void;
   region?: any;
   publicId?: string;
+  yoloTags: YoloTag[];
 }
 
 /** Collapsible keynote item in All Keynotes list */
@@ -46,6 +52,7 @@ export default function KeynoteItem({
   onDelete,
   region,
   publicId,
+  yoloTags,
 }: KeynoteItemProps) {
   // [refactor jul10 P2.2③] context-only handle for the summaries cache seed (zero subscription —
   // per-item list component; a useQuery here would re-render every row on every summaries write).
@@ -79,7 +86,9 @@ export default function KeynoteItem({
     );
   }, []);
 
-  const yoloTags = useViewerStore((s) => s.yoloTags);
+  // The parent owns the one whole-list query observer. This row only needs action closures; in
+  // particular the bulk callback rejects a late map response after a project/bootstrap change.
+  const { addYoloTagsBulk } = useYoloTagActions();
   const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
   const isTagViewActive = region?.id ? !!activeTableTagViews[region.id] : false;
   const [nameError, setNameError] = useState<string | null>(null);
@@ -169,7 +178,9 @@ export default function KeynoteItem({
 
   const handleKeyClick = (key: string) => {
     const store = useViewerStore.getState();
-    const existing = store.yoloTags.find((t) => t.tagText === key && t.source === "keynote" && t.pageNumber === keynote.pageNumber);
+    const existing = readYoloTags(queryClient, store.publicId).find(
+      (t) => t.tagText === key && t.source === "keynote" && t.pageNumber === keynote.pageNumber,
+    );
     if (existing) {
       if (store.activeYoloTagId === existing.id) {
         store.setActiveYoloTagId(null);
@@ -385,10 +396,11 @@ export default function KeynoteItem({
                     setMapping(true);
                     setMapError(null);
                     try {
-                      const store = useViewerStore.getState();
+                      const livePublicId = useViewerStore.getState().publicId;
                       const tags: string[] = [...new Set<string>(
                         keynote.keys.map((k) => k.key.trim()).filter(Boolean)
-                      )].filter((tag) => !store.yoloTags.some((t) => t.tagText === tag && t.source === "keynote"));
+                      )].filter((tag) => !readYoloTags(queryClient, livePublicId)
+                        .some((t) => t.tagText === tag && t.source === "keynote"));
 
                       if (tags.length === 0) { setShowMapTags(false); return; }
 
@@ -424,7 +436,7 @@ export default function KeynoteItem({
                             instances: results[tag],
                           };
                         });
-                      if (newTags.length > 0) store.addYoloTagsBulk(newTags);
+                      if (newTags.length > 0) addYoloTagsBulk(newTags);
                       setShowMapTags(false);
                     } catch (err) {
                       console.error("[MAP_TAGS] Keynote batch mapping failed:", err);
@@ -476,8 +488,15 @@ export default function KeynoteItem({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      const tag = yoloTags.find((t) => t.tagText === k.key && t.source === "keynote");
-                      if (tag) useViewerStore.getState().tagBrowseNavigate(tag.id, 0);
+                      // The row prop drives render only; a click reads the just-published cache so
+                      // it cannot navigate a tag that was replaced between render and dispatch.
+                      const livePublicId = useViewerStore.getState().publicId;
+                      const tag = readYoloTags(queryClient, livePublicId).find(
+                        (t) => t.tagText === k.key && t.source === "keynote",
+                      );
+                      if (tag) {
+                        navigateYoloTag(queryClient, livePublicId, tag.id, 0);
+                      }
                     }}
                     className="text-[9px] text-cyan-400/40 hover:text-cyan-300 shrink-0 px-0.5"
                     title="Browse all instances"

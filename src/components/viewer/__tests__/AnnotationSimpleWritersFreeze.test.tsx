@@ -39,6 +39,10 @@ import type { ReactNode } from "react";
 import type { ClientAnnotation, YoloTag } from "@/types";
 import { useViewerStore } from "@/stores/viewerStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
+import {
+  readYoloTags,
+  seedYoloTagsFromBootstrap,
+} from "@/queries/useYoloTags";
 import AnnotationListItem from "../AnnotationListItem";
 import AnnotationPanel from "../AnnotationPanel";
 import CalibrationInput from "../CalibrationInput";
@@ -145,6 +149,7 @@ beforeEach(() => {
   useViewerStore.getState().resetProjectData();
   useViewerStore.setState({ publicId: "pid", isDemo: false });
   seedAnnotations(qc, []); // AFTER publicId — the post-C3 cache key derives from it.
+  seedYoloTagsFromBootstrap(qc, "pid", { yoloTags: [] });
 
   fetchMock.mockReset();
   fetchMock.mockImplementation((url: unknown) => {
@@ -194,8 +199,8 @@ describe("TagBrowseBar annotation edit freeze", () => {
       ann(102, { pageNumber: 3, name: "D-01", bbox: freeBbox }),
       ann(103, { pageNumber: 3, name: "Unrelated" }),
     ]);
+    seedYoloTagsFromBootstrap(qc, "pid", { yoloTags: [tag] });
     useViewerStore.setState({
-      yoloTags: [tag],
       tagBrowseId: tag.id,
       tagBrowseIndex: 0,
       pageNames: { 2: "A-102" },
@@ -235,7 +240,7 @@ describe("TagBrowseBar annotation edit freeze", () => {
     expect(screen.getAllByRole("button", { name: "D-02 1" })).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Unrelated 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Same-tick sentinel 1" })).toBeInTheDocument();
-    expect(useViewerStore.getState().yoloTags[0]).toMatchObject({ name: "D-02", tagText: "D-02" });
+    expect(readYoloTags(qc, "pid")[0]).toMatchObject({ name: "D-02", tagText: "D-02" });
     expect(useViewerStore.getState().llmHighlight?.label).toBe("D-02 — 1 of 2");
 
     // WHY advance: updateYoloTag schedules its separate project-intelligence debounce even though

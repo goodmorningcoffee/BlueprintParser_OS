@@ -11,6 +11,7 @@ import {
   setPageIntelligenceForPage,
 } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
+import { navigateYoloTag, readYoloTags } from "@/queries/useYoloTags";
 import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import EditableGrid from "./EditableGrid";
 
@@ -646,11 +647,11 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
                   onCellDoubleClick={(_, __, header, value) => {
                     if (!tableParsedGrid?.tagColumn || header !== tableParsedGrid.tagColumn) return;
                     const store = useViewerStore.getState();
-                    const tag = store.yoloTags.find(
+                    const tag = readYoloTags(queryClient, store.publicId).find(
                       (t) => t.tagText === value.trim() && t.source === "schedule"
                     );
                     if (tag && tag.instances.length > 0) {
-                      store.tagBrowseNavigate(tag.id, 0);
+                      navigateYoloTag(queryClient, store.publicId, tag.id, 0);
                     }
                   }}
                 />

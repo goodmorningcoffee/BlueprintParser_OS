@@ -84,142 +84,38 @@ describe("viewerStore — table parse", () => {
   });
 });
 
-describe("viewerStore — YOLO tags", () => {
-  it("starts with empty tags", () => {
-    expect(useViewerStore.getState().yoloTags).toEqual([]);
-  });
-
-  it("addYoloTag appends tag", () => {
-    useViewerStore.getState().addYoloTag({
-      id: "tag-1", name: "T-1", tagText: "T-1",
-      yoloClass: "door", yoloModel: "model-v1",
-      source: "schedule", scope: "project",
-      description: "Test door", instances: [],
-    });
-    expect(useViewerStore.getState().yoloTags).toHaveLength(1);
-  });
-
-  it("removeYoloTag removes by id", () => {
-    useViewerStore.getState().addYoloTag({
-      id: "tag-1", name: "T-1", tagText: "T-1",
-      yoloClass: "", yoloModel: "", source: "keynote", scope: "page",
-      description: "", instances: [],
-    });
-    useViewerStore.getState().removeYoloTag("tag-1");
-    expect(useViewerStore.getState().yoloTags).toHaveLength(0);
-  });
-
-  it("yoloTagVisibility defaults to empty, toggles work", () => {
+// [refactor jul11 P2.2⑨] Collection/CRUD/dedup/persistence cases moved to
+// queries/__tests__/useYoloTags.test.tsx with the Query ownership flip. Zustand retains UI only.
+describe("viewerStore — YOLO tag UI state", () => {
+  it("visibility defaults to empty, toggles, and reset clears all browse/table state", () => {
     expect(useViewerStore.getState().yoloTagVisibility).toEqual({});
     useViewerStore.getState().setYoloTagVisibility("tag-1", false);
     expect(useViewerStore.getState().yoloTagVisibility["tag-1"]).toBe(false);
-    useViewerStore.getState().setYoloTagVisibility("tag-1", true);
-    expect(useViewerStore.getState().yoloTagVisibility["tag-1"]).toBe(true);
-  });
-
-  it("addYoloTagsBulk appends in one store update (batch Map Tags path)", () => {
-    const mk = (id: string) => ({
-      id, name: id, tagText: id,
-      yoloClass: "door", yoloModel: "v1",
-      source: "schedule" as const, scope: "project" as const,
-      description: "", instances: [],
-    });
-    useViewerStore.getState().addYoloTagsBulk([mk("D-101"), mk("D-102"), mk("D-103")]);
-    const tags = useViewerStore.getState().yoloTags;
-    expect(tags).toHaveLength(3);
-    expect(tags.map((t) => t.id)).toEqual(["D-101", "D-102", "D-103"]);
-  });
-
-  it("addYoloTagsBulk coexists with addYoloTag (preserves order)", () => {
-    useViewerStore.getState().addYoloTag({
-      id: "first", name: "first", tagText: "first",
-      yoloClass: "", yoloModel: "", source: "keynote", scope: "page",
-      description: "", instances: [],
-    });
-    useViewerStore.getState().addYoloTagsBulk([{
-      id: "second", name: "second", tagText: "second",
-      yoloClass: "", yoloModel: "", source: "schedule", scope: "project",
-      description: "", instances: [],
-    }, {
-      id: "third", name: "third", tagText: "third",
-      yoloClass: "", yoloModel: "", source: "schedule", scope: "project",
-      description: "", instances: [],
-    }]);
-    expect(useViewerStore.getState().yoloTags.map((t) => t.id))
-      .toEqual(["first", "second", "third"]);
-  });
-
-  it("addYoloTagsBulk with empty array is a no-op", () => {
-    useViewerStore.getState().addYoloTagsBulk([]);
-    expect(useViewerStore.getState().yoloTags).toEqual([]);
-  });
-
-  it("addYoloTagsBulk replaces entries with the same (source, tagText, scope, yoloClass) tuple", () => {
-    // Simulate the real bug: user runs Map Tags twice with different strictness.
-    // First batch finds 3 instances; second batch finds 5 for the same tag.
-    // Under append semantics, yoloTags had two entries for "D-101" and
-    // find(...) returned the first (stale) one with 3 instances.
-    // Under dedup semantics, the second batch replaces the first.
-    const mkSchedule = (id: string, tagText: string, instanceCount: number) => ({
-      id, name: tagText, tagText,
-      yoloClass: "door", yoloModel: "v1",
-      source: "schedule" as const, scope: "project" as const,
-      description: "", instances: Array.from({ length: instanceCount }, (_, i) => ({
-        pageNumber: i + 1, annotationId: -1,
-        bbox: [0, 0, 0.1, 0.1] as [number, number, number, number],
-        confidence: 1.0,
-      })),
+    useViewerStore.setState({
+      activeYoloTagId: "tag-1",
+      activeYoloTagFilter: "tag-1",
+      tagBrowseId: "tag-1",
+      tagBrowseIndex: 4,
+      activeTableTagViews: {
+        region: {
+          regionId: "region",
+          pageNum: 1,
+          bbox: [0, 0, 1, 1],
+          tagTexts: ["D-101"],
+          source: "schedule",
+        },
+      },
     });
 
-    useViewerStore.getState().addYoloTagsBulk([mkSchedule("first-map-D-101", "D-101", 3)]);
-    expect(useViewerStore.getState().yoloTags).toHaveLength(1);
-    expect(useViewerStore.getState().yoloTags[0].instances).toHaveLength(3);
-
-    useViewerStore.getState().addYoloTagsBulk([mkSchedule("second-map-D-101", "D-101", 5)]);
-    const after = useViewerStore.getState().yoloTags;
-    expect(after).toHaveLength(1);
-    expect(after[0].id).toBe("second-map-D-101");
-    expect(after[0].instances).toHaveLength(5);
-  });
-
-  it("addYoloTagsBulk keeps distinct tuples — different source, scope, or yoloClass do not collide", () => {
-    const base = { tagText: "D-101", description: "", instances: [] };
-    useViewerStore.getState().addYoloTagsBulk([
-      { ...base, id: "a", name: "D-101", source: "schedule", scope: "project", yoloClass: "door", yoloModel: "v1" },
-      { ...base, id: "b", name: "D-101", source: "keynote",  scope: "project", yoloClass: "door", yoloModel: "v1" },
-      { ...base, id: "c", name: "D-101", source: "schedule", scope: "page",    yoloClass: "door", yoloModel: "v1", pageNumber: 2 },
-      { ...base, id: "d", name: "D-101", source: "schedule", scope: "project", yoloClass: "window", yoloModel: "v1" },
-    ]);
-    const tags = useViewerStore.getState().yoloTags;
-    expect(tags).toHaveLength(4);
-    expect(tags.map((t) => t.id).sort()).toEqual(["a", "b", "c", "d"]);
-  });
-
-  it("addYoloTagsBulk dedup is case-insensitive on tagText", () => {
-    const mk = (id: string, tagText: string) => ({
-      id, name: tagText, tagText,
-      yoloClass: "door", yoloModel: "v1",
-      source: "schedule" as const, scope: "project" as const,
-      description: "", instances: [],
+    useViewerStore.getState().resetProjectData();
+    expect(useViewerStore.getState()).toMatchObject({
+      yoloTagVisibility: {},
+      activeYoloTagId: null,
+      activeYoloTagFilter: null,
+      tagBrowseId: null,
+      tagBrowseIndex: 0,
+      activeTableTagViews: {},
     });
-    useViewerStore.getState().addYoloTagsBulk([mk("upper", "D-101"), mk("lower", "d-101")]);
-    const tags = useViewerStore.getState().yoloTags;
-    expect(tags).toHaveLength(1);
-    expect(tags[0].id).toBe("lower"); // later one wins
-  });
-
-  it("addYoloTag (single) replaces on identity-tuple match", () => {
-    const mk = (id: string) => ({
-      id, name: "D-101", tagText: "D-101",
-      yoloClass: "door", yoloModel: "v1",
-      source: "schedule" as const, scope: "project" as const,
-      description: "", instances: [],
-    });
-    useViewerStore.getState().addYoloTag(mk("first"));
-    useViewerStore.getState().addYoloTag(mk("second"));
-    const tags = useViewerStore.getState().yoloTags;
-    expect(tags).toHaveLength(1);
-    expect(tags[0].id).toBe("second");
   });
 });
 
@@ -253,7 +149,6 @@ describe("viewerStore — resetProjectData", () => {
     useViewerStore.getState().resetProjectData();
 
     expect(useViewerStore.getState().pageNumber).toBe(1);
-    expect(useViewerStore.getState().yoloTags).toEqual([]);
     expect(useViewerStore.getState().tableParseStep).toBe("idle");
   });
 });

@@ -15,7 +15,12 @@ import {
   readPageIntelligence,
   useKeynotesForPage,
 } from "@/queries/usePageWindow";
-import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useYoloTags, useSymbolSearch, useAnnotationFilters } from "@/stores/viewerStore";
+import {
+  readYoloTags,
+  useYoloTagActions,
+  useYoloTagsForPage,
+} from "@/queries/useYoloTags";
+import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useSymbolSearch, useAnnotationFilters } from "@/stores/viewerStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
@@ -132,10 +137,17 @@ export default memo(function AnnotationOverlay({
     keynoteParseStep, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs,
     setKeynoteYoloClass,
   } = useKeynoteParse();
-  const {
-    yoloTags, activeYoloTagId, setActiveYoloTagId, setYoloTagFilter,
-    yoloTagVisibility, yoloTagPickingMode, setYoloTagPickingMode,
-  } = useYoloTags();
+  // [refactor jul11 P2.2⑨] Sacred canvas observes only the current-page instance projection.
+  // Metadata for every tag is retained so the existing tag-text/active-tag semantics stay exact;
+  // instance edits on another page no longer repaint this canvas.
+  const yoloTags = useYoloTagsForPage(pageNumber);
+  const { updateYoloTag } = useYoloTagActions();
+  const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
+  const setActiveYoloTagId = useViewerStore((s) => s.setActiveYoloTagId);
+  const setYoloTagFilter = useViewerStore((s) => s.setYoloTagFilter);
+  const yoloTagVisibility = useViewerStore((s) => s.yoloTagVisibility);
+  const yoloTagPickingMode = useViewerStore((s) => s.yoloTagPickingMode);
+  const setYoloTagPickingMode = useViewerStore((s) => s.setYoloTagPickingMode);
   const {
     symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches,
   } = useSymbolSearch();
@@ -243,8 +255,6 @@ export default memo(function AnnotationOverlay({
   const setSplitError = useViewerStore((s) => s.setSplitError);
   const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
   const tempPanMode = useViewerStore((s) => s.tempPanMode);
-  const addYoloTag = useViewerStore((s) => s.addYoloTag);
-
   // During keynote Step 2 with Column A drawn: only show YOLO fully inside Column A
   const isKeynoteYoloPicking = keynoteParseStep === "define-column" && keynoteColumnBBs.length >= 1;
   const keynoteColA = keynoteColumnBBs.length >= 1 ? keynoteColumnBBs[0] : null;
@@ -2038,7 +2048,7 @@ export default memo(function AnnotationOverlay({
       setDrawStart(pos);
       setDrawEnd(pos);
     },
-    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, qc, publicId, projectDbId, pageNumber, persistCreate, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError, splitAreaActive, splitLineA, splitPreview, setSplitLineEndpoint, setSplitPreview, setSplitError]
+    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, qc, publicId, projectDbId, pageNumber, persistCreate, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError, splitAreaActive, splitLineA, splitPreview, setSplitLineEndpoint, setSplitPreview, setSplitError]
   );
 
   const handleMouseMove = useCallback(
@@ -2263,7 +2273,9 @@ export default memo(function AnnotationOverlay({
     const tagAddingId = useViewerStore.getState().tagAddingMode;
     if (tagAddingId) {
       const store = useViewerStore.getState();
-      const tag = store.yoloTags.find((t) => t.id === tagAddingId);
+      // This is an event-time read-modify-write. Read the exact live project cache rather than the
+      // render-captured page projection so a same-tick producer cannot have its instances erased.
+      const tag = readYoloTags(qc, publicId).find((t) => t.id === tagAddingId);
       if (tag) {
         const newInstance = {
           pageNumber,
@@ -2271,7 +2283,7 @@ export default memo(function AnnotationOverlay({
           bbox: [minX, minY, maxX, maxY] as [number, number, number, number],
           confidence: 1.0,
         };
-        store.updateYoloTag(tagAddingId, {
+        updateYoloTag(tagAddingId, {
           instances: [...tag.instances, newInstance],
         });
       }
@@ -2284,7 +2296,7 @@ export default memo(function AnnotationOverlay({
     setMarkupName("");
     setMarkupNote("");
     setTimeout(() => nameInputRef.current?.focus(), 50);
-  }, [dragging, selectedId, saveDragPosition, saveVertexEdit, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setTableParseRegion, setDrawing, mode, pageAnnotations, multiSelect]);
+  }, [dragging, selectedId, saveDragPosition, saveVertexEdit, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setTableParseRegion, setDrawing, mode, pageAnnotations, multiSelect, qc, updateYoloTag]);
 
   const handleDoubleClick = useCallback(() => {
     // Close polygon or linear polyline on double-click

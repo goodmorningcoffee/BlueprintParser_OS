@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useNavigation, useProject, usePageData, useDetection, useTextAnnotationDisplay, useYoloTags, useSymbolSearch } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useProject, usePageData, useDetection, useTextAnnotationDisplay, useSymbolSearch } from "@/stores/viewerStore";
 import {
   useCsiCodesByPage,
   useKeynotesByPage,
@@ -12,6 +12,7 @@ import { useCachedTextractForPages } from "@/queries/useTextract";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
+import { useYoloTagById } from "@/queries/useYoloTags";
 import { findPhraseMatches } from "./SearchHighlightOverlay";
 import { extractDisciplinePrefix, disciplineOrder } from "@/lib/page-utils";
 
@@ -35,7 +36,8 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   // filter/search controls remain in useDetection's zustand UI slice.
   const { annotations } = useAnnotations();
   const { activeTextAnnotationFilter, setTextAnnotationFilter } = useTextAnnotationDisplay();
-  const { yoloTags, setActiveYoloTagId, setYoloTagFilter } = useYoloTags();
+  const setActiveYoloTagId = useViewerStore((s) => s.setActiveYoloTagId);
+  const setYoloTagFilter = useViewerStore((s) => s.setYoloTagFilter);
   const { symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches } = useSymbolSearch();
   const { summaries } = useSummaries();
 
@@ -50,6 +52,9 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   const activeTakeoffFilter = useViewerStore((s) => s.activeTakeoffFilter);
   const setTakeoffFilter = useViewerStore((s) => s.setTakeoffFilter);
   const activeYoloTagFilter = useViewerStore((s) => s.activeYoloTagFilter);
+  // [refactor jul11 P2.2⑨] The sidebar filter consumes one tag, not the whole project catalog.
+  // Unrelated tag edits can no longer rebuild its virtualized page derivations.
+  const activeYoloTag = useYoloTagById(activeYoloTagFilter);
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -249,10 +254,6 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   }, [activeTakeoffFilter, annotations]);
 
   // YOLO Tag filter
-  const activeYoloTag = useMemo(() => {
-    if (!activeYoloTagFilter) return null;
-    return yoloTags.find((t) => t.id === activeYoloTagFilter) || null;
-  }, [activeYoloTagFilter, yoloTags]);
   const yoloTagFilteredPages = useMemo(() => {
     if (!activeYoloTag) return [];
     const pages = new Set<number>();

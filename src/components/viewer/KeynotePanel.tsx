@@ -13,6 +13,7 @@ import {
 } from "@/queries/usePageWindow";
 import { readTextractForPage } from "@/queries/textractCache";
 import { useTextractForPage } from "@/queries/useTextract";
+import { useYoloTagActions, useYoloTagRows } from "@/queries/useYoloTags";
 import HelpTooltip from "./HelpTooltip";
 import KeynoteItem from "./KeynoteItem";
 import CompareEditTab from "./CompareEditTab";
@@ -78,7 +79,11 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const resetKeynoteParse = useViewerStore((s) => s.resetKeynoteParse);
   const resetAllTools = useViewerStore((s) => s.resetAllTools);
   const projectId = useViewerStore((s) => s.projectId);
-  const addYoloTagsBulk = useViewerStore((s) => s.addYoloTagsBulk);
+  // One collection observer owns the whole keynote list. Passing the same row array down avoids
+  // creating one query observer per expanded/collapsed KeynoteItem.
+  const yoloTags = useYoloTagRows();
+  // Action-only facade keeps async map responses behind the captured project/epoch guard.
+  const { addYoloTagsBulk } = useYoloTagActions();
   const toggleTableCompareModal = useViewerStore((s) => s.toggleTableCompareModal);
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
@@ -811,6 +816,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                         }}
                         region={matchingRegion}
                         publicId={publicId}
+                        yoloTags={yoloTags}
                       />
                     );
                   })}

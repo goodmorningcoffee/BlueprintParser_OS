@@ -13,6 +13,10 @@ import { seedTakeoffCache } from "@/queries/useTakeoff";
 // [refactor jul11 P2.2⑦] One paired helper publishes annotations + the active page window.
 import { publishBootstrapPageWindow } from "@/queries/usePageWindow";
 import { clearTextractProject } from "@/queries/textractCache";
+import {
+  clearYoloTagsProject,
+  seedYoloTagsFromBootstrap,
+} from "@/queries/useYoloTags";
 import { useSearch } from "@/hooks/useSearch";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type { PageWindowResponse } from "@/queries/pageWindowCore";
@@ -72,7 +76,10 @@ export default function DemoProjectPage() {
       // [refactor jul11 P2.2⑧] Match the former reset-owned OCR lifetime with exact-prefix cleanup.
       // Never remove queryKeys.project(previousPublicId): other P2 domains have independent policy.
       const previousPublicId = useViewerStore.getState().publicId;
-      if (previousPublicId) await clearTextractProject(queryClient, previousPublicId);
+      if (previousPublicId) {
+        await clearTextractProject(queryClient, previousPublicId);
+        clearYoloTagsProject(queryClient, previousPublicId);
+      }
       resetProjectData();
       setIsDemo(true);
       useViewerStore.getState().setConfidenceThreshold(0);
@@ -99,12 +106,16 @@ export default function DemoProjectPage() {
       setDataUrl(data.dataUrl);
       setNumPages(data.numPages || 0);
 
-      // Hydrate project intelligence (CSI graph + YOLO tags)
-      if (data.projectIntelligence) {
-        useViewerStore.getState().setProjectIntelligenceData(data.projectIntelligence);
-        if ((data.projectIntelligence as any).yoloTags) {
-          useViewerStore.getState().setYoloTags((data.projectIntelligence as any).yoloTags);
-        }
+      // [refactor jul11 P2.2⑨] Demo tags are bootstrap-seeded into the same read cache and remain
+      // locally editable, while the action facade's captured demo gate prevents every persistence
+      // request. Strip the nested copy before publishing the remaining PI UI data to Zustand.
+      const projectIntelligenceWithoutYoloTags = seedYoloTagsFromBootstrap(
+        queryClient,
+        data.id,
+        data.projectIntelligence,
+      );
+      if (projectIntelligenceWithoutYoloTags) {
+        useViewerStore.getState().setProjectIntelligenceData(projectIntelligenceWithoutYoloTags);
       }
 
       // Hydrate demo feature config

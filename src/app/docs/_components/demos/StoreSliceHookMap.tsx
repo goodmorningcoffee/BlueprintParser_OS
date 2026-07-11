@@ -22,7 +22,9 @@ const SLICES = [
   // only project-wide CSI UI/filter controls.
   { name: "usePageData",             line: 1785, purpose: "project-wide CSI filter controls only" },
   { name: "useDetection",            line: 1793, purpose: "detection models + visibility/search filters (annotation data → query cache)" },
-  { name: "useYoloTags",             line: 1812, purpose: "tags, activeId, visibility, picking mode" },
+  // [refactor jul11 P2.2⑨] Collection/CRUD + serialized debounce moved to the query facade;
+  // only selection/visibility/picking/browse state remains in Zustand.
+  { name: "useYoloTags",             line: 481,  purpose: "→ src/queries facade (P2.2⑨): tags in query cache; tag UI/tool state stays zustand" },
   { name: "useTextAnnotationDisplay",line: 1831, purpose: "shown types + colors + hidden set" },
   { name: "useAnnotationFilters",    line: 1847, purpose: "active filter, csi filter, trade filter" },
   // [refactor jul10 P2.2②] row rewritten: the old entry was doubly stale (line pointed at useChat;

@@ -28,6 +28,15 @@ const LEGACY_PAGE_WINDOW_MEMBERS = [
   // oracle so casts/aliases cannot recreate either retired owner through the same escape hatches.
   "textractData",
   "setTextractData",
+  // ⑨ yoloTags is the final server collection retired from viewerStore. Keep it in the same
+  // alias/cast/computed-key oracle so a compatibility shortcut cannot recreate dual ownership.
+  "yoloTags",
+  "setYoloTags",
+  "addYoloTag",
+  "addYoloTagsBulk",
+  "removeYoloTag",
+  "updateYoloTag",
+  "tagBrowseNavigate",
 ] as const;
 
 const WHOLE_MAP_HOOK_WHITELIST = {

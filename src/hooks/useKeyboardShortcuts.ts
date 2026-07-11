@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { takeoffRedo, takeoffUndo } from "@/queries/useAnnotations";
+import { navigateYoloTag } from "@/queries/useYoloTags";
 
 export function useKeyboardShortcuts() {
   // [refactor jul10 P2.2⑥] Providers constructs this client once. Keep the listener mount-once;
@@ -25,7 +26,9 @@ export function useKeyboardShortcuts() {
       // Tag browse: Left/Right arrows cycle instances when browsing
       if (store.tagBrowseId && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
-        store.tagBrowseNavigate(store.tagBrowseId, store.tagBrowseIndex + (e.key === "ArrowLeft" ? -1 : 1));
+        // Event-time publicId + exact cache read preserve the mount-once listener without leaving
+        // tag collection ownership in Zustand.
+        navigateYoloTag(qc, store.publicId, store.tagBrowseId, store.tagBrowseIndex + (e.key === "ArrowLeft" ? -1 : 1));
         return;
       }
       if (store.tagBrowseId && e.key === "Escape") {

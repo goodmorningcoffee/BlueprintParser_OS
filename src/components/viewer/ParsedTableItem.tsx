@@ -7,6 +7,10 @@ import { useViewerStore } from "@/stores/viewerStore";
 import { seedSummariesCache } from "@/queries/useSummaries";
 import { readAnnotations } from "@/queries/useAnnotations";
 import {
+  readYoloTags,
+  useYoloTagActions,
+} from "@/queries/useYoloTags";
+import {
   readPageIntelligence,
   setPageIntelligenceForPage,
 } from "@/queries/usePageWindow";
@@ -21,7 +25,7 @@ interface ParsedTableItemProps {
   pageNames: Record<number, string>;
   isCurrentPage: boolean;
   onNavigate: () => void;
-  yoloTags: any[];
+  yoloTags: YoloTag[];
   pageNumber: number;
   publicId: string;
   onDelete: () => void;
@@ -42,6 +46,9 @@ export default memo(function ParsedTableItem({
 }: ParsedTableItemProps) {
   // [refactor jul10 P2.2③] context-only handle for the summaries cache seed (zero subscription).
   const queryClient = useQueryClient();
+  // [refactor jul11 P2.2⑨] Action callbacks carry the mounted project epoch across awaits but add
+  // no Query observer per table row. Render data still arrives once through the parent prop.
+  const { addYoloTagsBulk, tagBrowseNavigate } = useYoloTagActions();
   const itemRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -167,7 +174,8 @@ export default memo(function ParsedTableItem({
 
   const handleTagClick = (tag: string) => {
     const store = useViewerStore.getState();
-    const existing = store.yoloTags.find((t) => t.tagText === tag && t.source === "schedule");
+    const existing = readYoloTags(queryClient, publicId)
+      .find((candidate) => candidate.tagText === tag && candidate.source === "schedule");
     if (existing) {
       if (store.activeYoloTagId === existing.id) {
         store.setActiveYoloTagId(null);
@@ -657,11 +665,13 @@ export default memo(function ParsedTableItem({
                     setMapping(true);
                     setMapError(null);
                     try {
-                      const store = useViewerStore.getState();
                       // Collect unique tags from the selected column
+                      // Re-read at click time so a sibling table's just-published mapping wins over
+                      // this component's render snapshot without creating another observer.
+                      const existingTags = readYoloTags(queryClient, publicId);
                       const tags: string[] = [...new Set<string>(
                         rows.map((row: Record<string, string>) => (row[mapTagColumn] || "").trim()).filter(Boolean)
-                      )].filter((tag) => !store.yoloTags.some((t) => t.tagText === tag && t.source === "schedule"));
+                      )].filter((tag) => !existingTags.some((t) => t.tagText === tag && t.source === "schedule"));
 
                       if (tags.length === 0) { setShowMapTags(false); return; }
 
@@ -681,7 +691,7 @@ export default memo(function ParsedTableItem({
                       if (!res.ok) throw new Error(`Server error: ${res.status}`);
                       const { results }: { results: Record<string, ScoredMatch[]> } = await res.json();
 
-                      // Build YoloTag[] from results and bulk-add in one store update.
+                      // Build YoloTag[] from results and bulk-add in one cache publication.
                       const newTags: YoloTag[] = tags
                         .filter((t) => (results[t]?.length ?? 0) > 0)
                         .map((tag) => {
@@ -700,7 +710,9 @@ export default memo(function ParsedTableItem({
                             instances: results[tag],
                           };
                         });
-                      if (newTags.length > 0) store.addYoloTagsBulk(newTags);
+                      // The action hook rejects this late result if loader ownership changed while
+                      // the request was in flight (including same-publicId reopen).
+                      if (newTags.length > 0) addYoloTagsBulk(newTags);
                       setShowMapTags(false);
                     } catch (err) {
                       console.error("[MAP_TAGS] Batch mapping failed:", err);
@@ -736,7 +748,7 @@ export default memo(function ParsedTableItem({
                     if (!rt.tag) return;
                     const tag = yoloTags.find((t: any) => t.tagText === rt.tag && t.source === "schedule");
                     if (tag && tag.instances?.length > 0) {
-                      useViewerStore.getState().tagBrowseNavigate(tag.id, 0);
+                      tagBrowseNavigate(tag.id, 0);
                     }
                   }}
                   className={`flex-1 text-left text-[10px] px-1.5 py-0.5 rounded text-[var(--muted)] ${
@@ -758,7 +770,7 @@ export default memo(function ParsedTableItem({
                     onClick={(e) => {
                       e.stopPropagation();
                       const tag = yoloTags.find((t: any) => t.tagText === rt.tag && t.source === "schedule");
-                      if (tag) useViewerStore.getState().tagBrowseNavigate(tag.id, 0);
+                      if (tag) tagBrowseNavigate(tag.id, 0);
                     }}
                     className="text-[9px] text-cyan-400/40 hover:text-cyan-300 shrink-0 px-0.5"
                     title="Browse all instances"

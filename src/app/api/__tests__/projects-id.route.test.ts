@@ -107,9 +107,17 @@ describe.skipIf(!dbUp)("PUT /api/projects/[id]", () => {
       .where(eq(projects.id, project.id));
     asUser(user);
 
+    const yoloTags = [{ id: "tag-1", tagText: "D-101", instances: [] }];
     const { status, body } = await readJson(
       await PUT(
-        makeReq("x", { method: "PUT", body: { name: "renamed", classCsiOverrides: { door: "08 11 00" } } }),
+        makeReq("x", {
+          method: "PUT",
+          body: {
+            name: "renamed",
+            classCsiOverrides: { door: "08 11 00" },
+            yoloTags,
+          },
+        }),
         params({ id: project.publicId }),
       ),
     );
@@ -121,6 +129,54 @@ describe.skipIf(!dbUp)("PUT /api/projects/[id]", () => {
     const pi = row.projectIntelligence as Record<string, unknown>;
     expect(pi.summaries).toEqual({ keep: true }); // merge, not replace
     expect(pi.classCsiOverrides).toEqual({ door: "08 11 00" });
+    expect(pi.yoloTags).toEqual(yoloTags);
+  });
+
+  it("rejects yoloTags writes to a demo project for both its owner and a cross-company root", async () => {
+    const { user, project } = await createWorld({
+      isDemo: true,
+      projectIntelligence: { yoloTags: [{ id: "keep" }] } as any,
+    });
+
+    asUser(user);
+    const owner = await readJson(
+      await PUT(
+        makeReq("x", { method: "PUT", body: { yoloTags: [] } }),
+        params({ id: project.publicId }),
+      ),
+    );
+    expect(owner.status).toBe(403);
+    expect(owner.body).toEqual({
+      error: { code: "FORBIDDEN", message: "Demo projects are read-only" },
+    });
+
+    const root = await createUser((await createCompany()).id, {
+      isRootAdmin: true,
+      role: "admin",
+    });
+    asUser(root);
+    expect((await PUT(
+      makeReq("x", { method: "PUT", body: { yoloTags: [] } }),
+      params({ id: project.publicId }),
+    )).status).toBe(403);
+
+    const [row] = await db.select().from(projects).where(eq(projects.id, project.id));
+    expect((row.projectIntelligence as any).yoloTags).toEqual([{ id: "keep" }]);
+  });
+
+  it("rejects a non-array yoloTags payload without touching project intelligence", async () => {
+    const { user, project } = await createWorld({
+      projectIntelligence: { keep: true } as any,
+    });
+    asUser(user);
+    const { status, body } = await readJson(await PUT(
+      makeReq("x", { method: "PUT", body: { yoloTags: { corrupt: true } } }),
+      params({ id: project.publicId }),
+    ));
+    expect(status).toBe(400);
+    expect(body.error.code).toBe("VALIDATION");
+    const [row] = await db.select().from(projects).where(eq(projects.id, project.id));
+    expect(row.projectIntelligence).toEqual({ keep: true });
   });
 
   it("cross-tenant PUT is 404 and writes nothing", async () => {

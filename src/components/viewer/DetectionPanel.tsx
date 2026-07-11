@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useYoloTags } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePanels, useProject, useDetection } from "@/stores/viewerStore";
 import { readAnnotations, useAnnotations, writeAnns } from "@/queries/useAnnotations";
+import { readYoloTags, useYoloTags } from "@/queries/useYoloTags";
 import {
   setKeynotesForPage,
   useKeynotesByPage,
@@ -58,7 +59,7 @@ export default function DetectionPanel({
   const {
     yoloTags, activeYoloTagId, setActiveYoloTagId,
     setYoloTagFilter, yoloTagVisibility, setYoloTagVisibility,
-    removeYoloTag, updateYoloTag, yoloTagPickingMode, setYoloTagPickingMode,
+    addYoloTagsBulk, removeYoloTag, updateYoloTag, yoloTagPickingMode, setYoloTagPickingMode,
     tagScanResults, setTagScanResults, tagAddingMode, setTagAddingMode,
   } = useYoloTags();
 
@@ -79,6 +80,7 @@ export default function DetectionPanel({
   const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
   const projectId = useViewerStore((s) => s.projectId);
+  const publicId = useViewerStore((s) => s.publicId);
 
   const pageKeynotes = keynotes[pageNumber] || [];
   const hasMultiPageKeynotes = useMemo(() => Object.keys(keynotes).length > 1, [keynotes]);
@@ -183,6 +185,39 @@ export default function DetectionPanel({
   function handleToggleFilter(name: string) {
     if (activeAnnotationFilter === name) { setAnnotationFilter(null); setSearch(""); }
     else setAnnotationFilter(name);
+  }
+
+  function acceptScannedTags(selectedOnly: boolean) {
+    if (!tagScanResults) return;
+    // [refactor jul11 P2.2⑨] Read the cache at click time: this scan preview may have stayed
+    // mounted while another tag editor published since the render. The local identity set also
+    // reproduces the legacy sequential action's duplicate suppression within this scan batch.
+    const existing = readYoloTags(queryClient, publicId);
+    const accepted: YoloTag[] = [];
+    const acceptedKeys = new Set(
+      existing.map((tag) => `${tag.tagText.toUpperCase()}::${tag.yoloClass}`),
+    );
+    for (const text of tagScanResults.texts) {
+      const selectionKey = text.text || "__empty__";
+      const checked = scanSelections[selectionKey] ?? (text.text !== "");
+      if (!text.text || (selectedOnly && !checked)) continue;
+
+      const identity = `${text.text.toUpperCase()}::${tagScanResults.yoloClass}`;
+      if (acceptedKeys.has(identity)) continue;
+      acceptedKeys.add(identity);
+      accepted.push({
+        id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: text.text,
+        tagText: text.text,
+        yoloClass: tagScanResults.yoloClass,
+        yoloModel: tagScanResults.yoloModel,
+        source: "manual",
+        scope: "project",
+        instances: text.instances,
+      });
+    }
+    // One immutable publication/save replaces the legacy N-action render storm.
+    addYoloTagsBulk(accepted);
   }
 
   return (
@@ -469,24 +504,7 @@ export default function DetectionPanel({
               <div className="flex gap-1 px-2 py-2 border-t border-amber-500/20">
                 <button
                   onClick={() => {
-                    const store = useViewerStore.getState();
-                    for (const t of tagScanResults.texts) {
-                      const key = t.text || "__empty__";
-                      const checked = scanSelections[key] ?? (t.text !== "");
-                      if (!checked || !t.text) continue;
-                      // Skip if tag already exists
-                      if (store.yoloTags.some((et) => et.tagText.toUpperCase() === t.text.toUpperCase() && et.yoloClass === tagScanResults.yoloClass)) continue;
-                      store.addYoloTag({
-                        id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                        name: t.text,
-                        tagText: t.text,
-                        yoloClass: tagScanResults.yoloClass,
-                        yoloModel: tagScanResults.yoloModel,
-                        source: "manual",
-                        scope: "project",
-                        instances: t.instances,
-                      });
-                    }
+                    acceptScannedTags(true);
                     setTagScanResults(null);
                     setScanSelections({});
                   }}
@@ -503,21 +521,7 @@ export default function DetectionPanel({
                     }
                     setScanSelections(all);
                     // Then trigger accept
-                    const store = useViewerStore.getState();
-                    for (const t of tagScanResults.texts) {
-                      if (!t.text) continue;
-                      if (store.yoloTags.some((et) => et.tagText.toUpperCase() === t.text.toUpperCase() && et.yoloClass === tagScanResults.yoloClass)) continue;
-                      store.addYoloTag({
-                        id: `scan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                        name: t.text,
-                        tagText: t.text,
-                        yoloClass: tagScanResults.yoloClass,
-                        yoloModel: tagScanResults.yoloModel,
-                        source: "manual",
-                        scope: "project",
-                        instances: t.instances,
-                      });
-                    }
+                    acceptScannedTags(false);
                     setTagScanResults(null);
                     setScanSelections({});
                   }}

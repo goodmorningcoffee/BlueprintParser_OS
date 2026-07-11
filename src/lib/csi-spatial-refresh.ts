@@ -10,6 +10,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { computeCsiSpatialMap, type CsiSpatialGridConfig } from "@/lib/csi-spatial";
 import { readAnnotations } from "@/queries/useAnnotations";
+import { readYoloTags } from "@/queries/useYoloTags";
 import {
   readPageIntelligence,
   readTextAnnotationsForPage,
@@ -21,8 +22,8 @@ import { useViewerStore } from "@/stores/viewerStore";
  * Recompute the CSI spatial map for a given project/page using all available client data.
  *
  * `publicId` is the request identity captured by the caller. Refuse to publish if the viewer has
- * since switched projects: the YOLO tags still come from the viewer store, so mixing those live
- * values into another project's cache would corrupt both projects.
+ * since switched projects: mixing one project's live tags into another project's cache would
+ * corrupt both projects.
  */
 export function refreshPageCsiSpatialMap(
   qc: QueryClient,
@@ -41,7 +42,9 @@ export function refreshPageCsiSpatialMap(
   >;
   const classifiedTables = (intel.classifiedTables || []) as any[];
   const parsedRegions = (intel.parsedRegions || []) as any[];
-  const yoloTags = store.yoloTags.filter(
+  // [refactor jul11 P2.2⑨] Library/event path reads the exact publicId-keyed collection. This is a
+  // same-tick cache bridge, not a passive observer, and therefore cannot introduce render fan-out.
+  const yoloTags = readYoloTags(qc, publicId).filter(
     (t) => t.instances.some((inst) => inst.pageNumber === pageNumber),
   );
 

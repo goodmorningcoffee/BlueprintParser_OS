@@ -4,7 +4,6 @@ import type {
   SearchWordMatch,
   TakeoffTab,
   ScaleCalibrationData,
-  YoloTag,
   SymbolSearchResult,
   SymbolSearchMatch,
   QtoWorkflow,
@@ -501,18 +500,11 @@ interface ViewerState {
   /** Shared Cmd+C/V clipboard. Persists across parser-mode switches +
    *  tool exits; cleared only by resetProjectData. */
   paragraphClipboard: ParagraphTemplate | null;
-  setParagraphClipboard: (t: ParagraphTemplate | null) => void;
+  // ─── YOLO Tag UI state (collection lives in Query) ──────
 
   // ─── YOLO Tags ─────────────────────────────────────────
-  yoloTags: YoloTag[];
-  setYoloTags: (tags: YoloTag[]) => void;
-  addYoloTag: (tag: YoloTag) => void;
-  /** Bulk-add variant for batch Map Tags results. One set() call → one
-   *  store-subscriber fan-out → one _debounceSaveYoloTags cycle. Prefer
-   *  over N sequential addYoloTag calls when inserting a batch. */
-  addYoloTagsBulk: (tags: YoloTag[]) => void;
-  removeYoloTag: (id: string) => void;
-  updateYoloTag: (id: string, updates: Partial<YoloTag>) => void;
+  // [refactor jul11 P2.2⑨] The project collection + CRUD/persistence live in
+  // queries/useYoloTags.ts. Only ephemeral selection/tool/browse state remains here.
   activeYoloTagId: string | null;
   setActiveYoloTagId: (id: string | null) => void;
   yoloTagVisibility: Record<string, boolean>;
@@ -536,7 +528,6 @@ interface ViewerState {
   // Tag instance browser ("Find All" for tags)
   tagBrowseId: string | null;
   tagBrowseIndex: number;
-  tagBrowseNavigate: (tagId: string, index: number) => void;
 
   // ─── Parsed Region Visibility ──────────────────────────
   showParsedRegions: boolean;
@@ -606,31 +597,6 @@ interface ViewerState {
 
   // ─── Reset ─────────────────────────────────────────────
   resetProjectData: () => void;
-}
-
-// Identity tuple for YoloTag dedup on write. Two tags with the same
-// (source, tagText uppercased, scope, yoloClass) are treated as the same
-// logical mapping — a re-map replaces the prior entry instead of appending.
-// Prevents the tag-browse stale-count bug where re-mapping with different
-// strictness/scope left multiple YoloTag rows and find(...) returned the
-// oldest one.
-function makeYoloTagKey(t: YoloTag): string {
-  return `${t.source}::${t.tagText.toUpperCase()}::${t.scope}::${t.yoloClass}`;
-}
-
-// Debounced save for YOLO tags — persists to projectIntelligence.yoloTags via PUT
-let _yoloTagSaveTimer: ReturnType<typeof setTimeout> | null = null;
-function _debounceSaveYoloTags() {
-  if (_yoloTagSaveTimer) clearTimeout(_yoloTagSaveTimer);
-  _yoloTagSaveTimer = setTimeout(() => {
-    const { publicId, yoloTags, isDemo } = useViewerStore.getState();
-    if (!publicId || isDemo) return;
-    fetch(`/api/projects/${publicId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ yoloTags }),
-    }).catch((e) => console.error("[yoloTags] Save failed:", e));
-  }, 500);
 }
 
 export const useViewerStore = create<ViewerState>((set, get) => ({
@@ -1232,37 +1198,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   paragraphClipboard: null,
   setParagraphClipboard: (paragraphClipboard) => set({ paragraphClipboard }),
 
-  yoloTags: [],
-  setYoloTags: (yoloTags) => set({ yoloTags }), // hydration only — no DB save
-  addYoloTag: (tag) => {
-    set((s) => {
-      const merged = new Map<string, YoloTag>();
-      for (const t of s.yoloTags) merged.set(makeYoloTagKey(t), t);
-      merged.set(makeYoloTagKey(tag), tag);
-      return { yoloTags: Array.from(merged.values()) };
-    });
-    _debounceSaveYoloTags();
-  },
-  addYoloTagsBulk: (tags) => {
-    if (tags.length === 0) return;
-    set((s) => {
-      const merged = new Map<string, YoloTag>();
-      for (const t of s.yoloTags) merged.set(makeYoloTagKey(t), t);
-      for (const t of tags) merged.set(makeYoloTagKey(t), t); // incoming overrides + intra-batch last-wins
-      return { yoloTags: Array.from(merged.values()) };
-    });
-    _debounceSaveYoloTags();
-  },
-  removeYoloTag: (id) => {
-    set((s) => ({ yoloTags: s.yoloTags.filter((t) => t.id !== id) }));
-    _debounceSaveYoloTags();
-  },
-  updateYoloTag: (id, updates) => {
-    set((s) => ({
-      yoloTags: s.yoloTags.map((t) => (t.id === id ? { ...t, ...updates } : t)),
-    }));
-    _debounceSaveYoloTags();
-  },
   activeYoloTagId: null,
   setActiveYoloTagId: (activeYoloTagId) => set({ activeYoloTagId }),
   yoloTagVisibility: {},
@@ -1286,37 +1221,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setLlmHighlight: (llmHighlight) => set({ llmHighlight }),
   tagBrowseId: null,
   tagBrowseIndex: 0,
-  tagBrowseNavigate: (tagId, index) => set((s) => {
-    const tag = s.yoloTags.find((t) => t.id === tagId);
-    if (!tag) return s;
-    // 0-instance tags used to early-return silently, leaving the click handler
-    // with no visible effect — user thought "didn't work for all rows" when
-    // really the map-tags call found zero matches for that tag under the
-    // current scope/strictness. Surface the tag in TagBrowseBar anyway so the
-    // "No instances (scope: A-*, strictness: strict)" hint renders and the
-    // user gets signal instead of silence.
-    if (tag.instances.length === 0) {
-      return {
-        tagBrowseId: tagId,
-        tagBrowseIndex: 0,
-        activeYoloTagId: tagId,
-        llmHighlight: null,
-      };
-    }
-    const idx = ((index % tag.instances.length) + tag.instances.length) % tag.instances.length;
-    const inst = tag.instances[idx];
-    return {
-      tagBrowseId: tagId,
-      tagBrowseIndex: idx,
-      activeYoloTagId: tagId,
-      pageNumber: inst.pageNumber,
-      llmHighlight: {
-        pageNumber: inst.pageNumber,
-        bbox: inst.bbox,
-        label: `${tag.tagText} — ${idx + 1} of ${tag.instances.length}`,
-      },
-    };
-  }),
 
   showParsedRegions: true,
   toggleParsedRegions: () => set((s) => ({ showParsedRegions: !s.showParsedRegions })),
@@ -1542,13 +1446,17 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       paragraphOverlayActive: false,
       paragraphBatch: [],
       paragraphClipboard: null,
-      yoloTags: [],
       activeYoloTagId: null,
       yoloTagVisibility: {},
       activeYoloTagFilter: null,
       yoloTagPickingMode: false,
       tagScanResults: null,
       tagAddingMode: null,
+      // [refactor jul11 P2.2⑨] These legacy omissions leaked browse/table overlays across
+      // projects and let a stale hidden browse id intercept arrow-key navigation.
+      activeTableTagViews: {},
+      tagBrowseId: null,
+      tagBrowseIndex: 0,
       llmHighlight: null,
       symbolSearchActive: false,
       symbolSearchLoading: false,
@@ -1806,25 +1714,6 @@ export const useDetection = () =>
     toggleAnnotationVisibility: s.toggleAnnotationVisibility,
     hiddenClasses: s.hiddenClasses,
     toggleClassVisibility: s.toggleClassVisibility,
-  })));
-
-/** YOLO tag CRUD + visibility state */
-export const useYoloTags = () =>
-  useViewerStore(useShallow((s) => ({
-    yoloTags: s.yoloTags,
-    activeYoloTagId: s.activeYoloTagId,
-    setActiveYoloTagId: s.setActiveYoloTagId,
-    yoloTagVisibility: s.yoloTagVisibility,
-    setYoloTagVisibility: s.setYoloTagVisibility,
-    setYoloTagFilter: s.setYoloTagFilter,
-    removeYoloTag: s.removeYoloTag,
-    updateYoloTag: s.updateYoloTag,
-    yoloTagPickingMode: s.yoloTagPickingMode,
-    setYoloTagPickingMode: s.setYoloTagPickingMode,
-    tagScanResults: s.tagScanResults,
-    setTagScanResults: s.setTagScanResults,
-    tagAddingMode: s.tagAddingMode,
-    setTagAddingMode: s.setTagAddingMode,
   })));
 
 /** Text annotation visibility + styling controls */

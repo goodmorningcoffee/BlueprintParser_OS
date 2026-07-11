@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { writeAnns } from "@/queries/useAnnotations";
+import { useYoloTagActions, useYoloTagById } from "@/queries/useYoloTags";
 
 /**
  * Floating tag instance navigator — shows when browsing tag instances.
@@ -14,7 +15,10 @@ export default function TagBrowseBar() {
   const queryClient = useQueryClient();
   const tagBrowseId = useViewerStore((s) => s.tagBrowseId);
   const tagBrowseIndex = useViewerStore((s) => s.tagBrowseIndex);
-  const yoloTags = useViewerStore((s) => s.yoloTags);
+  // [refactor jul11 P2.2⑨] Browse observes exactly its active row. CRUD/navigation callbacks are
+  // cache actions with captured project identity, while the remaining browse UI stays in Zustand.
+  const tag = useYoloTagById(tagBrowseId);
+  const { updateYoloTag, tagBrowseNavigate } = useYoloTagActions();
   const pageNames = useViewerStore((s) => s.pageNames);
 
   const [editing, setEditing] = useState(false);
@@ -22,7 +26,6 @@ export default function TagBrowseBar() {
 
   if (!tagBrowseId) return null;
 
-  const tag = yoloTags.find((t) => t.id === tagBrowseId);
   if (!tag) return null;
 
   const total = tag.instances.length;
@@ -45,7 +48,7 @@ export default function TagBrowseBar() {
     : "";
 
   const navigate = (delta: number) => {
-    useViewerStore.getState().tagBrowseNavigate(tagBrowseId, tagBrowseIndex + delta);
+    tagBrowseNavigate(tagBrowseId, tagBrowseIndex + delta);
   };
 
   const close = () => {
@@ -91,7 +94,7 @@ export default function TagBrowseBar() {
     const store = useViewerStore.getState();
 
     // Update the YoloTag text + name
-    store.updateYoloTag(tag.id, { tagText: trimmed, name: trimmed });
+    updateYoloTag(tag.id, { tagText: trimmed, name: trimmed });
 
     // [refactor jul11 P2.2⑥] This synchronous handler used a fresh getState read, so preserve its
     // live read-modify-write semantics with the cache's functional bridge (not a captured replace).
@@ -108,7 +111,7 @@ export default function TagBrowseBar() {
     );
 
     // Refresh the highlight label
-    store.tagBrowseNavigate(tag.id, tagBrowseIndex);
+    tagBrowseNavigate(tag.id, tagBrowseIndex);
 
     setEditing(false);
   };

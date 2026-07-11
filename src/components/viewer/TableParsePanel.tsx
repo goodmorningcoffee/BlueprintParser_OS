@@ -6,6 +6,7 @@ import { useViewerStore, useProject } from "@/stores/viewerStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
+import { useYoloTagActions, useYoloTagRows } from "@/queries/useYoloTags";
 import {
   setPageIntelligenceForPage,
   updatePageIntelligenceForPage,
@@ -51,8 +52,10 @@ export default function TableParsePanel() {
   const pageDrawingNumbers = useViewerStore((s) => s.pageDrawingNumbers);
   // [refactor jul11 P2.2⑥] Server-owned annotation window now subscribes via its cache facade.
   const { annotations } = useAnnotations();
-  const addYoloTagsBulk = useViewerStore((s) => s.addYoloTagsBulk);
-  const yoloTags = useViewerStore((s) => s.yoloTags);
+  // [refactor jul11 P2.2⑨] This orchestrator legitimately renders the full collection. The
+  // action-only facade adds no second Query observer and guards late map responses by project.
+  const yoloTags = useYoloTagRows();
+  const { addYoloTagsBulk } = useYoloTagActions();
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
   const toggleParsedRegions = useViewerStore((s) => s.toggleParsedRegions);
   const parsedRegionColorMode = useViewerStore((s) => s.parsedRegionColorMode);

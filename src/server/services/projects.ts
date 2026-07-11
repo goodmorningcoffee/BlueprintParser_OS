@@ -20,6 +20,9 @@
 //   (d) a malformed/empty JSON body that legacy let `req.json()` throw on (→ 500) now gets a shell 400.
 //       Corner: a malformed POST body + signed-out caller now 400s (shell body-parse precedes auth) where
 //       legacy 401'd — a subset of (d), accepted.
+//   (e) [refactor jul11 P2.2⑨] yoloTags-only PUTs now validate the top-level array and reject
+//       demo projects for every owner/root. This closes the server half of the existing client
+//       demo-never-writes invariant; name/address/classCsiOverrides policy is unchanged.
 //
 // Recipe shape (S008 §B / S009 / S010 / S011 precedent):
 //   • [id] GET/PUT/DELETE use `auth:"session"` + a MANUAL full-row lookup (loadProjectWithRootBypass) —
@@ -334,6 +337,16 @@ export async function updateProject(
   session: AuthSession,
 ): Promise<{ success: true }> {
   const project = await loadProjectWithRootBypass(idParam, session);
+
+  // [refactor jul11 P2.2⑨] Client demo gating is UX, not an authorization boundary. Block only
+  // the yolo artifact write here so ordinary admin metadata policy is unchanged, and apply the
+  // gate even to the owning company/root: public demo content is read-only by owner policy.
+  if (body.yoloTags !== undefined && project.isDemo) {
+    throw new ApiError("FORBIDDEN", "Demo projects are read-only");
+  }
+  if (body.yoloTags !== undefined && !Array.isArray(body.yoloTags)) {
+    throw new ApiError("VALIDATION", "yoloTags must be an array");
+  }
 
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name;

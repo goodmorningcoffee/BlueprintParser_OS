@@ -8,6 +8,7 @@ import { useViewerStore, useProject, useNavigation, isDemoFeatureEnabled } from 
 import { useQtoWorkflows } from "@/queries/useQtoWorkflows";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries } from "@/queries/useSummaries";
+import { readYoloTags, useYoloTagActions } from "@/queries/useYoloTags";
 import {
   ensurePageIntelligence,
   PageWindowHttpError,
@@ -1171,6 +1172,10 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
   updateWorkflowStep: (w: QtoWorkflow, u: Partial<QtoWorkflow>) => Promise<void>;
   setPage: (n: number) => void;
 }) {
+  const queryClient = useQueryClient();
+  const publicId = useViewerStore((state) => state.publicId);
+  // Review is action-only: it reads the live cache in handlers and must not observe the collection.
+  const { addYoloTag } = useYoloTagActions();
   const lineItems = workflow.lineItems || [];
   const schedule = workflow.parsedSchedule;
   // Track which page index is currently visible per-tag for ◀/▶ cycling
@@ -1179,7 +1184,9 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
 
   const activateTag = useCallback((li: QtoLineItem) => {
     const store = useViewerStore.getState();
-    const existing = store.yoloTags.find((t) => t.tagText === li.tag && t.source === "schedule");
+    const existing = readYoloTags(queryClient, publicId).find(
+      (t) => t.tagText === li.tag && t.source === "schedule",
+    );
     if (existing) {
       store.setActiveYoloTagId(existing.id);
       store.setYoloTagFilter(existing.id);
@@ -1199,11 +1206,11 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
           confidence: inst.confidence,
         })),
       };
-      store.addYoloTag(newTag);
+      addYoloTag(newTag);
       store.setActiveYoloTagId(newTag.id);
       store.setYoloTagFilter(newTag.id);
     }
-  }, [workflow.yoloClassFilter]);
+  }, [addYoloTag, publicId, queryClient, workflow.yoloClassFilter]);
 
   const cyclePage = useCallback((li: QtoLineItem, delta: number) => {
     if (li.pages.length === 0) return;

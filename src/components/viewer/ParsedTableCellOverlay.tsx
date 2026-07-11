@@ -3,6 +3,7 @@
 import { useMemo, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
+import { useYoloTagCatalog } from "@/queries/useYoloTags";
 
 interface ParsedTableCellOverlayProps {
   width: number;
@@ -24,7 +25,9 @@ export default memo(function ParsedTableCellOverlay({
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const intel = usePageIntelligenceForPage(pageNumber) as any;
   const hiddenParsedRegionIds = useViewerStore((s) => s.hiddenParsedRegionIds);
-  const yoloTags = useViewerStore((s) => s.yoloTags);
+  // [refactor jul11 P2.2⑨] Hit regions need identity/text and only the presence of instances.
+  // Coordinate/count edits therefore no longer repaint this overlay.
+  const yoloTagCatalog = useYoloTagCatalog();
   const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
 
   const cells = useMemo(() => {
@@ -78,9 +81,9 @@ export default memo(function ParsedTableCellOverlay({
 
         // Find matching YoloTag
         const yt = isKeynote
-          ? yoloTags.find((t) => t.tagText === cellValue && t.source === "keynote" && t.pageNumber === pageNumber)
-          : yoloTags.find((t) => t.tagText === cellValue && t.source === "schedule");
-        if (!yt || !yt.instances || yt.instances.length === 0) continue;
+          ? yoloTagCatalog.find((t) => t.tagText === cellValue && t.source === "keynote" && t.pageNumber === pageNumber)
+          : yoloTagCatalog.find((t) => t.tagText === cellValue && t.source === "schedule");
+        if (!yt?.hasInstances) continue;
 
         // Row index in the boundary array (skip header row if present)
         const rowBIdx = hasHeaderRow ? ri + 1 : ri;
@@ -102,7 +105,7 @@ export default memo(function ParsedTableCellOverlay({
     }
 
     return result;
-  }, [showParsedRegions, width, height, pageNumber, intel, hiddenParsedRegionIds, yoloTags]);
+  }, [showParsedRegions, width, height, pageNumber, intel, hiddenParsedRegionIds, yoloTagCatalog]);
 
   if (cells.length === 0) return null;
 

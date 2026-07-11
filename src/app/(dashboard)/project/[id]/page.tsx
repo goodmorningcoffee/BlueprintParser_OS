@@ -16,6 +16,10 @@ import { seedAnnotationGroupsFromBootstrap } from "@/queries/useAnnotationGroups
 // [refactor jul11 P2.2⑦] One paired helper publishes annotations + the active page window.
 import { publishBootstrapPageWindow } from "@/queries/usePageWindow";
 import { clearTextractProject } from "@/queries/textractCache";
+import {
+  clearYoloTagsProject,
+  seedYoloTagsFromBootstrap,
+} from "@/queries/useYoloTags";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type { PageWindowResponse } from "@/queries/pageWindowCore";
 import type {
@@ -82,7 +86,12 @@ export default function ProjectPage() {
       // reopen/switch contract with a TEXTRACT-ONLY cache clear; removing the broad project prefix
       // here would also destroy unrelated annotation/takeoff/chat cache state.
       const previousPublicId = useViewerStore.getState().publicId;
-      if (previousPublicId) await clearTextractProject(queryClient, previousPublicId);
+      if (previousPublicId) {
+        await clearTextractProject(queryClient, previousPublicId);
+        // [refactor jul11 P2.2⑨] Exact-key teardown bounds the instance-heavy project array and
+        // aborts/cancels its delayed save. Never broaden this to the whole project query prefix.
+        clearYoloTagsProject(queryClient, previousPublicId);
+      }
 
       // Clear stale UI/tool data from any previously viewed project.
       resetProjectData();
@@ -90,7 +99,9 @@ export default function ProjectPage() {
       // ─── Fetch metadata + initial chunk + annotation groups in parallel ───
       // All three APIs resolve publicId independently — no dependency between them
       const [res, chunkRes, groupsRes] = await Promise.all([
-        fetch(`/api/projects/${id}`),
+        // A delayed yolo PUT followed by a quick reopen must not hydrate the browser's cached
+        // pre-save projectIntelligence snapshot (this endpoint otherwise advertises max-age=60).
+        fetch(`/api/projects/${id}`, { cache: "no-store" }),
         fetch(`/api/projects/${id}/pages?from=1&to=15`),
         fetch(`/api/annotation-groups?projectId=${id}`),
       ]);
@@ -107,12 +118,16 @@ export default function ProjectPage() {
         numPages: data.numPages || 0,
       });
 
-      // Hydrate project intelligence (CSI graph, classCsiOverrides, etc.)
-      if (data.projectIntelligence) {
-        useViewerStore.getState().setProjectIntelligenceData(data.projectIntelligence);
-        if ((data.projectIntelligence as any).yoloTags) {
-          useViewerStore.getState().setYoloTags((data.projectIntelligence as any).yoloTags);
-        }
+      // [refactor jul11 P2.2⑨] Unconditional cache seed preserves reset-then-conditional-set net
+      // behavior for omitted/null tags and prevents stale same-key resurrection. The helper also
+      // strips yoloTags from the legacy PI blob so Zustand cannot remain a hidden second owner.
+      const projectIntelligenceWithoutYoloTags = seedYoloTagsFromBootstrap(
+        queryClient,
+        data.id,
+        data.projectIntelligence,
+      );
+      if (projectIntelligenceWithoutYoloTags) {
+        useViewerStore.getState().setProjectIntelligenceData(projectIntelligenceWithoutYoloTags);
       }
 
       // Load summaries into the TanStack Query cache (facade — no longer a zustand field).
