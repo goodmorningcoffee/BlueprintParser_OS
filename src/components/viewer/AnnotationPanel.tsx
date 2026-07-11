@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useAnnotations } from "@/queries/useAnnotations";
 import { TWENTY_COLORS } from "@/types";
 
@@ -16,8 +16,8 @@ function labelColor(name: string): string {
 export default function AnnotationPanel() {
   // [refactor jul10 P2.2⑥] Read the cache-owned collection; the old remove binding was dead.
   const { annotations } = useAnnotations();
-  const setAnnotationFilter = useViewerStore((s) => s.setAnnotationFilter);
-  const activeAnnotationFilter = useViewerStore((s) => s.activeAnnotationFilter);
+  const setAnnotationFilter = useUiStore((s) => s.setAnnotationFilter);
+  const activeAnnotationFilter = useUiStore((s) => s.activeAnnotationFilter);
 
   // Group annotations by category (YOLO, MARKUPS, QTO) then by name
   const categorized = useMemo(() => {

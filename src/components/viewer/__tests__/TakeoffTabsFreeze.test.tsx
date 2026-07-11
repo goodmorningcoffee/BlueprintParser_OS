@@ -31,6 +31,7 @@ import "@testing-library/jest-dom";
 import { render, screen, fireEvent, cleanup, waitFor, act, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
@@ -633,7 +634,7 @@ describe("ViewAllPanel — eye toggle joins takeoff rows with zustand visibility
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Widget A" })).toHaveClass("line-through"),
     );
-    expect(useViewerStore.getState().hiddenTakeoffItemIds.has(1)).toBe(true);
+    expect(useUiStore.getState().hiddenTakeoffItemIds.has(1)).toBe(true);
   });
 });
 

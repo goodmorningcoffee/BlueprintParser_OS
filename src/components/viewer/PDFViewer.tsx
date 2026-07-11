@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useNavigation, usePanels, useSymbolSearch } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useSymbolSearch } from "@/stores/viewerStore";
+import {
+  useUiStore,
+  useLayoutUi,
+  useLayoutUiActions,
+  usePanelVisibility,
+} from "@/stores/uiStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { useShallow } from "zustand/react/shallow";
 import PDFPage from "./PDFPage";
@@ -56,7 +62,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   // Gate the floating Symbol Search popup when Parse panel's Template Parse tab
   // is open — the embedded SymbolSearchPanel in ParsePanel is the canonical
   // surface in that case, avoids double-render.
-  const templateTabOpen = useViewerStore(
+  const templateTabOpen = useUiStore(
     (s) => s.showParsePanel && s.parsePanelTab === "template",
   );
 
@@ -88,10 +94,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   }, [pageNumber, numPages, dataUrl]);
 
   // Scroll to highlighted region (tag browse + LLM highlights)
-  const { llmHighlight, pageDimensions } = useViewerStore(useShallow((s) => ({
-    llmHighlight: s.llmHighlight,
-    pageDimensions: s.pageDimensions,
-  })));
+  const llmHighlight = useUiStore((s) => s.llmHighlight);
+  const pageDimensions = useViewerStore((s) => s.pageDimensions);
   useEffect(() => {
     if (!llmHighlight || !containerRef.current) return;
     const dim = pageDimensions[llmHighlight.pageNumber];
@@ -477,16 +481,9 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   // Hooks must be before early returns (Rules of Hooks)
   const { isDemo } = useProject();
-  const { sidebarCollapsed, toggleSidebar } = usePanels();
-  const { annotationPanelCollapsed, toggleAnnotationPanel, showTips, toggleTips, helpMode, toggleHelpMode, showTableCompareModal } = useViewerStore(useShallow((s) => ({
-    annotationPanelCollapsed: s.annotationPanelCollapsed,
-    toggleAnnotationPanel: s.toggleAnnotationPanel,
-    showTips: s.showTips,
-    toggleTips: s.toggleTips,
-    helpMode: s.helpMode,
-    toggleHelpMode: s.toggleHelpMode,
-    showTableCompareModal: s.showTableCompareModal,
-  })));
+  const { sidebarCollapsed, annotationPanelCollapsed, showTips, helpMode } = useLayoutUi();
+  const { toggleSidebar, toggleAnnotationPanel, toggleTips, toggleHelpMode } = useLayoutUiActions();
+  const showTableCompareModal = useUiStore((s) => s.showTableCompareModal);
 
   // Demo page sets helpMode: false, showTips: false directly — no auto-override needed
 
@@ -635,7 +632,7 @@ function ViewerPanels({ pdfDoc }: { pdfDoc: PDFDocumentProxy | null }) {
     showTextPanel, showChatPanel, showTakeoffPanel, showDetectionPanel,
     showCsiPanel, showPageIntelPanel, showTableParsePanel, showKeynoteParsePanel,
     showSpecsNotesPanel, showParsePanel, showToolsPanel, showViewAllPanel,
-  } = usePanels();
+  } = usePanelVisibility();
 
   return (
     <div className="viewer-scalable flex shrink-0">

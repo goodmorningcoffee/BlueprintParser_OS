@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useViewerStore, useTableParse, useNavigation } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useProject } from "@/stores/sessionStore";
 import { exportTableCsv } from "@/lib/table-parse-utils";
 // [refactor jul5 S027] apiErrorMessage: table-parse now serves {error:{code,message}}
@@ -86,9 +87,9 @@ export default function AutoParseTab({
     tableParseRegion, setTableParseRegion,
     tableParsedGrid, setTableParsedGrid,
     resetTableParse, tableParseTab, setTableParseTab,
-    toggleTableCompareModal,
     tableParseOptions, setTableParseOptions,
   } = useTableParse();
+  const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
 
   const [autoParsing, setAutoParsing] = useState(false);
   const [autoParseError, setAutoParseError] = useState<string | null>(null);

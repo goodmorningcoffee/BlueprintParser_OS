@@ -47,7 +47,7 @@ import "@testing-library/jest-dom";
 import { render, renderHook, screen, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { persistFetch } from "@/lib/client-persist";
@@ -144,7 +144,7 @@ describe("GroupActionsBar — create group is server-first with full membership 
     // Pre-existing group+membership: the create flow's rebuild loop (:72-78) must CARRY these
     // over — a rebuild that drops old pairs fails the (10)→"#ff0000" post-release assert.
     seedAnnotationGroups(qc, [grp({ id: 1, name: "Existing", color: "#ff0000" })], [{ annotationId: 10, groupId: 1 }]);
-    useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    useUiStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
     const d = deferred<unknown>();
     persistFetchMock.mockReturnValueOnce(d.promise);
     render(<GroupActionsBar />, { wrapper });
@@ -179,7 +179,7 @@ describe("GroupActionsBar — create group is server-first with full membership 
 
     // clearSelection ran → count < 2 → the whole bar (and its dialog) unmounts (:51-52)
     await waitFor(() => expect(screen.queryByText("2 selected")).not.toBeInTheDocument());
-    expect(useViewerStore.getState().selectedAnnotationIds.size).toBe(0); // selection stays zustand in ⑤
+    expect(useUiStore.getState().selectedAnnotationIds.size).toBe(0); // selection stays zustand in ⑤
     // full-rebuild effect (:69→:78): new pairs for BOTH selected ids AND the pre-existing pair
     await waitFor(() => expect(probe.result.current.getGroupOutlineColor(20)).toBe("#00ff00"));
     expect(probe.result.current.getGroupOutlineColor(21)).toBe("#00ff00");
@@ -192,7 +192,7 @@ describe("GroupActionsBar — create group is server-first with full membership 
 
 describe("GroupActionsBar — create rejection alerts and keeps the dialog open (G-2)", () => {
   it("alert 'Failed to create group:'; dialog + fields + selection intact; no group landed", async () => {
-    useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    useUiStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
     persistFetchMock.mockRejectedValueOnce(new Error("boom"));
     render(<GroupActionsBar />, { wrapper });
     const probe = mountProbe();
@@ -216,7 +216,7 @@ describe("GroupActionsBar — create rejection alerts and keeps the dialog open 
 describe("GroupActionsBar — add-to-existing is server-first (G-3)", () => {
   it("picker stays open while POST pending; membership lands post-resolve; selection clears", async () => {
     seedAnnotationGroups(qc, [grp({ id: 1, name: "Existing", color: "#ff0000" })], [{ annotationId: 10, groupId: 1 }]);
-    useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    useUiStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
     const d = deferred<unknown>();
     persistFetchMock.mockReturnValueOnce(d.promise);
     render(<GroupActionsBar />, { wrapper });
@@ -246,7 +246,7 @@ describe("GroupActionsBar — add-to-existing is server-first (G-3)", () => {
 
   it("rejection: alert 'Failed to add to group:'; picker stays open; selection kept", async () => {
     seedAnnotationGroups(qc, [grp({ id: 1, name: "Existing", color: "#ff0000" })], []);
-    useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    useUiStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
     persistFetchMock.mockRejectedValueOnce(new Error("boom"));
     render(<GroupActionsBar />, { wrapper });
     const probe = mountProbe();
@@ -269,7 +269,7 @@ describe("GroupActionsBar — add-to-existing is server-first (G-3)", () => {
 describe("GroupActionsBar — edit saves the SERVER row via the alert channel (G-4)", () => {
   it("PUT body carries the edited fields; resolved server row is upserted (replace, not append)", async () => {
     seedAnnotationGroups(qc, [grp({ id: 1, name: "Existing", color: "#ff0000" })], []);
-    useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    useUiStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
     const d = deferred<unknown>();
     persistFetchMock.mockReturnValueOnce(d.promise);
     render(<GroupActionsBar />, { wrapper });
@@ -304,7 +304,7 @@ describe("GroupActionsBar — edit saves the SERVER row via the alert channel (G
 
   it("rejection: alert 'Failed to save group:' (GAB channel — contrast VAP console-only) + dialog stays open", async () => {
     seedAnnotationGroups(qc, [grp({ id: 1, name: "Existing", color: "#ff0000" })], []);
-    useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    useUiStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
     persistFetchMock.mockRejectedValueOnce(new Error("boom"));
     render(<GroupActionsBar />, { wrapper });
 
@@ -332,7 +332,7 @@ describe("GroupActionsBar — mass delete sweeps ⑥-zustand annotations, indexe
         { annotationId: 20, groupId: 1 },
       ],
     );
-    useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    useUiStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
     const d = deferred<unknown>();
     persistFetchMock.mockReturnValueOnce(d.promise);
     render(<GroupActionsBar />, { wrapper });
@@ -371,7 +371,7 @@ describe("GroupActionsBar — mass delete sweeps ⑥-zustand annotations, indexe
     // annotations array leaves zustand. The future cache facade must not optimistically sweep,
     // roll back, or silently dismiss this confirmation dialog on a rejected batch delete.
     seedAnnotations(qc, [ann(10), ann(20), ann(21)]);
-    useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    useUiStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
     const d = deferred<unknown>();
     persistFetchMock.mockReturnValueOnce(d.promise);
     render(<GroupActionsBar />, { wrapper });
@@ -391,7 +391,7 @@ describe("GroupActionsBar — mass delete sweeps ⑥-zustand annotations, indexe
     await act(async () => {});
     expect(screen.getByRole("button", { name: "Deleting…" })).toBeInTheDocument();
     expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([10, 20, 21]);
-    expect(useViewerStore.getState().selectedAnnotationIds).toEqual(new Set([20, 21]));
+    expect(useUiStore.getState().selectedAnnotationIds).toEqual(new Set([20, 21]));
 
     d.reject(new Error("batch unavailable"));
 
@@ -399,7 +399,7 @@ describe("GroupActionsBar — mass delete sweeps ⑥-zustand annotations, indexe
       expect(alertMock).toHaveBeenCalledWith("Failed to delete: batch unavailable"),
     );
     expect(readSeededAnnotations(qc).map((a) => a.id)).toEqual([10, 20, 21]);
-    expect(useViewerStore.getState().selectedAnnotationIds).toEqual(new Set([20, 21]));
+    expect(useUiStore.getState().selectedAnnotationIds).toEqual(new Set([20, 21]));
     expect(screen.getByText("Delete 2 annotations?")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete all" })).toBeEnabled();
   });
@@ -417,7 +417,7 @@ describe("GroupActionsBar — demo never writes at the three guarded sites (G-6)
     setViewerStoreStateForTest({ isDemo: true });
     seedAnnotations(qc, [ann(10), ann(20), ann(21)]);
     seedAnnotationGroups(qc, [grp({ id: 1, name: "Demo Group", color: "#ff0000" })], []);
-    useViewerStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    useUiStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
     render(<GroupActionsBar />, { wrapper });
 
     // create attempt: canPersist (:57) returns before setBusy — dialog just sits there

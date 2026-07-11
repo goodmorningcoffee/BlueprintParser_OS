@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { writeAnns } from "@/queries/useAnnotations";
 import { useYoloTagActions, useYoloTagById } from "@/queries/useYoloTags";
@@ -14,8 +14,8 @@ import { useYoloTagActions, useYoloTagById } from "@/queries/useYoloTags";
  */
 export default function TagBrowseBar() {
   const queryClient = useQueryClient();
-  const tagBrowseId = useViewerStore((s) => s.tagBrowseId);
-  const tagBrowseIndex = useViewerStore((s) => s.tagBrowseIndex);
+  const tagBrowseId = useUiStore((s) => s.tagBrowseId);
+  const tagBrowseIndex = useUiStore((s) => s.tagBrowseIndex);
   // [refactor jul11 P2.2⑨] Browse observes exactly its active row. CRUD/navigation callbacks are
   // cache actions with captured project identity, while the remaining browse UI stays in Zustand.
   const tag = useYoloTagById(tagBrowseId);
@@ -53,8 +53,9 @@ export default function TagBrowseBar() {
   };
 
   const close = () => {
-    useViewerStore.getState().setLlmHighlight(null);
-    useViewerStore.setState({ tagBrowseId: null, tagBrowseIndex: 0 });
+    const ui = useUiStore.getState();
+    ui.setLlmHighlight(null);
+    ui.setYoloBrowseState({ tagBrowseId: null, tagBrowseIndex: 0 });
     setEditing(false);
   };
 

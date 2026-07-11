@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useViewerStore, useSelection } from "@/stores/viewerStore";
+import { useSelectionUi, useSelectionUiActions } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2⑤] annotation groups: zustand → TanStack cache facade (import-swap-only
 // surgery; destructure + every handler body byte-identical).
@@ -21,10 +21,8 @@ import type { AnnotationGroup } from "@/types";
  * logic. Reads selection + groups state from Zustand.
  */
 export default function GroupActionsBar() {
-  const {
-    selectedAnnotationIds,
-    clearSelection,
-  } = useSelection();
+  const { selectedAnnotationIds } = useSelectionUi();
+  const { clearSelection } = useSelectionUiActions();
   const {
     annotationGroups,
     upsertAnnotationGroup,

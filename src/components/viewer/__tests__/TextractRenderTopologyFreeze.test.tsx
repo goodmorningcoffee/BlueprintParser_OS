@@ -17,6 +17,7 @@ import {
   replaceTextractForPage,
 } from "@/queries/textractCache";
 import { queryKeys } from "@/queries/queryKeys";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { TextractPageData } from "@/types";
 
@@ -115,7 +116,7 @@ afterEach(() => {
 
 describe("I6 PageSidebar bounded legacy CSI fallback", () => {
   it("shows only retained OCR, loses the badge on LRU eviction, and regains it only after revisit", async () => {
-    useViewerStore.setState({ activeCsiFilter: "09 29 00" });
+    useUiStore.setState({ activeCsiFilter: "09 29 00" });
     qc.setQueryData(queryKeys.pagesWindow.active("P"), {
       loadedRange: { from: 1, to: 1 },
       keynotes: {},

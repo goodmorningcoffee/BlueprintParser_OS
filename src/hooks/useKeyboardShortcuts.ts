@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { takeoffRedo, takeoffUndo } from "@/queries/useAnnotations";
 import { navigateYoloTag } from "@/queries/useYoloTags";
@@ -13,8 +14,9 @@ export function useKeyboardShortcuts() {
   const qc = useQueryClient();
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Keep identity and UI/tool snapshots adjacent at the original event-time read boundary.
+      // Keep identity, UI, and tool/core snapshots adjacent at the original event-time boundary.
       const session = useSessionStore.getState();
+      const ui = useUiStore.getState();
       const store = useViewerStore.getState();
 
       // Don't capture if user is typing in an input
@@ -27,22 +29,22 @@ export function useKeyboardShortcuts() {
       }
 
       // Tag browse: Left/Right arrows cycle instances when browsing
-      if (store.tagBrowseId && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      if (ui.tagBrowseId && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
         // Event-time publicId + exact cache read preserve the mount-once listener without leaving
         // tag collection ownership in Zustand.
         navigateYoloTag(
           qc,
           session.publicId,
-          store.tagBrowseId,
-          store.tagBrowseIndex + (e.key === "ArrowLeft" ? -1 : 1),
+          ui.tagBrowseId,
+          ui.tagBrowseIndex + (e.key === "ArrowLeft" ? -1 : 1),
         );
         return;
       }
-      if (store.tagBrowseId && e.key === "Escape") {
+      if (ui.tagBrowseId && e.key === "Escape") {
         e.preventDefault();
-        store.setLlmHighlight(null);
-        useViewerStore.setState({ tagBrowseId: null, tagBrowseIndex: 0 });
+        ui.setLlmHighlight(null);
+        useUiStore.getState().setYoloBrowseState({ tagBrowseId: null, tagBrowseIndex: 0 });
         return;
       }
 

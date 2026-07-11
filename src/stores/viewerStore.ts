@@ -1,8 +1,6 @@
 import { create } from "zustand";
 import type {
   ClientAnnotation,
-  SearchWordMatch,
-  TakeoffTab,
   ScaleCalibrationData,
   SymbolSearchResult,
   SymbolSearchMatch,
@@ -53,45 +51,12 @@ interface ViewerState {
   // "group" mode powers the new multi-select / lasso tool. In this mode,
   // click-drag on empty canvas starts a marquee that selects every
   // intersecting annotation. Click on an annotation adds/removes it
-  // from `selectedAnnotationIds`. See the useSelection slice below + the
+  // from `selectedAnnotationIds` in uiStore. See useMultiSelectInteraction + the
   // useAnnotationGroups facade in src/queries/useAnnotationGroups.ts (P2.2⑤).
   mode: "move" | "pointer" | "markup" | "group";
   setMode: (m: "move" | "pointer" | "markup" | "group") => void;
   tempPanMode: boolean;
   setTempPanMode: (v: boolean) => void;
-
-  // ─── Search ──────────────────────────────────────────────
-  searchQuery: string;
-  searchResults: number[];
-  searchMatches: Record<number, SearchWordMatch[]>;
-  searchLoading: boolean;
-  setSearch: (q: string) => void;
-  setSearchResults: (pages: number[]) => void;
-  setSearchMatches: (matches: Record<number, SearchWordMatch[]>) => void;
-  setSearchLoading: (loading: boolean) => void;
-
-  // [refactor jul11 P2.2⑥] The server-owned, chunk-windowed annotation collection + CRUD actions
-  // live in src/queries/useAnnotations.ts. UI-only focus/selection/filter state stays here.
-  /** One-shot signal to focus/select an annotation from outside AnnotationOverlay.
-   *  AnnotationOverlay owns the local `selectedId` state; external callers
-   *  (TakeoffPanel instance-click, AreaTab instance-click) set this field and
-   *  AnnotationOverlay's useEffect consumes it, setting its local selectedId
-   *  and clearing the field back to null. */
-  focusAnnotationId: number | null;
-  setFocusAnnotationId: (id: number | null) => void;
-
-  // ─── Multi-select + Groups ──────────────────────────────
-  // Set of annotation ids currently selected by the Group tool lasso,
-  // shift-click accumulation, or ViewAllPanel tree checkboxes. The
-  // existing single-select `selectedId` in AnnotationOverlay is derived
-  // from `size === 1 ? [...][0] : null` for drag-to-move + pencil-edit
-  // backward compat.
-  selectedAnnotationIds: Set<number>;
-  setSelectedAnnotationIds: (ids: Set<number>) => void;
-  addToSelection: (id: number) => void;
-  removeFromSelection: (id: number) => void;
-  toggleSelection: (id: number) => void;
-  clearSelection: () => void;
 
   // [refactor jul10 P2.2⑤] annotation groups + the M:N membership indexes moved to the
   // TanStack Query cache — see src/queries/useAnnotationGroups.ts (ONE key holds the raw
@@ -104,98 +69,13 @@ interface ViewerState {
   // project/session data back to this UI/tool store.
 
   // [refactor jul11 P2.2⑦/⑧] Active page-window maps and per-page Textract OCR are query-owned.
-  // Only project-wide CSI/filter metadata from those former server-data slices remains here.
+  // Only project-wide bootstrap metadata from those former server-data slices remains here.
   allTrades: string[];
   setAllTrades: (trades: string[]) => void;
 
-  // ─── Text annotation display state ────────────────────────
-  showTextAnnotations: boolean; // global nuke toggle
-  toggleTextAnnotations: () => void;
-  activeTextAnnotationTypes: Record<string, boolean>;
-  setTextAnnotationType: (type: string, active: boolean) => void;
-  setAllTextAnnotationTypes: (active: boolean) => void;
-  hiddenTextAnnotations: Set<string>; // "pageNum:index" keys for individually hidden
-  toggleTextAnnotationVisibility: (pageNum: number, index: number) => void;
-  textAnnotationColors: Record<string, string>;
-  setTextAnnotationColor: (type: string, color: string) => void;
-  activeTextAnnotationFilter: { type: string; text: string } | null;
-  setTextAnnotationFilter: (filter: { type: string; text: string } | null) => void;
-  activeTakeoffFilter: number | null; // takeoff item ID to filter sidebar by
-  setTakeoffFilter: (id: number | null) => void;
-  textPanelTab: "ocr" | "annotations" | "graph" | "markups" | "textract";
-  setTextPanelTab: (tab: "ocr" | "annotations" | "graph" | "markups" | "textract") => void;
-  activeMarkupId: number | null;
-  setActiveMarkupId: (id: number | null) => void;
-
-  // ─── Panels ──────────────────────────────────────────────
-  showTextPanel: boolean;
-  toggleTextPanel: () => void;
-  showChatPanel: boolean;
-  toggleChatPanel: () => void;
-
-  // ─── Chat ────────────────────────────────────────────────
-  // [refactor jul9 P2.2①] message DATA (list + add/set/clear) moved to the TanStack Query cache
-  // (src/queries/useChatMessages.ts, key queryKeys.chatMessages.all(publicId)). Only the chatScope
-  // UI knob stays here; showChatPanel lives with the other panel toggles above.
-  chatScope: "page" | "project";
-  setChatScope: (scope: "page" | "project") => void;
-
-  // ─── Detections ──────────────────────────────────────────
-  showDetections: boolean;          // overlay visibility (stays on when panel closed)
-  toggleDetections: () => void;
-  showDetectionPanel: boolean;      // sidebar panel visibility
-  toggleDetectionPanel: () => void;
-  showViewAllPanel: boolean;        // unified tree panel visibility
-  toggleViewAllPanel: () => void;
-  activeModels: Record<string, boolean>;
-  setModelActive: (model: string, active: boolean) => void;
-  confidenceThreshold: number;
-  setConfidenceThreshold: (t: number) => void;
-  confidenceThresholds: Record<string, number>;
-  setModelConfidence: (model: string, threshold: number) => void;
-  initDetectionModels: (modelNames: string[]) => void;
-  hiddenAnnotationIds: Set<number>;
-  toggleAnnotationVisibility: (id: number) => void;
-  hiddenClasses: Record<string, boolean>; // "model:class" -> false means hidden
-  toggleClassVisibility: (model: string, cls: string) => void;
-
-  // ─── Help tips ─────────────────────────────────────────
-  showTips: boolean;
-  toggleTips: () => void;
-  helpMode: boolean;
-  toggleHelpMode: () => void;
-
-  // ─── Panel collapse ────────────────────────────────────
-  sidebarCollapsed: boolean;
-  toggleSidebar: () => void;
-  annotationPanelCollapsed: boolean;
-  toggleAnnotationPanel: () => void;
-
-  // ─── Keynotes ───────────────────────────────────────────
-  showKeynotes: boolean;
-  toggleKeynotes: () => void;
-  activeKeynoteFilter: { shape: string; text: string } | null;
-  setKeynoteFilter: (filter: { shape: string; text: string } | null) => void;
-
-  // ─── Annotation filter ─────────────────────────────────
-  activeAnnotationFilter: string | null;
-  setAnnotationFilter: (label: string | null) => void;
-
-  // ─── Trade filter ─────────────────────────────────────────
-  activeTradeFilter: string | null;
-  setTradeFilter: (trade: string | null) => void;
-
-  // ─── CSI code filter ───────────────────────────────────────
-  activeCsiFilter: string | null;
-  setCsiFilter: (code: string | null) => void;
+  // ─── CSI project metadata ─────────────────────────────────
   allCsiCodes: { code: string; description: string }[];
   setAllCsiCodes: (codes: { code: string; description: string }[]) => void;
-  showCsiPanel: boolean;
-  toggleCsiPanel: () => void;
-
-  // ─── Page Intelligence ─────────────────────────────────
-  showPageIntelPanel: boolean;
-  togglePageIntelPanel: () => void;
 
   // ─── Takeoff ────────────────────────────────────────────
   // [refactor jul10 P2.2④] takeoffItems + takeoffGroups (and their collection actions,
@@ -203,20 +83,12 @@ interface ViewerState {
   // src/queries/useTakeoff.ts (useTakeoffItems/useTakeoffGroups/readTakeoffItems/
   // seedTakeoffCache). setTakeoffItems/setTakeoffGroups were DELETED, not ported (sole
   // callers were the loader seeds seedTakeoffCache replaces). Only the UI fields below
-  // stay zustand: panel flag, active pointer, visibility set, tab (+ activeTakeoffFilter
-  // and the ⑥-domain undo/redo stacks elsewhere in this store).
-  showTakeoffPanel: boolean;
-  toggleTakeoffPanel: () => void;
+  // stay Zustand but are split by responsibility: the active pointer and undo/redo stacks remain
+  // tool state here; panel/filter/visibility/tab presentation lives in uiStore.
   activeTakeoffItemId: number | null;
   setActiveTakeoffItemId: (id: number | null) => void;
 
-  // ─── Takeoff item visibility ─────────────────────────────
-  hiddenTakeoffItemIds: Set<number>;
-  toggleTakeoffItemVisibility: (itemId: number) => void;
-
   // ─── Takeoff Area ──────────────────────────────────────
-  takeoffTab: TakeoffTab;
-  setTakeoffTab: (tab: TakeoffTab) => void;
   pageDimensions: Record<number, { width: number; height: number }>;
   setPageDimensions: (pageNum: number, width: number, height: number) => void;
   scaleCalibrations: Record<number, ScaleCalibrationData>;
@@ -314,8 +186,6 @@ interface ViewerState {
   setActiveQtoWorkflow: (w: QtoWorkflow | null) => void;
 
   // ─── Table Parse ───────────────────────────────────────
-  showTableParsePanel: boolean;
-  toggleTableParsePanel: () => void;
   tableParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
   setTableParseStep: (step: "idle" | "select-region" | "define-column" | "define-row" | "review") => void;
   tableParseRegion: [number, number, number, number] | null; // [minX, minY, maxX, maxY] normalized
@@ -370,30 +240,8 @@ interface ViewerState {
     mergerEditDistance: number;
   };
   setTableParseOptions: (patch: Partial<ViewerState["tableParseOptions"]>) => void;
-  showTableCompareModal: boolean;
-  toggleTableCompareModal: () => void;
-
-  // ─── Specs/Notes (D2 container: Spec Parse + Notes Parse + Keynotes) ──
-  showSpecsNotesPanel: boolean;
-  toggleSpecsNotesPanel: () => void;
-  specsNotesTab: "spec-parse" | "notes-parse" | "keynotes";
-  setSpecsNotesTab: (tab: "spec-parse" | "notes-parse" | "keynotes") => void;
-
-  // ─── Parse (D3 container: Shape Parse + Template Parse + YOLO-Tag-Map) ──
-  showParsePanel: boolean;
-  toggleParsePanel: () => void;
-  parsePanelTab: "shape" | "template" | "yolo-tag-map";
-  setParsePanelTab: (tab: "shape" | "template" | "yolo-tag-map") => void;
-
-  // ─── Tools (D4 container: CSI + Text + Page Intelligence) ──
-  showToolsPanel: boolean;
-  toggleToolsPanel: () => void;
-  toolsPanelTab: "csi" | "text" | "intel";
-  setToolsPanelTab: (tab: "csi" | "text" | "intel") => void;
 
   // ─── Keynote Parse ────────────────────────────────────
-  showKeynoteParsePanel: boolean;
-  toggleKeynoteParsePanel: () => void;
   keynoteParseTab: "all" | "auto" | "guided" | "manual" | "compare";
   setKeynoteParseTab: (tab: "all" | "auto" | "guided" | "manual" | "compare") => void;
   keynoteParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
@@ -409,8 +257,6 @@ interface ViewerState {
   parsedKeynoteData: { pageNumber: number; keys: { key: string; description: string }[]; yoloClass?: string; tableName?: string }[] | null;
   setParsedKeynoteData: (data: { pageNumber: number; keys: { key: string; description: string }[]; yoloClass?: string; tableName?: string }[] | null) => void;
   addParsedKeynote: (entry: { pageNumber: number; keys: { key: string; description: string }[]; yoloClass?: string; tableName?: string }) => void;
-  activeKeynoteHighlight: { pageNumber: number; key: string } | null;
-  setActiveKeynoteHighlight: (h: { pageNumber: number; key: string } | null) => void;
   resetKeynoteParse: () => void;
 
   // ─── Notes Parse (Stage 3 scaffold — consumed by Stage 4 UI) ───
@@ -476,15 +322,7 @@ interface ViewerState {
    *  tool exits; cleared only by resetProjectData. */
   paragraphClipboard: ParagraphTemplate | null;
   setParagraphClipboard: (t: ParagraphTemplate | null) => void;
-  // ─── YOLO Tag UI state (collection lives in Query) ──────
-  // [refactor jul11 P2.2⑨] The project collection + CRUD/persistence live in
-  // queries/useYoloTags.ts. Only ephemeral selection/tool/browse state remains here.
-  activeYoloTagId: string | null;
-  setActiveYoloTagId: (id: string | null) => void;
-  yoloTagVisibility: Record<string, boolean>;
-  setYoloTagVisibility: (id: string, visible: boolean) => void;
-  activeYoloTagFilter: string | null;
-  setYoloTagFilter: (id: string | null) => void;
+  // ─── YOLO Tag tool state (collection lives in Query; presentation lives in uiStore) ──────
   yoloTagPickingMode: boolean;
   setYoloTagPickingMode: (v: boolean) => void;
   // Class-scan flow: scan results pending user selection
@@ -493,25 +331,6 @@ interface ViewerState {
   // Add-instance mode: draw BB to add to a specific tag
   tagAddingMode: string | null; // tagId when active
   setTagAddingMode: (tagId: string | null) => void;
-  // Per-table/keynote tag view — eye icon toggle shows mapped tags + blue region highlight
-  activeTableTagViews: Record<string, { regionId: string; pageNum: number; bbox: [number, number, number, number]; tagTexts: string[]; source: "schedule" | "keynote" }>;
-  setTableTagView: (regionId: string, view: { regionId: string; pageNum: number; bbox: [number, number, number, number]; tagTexts: string[]; source: "schedule" | "keynote" } | null) => void;
-  // LLM tool use highlight (auto-clears after timeout)
-  llmHighlight: { pageNumber: number; bbox: [number, number, number, number]; label?: string } | null;
-  setLlmHighlight: (h: { pageNumber: number; bbox: [number, number, number, number]; label?: string } | null) => void;
-  // Tag instance browser ("Find All" for tags)
-  tagBrowseId: string | null;
-  tagBrowseIndex: number;
-
-  // ─── Parsed Region Visibility ──────────────────────────
-  showParsedRegions: boolean;
-  toggleParsedRegions: () => void;
-  parsedRegionColorMode: "none" | "striped" | "checkerboard";
-  setParsedRegionColorMode: (mode: "none" | "striped" | "checkerboard") => void;
-  hiddenParsedRegionIds: Set<string>;
-  toggleParsedRegionVisibility: (id: string) => void;
-  focusedParsedRegionId: string | null;
-  setFocusedParsedRegionId: (id: string | null) => void;
 
   // ─── Symbol Search ────────────────────────────────────
   symbolSearchActive: boolean;                    // draw mode active (crosshair cursor)
@@ -570,7 +389,7 @@ interface ViewerState {
   resetAllTools: () => void;
 
   // ─── Reset ─────────────────────────────────────────────
-  /** Viewer/UI/tool half of the temporary reset command. Call resetProjectData from viewerCommands. */
+  /** Remaining viewer/tool/parse half of reset. Call resetProjectData from viewerCommands. */
   resetViewerState: () => void;
 }
 
@@ -598,45 +417,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   tempPanMode: false,
   setTempPanMode: (tempPanMode) => set({ tempPanMode }),
 
-  searchQuery: "",
-  searchResults: [],
-  searchMatches: {},
-  searchLoading: false,
-  setSearch: (searchQuery) => set({ searchQuery }),
-  setSearchResults: (searchResults) => set({ searchResults }),
-  setSearchMatches: (searchMatches) => set({ searchMatches }),
-  setSearchLoading: (searchLoading) => set({ searchLoading }),
-
-  // [refactor jul11 P2.2⑥] Annotation data/actions deleted here; useAnnotations owns them.
-  focusAnnotationId: null,
-  setFocusAnnotationId: (focusAnnotationId) => set({ focusAnnotationId }),
-
-  // ─── Multi-select + Groups state ─────────────────────────
-  selectedAnnotationIds: new Set<number>(),
-  setSelectedAnnotationIds: (selectedAnnotationIds) => set({ selectedAnnotationIds }),
-  addToSelection: (id) =>
-    set((s) => {
-      if (s.selectedAnnotationIds.has(id)) return {};
-      const next = new Set(s.selectedAnnotationIds);
-      next.add(id);
-      return { selectedAnnotationIds: next };
-    }),
-  removeFromSelection: (id) =>
-    set((s) => {
-      if (!s.selectedAnnotationIds.has(id)) return {};
-      const next = new Set(s.selectedAnnotationIds);
-      next.delete(id);
-      return { selectedAnnotationIds: next };
-    }),
-  toggleSelection: (id) =>
-    set((s) => {
-      const next = new Set(s.selectedAnnotationIds);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return { selectedAnnotationIds: next };
-    }),
-  clearSelection: () => set({ selectedAnnotationIds: new Set<number>() }),
-
   // [refactor jul10 P2.2⑤] annotationGroups init + 6 actions (setAnnotationGroups,
   // upsertAnnotationGroup, removeAnnotationGroupLocal, hydrateGroupMemberships,
   // addAnnotationToGroup, removeAnnotationFromGroup) and the two index inits moved/deleted →
@@ -650,155 +430,14 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   allTrades: [],
   setAllTrades: (allTrades) => set({ allTrades }),
 
-  showTextAnnotations: false,
-  toggleTextAnnotations: () => set((s) => ({ showTextAnnotations: !s.showTextAnnotations })),
-  activeTextAnnotationTypes: {},
-  setTextAnnotationType: (type, active) =>
-    set((s) => ({ activeTextAnnotationTypes: { ...s.activeTextAnnotationTypes, [type]: active } })),
-  setAllTextAnnotationTypes: (active) =>
-    set((s) => {
-      const updated: Record<string, boolean> = {};
-      for (const key of Object.keys(s.activeTextAnnotationTypes)) updated[key] = active;
-      return { activeTextAnnotationTypes: updated };
-    }),
-  hiddenTextAnnotations: new Set<string>(),
-  toggleTextAnnotationVisibility: (pageNum, index) =>
-    set((s) => {
-      const key = `${pageNum}:${index}`;
-      const next = new Set(s.hiddenTextAnnotations);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return { hiddenTextAnnotations: next };
-    }),
-  textAnnotationColors: {},
-  setTextAnnotationColor: (type, color) =>
-    set((s) => ({ textAnnotationColors: { ...s.textAnnotationColors, [type]: color } })),
-  activeTextAnnotationFilter: null,
-  setTextAnnotationFilter: (activeTextAnnotationFilter) => set({ activeTextAnnotationFilter }),
-  activeTakeoffFilter: null,
-  setTakeoffFilter: (activeTakeoffFilter) => set({ activeTakeoffFilter }),
-  textPanelTab: "annotations",
-  setTextPanelTab: (textPanelTab) => set({ textPanelTab }),
-  activeMarkupId: null,
-  setActiveMarkupId: (activeMarkupId) => set({ activeMarkupId }),
-
-  showTextPanel: false,
-  toggleTextPanel: () => set((s) => ({ showTextPanel: !s.showTextPanel })),
-  showChatPanel: true,
-  toggleChatPanel: () => set((s) => ({ showChatPanel: !s.showChatPanel })),
-
-  // [refactor jul9 P2.2①] chatMessages/add/set/clear removed — chat message data lives in the
-  // TanStack Query cache now (see useChatMessages). chatScope (UI) stays.
-  chatScope: "page",
-  setChatScope: (chatScope) => set({ chatScope }),
-
-  showDetections: false,
-  toggleDetections: () =>
-    set((s) => ({ showDetections: !s.showDetections })),
-  showDetectionPanel: false,
-  toggleDetectionPanel: () =>
-    set((s) => {
-      const closing = s.showDetectionPanel;
-      // Cascade tool-state teardown only when no other panel is still hosting
-      // the same tools. Parse panel embeds DetectionPanel via lockedTab and
-      // shares the Shape Parse / Template Parse store state; resetting while
-      // Parse is open would clobber an active draft the user can still see.
-      if (closing && !s.showParsePanel) {
-        queueMicrotask(() => get().resetAllTools());
-      }
-      return { showDetectionPanel: !s.showDetectionPanel };
-    }),
-  showViewAllPanel: false,
-  toggleViewAllPanel: () =>
-    set((s) => ({ showViewAllPanel: !s.showViewAllPanel })),
-  activeModels: {},
-  setModelActive: (model, active) =>
-    set((s) => ({ activeModels: { ...s.activeModels, [model]: active } })),
-  confidenceThreshold: 0.10,
-  setConfidenceThreshold: (confidenceThreshold) =>
-    set({ confidenceThreshold }),
-  confidenceThresholds: {},
-  setModelConfidence: (model, threshold) =>
-    set((s) => ({ confidenceThresholds: { ...s.confidenceThresholds, [model]: threshold } })),
-  initDetectionModels: (modelNames) =>
-    set((s) => {
-      const activeModels: Record<string, boolean> = {};
-      const confidenceThresholds: Record<string, number> = {};
-      for (const name of modelNames) {
-        activeModels[name] = s.activeModels[name] ?? true;
-        confidenceThresholds[name] = s.confidenceThresholds[name] ?? 0.10;
-      }
-      return { activeModels, confidenceThresholds };
-    }),
-  hiddenAnnotationIds: new Set<number>(),
-  toggleAnnotationVisibility: (id) =>
-    set((s) => {
-      const next = new Set(s.hiddenAnnotationIds);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return { hiddenAnnotationIds: next };
-    }),
-  hiddenClasses: {},
-  toggleClassVisibility: (model, cls) =>
-    set((s) => {
-      const key = `${model}:${cls}`;
-      const current = s.hiddenClasses[key] !== false; // default visible
-      return { hiddenClasses: { ...s.hiddenClasses, [key]: !current } };
-    }),
-
-  showTips: false,
-  toggleTips: () => set((s) => ({ showTips: !s.showTips })),
-  helpMode: false,
-  toggleHelpMode: () => set((s) => ({ helpMode: !s.helpMode })),
-
-  sidebarCollapsed: false,
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-  annotationPanelCollapsed: false,
-  toggleAnnotationPanel: () => set((s) => ({ annotationPanelCollapsed: !s.annotationPanelCollapsed })),
-
-  showKeynotes: false,
-  toggleKeynotes: () => set((s) => ({ showKeynotes: !s.showKeynotes })),
-  activeKeynoteFilter: null,
-  setKeynoteFilter: (activeKeynoteFilter) => set({ activeKeynoteFilter }),
-
-  activeAnnotationFilter: null,
-  setAnnotationFilter: (activeAnnotationFilter) => set({ activeAnnotationFilter }),
-
-  activeTradeFilter: null,
-  setTradeFilter: (activeTradeFilter) => set({ activeTradeFilter }),
-
-  activeCsiFilter: null,
-  setCsiFilter: (activeCsiFilter) => set({ activeCsiFilter }),
   allCsiCodes: [],
   setAllCsiCodes: (allCsiCodes) => set({ allCsiCodes }),
-  showCsiPanel: false,
-  toggleCsiPanel: () => set((s) => ({ showCsiPanel: !s.showCsiPanel })),
-
-  showPageIntelPanel: false,
-  togglePageIntelPanel: () => set((s) => ({ showPageIntelPanel: !s.showPageIntelPanel })),
-
-  showTakeoffPanel: false,
-  toggleTakeoffPanel: () =>
-    set((s) => ({
-      showTakeoffPanel: !s.showTakeoffPanel,
-      // Clear active item when closing panel
-      ...(s.showTakeoffPanel ? { activeTakeoffItemId: null } : {}),
-      ...(s.showChatPanel && !s.showTakeoffPanel ? { showChatPanel: false } : {}),
-    })),
   // [refactor jul10 P2.2④] takeoffItems/takeoffGroups collection state + actions moved to the
   // TanStack cache (src/queries/useTakeoff.ts). The FK-SET-NULL ungroup that lived in
   // removeTakeoffGroup here is now the facade's two-key notifyManager.batch write.
   activeTakeoffItemId: null,
   setActiveTakeoffItemId: (activeTakeoffItemId) => set({ activeTakeoffItemId, takeoffUndoStack: [], takeoffRedoStack: [] }),
 
-  hiddenTakeoffItemIds: new Set<number>(),
-  toggleTakeoffItemVisibility: (itemId) =>
-    set((s) => {
-      const next = new Set(s.hiddenTakeoffItemIds);
-      if (next.has(itemId)) next.delete(itemId); else next.add(itemId);
-      return { hiddenTakeoffItemIds: next };
-    }),
-
-  takeoffTab: "count",
-  setTakeoffTab: (takeoffTab) => set({ takeoffTab }),
   pageDimensions: {},
   setPageDimensions: (pageNum, width, height) => {
     const existing = get().pageDimensions[pageNum];
@@ -891,29 +530,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   activeQtoWorkflow: null,
   setActiveQtoWorkflow: (activeQtoWorkflow) => set({ activeQtoWorkflow }),
 
-  showTableParsePanel: false,
-  toggleTableParsePanel: () =>
-    set((s) => ({
-      showTableParsePanel: !s.showTableParsePanel,
-      // Reset all parse state when closing. guidedParse* fields live on the
-      // store but share the Table/Keynote Guided tab — clear them too so the
-      // pink region overlay doesn't survive a close/reopen.
-      ...(!s.showTableParsePanel ? {} : {
-        tableParseStep: "idle" as const,
-        tableParseRegion: null,
-        tableParsedGrid: null,
-        tableParseMeta: null,
-        tableParseColumnBBs: [],
-        tableParseColumnNames: [],
-        tableParseRowBBs: [],
-        tableParseTab: "all" as const,
-        guidedParseActive: false,
-        guidedParseRegion: null,
-        guidedParseRows: [],
-        guidedParseCols: [],
-        mode: "move" as const,
-      }),
-    })),
   tableParseStep: "idle",
   setTableParseStep: (tableParseStep) =>
     set((s) => ({
@@ -977,67 +593,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   },
   setTableParseOptions: (patch) =>
     set((s) => ({ tableParseOptions: { ...s.tableParseOptions, ...patch } })),
-  showTableCompareModal: false,
-  toggleTableCompareModal: () => set((s) => ({ showTableCompareModal: !s.showTableCompareModal })),
-
-  // ─── Specs/Notes orchestrator panel (D2) ──
-  // Lightweight wrapper — the real content lives in the per-tab components.
-  // Keynotes tab mounts <KeynotePanel embedded />; the other three are stubs.
-  showSpecsNotesPanel: false,
-  toggleSpecsNotesPanel: () =>
-    set((s) => ({ showSpecsNotesPanel: !s.showSpecsNotesPanel })),
-  specsNotesTab: "spec-parse",
-  setSpecsNotesTab: (specsNotesTab) => set({ specsNotesTab }),
-
-  // ─── Parse orchestrator panel (D3) ──
-  // Houses Shape Parse, Template Parse (renamed Symbol Search), YOLO-Tag-Map.
-  // Tabs mount DetectionPanel embedded with lockedTab, or SymbolSearchPanel
-  // embedded, so the underlying logic is reused rather than duplicated.
-  showParsePanel: false,
-  toggleParsePanel: () =>
-    set((s) => {
-      const closing = s.showParsePanel;
-      // Cascade teardown only when the standalone YOLO (DetectionPanel) isn't
-      // still open — closing one panel shouldn't clobber a Shape Parse draft
-      // the user is actively working in the other.
-      if (closing && !s.showDetectionPanel) {
-        queueMicrotask(() => get().resetAllTools());
-      }
-      return { showParsePanel: !s.showParsePanel };
-    }),
-  parsePanelTab: "shape",
-  setParsePanelTab: (parsePanelTab) => set({ parsePanelTab }),
-
-  // ─── Tools orchestrator panel (D4) ──
-  // Houses CSI, Text, Page Intelligence sub-tabs. Each tab mounts the
-  // respective panel in embedded mode.
-  showToolsPanel: false,
-  toggleToolsPanel: () =>
-    set((s) => ({ showToolsPanel: !s.showToolsPanel })),
-  toolsPanelTab: "csi",
-  setToolsPanelTab: (toolsPanelTab) => set({ toolsPanelTab }),
-
-  showKeynoteParsePanel: false,
-  toggleKeynoteParsePanel: () =>
-    set((s) => ({
-      showKeynoteParsePanel: !s.showKeynoteParsePanel,
-      // Reset all parse state when closing. Keynote's Guided tab shares the
-      // guidedParse* store fields — clear them so pink region overlay doesn't
-      // survive across panel close/reopen.
-      ...(!s.showKeynoteParsePanel ? {} : {
-        keynoteParseStep: "idle" as const,
-        keynoteParseRegion: null,
-        keynoteColumnBBs: [],
-        keynoteRowBBs: [],
-        keynoteYoloClass: null,
-        keynoteParseTab: "all" as const,
-        guidedParseActive: false,
-        guidedParseRegion: null,
-        guidedParseRows: [],
-        guidedParseCols: [],
-        mode: "move" as const,
-      }),
-    })),
   keynoteParseTab: "all",
   setKeynoteParseTab: (keynoteParseTab) => set({ keynoteParseTab }),
   keynoteParseStep: "idle",
@@ -1062,8 +617,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   addParsedKeynote: (entry) => set((s) => ({
     parsedKeynoteData: [...(s.parsedKeynoteData || []), entry],
   })),
-  activeKeynoteHighlight: null,
-  setActiveKeynoteHighlight: (activeKeynoteHighlight) => set({ activeKeynoteHighlight }),
   resetKeynoteParse: () => set({
     keynoteParseStep: "idle",
     keynoteParseRegion: null,
@@ -1145,42 +698,12 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   paragraphClipboard: null,
   setParagraphClipboard: (paragraphClipboard) => set({ paragraphClipboard }),
 
-  activeYoloTagId: null,
-  setActiveYoloTagId: (activeYoloTagId) => set({ activeYoloTagId }),
-  yoloTagVisibility: {},
-  setYoloTagVisibility: (id, visible) =>
-    set((s) => ({ yoloTagVisibility: { ...s.yoloTagVisibility, [id]: visible } })),
-  activeYoloTagFilter: null,
-  setYoloTagFilter: (activeYoloTagFilter) => set({ activeYoloTagFilter }),
   yoloTagPickingMode: false,
   setYoloTagPickingMode: (yoloTagPickingMode) => set({ yoloTagPickingMode }),
   tagScanResults: null,
   setTagScanResults: (tagScanResults) => set({ tagScanResults }),
   tagAddingMode: null,
   setTagAddingMode: (tagAddingMode) => set({ tagAddingMode }),
-  activeTableTagViews: {},
-  setTableTagView: (regionId, view) => set((s) => {
-    const updated = { ...s.activeTableTagViews };
-    if (view) { updated[regionId] = view; } else { delete updated[regionId]; }
-    return { activeTableTagViews: updated };
-  }),
-  llmHighlight: null,
-  setLlmHighlight: (llmHighlight) => set({ llmHighlight }),
-  tagBrowseId: null,
-  tagBrowseIndex: 0,
-
-  showParsedRegions: true,
-  toggleParsedRegions: () => set((s) => ({ showParsedRegions: !s.showParsedRegions })),
-  parsedRegionColorMode: "striped" as const,
-  setParsedRegionColorMode: (parsedRegionColorMode) => set({ parsedRegionColorMode }),
-  hiddenParsedRegionIds: new Set<string>(),
-  toggleParsedRegionVisibility: (id) => set((s) => {
-    const next = new Set(s.hiddenParsedRegionIds);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return { hiddenParsedRegionIds: next };
-  }),
-  focusedParsedRegionId: null,
-  setFocusedParsedRegionId: (focusedParsedRegionId) => set({ focusedParsedRegionId }),
 
   symbolSearchActive: false,
   setSymbolSearchActive: (symbolSearchActive) =>
@@ -1259,10 +782,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   // inlining field lists so each subsystem stays the owner of its own cleanup
   // shape. Called from parent-panel toggles (Parse, Detection, Table, Keynote)
   // on close, and from cancel buttons inside parse panels. Explicitly does NOT
-  // touch: selectedAnnotationIds, llmHighlight, showKeynotes overlay, chat,
-  // takeoffs, parsedKeynoteData (annotation groups + annotations now live in
-  // project-keyed query caches — P2.2⑤/⑥ — and are equally untouched). Those survive panel close
-  // so the user's saved work and multi-select state persist.
+  // touch uiStore presentation, takeoffs, or parsedKeynoteData. Annotation groups + annotations
+  // live in project-keyed Query caches (P2.2⑤/⑥) and are equally untouched. Saved work and
+  // multi-select presentation therefore survive a tool reset exactly as before.
   resetAllTools: () => {
     const s = get();
     s.setMode("move");          // clears bucket/split/symbol-active/polygon/tempPan
@@ -1288,10 +810,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       pageNumber: 1,
       numPages: 0,
       scale: 1,
-      searchQuery: "",
-      searchResults: [],
-      searchMatches: {},
-      searchLoading: false,
       // [refactor jul11 P2.2⑥] annotations reset deleted: loader seeds the publicId-keyed cache
       // unconditionally before reveal; the coordinator's preceding session reset re-keys observers.
       // [refactor jul11 P2.3] session identity/page-label fields and csiGraph are reset by the
@@ -1301,39 +819,10 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       // persists but is unobservable: resetProjectData resets session identity first, and consumers
       // are unmounted behind the loaders' `loading` gates until the fresh seed lands).
       allTrades: [],
-      showTextAnnotations: false,
-      activeTextAnnotationTypes: {},
-      hiddenTextAnnotations: new Set<string>(),
-      textAnnotationColors: {},
-      activeTextAnnotationFilter: null,
-      activeTakeoffFilter: null,
-      textPanelTab: "annotations",
-      activeMarkupId: null,
-      // [refactor jul9 P2.2①] chatMessages no longer reset here — chat data is cache-backed and
-      // publicId-scoped; the loader unconditionally re-seeds the new project's key. chatScope (UI) stays.
-      chatScope: "page",
-      activeKeynoteFilter: null,
-      activeAnnotationFilter: null,
-      activeTradeFilter: null,
-      activeCsiFilter: null,
       allCsiCodes: [],
-      showCsiPanel: false,
-      showPageIntelPanel: false,
-      sidebarCollapsed: false,
-      annotationPanelCollapsed: false,
-      showDetections: false,
-      showDetectionPanel: false,
-      showViewAllPanel: false,
-      confidenceThreshold: 0.10,
-      activeModels: {},
-      confidenceThresholds: {},
-      hiddenAnnotationIds: new Set<number>(),
-      showTakeoffPanel: false,
       // takeoffItems/takeoffGroups: cache-backed since P2.2④ — reset deliberately does NOT
       // touch the query cache (RECIPE step 7; publicId-keyed isolation makes it unnecessary).
-      // hiddenTakeoffItemIds was never in this reset block (pre-existing; do not "fix").
       activeTakeoffItemId: null,
-      takeoffTab: "count",
       activeQtoWorkflow: null,
       // qtoWorkflows: cache-backed since P2.2② — reset deliberately does NOT touch the query
       // cache (RECIPE step 7; publicId-keyed isolation makes it unnecessary, SPEC §7).
@@ -1343,8 +832,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       calibrationPoints: {},
       polygonDrawingMode: "idle",
       polygonVertices: [],
-      showTableParsePanel: false,
-      focusedParsedRegionId: null,
       tableParseTab: "all",
       tableParseStep: "idle",
       tableParseRegion: null,
@@ -1353,14 +840,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       tableParseColumnBBs: [],
       tableParseColumnNames: [],
       tableParseRowBBs: [],
-      showTableCompareModal: false,
-      showKeynoteParsePanel: false,
-      showSpecsNotesPanel: false,
-      specsNotesTab: "spec-parse",
-      showParsePanel: false,
-      parsePanelTab: "shape",
-      showToolsPanel: false,
-      toolsPanelTab: "csi",
       keynoteParseTab: "all",
       keynoteParseStep: "idle",
       keynoteParseRegion: null,
@@ -1368,7 +847,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       keynoteRowBBs: [],
       keynoteYoloClass: null,
       parsedKeynoteData: null,
-      activeKeynoteHighlight: null,
       // Stage 3 scaffold — reset on project change so slices don't leak across projects
       notesParseStep: "idle",
       notesParseRegion: null,
@@ -1383,18 +861,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       paragraphOverlayActive: false,
       paragraphBatch: [],
       paragraphClipboard: null,
-      activeYoloTagId: null,
-      yoloTagVisibility: {},
-      activeYoloTagFilter: null,
       yoloTagPickingMode: false,
       tagScanResults: null,
       tagAddingMode: null,
-      // [refactor jul11 P2.2⑨] These legacy omissions leaked browse/table overlays across
-      // projects and let a stale hidden browse id intercept arrow-key navigation.
-      activeTableTagViews: {},
-      tagBrowseId: null,
-      tagBrowseIndex: 0,
-      llmHighlight: null,
       symbolSearchActive: false,
       symbolSearchLoading: false,
       symbolSearchProgress: null,
@@ -1442,57 +911,6 @@ export const useNavigation = () =>
     setMode: s.setMode,
   })));
 
-/** Panel visibility toggles */
-export const usePanels = () =>
-  useViewerStore(useShallow((s) => ({
-    showTextPanel: s.showTextPanel,
-    toggleTextPanel: s.toggleTextPanel,
-    showChatPanel: s.showChatPanel,
-    toggleChatPanel: s.toggleChatPanel,
-    showTakeoffPanel: s.showTakeoffPanel,
-    toggleTakeoffPanel: s.toggleTakeoffPanel,
-    showDetectionPanel: s.showDetectionPanel,
-    toggleDetectionPanel: s.toggleDetectionPanel,
-    showViewAllPanel: s.showViewAllPanel,
-    toggleViewAllPanel: s.toggleViewAllPanel,
-    showCsiPanel: s.showCsiPanel,
-    toggleCsiPanel: s.toggleCsiPanel,
-    showPageIntelPanel: s.showPageIntelPanel,
-    togglePageIntelPanel: s.togglePageIntelPanel,
-    showTableParsePanel: s.showTableParsePanel,
-    toggleTableParsePanel: s.toggleTableParsePanel,
-    showKeynoteParsePanel: s.showKeynoteParsePanel,
-    toggleKeynoteParsePanel: s.toggleKeynoteParsePanel,
-    showSpecsNotesPanel: s.showSpecsNotesPanel,
-    toggleSpecsNotesPanel: s.toggleSpecsNotesPanel,
-    specsNotesTab: s.specsNotesTab,
-    setSpecsNotesTab: s.setSpecsNotesTab,
-    showParsePanel: s.showParsePanel,
-    toggleParsePanel: s.toggleParsePanel,
-    parsePanelTab: s.parsePanelTab,
-    setParsePanelTab: s.setParsePanelTab,
-    showToolsPanel: s.showToolsPanel,
-    toggleToolsPanel: s.toggleToolsPanel,
-    toolsPanelTab: s.toolsPanelTab,
-    setToolsPanelTab: s.setToolsPanelTab,
-    sidebarCollapsed: s.sidebarCollapsed,
-    toggleSidebar: s.toggleSidebar,
-    textPanelTab: s.textPanelTab,
-    setTextPanelTab: s.setTextPanelTab,
-  })));
-
-/** Multi-select selection state — shared by Group tool lasso,
- *  shift-click accumulation, and ViewAllPanel tree checkboxes. */
-export const useSelection = () =>
-  useViewerStore(useShallow((s) => ({
-    selectedAnnotationIds: s.selectedAnnotationIds,
-    setSelectedAnnotationIds: s.setSelectedAnnotationIds,
-    addToSelection: s.addToSelection,
-    removeFromSelection: s.removeFromSelection,
-    toggleSelection: s.toggleSelection,
-    clearSelection: s.clearSelection,
-  })));
-
 // [refactor jul10 P2.2⑤] useAnnotationGroups selector DELETED — the facade now lives in
 // src/queries/useAnnotationGroups.ts (same name, 5-member live shape; the 4 dead members
 // dropped per SPEC §5-E7). Consumers changed only their import line.
@@ -1538,14 +956,6 @@ export const useSymbolSearch = () =>
     setSymbolSearchPreset: s.setSymbolSearchPreset,
   })));
 
-/** Chat UI state. [refactor jul9 P2.2①] message DATA moved to the query cache — see
- *  useChatMessages(); this selector is now the chatScope knob only. */
-export const useChat = () =>
-  useViewerStore(useShallow((s) => ({
-    chatScope: s.chatScope,
-    setChatScope: s.setChatScope,
-  })));
-
 /** Table parse state */
 export const useTableParse = () =>
   useViewerStore(useShallow((s) => ({
@@ -1566,13 +976,7 @@ export const useTableParse = () =>
     setTableParseTab: s.setTableParseTab,
     tableParseOptions: s.tableParseOptions,
     setTableParseOptions: s.setTableParseOptions,
-    showTableCompareModal: s.showTableCompareModal,
-    toggleTableCompareModal: s.toggleTableCompareModal,
     resetTableParse: s.resetTableParse,
-    showParsedRegions: s.showParsedRegions,
-    toggleParsedRegions: s.toggleParsedRegions,
-    parsedRegionColorMode: s.parsedRegionColorMode,
-    setParsedRegionColorMode: s.setParsedRegionColorMode,
   })));
 
 /** Keynote parse + guided parse state */
@@ -1602,61 +1006,10 @@ export const useKeynoteParse = () =>
     resetGuidedParse: s.resetGuidedParse,
   })));
 
-/** Project-wide CSI filter controls. Active-window data lives in usePageWindow (⑦), while heavy
- *  per-page OCR lives in the bounded useTextract facade/coordinator (⑧). */
+/** Project-wide CSI catalog. Its active display filter lives in uiStore. */
 export const usePageData = () =>
   useViewerStore(useShallow((s) => ({
     allCsiCodes: s.allCsiCodes,
-    activeCsiFilter: s.activeCsiFilter,
-    setCsiFilter: s.setCsiFilter,
-  })));
-
-/** YOLO detection model state + visibility/search filters (annotation data lives in Query). */
-export const useDetection = () =>
-  useViewerStore(useShallow((s) => ({
-    activeModels: s.activeModels,
-    setModelActive: s.setModelActive,
-    confidenceThreshold: s.confidenceThreshold,
-    setConfidenceThreshold: s.setConfidenceThreshold,
-    activeAnnotationFilter: s.activeAnnotationFilter,
-    setAnnotationFilter: s.setAnnotationFilter,
-    // Cross-cutting: searchQuery/setSearch included here because consumers
-    // pair them with filter toggles. May extract to useSearch() later.
-    searchQuery: s.searchQuery,
-    setSearch: s.setSearch,
-    hiddenAnnotationIds: s.hiddenAnnotationIds,
-    toggleAnnotationVisibility: s.toggleAnnotationVisibility,
-    hiddenClasses: s.hiddenClasses,
-    toggleClassVisibility: s.toggleClassVisibility,
-  })));
-
-/** Text annotation visibility + styling controls */
-export const useTextAnnotationDisplay = () =>
-  useViewerStore(useShallow((s) => ({
-    showTextAnnotations: s.showTextAnnotations,
-    toggleTextAnnotations: s.toggleTextAnnotations,
-    activeTextAnnotationTypes: s.activeTextAnnotationTypes,
-    setTextAnnotationType: s.setTextAnnotationType,
-    setAllTextAnnotationTypes: s.setAllTextAnnotationTypes,
-    hiddenTextAnnotations: s.hiddenTextAnnotations,
-    toggleTextAnnotationVisibility: s.toggleTextAnnotationVisibility,
-    textAnnotationColors: s.textAnnotationColors,
-    setTextAnnotationColor: s.setTextAnnotationColor,
-    activeTextAnnotationFilter: s.activeTextAnnotationFilter,
-    setTextAnnotationFilter: s.setTextAnnotationFilter,
-  })));
-
-/** Annotation visibility filter state (used by AnnotationOverlay pageAnnotations useMemo) */
-export const useAnnotationFilters = () =>
-  useViewerStore(useShallow((s) => ({
-    showDetections: s.showDetections,
-    confidenceThreshold: s.confidenceThreshold,
-    activeModels: s.activeModels,
-    hiddenClasses: s.hiddenClasses,
-    confidenceThresholds: s.confidenceThresholds,
-    activeAnnotationFilter: s.activeAnnotationFilter,
-    activeCsiFilter: s.activeCsiFilter,
-    hiddenAnnotationIds: s.hiddenAnnotationIds,
   })));
 
 // [refactor jul10 P2.2②] useQtoWorkflow selector DELETED — its sole consumer (AutoQtoTab) now

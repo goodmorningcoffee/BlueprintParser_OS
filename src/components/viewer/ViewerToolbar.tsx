@@ -1,7 +1,21 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useViewerStore, useNavigation, usePanels, usePageData, useDetection } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePageData } from "@/stores/viewerStore";
+import {
+  useUiStore,
+  usePanelVisibility,
+  usePanelUiActions,
+  useDetectionUi,
+  useDetectionUiActions,
+  useSearchUiActions,
+} from "@/stores/uiStore";
+import {
+  toggleTakeoffPanel,
+  toggleDetectionPanel,
+  toggleParsePanel,
+  toggleTableParsePanel,
+} from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries } from "@/queries/useSummaries";
@@ -25,16 +39,24 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const scale = useViewerStore((s) => s.scale);
   const { publicId, isDemo, demoFeatureConfig } = useProject();
   const {
-    showChatPanel, toggleChatPanel,
-    showTakeoffPanel, toggleTakeoffPanel, showDetectionPanel, toggleDetectionPanel,
-    showTableParsePanel, toggleTableParsePanel,
-    showSpecsNotesPanel, toggleSpecsNotesPanel,
-    showParsePanel, toggleParsePanel,
-    showToolsPanel, toggleToolsPanel,
-    showViewAllPanel, toggleViewAllPanel,
-  } = usePanels();
-  const { allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
-  const { activeModels, setModelActive, searchQuery, setSearch } = useDetection();
+    showChatPanel,
+    showTakeoffPanel,
+    showDetectionPanel,
+    showTableParsePanel,
+    showSpecsNotesPanel,
+    showParsePanel,
+    showToolsPanel,
+    showViewAllPanel,
+  } = usePanelVisibility();
+  const { toggleChatPanel, toggleSpecsNotesPanel, toggleToolsPanel, toggleViewAllPanel } =
+    usePanelUiActions();
+  const { allCsiCodes } = usePageData();
+  const activeCsiFilter = useUiStore((s) => s.activeCsiFilter);
+  const setCsiFilter = useUiStore((s) => s.setCsiFilter);
+  const { activeModels } = useDetectionUi();
+  const { setModelActive } = useDetectionUiActions();
+  const searchQuery = useUiStore((s) => s.searchQuery);
+  const { setSearch } = useSearchUiActions();
   // [refactor jul11 P2.2⑥] Keep annotation-derived model controls reactive via the dedicated
   // cache facade while detection filters/models remain in their zustand UI slice.
   const { annotations } = useAnnotations();
@@ -43,17 +65,17 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const zoomIn = useViewerStore((s) => s.zoomIn);
   const zoomOut = useViewerStore((s) => s.zoomOut);
   const zoomFit = useViewerStore((s) => s.zoomFit);
-  const searchResults = useViewerStore((s) => s.searchResults);
-  const searchLoading = useViewerStore((s) => s.searchLoading);
-  const showDetections = useViewerStore((s) => s.showDetections);
-  const toggleDetections = useViewerStore((s) => s.toggleDetections);
-  const confidenceThresholds = useViewerStore((s) => s.confidenceThresholds);
-  const setModelConfidence = useViewerStore((s) => s.setModelConfidence);
+  const searchResults = useUiStore((s) => s.searchResults);
+  const searchLoading = useUiStore((s) => s.searchLoading);
+  const showDetections = useUiStore((s) => s.showDetections);
+  const toggleDetections = useUiStore((s) => s.toggleDetections);
+  const confidenceThresholds = useUiStore((s) => s.confidenceThresholds);
+  const setModelConfidence = useUiStore((s) => s.setModelConfidence);
   const allTrades = useViewerStore((s) => s.allTrades);
-  const activeTradeFilter = useViewerStore((s) => s.activeTradeFilter);
-  const setTradeFilter = useViewerStore((s) => s.setTradeFilter);
-  const showKeynotes = useViewerStore((s) => s.showKeynotes);
-  const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
+  const activeTradeFilter = useUiStore((s) => s.activeTradeFilter);
+  const setTradeFilter = useUiStore((s) => s.setTradeFilter);
+  const showKeynotes = useUiStore((s) => s.showKeynotes);
+  const toggleKeynotes = useUiStore((s) => s.toggleKeynotes);
   const showLabelingWizard = useSessionStore((s) => s.showLabelingWizard);
   const setShowLabelingWizard = useSessionStore((s) => s.setShowLabelingWizard);
 
@@ -310,7 +332,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
               Admin
             </a>
             <button
-              onClick={() => { setMenuOpen(false); useViewerStore.getState().toggleTips(); }}
+              onClick={() => { setMenuOpen(false); useUiStore.getState().toggleTips(); }}
               className="w-full text-left px-3 py-2 text-xs hover:bg-[var(--surface-hover)] text-[var(--fg)]"
             >
               Help

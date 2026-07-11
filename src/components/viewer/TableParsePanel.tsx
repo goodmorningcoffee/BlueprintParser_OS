@@ -3,6 +3,8 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
+import { toggleTableParsePanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
@@ -36,7 +38,6 @@ export default function TableParsePanel() {
   const queryClient = useQueryClient();
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const pageIntelligence = usePageIntelligenceByPage();
-  const toggleTableParsePanel = useViewerStore((s) => s.toggleTableParsePanel);
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
   const tableParsedGrid = useViewerStore((s) => s.tableParsedGrid);
@@ -45,7 +46,7 @@ export default function TableParsePanel() {
   const resetAllTools = useViewerStore((s) => s.resetAllTools);
   const tableParseStep = useViewerStore((s) => s.tableParseStep);
   const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
-  const toggleTableCompareModal = useViewerStore((s) => s.toggleTableCompareModal);
+  const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
   const setPage = useViewerStore((s) => s.setPage);
   const tableParseTab = useViewerStore((s) => s.tableParseTab);
   const setTableParseTab = useViewerStore((s) => s.setTableParseTab);
@@ -57,11 +58,11 @@ export default function TableParsePanel() {
   // action-only facade adds no second Query observer and guards late map responses by project.
   const yoloTags = useYoloTagRows();
   const { addYoloTagsBulk } = useYoloTagActions();
-  const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
-  const toggleParsedRegions = useViewerStore((s) => s.toggleParsedRegions);
-  const parsedRegionColorMode = useViewerStore((s) => s.parsedRegionColorMode);
-  const setParsedRegionColorMode = useViewerStore((s) => s.setParsedRegionColorMode);
-  const focusedParsedRegionId = useViewerStore((s) => s.focusedParsedRegionId);
+  const showParsedRegions = useUiStore((s) => s.showParsedRegions);
+  const toggleParsedRegions = useUiStore((s) => s.toggleParsedRegions);
+  const parsedRegionColorMode = useUiStore((s) => s.parsedRegionColorMode);
+  const setParsedRegionColorMode = useUiStore((s) => s.setParsedRegionColorMode);
+  const focusedParsedRegionId = useUiStore((s) => s.focusedParsedRegionId);
   const { publicId } = useProject();
 
   const [showExportModal, setShowExportModal] = useState(false);

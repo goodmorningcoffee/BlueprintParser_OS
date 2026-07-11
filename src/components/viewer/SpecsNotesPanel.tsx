@@ -1,6 +1,6 @@
 "use client";
 
-import { useViewerStore, usePanels } from "@/stores/viewerStore";
+import { useUiStore, usePanelTabs, usePanelTabActions } from "@/stores/uiStore";
 import KeynotePanel from "./KeynotePanel";
 import NotesPanel from "./NotesPanel";
 import SpecPanel from "./SpecPanel";
@@ -19,9 +19,11 @@ import SpecPanel from "./SpecPanel";
  * close button, outer header) is suppressed.
  */
 export default function SpecsNotesPanel() {
-  const { toggleSpecsNotesPanel, specsNotesTab, setSpecsNotesTab } = usePanels();
-  const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
-  const toggleParsedRegions = useViewerStore((s) => s.toggleParsedRegions);
+  const toggleSpecsNotesPanel = useUiStore((s) => s.toggleSpecsNotesPanel);
+  const { specsNotesTab } = usePanelTabs();
+  const { setSpecsNotesTab } = usePanelTabActions();
+  const showParsedRegions = useUiStore((s) => s.showParsedRegions);
+  const toggleParsedRegions = useUiStore((s) => s.toggleParsedRegions);
 
   return (
     <div className="w-80 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg">
@@ -77,4 +79,3 @@ export default function SpecsNotesPanel() {
     </div>
   );
 }
-

@@ -28,7 +28,7 @@ import "@testing-library/jest-dom";
 import { renderHook, cleanup, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
 import type { AnnotationGroup } from "@/types";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
@@ -124,13 +124,13 @@ describe("useMultiSelectInteraction — sibling expansion skips inactive groups 
     act(() => result.current.expandSelectionViaGroups(20));
     // the clicked annotation is still added; the inactive group's siblings are filtered (:103)
     await waitFor(() =>
-      expect([...useViewerStore.getState().selectedAnnotationIds].sort((a, b) => a - b)).toEqual([20]),
+      expect([...useUiStore.getState().selectedAnnotationIds].sort((a, b) => a - b)).toEqual([20]),
     );
 
     // membership-less id: early return (:99) — selection untouched (no spurious set)
     act(() => result.current.expandSelectionViaGroups(99));
     await waitFor(() =>
-      expect([...useViewerStore.getState().selectedAnnotationIds].sort((a, b) => a - b)).toEqual([20]),
+      expect([...useUiStore.getState().selectedAnnotationIds].sort((a, b) => a - b)).toEqual([20]),
     );
   });
 });
@@ -151,14 +151,14 @@ describe("useMultiSelectInteraction — expansion unions siblings across groups,
         { annotationId: 13, groupId: 4 },
       ],
     );
-    useViewerStore.setState({ selectedAnnotationIds: new Set([99]) }); // pre-existing selection
+    useUiStore.setState({ selectedAnnotationIds: new Set([99]) }); // pre-existing selection
     const { result } = renderHook(() => useMultiSelectInteraction(), { wrapper });
     await waitFor(() => expect(result.current.selectionSize).toBe(1));
 
     act(() => result.current.expandSelectionViaGroups(10));
 
     await waitFor(() =>
-      expect([...useViewerStore.getState().selectedAnnotationIds].sort((a, b) => a - b)).toEqual([
+      expect([...useUiStore.getState().selectedAnnotationIds].sort((a, b) => a - b)).toEqual([
         10, 11, 12, 13, 99,
       ]),
     );

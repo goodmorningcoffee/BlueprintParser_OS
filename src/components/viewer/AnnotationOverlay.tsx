@@ -20,7 +20,9 @@ import {
   useYoloTagActions,
   useYoloTagsForPage,
 } from "@/queries/useYoloTags";
-import { useViewerStore, useNavigation, useTableParse, useKeynoteParse, useSymbolSearch, useAnnotationFilters } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useTableParse, useKeynoteParse, useSymbolSearch } from "@/stores/viewerStore";
+import { useUiStore, useAnnotationFiltersUi } from "@/stores/uiStore";
+import { toggleTableParsePanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
@@ -132,8 +134,9 @@ export default memo(function AnnotationOverlay({
   const qc = useQueryClient();
   const {
     tableParseStep, setTableParseStep, tableParseRegion, setTableParseRegion,
-    tableParseColumnBBs, tableParseRowBBs, showParsedRegions,
+    tableParseColumnBBs, tableParseRowBBs,
   } = useTableParse();
+  const showParsedRegions = useUiStore((s) => s.showParsedRegions);
   const {
     keynoteParseStep, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs,
     setKeynoteYoloClass,
@@ -143,18 +146,18 @@ export default memo(function AnnotationOverlay({
   // instance edits on another page no longer repaint this canvas.
   const yoloTags = useYoloTagsForPage(pageNumber);
   const { updateYoloTag } = useYoloTagActions();
-  const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
-  const setActiveYoloTagId = useViewerStore((s) => s.setActiveYoloTagId);
-  const setYoloTagFilter = useViewerStore((s) => s.setYoloTagFilter);
-  const yoloTagVisibility = useViewerStore((s) => s.yoloTagVisibility);
+  const activeYoloTagId = useUiStore((s) => s.activeYoloTagId);
+  const setActiveYoloTagId = useUiStore((s) => s.setActiveYoloTagId);
+  const setYoloTagFilter = useUiStore((s) => s.setYoloTagFilter);
+  const yoloTagVisibility = useUiStore((s) => s.yoloTagVisibility);
   const yoloTagPickingMode = useViewerStore((s) => s.yoloTagPickingMode);
   const setYoloTagPickingMode = useViewerStore((s) => s.setYoloTagPickingMode);
   const {
     symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches,
   } = useSymbolSearch();
 
-  const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
-  const llmHighlight = useViewerStore((s) => s.llmHighlight);
+  const activeTableTagViews = useUiStore((s) => s.activeTableTagViews);
+  const llmHighlight = useUiStore((s) => s.llmHighlight);
   const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
   const showTableCellStructure = useViewerStore((s) => s.showTableCellStructure);
   const toggleCellHighlight = useViewerStore((s) => s.toggleCellHighlight);
@@ -172,7 +175,7 @@ export default memo(function AnnotationOverlay({
   // [refactor jul11 P2.2⑦] Sacred canvas subscription is current-page only. Handler-time PI below
   // remains an imperative read so parsed-region writes do not redraw this overlay unnecessarily.
   const pageKeynotes = useKeynotesForPage(pageNumber);
-  const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
+  const setKeynoteFilter = useUiStore((s) => s.setKeynoteFilter);
 
   // Drawing state lives in Zustand store — AnnotationOverlay does NOT subscribe.
   // Use getState() for reads AND writes in event handlers. DrawingPreviewLayer subscribes independently.
@@ -193,11 +196,11 @@ export default memo(function AnnotationOverlay({
   const draggingVertexRef = useRef<{ annId: number; idx: number } | null>(null);
   // One-shot focus signal from external components (TakeoffPanel, AreaTab).
   // When set, we transfer the value to local selectedId and clear the field.
-  const focusAnnotationId = useViewerStore((s) => s.focusAnnotationId);
+  const focusAnnotationId = useUiStore((s) => s.focusAnnotationId);
   useEffect(() => {
     if (focusAnnotationId !== null) {
       setSelectedId(focusAnnotationId);
-      useViewerStore.getState().setFocusAnnotationId(null);
+      useUiStore.getState().setFocusAnnotationId(null);
     }
   }, [focusAnnotationId]);
 
@@ -213,10 +216,10 @@ export default memo(function AnnotationOverlay({
   const {
     showDetections, confidenceThreshold, activeModels, hiddenClasses,
     confidenceThresholds, activeAnnotationFilter, activeCsiFilter, hiddenAnnotationIds,
-  } = useAnnotationFilters();
-  const setAnnotationFilter = useViewerStore((s) => s.setAnnotationFilter);
-  const setTakeoffFilter = useViewerStore((s) => s.setTakeoffFilter);
-  const setSearch = useViewerStore((s) => s.setSearch);
+  } = useAnnotationFiltersUi();
+  const setAnnotationFilter = useUiStore((s) => s.setAnnotationFilter);
+  const setTakeoffFilter = useUiStore((s) => s.setTakeoffFilter);
+  const setSearch = useUiStore((s) => s.setSearch);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   // [refactor jul10 P2.2④] cache-backed items subscription (data ONLY — no actions destructured).
   // Re-render topology is a strict SUBSET of the old raw selector: items-key observers notify on
@@ -224,7 +227,7 @@ export default memo(function AnnotationOverlay({
   // stays in the click-handler closures below (+ their dep arrays) exactly as before — D1-class
   // one-macrotask refresh lag, sanctioned.
   const { takeoffItems } = useTakeoffItems();
-  const hiddenTakeoffItemIds = useViewerStore((s) => s.hiddenTakeoffItemIds);
+  const hiddenTakeoffItemIds = useUiStore((s) => s.hiddenTakeoffItemIds);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   const calibrationMode = useViewerStore((s) => s.calibrationMode);
   const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
@@ -254,7 +257,7 @@ export default memo(function AnnotationOverlay({
   const splitPreview = useViewerStore((s) => s.splitPreview);
   const setSplitPreview = useViewerStore((s) => s.setSplitPreview);
   const setSplitError = useViewerStore((s) => s.setSplitError);
-  const showTakeoffPanel = useViewerStore((s) => s.showTakeoffPanel);
+  const showTakeoffPanel = useUiStore((s) => s.showTakeoffPanel);
   const tempPanMode = useViewerStore((s) => s.tempPanMode);
   // During keynote Step 2 with Column A drawn: only show YOLO fully inside Column A
   const isKeynoteYoloPicking = keynoteParseStep === "define-column" && keynoteColumnBBs.length >= 1;
@@ -1715,7 +1718,7 @@ export default memo(function AnnotationOverlay({
             if (!hit) continue;
             e.stopPropagation();
 
-            const store = useViewerStore.getState();
+            const store = useUiStore.getState();
             const currentSearch = store.searchQuery;
             const isToggleOff = currentSearch.toLowerCase() === ann.name.toLowerCase();
 
@@ -1760,10 +1763,9 @@ export default memo(function AnnotationOverlay({
               const [rMinX, rMinY, rMaxX, rMaxY] = region.bbox;
               if (nrmX >= rMinX && nrmX <= rMaxX && nrmY >= rMinY && nrmY <= rMaxY) {
                 e.stopPropagation();
-                const st = useViewerStore.getState();
-                if (!st.showTableParsePanel) st.toggleTableParsePanel();
-                st.setTableParseTab("all");
-                st.setFocusedParsedRegionId(region.id);
+                if (!useUiStore.getState().showTableParsePanel) toggleTableParsePanel();
+                useViewerStore.getState().setTableParseTab("all");
+                useUiStore.getState().setFocusedParsedRegionId(region.id);
                 return;
               }
             }
@@ -1779,7 +1781,7 @@ export default memo(function AnnotationOverlay({
             for (const word of pageWords) {
               const [left, top, w, h] = word.bbox;
               if (normX >= left && normX <= left + w && normY >= top && normY <= top + h) {
-                const sq = useViewerStore.getState().searchQuery;
+                const sq = useUiStore.getState().searchQuery;
                 if (e.shiftKey && sq) {
                   // Shift+double-click: append word to search (multi-word selection)
                   const existing = sq.toLowerCase().split(/\s+/);

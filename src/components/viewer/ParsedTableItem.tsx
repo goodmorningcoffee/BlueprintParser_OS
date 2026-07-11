@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
@@ -91,10 +92,10 @@ export default memo(function ParsedTableItem({
   }, []);
 
   // Reactive selectors for render-path (not getState)
-  const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
-  const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
+  const activeYoloTagId = useUiStore((s) => s.activeYoloTagId);
+  const activeTableTagViews = useUiStore((s) => s.activeTableTagViews);
   const isTagViewActive = table.region?.id ? !!activeTableTagViews[table.region.id] : false;
-  const hiddenParsedRegionIds = useViewerStore((s) => s.hiddenParsedRegionIds);
+  const hiddenParsedRegionIds = useUiStore((s) => s.hiddenParsedRegionIds);
   const isRegionHidden = table.region?.id ? hiddenParsedRegionIds.has(table.region.id) : false;
   const isFocused = focusedParsedRegionId != null && focusedParsedRegionId === table.region?.id;
   const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
@@ -148,7 +149,7 @@ export default memo(function ParsedTableItem({
       setExpanded(true);
       itemRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       const timer = setTimeout(() => {
-        useViewerStore.getState().setFocusedParsedRegionId(null);
+        useUiStore.getState().setFocusedParsedRegionId(null);
       }, 3000);
       return () => clearTimeout(timer);
     }
@@ -174,7 +175,7 @@ export default memo(function ParsedTableItem({
   }, [yoloTags]);
 
   const handleTagClick = (tag: string) => {
-    const store = useViewerStore.getState();
+    const store = useUiStore.getState();
     const existing = readYoloTags(queryClient, publicId)
       .find((candidate) => candidate.tagText === tag && candidate.source === "schedule");
     if (existing) {
@@ -333,7 +334,7 @@ export default memo(function ParsedTableItem({
         {/* Eye icon — toggle table region visibility on canvas */}
         {table.region?.id && (
           <button
-            onClick={() => useViewerStore.getState().toggleParsedRegionVisibility(table.region.id)}
+            onClick={() => useUiStore.getState().toggleParsedRegionVisibility(table.region.id)}
             className={`text-[10px] shrink-0 ${
               isRegionHidden
                 ? "text-[var(--muted)]/30 hover:text-[var(--muted)]"
@@ -348,7 +349,7 @@ export default memo(function ParsedTableItem({
         {table.region && rowTags.some((rt: { tag: string }) => yoloTags.some((t: any) => t.tagText === rt.tag && t.source === "schedule")) && (
           <button
             onClick={() => {
-              const store = useViewerStore.getState();
+              const store = useUiStore.getState();
               const regionId = table.region.id;
               if (store.activeTableTagViews[regionId]) {
                 store.setTableTagView(regionId, null);
@@ -506,7 +507,7 @@ export default memo(function ParsedTableItem({
                     });
                     store.setTableParseRegion(table.region.bbox || null);
                     store.setPage(table.pageNum);
-                    store.toggleTableCompareModal();
+                    useUiStore.getState().toggleTableCompareModal();
                   }}
                   className="flex-1 text-[9px] px-2 py-1 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
                 >

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { HELP_TOOLTIPS } from "@/data/help-tooltips";
 
 interface HelpTooltipProps {
@@ -14,7 +14,7 @@ interface HelpTooltipProps {
 const TOOLTIP_WIDTH = 256; // w-64
 
 export default function HelpTooltip({ id, children, position = "below" }: HelpTooltipProps) {
-  const helpMode = useViewerStore((s) => s.helpMode);
+  const helpMode = useUiStore((s) => s.helpMode);
   const [visible, setVisible] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);

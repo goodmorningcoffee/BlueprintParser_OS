@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
@@ -90,7 +91,7 @@ export default function KeynoteItem({
   // The parent owns the one whole-list query observer. This row only needs action closures; in
   // particular the bulk callback rejects a late map response after a project/bootstrap change.
   const { addYoloTagsBulk } = useYoloTagActions();
-  const activeTableTagViews = useViewerStore((s) => s.activeTableTagViews);
+  const activeTableTagViews = useUiStore((s) => s.activeTableTagViews);
   const isTagViewActive = region?.id ? !!activeTableTagViews[region.id] : false;
   const [nameError, setNameError] = useState<string | null>(null);
 
@@ -179,7 +180,7 @@ export default function KeynoteItem({
   };
 
   const handleKeyClick = (key: string) => {
-    const store = useViewerStore.getState();
+    const store = useUiStore.getState();
     const session = useSessionStore.getState();
     const existing = readYoloTags(queryClient, session.publicId).find(
       (t) => t.tagText === key && t.source === "keynote" && t.pageNumber === keynote.pageNumber,
@@ -222,7 +223,7 @@ export default function KeynoteItem({
         {region && keynote.keys.some((k) => yoloTags.some((t) => t.tagText === k.key && t.source === "keynote")) && (
           <button
             onClick={() => {
-              const store = useViewerStore.getState();
+              const store = useUiStore.getState();
               if (isTagViewActive) {
                 store.setTableTagView(region.id, null);
               } else {
@@ -269,7 +270,7 @@ export default function KeynoteItem({
                     });
                     store.setTableParseRegion(region.bbox || null);
                     store.setPage(keynote.pageNumber);
-                    store.toggleTableCompareModal();
+                    useUiStore.getState().toggleTableCompareModal();
                   }}
                   className="flex-1 text-[9px] px-2 py-1 rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
                 >

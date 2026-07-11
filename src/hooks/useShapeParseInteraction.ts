@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import {
   appendKeynotesForPage,
   mergeKeynotesByPage,
@@ -26,8 +27,8 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
   const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
   const setMode = useViewerStore((s) => s.setMode);
-  const showKeynotes = useViewerStore((s) => s.showKeynotes);
-  const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
+  const showKeynotes = useUiStore((s) => s.showKeynotes);
+  const toggleKeynotes = useUiStore((s) => s.toggleKeynotes);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

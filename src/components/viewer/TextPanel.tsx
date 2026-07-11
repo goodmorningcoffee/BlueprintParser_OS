@@ -2,7 +2,17 @@
 
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useNavigation, usePanels, useDetection, useTextAnnotationDisplay } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import {
+  useUiStore,
+  usePanelTabs,
+  usePanelTabActions,
+  useDetectionUi,
+  useDetectionUiActions,
+  useSearchUiActions,
+  useTextAnnotationUi,
+  useTextAnnotationUiActions,
+} from "@/stores/uiStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { useAnnotations } from "@/queries/useAnnotations";
 import { cancelTextractPage, replaceTextractForPage } from "@/queries/textractCache";
@@ -42,8 +52,9 @@ const CATEGORY_LABELS: Record<AnnotationCategory, string> = {
 export default function TextPanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
   const annotations = useTextAnnotationsForPage(pageNumber);
-  const { textPanelTab: tab, setTextPanelTab: setTab } = usePanels();
-  const { searchQuery } = useDetection();
+  const { textPanelTab: tab } = usePanelTabs();
+  const { setTextPanelTab: setTab } = usePanelTabActions();
+  const searchQuery = useUiStore((s) => s.searchQuery);
   // [refactor jul11 P2.2⑥] Annotation rows left the broad detection UI slice; subscribing through
   // the dedicated cache facade keeps this markup count reactive without retaining store ownership.
   const { annotations: allAnnotations } = useAnnotations();
@@ -173,13 +184,20 @@ function OcrTab({ searchQuery, pageNumber }: { searchQuery: string; pageNumber: 
 
 function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotation[]; pageNumber: number }) {
   const {
-    showTextAnnotations: showAll, toggleTextAnnotations: toggleAll,
-    activeTextAnnotationTypes: activeTypes, setTextAnnotationType: setType,
+    showTextAnnotations: showAll,
+    activeTextAnnotationTypes: activeTypes,
+    hiddenTextAnnotations: hiddenSet,
+    textAnnotationColors: customColors,
+    activeTextAnnotationFilter: activeFilter,
+  } = useTextAnnotationUi();
+  const {
+    toggleTextAnnotations: toggleAll,
+    setTextAnnotationType: setType,
     setAllTextAnnotationTypes: setAllTypes,
-    hiddenTextAnnotations: hiddenSet, toggleTextAnnotationVisibility: toggleIndividual,
-    textAnnotationColors: customColors, setTextAnnotationColor: setColor,
-    activeTextAnnotationFilter: activeFilter, setTextAnnotationFilter: setFilter,
-  } = useTextAnnotationDisplay();
+    toggleTextAnnotationVisibility: toggleIndividual,
+    setTextAnnotationColor: setColor,
+    setTextAnnotationFilter: setFilter,
+  } = useTextAnnotationUiActions();
 
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
 
@@ -451,10 +469,12 @@ function GraphTab({ pageNumber }: { pageNumber: number }) {
 // ─── Markups Tab ────────────────────────────────────────────────
 
 function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
-  const { activeAnnotationFilter, setAnnotationFilter, setSearch } = useDetection();
+  const { activeAnnotationFilter } = useDetectionUi();
+  const { setAnnotationFilter } = useDetectionUiActions();
+  const { setSearch } = useSearchUiActions();
   const { setPage } = useNavigation();
   const { pageNames } = useProject();
-  const activeMarkupId = useViewerStore((s) => s.activeMarkupId);
+  const activeMarkupId = useUiStore((s) => s.activeMarkupId);
   const scrollRef = useRef<Record<number, HTMLDivElement | null>>({});
 
   // Scroll to active markup when it changes

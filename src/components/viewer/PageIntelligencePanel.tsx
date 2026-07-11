@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useNavigation, usePanels } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { migrateTextRegions } from "@/lib/text-region-migrate";
 
@@ -13,7 +14,7 @@ import { migrateTextRegions } from "@/lib/text-region-migrate";
 export default function PageIntelligencePanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
   const intel = usePageIntelligenceForPage(pageNumber) as any;
-  const { togglePageIntelPanel } = usePanels();
+  const togglePageIntelPanel = useUiStore((s) => s.togglePageIntelPanel);
 
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     classification: true,

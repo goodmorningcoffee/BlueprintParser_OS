@@ -2,6 +2,7 @@
 
 import { useMemo, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { useYoloTagCatalog } from "@/queries/useYoloTags";
 
@@ -21,14 +22,14 @@ export default memo(function ParsedTableCellOverlay({
   height,
   cssScale,
 }: ParsedTableCellOverlayProps) {
-  const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
+  const showParsedRegions = useUiStore((s) => s.showParsedRegions);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const intel = usePageIntelligenceForPage(pageNumber) as any;
-  const hiddenParsedRegionIds = useViewerStore((s) => s.hiddenParsedRegionIds);
+  const hiddenParsedRegionIds = useUiStore((s) => s.hiddenParsedRegionIds);
   // [refactor jul11 P2.2⑨] Hit regions need identity/text and only the presence of instances.
   // Coordinate/count edits therefore no longer repaint this overlay.
   const yoloTagCatalog = useYoloTagCatalog();
-  const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
+  const activeYoloTagId = useUiStore((s) => s.activeYoloTagId);
 
   const cells = useMemo(() => {
     if (!showParsedRegions || width === 0 || height === 0) return [];
@@ -110,7 +111,7 @@ export default memo(function ParsedTableCellOverlay({
   if (cells.length === 0) return null;
 
   const handleClick = (tagId: string) => {
-    const store = useViewerStore.getState();
+    const store = useUiStore.getState();
     if (store.activeYoloTagId === tagId) {
       store.setActiveYoloTagId(null);
       store.setYoloTagFilter(null);

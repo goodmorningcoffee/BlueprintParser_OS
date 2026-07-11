@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useTextAnnotationsForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
 import { TEXT_ANNOTATION_COLORS } from "@/types";
@@ -21,17 +22,17 @@ export default memo(function TextAnnotationOverlay({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const annotations = useTextAnnotationsForPage(pageNumber);
-  const showTextAnnotations = useViewerStore((s) => s.showTextAnnotations);
-  const activeTypes = useViewerStore((s) => s.activeTextAnnotationTypes);
-  const hiddenSet = useViewerStore((s) => s.hiddenTextAnnotations);
-  const customColors = useViewerStore((s) => s.textAnnotationColors);
-  const activeFilter = useViewerStore((s) => s.activeTextAnnotationFilter);
-  const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
-  const setFilter = useViewerStore((s) => s.setTextAnnotationFilter);
+  const showTextAnnotations = useUiStore((s) => s.showTextAnnotations);
+  const activeTypes = useUiStore((s) => s.activeTextAnnotationTypes);
+  const hiddenSet = useUiStore((s) => s.hiddenTextAnnotations);
+  const customColors = useUiStore((s) => s.textAnnotationColors);
+  const activeFilter = useUiStore((s) => s.activeTextAnnotationFilter);
+  const activeCsiFilter = useUiStore((s) => s.activeCsiFilter);
+  const setFilter = useUiStore((s) => s.setTextAnnotationFilter);
   const mode = useViewerStore((s) => s.mode);
   const textractData = useTextractForPage(pageNumber);
-  const setSearch = useViewerStore((s) => s.setSearch);
-  const searchQuery = useViewerStore((s) => s.searchQuery);
+  const setSearch = useUiStore((s) => s.setSearch);
+  const searchQuery = useUiStore((s) => s.searchQuery);
 
   // Filter visible annotations
   const visible = useMemo(() => {

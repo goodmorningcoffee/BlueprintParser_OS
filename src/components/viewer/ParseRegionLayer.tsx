@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 
 interface ParseRegionLayerProps {
@@ -24,14 +25,14 @@ export default memo(function ParseRegionLayer({
 }: ParseRegionLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
-  const showTableParsePanel = useViewerStore((s) => s.showTableParsePanel);
+  const showParsedRegions = useUiStore((s) => s.showParsedRegions);
+  const showTableParsePanel = useUiStore((s) => s.showTableParsePanel);
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const tableParseColumnBBs = useViewerStore((s) => s.tableParseColumnBBs);
   const tableParseRowBBs = useViewerStore((s) => s.tableParseRowBBs);
   // Keynote region overlay renders when the standalone KeynotePanel is open OR
   // when Specs/Notes is open on its Keynotes tab (D2 container embeds KeynotePanel).
-  const showKeynoteParsePanel = useViewerStore(
+  const showKeynoteParsePanel = useUiStore(
     (s) => s.showKeynoteParsePanel || (s.showSpecsNotesPanel && s.specsNotesTab === "keynotes"),
   );
   const keynoteParseRegion = useViewerStore((s) => s.keynoteParseRegion);
@@ -39,8 +40,8 @@ export default memo(function ParseRegionLayer({
   const keynoteRowBBs = useViewerStore((s) => s.keynoteRowBBs);
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const intel = usePageIntelligenceForPage(pageNumber) as any;
-  const hiddenParsedRegionIds = useViewerStore((s) => s.hiddenParsedRegionIds);
-  const parsedRegionColorMode = useViewerStore((s) => s.parsedRegionColorMode);
+  const hiddenParsedRegionIds = useUiStore((s) => s.hiddenParsedRegionIds);
+  const parsedRegionColorMode = useUiStore((s) => s.parsedRegionColorMode);
   const parseDraftRegion = useViewerStore((s) => s.parseDraftRegion);
 
   useEffect(() => {

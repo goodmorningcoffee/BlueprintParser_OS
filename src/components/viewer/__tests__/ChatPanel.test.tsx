@@ -16,7 +16,6 @@ import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-li
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import ChatPanel from "../ChatPanel";
-import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ChatMsg } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -182,7 +181,7 @@ describe("ChatPanel — Clear DELETE by scope (T-B6/T-B7)", () => {
       { id: 1, role: "user", content: "m1" },
       { id: 2, role: "assistant", content: "m2" },
     ]);
-    useViewerStore.setState({ chatScope: "page", pageNumber: 3 });
+    setViewerStoreStateForTest({ chatScope: "page", pageNumber: 3 });
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
     renderChatPanel();
 
@@ -198,7 +197,7 @@ describe("ChatPanel — Clear DELETE by scope (T-B6/T-B7)", () => {
 
   it("project scope: DELETE omits pageNumber", async () => {
     seedChat([{ id: 1, role: "user", content: "m1" }]);
-    useViewerStore.setState({ chatScope: "project" });
+    setViewerStoreStateForTest({ chatScope: "project" });
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
     renderChatPanel();
 
@@ -241,7 +240,7 @@ describe("ChatPanel — scope is display UI, NOT a message filter (T-B10/T-B11)"
       { id: 1, role: "user", content: "m1" },
       { id: 2, role: "assistant", content: "m2" },
     ]);
-    useViewerStore.setState({ chatScope: "page", pageNumber: 5 });
+    setViewerStoreStateForTest({ chatScope: "page", pageNumber: 5 });
     renderChatPanel();
 
     expect(bubbleTexts()).toEqual(["m1", "m2"]);

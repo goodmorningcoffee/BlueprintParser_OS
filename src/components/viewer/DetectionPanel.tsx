@@ -2,7 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useNavigation, usePanels, useDetection } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import {
+  useUiStore,
+  useDetectionUi,
+  useDetectionUiActions,
+  useSearchUiActions,
+} from "@/stores/uiStore";
+import { toggleDetectionPanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations, useAnnotations, writeAnns } from "@/queries/useAnnotations";
 import { readYoloTags, useYoloTags } from "@/queries/useYoloTags";
@@ -45,18 +52,25 @@ export default function DetectionPanel({
 }: { embedded?: boolean; lockedTab?: DetectionTab } = {}) {
   const queryClient = useQueryClient();
   const { pageNumber, setPage } = useNavigation();
-  const { toggleDetectionPanel } = usePanels();
   const { pageNames } = useProject();
   // [refactor jul11 P2.2⑥] Annotation data now follows its publicId-keyed cache facade; the
   // remaining useDetection fields stay zustand-owned UI/filter state.
   const { annotations, setAnnotations } = useAnnotations();
   const {
-    activeModels, setModelActive,
-    confidenceThreshold, setConfidenceThreshold,
-    activeAnnotationFilter, setAnnotationFilter, setSearch,
-    hiddenAnnotationIds, toggleAnnotationVisibility,
-    hiddenClasses, toggleClassVisibility,
-  } = useDetection();
+    activeModels,
+    confidenceThreshold,
+    activeAnnotationFilter,
+    hiddenAnnotationIds,
+    hiddenClasses,
+  } = useDetectionUi();
+  const {
+    setModelActive,
+    setConfidenceThreshold,
+    setAnnotationFilter,
+    toggleAnnotationVisibility,
+    toggleClassVisibility,
+  } = useDetectionUiActions();
+  const { setSearch } = useSearchUiActions();
   const {
     yoloTags, activeYoloTagId, setActiveYoloTagId,
     setYoloTagFilter, yoloTagVisibility, setYoloTagVisibility,
@@ -74,12 +88,12 @@ export default function DetectionPanel({
   // retained pending-shape page. Cache actions below remain explicit and project-keyed.
   const keynotes = useKeynotesByPage();
   const setMode = useViewerStore((s) => s.setMode);
-  const showKeynotes = useViewerStore((s) => s.showKeynotes);
-  const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
-  const showDetections = useViewerStore((s) => s.showDetections);
-  const toggleDetections = useViewerStore((s) => s.toggleDetections);
-  const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);
-  const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
+  const showKeynotes = useUiStore((s) => s.showKeynotes);
+  const toggleKeynotes = useUiStore((s) => s.toggleKeynotes);
+  const showDetections = useUiStore((s) => s.showDetections);
+  const toggleDetections = useUiStore((s) => s.toggleDetections);
+  const activeKeynoteFilter = useUiStore((s) => s.activeKeynoteFilter);
+  const setKeynoteFilter = useUiStore((s) => s.setKeynoteFilter);
   const projectId = useSessionStore((s) => s.projectId);
   const publicId = useSessionStore((s) => s.publicId);
 

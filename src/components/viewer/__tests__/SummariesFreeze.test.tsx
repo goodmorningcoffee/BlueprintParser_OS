@@ -33,6 +33,7 @@ import {
   type ActivePageWindow,
 } from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedAnnotations } from "@/test/seed-annotations";
 import { seedSummaries } from "@/test/seed-summaries";
@@ -332,7 +333,7 @@ describe("KeynotePanel — keynoteTablePages replaces the intel fallback wholesa
 
 describe("ViewerToolbar — YOLO dropdown lists summaries.modelNames, not the fallback (VT-1)", () => {
   it("dropdown shows 'summaryModel' and NOT the annotation-derived 'annModel'", async () => {
-    useViewerStore.setState({ showDetections: true });
+    useUiStore.setState({ showDetections: true });
     // one real yolo annotation: passes the hasYoloAnnotations gate AND baits the fallback —
     // the `summaries?...modelNames || [...]` read must suppress it while summaries exist
     // (incl. the `[] ||` truthiness quirk: even an EMPTY summaries list wins).
@@ -370,7 +371,7 @@ describe("PageSidebar — trade chip uses summaries.tradePageIndex over the csiC
   // variants behind what will be an import-line-only diff (SPEC §6 PS-1). CHIPS ONLY — the
   // virtual-scroll tile list never renders in jsdom (containerHeight 0).
   it("chip reads 'Trade: Plumbing (2 pg)' from the summary index (fallback would say 1 pg)", async () => {
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       numPages: 10,
       activeTradeFilter: "Plumbing",
     });

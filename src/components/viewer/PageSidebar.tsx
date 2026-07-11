@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useNavigation, usePageData, useDetection, useTextAnnotationDisplay, useSymbolSearch } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, useSymbolSearch } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import {
   useCsiCodesByPage,
@@ -31,28 +32,32 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   const keynotes = useKeynotesByPage();
   const csiCodes = useCsiCodesByPage();
   const textAnnotations = useTextAnnotationsByPage();
-  const { activeCsiFilter, setCsiFilter } = usePageData();
-  const { activeAnnotationFilter, setAnnotationFilter, searchQuery } = useDetection();
+  const activeCsiFilter = useUiStore((s) => s.activeCsiFilter);
+  const setCsiFilter = useUiStore((s) => s.setCsiFilter);
+  const activeAnnotationFilter = useUiStore((s) => s.activeAnnotationFilter);
+  const setAnnotationFilter = useUiStore((s) => s.setAnnotationFilter);
+  const searchQuery = useUiStore((s) => s.searchQuery);
   // [refactor jul11 P2.2⑥] Page derivations follow the publicId-keyed annotation cache; the
   // filter/search controls remain in useDetection's zustand UI slice.
   const { annotations } = useAnnotations();
-  const { activeTextAnnotationFilter, setTextAnnotationFilter } = useTextAnnotationDisplay();
-  const setActiveYoloTagId = useViewerStore((s) => s.setActiveYoloTagId);
-  const setYoloTagFilter = useViewerStore((s) => s.setYoloTagFilter);
+  const activeTextAnnotationFilter = useUiStore((s) => s.activeTextAnnotationFilter);
+  const setTextAnnotationFilter = useUiStore((s) => s.setTextAnnotationFilter);
+  const setActiveYoloTagId = useUiStore((s) => s.setActiveYoloTagId);
+  const setYoloTagFilter = useUiStore((s) => s.setYoloTagFilter);
   const { symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches } = useSymbolSearch();
   const { summaries } = useSummaries();
 
   // Fields not in any slice selector — individual selectors
   const setPageName = useSessionStore((s) => s.setPageName);
-  const searchResults = useViewerStore((s) => s.searchResults);
-  const searchMatches = useViewerStore((s) => s.searchMatches);
-  const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);
-  const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
-  const activeTradeFilter = useViewerStore((s) => s.activeTradeFilter);
-  const setTradeFilter = useViewerStore((s) => s.setTradeFilter);
-  const activeTakeoffFilter = useViewerStore((s) => s.activeTakeoffFilter);
-  const setTakeoffFilter = useViewerStore((s) => s.setTakeoffFilter);
-  const activeYoloTagFilter = useViewerStore((s) => s.activeYoloTagFilter);
+  const searchResults = useUiStore((s) => s.searchResults);
+  const searchMatches = useUiStore((s) => s.searchMatches);
+  const activeKeynoteFilter = useUiStore((s) => s.activeKeynoteFilter);
+  const setKeynoteFilter = useUiStore((s) => s.setKeynoteFilter);
+  const activeTradeFilter = useUiStore((s) => s.activeTradeFilter);
+  const setTradeFilter = useUiStore((s) => s.setTradeFilter);
+  const activeTakeoffFilter = useUiStore((s) => s.activeTakeoffFilter);
+  const setTakeoffFilter = useUiStore((s) => s.setTakeoffFilter);
+  const activeYoloTagFilter = useUiStore((s) => s.activeYoloTagFilter);
   // [refactor jul11 P2.2⑨] The sidebar filter consumes one tag, not the whole project catalog.
   // Unrelated tag edits can no longer rebuild its virtualized page derivations.
   const activeYoloTag = useYoloTagById(activeYoloTagFilter);

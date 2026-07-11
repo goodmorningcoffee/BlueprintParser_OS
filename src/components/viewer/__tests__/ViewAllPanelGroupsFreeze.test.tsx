@@ -34,7 +34,7 @@ import "@testing-library/jest-dom";
 import { render, screen, fireEvent, cleanup, waitFor, act, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
 import { seedAnnotations } from "@/test/seed-annotations";
 import type { AnnotationGroup, ClientAnnotation } from "@/types";
@@ -165,8 +165,8 @@ describe("ViewAllPanel annotation navigation — live handler-time row lookup", 
     seedAnnotations(qc, [live]);
     fireEvent.click(renderedRow);
 
-    expect(useViewerStore.getState().focusAnnotationId).toBe(100);
-    expect(useViewerStore.getState().llmHighlight).toEqual({
+    expect(useUiStore.getState().focusAnnotationId).toBe(100);
+    expect(useUiStore.getState().llmHighlight).toEqual({
       pageNumber: 4,
       bbox: live.bbox,
       label: live.name,

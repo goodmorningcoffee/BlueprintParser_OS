@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (both hooks —
 // CountTab is a dual reader). Handler bodies below are UNCHANGED: the SPLIT write ordering
@@ -210,7 +211,7 @@ export default memo(function CountTab() {
         <div
           onClick={() => {
             setActiveTakeoffItemId(isActive ? null : item.id);
-            const store = useViewerStore.getState();
+            const store = useUiStore.getState();
             if (isActive) { store.setTakeoffFilter(null); } else { store.setTakeoffFilter(item.id); }
           }}
           className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors ${
@@ -239,12 +240,12 @@ export default memo(function CountTab() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                const store = useViewerStore.getState();
+                const store = useUiStore.getState();
                 if (store.activeTakeoffFilter === item.id) { store.setTakeoffFilter(null); store.setSearch(""); }
                 else { store.setTakeoffFilter(item.id); store.setSearch(item.name); }
               }}
               className={`text-[10px] px-1 rounded hover:text-emerald-400 ${
-                useViewerStore.getState().activeTakeoffFilter === item.id ? "text-emerald-400 bg-emerald-500/20" : "text-[var(--muted)]"
+                useUiStore.getState().activeTakeoffFilter === item.id ? "text-emerald-400 bg-emerald-500/20" : "text-[var(--muted)]"
               }`}
               title="Filter pages by this item"
             >

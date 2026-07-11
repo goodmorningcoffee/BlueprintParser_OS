@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useNavigation, usePageData, usePanels, useDetection } from "@/stores/viewerStore";
+import { useNavigation, usePageData } from "@/stores/viewerStore";
+import { useUiStore, useSearchUiActions } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useCsiCodesForPage } from "@/queries/usePageWindow";
 import { useCsiGraph } from "@/queries/useCsiGraph";
@@ -39,9 +40,11 @@ const DIVISION_NAMES: Record<string, string> = {
 export default function CsiPanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
   const pageCsiCodes = useCsiCodesForPage(pageNumber);
-  const { allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
-  const { toggleCsiPanel } = usePanels();
-  const { setSearch } = useDetection();
+  const { allCsiCodes } = usePageData();
+  const activeCsiFilter = useUiStore((s) => s.activeCsiFilter);
+  const setCsiFilter = useUiStore((s) => s.setCsiFilter);
+  const toggleCsiPanel = useUiStore((s) => s.toggleCsiPanel);
+  const { setSearch } = useSearchUiActions();
   const csiGraph = useCsiGraph();
   // Bootstrap JSON remains deliberately unvalidated until P4. Preserve the old optional-field
   // tolerance at the render boundary even though the canonical graph type requires these arrays.

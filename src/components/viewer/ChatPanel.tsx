@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useViewerStore, useChat, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useProject } from "@/stores/sessionStore";
 // [refactor jul9 P2.2①] chat message DATA now lives in the TanStack Query cache (facade hook);
 // useChat() is shrunk to the chatScope UI knob. showChatPanel still comes from usePanels().
@@ -43,7 +44,8 @@ function getDisciplineFromPageName(pageName: string): string | null {
 export default function ChatPanel() {
   // [refactor jul9 P2.2①] message data from the query-cache facade; scope stays zustand UI state.
   const { chatMessages, addChatMessage, clearChatMessages } = useChatMessages();
-  const { chatScope, setChatScope } = useChat();
+  const chatScope = useUiStore((s) => s.chatScope);
+  const setChatScope = useUiStore((s) => s.setChatScope);
   const { publicId, pageNames } = useProject();
   const { pageNumber } = useNavigation();
 
@@ -150,12 +152,12 @@ export default function ChatPanel() {
                       store.setPage(act.pageNumber);
                     } else if (act.action === "highlight" && act.bbox) {
                       store.setPage(act.pageNumber);
-                      store.setLlmHighlight({
+                      useUiStore.getState().setLlmHighlight({
                         pageNumber: act.pageNumber,
                         bbox: act.bbox,
                         label: act.label,
                       });
-                      setTimeout(() => useViewerStore.getState().setLlmHighlight(null), 8000);
+                      setTimeout(() => useUiStore.getState().setLlmHighlight(null), 8000);
                     }
                   } else if (parsed.error) {
                     fullContent = `Error: ${parsed.error}`;

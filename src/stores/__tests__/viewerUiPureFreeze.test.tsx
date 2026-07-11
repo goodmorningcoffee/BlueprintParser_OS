@@ -1,11 +1,20 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { useSessionStore } from "@/stores/sessionStore";
 import { resetProjectData } from "@/stores/viewerCommands";
-import { useViewerStore } from "@/stores/viewerStore";
+// Keep the U0 fixture's local store variable stable while flipping its imported owner. The module
+// path is the ownership assertion: every data/action exercise below now runs against uiStore.
+import { useUiStore as useViewerStore } from "@/stores/uiStore";
+import { useViewerStore as useResidualViewerStore } from "@/stores/viewerStore";
+import {
+  partitionViewerStoreTestState,
+  setViewerStoreStateForTest,
+  UI_TEST_STATE_KEYS,
+} from "@/test/viewer-store-state";
 
 type ViewerState = ReturnType<typeof useViewerStore.getState>;
 
-// P2.3 U0: this is the exact mechanically-pure uiStore candidate. Tool activation,
+// P2.3 U2: this is the exact mechanically-pure uiStore owner. Tool activation,
 // parse drafts/tabs, project data, and mutable server-row drafts deliberately stay out.
 const UI_FIELDS = [
   "searchQuery",
@@ -103,17 +112,13 @@ const UI_ACTION_FIELDS = [
   "toggleTextPanel",
   "toggleChatPanel",
   "toggleDetections",
-  "toggleDetectionPanel",
   "toggleViewAllPanel",
   "toggleCsiPanel",
   "togglePageIntelPanel",
-  "toggleTakeoffPanel",
-  "toggleTableParsePanel",
-  "toggleKeynoteParsePanel",
   "toggleSpecsNotesPanel",
-  "toggleParsePanel",
   "toggleToolsPanel",
   "toggleTableCompareModal",
+  "setPanelVisibility",
   "setSpecsNotesTab",
   "setParsePanelTab",
   "setToolsPanelTab",
@@ -132,11 +137,13 @@ const UI_ACTION_FIELDS = [
   "setYoloTagVisibility",
   "setYoloTagFilter",
   "setTableTagView",
+  "setYoloBrowseState",
   "setLlmHighlight",
   "toggleParsedRegions",
   "setParsedRegionColorMode",
   "toggleParsedRegionVisibility",
   "setFocusedParsedRegionId",
+  "resetProjectUiState",
 ] as const satisfies readonly (keyof ViewerState)[];
 
 type UiActionField = (typeof UI_ACTION_FIELDS)[number];
@@ -176,7 +183,7 @@ beforeEach(() => {
   });
 });
 
-describe("viewerStore — P2.3 pure UI characterization", () => {
+describe("uiStore — P2.3 post-carve pure UI ownership", () => {
   it("freezes the exact 60-field candidate and its construction defaults", () => {
     expect(UI_FIELDS).toHaveLength(60);
     expect(pickUi(useViewerStore.getState())).toEqual({
@@ -241,6 +248,43 @@ describe("viewerStore — P2.3 pure UI characterization", () => {
       hiddenParsedRegionIds: new Set<string>(),
       focusedParsedRegionId: null,
     });
+  });
+
+  it("routes the exact 60-key test seam session -> UI -> viewer and skips empty owners", () => {
+    expect(UI_TEST_STATE_KEYS).toEqual(UI_FIELDS);
+    const partitions = partitionViewerStoreTestState({
+      publicId: "destination",
+      searchQuery: "needle",
+      pageNumber: 7,
+    });
+    expect(partitions).toEqual({
+      session: { publicId: "destination" },
+      ui: { searchQuery: "needle" },
+      viewer: { pageNumber: 7 },
+    });
+
+    const publications: string[] = [];
+    const unsubscribeSession = useSessionStore.subscribe(() => publications.push("session"));
+    const unsubscribeUi = useViewerStore.subscribe(() => publications.push("ui"));
+    const unsubscribeViewer = useResidualViewerStore.subscribe(() => publications.push("viewer"));
+
+    setViewerStoreStateForTest({
+      publicId: "destination",
+      searchQuery: "needle",
+      pageNumber: 7,
+    });
+    expect(publications).toEqual(["session", "ui", "viewer"]);
+
+    publications.length = 0;
+    setViewerStoreStateForTest({ searchQuery: "ui-only" });
+    expect(publications).toEqual(["ui"]);
+
+    publications.length = 0;
+    setViewerStoreStateForTest({});
+    expect(publications).toEqual([]);
+    unsubscribeSession();
+    unsubscribeUi();
+    unsubscribeViewer();
   });
 
   it("preserves selection pass-through/no-op identity and copies every visibility Set toggle", () => {

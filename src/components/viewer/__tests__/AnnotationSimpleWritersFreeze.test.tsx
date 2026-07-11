@@ -37,6 +37,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { ClientAnnotation, YoloTag } from "@/types";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import {
@@ -243,7 +244,7 @@ describe("TagBrowseBar annotation edit freeze", () => {
     expect(screen.getByRole("button", { name: "Unrelated 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Same-tick sentinel 1" })).toBeInTheDocument();
     expect(readYoloTags(qc, "pid")[0]).toMatchObject({ name: "D-02", tagText: "D-02" });
-    expect(useViewerStore.getState().llmHighlight?.label).toBe("D-02 — 1 of 2");
+    expect(useUiStore.getState().llmHighlight?.label).toBe("D-02 — 1 of 2");
 
     // WHY advance: updateYoloTag schedules its separate project-intelligence debounce even though
     // the annotation rename itself is local. Draining under demo prevents cross-test timer bleed.

@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
@@ -79,9 +80,9 @@ export default memo(function LinearTab() {
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const isDemo = useSessionStore((s) => s.isDemo);
   const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();
-  // visibility set + toggle STAY zustand in ④ (UI state, not a server collection)
-  const hiddenTakeoffItemIds = useViewerStore((s) => s.hiddenTakeoffItemIds);
-  const toggleTakeoffItemVisibility = useViewerStore((s) => s.toggleTakeoffItemVisibility);
+  // Visibility is presentation state; the server collection remains in Query.
+  const hiddenTakeoffItemIds = useUiStore((s) => s.hiddenTakeoffItemIds);
+  const toggleTakeoffItemVisibility = useUiStore((s) => s.toggleTakeoffItemVisibility);
 
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");
@@ -266,7 +267,7 @@ export default memo(function LinearTab() {
         <div
           onClick={() => {
             setActiveTakeoffItemId(isActive ? null : item.id);
-            const store = useViewerStore.getState();
+            const store = useUiStore.getState();
             if (isActive) { store.setTakeoffFilter(null); } else { store.setTakeoffFilter(item.id); }
           }}
           className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors ${isActive ? "ring-1 ring-[var(--accent)]" : "hover:bg-[var(--surface-hover)]"} ${isHidden ? "opacity-40" : ""}`}

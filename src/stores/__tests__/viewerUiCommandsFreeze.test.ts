@@ -1,7 +1,6 @@
 // @vitest-environment node
-// [refactor jul11 P2.3 U0] Characterization for compound commands that still live in the
-// monolithic viewerStore. These tests deliberately pin publication count, peer-panel timing,
-// and the uneven close-reset shapes before the UI command/store carve changes their owner.
+// [refactor jul11 P2.3 U2] Post-carve characterization for neutral cross-store UI commands.
+// These tests pin owner-specific publication count/order, peer-panel timing, and close-reset shapes.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -12,7 +11,18 @@ import {
   navigateYoloTag,
   seedYoloTagsFromBootstrap,
 } from "@/queries/useYoloTags";
+import { useSessionStore } from "@/stores/sessionStore";
+import { useUiStore } from "@/stores/uiStore";
+import {
+  resetProjectData,
+  toggleDetectionPanel,
+  toggleKeynoteParsePanel,
+  toggleParsePanel,
+  toggleTableParsePanel,
+  toggleTakeoffPanel,
+} from "@/stores/viewerCommands";
 import { useViewerStore } from "@/stores/viewerStore";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 import type { YoloTag } from "@/types";
 
 let queryClient: QueryClient;
@@ -22,6 +32,8 @@ function restoreViewerStore(): void {
   // value. resetViewerState intentionally preserves several tool fields, so it is not sufficient
   // isolation for characterization that seeds otherwise-impossible competing-tool combinations.
   useViewerStore.setState(useViewerStore.getInitialState(), true);
+  useUiStore.setState(useUiStore.getInitialState(), true);
+  useSessionStore.setState(useSessionStore.getInitialState(), true);
 }
 
 beforeEach(() => {
@@ -40,12 +52,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function changedValueKeys(
-  before: ReturnType<typeof useViewerStore.getState>,
-  after: ReturnType<typeof useViewerStore.getState>,
-): string[] {
+function changedValueKeys<T extends object>(before: T, after: T): string[] {
   return Object.keys(before)
-    .filter((key) => !Object.is(before[key as keyof typeof before], after[key as keyof typeof after]))
+    .filter((key) => !Object.is(before[key as keyof T], after[key as keyof T]))
     .sort();
 }
 
@@ -62,11 +71,35 @@ function yoloTag(id: string, instances: YoloTag["instances"] = []): YoloTag {
   };
 }
 
+describe("viewer UI command freeze — project reset", () => {
+  it("publishes session -> UI -> residual viewer synchronously and exactly once each", () => {
+    setViewerStoreStateForTest({
+      publicId: "old-project",
+      searchQuery: "needle",
+      pageNumber: 7,
+    });
+    const publications: string[] = [];
+    const unsubscribeSession = useSessionStore.subscribe(() => publications.push("session"));
+    const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
+    const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
+
+    resetProjectData();
+
+    expect(publications).toEqual(["session", "ui", "viewer"]);
+    expect(useSessionStore.getState().publicId).toBe("");
+    expect(useUiStore.getState().searchQuery).toBe("");
+    expect(useViewerStore.getState().pageNumber).toBe(1);
+    unsubscribeSession();
+    unsubscribeUi();
+    unsubscribeViewer();
+  });
+});
+
 describe("viewer UI command freeze — takeoff panel", () => {
   it("opens over chat without clearing the active item or either history stack", () => {
     const undo = useViewerStore.getState().takeoffUndoStack.slice();
     const redo = useViewerStore.getState().takeoffRedoStack.slice();
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       showTakeoffPanel: false,
       showChatPanel: true,
       activeTakeoffItemId: 41,
@@ -74,22 +107,30 @@ describe("viewer UI command freeze — takeoff panel", () => {
       takeoffRedoStack: redo,
     });
 
-    useViewerStore.getState().toggleTakeoffPanel();
+    const publications: string[] = [];
+    const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
+    const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
+    toggleTakeoffPanel();
 
     const state = useViewerStore.getState();
-    expect(state).toMatchObject({
+    expect(useUiStore.getState()).toMatchObject({
       showTakeoffPanel: true,
       showChatPanel: false,
+    });
+    expect(state).toMatchObject({
       activeTakeoffItemId: 41,
     });
+    expect(publications).toEqual(["ui"]);
     expect(state.takeoffUndoStack).toBe(undo);
     expect(state.takeoffRedoStack).toBe(redo);
+    unsubscribeViewer();
+    unsubscribeUi();
   });
 
   it("closes with a direct active-id clear, preserving chat and both history references", () => {
     const undo = useViewerStore.getState().takeoffUndoStack.slice();
     const redo = useViewerStore.getState().takeoffRedoStack.slice();
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       showTakeoffPanel: true,
       showChatPanel: true,
       activeTakeoffItemId: 41,
@@ -97,18 +138,26 @@ describe("viewer UI command freeze — takeoff panel", () => {
       takeoffRedoStack: redo,
     });
 
-    useViewerStore.getState().toggleTakeoffPanel();
+    const publications: string[] = [];
+    const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
+    const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
+    toggleTakeoffPanel();
 
     const state = useViewerStore.getState();
-    expect(state).toMatchObject({
+    expect(useUiStore.getState()).toMatchObject({
       showTakeoffPanel: false,
       showChatPanel: true,
+    });
+    expect(state).toMatchObject({
       activeTakeoffItemId: null,
     });
+    expect(publications).toEqual(["viewer", "ui"]);
     // setActiveTakeoffItemId(null) would allocate two new empty arrays. The compound toggle does
     // not call that action; undo/redo history survives the panel close.
     expect(state.takeoffUndoStack).toBe(undo);
     expect(state.takeoffRedoStack).toBe(redo);
+    unsubscribeViewer();
+    unsubscribeUi();
   });
 });
 
@@ -119,7 +168,7 @@ const peerPanelScenarios = [
     openPeerSeed: { showParsePanel: true },
     closePeerSeed: { showParsePanel: false },
     hostKey: "showDetectionPanel" as const,
-    toggle: () => useViewerStore.getState().toggleDetectionPanel(),
+    toggle: toggleDetectionPanel,
   },
   {
     label: "parse host with detection peer",
@@ -127,7 +176,7 @@ const peerPanelScenarios = [
     openPeerSeed: { showDetectionPanel: true },
     closePeerSeed: { showDetectionPanel: false },
     hostKey: "showParsePanel" as const,
-    toggle: () => useViewerStore.getState().toggleParsePanel(),
+    toggle: toggleParsePanel,
   },
 ] as const;
 
@@ -135,15 +184,16 @@ describe("viewer UI command freeze — peer-host teardown", () => {
   for (const scenario of peerPanelScenarios) {
     it(`${scenario.label}: decides from the peer at call time, then resets in a microtask`, () => {
       const resetAllTools = vi.fn();
-      useViewerStore.setState({ ...scenario.closedHostSeed, resetAllTools });
+      useUiStore.setState(scenario.closedHostSeed);
+      useViewerStore.setState({ resetAllTools });
 
       scenario.toggle();
 
-      expect(useViewerStore.getState()[scenario.hostKey]).toBe(false);
+      expect(useUiStore.getState()[scenario.hostKey]).toBe(false);
       expect(resetAllTools).not.toHaveBeenCalled();
 
       // Opening the peer after the close call does not cancel the already-queued teardown.
-      useViewerStore.setState(scenario.openPeerSeed);
+      useUiStore.setState(scenario.openPeerSeed);
       expect(resetAllTools).not.toHaveBeenCalled();
       vi.runAllTicks();
       expect(resetAllTools).toHaveBeenCalledTimes(1);
@@ -151,26 +201,28 @@ describe("viewer UI command freeze — peer-host teardown", () => {
 
     it(`${scenario.label}: an open peer at call time suppresses teardown permanently`, () => {
       const resetAllTools = vi.fn();
-      useViewerStore.setState({ ...scenario.closedHostSeed, ...scenario.openPeerSeed, resetAllTools });
+      useUiStore.setState({ ...scenario.closedHostSeed, ...scenario.openPeerSeed });
+      useViewerStore.setState({ resetAllTools });
 
       scenario.toggle();
       // Closing the peer before microtasks drain does not retroactively schedule a reset.
-      useViewerStore.setState(scenario.closePeerSeed);
+      useUiStore.setState(scenario.closePeerSeed);
       vi.runAllTicks();
 
-      expect(useViewerStore.getState()[scenario.hostKey]).toBe(false);
+      expect(useUiStore.getState()[scenario.hostKey]).toBe(false);
       expect(resetAllTools).not.toHaveBeenCalled();
     });
 
     it(`${scenario.label}: opening the host never schedules teardown`, () => {
       restoreViewerStore();
       const resetAllTools = vi.fn();
-      useViewerStore.setState({ ...scenario.closePeerSeed, resetAllTools });
+      useUiStore.setState(scenario.closePeerSeed);
+      useViewerStore.setState({ resetAllTools });
 
       scenario.toggle();
       vi.runAllTicks();
 
-      expect(useViewerStore.getState()[scenario.hostKey]).toBe(true);
+      expect(useUiStore.getState()[scenario.hostKey]).toBe(true);
       expect(resetAllTools).not.toHaveBeenCalled();
     });
   }
@@ -187,7 +239,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     const tableParseOptions = useViewerStore.getState().tableParseOptions;
     const polygonVertices = [{ x: 3, y: 4 }];
     const bucketFillPreview = { vertices: [{ x: 1, y: 2 }], method: "sentinel" };
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       setMode,
       showTableParsePanel: true,
       tableParseStep: "review",
@@ -220,8 +272,9 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       tempPanMode: true,
     });
     const before = useViewerStore.getState();
+    const beforeUi = useUiStore.getState();
 
-    before.toggleTableParsePanel();
+    toggleTableParsePanel();
 
     const after = useViewerStore.getState();
     expect(changedValueKeys(before, after)).toEqual([
@@ -230,7 +283,6 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       "guidedParseRegion",
       "guidedParseRows",
       "mode",
-      "showTableParsePanel",
       "tableParseColumnBBs",
       "tableParseColumnNames",
       "tableParseMeta",
@@ -240,8 +292,8 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       "tableParseTab",
       "tableParsedGrid",
     ]);
+    expect(changedValueKeys(beforeUi, useUiStore.getState())).toEqual(["showTableParsePanel"]);
     expect(after).toMatchObject({
-      showTableParsePanel: false,
       tableParseStep: "idle",
       tableParseRegion: null,
       tableParsedGrid: null,
@@ -256,12 +308,15 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       guidedParseCols: [],
       mode: "move",
       showTableCellStructure: true,
-      showTableCompareModal: true,
       activeTakeoffItemId: 41,
       polygonDrawingMode: "drawing",
       bucketFillActive: true,
       symbolSearchActive: true,
       tempPanMode: true,
+    });
+    expect(useUiStore.getState()).toMatchObject({
+      showTableParsePanel: false,
+      showTableCompareModal: true,
     });
     expect(after.tableCellStructure).toBe(tableCellStructure);
     expect(after.tableParseOptions).toBe(tableParseOptions);
@@ -279,7 +334,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     const activeKeynoteHighlight = { pageNumber: 8, key: "1" };
     const polygonVertices = [{ x: 3, y: 4 }];
     const bucketFillPreview = { vertices: [{ x: 1, y: 2 }], method: "sentinel" };
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       setMode,
       showKeynoteParsePanel: true,
       keynoteParseStep: "review",
@@ -304,8 +359,9 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       tempPanMode: true,
     });
     const before = useViewerStore.getState();
+    const beforeUi = useUiStore.getState();
 
-    before.toggleKeynoteParsePanel();
+    toggleKeynoteParsePanel();
 
     const after = useViewerStore.getState();
     expect(changedValueKeys(before, after)).toEqual([
@@ -320,10 +376,9 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       "keynoteRowBBs",
       "keynoteYoloClass",
       "mode",
-      "showKeynoteParsePanel",
     ]);
+    expect(changedValueKeys(beforeUi, useUiStore.getState())).toEqual(["showKeynoteParsePanel"]);
     expect(after).toMatchObject({
-      showKeynoteParsePanel: false,
       keynoteParseStep: "idle",
       keynoteParseRegion: null,
       keynoteColumnBBs: [],
@@ -341,8 +396,9 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       symbolSearchActive: true,
       tempPanMode: true,
     });
+    expect(useUiStore.getState().showKeynoteParsePanel).toBe(false);
     expect(after.parsedKeynoteData).toBe(parsedKeynoteData);
-    expect(after.activeKeynoteHighlight).toBe(activeKeynoteHighlight);
+    expect(useUiStore.getState().activeKeynoteHighlight).toBe(activeKeynoteHighlight);
     expect(after.polygonVertices).toBe(polygonVertices);
     expect(after.bucketFillPreview).toBe(bucketFillPreview);
     expect(setMode).not.toHaveBeenCalled();
@@ -359,7 +415,7 @@ describe("viewer UI command freeze — YOLO browse navigation", () => {
       bbox: [0, 0, 1, 1] as [number, number, number, number],
       label: "old",
     };
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       pageNumber: 7,
       searchQuery: "unrelated-current-value",
       activeYoloTagId: "old",
@@ -367,27 +423,25 @@ describe("viewer UI command freeze — YOLO browse navigation", () => {
       tagBrowseIndex: 3,
       llmHighlight: oldHighlight,
     });
-    const missingBaseline = useViewerStore.getState();
-    const publications: Array<{
-      next: ReturnType<typeof useViewerStore.getState>;
-      previous: ReturnType<typeof useViewerStore.getState>;
-    }> = [];
-    const unsubscribe = useViewerStore.subscribe((next, previous) => {
-      publications.push({ next, previous });
-    });
+    const missingViewerBaseline = useViewerStore.getState();
+    const missingUiBaseline = useUiStore.getState();
+    const publications: string[] = [];
+    const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
+    const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
 
     navigateYoloTag(queryClient, "project-A", "missing", 99);
     expect(publications).toEqual([]);
-    expect(useViewerStore.getState()).toBe(missingBaseline);
+    expect(useViewerStore.getState()).toBe(missingViewerBaseline);
+    expect(useUiStore.getState()).toBe(missingUiBaseline);
 
     navigateYoloTag(queryClient, "project-A", "empty", 99);
-    unsubscribe();
+    unsubscribeViewer();
+    unsubscribeUi();
 
-    expect(publications).toHaveLength(1);
-    expect(publications[0].previous).toBe(missingBaseline);
-    expect(publications[0].next).toBe(useViewerStore.getState());
-    expect(publications[0].next).toMatchObject({
-      pageNumber: 7,
+    expect(publications).toEqual(["ui"]);
+    expect(useViewerStore.getState()).toBe(missingViewerBaseline);
+    expect(useViewerStore.getState().pageNumber).toBe(7);
+    expect(useUiStore.getState()).toMatchObject({
       searchQuery: "unrelated-current-value",
       activeYoloTagId: "empty",
       tagBrowseId: "empty",
@@ -396,7 +450,7 @@ describe("viewer UI command freeze — YOLO browse navigation", () => {
     });
   });
 
-  it("wraps negative and positive indexes and publishes each nonempty navigation once", () => {
+  it("wraps indexes and publishes raw page first, then one UI bundle", () => {
     const instances: YoloTag["instances"] = [
       { pageNumber: 2, annotationId: 1, bbox: [0, 0, 0.1, 0.1], confidence: 1 },
       { pageNumber: 5, annotationId: 2, bbox: [0.2, 0.2, 0.3, 0.3], confidence: 1 },
@@ -404,22 +458,21 @@ describe("viewer UI command freeze — YOLO browse navigation", () => {
     seedYoloTagsFromBootstrap(queryClient, "project-A", {
       yoloTags: [yoloTag("D-201", instances)],
     });
-    useViewerStore.setState({ searchQuery: "preserve-me" });
-    const publications: Array<{
-      next: ReturnType<typeof useViewerStore.getState>;
-      previous: ReturnType<typeof useViewerStore.getState>;
-    }> = [];
-    const unsubscribe = useViewerStore.subscribe((next, previous) => {
-      publications.push({ next, previous });
+    useUiStore.setState({ searchQuery: "preserve-me" });
+    const publications: string[] = [];
+    const uiObservedPages: number[] = [];
+    const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
+    const unsubscribeUi = useUiStore.subscribe(() => {
+      publications.push("ui");
+      uiObservedPages.push(useViewerStore.getState().pageNumber);
     });
-    const negativeBaseline = useViewerStore.getState();
 
     navigateYoloTag(queryClient, "project-A", "D-201", -1);
 
-    expect(publications).toHaveLength(1);
-    expect(publications[0].previous).toBe(negativeBaseline);
-    expect(publications[0].next).toMatchObject({
-      pageNumber: 5,
+    expect(publications).toEqual(["viewer", "ui"]);
+    expect(uiObservedPages).toEqual([5]);
+    expect(useViewerStore.getState().pageNumber).toBe(5);
+    expect(useUiStore.getState()).toMatchObject({
       searchQuery: "preserve-me",
       activeYoloTagId: "D-201",
       tagBrowseId: "D-201",
@@ -430,15 +483,15 @@ describe("viewer UI command freeze — YOLO browse navigation", () => {
         label: "D-201 — 2 of 2",
       },
     });
-    const positiveBaseline = useViewerStore.getState();
 
     navigateYoloTag(queryClient, "project-A", "D-201", 4);
-    unsubscribe();
+    unsubscribeViewer();
+    unsubscribeUi();
 
-    expect(publications).toHaveLength(2);
-    expect(publications[1].previous).toBe(positiveBaseline);
-    expect(publications[1].next).toMatchObject({
-      pageNumber: 2,
+    expect(publications).toEqual(["viewer", "ui", "viewer", "ui"]);
+    expect(uiObservedPages).toEqual([5, 2]);
+    expect(useViewerStore.getState().pageNumber).toBe(2);
+    expect(useUiStore.getState()).toMatchObject({
       searchQuery: "preserve-me",
       tagBrowseIndex: 0,
       llmHighlight: {
@@ -532,12 +585,15 @@ describe("viewer UI command freeze — demo mixed bootstrap source", () => {
     };
     const reset = oneCall("resetProjectData");
     const demoPolicy = oneCall("setIsDemo");
-    const confidence = oneCall("useViewerStore.getState().setConfidenceThreshold");
-    const uiPatch = oneCall("useViewerStore.setState");
+    const confidence = oneCall("useUiStore.getState().setConfidenceThreshold");
+    const parsePatch = oneCall("useViewerStore.setState");
+    const uiPatch = oneCall("useUiStore.setState");
     const promiseAll = oneCall("Promise.all");
 
     expect(compact(demoPolicy.arguments[0], source)).toBe("true");
     expect(compact(confidence.arguments[0], source)).toBe("0");
+    expect(parsePatch.arguments).toHaveLength(1);
+    expect(compact(parsePatch.arguments[0], source)).toBe('{tableParseTab:"auto"}');
     expect(uiPatch.arguments).toHaveLength(1);
     expect(ts.isObjectLiteralExpression(uiPatch.arguments[0])).toBe(true);
     const properties = Object.fromEntries(
@@ -553,10 +609,9 @@ describe("viewer UI command freeze — demo mixed bootstrap source", () => {
       showTips: "false",
       showChatPanel: "false",
       showTableParsePanel: "true",
-      tableParseTab: '"auto"',
     });
 
-    const indexes = [reset, demoPolicy, confidence, uiPatch, promiseAll].map((node) =>
+    const indexes = [reset, demoPolicy, confidence, parsePatch, uiPatch, promiseAll].map((node) =>
       tryBlock.statements.indexOf(directStatement(node, tryBlock)),
     );
     expect(indexes).toEqual([
@@ -565,8 +620,9 @@ describe("viewer UI command freeze — demo mixed bootstrap source", () => {
       indexes[0] + 2,
       indexes[0] + 3,
       indexes[0] + 4,
+      indexes[0] + 5,
     ]);
-    for (const call of [reset, demoPolicy, confidence, uiPatch]) {
+    for (const call of [reset, demoPolicy, confidence, parsePatch, uiPatch]) {
       expect(descendants(directStatement(call, tryBlock), ts.isAwaitExpression)).toHaveLength(0);
     }
   });

@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
@@ -322,7 +323,7 @@ export default memo(function AreaTab() {
         <div
           onClick={() => {
             setActiveTakeoffItemId(isActive ? null : item.id);
-            const store = useViewerStore.getState();
+            const store = useUiStore.getState();
             if (isActive) { store.setTakeoffFilter(null); } else { store.setTakeoffFilter(item.id); }
           }}
           className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors ${isActive ? "ring-1 ring-[var(--accent)]" : "hover:bg-[var(--surface-hover)]"}`}
@@ -366,7 +367,7 @@ export default memo(function AreaTab() {
                 onClick={(e) => {
                   e.stopPropagation();
                   useViewerStore.getState().setPage(inst.pageNumber);
-                  useViewerStore.getState().setFocusAnnotationId(inst.annId);
+                  useUiStore.getState().setFocusAnnotationId(inst.annId);
                 }}
                 className="flex items-center gap-2 px-2 py-0.5 text-[11px] rounded cursor-pointer hover:bg-[var(--surface-hover)]"
                 title={`Go to page ${inst.pageNumber}`}

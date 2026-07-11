@@ -19,6 +19,7 @@ import { useShallow } from "zustand/react/shallow";
 import { persistFetch } from "@/lib/client-persist";
 import { queryKeys } from "@/queries/queryKeys";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { YoloTag } from "@/types";
 
@@ -322,7 +323,7 @@ export function navigateYoloTag(
   if (!tag) return;
 
   if (tag.instances.length === 0) {
-    useViewerStore.setState({
+    useUiStore.getState().setYoloBrowseState({
       tagBrowseId: tagId,
       tagBrowseIndex: 0,
       activeYoloTagId: tagId,
@@ -333,11 +334,13 @@ export function navigateYoloTag(
 
   const nextIndex = ((index % tag.instances.length) + tag.instances.length) % tag.instances.length;
   const instance = tag.instances[nextIndex];
-  useViewerStore.setState({
+  // Preserve the legacy raw, unclamped page jump and expose that destination before the single UI
+  // bundle. Calling setPage here would clamp behavior that navigateYoloTag never clamped.
+  useViewerStore.setState({ pageNumber: instance.pageNumber });
+  useUiStore.getState().setYoloBrowseState({
     tagBrowseId: tagId,
     tagBrowseIndex: nextIndex,
     activeYoloTagId: tagId,
-    pageNumber: instance.pageNumber,
     llmHighlight: {
       pageNumber: instance.pageNumber,
       bbox: instance.bbox,
@@ -482,12 +485,14 @@ export function useYoloTagActions() {
 export function useYoloTags() {
   const yoloTags = useYoloTagRows();
   const actions = useYoloTagActions();
-  const ui = useViewerStore(useShallow((state) => ({
+  const ui = useUiStore(useShallow((state) => ({
     activeYoloTagId: state.activeYoloTagId,
     setActiveYoloTagId: state.setActiveYoloTagId,
     yoloTagVisibility: state.yoloTagVisibility,
     setYoloTagVisibility: state.setYoloTagVisibility,
     setYoloTagFilter: state.setYoloTagFilter,
+  })));
+  const tool = useViewerStore(useShallow((state) => ({
     yoloTagPickingMode: state.yoloTagPickingMode,
     setYoloTagPickingMode: state.setYoloTagPickingMode,
     tagScanResults: state.tagScanResults,
@@ -496,5 +501,5 @@ export function useYoloTags() {
     setTagAddingMode: state.setTagAddingMode,
   })));
 
-  return { yoloTags, ...actions, ...ui };
+  return { yoloTags, ...actions, ...ui, ...tool };
 }

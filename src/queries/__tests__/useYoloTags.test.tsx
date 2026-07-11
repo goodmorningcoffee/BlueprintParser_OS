@@ -25,6 +25,7 @@ import {
   useYoloTagRows,
   useYoloTagsForPage,
 } from "@/queries/useYoloTags";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { YoloTag } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -435,23 +436,40 @@ describe("yoloTags observer/action topology and navigation", () => {
     seedYoloTagsFromBootstrap(qc, "project-A", {
       yoloTags: [tag("empty"), tag("D-201", { instances })],
     });
-    useViewerStore.setState({ pageNumber: 7, activeYoloTagId: "keep", tagBrowseIndex: 3 });
+    setViewerStoreStateForTest({ pageNumber: 7, activeYoloTagId: "keep", tagBrowseIndex: 3 });
+    const publications: string[] = [];
+    const viewerListener = vi.fn(() => publications.push("viewer"));
+    const uiListener = vi.fn(() => publications.push("ui"));
+    const unsubscribeViewer = useViewerStore.subscribe(viewerListener);
+    const unsubscribeUi = useUiStore.subscribe(uiListener);
 
     navigateYoloTag(qc, "project-A", "missing", 9);
-    expect(useViewerStore.getState()).toMatchObject({ pageNumber: 7, activeYoloTagId: "keep", tagBrowseIndex: 3 });
+    expect(viewerListener).not.toHaveBeenCalled();
+    expect(uiListener).not.toHaveBeenCalled();
+    expect(useViewerStore.getState().pageNumber).toBe(7);
+    expect(useUiStore.getState()).toMatchObject({ activeYoloTagId: "keep", tagBrowseIndex: 3 });
 
     navigateYoloTag(qc, "project-A", "empty", 9);
-    expect(useViewerStore.getState()).toMatchObject({
-      pageNumber: 7,
+    expect(viewerListener).not.toHaveBeenCalled();
+    expect(uiListener).toHaveBeenCalledTimes(1);
+    expect(publications).toEqual(["ui"]);
+    expect(useViewerStore.getState().pageNumber).toBe(7);
+    expect(useUiStore.getState()).toMatchObject({
       activeYoloTagId: "empty",
       tagBrowseId: "empty",
       tagBrowseIndex: 0,
       llmHighlight: null,
     });
 
+    viewerListener.mockClear();
+    uiListener.mockClear();
+    publications.length = 0;
     navigateYoloTag(qc, "project-A", "D-201", -1);
-    expect(useViewerStore.getState()).toMatchObject({
-      pageNumber: 5,
+    expect(viewerListener).toHaveBeenCalledTimes(1);
+    expect(uiListener).toHaveBeenCalledTimes(1);
+    expect(publications).toEqual(["viewer", "ui"]);
+    expect(useViewerStore.getState().pageNumber).toBe(5);
+    expect(useUiStore.getState()).toMatchObject({
       activeYoloTagId: "D-201",
       tagBrowseId: "D-201",
       tagBrowseIndex: 1,
@@ -461,5 +479,7 @@ describe("yoloTags observer/action topology and navigation", () => {
         label: "D-201 — 2 of 2",
       },
     });
+    unsubscribeViewer();
+    unsubscribeUi();
   });
 });

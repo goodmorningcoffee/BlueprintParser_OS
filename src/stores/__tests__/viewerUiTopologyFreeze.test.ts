@@ -1,5 +1,5 @@
 // @vitest-environment node
-// [refactor jul11 P2.3 U0] PRE-carve ownership/topology freeze for the pure display slice.
+// [refactor jul11 P2.3 U2] POST-carve ownership/topology gate for the pure display slice.
 // This is deliberately a source contract: runtime store tests cover setter behavior, while this
 // file makes the upcoming additive uiStore + atomic flip reviewable and prevents a compatibility
 // shortcut from widening subscriptions on the hot viewer path.
@@ -10,34 +10,33 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const VIEWER_STORE_FILE = "src/stores/viewerStore.ts";
-const FUTURE_UI_STORE_FILE = "src/stores/uiStore.ts";
+const UI_STORE_FILE = "src/stores/uiStore.ts";
+const VIEWER_COMMANDS_FILE = "src/stores/viewerCommands.ts";
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
 const YOLO_FACADE = "src/queries/useYoloTags.ts";
 
-// Flip-ready ownership switch. U0 intentionally points at the PRE-carve owner. At the atomic U2
-// flip this one tuple changes to UI_OWNER and the same alias/cast/computed-key oracle rejects every
-// remaining legacy viewerStore access instead of relying on grep or TypeScript's `any` behavior.
+// The same alias/cast/computed-key oracle that froze the PRE owner now rejects every legacy
+// viewerStore escape after the atomic ownership flip.
 const VIEWER_OWNER = {
   file: VIEWER_STORE_FILE,
   module: "@/stores/viewerStore",
   exportName: "useViewerStore",
 } as const;
 const UI_OWNER = {
-  file: FUTURE_UI_STORE_FILE,
+  file: UI_STORE_FILE,
   module: "@/stores/uiStore",
   exportName: "useUiStore",
 } as const;
-const ACTIVE_UI_OWNER = VIEWER_OWNER;
-const INACTIVE_UI_OWNER = UI_OWNER;
+const ACTIVE_UI_OWNER = UI_OWNER;
+const INACTIVE_UI_OWNER = VIEWER_OWNER;
 
 type UiFieldContract = {
   readonly default: string;
   readonly actions: readonly string[];
 };
 
-// Exact U0 pure-display ledger: 60 state fields. Defaults are compact AST source text so Sets and
-// literal assertions remain distinguishable. Actions are ownership companions, not a claim that
-// every action is a one-field setter (the compound exceptions are frozen separately below).
+// Exact 60-field pure-display ledger. Defaults are compact AST source text so Sets and literals
+// remain distinguishable; cross-store compound commands are frozen separately below.
 const PURE_UI_CONTRACT = {
   searchQuery: { default: '""', actions: ["setSearch"] },
   searchResults: { default: "[]", actions: ["setSearchResults"] },
@@ -71,15 +70,15 @@ const PURE_UI_CONTRACT = {
 
   showTextPanel: { default: "false", actions: ["toggleTextPanel"] },
   showChatPanel: { default: "true", actions: ["toggleChatPanel"] },
-  showDetectionPanel: { default: "false", actions: ["toggleDetectionPanel"] },
+  showDetectionPanel: { default: "false", actions: ["setPanelVisibility"] },
   showViewAllPanel: { default: "false", actions: ["toggleViewAllPanel"] },
   showCsiPanel: { default: "false", actions: ["toggleCsiPanel"] },
   showPageIntelPanel: { default: "false", actions: ["togglePageIntelPanel"] },
-  showTakeoffPanel: { default: "false", actions: ["toggleTakeoffPanel"] },
-  showTableParsePanel: { default: "false", actions: ["toggleTableParsePanel"] },
-  showKeynoteParsePanel: { default: "false", actions: ["toggleKeynoteParsePanel"] },
+  showTakeoffPanel: { default: "false", actions: ["setPanelVisibility"] },
+  showTableParsePanel: { default: "false", actions: ["setPanelVisibility"] },
+  showKeynoteParsePanel: { default: "false", actions: ["setPanelVisibility"] },
   showSpecsNotesPanel: { default: "false", actions: ["toggleSpecsNotesPanel"] },
-  showParsePanel: { default: "false", actions: ["toggleParsePanel"] },
+  showParsePanel: { default: "false", actions: ["setPanelVisibility"] },
   showToolsPanel: { default: "false", actions: ["toggleToolsPanel"] },
   showTips: { default: "false", actions: ["toggleTips"] },
   helpMode: { default: "false", actions: ["toggleHelpMode"] },
@@ -117,12 +116,10 @@ const PURE_UI_CONTRACT = {
   activeYoloTagFilter: { default: "null", actions: ["setYoloTagFilter"] },
   activeTableTagViews: { default: "{}", actions: ["setTableTagView"] },
   llmHighlight: { default: "null", actions: ["setLlmHighlight"] },
-  // These two are published by the data-dependent navigateYoloTag command and intentionally have
-  // no leaf setter today. That mixed Query/UI/core publication is characterized later in this file.
-  tagBrowseId: { default: "null", actions: [] },
-  tagBrowseIndex: { default: "0", actions: [] },
+  tagBrowseId: { default: "null", actions: ["setYoloBrowseState"] },
+  tagBrowseIndex: { default: "0", actions: ["setYoloBrowseState"] },
   showParsedRegions: { default: "true", actions: ["toggleParsedRegions"] },
-  parsedRegionColorMode: { default: '"striped"asconst', actions: ["setParsedRegionColorMode"] },
+  parsedRegionColorMode: { default: '"striped"', actions: ["setParsedRegionColorMode"] },
   hiddenParsedRegionIds: {
     default: "newSet<string>()",
     actions: ["toggleParsedRegionVisibility"],
@@ -136,6 +133,7 @@ const PURE_UI_CONTRACT = {
 const PURE_UI_MEMBER_NAMES = new Set<string>([
   ...Object.keys(PURE_UI_CONTRACT),
   ...Object.values(PURE_UI_CONTRACT).flatMap((contract) => [...contract.actions]),
+  "resetProjectUiState",
 ]);
 
 // Explicit non-UI seams found in the U0 census. They stay visible here so a future mechanical
@@ -164,8 +162,8 @@ const UI_BOUNDARY_EXCLUSIONS = {
 } as const;
 
 const COMPOUND_COMMAND_MEMBERS = {
-  toggleDetectionPanel: ["showDetectionPanel", "showParsePanel", "resetAllTools"],
-  toggleTakeoffPanel: ["activeTakeoffItemId", "showChatPanel", "showTakeoffPanel"],
+  toggleDetectionPanel: ["showDetectionPanel", "showParsePanel", "setPanelVisibility", "resetAllTools"],
+  toggleTakeoffPanel: ["activeTakeoffItemId", "showChatPanel", "showTakeoffPanel", "setPanelVisibility"],
   toggleTableParsePanel: [
     "guidedParseActive",
     "guidedParseCols",
@@ -181,8 +179,9 @@ const COMPOUND_COMMAND_MEMBERS = {
     "tableParseStep",
     "tableParseTab",
     "tableParsedGrid",
+    "setPanelVisibility",
   ],
-  toggleParsePanel: ["resetAllTools", "showDetectionPanel", "showParsePanel"],
+  toggleParsePanel: ["resetAllTools", "showDetectionPanel", "showParsePanel", "setPanelVisibility"],
   toggleKeynoteParsePanel: [
     "guidedParseActive",
     "guidedParseCols",
@@ -196,74 +195,88 @@ const COMPOUND_COMMAND_MEMBERS = {
     "keynoteYoloClass",
     "mode",
     "showKeynoteParsePanel",
-  ],
-  resetAllTools: [
-    "clearSymbolSearch",
-    "resetGuidedParse",
-    "resetKeynoteParse",
-    "resetNotesParse",
-    "resetSpecParse",
-    "resetTableParse",
-    "setMode",
+    "setPanelVisibility",
   ],
 } as const;
 
 const GROUPED_HOOK_SHAPES = {
-  usePanels: [
-    "showTextPanel", "toggleTextPanel", "showChatPanel", "toggleChatPanel",
-    "showTakeoffPanel", "toggleTakeoffPanel", "showDetectionPanel", "toggleDetectionPanel",
-    "showViewAllPanel", "toggleViewAllPanel", "showCsiPanel", "toggleCsiPanel",
-    "showPageIntelPanel", "togglePageIntelPanel", "showTableParsePanel", "toggleTableParsePanel",
-    "showKeynoteParsePanel", "toggleKeynoteParsePanel", "showSpecsNotesPanel", "toggleSpecsNotesPanel",
-    "specsNotesTab", "setSpecsNotesTab", "showParsePanel", "toggleParsePanel",
-    "parsePanelTab", "setParsePanelTab", "showToolsPanel", "toggleToolsPanel",
-    "toolsPanelTab", "setToolsPanelTab", "sidebarCollapsed", "toggleSidebar",
-    "textPanelTab", "setTextPanelTab",
+  usePanelVisibility: [
+    "showTextPanel", "showChatPanel", "showDetections", "showDetectionPanel",
+    "showViewAllPanel", "showCsiPanel", "showPageIntelPanel", "showTakeoffPanel",
+    "showTableParsePanel", "showKeynoteParsePanel", "showSpecsNotesPanel", "showParsePanel",
+    "showToolsPanel", "showTableCompareModal",
   ],
-  useDetection: [
-    "activeModels", "setModelActive", "confidenceThreshold", "setConfidenceThreshold",
-    "activeAnnotationFilter", "setAnnotationFilter", "searchQuery", "setSearch",
-    "hiddenAnnotationIds", "toggleAnnotationVisibility", "hiddenClasses", "toggleClassVisibility",
+  usePanelUiActions: [
+    "toggleTextPanel", "toggleChatPanel", "toggleDetections", "toggleViewAllPanel",
+    "toggleCsiPanel", "togglePageIntelPanel", "toggleSpecsNotesPanel", "toggleToolsPanel",
+    "toggleTableCompareModal", "setPanelVisibility",
   ],
-  useSelection: [
-    "selectedAnnotationIds", "setSelectedAnnotationIds", "addToSelection",
+  useLayoutUi: ["sidebarCollapsed", "annotationPanelCollapsed", "showTips", "helpMode"],
+  useLayoutUiActions: ["toggleSidebar", "toggleAnnotationPanel", "toggleTips", "toggleHelpMode"],
+  usePanelTabs: ["textPanelTab", "specsNotesTab", "parsePanelTab", "toolsPanelTab"],
+  usePanelTabActions: ["setTextPanelTab", "setSpecsNotesTab", "setParsePanelTab", "setToolsPanelTab"],
+  useDetectionUi: [
+    "activeModels", "confidenceThreshold", "confidenceThresholds", "hiddenAnnotationIds",
+    "hiddenClasses", "activeAnnotationFilter",
+  ],
+  useDetectionUiActions: [
+    "setModelActive", "setConfidenceThreshold", "setModelConfidence", "initDetectionModels",
+    "toggleAnnotationVisibility", "toggleClassVisibility", "setAnnotationFilter",
+  ],
+  useSelectionUi: ["selectedAnnotationIds"],
+  useSelectionUiActions: [
+    "setFocusAnnotationId", "setSelectedAnnotationIds", "addToSelection",
     "removeFromSelection", "toggleSelection", "clearSelection",
   ],
-  // Existing hot-path facade: keep this exact eight-value projection; it is not permission to add
-  // a whole-ui hook when the leaf moves.
-  useAnnotationFilters: [
+  useAnnotationFiltersUi: [
     "showDetections", "confidenceThreshold", "activeModels", "hiddenClasses",
     "confidenceThresholds", "activeAnnotationFilter", "activeCsiFilter", "hiddenAnnotationIds",
   ],
 } as const;
 
 const GROUPED_HOOK_CALL_TOPOLOGY = {
-  usePanels: {
-    "src/components/viewer/CsiPanel.tsx": 1,
-    "src/components/viewer/DetectionPanel.tsx": 1,
-    "src/components/viewer/PageIntelligencePanel.tsx": 1,
-    "src/components/viewer/PDFViewer.tsx": 2,
+  usePanelVisibility: {
+    "src/components/viewer/PDFViewer.tsx": 1,
+    "src/components/viewer/ViewerToolbar.tsx": 1,
+  },
+  usePanelUiActions: { "src/components/viewer/ViewerToolbar.tsx": 1 },
+  useLayoutUi: { "src/components/viewer/PDFViewer.tsx": 1 },
+  useLayoutUiActions: { "src/components/viewer/PDFViewer.tsx": 1 },
+  usePanelTabs: {
     "src/components/viewer/ParsePanel.tsx": 1,
     "src/components/viewer/SpecsNotesPanel.tsx": 1,
     "src/components/viewer/TextPanel.tsx": 1,
     "src/components/viewer/ToolsPanel.tsx": 1,
-    "src/components/viewer/ViewAllPanel.tsx": 1,
-    "src/components/viewer/ViewerToolbar.tsx": 1,
   },
-  useDetection: {
-    "src/components/viewer/CsiPanel.tsx": 1,
+  usePanelTabActions: {
+    "src/components/viewer/ParsePanel.tsx": 1,
+    "src/components/viewer/SpecsNotesPanel.tsx": 1,
+    "src/components/viewer/TextPanel.tsx": 1,
+    "src/components/viewer/ToolsPanel.tsx": 1,
+  },
+  useDetectionUi: {
     "src/components/viewer/DetectionPanel.tsx": 1,
-    "src/components/viewer/PageSidebar.tsx": 1,
-    "src/components/viewer/TextPanel.tsx": 2,
+    "src/components/viewer/TextPanel.tsx": 1,
     "src/components/viewer/ViewAllPanel.tsx": 1,
     "src/components/viewer/ViewerToolbar.tsx": 1,
   },
-  useSelection: {
+  useDetectionUiActions: {
+    "src/components/viewer/DetectionPanel.tsx": 1,
+    "src/components/viewer/TextPanel.tsx": 1,
+    "src/components/viewer/ViewAllPanel.tsx": 1,
+    "src/components/viewer/ViewerToolbar.tsx": 1,
+  },
+  useSelectionUi: {
     "src/components/viewer/GroupActionsBar.tsx": 1,
     "src/components/viewer/ViewAllPanel.tsx": 1,
     "src/hooks/useMultiSelectInteraction.ts": 1,
   },
-  useAnnotationFilters: {
+  useSelectionUiActions: {
+    "src/components/viewer/GroupActionsBar.tsx": 1,
+    "src/components/viewer/ViewAllPanel.tsx": 1,
+    "src/hooks/useMultiSelectInteraction.ts": 1,
+  },
+  useAnnotationFiltersUi: {
     "src/components/viewer/AnnotationOverlay.tsx": 1,
   },
 } as const;
@@ -274,6 +287,7 @@ const HOT_OVERLAY_UI_SELECTORS = [
   "focusAnnotationId",
   "hiddenTakeoffItemIds",
   "llmHighlight",
+  "showParsedRegions",
   "setActiveYoloTagId",
   "setAnnotationFilter",
   "setKeynoteFilter",
@@ -592,13 +606,34 @@ function storeMemberAccesses(
   const isGet = (call: ts.CallExpression) => isMethodCall(call, hooks, getters, "getState", constants);
   const isSet = (call: ts.CallExpression) => isMethodCall(call, hooks, setters, "setState", constants);
 
-  const resultNames = new Set<string>();
-  for (const declaration of descendants(source, ts.isVariableDeclaration)) {
-    if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+  const variableDeclarations = descendants(source, ts.isVariableDeclaration)
+    .filter((declaration) => ts.isIdentifier(declaration.name));
+  const lexicalScope = (node: ts.Node): ts.Node => {
+    let current = node.parent;
+    while (current && !ts.isBlock(current) && !ts.isSourceFile(current)) current = current.parent;
+    return current ?? source;
+  };
+  const declarationFor = (name: string, at: ts.Node): ts.VariableDeclaration | null => {
+    const atStart = at.getStart(source);
+    const candidates = variableDeclarations.filter((declaration) => {
+      if ((declaration.name as ts.Identifier).text !== name || declaration.getStart(source) >= atStart) {
+        return false;
+      }
+      const scope = lexicalScope(declaration);
+      return scope.getStart(source) <= atStart && atStart < scope.end;
+    });
+    return candidates.sort((left, right) => right.getStart(source) - left.getStart(source))[0] ?? null;
+  };
+  const resolvesToOwnedGet = (identifier: ts.Identifier, at: ts.Node, seen = new Set<ts.Node>()): boolean => {
+    const declaration = declarationFor(identifier.text, at);
+    if (!declaration || seen.has(declaration) || !declaration.initializer) return false;
+    seen.add(declaration);
     const initializer = unwrapExpression(declaration.initializer);
-    if (ts.isCallExpression(initializer) && isGet(initializer)) resultNames.add(declaration.name.text);
-  }
-  const resultAliases = identifierAliases(source, resultNames);
+    if (ts.isCallExpression(initializer)) return isGet(initializer);
+    return ts.isIdentifier(initializer)
+      ? resolvesToOwnedGet(initializer, declaration, seen)
+      : false;
+  };
 
   for (const call of calls) {
     const callee = unwrapExpression(call.expression);
@@ -677,14 +712,14 @@ function storeMemberAccesses(
 
   for (const access of descendants(source, ts.isPropertyAccessExpression)) {
     const receiver = unwrapExpression(access.expression);
-    if (ts.isIdentifier(receiver) && resultAliases.has(receiver.text) && members.has(access.name.text)) {
+    if (ts.isIdentifier(receiver) && resolvesToOwnedGet(receiver, access) && members.has(access.name.text)) {
       output.push({ kind: "getState-alias", member: access.name.text });
     }
   }
   for (const access of descendants(source, ts.isElementAccessExpression)) {
     const receiver = unwrapExpression(access.expression);
     const member = elementAccessName(access, constants);
-    if (ts.isIdentifier(receiver) && resultAliases.has(receiver.text) && member && members.has(member)) {
+    if (ts.isIdentifier(receiver) && resolvesToOwnedGet(receiver, access) && member && members.has(member)) {
       output.push({ kind: "getState-alias-element", member });
     }
   }
@@ -701,14 +736,30 @@ function findVariable(source: ts.SourceFile, name: string): ts.VariableDeclarati
   return matches[0];
 }
 
-function findViewerState(source: ts.SourceFile): ts.InterfaceDeclaration {
+function findInterface(source: ts.SourceFile, name: string): ts.InterfaceDeclaration {
   const matches = descendants(
     source,
     (node): node is ts.InterfaceDeclaration =>
-      ts.isInterfaceDeclaration(node) && node.name.text === "ViewerState",
+      ts.isInterfaceDeclaration(node) && node.name.text === name,
   );
-  expect(matches).toHaveLength(1);
+  expect(matches, `${name} interface`).toHaveLength(1);
   return matches[0];
+}
+
+function findFunctionReturnObject(source: ts.SourceFile, name: string): ts.ObjectLiteralExpression {
+  const matches = descendants(
+    source,
+    (node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === name,
+  );
+  expect(matches, `${name} function`).toHaveLength(1);
+  const returns = descendants(matches[0], ts.isReturnStatement)
+    .map((statement) => statement.expression && unwrapExpression(statement.expression))
+    .filter((expression): expression is ts.ObjectLiteralExpression =>
+      !!expression && ts.isObjectLiteralExpression(expression),
+    );
+  expect(returns, `${name} object return`).toHaveLength(1);
+  return returns[0];
 }
 
 function findStoreObject(source: ts.SourceFile, storeName: string): ts.ObjectLiteralExpression {
@@ -743,7 +794,7 @@ function propertyInitializer(
 }
 
 function groupedHookShape(name: keyof typeof GROUPED_HOOK_SHAPES): string[] {
-  const ownerFiles = [VIEWER_STORE_FILE, FUTURE_UI_STORE_FILE].filter(existsRelative);
+  const ownerFiles = [VIEWER_STORE_FILE, UI_STORE_FILE].filter(existsRelative);
   const declarations = ownerFiles.flatMap((path) => {
     const source = parse(path);
     return descendants(
@@ -828,11 +879,19 @@ function rawSelectorMembers(
   return output;
 }
 
-describe("P2.3 U0 pure UI ownership contract", () => {
+describe("P2.3 U2 pure UI ownership contract", () => {
+  const uiSource = parse(UI_STORE_FILE);
   const viewerSource = parse(VIEWER_STORE_FILE);
-  const viewerState = findViewerState(viewerSource);
-  const storeObject = findStoreObject(viewerSource, "useViewerStore");
-  const interfaceKeys = viewerState.members
+  const uiData = findInterface(uiSource, "UiData");
+  const uiActions = findInterface(uiSource, "UiActions");
+  const viewerState = findInterface(viewerSource, "ViewerState");
+  const uiStoreObject = findStoreObject(uiSource, "useUiStore");
+  const viewerStoreObject = findStoreObject(viewerSource, "useViewerStore");
+  const defaultsObject = findFunctionReturnObject(uiSource, "freshUiState");
+  const interfaceKeys = [...uiData.members, ...uiActions.members]
+    .map((member) => ("name" in member ? staticName(member.name) : null))
+    .filter((name): name is string => name !== null);
+  const viewerInterfaceKeys = viewerState.members
     .map((member) => ("name" in member ? staticName(member.name) : null))
     .filter((name): name is string => name !== null);
 
@@ -843,11 +902,13 @@ describe("P2.3 U0 pure UI ownership contract", () => {
 
     for (const [field, contract] of entries) {
       expect(interfaceKeys, `${field} interface owner`).toContain(field);
-      const initializer = propertyInitializer(storeObject, field);
-      expect(compact(initializer, viewerSource), `${field} PRE default`).toBe(contract.default);
+      expect(viewerInterfaceKeys, `${field} deleted legacy owner`).not.toContain(field);
+      const initializer = propertyInitializer(defaultsObject, field);
+      expect(compact(initializer, uiSource), `${field} UI default`).toBe(contract.default);
       for (const action of contract.actions) {
         expect(interfaceKeys, `${field} companion ${action}`).toContain(action);
-        expect(() => directProperty(storeObject, action)).not.toThrow();
+        expect(() => directProperty(uiStoreObject, action)).not.toThrow();
+        expect(viewerInterfaceKeys, `${action} deleted legacy owner`).not.toContain(action);
       }
     }
   });
@@ -858,31 +919,37 @@ describe("P2.3 U0 pure UI ownership contract", () => {
     expect(new Set(exclusions).size).toBe(exclusions.length);
     for (const field of exclusions) {
       expect(pureFields, `${field} must not enter pure UI ledger`).not.toContain(field);
-      expect(interfaceKeys, `${field} boundary still exists pre-carve`).toContain(field);
-      expect(() => directProperty(storeObject, field)).not.toThrow();
+      expect(interfaceKeys, `${field} excluded from uiStore`).not.toContain(field);
+      expect(viewerInterfaceKeys, `${field} remains on viewer owner`).toContain(field);
+      expect(() => directProperty(viewerStoreObject, field)).not.toThrow();
     }
   });
 
-  it("pins compound panel/tool commands until neutral coordination is extracted", () => {
-    const interfaceMembers = new Set(interfaceKeys);
+  it("keeps every compound panel/tool command solely in the neutral coordinator", () => {
+    const commandSource = parse(VIEWER_COMMANDS_FILE);
+    const commandNames = new Set(Object.keys(COMPOUND_COMMAND_MEMBERS));
+    const definitions = descendants(
+      commandSource,
+      (node): node is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(node) && !!node.name && commandNames.has(node.name.text),
+    );
+    expect(definitions.map((definition) => definition.name!.text).sort()).toEqual(
+      [...commandNames].sort(),
+    );
     for (const [command, expected] of Object.entries(COMPOUND_COMMAND_MEMBERS)) {
-      const initializer = propertyInitializer(storeObject, command);
-      const referenced = new Set<string>();
-      for (const object of descendants(initializer, ts.isObjectLiteralExpression)) {
-        for (const name of directObjectKeys(object)) {
-          if (interfaceMembers.has(name)) referenced.add(name);
-        }
+      const definition = definitions.find((candidate) => candidate.name!.text === command)!;
+      const text = definition.getText(commandSource);
+      for (const member of expected) {
+        expect(text, `${command} owns ${member}`).toContain(member);
       }
-      for (const access of descendants(initializer, ts.isPropertyAccessExpression)) {
-        if (interfaceMembers.has(access.name.text)) referenced.add(access.name.text);
-      }
-      expect([...referenced].sort(), command).toEqual([...expected].sort());
+      expect(directObjectKeys(uiStoreObject), `${command} absent from uiStore`).not.toContain(command);
+      expect(directObjectKeys(viewerStoreObject), `${command} absent from viewerStore`).not.toContain(command);
     }
   });
 });
 
-describe("P2.3 U0 subscription topology", () => {
-  it("pins the broad compatibility hook shapes and their current call graph", () => {
+describe("P2.3 U2 subscription topology", () => {
+  it("pins the split UI hook shapes and their current call graph", () => {
     for (const name of Object.keys(GROUPED_HOOK_SHAPES) as Array<keyof typeof GROUPED_HOOK_SHAPES>) {
       expect(groupedHookShape(name), `${name} shape`).toEqual(GROUPED_HOOK_SHAPES[name]);
       expect(importedCallTopology(name), `${name} callers`).toEqual(GROUPED_HOOK_CALL_TOPOLOGY[name]);
@@ -896,11 +963,11 @@ describe("P2.3 U0 subscription topology", () => {
       .sort();
     expect(activeMembers).toEqual([...HOT_OVERLAY_UI_SELECTORS].sort());
 
-    for (const hook of ["usePanels", "useDetection", "useSelection"]) {
+    for (const hook of ["usePanelVisibility", "useDetectionUi", "useSelectionUi"]) {
       expect(importedCallCount(source, [VIEWER_OWNER.module, UI_OWNER.module], hook), hook).toBe(0);
     }
 
-    const ownerFiles = [VIEWER_STORE_FILE, FUTURE_UI_STORE_FILE].filter(existsRelative);
+    const ownerFiles = [VIEWER_STORE_FILE, UI_STORE_FILE].filter(existsRelative);
     for (const path of ownerFiles) {
       const ownerSource = parse(path);
       for (const declaration of descendants(ownerSource, ts.isVariableDeclaration)) {
@@ -912,21 +979,21 @@ describe("P2.3 U0 subscription topology", () => {
           expect(
             selectedUiFields.length,
             `${path}:${declaration.name.text} must not become a whole-UI compatibility hook`,
-          ).toBeLessThanOrEqual(GROUPED_HOOK_SHAPES.usePanels.length);
+          ).toBeLessThanOrEqual(GROUPED_HOOK_SHAPES.usePanelVisibility.length);
         }
       }
     }
   });
 });
 
-describe("P2.3 U0 flip-ready ownership escape oracle", () => {
+describe("P2.3 U2 ownership escape oracle", () => {
   const uiMembers = PURE_UI_MEMBER_NAMES;
 
   it("self-calibrates aliases, casts, destructuring, useShallow, and computed keys", () => {
     const fixture = ts.createSourceFile(
       "ui-owner-escape-fixture.tsx",
       `
-        import { useViewerStore as importedHook } from "@/stores/viewerStore";
+        import { useUiStore as importedHook } from "@/stores/uiStore";
         const hookAlias = importedHook as any;
         const computed = "activeYoloTagId";
         hookAlias(({ searchQuery }: any) => searchQuery);
@@ -946,7 +1013,7 @@ describe("P2.3 U0 flip-ready ownership escape oracle", () => {
       true,
       ts.ScriptKind.TSX,
     );
-    const accesses = storeMemberAccesses(fixture, VIEWER_OWNER, uiMembers)
+    const accesses = storeMemberAccesses(fixture, UI_OWNER, uiMembers)
       .map(({ kind, member }) => `${kind}:${member}`);
     expect(accesses).toEqual(expect.arrayContaining([
       "selector-parameter:searchQuery",
@@ -958,7 +1025,7 @@ describe("P2.3 U0 flip-ready ownership escape oracle", () => {
     ]));
   });
 
-  it("keeps every current access on the PRE owner and the future owner empty", () => {
+  it("keeps every current access on uiStore and the deleted viewer owner empty", () => {
     const plausible = productionSourceFiles.filter((path) => {
       const text = textOf(path);
       return text.includes(VIEWER_OWNER.module) || text.includes(UI_OWNER.module);
@@ -971,12 +1038,12 @@ describe("P2.3 U0 flip-ready ownership escape oracle", () => {
       storeMemberAccesses(parse(path), INACTIVE_UI_OWNER, uiMembers)
         .map((access) => `${path}:${access.kind}:${access.member}`),
     );
-    expect(active.length, "PRE ui members must have real production consumers").toBeGreaterThan(100);
+    expect(active.length, "uiStore members must have real production consumers").toBeGreaterThan(100);
     expect(inactive).toEqual([]);
   }, 15_000);
 
-  it("keeps viewerStore and the future uiStore as dependency-free leaf stores", () => {
-    for (const path of [VIEWER_STORE_FILE, FUTURE_UI_STORE_FILE].filter(existsRelative)) {
+  it("keeps viewerStore and uiStore as dependency-free leaf stores", () => {
+    for (const path of [VIEWER_STORE_FILE, UI_STORE_FILE].filter(existsRelative)) {
       const source = parse(path);
       const imports = source.statements
         .filter(ts.isImportDeclaration)
@@ -994,8 +1061,8 @@ describe("P2.3 U0 flip-ready ownership escape oracle", () => {
   });
 });
 
-describe("P2.3 U0 yolo browse cross-store command", () => {
-  it("keeps navigateYoloTag solely in the Query facade with its two mixed publications", () => {
+describe("P2.3 U2 yolo browse cross-store command", () => {
+  it("keeps navigateYoloTag solely in Query with one raw page write and bundled UI writes", () => {
     const definitions = productionSourceFiles
       .filter((path) => textOf(path).includes("navigateYoloTag"))
       .flatMap((path) =>
@@ -1016,17 +1083,24 @@ describe("P2.3 U0 yolo browse cross-store command", () => {
       importedLocalNames(source, VIEWER_OWNER.module, VIEWER_OWNER.exportName),
     );
     const setters = methodAliases(source, storeHooks, "setState", constants);
-    const publications = descendants(body!, ts.isCallExpression)
+    const viewerPublications = descendants(body!, ts.isCallExpression)
       .filter((call) => isMethodCall(call, storeHooks, setters, "setState", constants))
       .map((call) => call.arguments[0])
       .filter((argument): argument is ts.ObjectLiteralExpression => ts.isObjectLiteralExpression(argument))
       .map((object) => directObjectKeys(object, constants));
+    const uiPublications = descendants(body!, ts.isCallExpression)
+      .filter((call) => {
+        const expression = unwrapExpression(call.expression);
+        return ts.isPropertyAccessExpression(expression) && expression.name.text === "setYoloBrowseState";
+      })
+      .map((call) => call.arguments[0])
+      .filter((argument): argument is ts.ObjectLiteralExpression => ts.isObjectLiteralExpression(argument))
+      .map((object) => directObjectKeys(object, constants));
 
-    expect(publications).toEqual([
+    expect(viewerPublications).toEqual([["pageNumber"]]);
+    expect(uiPublications).toEqual([
       ["tagBrowseId", "tagBrowseIndex", "activeYoloTagId", "llmHighlight"],
-      ["tagBrowseId", "tagBrowseIndex", "activeYoloTagId", "pageNumber", "llmHighlight"],
+      ["tagBrowseId", "tagBrowseIndex", "activeYoloTagId", "llmHighlight"],
     ]);
-    const uiFields = new Set(Object.keys(PURE_UI_CONTRACT));
-    expect(publications.flat().filter((name) => !uiFields.has(name))).toEqual(["pageNumber"]);
   });
 });

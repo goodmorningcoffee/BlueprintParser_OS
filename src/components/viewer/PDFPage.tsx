@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, memo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore, useKeynoteParse } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
@@ -479,7 +480,7 @@ export default memo(function PDFPage({
         height={pageSize.height}
         cssScale={cssScale}
       />
-      {useViewerStore((s) => s.showKeynotes) && (
+      {useUiStore((s) => s.showKeynotes) && (
         <KeynoteOverlay
           width={pageSize.width}
           height={pageSize.height}

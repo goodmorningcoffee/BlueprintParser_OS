@@ -3,6 +3,8 @@
 import { useMemo, useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
+import { toggleKeynoteParsePanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
@@ -60,7 +62,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const pageTextract = useTextractForPage(pageNumber);
   // [refactor jul11 P2.2⑥] Subscribe to the one chunk-windowed cache entry, not viewerStore.
   const { annotations } = useAnnotations();
-  const toggleKeynoteParsePanel = useViewerStore((s) => s.toggleKeynoteParsePanel);
   const keynoteParseTab = useViewerStore((s) => s.keynoteParseTab);
   const setKeynoteParseTab = useViewerStore((s) => s.setKeynoteParseTab);
   const keynoteParseStep = useViewerStore((s) => s.keynoteParseStep);
@@ -75,8 +76,8 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const setKeynoteYoloClass = useViewerStore((s) => s.setKeynoteYoloClass);
   const parsedKeynoteData = useViewerStore((s) => s.parsedKeynoteData);
   const addParsedKeynote = useViewerStore((s) => s.addParsedKeynote);
-  const activeKeynoteHighlight = useViewerStore((s) => s.activeKeynoteHighlight);
-  const setActiveKeynoteHighlight = useViewerStore((s) => s.setActiveKeynoteHighlight);
+  const activeKeynoteHighlight = useUiStore((s) => s.activeKeynoteHighlight);
+  const setActiveKeynoteHighlight = useUiStore((s) => s.setActiveKeynoteHighlight);
   const resetKeynoteParse = useViewerStore((s) => s.resetKeynoteParse);
   const resetAllTools = useViewerStore((s) => s.resetAllTools);
   const projectId = useSessionStore((s) => s.projectId);
@@ -85,8 +86,8 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const yoloTags = useYoloTagRows();
   // Action-only facade keeps async map responses behind the captured project/epoch guard.
   const { addYoloTagsBulk } = useYoloTagActions();
-  const toggleTableCompareModal = useViewerStore((s) => s.toggleTableCompareModal);
-  const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
+  const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
+  const showParsedRegions = useUiStore((s) => s.showParsedRegions);
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
   const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
   const { publicId } = useProject();
@@ -689,7 +690,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           <h3 className="text-sm font-semibold text-[var(--fg)]">Keynotes</h3>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => useViewerStore.getState().toggleParsedRegions()}
+              onClick={() => useUiStore.getState().toggleParsedRegions()}
               className={`text-sm px-1 ${showParsedRegions ? "text-amber-300" : "text-[var(--muted)]/30"}`}
               title="Toggle region outlines on canvas"
             >

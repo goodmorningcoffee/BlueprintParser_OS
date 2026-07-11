@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
-import { resetProjectData } from "@/stores/viewerCommands";
+import { resetProjectData, toggleDetectionPanel } from "@/stores/viewerCommands";
 import { useSessionStore } from "@/stores/sessionStore";
 
 // Reset store before each test
@@ -38,19 +39,19 @@ describe("viewerStore — navigation", () => {
   });
 });
 
-describe("viewerStore — panels", () => {
+describe("uiStore — panels", () => {
   it("toggleTextPanel flips state", () => {
-    expect(useViewerStore.getState().showTextPanel).toBe(false);
-    useViewerStore.getState().toggleTextPanel();
-    expect(useViewerStore.getState().showTextPanel).toBe(true);
-    useViewerStore.getState().toggleTextPanel();
-    expect(useViewerStore.getState().showTextPanel).toBe(false);
+    expect(useUiStore.getState().showTextPanel).toBe(false);
+    useUiStore.getState().toggleTextPanel();
+    expect(useUiStore.getState().showTextPanel).toBe(true);
+    useUiStore.getState().toggleTextPanel();
+    expect(useUiStore.getState().showTextPanel).toBe(false);
   });
 
   it("toggleDetectionPanel flips state", () => {
-    expect(useViewerStore.getState().showDetectionPanel).toBe(false);
-    useViewerStore.getState().toggleDetectionPanel();
-    expect(useViewerStore.getState().showDetectionPanel).toBe(true);
+    expect(useUiStore.getState().showDetectionPanel).toBe(false);
+    toggleDetectionPanel();
+    expect(useUiStore.getState().showDetectionPanel).toBe(true);
   });
 });
 
@@ -58,16 +59,16 @@ describe("viewerStore — panels", () => {
 // Cache/action coverage now lives in queries/__tests__/useAnnotations.test.tsx (including guards,
 // project isolation, structural sharing, bucket fill, and takeoff undo/redo).
 
-describe("viewerStore — detection visibility", () => {
+describe("uiStore — detection visibility", () => {
   it("hiddenAnnotationIds starts empty", () => {
-    expect(useViewerStore.getState().hiddenAnnotationIds.size).toBe(0);
+    expect(useUiStore.getState().hiddenAnnotationIds.size).toBe(0);
   });
 
   it("toggleAnnotationVisibility adds then removes", () => {
-    useViewerStore.getState().toggleAnnotationVisibility(42);
-    expect(useViewerStore.getState().hiddenAnnotationIds.has(42)).toBe(true);
-    useViewerStore.getState().toggleAnnotationVisibility(42);
-    expect(useViewerStore.getState().hiddenAnnotationIds.has(42)).toBe(false);
+    useUiStore.getState().toggleAnnotationVisibility(42);
+    expect(useUiStore.getState().hiddenAnnotationIds.has(42)).toBe(true);
+    useUiStore.getState().toggleAnnotationVisibility(42);
+    expect(useUiStore.getState().hiddenAnnotationIds.has(42)).toBe(false);
   });
 });
 
@@ -88,12 +89,12 @@ describe("viewerStore — table parse", () => {
 
 // [refactor jul11 P2.2⑨] Collection/CRUD/dedup/persistence cases moved to
 // queries/__tests__/useYoloTags.test.tsx with the Query ownership flip. Zustand retains UI only.
-describe("viewerStore — YOLO tag UI state", () => {
+describe("uiStore — YOLO tag UI state", () => {
   it("visibility defaults to empty, toggles, and reset clears all browse/table state", () => {
-    expect(useViewerStore.getState().yoloTagVisibility).toEqual({});
-    useViewerStore.getState().setYoloTagVisibility("tag-1", false);
-    expect(useViewerStore.getState().yoloTagVisibility["tag-1"]).toBe(false);
-    useViewerStore.setState({
+    expect(useUiStore.getState().yoloTagVisibility).toEqual({});
+    useUiStore.getState().setYoloTagVisibility("tag-1", false);
+    expect(useUiStore.getState().yoloTagVisibility["tag-1"]).toBe(false);
+    useUiStore.setState({
       activeYoloTagId: "tag-1",
       activeYoloTagFilter: "tag-1",
       tagBrowseId: "tag-1",
@@ -110,7 +111,7 @@ describe("viewerStore — YOLO tag UI state", () => {
     });
 
     resetProjectData();
-    expect(useViewerStore.getState()).toMatchObject({
+    expect(useUiStore.getState()).toMatchObject({
       yoloTagVisibility: {},
       activeYoloTagId: null,
       activeYoloTagFilter: null,
@@ -159,20 +160,20 @@ describe("viewerStore — resetProjectData", () => {
 // chatScope UI knob remains in zustand — the message DATA (list + add/set/clear) moved to the
 // TanStack Query cache (covered by src/queries/__tests__/useChatMessages.test.tsx). T-C1 and the
 // chatMessages half of T-C2 were RETIRED here in the same commit that deleted those store fields.
-describe("viewerStore — chat scope (UI state; data lives in the query cache)", () => {
+describe("uiStore — chat scope (data lives in the query cache)", () => {
   // ── T-C2 (scope half — chatMessages assertion retired with the field) ──────
   it("resetProjectData re-defaults chatScope to 'page'", () => {
-    useViewerStore.getState().setChatScope("project");
+    useUiStore.getState().setChatScope("project");
     resetProjectData();
-    expect(useViewerStore.getState().chatScope).toBe("page"); // scope is zustand-owned UI
+    expect(useUiStore.getState().chatScope).toBe("page");
   });
 
   // ── T-C3 (chatScope default + toggle) ──────────────────────────────────────
   it("chatScope defaults to 'page' and toggles", () => {
-    expect(useViewerStore.getState().chatScope).toBe("page");
-    useViewerStore.getState().setChatScope("project");
-    expect(useViewerStore.getState().chatScope).toBe("project");
-    useViewerStore.getState().setChatScope("page");
-    expect(useViewerStore.getState().chatScope).toBe("page");
+    expect(useUiStore.getState().chatScope).toBe("page");
+    useUiStore.getState().setChatScope("project");
+    expect(useUiStore.getState().chatScope).toBe("project");
+    useUiStore.getState().setChatScope("page");
+    expect(useUiStore.getState().chatScope).toBe("page");
   });
 });

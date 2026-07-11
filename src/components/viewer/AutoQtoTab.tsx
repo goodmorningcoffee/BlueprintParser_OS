@@ -3,6 +3,8 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
+import { toggleTableParsePanel } from "@/stores/viewerCommands";
 import { isDemoFeatureEnabled, useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2②] qtoWorkflows collection moved zustand → TanStack cache; the facade hook
 // returns the same 4-field shape the old useQtoWorkflow() store selector did (SPEC §3).
@@ -307,8 +309,7 @@ export default function AutoQtoTab() {
               <div className="flex gap-1">
                 <button
                   onClick={() => {
-                    const store = useViewerStore.getState();
-                    if (!store.showTableParsePanel) store.toggleTableParsePanel();
+                    if (!useUiStore.getState().showTableParsePanel) toggleTableParsePanel();
                   }}
                   className="flex-1 text-[10px] px-2 py-1.5 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
                 >
@@ -316,9 +317,9 @@ export default function AutoQtoTab() {
                 </button>
                 <button
                   onClick={() => {
-                    const store = useViewerStore.getState();
-                    if (!store.showSpecsNotesPanel) store.toggleSpecsNotesPanel();
-                    store.setSpecsNotesTab("keynotes");
+                    const ui = useUiStore.getState();
+                    if (!ui.showSpecsNotesPanel) ui.toggleSpecsNotesPanel();
+                    ui.setSpecsNotesTab("keynotes");
                   }}
                   className="flex-1 text-[10px] px-2 py-1.5 rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
                 >
@@ -1184,7 +1185,7 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
   const [csvModalOpen, setCsvModalOpen] = useState(false);
 
   const activateTag = useCallback((li: QtoLineItem) => {
-    const store = useViewerStore.getState();
+    const store = useUiStore.getState();
     const existing = readYoloTags(queryClient, publicId).find(
       (t) => t.tagText === li.tag && t.source === "schedule",
     );

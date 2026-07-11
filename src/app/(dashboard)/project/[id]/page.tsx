@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -73,14 +74,14 @@ export default function ProjectPage() {
   // Search hook — reacts to searchQuery changes in the store
   useSearch();
 
-  const initDetectionModels = useViewerStore((s) => s.initDetectionModels);
+  const initDetectionModels = useUiStore((s) => s.initDetectionModels);
   const setPageNames = useSessionStore((s) => s.setPageNames);
   const setPageDrawingNumbers = useSessionStore((s) => s.setPageDrawingNumbers);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const queryClient = useQueryClient();
   const setScaleCalibration = useViewerStore((s) => s.setScaleCalibration);
-  const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
+  const setCsiFilter = useUiStore((s) => s.setCsiFilter);
 
   const load = useCallback(async () => {
     try {
@@ -168,7 +169,7 @@ export default function ProjectPage() {
 
       // Apply filters from URL query params
       if (csiParam) setCsiFilter(csiParam);
-      if (qParam) useViewerStore.getState().setSearch(qParam);
+      if (qParam) useUiStore.getState().setSearch(qParam);
 
       // Load chat history into the TanStack Query cache (facade — no longer a zustand field).
       // [refactor jul9 P2.2①] Unconditional publicId-scoped seed (see seedChatCache). ChatPanel is

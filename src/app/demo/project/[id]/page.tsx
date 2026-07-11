@@ -6,6 +6,7 @@ import { useParams, useSearchParams } from "next/navigation";
 // getDemoProject omits chatMessages). The root layout wraps /demo in <Providers>, so the
 // QueryClient context is available here.
 import { useQueryClient } from "@tanstack/react-query";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -64,13 +65,13 @@ export default function DemoProjectPage() {
   const setPublicId = useSessionStore((s) => s.setPublicId);
   const setDataUrl = useSessionStore((s) => s.setDataUrl);
   const setNumPages = useViewerStore((s) => s.setNumPages);
-  const initDetectionModels = useViewerStore((s) => s.initDetectionModels);
+  const initDetectionModels = useUiStore((s) => s.initDetectionModels);
   const setPageNames = useSessionStore((s) => s.setPageNames);
   const setPageDrawingNumbers = useSessionStore((s) => s.setPageDrawingNumbers);
   const setAllTrades = useViewerStore((s) => s.setAllTrades);
   const setAllCsiCodes = useViewerStore((s) => s.setAllCsiCodes);
   const setIsDemo = useSessionStore((s) => s.setIsDemo);
-  const setCsiFilter = useViewerStore((s) => s.setCsiFilter);
+  const setCsiFilter = useUiStore((s) => s.setCsiFilter);
   // [refactor jul10 P2.2③] summaries now live in the query cache; the loader seeds it below.
   const queryClient = useQueryClient();
 
@@ -88,13 +89,15 @@ export default function DemoProjectPage() {
       }
       resetProjectData();
       setIsDemo(true);
-      useViewerStore.getState().setConfidenceThreshold(0);
-      useViewerStore.setState({
+      useUiStore.getState().setConfidenceThreshold(0);
+      // Parse owns the destination tab. Publish it before revealing the UI panel so every raw UI
+      // subscriber observes the already-active destination, with no await between the two writes.
+      useViewerStore.setState({ tableParseTab: "auto" });
+      useUiStore.setState({
         helpMode: false,
         showTips: false,
         showChatPanel: false,
         showTableParsePanel: true,
-        tableParseTab: "auto",
       });
 
       // ─── Fetch metadata + initial chunk in parallel ───
@@ -147,15 +150,15 @@ export default function DemoProjectPage() {
       // (demo temps were already lost on reload). Read-side cache write of (absent)
       // server-provided data — the demo-never-writes invariant is untouched.
       seedTakeoffCache(queryClient, data.id, undefined, undefined);
-      // Guard KEEPS its 4 piggybacks — allTrades/allCsiCodes/detection models AND the demo-only
-      // setModelConfidence(name, 0) loop are separate, non-migrating zustand fields.
+      // Guard KEEPS its 4 piggybacks — allTrades/allCsiCodes plus UI-owned detection models AND
+      // the demo-only setModelConfidence(name, 0) loop remain separate bootstrap state.
       if (data.summaries) {
         setAllTrades(data.summaries.allTrades);
         setAllCsiCodes(data.summaries.allCsiCodes);
         if (data.summaries.annotationSummary.modelNames.length > 0) {
           initDetectionModels(data.summaries.annotationSummary.modelNames);
           for (const name of data.summaries.annotationSummary.modelNames) {
-            useViewerStore.getState().setModelConfidence(name, 0);
+            useUiStore.getState().setModelConfidence(name, 0);
           }
         }
       }
@@ -171,7 +174,7 @@ export default function DemoProjectPage() {
       setPageDrawingNumbers(drawingNumbers);
 
       if (csiParam) setCsiFilter(csiParam);
-      if (qParam) useViewerStore.getState().setSearch(qParam);
+      if (qParam) useUiStore.getState().setSearch(qParam);
 
       // ─── Hydrate initial chunk (already fetched in parallel above) ───
       if (!chunkRes.ok) {
@@ -215,7 +218,7 @@ export default function DemoProjectPage() {
           if (yoloModelNames.length > 0) {
             initDetectionModels(yoloModelNames);
             for (const name of yoloModelNames) {
-              useViewerStore.getState().setModelConfidence(name, 0);
+              useUiStore.getState().setModelConfidence(name, 0);
             }
           }
         }

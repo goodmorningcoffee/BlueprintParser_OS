@@ -816,15 +816,13 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     const pageData = findVariable(viewerStore, "usePageData");
     const selectorObjects = descendants(pageData, ts.isObjectLiteralExpression).filter((object) => {
       const keys = directObjectKeys(object);
-      return keys.includes("allCsiCodes") && keys.includes("setCsiFilter");
+      return keys.includes("allCsiCodes");
     });
     expect(selectorObjects, "usePageData selector result").toHaveLength(1);
     const selectorObject = selectorObjects[0];
-    expect(directObjectKeys(selectorObject)).toEqual([
-      "allCsiCodes",
-      "activeCsiFilter",
-      "setCsiFilter",
-    ]);
+    // P2.3 moves the CSI presentation filter/action to uiStore; this residual viewer facade is
+    // bootstrap-derived catalog data only.
+    expect(directObjectKeys(selectorObject)).toEqual(["allCsiCodes"]);
 
     const selectedStoreMembers = descendants(
       selectorObject,

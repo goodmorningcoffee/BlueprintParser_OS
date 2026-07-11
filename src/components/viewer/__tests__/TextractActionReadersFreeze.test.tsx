@@ -15,6 +15,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import { queryKeys } from "@/queries/queryKeys";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { TextractPageData } from "@/types";
 
@@ -139,7 +140,7 @@ describe("I8 live action readers", () => {
     // The handler must bridge into Query at invocation time to see `live-word`.
     seedTextract(pageData("live-word"));
     fireEvent.mouseDown(canvas, { clientX: 50, clientY: 50, detail: 2 });
-    expect(useViewerStore.getState().searchQuery).toBe("live-word");
+    expect(useUiStore.getState().searchQuery).toBe("live-word");
     expect(totalTextractObservers()).toBe(0);
   });
 

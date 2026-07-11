@@ -533,7 +533,6 @@ export const useSearchUiActions = () =>
 export const useSelectionUi = () =>
   useUiStore(
     useShallow((state) => ({
-      focusAnnotationId: state.focusAnnotationId,
       selectedAnnotationIds: state.selectedAnnotationIds,
     })),
   );
@@ -661,6 +660,24 @@ export const useDetectionUiActions = () =>
       toggleAnnotationVisibility: state.toggleAnnotationVisibility,
       toggleClassVisibility: state.toggleClassVisibility,
       setAnnotationFilter: state.setAnnotationFilter,
+    })),
+  );
+
+/**
+ * Sacred canvas projection retained byte-shaped from AnnotationOverlay. This is the one deliberate
+ * broad UI read: those eight values jointly decide which annotation primitives are painted.
+ */
+export const useAnnotationFiltersUi = () =>
+  useUiStore(
+    useShallow((state) => ({
+      showDetections: state.showDetections,
+      confidenceThreshold: state.confidenceThreshold,
+      activeModels: state.activeModels,
+      hiddenClasses: state.hiddenClasses,
+      confidenceThresholds: state.confidenceThresholds,
+      activeAnnotationFilter: state.activeAnnotationFilter,
+      activeCsiFilter: state.activeCsiFilter,
+      hiddenAnnotationIds: state.hiddenAnnotationIds,
     })),
   );
 

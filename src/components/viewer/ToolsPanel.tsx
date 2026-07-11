@@ -1,6 +1,6 @@
 "use client";
 
-import { usePanels } from "@/stores/viewerStore";
+import { useUiStore, usePanelTabs, usePanelTabActions } from "@/stores/uiStore";
 import CsiPanel from "./CsiPanel";
 import TextPanel from "./TextPanel";
 import PageIntelligencePanel from "./PageIntelligencePanel";
@@ -18,7 +18,9 @@ import PageIntelligencePanel from "./PageIntelligencePanel";
  * + content area switched on a store field (toolsPanelTab).
  */
 export default function ToolsPanel() {
-  const { toggleToolsPanel, toolsPanelTab, setToolsPanelTab } = usePanels();
+  const toggleToolsPanel = useUiStore((s) => s.toggleToolsPanel);
+  const { toolsPanelTab } = usePanelTabs();
+  const { setToolsPanelTab } = usePanelTabActions();
 
   return (
     <div className="w-80 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg">

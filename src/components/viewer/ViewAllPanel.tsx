@@ -4,12 +4,16 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useViewerStore,
-  usePanels,
-  useSelection,
-  usePageData,
-  useDetection,
-  useTextAnnotationDisplay,
 } from "@/stores/viewerStore";
+import {
+  useUiStore,
+  useSelectionUi,
+  useSelectionUiActions,
+  useDetectionUi,
+  useDetectionUiActions,
+  useTextAnnotationUi,
+  useTextAnnotationUiActions,
+} from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
@@ -65,7 +69,7 @@ function aggregate<T>(items: readonly T[], isHidden: (item: T) => boolean): Visi
 // clicks a parent eye. All operate on the same store state the canvas reads.
 
 function setAnnotationsHiddenBulk(ids: number[], hide: boolean) {
-  useViewerStore.setState((s) => {
+  useUiStore.setState((s) => {
     const next = new Set(s.hiddenAnnotationIds);
     if (hide) for (const id of ids) next.add(id);
     else for (const id of ids) next.delete(id);
@@ -74,7 +78,7 @@ function setAnnotationsHiddenBulk(ids: number[], hide: boolean) {
 }
 
 function setTakeoffItemsHiddenBulk(ids: number[], hide: boolean) {
-  useViewerStore.setState((s) => {
+  useUiStore.setState((s) => {
     const next = new Set(s.hiddenTakeoffItemIds);
     if (hide) for (const id of ids) next.add(id);
     else for (const id of ids) next.delete(id);
@@ -83,7 +87,7 @@ function setTakeoffItemsHiddenBulk(ids: number[], hide: boolean) {
 }
 
 function setTextAnnotationsHiddenBulk(keys: string[], hide: boolean) {
-  useViewerStore.setState((s) => {
+  useUiStore.setState((s) => {
     const next = new Set(s.hiddenTextAnnotations);
     if (hide) for (const k of keys) next.add(k);
     else for (const k of keys) next.delete(k);
@@ -93,7 +97,7 @@ function setTextAnnotationsHiddenBulk(keys: string[], hide: boolean) {
 
 // hiddenClasses uses inverted semantic: key === false means hidden; default visible.
 function setClassesHiddenBulk(keys: string[], hide: boolean) {
-  useViewerStore.setState((s) => {
+  useUiStore.setState((s) => {
     const next = { ...s.hiddenClasses };
     for (const k of keys) {
       if (hide) next[k] = false;
@@ -105,7 +109,7 @@ function setClassesHiddenBulk(keys: string[], hide: boolean) {
 
 // activeModels same inverted semantic.
 function setModelsHiddenBulk(names: string[], hide: boolean) {
-  useViewerStore.setState((s) => {
+  useUiStore.setState((s) => {
     const next = { ...s.activeModels };
     for (const m of names) next[m] = !hide;
     return { activeModels: next };
@@ -113,7 +117,7 @@ function setModelsHiddenBulk(names: string[], hide: boolean) {
 }
 
 function setTextAnnotationTypesHiddenBulk(types: string[], hide: boolean) {
-  useViewerStore.setState((s) => {
+  useUiStore.setState((s) => {
     const next = { ...s.activeTextAnnotationTypes };
     for (const t of types) next[t] = !hide;
     return { activeTextAnnotationTypes: next };
@@ -122,7 +126,7 @@ function setTextAnnotationTypesHiddenBulk(types: string[], hide: boolean) {
 
 export default function ViewAllPanel() {
   const queryClient = useQueryClient();
-  const { toggleViewAllPanel } = usePanels();
+  const toggleViewAllPanel = useUiStore((s) => s.toggleViewAllPanel);
 
   // [refactor jul11 P2.2⑥] Domain rows subscribe through the publicId-keyed cache facade;
   // visibility/filter controls below remain zustand-owned UI state.
@@ -131,10 +135,10 @@ export default function ViewAllPanel() {
   // this panel writes nothing to takeoff; visibility toggles below stay zustand).
   const { takeoffItems } = useTakeoffItems();
   const { takeoffGroups } = useTakeoffGroups();
-  const hiddenTakeoffItemIds = useViewerStore((s) => s.hiddenTakeoffItemIds);
-  const toggleTakeoffItemVisibility = useViewerStore((s) => s.toggleTakeoffItemVisibility);
+  const hiddenTakeoffItemIds = useUiStore((s) => s.hiddenTakeoffItemIds);
+  const toggleTakeoffItemVisibility = useUiStore((s) => s.toggleTakeoffItemVisibility);
   const setPage = useViewerStore((s) => s.setPage);
-  const setFocusAnnotationId = useViewerStore((s) => s.setFocusAnnotationId);
+  const setFocusAnnotationId = useUiStore((s) => s.setFocusAnnotationId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   // Drawing numbers per page — join into every row so users see "p.12 · A-201"
   // instead of just "p.12". Hydrated at project load, so no loading state needed.
@@ -168,20 +172,17 @@ export default function ViewAllPanel() {
   // Master-visibility fields that gate the whole overlay class on the canvas.
   // ViewAllPanel eyeballs for YOLO / Text sub-sections bind to these so toggling
   // either surface (panel button or View All eye) keeps the other in sync.
-  const showDetections = useViewerStore((s) => s.showDetections);
-  const toggleDetections = useViewerStore((s) => s.toggleDetections);
+  const showDetections = useUiStore((s) => s.showDetections);
+  const toggleDetections = useUiStore((s) => s.toggleDetections);
 
-  const {
-    hiddenAnnotationIds, toggleAnnotationVisibility,
-    hiddenClasses, toggleClassVisibility,
-    activeModels, setModelActive,
-  } = useDetection();
+  const { hiddenAnnotationIds, hiddenClasses, activeModels } = useDetectionUi();
+  const { toggleAnnotationVisibility, toggleClassVisibility, setModelActive } =
+    useDetectionUiActions();
 
-  const {
-    showTextAnnotations, toggleTextAnnotations,
-    hiddenTextAnnotations, toggleTextAnnotationVisibility,
-    activeTextAnnotationTypes, setTextAnnotationType,
-  } = useTextAnnotationDisplay();
+  const { showTextAnnotations, hiddenTextAnnotations, activeTextAnnotationTypes } =
+    useTextAnnotationUi();
+  const { toggleTextAnnotations, toggleTextAnnotationVisibility, setTextAnnotationType } =
+    useTextAnnotationUiActions();
 
   const {
     annotationGroups,
@@ -192,8 +193,9 @@ export default function ViewAllPanel() {
   const csiCodes = useCsiCodesByPage();
   const textAnnotations = useTextAnnotationsByPage();
   const pageIntelligence = usePageIntelligenceByPage();
-  const { setCsiFilter } = usePageData();
-  const { selectedAnnotationIds, setSelectedAnnotationIds } = useSelection();
+  const setCsiFilter = useUiStore((s) => s.setCsiFilter);
+  const { selectedAnnotationIds } = useSelectionUi();
+  const { setSelectedAnnotationIds } = useSelectionUiActions();
 
   // Section expand state — collapsed by default.
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -333,7 +335,7 @@ export default function ViewAllPanel() {
     // state updates above instead of closing over the panel's last rendered annotation array.
     const ann = readAnnotations(queryClient, publicId).find((a) => a.id === focusId);
     if (ann) {
-      useViewerStore.getState().setLlmHighlight({
+      useUiStore.getState().setLlmHighlight({
         pageNumber: ann.pageNumber,
         bbox: ann.bbox,
         label: ann.name,
@@ -626,7 +628,7 @@ export default function ViewAllPanel() {
     if (masterState === "all-hidden") {
       // Show — restore from snapshot if we have one
       if (masterSnapshot) {
-        useViewerStore.setState({
+        useUiStore.setState({
           showDetections: masterSnapshot.showDetections,
           showTextAnnotations: masterSnapshot.showTextAnnotations,
           hiddenAnnotationIds: new Set(masterSnapshot.hiddenAnnotationIds),
@@ -657,7 +659,7 @@ export default function ViewAllPanel() {
       }
     } else {
       // Hide — snapshot current state FIRST, then hide everything
-      const cur = useViewerStore.getState();
+      const cur = useUiStore.getState();
       setMasterSnapshot({
         showDetections: cur.showDetections,
         showTextAnnotations: cur.showTextAnnotations,
@@ -1397,7 +1399,7 @@ export default function ViewAllPanel() {
                             onClick={() => {
                               setPage(pnNum);
                               const [l, t, w, h] = r.bbox;
-                              useViewerStore.getState().setLlmHighlight({
+                              useUiStore.getState().setLlmHighlight({
                                 pageNumber: pnNum,
                                 bbox: [l, t, l + w, t + h],
                                 label: r.category,

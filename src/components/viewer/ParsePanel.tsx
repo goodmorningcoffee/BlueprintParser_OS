@@ -1,7 +1,8 @@
 "use client";
 
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { usePanels } from "@/stores/viewerStore";
+import { usePanelTabs, usePanelTabActions } from "@/stores/uiStore";
+import { toggleParsePanel } from "@/stores/viewerCommands";
 import DetectionPanel from "./DetectionPanel";
 import SymbolSearchPanel from "./SymbolSearchPanel";
 
@@ -24,7 +25,8 @@ import SymbolSearchPanel from "./SymbolSearchPanel";
  * the duplicate tabs in DetectionPanel is deferred to a later pass.
  */
 export default function ParsePanel({ pdfDoc }: { pdfDoc: PDFDocumentProxy | null }) {
-  const { toggleParsePanel, parsePanelTab, setParsePanelTab } = usePanels();
+  const { parsePanelTab } = usePanelTabs();
+  const { setParsePanelTab } = usePanelTabActions();
 
   return (
     <div className="w-72 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg">

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useMemo, memo } from "react";
+import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useCsiCodesForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
@@ -81,10 +82,10 @@ export default memo(function SearchHighlightOverlay({
 }: SearchHighlightOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const searchMatches = useViewerStore((s) => s.searchMatches);
-  const searchQuery = useViewerStore((s) => s.searchQuery);
-  const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
-  const activeTradeFilter = useViewerStore((s) => s.activeTradeFilter);
+  const searchMatches = useUiStore((s) => s.searchMatches);
+  const searchQuery = useUiStore((s) => s.searchQuery);
+  const activeCsiFilter = useUiStore((s) => s.activeCsiFilter);
+  const activeTradeFilter = useUiStore((s) => s.activeTradeFilter);
   const pageCsiCodes = useCsiCodesForPage(pageNumber);
   const textractData = useTextractForPage(pageNumber);
 
