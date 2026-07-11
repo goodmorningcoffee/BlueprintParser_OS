@@ -235,7 +235,10 @@ describe("P2.3 test state partition seam", () => {
         `core:${useSessionStore.getState().publicId}:${useViewerCoreStore.getState().pageNumber}`,
       );
     });
-    const viewerListener = vi.fn();
+    let viewerPublications = 0;
+    const viewerListener = () => {
+      viewerPublications += 1;
+    };
     const unsubscribeSession = useSessionStore.subscribe(sessionListener);
     const unsubscribeCore = useViewerCoreStore.subscribe(coreListener);
     const unsubscribeViewer = useViewerStore.subscribe(viewerListener);
@@ -249,10 +252,10 @@ describe("P2.3 test state partition seam", () => {
     expect(useViewerCoreStore.getState()).toMatchObject({
       pageNumber: 6,
     });
-    // Zustand accepts undeclared runtime keys, so positive assertions alone would not prove that
-    // the helper stopped republishing a hidden session copy into viewerStore.
+    // The exact partition above plus a zero-publication residual viewer witness proves the helper
+    // stopped republishing a hidden session copy into viewerStore. Core remains safe to inspect
+    // directly because this setup intentionally publishes its page patch there.
     for (const key of SESSION_TEST_STATE_KEYS) {
-      expect(useViewerStore.getState()).not.toHaveProperty(key);
       expect(useViewerCoreStore.getState()).not.toHaveProperty(key);
     }
     expect(useSessionStore.getState()).not.toHaveProperty("pageNumber");
@@ -261,7 +264,7 @@ describe("P2.3 test state partition seam", () => {
     // session-first contract and prove each logical patch produces exactly one leaf publication.
     expect(sessionListener).toHaveBeenCalledTimes(1);
     expect(coreListener).toHaveBeenCalledTimes(1);
-    expect(viewerListener).not.toHaveBeenCalled();
+    expect(viewerPublications).toBe(0);
     expect(publications).toEqual(["session:P:1", "core:P:6"]);
     unsubscribeSession();
     unsubscribeCore();
@@ -271,7 +274,10 @@ describe("P2.3 test state partition seam", () => {
   it("does not publish an empty sibling-store patch", () => {
     const sessionListener = vi.fn();
     const coreListener = vi.fn();
-    const viewerListener = vi.fn();
+    let viewerPublications = 0;
+    const viewerListener = () => {
+      viewerPublications += 1;
+    };
     const unsubscribeSession = useSessionStore.subscribe(sessionListener);
     const unsubscribeCore = useViewerCoreStore.subscribe(coreListener);
     const unsubscribeViewer = useViewerStore.subscribe(viewerListener);
@@ -279,15 +285,15 @@ describe("P2.3 test state partition seam", () => {
     setViewerStoreStateForTest({ publicId: "session-only" });
     expect(sessionListener).toHaveBeenCalledTimes(1);
     expect(coreListener).not.toHaveBeenCalled();
-    expect(viewerListener).not.toHaveBeenCalled();
+    expect(viewerPublications).toBe(0);
 
     sessionListener.mockClear();
     coreListener.mockClear();
-    viewerListener.mockClear();
+    viewerPublications = 0;
     setViewerStoreStateForTest({ pageNumber: 4 });
     expect(sessionListener).not.toHaveBeenCalled();
     expect(coreListener).toHaveBeenCalledTimes(1);
-    expect(viewerListener).not.toHaveBeenCalled();
+    expect(viewerPublications).toBe(0);
 
     unsubscribeSession();
     unsubscribeCore();

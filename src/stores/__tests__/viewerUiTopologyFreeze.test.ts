@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 const VIEWER_STORE_FILE = "src/stores/viewerStore.ts";
 const UI_STORE_FILE = "src/stores/uiStore.ts";
+const PARSE_STORE_FILE = "src/stores/parseFlowStore.ts";
 const CORE_STORE_FILE = "src/stores/viewerCoreStore.ts";
 const TOOL_STORE_FILE = "src/stores/toolStore.ts";
 const VIEWER_COMMANDS_FILE = "src/stores/viewerCommands.ts";
@@ -28,6 +29,11 @@ const UI_OWNER = {
   file: UI_STORE_FILE,
   module: "@/stores/uiStore",
   exportName: "useUiStore",
+} as const;
+const PARSE_OWNER = {
+  file: PARSE_STORE_FILE,
+  module: "@/stores/parseFlowStore",
+  exportName: "useParseFlowStore",
 } as const;
 const CORE_OWNER = {
   file: CORE_STORE_FILE,
@@ -889,15 +895,18 @@ function rawSelectorMembers(
 describe("P2.3 U2 pure UI ownership contract", () => {
   const uiSource = parse(UI_STORE_FILE);
   const viewerSource = parse(VIEWER_STORE_FILE);
+  const parseSource = parse(PARSE_OWNER.file);
   const coreSource = parse(CORE_STORE_FILE);
   const toolSource = parse(TOOL_STORE_FILE);
   const uiData = findInterface(uiSource, "UiData");
   const uiActions = findInterface(uiSource, "UiActions");
   const viewerState = findInterface(viewerSource, "ViewerState");
+  const parseState = findInterface(parseSource, "ParseFlowState");
   const coreData = findInterface(coreSource, "ViewerCoreData");
   const toolData = findInterface(toolSource, "ToolStoreData");
   const uiStoreObject = findStoreObject(uiSource, "useUiStore");
   const viewerStoreObject = findStoreObject(viewerSource, "useViewerStore");
+  const parseStoreObject = findStoreObject(parseSource, PARSE_OWNER.exportName);
   const defaultsObject = findFunctionReturnObject(uiSource, "freshUiState");
   const coreDefaultsObject = findFunctionReturnObject(coreSource, "freshViewerCoreState");
   const toolDefaultsObject = findStoreObject(toolSource, "useToolStore");
@@ -905,6 +914,9 @@ describe("P2.3 U2 pure UI ownership contract", () => {
     .map((member) => ("name" in member ? staticName(member.name) : null))
     .filter((name): name is string => name !== null);
   const viewerInterfaceKeys = viewerState.members
+    .map((member) => ("name" in member ? staticName(member.name) : null))
+    .filter((name): name is string => name !== null);
+  const parseInterfaceKeys = parseState.members
     .map((member) => ("name" in member ? staticName(member.name) : null))
     .filter((name): name is string => name !== null);
   const coreInterfaceKeys = coreData.members
@@ -947,6 +959,12 @@ describe("P2.3 U2 pure UI ownership contract", () => {
         expect(toolInterfaceKeys, `${field} remains on tool owner`).toContain(field);
         expect(() => directProperty(toolDefaultsObject, field)).not.toThrow();
         expect(viewerInterfaceKeys, `${field} deleted residual owner`).not.toContain(field);
+      } else if ((UI_BOUNDARY_EXCLUSIONS.parseFlow as readonly string[]).includes(field)) {
+        expect(parseInterfaceKeys, `${field} remains on parse owner`).toContain(field);
+        expect(() => directProperty(parseStoreObject, field)).not.toThrow();
+        expect(viewerInterfaceKeys, `${field} deleted residual owner`).not.toContain(field);
+        expect(directObjectKeys(viewerStoreObject), `${field} absent from residual defaults`)
+          .not.toContain(field);
       } else {
         expect(viewerInterfaceKeys, `${field} remains on residual viewer owner`).toContain(field);
         expect(() => directProperty(viewerStoreObject, field)).not.toThrow();
@@ -983,7 +1001,7 @@ describe("P2.3 U2 subscription topology", () => {
       expect(groupedHookShape(name), `${name} shape`).toEqual(GROUPED_HOOK_SHAPES[name]);
       expect(importedCallTopology(name), `${name} callers`).toEqual(GROUPED_HOOK_CALL_TOPOLOGY[name]);
     }
-  });
+  }, 15_000);
 
   it("keeps AnnotationOverlay UI subscriptions primitive and avoids broad UI facades", () => {
     const source = parse(ANNOTATION_OVERLAY);
@@ -1017,6 +1035,7 @@ describe("P2.3 U2 subscription topology", () => {
 
 describe("P2.3 U2 ownership escape oracle", () => {
   const uiMembers = PURE_UI_MEMBER_NAMES;
+  const parseBoundaryMembers = new Set<string>(UI_BOUNDARY_EXCLUSIONS.parseFlow);
 
   it("self-calibrates aliases, casts, destructuring, useShallow, and computed keys", () => {
     const fixture = ts.createSourceFile(
@@ -1071,8 +1090,32 @@ describe("P2.3 U2 ownership escape oracle", () => {
     expect(inactive).toEqual([]);
   }, 15_000);
 
-  it("keeps viewerStore and uiStore as dependency-free leaf stores", () => {
-    for (const path of [VIEWER_STORE_FILE, UI_STORE_FILE].filter(existsRelative)) {
+  it("keeps the exact parse boundary on parseFlowStore and absent from both UI and residual owners", () => {
+    const plausible = productionSourceFiles.filter((path) => {
+      const text = textOf(path);
+      return [PARSE_OWNER.module, UI_OWNER.module, VIEWER_OWNER.module]
+        .some((moduleName) => text.includes(moduleName));
+    });
+    const activeMembers = new Set(plausible.flatMap((path) =>
+      storeMemberAccesses(parse(path), PARSE_OWNER, parseBoundaryMembers)
+        .map(({ member }) => member),
+    ));
+    const uiEscapes = plausible.flatMap((path) =>
+      storeMemberAccesses(parse(path), UI_OWNER, parseBoundaryMembers)
+        .map((access) => `${path}:${access.kind}:${access.member}`),
+    );
+    const viewerEscapes = plausible.flatMap((path) =>
+      storeMemberAccesses(parse(path), VIEWER_OWNER, parseBoundaryMembers)
+        .map((access) => `${path}:${access.kind}:${access.member}`),
+    );
+
+    expect([...activeMembers].sort()).toEqual([...parseBoundaryMembers].sort());
+    expect(uiEscapes).toEqual([]);
+    expect(viewerEscapes).toEqual([]);
+  }, 15_000);
+
+  it("keeps viewerStore, uiStore, and parseFlowStore as dependency-free leaf stores", () => {
+    for (const path of [VIEWER_STORE_FILE, UI_STORE_FILE, PARSE_OWNER.file].filter(existsRelative)) {
       const source = parse(path);
       const imports = source.statements
         .filter(ts.isImportDeclaration)

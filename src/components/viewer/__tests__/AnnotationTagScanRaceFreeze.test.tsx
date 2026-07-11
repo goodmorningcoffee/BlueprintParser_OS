@@ -13,6 +13,7 @@ import "@testing-library/jest-dom";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ClientAnnotation } from "@/types";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import type { ToolTagScanResults } from "@/stores/toolStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useViewerStore } from "@/stores/viewerStore";
@@ -212,19 +213,21 @@ describe("AnnotationOverlay scanClass request ownership", () => {
     // AnnotationOverlay's page-change effect intentionally tears down any parse flow present at
     // mount. Start this interaction after mount, exactly as the panel command does in production.
     act(() => {
-      useViewerStore.setState({
+      useParseFlowStore.setState({
         tableParseStep: "select-region",
         tableParseRegion: null,
+      });
+      useViewerStore.setState({
         _drawing: true,
         _drawStart: { x: 10, y: 20 },
         _drawEnd: { x: 70, y: 80 },
       });
     });
-    expect(useViewerStore.getState().tableParseStep).toBe("select-region");
+    expect(useParseFlowStore.getState().tableParseStep).toBe("select-region");
     const trace: Array<
+      | { owner: "viewer"; drawing: boolean }
       | {
-          owner: "viewer";
-          drawing: boolean;
+          owner: "parse";
           region: [number, number, number, number] | null;
           step: string;
         }
@@ -233,6 +236,9 @@ describe("AnnotationOverlay scanClass request ownership", () => {
     const unsubscribeViewer = useViewerStore.subscribe((state) => trace.push({
       owner: "viewer",
       drawing: state._drawing,
+    }));
+    const unsubscribeParse = useParseFlowStore.subscribe((state) => trace.push({
+      owner: "parse",
       region: state.tableParseRegion,
       step: state.tableParseStep,
     }));
@@ -244,20 +250,20 @@ describe("AnnotationOverlay scanClass request ownership", () => {
     fireEvent.mouseUp(canvas);
 
     expect(trace).toEqual([
-      { owner: "viewer", drawing: false, region: null, step: "select-region" },
+      { owner: "viewer", drawing: false },
       {
-        owner: "viewer",
-        drawing: false,
+        owner: "parse",
         region: [0.1, 0.2, 0.7, 0.8],
         step: "select-region",
       },
-      { owner: "viewer", drawing: false, region: [0.1, 0.2, 0.7, 0.8], step: "idle" },
+      { owner: "parse", region: [0.1, 0.2, 0.7, 0.8], step: "idle" },
       { owner: "tool", mode: "move" },
     ]);
-    expect(useViewerStore.getState().tableParseRegion).toEqual([0.1, 0.2, 0.7, 0.8]);
-    expect(useViewerStore.getState().tableParseStep).toBe("idle");
+    expect(useParseFlowStore.getState().tableParseRegion).toEqual([0.1, 0.2, 0.7, 0.8]);
+    expect(useParseFlowStore.getState().tableParseStep).toBe("idle");
     expect(useToolStore.getState().mode).toBe("move");
     unsubscribeViewer();
+    unsubscribeParse();
     unsubscribeTool();
   });
 

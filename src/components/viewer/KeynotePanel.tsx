@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
   resetAllTools,
@@ -69,22 +69,22 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const pageTextract = useTextractForPage(pageNumber);
   // [refactor jul11 P2.2⑥] Subscribe to the one chunk-windowed cache entry, not viewerStore.
   const { annotations } = useAnnotations();
-  const keynoteParseTab = useViewerStore((s) => s.keynoteParseTab);
-  const setKeynoteParseTab = useViewerStore((s) => s.setKeynoteParseTab);
-  const keynoteParseStep = useViewerStore((s) => s.keynoteParseStep);
-  const keynoteParseRegion = useViewerStore((s) => s.keynoteParseRegion);
-  const setKeynoteParseRegion = useViewerStore((s) => s.setKeynoteParseRegion);
-  const keynoteColumnBBs = useViewerStore((s) => s.keynoteColumnBBs);
-  const addKeynoteColumnBB = useViewerStore((s) => s.addKeynoteColumnBB);
-  const keynoteRowBBs = useViewerStore((s) => s.keynoteRowBBs);
-  const addKeynoteRowBB = useViewerStore((s) => s.addKeynoteRowBB);
-  const keynoteYoloClass = useViewerStore((s) => s.keynoteYoloClass);
-  const setKeynoteYoloClass = useViewerStore((s) => s.setKeynoteYoloClass);
-  const parsedKeynoteData = useViewerStore((s) => s.parsedKeynoteData);
-  const addParsedKeynote = useViewerStore((s) => s.addParsedKeynote);
+  const keynoteParseTab = useParseFlowStore((s) => s.keynoteParseTab);
+  const setKeynoteParseTab = useParseFlowStore((s) => s.setKeynoteParseTab);
+  const keynoteParseStep = useParseFlowStore((s) => s.keynoteParseStep);
+  const keynoteParseRegion = useParseFlowStore((s) => s.keynoteParseRegion);
+  const setKeynoteParseRegion = useParseFlowStore((s) => s.setKeynoteParseRegion);
+  const keynoteColumnBBs = useParseFlowStore((s) => s.keynoteColumnBBs);
+  const addKeynoteColumnBB = useParseFlowStore((s) => s.addKeynoteColumnBB);
+  const keynoteRowBBs = useParseFlowStore((s) => s.keynoteRowBBs);
+  const addKeynoteRowBB = useParseFlowStore((s) => s.addKeynoteRowBB);
+  const keynoteYoloClass = useParseFlowStore((s) => s.keynoteYoloClass);
+  const setKeynoteYoloClass = useParseFlowStore((s) => s.setKeynoteYoloClass);
+  const parsedKeynoteData = useParseFlowStore((s) => s.parsedKeynoteData);
+  const addParsedKeynote = useParseFlowStore((s) => s.addParsedKeynote);
   const activeKeynoteHighlight = useUiStore((s) => s.activeKeynoteHighlight);
   const setActiveKeynoteHighlight = useUiStore((s) => s.setActiveKeynoteHighlight);
-  const resetKeynoteParse = useViewerStore((s) => s.resetKeynoteParse);
+  const resetKeynoteParse = useParseFlowStore((s) => s.resetKeynoteParse);
   const projectId = useSessionStore((s) => s.projectId);
   // One collection observer owns the whole keynote list. Passing the same row array down avoids
   // creating one query observer per expanded/collapsed KeynoteItem.
@@ -93,23 +93,23 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const { addYoloTagsBulk } = useYoloTagActions();
   const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
-  const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
-  const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
+  const setTableParsedGrid = useParseFlowStore((s) => s.setTableParsedGrid);
+  const setTableParseRegion = useParseFlowStore((s) => s.setTableParseRegion);
   const { publicId } = useProject();
   // [refactor jul10 P2.2③] context-only handle for the two promote-refresher cache seeds below
   // (saveKeynoteToIntelligence + the guided-parse save) — zero subscription.
   const queryClient = useQueryClient();
 
   // Guided parse state
-  const guidedParseActive = useViewerStore((s) => s.guidedParseActive);
-  const guidedParseRegion = useViewerStore((s) => s.guidedParseRegion);
-  const guidedParseRows = useViewerStore((s) => s.guidedParseRows);
-  const guidedParseCols = useViewerStore((s) => s.guidedParseCols);
-  const setGuidedParseActive = useViewerStore((s) => s.setGuidedParseActive);
-  const setGuidedParseRegion = useViewerStore((s) => s.setGuidedParseRegion);
-  const setGuidedParseRows = useViewerStore((s) => s.setGuidedParseRows);
-  const setGuidedParseCols = useViewerStore((s) => s.setGuidedParseCols);
-  const resetGuidedParse = useViewerStore((s) => s.resetGuidedParse);
+  const guidedParseActive = useParseFlowStore((s) => s.guidedParseActive);
+  const guidedParseRegion = useParseFlowStore((s) => s.guidedParseRegion);
+  const guidedParseRows = useParseFlowStore((s) => s.guidedParseRows);
+  const guidedParseCols = useParseFlowStore((s) => s.guidedParseCols);
+  const setGuidedParseActive = useParseFlowStore((s) => s.setGuidedParseActive);
+  const setGuidedParseRegion = useParseFlowStore((s) => s.setGuidedParseRegion);
+  const setGuidedParseRows = useParseFlowStore((s) => s.setGuidedParseRows);
+  const setGuidedParseCols = useParseFlowStore((s) => s.setGuidedParseCols);
+  const resetGuidedParse = useParseFlowStore((s) => s.resetGuidedParse);
 
   // Guards against double-click save stacking. Same pattern as TableParsePanel —
   // Manual + Auto both call this helper; Guided bypasses it and writes inline.
@@ -139,7 +139,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     csiTags?: { code: string; description: string }[],
     persistToDb: boolean = true,
   ) => {
-    const storeState = useViewerStore.getState();
+    const storeState = useParseFlowStore.getState();
     const sessionState = useSessionStore.getState();
     const headers = ["Key", "Description"];
     const rows = keys.map((k) => ({ Key: k.key, Description: k.description }));
@@ -516,7 +516,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const [guidedExpCols, setGuidedExpCols] = useState<number | null>(2); // keynotes default 2
 
   const proposeGrid = useCallback(async () => {
-    const region = useViewerStore.getState().keynoteParseRegion;
+    const region = useParseFlowStore.getState().keynoteParseRegion;
     if (!region || !projectId) return;
     setGuidedParseRegion(region); // store for overlay
     setGuidedLoading(true);
@@ -814,7 +814,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                             : { pageNumber: kn.pageNumber, key }
                         )}
                         onDelete={() => {
-                          const store = useViewerStore.getState();
+                          const store = useParseFlowStore.getState();
                           const all = store.parsedKeynoteData;
                           if (all) {
                             store.setParsedKeynoteData(all.filter((entry) =>

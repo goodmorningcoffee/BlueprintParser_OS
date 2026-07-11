@@ -211,6 +211,103 @@ describe("store owner oracle — setState resolution and fail-closed findings", 
   });
 });
 
+describe("store owner oracle — single-argument subscribe listener classification", () => {
+  it("allows resolvable listeners that ignore state or read only non-ledger residual members", () => {
+    const result = scanStoreOwnerText("fixture.ts", `
+      import { useViewerStore as importedStore } from "@/stores/viewerStore";
+      const trace: unknown[] = [];
+
+      importedStore.subscribe(() => trace.push("inline ignored"));
+      importedStore.subscribe((_state: any) => trace.push("declared state ignored"));
+      function ignoredNamed() { trace.push("named ignored"); }
+      importedStore.subscribe(ignoredNamed);
+      importedStore.subscribe((state: any) => trace.push(state.allTrades));
+      const residualDestructure = ({ activeQtoWorkflow }: any) => activeQtoWorkflow;
+      importedStore.subscribe(residualDestructure);
+      importedStore.subscribe((_state: any, previousState: any) =>
+        trace.push(previousState.allCsiCodes));
+    `, OWNER);
+
+    expect(signatures(result)).toEqual([]);
+    expect(result.uncertain).toEqual([]);
+  });
+
+  it("preserves known findings from current state, previous state, and destructured listeners", () => {
+    const result = scanStoreOwnerText("fixture.ts", `
+      import { useViewerStore as importedStore } from "@/stores/viewerStore";
+
+      importedStore.subscribe((state: any, previousState: any) => [
+        state.alpha,
+        previousState.beta,
+      ]);
+      importedStore.subscribe(({ gamma }: any, { delta }: any) => gamma + delta);
+    `, OWNER);
+
+    expect(signatures(result)).toEqual([
+      "subscribe:read:known:alpha",
+      "subscribe:read:known:beta",
+      "subscribe:read:known:gamma",
+      "subscribe:read:known:delta",
+    ]);
+    expect(result.uncertain).toEqual([]);
+  });
+
+  it("keeps an unresolved listener opaque without inventing a blanket broad read", () => {
+    const result = scanStoreOwnerText("fixture.ts", `
+      import { useViewerStore as importedStore } from "@/stores/viewerStore";
+      declare const externalListener: (state: unknown, previousState: unknown) => void;
+      importedStore.subscribe(externalListener);
+    `, OWNER);
+
+    expect(signatures(result)).toEqual(["subscribe:read:opaque:*"]);
+    expect(result.uncertain[0]?.detail).toBe(
+      "subscribe callback/selector could not be resolved locally",
+    );
+  });
+
+  it("keeps subscribeWithSelector's first callback under selector-style fail-closed rules", () => {
+    const result = scanStoreOwnerText("fixture.ts", `
+      import { useViewerStore as importedStore } from "@/stores/viewerStore";
+      importedStore.subscribe(() => "constant", () => {});
+    `, OWNER);
+
+    expect(signatures(result)).toEqual(["subscribe:read:opaque:*"]);
+    expect(result.uncertain[0]?.detail).toBe("state callback has no parameter");
+  });
+
+  it("fails closed when either listener state is passed, returned, spread, or retained whole", () => {
+    const result = scanStoreOwnerText("fixture.ts", `
+      import { useViewerStore as importedStore } from "@/stores/viewerStore";
+      declare function consume(value: unknown): void;
+
+      importedStore.subscribe((state: any) => consume(state));
+      importedStore.subscribe((state: any) => state);
+      importedStore.subscribe((state: any) => ({ ...state }));
+      importedStore.subscribe(function returnWhole(state: any) { return state; });
+      importedStore.subscribe((state: any) => ({ retained: state }));
+      importedStore.subscribe((_state: any, previousState: any) => consume(previousState));
+    `, OWNER);
+
+    expect(result.known).toEqual([]);
+    expect(signatures(result)).toEqual([
+      "subscribe:read:opaque:*",
+      "subscribe:broad:broad:*",
+      "subscribe:read:broad:*",
+      "subscribe:broad:broad:*",
+      "subscribe:read:opaque:*",
+      "subscribe:read:opaque:*",
+    ]);
+    expect(result.uncertain.map((finding) => finding.detail)).toEqual([
+      "state is passed to an opaque helper",
+      "callback returns the whole state",
+      "spreading the state observes every member",
+      "callback returns the whole state",
+      "state escapes through an object property",
+      "state is passed to an opaque helper",
+    ]);
+  });
+});
+
 describe("store owner oracle — provenance escape hardening", () => {
   it("taints identity/Proxy-derived stores and reports calls, returns, spreads, and dynamic namespace exports", () => {
     const result = scanStoreOwnerText("fixture.tsx", `

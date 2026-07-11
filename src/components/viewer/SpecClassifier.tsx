@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
@@ -33,7 +33,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
   const isDemo = useSessionStore((s) => s.isDemo);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const intel = usePageIntelligenceForPage(pageNumber);
-  const setSpecParseRegion = useViewerStore((s) => s.setSpecParseRegion);
+  const setSpecParseRegion = useParseFlowStore((s) => s.setSpecParseRegion);
   const [rowStates, setRowStates] = useState<Record<string, RowAction>>({});
   const [errorByRow, setErrorByRow] = useState<Record<string, string>>({});
   // React commits the disabled button state after the event. This keyed synchronous barrier closes

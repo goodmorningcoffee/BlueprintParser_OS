@@ -30,7 +30,6 @@ import {
   readPageIntelligence,
   setPageIntelligenceForPage,
 } from "@/queries/usePageWindow";
-import { useViewerStore } from "@/stores/viewerStore";
 import type {
   ClientAnnotation,
   KeynoteShapeData,

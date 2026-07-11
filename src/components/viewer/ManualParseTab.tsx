@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useViewerStore, useTableParse } from "@/stores/viewerStore";
+import { useParseFlowStore, useTableParse } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { setTableParseStep } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
@@ -187,7 +187,7 @@ export default function ManualParseTab({
     setTableParsedGrid(grid);
     // Manual parse doesn't use the merger — clear source-picker meta so the
     // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
-    useViewerStore.getState().setTableParseMeta(null);
+    useParseFlowStore.getState().setTableParseMeta(null);
     setTableParseStep("review");
     useToolStore.getState().setMode("move");
     // Auto-persist immediately (no separate Save click). resetAfter:false keeps
@@ -225,7 +225,7 @@ export default function ManualParseTab({
           <span className="text-[10px] text-green-400">Region defined</span>
           <button
             onClick={() => {
-              useViewerStore.getState().setTableParseRegion(null);
+              useParseFlowStore.getState().setTableParseRegion(null);
               setTableParseStep("idle");
               useToolStore.getState().setMode("move");
             }}

@@ -16,7 +16,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import { queryKeys } from "@/queries/queryKeys";
 import { useUiStore } from "@/stores/uiStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore as useViewerStore } from "@/stores/parseFlowStore";
 import type { TextractPageData } from "@/types";
 
 vi.mock("@/lib/ocr-grid-detect", () => ({

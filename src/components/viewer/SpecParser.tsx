@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { setSpecParseStep } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -39,17 +39,17 @@ export default function SpecParser() {
   const isDemo = useSessionStore((s) => s.isDemo);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
 
-  const specParseRegion = useViewerStore((s) => s.specParseRegion);
-  const setSpecParseRegion = useViewerStore((s) => s.setSpecParseRegion);
-  const resetSpecParse = useViewerStore((s) => s.resetSpecParse);
+  const specParseRegion = useParseFlowStore((s) => s.specParseRegion);
+  const setSpecParseRegion = useParseFlowStore((s) => s.setSpecParseRegion);
+  const resetSpecParse = useParseFlowStore((s) => s.resetSpecParse);
 
-  const paragraphBatch = useViewerStore((s) => s.paragraphBatch);
-  const setParagraphBatch = useViewerStore((s) => s.setParagraphBatch);
-  const removePendingParagraph = useViewerStore((s) => s.removePendingParagraph);
-  const setParagraphOverlayActive = useViewerStore((s) => s.setParagraphOverlayActive);
-  const upsertPendingParagraph = useViewerStore((s) => s.upsertPendingParagraph);
+  const paragraphBatch = useParseFlowStore((s) => s.paragraphBatch);
+  const setParagraphBatch = useParseFlowStore((s) => s.setParagraphBatch);
+  const removePendingParagraph = useParseFlowStore((s) => s.removePendingParagraph);
+  const setParagraphOverlayActive = useParseFlowStore((s) => s.setParagraphOverlayActive);
+  const upsertPendingParagraph = useParseFlowStore((s) => s.upsertPendingParagraph);
 
-  const setParseDraftRegion = useViewerStore((s) => s.setParseDraftRegion);
+  const setParseDraftRegion = useParseFlowStore((s) => s.setParseDraftRegion);
 
   const [mode, setMode] = useState<SpecSubMode>("auto");
   const [preview, setPreview] = useState<PreviewSpec | null>(null);

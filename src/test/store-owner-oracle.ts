@@ -733,22 +733,36 @@ export function scanStoreOwnerSource(
   const analyzeStateFunction = (
     fn: ts.FunctionLikeDeclaration,
     operation: StoreOwnerOperation,
+    options: {
+      readonly allowNoStateParameters?: boolean;
+      readonly stateParameterCount?: number;
+    } = {},
   ): void => {
-    const parameter = fn.parameters[0];
-    if (!parameter) {
-      addFinding(fn, operation, "read", "opaque", null, "state callback has no parameter");
-      return;
-    }
-    if (ts.isObjectBindingPattern(parameter.name)) {
-      addBindingReads(parameter.name, parameter, operation);
-      return;
-    }
-    if (!ts.isIdentifier(parameter.name)) {
-      addFinding(parameter, operation, "read", "opaque", null, "unsupported state parameter binding");
+    const stateParameters = fn.parameters.slice(0, options.stateParameterCount ?? 1);
+    if (stateParameters.length === 0) {
+      // A one-argument Zustand subscribe listener may deliberately ignore both state arguments.
+      // Selectors (including subscribeWithSelector's first callback) still require a state
+      // parameter, so keep their missing parameter fail-closed.
+      if (!options.allowNoStateParameters) {
+        addFinding(fn, operation, "read", "opaque", null, "state callback has no parameter");
+      }
       return;
     }
 
-    const stateAliases = new Set([parameter.name.text]);
+    const stateAliases = new Set<string>();
+    for (const parameter of stateParameters) {
+      if (parameter.dotDotDotToken) {
+        addFinding(parameter, operation, "read", "opaque", null, "unsupported rest state parameter");
+      } else if (ts.isObjectBindingPattern(parameter.name)) {
+        addBindingReads(parameter.name, parameter, operation);
+      } else if (ts.isIdentifier(parameter.name)) {
+        stateAliases.add(parameter.name.text);
+      } else {
+        addFinding(parameter, operation, "read", "opaque", null, "unsupported state parameter binding");
+      }
+    }
+    if (stateAliases.size === 0) return;
+
     let changed = true;
     while (changed) {
       changed = false;
@@ -1222,7 +1236,9 @@ export function scanStoreOwnerSource(
     analyzePatch(call.arguments[0], call);
   }
 
-  // subscribe(selector, listener) is selector-based; subscribe(listener) receives the whole state.
+  // subscribe(selector, listener) is selector-based; subscribe(listener) receives the whole state,
+  // but receipt alone is not an ownership read. Resolve a local listener and classify only its
+  // actual state uses. Unresolved listeners and whole-state escapes remain fail-closed.
   for (const call of descendants(source, ts.isCallExpression)) {
     if (!isMethodCall(call, "subscribe")) continue;
     if (!call.arguments[0]) {
@@ -1230,9 +1246,15 @@ export function scanStoreOwnerSource(
       continue;
     }
     const resolved = resolveFunctions(call.arguments[0], expressionAssignments, declarations);
-    for (const fn of resolved.functions) analyzeStateFunction(fn, "subscribe");
-    if (call.arguments.length === 1) {
-      addFinding(call, "subscribe", "broad", "broad", null, "single-argument Zustand subscribe observes whole-state publications");
+    const singleArgumentListener = call.arguments.length === 1;
+    for (const fn of resolved.functions) {
+      analyzeStateFunction(
+        fn,
+        "subscribe",
+        singleArgumentListener
+          ? { allowNoStateParameters: true, stateParameterCount: 2 }
+          : undefined,
+      );
     }
     if (resolved.opaque) {
       addFinding(call.arguments[0], "subscribe", "read", "opaque", null, "subscribe callback/selector could not be resolved locally");

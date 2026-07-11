@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -26,8 +26,8 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
 
   const projectId = useSessionStore((s) => s.projectId);
   const publicId = useSessionStore((s) => s.publicId);
-  const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
-  const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
+  const tableParseRegion = useParseFlowStore((s) => s.tableParseRegion);
+  const setTableParseRegion = useParseFlowStore((s) => s.setTableParseRegion);
   const setMode = useToolStore((s) => s.setMode);
   const showKeynotes = useUiStore((s) => s.showKeynotes);
   const toggleKeynotes = useUiStore((s) => s.toggleKeynotes);

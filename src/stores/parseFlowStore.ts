@@ -4,13 +4,12 @@ import { useShallow } from "zustand/react/shallow";
 import type { ParsedRegion, TextractLine } from "@/types";
 
 /**
- * [refactor jul11 P2.4 S1] Production-dead candidate owner for parse workflows.
+ * [refactor jul11 P2.4 S2] Sole leaf owner for transient Table, Keynote, Notes, and Spec parsing.
  *
- * S1 deliberately duplicates viewerStore's flat parse contract without serving a production
- * consumer. The S2 ownership flip moves every consumer atomically, then deletes the old owner;
- * keeping this leaf dependency-free makes parity and rollback auditable in the meantime. The four
- * set*ParseStep commands remain in viewerCommands because idle-to-active entry also writes the
- * tool owner. Do not import a sibling store, Query facade, command, or UI concern here.
+ * S1 staged this contract production-dead; S2 moved every borrower atomically and deleted the
+ * legacy Viewer copy. Keep the leaf dependency-free: the four set*ParseStep commands remain in
+ * viewerCommands because idle-to-active entry also writes the tool owner. Do not import a sibling
+ * store, Query facade, command, or UI concern here.
  */
 
 /** Stage 5 Phase 2.5 — a paragraph committed by the user via ParagraphOverlay.
@@ -184,7 +183,7 @@ export interface ParseFlowState {
   resetGuidedParse: () => void;
 
   /**
-   * Project-reset seam added for S1. It intentionally preserves the legacy three-field policy:
+   * Project-reset seam. It intentionally preserves the characterized three-field policy:
    * tableCellStructure, showTableCellStructure, and tableParseOptions retain their references.
    */
   resetProjectParseState: () => void;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useViewerStore, useTableParse } from "@/stores/viewerStore";
+import { useParseFlowStore, useTableParse } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { setTableParseStep } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
@@ -211,7 +211,7 @@ export default function AutoParseTab({
         // single-region parses — multi-region merges combine rows across tables
         // and per-method raw grids no longer align meaningfully.
         if (proposedRegions.length === 1 && lastMethodResults && lastMergerNotes?.baseMethod) {
-          useViewerStore.getState().setTableParseMeta({
+          useParseFlowStore.getState().setTableParseMeta({
             methodResults: lastMethodResults,
             baseMethod: lastMergerNotes.baseMethod,
             mergedSnapshot: {
@@ -223,7 +223,7 @@ export default function AutoParseTab({
             },
           });
         } else {
-          useViewerStore.getState().setTableParseMeta(null);
+          useParseFlowStore.getState().setTableParseMeta(null);
         }
         // Set tableParseRegion to merged bbox so TableCompareModal can crop the
         // image AND so the auto-persist below derives a stable regionId from it.
@@ -675,11 +675,11 @@ function DetectCellStructureButton() {
   const { projectId } = useProject();
   const { pageNumber } = useNavigation();
   const { tableParseRegion } = useTableParse();
-  const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
-  const setTableCellStructure = useViewerStore((s) => s.setTableCellStructure);
+  const tableCellStructure = useParseFlowStore((s) => s.tableCellStructure);
+  const setTableCellStructure = useParseFlowStore((s) => s.setTableCellStructure);
   // TATR-OVERLAY: visibility toggle for the cell overlay on the canvas
-  const showTableCellStructure = useViewerStore((s) => s.showTableCellStructure);
-  const setShowTableCellStructure = useViewerStore((s) => s.setShowTableCellStructure);
+  const showTableCellStructure = useParseFlowStore((s) => s.showTableCellStructure);
+  const setShowTableCellStructure = useParseFlowStore((s) => s.setShowTableCellStructure);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

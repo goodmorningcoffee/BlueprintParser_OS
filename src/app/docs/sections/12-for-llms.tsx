@@ -94,7 +94,7 @@ export function Section12ForLlms() {
             [<InlineCode key="a9">BP_TOOLS</InlineCode>, "src/lib/llm/tools-defs.ts", "20 tool definitions. Client-safe (no db/fs)."],
             [<InlineCode key="a10">executeToolCall</InlineCode>, "src/lib/llm/tools.ts", "Server-side tool executors. Full db + fs access."],
             [<InlineCode key="a11">canvasWantsEvents</InlineCode>, "src/components/viewer/AnnotationOverlay.tsx:2609", "Render-gate condition #1. Also touch L2620, L2649, L2653."],
-            [<InlineCode key="a12">domain stores</InlineCode>, "src/stores/{sessionStore,uiStore,viewerCoreStore,toolStore,viewerStore}.ts", "Use the owning leaf; viewerStore is residual parse/drawing state."],
+            [<InlineCode key="a12">domain stores</InlineCode>, "src/stores/{sessionStore,uiStore,viewerCoreStore,toolStore,parseFlowStore,viewerStore}.ts", "Use the owning leaf; parseFlowStore owns parsing and viewerStore is residual metadata/drawing."],
             [<InlineCode key="a13">resetAllTools</InlineCode>, "src/stores/viewerCommands.ts", "Neutral tool/parse reset command; leaf stores do not import siblings."],
             [<InlineCode key="a14">focusAnnotationId</InlineCode>, "src/stores/uiStore.ts", "One-shot UI signal. Read-and-clear pattern."],
             [<InlineCode key="a15">assembleContextWithConfig</InlineCode>, "src/lib/context-builder.ts", "LLM prompt assembly. Priority-sorted section packing."],
@@ -274,7 +274,7 @@ objectAdjacencyBoost: 0,  // not yet produced by matchers; future refinement`}
           <div>
             <h4 className="text-[var(--fg)] font-semibold mb-1">Add a new canvas tool mode</h4>
             <ol className="list-decimal pl-5 space-y-0.5 text-[13px]">
-              <li>Add flat interaction/session state to <InlineCode>toolStore.ts</InlineCode>; keep server rows in Query and parse state in its residual owner.</li>
+              <li>Add flat interaction/session state to <InlineCode>toolStore.ts</InlineCode>; keep server rows in Query and parse state in <InlineCode>parseFlowStore.ts</InlineCode>.</li>
               <li>Touch ALL FOUR conditions in <InlineCode>AnnotationOverlay.tsx</InlineCode>: <InlineCode>canvasWantsEvents</InlineCode> (L2609), <InlineCode>canvasShouldRender</InlineCode> (L2620), <InlineCode>pointerEvents</InlineCode> (L2649), <InlineCode>cursor</InlineCode> (L2653).</li>
               <li>Add branches in <InlineCode>handleMouseDown/Move/Up</InlineCode>.</li>
               <li>For cross-owner cleanup, compose the operation in <InlineCode>viewerCommands.resetAllTools()</InlineCode>; never import sibling stores into a leaf.</li>

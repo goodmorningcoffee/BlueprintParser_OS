@@ -9,6 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { seedSummariesCache } from "@/queries/useSummaries";
@@ -93,7 +94,7 @@ export default function DemoProjectPage() {
       useUiStore.getState().setConfidenceThreshold(0);
       // Parse owns the destination tab. Publish it before revealing the UI panel so every raw UI
       // subscriber observes the already-active destination, with no await between the two writes.
-      useViewerStore.setState({ tableParseTab: "auto" });
+      useParseFlowStore.setState({ tableParseTab: "auto" });
       useUiStore.setState({
         helpMode: false,
         showTips: false,

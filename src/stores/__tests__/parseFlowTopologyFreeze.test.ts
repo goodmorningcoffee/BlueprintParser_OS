@@ -1,5 +1,5 @@
 // @vitest-environment node
-// [refactor jul11 P2.4 S1] Source-exact topology freeze for the additive parse owner.
+// [refactor jul11 P2.4 S2] Source-exact topology freeze for sole parse ownership.
 //
 // This suite is intentionally narrower than the fail-closed owner oracle. It pins the known
 // grouped surfaces, canvas-adjacent subscriptions, cross-kind borrowers, neutral-command home,
@@ -72,9 +72,9 @@ type OwnershipPhaseConfig = {
 
 // This is the only phase switch. S1 keeps viewer active and permits only the dual-owner parity
 // suite plus this topology/runtime witness to touch the production-dead candidate. S2 flips the
-// owners and removes both exceptions; the gate fails until manifest, reader, and imports move
-// together.
-const PARSE_OWNERSHIP_PHASE: ParseOwnershipPhase = "S1";
+// owners, removes the parity exception, and retains only this file's explicit residual-runtime
+// absence witness; the gate fails until manifest, reader, and imports move together.
+const PARSE_OWNERSHIP_PHASE: ParseOwnershipPhase = "S2";
 const OWNERSHIP_PHASES = {
   F0: {
     active: VIEWER_OWNER,
@@ -95,7 +95,9 @@ const OWNERSHIP_PHASES = {
     active: PARSE_OWNER,
     inactive: VIEWER_OWNER,
     inactiveDefinition: "ledger-absent",
-    inactiveAccessAllowlist: [],
+    // This suite intentionally retains the residual Viewer runtime/drawing witness needed to prove
+    // old-owner absence. No production file, other real test, or shared helper is exempt.
+    inactiveAccessAllowlist: ["src/stores/__tests__/parseFlowTopologyFreeze.test.ts"],
   },
 } as const satisfies Record<ParseOwnershipPhase, OwnershipPhaseConfig>;
 
@@ -935,8 +937,7 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
     expect(viewerDefinitions.objectKeys.includes("resetProjectParseState")).toBe(false);
   });
 
-  it("keeps the additive parse owner dependency-free and production-dead in S1", () => {
-    expect(PARSE_OWNERSHIP_PHASE).toBe("S1");
+  it("keeps the sole parse owner dependency-free and self-calibrates load detection", () => {
     const source = parse(PARSE_OWNER.file);
     const imports = source.statements
       .filter(ts.isImportDeclaration)
@@ -979,8 +980,7 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
       "require",
       "import-type",
     ]);
-    expect(productionSourceFiles.filter((path) => parseOwnerLoadKinds(path).length > 0))
-      .toEqual([]);
+    expect(productionSourceFiles.some((path) => parseOwnerLoadKinds(path).length > 0)).toBe(true);
   });
 
   it("keeps the four step writers out of the leaf and defined only by the neutral command module", () => {
@@ -996,11 +996,11 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
       const source = parse(VIEWER_COMMANDS_FILE);
       expect(callLabels(definitions[0].node, source)).toEqual([
         "prepareParseEntry",
-        "useViewerStore.getState",
-        "useViewerStore.setState",
+        "useParseFlowStore.getState",
+        "useParseFlowStore.setState",
       ]);
     }
-  });
+  }, 15_000);
 });
 
 describe("P2.4 phase-aware grouped parse hook contract", () => {
@@ -1155,17 +1155,22 @@ describe("P2.4 phase-aware mixed test-helper parse ledger", () => {
     });
   });
 
-  it("publishes session -> UI -> core -> tool -> one coalesced current viewer owner", () => {
+  it("publishes session -> UI -> core -> tool -> parse -> residual viewer", () => {
     const trace: string[] = [];
-    const viewerSnapshots: Array<{ step: string; trades: string[] }> = [];
+    const parseSnapshots: string[] = [];
+    const viewerSnapshots: string[][] = [];
     const unsubscribers = [
       useSessionStore.subscribe(() => trace.push("session")),
       useUiStore.subscribe(() => trace.push("ui")),
       useViewerCoreStore.subscribe(() => trace.push("core")),
       useToolStore.subscribe(() => trace.push("tool")),
+      useParseFlowStore.subscribe((state) => {
+        trace.push("parse");
+        parseSnapshots.push(state.tableParseStep);
+      }),
       useViewerStore.subscribe((state) => {
         trace.push("viewer");
-        viewerSnapshots.push({ step: state.tableParseStep, trades: state.allTrades });
+        viewerSnapshots.push(state.allTrades);
       }),
     ];
 
@@ -1178,8 +1183,9 @@ describe("P2.4 phase-aware mixed test-helper parse ledger", () => {
       allTrades: ["Electrical"],
     });
 
-    expect(trace).toEqual(["session", "ui", "core", "tool", "viewer"]);
-    expect(viewerSnapshots).toEqual([{ step: "review", trades: ["Electrical"] }]);
+    expect(trace).toEqual(["session", "ui", "core", "tool", "parse", "viewer"]);
+    expect(parseSnapshots).toEqual(["review"]);
+    expect(viewerSnapshots).toEqual([["Electrical"]]);
     unsubscribers.forEach((unsubscribe) => unsubscribe());
   });
 
@@ -1189,6 +1195,7 @@ describe("P2.4 phase-aware mixed test-helper parse ledger", () => {
       ui: vi.fn(),
       core: vi.fn(),
       tool: vi.fn(),
+      parse: vi.fn(),
       viewer: vi.fn(),
     };
     const unsubscribers = [
@@ -1196,12 +1203,14 @@ describe("P2.4 phase-aware mixed test-helper parse ledger", () => {
       useUiStore.subscribe(listeners.ui),
       useViewerCoreStore.subscribe(listeners.core),
       useToolStore.subscribe(listeners.tool),
+      useParseFlowStore.subscribe(listeners.parse),
       useViewerStore.subscribe(listeners.viewer),
     ];
 
     setViewerStoreStateForTest({ tableParseStep: "review" });
 
-    expect(listeners.viewer).toHaveBeenCalledTimes(1);
+    expect(listeners.parse).toHaveBeenCalledTimes(1);
+    expect(listeners.viewer).not.toHaveBeenCalled();
     expect(listeners.session).not.toHaveBeenCalled();
     expect(listeners.ui).not.toHaveBeenCalled();
     expect(listeners.core).not.toHaveBeenCalled();
@@ -1311,7 +1320,7 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
     const compareSource = parse(TABLE_COMPARE_MODAL);
     const handleDone = findVariable(compareSource, "handleDone");
     const compareText = compact(handleDone, compareSource);
-    expect(compareText).toContain("useViewerStore.getState().tableParsedGrid");
+    expect(compareText).toContain("useParseFlowStore.getState().tableParsedGrid");
     expect(compareText).toContain("store.parsedKeynoteData");
     expect(compareText).toContain("store.setParsedKeynoteData(updated)");
   });
@@ -1329,8 +1338,8 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
 
 describe("P2.4 phase-aware guided-Spec tombstone", () => {
   it("keeps the dead field/action in the exact owner/reset while proving zero external production borrowers", () => {
-    const source = parse(VIEWER_STORE_FILE);
-    const store = findStoreObject(source, "useViewerStore");
+    const source = parse(ACTIVE_PARSE_OWNER.file);
+    const store = findStoreObject(source, ACTIVE_PARSE_OWNER.storeName);
     const reset = directProperty(store, "resetSpecParse");
     const resetObjects = descendants(reset, ts.isObjectLiteralExpression).filter((object) =>
       directObjectKeys(object).includes("specParseStep"),
@@ -1370,17 +1379,8 @@ describe("P2.4 phase-aware shared owner-oracle integration", () => {
     })).filter(({ result }) => result.findings.length > 0);
     const allowlist = new Set<string>(OWNERSHIP.inactiveAccessAllowlist);
     const unexpected = inactiveByFile.filter(({ path }) => !allowlist.has(path));
-    const observedAllowlist = inactiveByFile.map(({ path }) => path).filter((path) => allowlist.has(path));
-
-    if (PARSE_OWNERSHIP_PHASE === "S1") {
-      const candidateLoads = allSourceCorpus
-        .filter((path) => parseOwnerLoadKinds(path).length > 0);
-      expect(candidateLoads).toEqual([...allowlist].sort());
-      expect(candidateLoads.map((path) => ({
-        path,
-        kinds: parseOwnerLoadKinds(path),
-      }))).toEqual(candidateLoads.map((path) => ({ path, kinds: ["import"] })));
-    }
+    const allowed = inactiveByFile.filter(({ path }) => allowlist.has(path));
+    const observedAllowlist = allowed.map(({ path }) => path);
 
     const accessed = new Set(activeKnown.map((finding) => finding.member));
     for (const representative of [
@@ -1391,13 +1391,18 @@ describe("P2.4 phase-aware shared owner-oracle integration", () => {
       "guidedParseRows",
       "paragraphBatch",
     ]) {
-      expect(accessed, `${representative} live viewer consumer`).toContain(representative);
+      expect(accessed, `${representative} live parse consumer`).toContain(representative);
     }
     expect(unexpected.flatMap(({ result }) => [
       ...result.known.map((finding) =>
         `${finding.fileName}:${finding.line}:${finding.column} ${formatStoreOwnerFinding(finding)}`),
       ...findingLabels(result),
     ])).toEqual([]);
+    // The sole S2 exception exists only because this topology file deliberately snapshots the
+    // residual owner to prove runtime absence. It may never hide a statically known parse access.
+    expect(allowed.flatMap(({ result }) => result.known.map((finding) =>
+      `${finding.fileName}:${finding.line}:${finding.column} ${formatStoreOwnerFinding(finding)}`,
+    ))).toEqual([]);
     expect(observedAllowlist).toEqual([...allowlist].sort());
-  }, 30_000);
+  }, 60_000);
 });

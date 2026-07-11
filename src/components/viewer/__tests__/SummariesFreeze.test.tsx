@@ -34,7 +34,7 @@ import {
 } from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
 import { useUiStore } from "@/stores/uiStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore as useViewerStore } from "@/stores/parseFlowStore";
 import { seedAnnotations } from "@/test/seed-annotations";
 import { seedSummaries } from "@/test/seed-summaries";
 import type { ProjectSummaries } from "@/types";

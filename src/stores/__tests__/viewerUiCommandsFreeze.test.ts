@@ -12,6 +12,7 @@ import {
   seedYoloTagsFromBootstrap,
 } from "@/queries/useYoloTags";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 import {
@@ -30,10 +31,11 @@ import type { YoloTag } from "@/types";
 let queryClient: QueryClient;
 
 function restoreViewerStore(): void {
-  // Replacing with Zustand's construction-time state restores every action as well as every
-  // value. Each leaf reset is partial, so construction-time replacement gives characterization
-  // complete isolation even when it seeds otherwise-impossible competing-tool combinations.
-  useViewerStore.setState(useViewerStore.getInitialState(), true);
+  // The residual viewer now has one complete public metadata reset; use that action instead of a
+  // whole-store replacement. The other leaves still need construction-time replacement to restore
+  // every action as well as every value after otherwise-impossible competing-tool combinations.
+  useViewerStore.getState().resetViewerState();
+  useParseFlowStore.setState(useParseFlowStore.getInitialState(), true);
   useToolStore.setState(useToolStore.getInitialState(), true);
   useViewerCoreStore.setState(useViewerCoreStore.getInitialState(), true);
   useUiStore.setState(useUiStore.getInitialState(), true);
@@ -76,7 +78,7 @@ function yoloTag(id: string, instances: YoloTag["instances"] = []): YoloTag {
 }
 
 describe("viewer UI command freeze — project reset", () => {
-  it("publishes session -> UI -> core -> tool -> residual viewer synchronously once each", () => {
+  it("publishes session -> UI -> core -> tool -> parse -> residual viewer synchronously", () => {
     setViewerStoreStateForTest({
       publicId: "old-project",
       searchQuery: "needle",
@@ -88,11 +90,12 @@ describe("viewer UI command freeze — project reset", () => {
     const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
     const unsubscribeCore = useViewerCoreStore.subscribe(() => publications.push("core"));
     const unsubscribeTool = useToolStore.subscribe(() => publications.push("tool"));
+    const unsubscribeParse = useParseFlowStore.subscribe(() => publications.push("parse"));
     const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
 
     resetProjectData();
 
-    expect(publications).toEqual(["session", "ui", "core", "tool", "viewer"]);
+    expect(publications).toEqual(["session", "ui", "core", "tool", "parse", "viewer"]);
     expect(useSessionStore.getState().publicId).toBe("");
     expect(useUiStore.getState().searchQuery).toBe("");
     expect(useViewerCoreStore.getState().pageNumber).toBe(1);
@@ -102,6 +105,7 @@ describe("viewer UI command freeze — project reset", () => {
     unsubscribeUi();
     unsubscribeCore();
     unsubscribeTool();
+    unsubscribeParse();
     unsubscribeViewer();
   });
 });
@@ -196,20 +200,20 @@ describe("viewer UI command freeze — peer-host teardown", () => {
     it(`${scenario.label}: decides from the peer at call time, then resets in a microtask`, () => {
       useUiStore.setState(scenario.closedHostSeed);
       useToolStore.setState({ mode: "markup" });
-      useViewerStore.setState({ tableParseStep: "review" });
+      useParseFlowStore.setState({ tableParseStep: "review" });
 
       scenario.toggle();
 
       expect(useUiStore.getState()[scenario.hostKey]).toBe(false);
       expect(useToolStore.getState().mode).toBe("markup");
-      expect(useViewerStore.getState().tableParseStep).toBe("review");
+      expect(useParseFlowStore.getState().tableParseStep).toBe("review");
 
       // Opening the peer after the close call does not cancel the already-queued teardown.
       useUiStore.setState(scenario.openPeerSeed);
       expect(useToolStore.getState().mode).toBe("markup");
       vi.runAllTicks();
       expect(useToolStore.getState().mode).toBe("move");
-      expect(useViewerStore.getState().tableParseStep).toBe("idle");
+      expect(useParseFlowStore.getState().tableParseStep).toBe("idle");
     });
 
     it(`${scenario.label}: an open peer at call time suppresses teardown permanently`, () => {
@@ -247,7 +251,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       pageNumber: 8,
       regionBbox: [0.1, 0.2, 0.8, 0.9] as [number, number, number, number],
     };
-    const tableParseOptions = useViewerStore.getState().tableParseOptions;
+    const tableParseOptions = useParseFlowStore.getState().tableParseOptions;
     const polygonVertices = [{ x: 3, y: 4 }];
     const bucketFillPreview = { vertices: [{ x: 1, y: 2 }], method: "sentinel" };
     useToolStore.setState({ setMode });
@@ -282,17 +286,17 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       symbolSearchActive: true,
       tempPanMode: true,
     });
-    const before = useViewerStore.getState();
+    const before = useParseFlowStore.getState();
     const beforeTool = useToolStore.getState();
     const beforeUi = useUiStore.getState();
     const publications: string[] = [];
-    const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
+    const unsubscribeParse = useParseFlowStore.subscribe(() => publications.push("parse"));
     const unsubscribeTool = useToolStore.subscribe(() => publications.push("tool"));
     const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
 
     toggleTableParsePanel();
 
-    const after = useViewerStore.getState();
+    const after = useParseFlowStore.getState();
     const afterTool = useToolStore.getState();
     expect(changedValueKeys(before, after)).toEqual([
       "guidedParseActive",
@@ -342,8 +346,8 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     expect(afterTool.polygonVertices).toBe(polygonVertices);
     expect(afterTool.bucketFillPreview).toBe(bucketFillPreview);
     expect(setMode).not.toHaveBeenCalled();
-    expect(publications).toEqual(["viewer", "tool", "ui"]);
-    unsubscribeViewer();
+    expect(publications).toEqual(["parse", "tool", "ui"]);
+    unsubscribeParse();
     unsubscribeTool();
     unsubscribeUi();
   });
@@ -381,17 +385,17 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       symbolSearchActive: true,
       tempPanMode: true,
     });
-    const before = useViewerStore.getState();
+    const before = useParseFlowStore.getState();
     const beforeTool = useToolStore.getState();
     const beforeUi = useUiStore.getState();
     const publications: string[] = [];
-    const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
+    const unsubscribeParse = useParseFlowStore.subscribe(() => publications.push("parse"));
     const unsubscribeTool = useToolStore.subscribe(() => publications.push("tool"));
     const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
 
     toggleKeynoteParsePanel();
 
-    const after = useViewerStore.getState();
+    const after = useParseFlowStore.getState();
     const afterTool = useToolStore.getState();
     expect(changedValueKeys(before, after)).toEqual([
       "guidedParseActive",
@@ -433,8 +437,8 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     expect(afterTool.polygonVertices).toBe(polygonVertices);
     expect(afterTool.bucketFillPreview).toBe(bucketFillPreview);
     expect(setMode).not.toHaveBeenCalled();
-    expect(publications).toEqual(["viewer", "tool", "ui"]);
-    unsubscribeViewer();
+    expect(publications).toEqual(["parse", "tool", "ui"]);
+    unsubscribeParse();
     unsubscribeTool();
     unsubscribeUi();
   });
@@ -621,7 +625,7 @@ describe("viewer UI command freeze — demo mixed bootstrap source", () => {
     const reset = oneCall("resetProjectData");
     const demoPolicy = oneCall("setIsDemo");
     const confidence = oneCall("useUiStore.getState().setConfidenceThreshold");
-    const parsePatch = oneCall("useViewerStore.setState");
+    const parsePatch = oneCall("useParseFlowStore.setState");
     const uiPatch = oneCall("useUiStore.setState");
     const promiseAll = oneCall("Promise.all");
 

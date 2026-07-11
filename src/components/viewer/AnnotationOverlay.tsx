@@ -20,7 +20,8 @@ import {
   useYoloTagActions,
   useYoloTagsForPage,
 } from "@/queries/useYoloTags";
-import { useViewerStore, useTableParse, useKeynoteParse } from "@/stores/viewerStore";
+import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore, useTableParse, useKeynoteParse } from "@/stores/parseFlowStore";
 import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore, useAnnotationFiltersUi } from "@/stores/uiStore";
@@ -176,9 +177,9 @@ export default memo(function AnnotationOverlay({
 
   const activeTableTagViews = useUiStore((s) => s.activeTableTagViews);
   const llmHighlight = useUiStore((s) => s.llmHighlight);
-  const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
-  const showTableCellStructure = useViewerStore((s) => s.showTableCellStructure);
-  const toggleCellHighlight = useViewerStore((s) => s.toggleCellHighlight);
+  const tableCellStructure = useParseFlowStore((s) => s.tableCellStructure);
+  const showTableCellStructure = useParseFlowStore((s) => s.showTableCellStructure);
+  const toggleCellHighlight = useParseFlowStore((s) => s.toggleCellHighlight);
   // [refactor jul11 P2.2⑥] Annotation data/actions now share the one chunk-seeded cache facade.
   // C4 converges the five independent create paths onto persistCreate; split stays explicit because
   // its two-row PUT-before-POST order is load-bearing. The subscription remains data-only.
@@ -1678,8 +1679,8 @@ export default memo(function AnnotationOverlay({
       }
 
       // Table or keynote or notes or spec parse drawing mode
-      const notesStep = useViewerStore.getState().notesParseStep;
-      const specStep = useViewerStore.getState().specParseStep;
+      const notesStep = useParseFlowStore.getState().notesParseStep;
+      const specStep = useParseFlowStore.getState().specParseStep;
       if (tableParseStep === "select-region" || tableParseStep === "define-column" || tableParseStep === "define-row"
           || keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row"
           || notesStep === "select-region" || notesStep === "define-column" || notesStep === "define-row"
@@ -1795,7 +1796,7 @@ export default memo(function AnnotationOverlay({
               if (nrmX >= rMinX && nrmX <= rMaxX && nrmY >= rMinY && nrmY <= rMaxY) {
                 e.stopPropagation();
                 if (!useUiStore.getState().showTableParsePanel) toggleTableParsePanel();
-                useViewerStore.getState().setTableParseTab("all");
+                useParseFlowStore.getState().setTableParseTab("all");
                 useUiStore.getState().setFocusedParsedRegionId(region.id);
                 return;
               }
@@ -2254,51 +2255,51 @@ export default memo(function AnnotationOverlay({
       return;
     }
     if (tableParseStep === "define-column") {
-      useViewerStore.getState().addTableParseColumnBB([minX, minY, maxX, maxY]);
+      useParseFlowStore.getState().addTableParseColumnBB([minX, minY, maxX, maxY]);
       return;
     }
     if (tableParseStep === "define-row") {
-      useViewerStore.getState().addTableParseRowBB([minX, minY, maxX, maxY]);
+      useParseFlowStore.getState().addTableParseRowBB([minX, minY, maxX, maxY]);
       return;
     }
 
     // Keynote parse BBs
     if (keynoteParseStep === "select-region") {
-      useViewerStore.getState().setKeynoteParseRegion([minX, minY, maxX, maxY]);
+      useParseFlowStore.getState().setKeynoteParseRegion([minX, minY, maxX, maxY]);
       setKeynoteParseStep("idle");
       useToolStore.getState().setMode("move");
       return;
     }
     if (keynoteParseStep === "define-column") {
-      useViewerStore.getState().addKeynoteColumnBB([minX, minY, maxX, maxY]);
+      useParseFlowStore.getState().addKeynoteColumnBB([minX, minY, maxX, maxY]);
       return;
     }
     if (keynoteParseStep === "define-row") {
-      useViewerStore.getState().addKeynoteRowBB([minX, minY, maxX, maxY]);
+      useParseFlowStore.getState().addKeynoteRowBB([minX, minY, maxX, maxY]);
       return;
     }
 
     // Notes parse BBs (Stage 4)
-    const notesStep = useViewerStore.getState().notesParseStep;
+    const notesStep = useParseFlowStore.getState().notesParseStep;
     if (notesStep === "select-region") {
-      useViewerStore.getState().setNotesParseRegion([minX, minY, maxX, maxY]);
+      useParseFlowStore.getState().setNotesParseRegion([minX, minY, maxX, maxY]);
       setNotesParseStep("idle");
       useToolStore.getState().setMode("move");
       return;
     }
     if (notesStep === "define-column") {
-      useViewerStore.getState().addGuidedNotesCol([minX, minY, maxX, maxY]);
+      useParseFlowStore.getState().addGuidedNotesCol([minX, minY, maxX, maxY]);
       return;
     }
     if (notesStep === "define-row") {
-      useViewerStore.getState().addGuidedNotesRow([minX, minY, maxX, maxY]);
+      useParseFlowStore.getState().addGuidedNotesRow([minX, minY, maxX, maxY]);
       return;
     }
 
     // Spec parse BBs (Stage 5)
-    const specStep = useViewerStore.getState().specParseStep;
+    const specStep = useParseFlowStore.getState().specParseStep;
     if (specStep === "select-region") {
-      useViewerStore.getState().setSpecParseRegion([minX, minY, maxX, maxY]);
+      useParseFlowStore.getState().setSpecParseRegion([minX, minY, maxX, maxY]);
       setSpecParseStep("idle");
       useToolStore.getState().setMode("move");
       return;
@@ -2382,7 +2383,7 @@ export default memo(function AnnotationOverlay({
     function handleEscape(e: KeyboardEvent) {
       if (e.key === "Escape") {
         const tool = useToolStore.getState();
-        const viewer = useViewerStore.getState();
+        const parse = useParseFlowStore.getState();
         if (tool.splitPreview) {
           // Discard split preview, stay in split mode (line endpoints preserved)
           tool.setSplitPreview(null);
@@ -2402,10 +2403,10 @@ export default memo(function AnnotationOverlay({
         } else if (tool.bucketFillActive) {
           // Deactivate bucket fill entirely
           tool.setBucketFillActive(false);
-        } else if (viewer.tableParseStep !== "idle") {
+        } else if (parse.tableParseStep !== "idle") {
           setTableParseStep("idle");
           tool.setMode("move");
-        } else if (viewer.keynoteParseStep !== "idle") {
+        } else if (parse.keynoteParseStep !== "idle") {
           setKeynoteParseStep("idle");
           tool.setMode("move");
         } else if (polygonDrawingMode === "drawing") {
@@ -2518,15 +2519,15 @@ export default memo(function AnnotationOverlay({
       resetCalibration();
     }
     // Reset table/keynote parse drawing state on page change
-    const viewer = useViewerStore.getState();
+    const parse = useParseFlowStore.getState();
     const tool = useToolStore.getState();
-    if (viewer.tableParseStep !== "idle") {
-      viewer.resetTableParse();
+    if (parse.tableParseStep !== "idle") {
+      parse.resetTableParse();
       tool.setMode("move");
     }
-    if (viewer.keynoteParseStep !== "idle") {
-      viewer.resetKeynoteParse();
-      viewer.setKeynoteParseRegion(null);
+    if (parse.keynoteParseStep !== "idle") {
+      parse.resetKeynoteParse();
+      parse.setKeynoteParseRegion(null);
       tool.setMode("move");
     }
     if (tool.symbolSearchActive) {

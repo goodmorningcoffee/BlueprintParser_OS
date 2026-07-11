@@ -1,11 +1,12 @@
 // [refactor jul11 P2.3 S0] One test-side seam for mixed viewer/session setup.
 //
 // The helper accepts one logical test setup patch and partitions session, UI, core, tool, parse,
-// then residual viewer state. During P2.4 F0 parse + residual are coalesced into their current one
-// physical viewerStore publication; S2 makes the logical boundary physical. This keeps tests
-// explicit about production ownership without repeating routing boilerplate. CSI bootstrap data is
-// intentionally absent because its residual graph has a dedicated Query facade.
+// then residual viewer state. P2.4 S2 makes every logical boundary physical and preserves that
+// publication order. This keeps tests explicit about production ownership without repeating
+// routing boilerplate. CSI bootstrap data is intentionally absent because its residual graph has a
+// dedicated Query facade.
 
+import { useParseFlowStore, type ParseFlowState } from "@/stores/parseFlowStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -17,6 +18,7 @@ export type SessionStoreTestState = ReturnType<typeof useSessionStore.getState>;
 export type UiStoreTestState = ReturnType<typeof useUiStore.getState>;
 export type ViewerCoreStoreTestState = ReturnType<typeof useViewerCoreStore.getState>;
 export type ToolStoreTestState = ReturnType<typeof useToolStore.getState>;
+export type ParseStoreTestState = ParseFlowState;
 
 export const SESSION_TEST_STATE_KEYS = [
   "projectId",
@@ -166,10 +168,8 @@ export const TOOL_TEST_STATE_KEYS = [
 export type ToolTestStateKey = (typeof TOOL_TEST_STATE_KEYS)[number];
 export type ToolStoreTestPatch = Partial<Pick<ToolStoreTestState, ToolTestStateKey>>;
 
-// [refactor jul11 P2.4 F0] Exact logical parse-data ledger. Parse still physically lives in
-// viewerStore during F0, but partitioning it now gives mixed test setup the final deterministic
-// session -> UI -> core -> tool -> parse -> residual order. S2 changes only this partition's
-// physical target to parseFlowStore; test call sites and the 35-key contract remain fixed.
+// [refactor jul11 P2.4 S2] Exact parse-owner ledger. Mixed setup publishes in deterministic
+// session -> UI -> core -> tool -> parse -> residual order; call sites stay flat.
 export const PARSE_TEST_STATE_KEYS = [
   "tableParseStep",
   "tableParseRegion",
@@ -206,7 +206,7 @@ export const PARSE_TEST_STATE_KEYS = [
   "guidedParseRegion",
   "guidedParseRows",
   "guidedParseCols",
-] as const satisfies readonly (keyof ViewerStoreTestState)[];
+] as const satisfies readonly (keyof ParseStoreTestState)[];
 
 export type ParseTestStateKey = (typeof PARSE_TEST_STATE_KEYS)[number];
 
@@ -255,14 +255,49 @@ export const PARSE_TEST_ACTION_KEYS = [
   "setGuidedParseRows",
   "setGuidedParseCols",
   "resetGuidedParse",
-] as const satisfies readonly (keyof ViewerStoreTestState)[];
+] as const satisfies readonly (keyof ParseStoreTestState)[];
 
 export type ParseTestActionKey = (typeof PARSE_TEST_ACTION_KEYS)[number];
 export type ParseStoreTestPatch = Partial<
-  Pick<ViewerStoreTestState, ParseTestStateKey | ParseTestActionKey>
+  Pick<ParseStoreTestState, ParseTestStateKey | ParseTestActionKey>
 >;
+
+// [refactor jul11 P2.4 S2] Keep the residual test seam independently enumerable. Falling every
+// unknown key through to Viewer used to make an omitted migration ledger entry silently recreate
+// hidden state through Zustand's permissive setState API. The exhaustive list and fail-closed
+// partition below turn that class of ownership mistake into a type error or an immediate test
+// setup error.
+export const REMAINING_VIEWER_TEST_KEYS = [
+  "allTrades",
+  "setAllTrades",
+  "allCsiCodes",
+  "setAllCsiCodes",
+  "activeQtoWorkflow",
+  "setActiveQtoWorkflow",
+  "_drawing",
+  "_drawStart",
+  "_drawEnd",
+  "_mousePos",
+  "_setDrawing",
+  "_setDrawStart",
+  "_setDrawEnd",
+  "_setMousePos",
+  "resetViewerState",
+] as const satisfies readonly (keyof ViewerStoreTestState)[];
+
+type RemainingViewerTestKey = (typeof REMAINING_VIEWER_TEST_KEYS)[number];
+type MissingRemainingViewerTestKey = Exclude<
+  keyof ViewerStoreTestState,
+  RemainingViewerTestKey
+>;
+// This assignment deliberately fails when Viewer gains a member without an explicit routing
+// decision here. `satisfies` above independently rejects stale/extra ledger members.
+const REMAINING_VIEWER_TEST_KEYS_ARE_EXHAUSTIVE:
+  MissingRemainingViewerTestKey extends never ? true : never = true;
+void REMAINING_VIEWER_TEST_KEYS_ARE_EXHAUSTIVE;
+
 export type RemainingViewerStoreTestPatch = Partial<
-  Omit<ViewerStoreTestState, ParseTestStateKey | ParseTestActionKey>
+  Pick<ViewerStoreTestState, RemainingViewerTestKey>
 >;
 export type ViewerStoreTestPatch = RemainingViewerStoreTestPatch &
   SessionStoreTestPatch &
@@ -281,6 +316,9 @@ const PARSE_TEST_KEY_SET = new Set<string>([
   ...PARSE_TEST_STATE_KEYS,
   ...PARSE_TEST_ACTION_KEYS,
 ]);
+const REMAINING_VIEWER_TEST_KEY_SET = new Set<string>(
+  REMAINING_VIEWER_TEST_KEYS,
+);
 
 export function partitionViewerStoreTestState(patch: ViewerStoreTestPatch): {
   session: SessionStoreTestPatch;
@@ -308,7 +346,12 @@ export function partitionViewerStoreTestState(patch: ViewerStoreTestPatch): {
             ? toolEntries
             : PARSE_TEST_KEY_SET.has(key)
               ? parseEntries
-              : viewerEntries;
+              : REMAINING_VIEWER_TEST_KEY_SET.has(key)
+                ? viewerEntries
+                : null;
+    if (!target) {
+      throw new Error(`Unowned viewer test-state key: ${key}`);
+    }
     target.push([key, value]);
   }
 
@@ -325,15 +368,41 @@ export function partitionViewerStoreTestState(patch: ViewerStoreTestPatch): {
 export function setViewerStoreStateForTest(patch: ViewerStoreTestPatch): void {
   const { session, ui, core, tool, parse, viewer } = partitionViewerStoreTestState(patch);
 
+  // Spell every residual property as a literal setState key. Besides preserving one publication,
+  // this lets the shared ownership oracle prove that a computed/misrouted parse key cannot escape
+  // through this otherwise-generic test helper.
+  const residualViewerPatch = {
+    ...("allTrades" in viewer ? { allTrades: viewer.allTrades } : {}),
+    ...("setAllTrades" in viewer ? { setAllTrades: viewer.setAllTrades } : {}),
+    ...("allCsiCodes" in viewer ? { allCsiCodes: viewer.allCsiCodes } : {}),
+    ...("setAllCsiCodes" in viewer ? { setAllCsiCodes: viewer.setAllCsiCodes } : {}),
+    ...("activeQtoWorkflow" in viewer
+      ? { activeQtoWorkflow: viewer.activeQtoWorkflow }
+      : {}),
+    ...("setActiveQtoWorkflow" in viewer
+      ? { setActiveQtoWorkflow: viewer.setActiveQtoWorkflow }
+      : {}),
+    ...("_drawing" in viewer ? { _drawing: viewer._drawing } : {}),
+    ...("_drawStart" in viewer ? { _drawStart: viewer._drawStart } : {}),
+    ...("_drawEnd" in viewer ? { _drawEnd: viewer._drawEnd } : {}),
+    ...("_mousePos" in viewer ? { _mousePos: viewer._mousePos } : {}),
+    ...("_setDrawing" in viewer ? { _setDrawing: viewer._setDrawing } : {}),
+    ...("_setDrawStart" in viewer ? { _setDrawStart: viewer._setDrawStart } : {}),
+    ...("_setDrawEnd" in viewer ? { _setDrawEnd: viewer._setDrawEnd } : {}),
+    ...("_setMousePos" in viewer ? { _setMousePos: viewer._setMousePos } : {}),
+    ...("resetViewerState" in viewer
+      ? { resetViewerState: viewer.resetViewerState }
+      : {}),
+  } satisfies RemainingViewerStoreTestPatch;
+
   // Identity/policy must be visible before presentation, geometry, tool, parse, and residual state.
   // Empty partitions are skipped so a one-owner setup remains exactly one publication.
   if (Object.keys(session).length > 0) useSessionStore.setState(session);
   if (Object.keys(ui).length > 0) useUiStore.setState(ui);
   if (Object.keys(core).length > 0) useViewerCoreStore.setState(core);
   if (Object.keys(tool).length > 0) useToolStore.setState(tool);
-  // F0's logical parse and residual partitions still share one physical owner. Coalesce them to
-  // preserve the legacy one-publication setup contract; S2 replaces this line with parse-owner
-  // then residual-viewer publications without changing the partition or any caller.
-  const currentViewerPatch = { ...parse, ...viewer };
-  if (Object.keys(currentViewerPatch).length > 0) useViewerStore.setState(currentViewerPatch);
+  if (Object.keys(parse).length > 0) useParseFlowStore.setState(parse);
+  if (Object.keys(residualViewerPatch).length > 0) {
+    useViewerStore.setState(residualViewerPatch);
+  }
 }

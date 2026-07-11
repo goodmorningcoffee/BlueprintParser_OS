@@ -9,6 +9,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const VIEWER_STORE_FILE = "src/stores/viewerStore.ts";
+const PARSE_STORE_FILE = "src/stores/parseFlowStore.ts";
 const TOOL_STORE_FILE = "src/stores/toolStore.ts";
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
 const DRAWING_PREVIEW = "src/components/viewer/DrawingPreviewLayer.tsx";
@@ -18,6 +19,11 @@ const VIEWER_OWNER = {
   file: VIEWER_STORE_FILE,
   module: "@/stores/viewerStore",
   exportName: "useViewerStore",
+} as const;
+const PARSE_OWNER = {
+  file: PARSE_STORE_FILE,
+  module: "@/stores/parseFlowStore",
+  exportName: "useParseFlowStore",
 } as const;
 const TOOL_OWNER = {
   file: TOOL_STORE_FILE,
@@ -110,8 +116,7 @@ const GROUPED_OR_UNUSED_TOOL_MEMBERS = new Set([
 ]);
 const DRAWING_DATA = ["_drawing", "_drawStart", "_drawEnd", "_mousePos"] as const;
 const DRAWING_ACTIONS = ["_setDrawing", "_setDrawStart", "_setDrawEnd", "_setMousePos"] as const;
-const DRAWING_MEMBERS = new Set<string>([...DRAWING_DATA, ...DRAWING_ACTIONS]);
-const PREVIEW_PARSE_DATA = new Set(["tableParseStep", "keynoteParseStep"]);
+const PREVIEW_PARSE_DATA = ["tableParseStep", "keynoteParseStep"] as const;
 
 const BOUNDARY_EXCLUSIONS = {
   serverMetadata: ["allTrades", "setAllTrades", "allCsiCodes", "setAllCsiCodes"],
@@ -120,8 +125,9 @@ const BOUNDARY_EXCLUSIONS = {
     "tableParseStep", "keynoteParseStep", "notesParseStep", "specParseStep",
     "guidedParseActive", "paragraphOverlayActive", "paragraphClipboard",
     "tableCellStructure", "showTableCellStructure", "parseDraftRegion",
-    "notesFastManualActive", "notesFastManualGrid", "resetAllTools",
+    "notesFastManualActive", "notesFastManualGrid",
   ],
+  neutralReset: ["resetAllTools"],
   drawingQuarantine: [...DRAWING_DATA, ...DRAWING_ACTIONS],
 } as const;
 
@@ -758,9 +764,12 @@ function functionDeclaration(source: ts.SourceFile, name: string): ts.FunctionDe
 
 describe("P2.3 T2 flat tool ownership", () => {
   const viewerSource = parse(VIEWER_STORE_FILE);
+  const parseSource = parse(PARSE_STORE_FILE);
   const toolSource = parse(TOOL_STORE_FILE);
   const viewerInterfaceKeys = interfaceKeys(findInterface(viewerSource, "ViewerState"));
+  const parseInterfaceKeys = interfaceKeys(findInterface(parseSource, "ParseFlowState"));
   const viewerObject = findStoreObject(viewerSource, "useViewerStore");
+  const parseObject = findStoreObject(parseSource, "useParseFlowStore");
   const toolInterfaceKeys = [
     ...interfaceKeys(findInterface(toolSource, "ToolStoreData")),
     ...interfaceKeys(findInterface(toolSource, "ToolStoreActions")),
@@ -787,19 +796,38 @@ describe("P2.3 T2 flat tool ownership", () => {
     }
   });
 
-  it("keeps metadata, mutable server draft, parse flow, neutral reset, and drawing out of the tool ledger", () => {
+  it("keeps every boundary exclusion out of toolStore and pins its exact S2 owner", () => {
     const exclusions = Object.values(BOUNDARY_EXCLUSIONS).flat();
     expect(new Set(exclusions).size).toBe(exclusions.length);
     for (const member of exclusions) {
       expect(TOOL_MEMBERS, `${member} excluded`).not.toContain(member);
-      if (member === "resetAllTools") {
-        expect(viewerInterfaceKeys, `${member} deleted from viewer`).not.toContain(member);
-        expect(() => directProperty(viewerObject, member)).toThrow();
-        expect(textOf("src/stores/viewerCommands.ts")).toMatch(/export function resetAllTools\(/);
-      } else {
-        expect(viewerInterfaceKeys, `${member} remains residual`).toContain(member);
-        expect(() => directProperty(viewerObject, member)).not.toThrow();
-      }
+    }
+
+    const viewerOwned = [
+      ...BOUNDARY_EXCLUSIONS.serverMetadata,
+      ...BOUNDARY_EXCLUSIONS.mutableServerDraft,
+      ...BOUNDARY_EXCLUSIONS.drawingQuarantine,
+    ];
+    for (const member of viewerOwned) {
+      expect(viewerInterfaceKeys, `${member} remains residual viewer-owned`).toContain(member);
+      expect(() => directProperty(viewerObject, member)).not.toThrow();
+      expect(parseInterfaceKeys, `${member} excluded from parse owner`).not.toContain(member);
+      expect(() => directProperty(parseObject, member)).toThrow();
+    }
+
+    for (const member of BOUNDARY_EXCLUSIONS.parseFlow) {
+      expect(viewerInterfaceKeys, `${member} deleted from residual viewer`).not.toContain(member);
+      expect(() => directProperty(viewerObject, member)).toThrow();
+      expect(parseInterfaceKeys, `${member} present on parse owner`).toContain(member);
+      expect(() => directProperty(parseObject, member)).not.toThrow();
+    }
+
+    for (const member of BOUNDARY_EXCLUSIONS.neutralReset) {
+      expect(viewerInterfaceKeys, `${member} deleted from viewer`).not.toContain(member);
+      expect(() => directProperty(viewerObject, member)).toThrow();
+      expect(parseInterfaceKeys, `${member} excluded from parse leaf`).not.toContain(member);
+      expect(() => directProperty(parseObject, member)).toThrow();
+      expect(textOf("src/stores/viewerCommands.ts")).toMatch(/export function resetAllTools\(/);
     }
   });
 
@@ -861,11 +889,10 @@ describe("P2.3 T2 sacred canvas subscription topology", () => {
     const source = parse(DRAWING_PREVIEW);
     const toolRaw = primitiveSelectorMembers(source, ACTIVE_TOOL_OWNER);
     const viewerRaw = primitiveSelectorMembers(source, VIEWER_OWNER);
+    const parseRaw = primitiveSelectorMembers(source, PARSE_OWNER);
     expect(toolRaw.filter((member) => TOOL_MEMBERS.has(member))).toEqual(PREVIEW_TOOL_PRIMITIVES);
-    expect(viewerRaw.filter((member) => DRAWING_MEMBERS.has(member))).toEqual(DRAWING_DATA);
-    expect(viewerRaw.filter((member) => PREVIEW_PARSE_DATA.has(member))).toEqual([
-      "tableParseStep", "keynoteParseStep",
-    ]);
+    expect(viewerRaw).toEqual(DRAWING_DATA);
+    expect(parseRaw).toEqual(PREVIEW_PARSE_DATA);
 
     const imperative = storeMemberAccesses(source, ACTIVE_TOOL_OWNER, TOOL_MEMBERS)
       .filter((access) => access.kind.startsWith("getState"))

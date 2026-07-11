@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, memo } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
@@ -28,22 +28,22 @@ export default memo(function ParseRegionLayer({
 
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
   const showTableParsePanel = useUiStore((s) => s.showTableParsePanel);
-  const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
-  const tableParseColumnBBs = useViewerStore((s) => s.tableParseColumnBBs);
-  const tableParseRowBBs = useViewerStore((s) => s.tableParseRowBBs);
+  const tableParseRegion = useParseFlowStore((s) => s.tableParseRegion);
+  const tableParseColumnBBs = useParseFlowStore((s) => s.tableParseColumnBBs);
+  const tableParseRowBBs = useParseFlowStore((s) => s.tableParseRowBBs);
   // Keynote region overlay renders when the standalone KeynotePanel is open OR
   // when Specs/Notes is open on its Keynotes tab (D2 container embeds KeynotePanel).
   const showKeynoteParsePanel = useUiStore(
     (s) => s.showKeynoteParsePanel || (s.showSpecsNotesPanel && s.specsNotesTab === "keynotes"),
   );
-  const keynoteParseRegion = useViewerStore((s) => s.keynoteParseRegion);
-  const keynoteColumnBBs = useViewerStore((s) => s.keynoteColumnBBs);
-  const keynoteRowBBs = useViewerStore((s) => s.keynoteRowBBs);
+  const keynoteParseRegion = useParseFlowStore((s) => s.keynoteParseRegion);
+  const keynoteColumnBBs = useParseFlowStore((s) => s.keynoteColumnBBs);
+  const keynoteRowBBs = useParseFlowStore((s) => s.keynoteRowBBs);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const intel = usePageIntelligenceForPage(pageNumber) as any;
   const hiddenParsedRegionIds = useUiStore((s) => s.hiddenParsedRegionIds);
   const parsedRegionColorMode = useUiStore((s) => s.parsedRegionColorMode);
-  const parseDraftRegion = useViewerStore((s) => s.parseDraftRegion);
+  const parseDraftRegion = useParseFlowStore((s) => s.parseDraftRegion);
 
   useEffect(() => {
     const canvas = canvasRef.current;

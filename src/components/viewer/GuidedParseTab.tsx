@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { readTextractForPage } from "@/queries/textractCache";
-import { useViewerStore, useTableParse } from "@/stores/viewerStore";
+import { useParseFlowStore, useTableParse } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { setTableParseStep } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
@@ -49,14 +49,14 @@ export default function GuidedParseTab({
   } = useTableParse();
 
   // Guided parse store fields
-  const guidedParseActive = useViewerStore((s) => s.guidedParseActive);
-  const guidedParseRows = useViewerStore((s) => s.guidedParseRows);
-  const guidedParseCols = useViewerStore((s) => s.guidedParseCols);
-  const setGuidedParseActive = useViewerStore((s) => s.setGuidedParseActive);
-  const setGuidedParseRegion = useViewerStore((s) => s.setGuidedParseRegion);
-  const setGuidedParseRows = useViewerStore((s) => s.setGuidedParseRows);
-  const setGuidedParseCols = useViewerStore((s) => s.setGuidedParseCols);
-  const resetGuidedParse = useViewerStore((s) => s.resetGuidedParse);
+  const guidedParseActive = useParseFlowStore((s) => s.guidedParseActive);
+  const guidedParseRows = useParseFlowStore((s) => s.guidedParseRows);
+  const guidedParseCols = useParseFlowStore((s) => s.guidedParseCols);
+  const setGuidedParseActive = useParseFlowStore((s) => s.setGuidedParseActive);
+  const setGuidedParseRegion = useParseFlowStore((s) => s.setGuidedParseRegion);
+  const setGuidedParseRows = useParseFlowStore((s) => s.setGuidedParseRows);
+  const setGuidedParseCols = useParseFlowStore((s) => s.setGuidedParseCols);
+  const resetGuidedParse = useParseFlowStore((s) => s.resetGuidedParse);
 
   // Tuning sliders
   const [rowTolerance, setRowTolerance] = useState(0.006);
@@ -143,7 +143,7 @@ export default function GuidedParseTab({
     setTableParsedGrid({ headers: result.headers, rows: result.rows });
     // Guided parse doesn't use the merger — clear source-picker meta so the
     // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
-    useViewerStore.getState().setTableParseMeta(null);
+    useParseFlowStore.getState().setTableParseMeta(null);
     setTableParseStep("review");
 
     // Save via shared detectCsiAndPersist — surface PATCH failures to the

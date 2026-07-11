@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade (data only). This layer
@@ -40,8 +41,8 @@ export default memo(function DrawingPreviewLayer({
 
   // Other store reads
   const symbolSearchActive = useToolStore((s) => s.symbolSearchActive);
-  const tableParseStep = useViewerStore((s) => s.tableParseStep);
-  const keynoteParseStep = useViewerStore((s) => s.keynoteParseStep);
+  const tableParseStep = useParseFlowStore((s) => s.tableParseStep);
+  const keynoteParseStep = useParseFlowStore((s) => s.keynoteParseStep);
   const calibrationMode = useToolStore((s) => s.calibrationMode);
   const calibrationPoints = useToolStore((s) => s.calibrationPoints);
   const polygonDrawingMode = useToolStore((s) => s.polygonDrawingMode);

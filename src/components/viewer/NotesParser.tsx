@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { setNotesParseStep } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -53,20 +53,20 @@ export default function NotesParser() {
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const textractData = useTextractForPage(pageNumber);
 
-  const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
-  const setNotesParseRegion = useViewerStore((s) => s.setNotesParseRegion);
+  const notesParseRegion = useParseFlowStore((s) => s.notesParseRegion);
+  const setNotesParseRegion = useParseFlowStore((s) => s.setNotesParseRegion);
 
-  const guidedNotesRows = useViewerStore((s) => s.guidedNotesRows);
-  const guidedNotesCols = useViewerStore((s) => s.guidedNotesCols);
-  const resetNotesParse = useViewerStore((s) => s.resetNotesParse);
+  const guidedNotesRows = useParseFlowStore((s) => s.guidedNotesRows);
+  const guidedNotesCols = useParseFlowStore((s) => s.guidedNotesCols);
+  const resetNotesParse = useParseFlowStore((s) => s.resetNotesParse);
 
-  const setParseDraftRegion = useViewerStore((s) => s.setParseDraftRegion);
+  const setParseDraftRegion = useParseFlowStore((s) => s.setParseDraftRegion);
 
-  const paragraphBatch = useViewerStore((s) => s.paragraphBatch);
-  const setParagraphBatch = useViewerStore((s) => s.setParagraphBatch);
-  const removePendingParagraph = useViewerStore((s) => s.removePendingParagraph);
-  const upsertPendingParagraph = useViewerStore((s) => s.upsertPendingParagraph);
-  const setParagraphOverlayActive = useViewerStore((s) => s.setParagraphOverlayActive);
+  const paragraphBatch = useParseFlowStore((s) => s.paragraphBatch);
+  const setParagraphBatch = useParseFlowStore((s) => s.setParagraphBatch);
+  const removePendingParagraph = useParseFlowStore((s) => s.removePendingParagraph);
+  const upsertPendingParagraph = useParseFlowStore((s) => s.upsertPendingParagraph);
+  const setParagraphOverlayActive = useParseFlowStore((s) => s.setParagraphOverlayActive);
 
   const [mode, setMode] = useState<NotesSubMode>("auto");
   const [preview, setPreview] = useState<PreviewGrid | null>(null);
@@ -115,7 +115,7 @@ export default function NotesParser() {
   // so PDFPage's KeynoteGuidedOverlaySlot renders the drag-adjust overlay.
   // Only one parser is active at a time so sharing the flag is safe.
   useEffect(() => {
-    const store = useViewerStore.getState();
+    const store = useParseFlowStore.getState();
     if (mode === "guided" && notesParseRegion) {
       store.setGuidedParseActive(true);
       if (!store.guidedParseRegion) {
@@ -125,19 +125,19 @@ export default function NotesParser() {
       store.setGuidedParseActive(false);
     }
     return () => {
-      useViewerStore.getState().setGuidedParseActive(false);
+      useParseFlowStore.getState().setGuidedParseActive(false);
     };
   }, [mode, notesParseRegion]);
 
   // Toggle the Fast-manual overlay slot when entering/leaving that sub-mode.
   useEffect(() => {
-    const store = useViewerStore.getState();
+    const store = useParseFlowStore.getState();
     store.setNotesFastManualActive(mode === "fast-manual" && !!notesParseRegion);
     if (mode !== "fast-manual") {
       store.setNotesFastManualGrid(null);
     }
     return () => {
-      const s = useViewerStore.getState();
+      const s = useParseFlowStore.getState();
       s.setNotesFastManualActive(false);
       s.setNotesFastManualGrid(null);
     };
@@ -151,7 +151,7 @@ export default function NotesParser() {
 
   // Mirror the Fast-manual overlay's grid into local preview so the standard
   // preview panel + Save path work identically across all four sub-modes.
-  const notesFastManualGrid = useViewerStore((s) => s.notesFastManualGrid);
+  const notesFastManualGrid = useParseFlowStore((s) => s.notesFastManualGrid);
   useEffect(() => {
     if (mode !== "fast-manual") return;
     if (!notesFastManualGrid) {
@@ -221,8 +221,8 @@ export default function NotesParser() {
       const payload = (await res.json()) as { proposedRows: number[]; proposedCols: number[] };
       // Populate the shared guided slice (keynote uses the same) so
       // GuidedParseOverlay can render via PDFPage's notes slot.
-      useViewerStore.getState().setGuidedParseRows(payload.proposedRows);
-      useViewerStore.getState().setGuidedParseCols(payload.proposedCols);
+      useParseFlowStore.getState().setGuidedParseRows(payload.proposedRows);
+      useParseFlowStore.getState().setGuidedParseCols(payload.proposedCols);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Propose failed");
     } finally {
@@ -232,7 +232,7 @@ export default function NotesParser() {
 
   const buildGridFromGuided = (): PreviewGrid | null => {
     if (!textractData) return null;
-    const store = useViewerStore.getState();
+    const store = useParseFlowStore.getState();
     const rows = store.guidedParseRows;
     const cols = store.guidedParseCols;
     if (rows.length < 2 || cols.length < 2) return null;

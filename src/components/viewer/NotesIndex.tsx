@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 // [refactor jul10 P2.2③; jul11 P2.2⑦] Summaries moved Zustand → TanStack Query. This component
 // deliberately keeps the narrow cache-only hook because it reads summaries only; active-window
@@ -31,7 +31,7 @@ interface NotesIndexProps {
 export default function NotesIndex({ onOpenParser }: NotesIndexProps) {
   const { summaries } = useSummariesData();
   const setPage = useViewerCoreStore((s) => s.setPage);
-  const setNotesParseRegion = useViewerStore((s) => s.setNotesParseRegion);
+  const setNotesParseRegion = useParseFlowStore((s) => s.setNotesParseRegion);
   const [filter, setFilter] = useState("");
 
   const rows = useMemo(() => {

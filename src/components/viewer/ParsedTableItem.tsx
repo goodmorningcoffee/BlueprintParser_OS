@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -99,13 +99,13 @@ export default memo(function ParsedTableItem({
   const hiddenParsedRegionIds = useUiStore((s) => s.hiddenParsedRegionIds);
   const isRegionHidden = table.region?.id ? hiddenParsedRegionIds.has(table.region.id) : false;
   const isFocused = focusedParsedRegionId != null && focusedParsedRegionId === table.region?.id;
-  const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
+  const tableCellStructure = useParseFlowStore((s) => s.tableCellStructure);
   const [detectingCells, setDetectingCells] = useState(false);
   const [detectCellsError, setDetectCellsError] = useState<string | null>(null);
   const cellsDetectedHere = tableCellStructure?.pageNumber === table.pageNum;
 
   const handleDetectCells = useCallback(async () => {
-    const store = useViewerStore.getState();
+    const store = useParseFlowStore.getState();
     // Clicking while cells are visible on this page clears them — mirrors
     // AutoParseTab's DetectCellStructureButton toggle behavior.
     if (cellsDetectedHere) {
@@ -499,7 +499,7 @@ export default memo(function ParsedTableItem({
               <div className="flex gap-1 mt-1">
                 <button
                   onClick={() => {
-                    const store = useViewerStore.getState();
+                    const store = useParseFlowStore.getState();
                     store.setTableParsedGrid({
                       headers: table.region.data?.headers || [],
                       rows: table.region.data?.rows || [],

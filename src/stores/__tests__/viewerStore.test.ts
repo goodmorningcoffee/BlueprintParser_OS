@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useToolStore } from "@/stores/toolStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { resetProjectData, setTableParseStep, toggleDetectionPanel } from "@/stores/viewerCommands";
 import { useSessionStore } from "@/stores/sessionStore";
 
@@ -74,18 +74,18 @@ describe("uiStore — detection visibility", () => {
   });
 });
 
-describe("viewerStore — table parse", () => {
+describe("parseFlowStore — table parse", () => {
   it("setTableParseStep updates step", () => {
     setTableParseStep("select-region");
-    expect(useViewerStore.getState().tableParseStep).toBe("select-region");
+    expect(useParseFlowStore.getState().tableParseStep).toBe("select-region");
   });
 
   it("resetTableParse clears parse state", () => {
     setTableParseStep("review");
-    useViewerStore.getState().setTableParseRegion([0.1, 0.2, 0.5, 0.6]);
-    useViewerStore.getState().resetTableParse();
-    expect(useViewerStore.getState().tableParseStep).toBe("idle");
-    expect(useViewerStore.getState().tableParseRegion).toBeNull();
+    useParseFlowStore.getState().setTableParseRegion([0.1, 0.2, 0.5, 0.6]);
+    useParseFlowStore.getState().resetTableParse();
+    expect(useParseFlowStore.getState().tableParseStep).toBe("idle");
+    expect(useParseFlowStore.getState().tableParseRegion).toBeNull();
   });
 });
 
@@ -154,7 +154,7 @@ describe("viewerStore — resetProjectData", () => {
     resetProjectData();
 
     expect(useViewerCoreStore.getState().pageNumber).toBe(1);
-    expect(useViewerStore.getState().tableParseStep).toBe("idle");
+    expect(useParseFlowStore.getState().tableParseStep).toBe("idle");
   });
 });
 

@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
   resetAllTools,
@@ -61,16 +61,16 @@ export default function TableParsePanel() {
   const queryClient = useQueryClient();
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const pageIntelligence = usePageIntelligenceByPage();
-  const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
-  const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
-  const tableParsedGrid = useViewerStore((s) => s.tableParsedGrid);
-  const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
-  const resetTableParse = useViewerStore((s) => s.resetTableParse);
-  const tableParseStep = useViewerStore((s) => s.tableParseStep);
+  const tableParseRegion = useParseFlowStore((s) => s.tableParseRegion);
+  const setTableParseRegion = useParseFlowStore((s) => s.setTableParseRegion);
+  const tableParsedGrid = useParseFlowStore((s) => s.tableParsedGrid);
+  const setTableParsedGrid = useParseFlowStore((s) => s.setTableParsedGrid);
+  const resetTableParse = useParseFlowStore((s) => s.resetTableParse);
+  const tableParseStep = useParseFlowStore((s) => s.tableParseStep);
   const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
   const setPage = useViewerCoreStore((s) => s.setPage);
-  const tableParseTab = useViewerStore((s) => s.tableParseTab);
-  const setTableParseTab = useViewerStore((s) => s.setTableParseTab);
+  const tableParseTab = useParseFlowStore((s) => s.tableParseTab);
+  const setTableParseTab = useParseFlowStore((s) => s.setTableParseTab);
   const pageNames = useSessionStore((s) => s.pageNames);
   const pageDrawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
   // [refactor jul11 P2.2⑥] Server-owned annotation window now subscribes via its cache facade.
@@ -190,7 +190,7 @@ export default function TableParsePanel() {
       // crossing it: a project/page switch must not combine A's table with B's identity or region.
       // Clone nested grid values as well; Auto/Manual pass their Zustand-owned object directly.
       const targetSession = useSessionStore.getState();
-      const liveRegion = useViewerStore.getState().tableParseRegion;
+      const liveRegion = useParseFlowStore.getState().tableParseRegion;
       const target: TableSaveTarget = {
         publicId: targetSession.publicId,
         isDemo: targetSession.isDemo,
@@ -425,7 +425,7 @@ export default function TableParsePanel() {
       });
       // Clear source-picker meta — this grid didn't come from the auto-parse
       // merger, so the per-method results from a prior parse are stale.
-      useViewerStore.getState().setTableParseMeta(null);
+      useParseFlowStore.getState().setTableParseMeta(null);
       setTableParseStep("review");
       useToolStore.getState().setMode("move");
     },

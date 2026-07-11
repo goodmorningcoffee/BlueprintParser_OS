@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import NotesIndex from "./NotesIndex";
 import NotesClassifier from "./NotesClassifier";
@@ -27,7 +27,7 @@ interface NotesPanelProps {
  */
 export default function NotesPanel({ embedded = false }: NotesPanelProps) {
   const [tab, setTab] = useState<NotesSubTab>("index");
-  const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
+  const notesParseRegion = useParseFlowStore((s) => s.notesParseRegion);
   const projectId = useSessionStore((s) => s.projectId);
 
   // Auto-switch to Parser when a region is pre-selected (Classifier Edit or Index row click).

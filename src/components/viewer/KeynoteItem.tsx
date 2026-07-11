@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -101,7 +101,7 @@ export default function KeynoteItem({
     setEditingName(false);
     if (!trimmed) return;
     setNameError(null);
-    const store = useViewerStore.getState();
+    const store = useParseFlowStore.getState();
     const session = useSessionStore.getState();
     // This prop is also the promote request identity. Keep both optimistic and authoritative
     // replacements on that same project cache (the default empty id covers pre-project/demo use).
@@ -261,7 +261,7 @@ export default function KeynoteItem({
               {region && (
                 <button
                   onClick={() => {
-                    const store = useViewerStore.getState();
+                    const store = useParseFlowStore.getState();
                     const grid = keynoteDataToGrid(region.data || {});
                     store.setTableParsedGrid({
                       headers: grid.headers,
@@ -539,7 +539,7 @@ export default function KeynoteItem({
                   </div>
                   <button
                     onClick={() => {
-                      const store = useViewerStore.getState();
+                      const store = useParseFlowStore.getState();
                       const allKeynotes = store.parsedKeynoteData;
                       if (allKeynotes) {
                         const updated = allKeynotes.map((kn) => {

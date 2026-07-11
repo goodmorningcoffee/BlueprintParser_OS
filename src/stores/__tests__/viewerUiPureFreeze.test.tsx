@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useToolStore } from "@/stores/toolStore";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -401,16 +402,18 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     const unsubscribeUi = useViewerStore.subscribe(() => publications.push("ui"));
     const unsubscribeCore = useViewerCoreStore.subscribe(() => publications.push("core"));
     const unsubscribeTool = useToolStore.subscribe(() => publications.push("tool"));
+    const unsubscribeParse = useParseFlowStore.subscribe(() => publications.push("parse"));
     const unsubscribeViewer = useResidualViewerStore.subscribe(() => publications.push("viewer"));
 
     setViewerStoreStateForTest(mixedPatch);
-    // During F0 parse + residual still share viewerStore, so the helper coalesces them into this
-    // one final publication. S2 splits that final position into parse then residual viewer.
-    expect(publications).toEqual(["session", "ui", "core", "tool", "viewer"]);
-    expect(useResidualViewerStore.getState()).toMatchObject({
+    expect(publications).toEqual(["session", "ui", "core", "tool", "parse", "viewer"]);
+    expect(useParseFlowStore.getState()).toMatchObject({
       tableParseStep: "review",
-      allTrades: ["Concrete"],
     });
+    expect(useResidualViewerStore.getState().allTrades).toEqual(["Concrete"]);
+    // The S2 parse topology gate proves definition/runtime absence from residual Viewer. This
+    // helper characterization stays on its own side of that boundary and proves the split through
+    // the independent parse/residual values and publication trace above.
 
     publications.length = 0;
     setViewerStoreStateForTest({ searchQuery: "ui-only" });
@@ -423,6 +426,7 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     unsubscribeUi();
     unsubscribeCore();
     unsubscribeTool();
+    unsubscribeParse();
     unsubscribeViewer();
   });
 

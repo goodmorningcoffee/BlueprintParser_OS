@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -33,10 +33,10 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const queryClient = useQueryClient();
   const toggleModal = useUiStore((s) => s.toggleTableCompareModal);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
-  const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
-  const tableParsedGrid = useViewerStore((s) => s.tableParsedGrid);
-  const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
-  const tableParseMeta = useViewerStore((s) => s.tableParseMeta);
+  const tableParseRegion = useParseFlowStore((s) => s.tableParseRegion);
+  const tableParsedGrid = useParseFlowStore((s) => s.tableParsedGrid);
+  const setTableParsedGrid = useParseFlowStore((s) => s.setTableParsedGrid);
+  const tableParseMeta = useParseFlowStore((s) => s.tableParseMeta);
   const textractData = useTextractForPage(pageNumber);
 
   // Source picker — "merged" (default) or a method name from tableParseMeta.methodResults.
@@ -401,9 +401,9 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   // authoritative intelligence + summaries. Surfaces failures instead of the
   // old fire-and-forget so edits aren't silently lost on close.
   const handleDone = useCallback(async () => {
-    const grid = useViewerStore.getState().tableParsedGrid;
+    const grid = useParseFlowStore.getState().tableParsedGrid;
     if (!grid) { toggleModal(); return; }
-    const store = useViewerStore.getState();
+    const store = useParseFlowStore.getState();
     const { publicId, isDemo } = useSessionStore.getState();
     const intel = readPageIntelligence(queryClient, publicId, pageNumber) || {};
 

@@ -6,6 +6,7 @@
 // the generation/AbortController-aware openProject orchestrator and an explicit survival policy.
 
 import { useSessionStore } from "@/stores/sessionStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -19,6 +20,7 @@ export function resetProjectData(): void {
   useUiStore.getState().resetProjectUiState();
   useViewerCoreStore.getState().resetViewerCoreState();
   useToolStore.getState().resetProjectToolState();
+  useParseFlowStore.getState().resetProjectParseState();
   useViewerStore.getState().resetViewerState();
 }
 
@@ -49,44 +51,44 @@ function prepareParseEntry(currentStep: string, nextStep: string): void {
 }
 
 export function setTableParseStep(tableParseStep: TableParseStep): void {
-  prepareParseEntry(useViewerStore.getState().tableParseStep, tableParseStep);
-  useViewerStore.setState({ tableParseStep });
+  prepareParseEntry(useParseFlowStore.getState().tableParseStep, tableParseStep);
+  useParseFlowStore.setState({ tableParseStep });
 }
 
 export function setKeynoteParseStep(keynoteParseStep: KeynoteParseStep): void {
-  prepareParseEntry(useViewerStore.getState().keynoteParseStep, keynoteParseStep);
-  useViewerStore.setState({ keynoteParseStep });
+  prepareParseEntry(useParseFlowStore.getState().keynoteParseStep, keynoteParseStep);
+  useParseFlowStore.setState({ keynoteParseStep });
 }
 
 export function setNotesParseStep(notesParseStep: NotesParseStep): void {
-  prepareParseEntry(useViewerStore.getState().notesParseStep, notesParseStep);
-  useViewerStore.setState({ notesParseStep });
+  prepareParseEntry(useParseFlowStore.getState().notesParseStep, notesParseStep);
+  useParseFlowStore.setState({ notesParseStep });
 }
 
 export function setSpecParseStep(specParseStep: SpecParseStep): void {
-  prepareParseEntry(useViewerStore.getState().specParseStep, specParseStep);
-  useViewerStore.setState({ specParseStep });
+  prepareParseEntry(useParseFlowStore.getState().specParseStep, specParseStep);
+  useParseFlowStore.setState({ specParseStep });
 }
 
-/** Seven-publication universal tool/parse teardown retained until P2.4 owns parse flows. */
+/** Seven-publication universal tool/parse teardown preserved across the S2 ownership split. */
 export function resetAllTools(): void {
   // Capture live action references at execution time. Detection/parse closes invoke this from a
   // microtask, matching the legacy get().resetAllTools() timing rather than the close-call time.
   const tool = useToolStore.getState();
-  const viewer = useViewerStore.getState();
+  const parse = useParseFlowStore.getState();
   tool.setMode("move");
-  viewer.resetTableParse();
-  viewer.resetKeynoteParse();
-  viewer.resetNotesParse();
-  viewer.resetSpecParse();
-  viewer.resetGuidedParse();
+  parse.resetTableParse();
+  parse.resetKeynoteParse();
+  parse.resetNotesParse();
+  parse.resetSpecParse();
+  parse.resetGuidedParse();
   tool.clearSymbolSearch();
 }
 
 /**
  * Cross-store panel commands preserve the legacy destination and publication timing while keeping
  * uiStore dependency-free. These are product commands, not leaf-store toggles: each one may
- * coordinate presentation with a tool or parse draft still owned by viewerStore during P2.3.
+ * coordinate presentation with toolStore or the dedicated parseFlowStore.
  */
 export function toggleTakeoffPanel(): void {
   const ui = useUiStore.getState();
@@ -132,7 +134,7 @@ export function toggleTableParsePanel(): void {
 
   if (closing) {
     // Preserve the old raw mode transition. Calling setMode would clear additional live tools.
-    useViewerStore.setState({
+    useParseFlowStore.setState({
       tableParseStep: "idle",
       tableParseRegion: null,
       tableParsedGrid: null,
@@ -156,7 +158,7 @@ export function toggleKeynoteParsePanel(): void {
   const closing = useUiStore.getState().showKeynoteParsePanel;
 
   if (closing) {
-    useViewerStore.setState({
+    useParseFlowStore.setState({
       keynoteParseStep: "idle",
       keynoteParseRegion: null,
       keynoteColumnBBs: [],

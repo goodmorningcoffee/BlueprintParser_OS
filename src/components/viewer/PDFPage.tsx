@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback, memo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useKeynoteParse } from "@/stores/viewerStore";
+import { useParseFlowStore, useKeynoteParse } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -65,11 +65,11 @@ const NotesFastManualOverlaySlot = memo(function NotesFastManualOverlaySlot(prop
   height: number;
   cssScale: number;
 }) {
-  const active = useViewerStore((s) => s.notesFastManualActive);
-  const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
+  const active = useParseFlowStore((s) => s.notesFastManualActive);
+  const notesParseRegion = useParseFlowStore((s) => s.notesParseRegion);
   // Keep the exact-page observer inside this memo slot so adjacent OCR cannot invalidate it.
   const textractData = useTextractForPage(props.pageNumber);
-  const setNotesFastManualGrid = useViewerStore((s) => s.setNotesFastManualGrid);
+  const setNotesFastManualGrid = useParseFlowStore((s) => s.setNotesFastManualGrid);
   const lines = textractData?.lines ?? [];
   return (
     <FastManualParseOverlay
@@ -90,19 +90,19 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
   height: number;
   cssScale: number;
 }) {
-  const active = useViewerStore((s) => s.paragraphOverlayActive);
-  const specParseRegion = useViewerStore((s) => s.specParseRegion);
-  const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
+  const active = useParseFlowStore((s) => s.paragraphOverlayActive);
+  const specParseRegion = useParseFlowStore((s) => s.specParseRegion);
+  const notesParseRegion = useParseFlowStore((s) => s.notesParseRegion);
   // This slot owns a separate exact-page observer because its render inputs/lifetime are independent.
   const textractData = useTextractForPage(props.pageNumber);
   const pageIntel = usePageIntelligenceForPage(props.pageNumber);
-  const paragraphBatch = useViewerStore((s) => s.paragraphBatch);
-  const paragraphClipboard = useViewerStore((s) => s.paragraphClipboard);
-  const upsertPendingParagraph = useViewerStore((s) => s.upsertPendingParagraph);
-  const removePendingParagraph = useViewerStore((s) => s.removePendingParagraph);
-  const setParagraphClipboard = useViewerStore((s) => s.setParagraphClipboard);
-  const resetNotesParse = useViewerStore((s) => s.resetNotesParse);
-  const resetSpecParse = useViewerStore((s) => s.resetSpecParse);
+  const paragraphBatch = useParseFlowStore((s) => s.paragraphBatch);
+  const paragraphClipboard = useParseFlowStore((s) => s.paragraphClipboard);
+  const upsertPendingParagraph = useParseFlowStore((s) => s.upsertPendingParagraph);
+  const removePendingParagraph = useParseFlowStore((s) => s.removePendingParagraph);
+  const setParagraphClipboard = useParseFlowStore((s) => s.setParagraphClipboard);
+  const resetNotesParse = useParseFlowStore((s) => s.resetNotesParse);
+  const resetSpecParse = useParseFlowStore((s) => s.resetSpecParse);
 
   // Phase 2.5 temporary: prefer spec region when present, else notes region.
   // Phase 2.6 will unify into a single `parseRegion` slot.

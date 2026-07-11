@@ -1,31 +1,17 @@
 // @vitest-environment node
-// [refactor jul11 P2.4 S1] Exact isolated contract for the production-dead parse owner.
+// [refactor jul11 P2.4 S2] Exact contract for the sole parse owner.
 //
-// F0 committed this entire behavior matrix against viewerStore. S1 now instantiates that same
-// matrix against both the live legacy owner and the production-dead candidate, with only the two
-// coordinator witnesses injected. S2 wires the neutral commands/helper atomically.
+// F0 characterized the legacy owner and S1 ran this complete matrix against both owners. S2 makes
+// parseFlowStore sole owner; old-owner absence is enforced by the phase topology/oracle suite.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useParseFlowStore, type ParseFlowState } from "@/stores/parseFlowStore";
-import { resetAllTools, resetProjectData } from "@/stores/viewerCommands";
-import { useViewerStore as useLegacyViewerStore } from "@/stores/viewerStore";
 import {
   PARSE_TEST_ACTION_KEYS,
   PARSE_TEST_STATE_KEYS,
 } from "@/test/viewer-store-state";
 
 type ParseState = ParseFlowState;
-
-// One test body, two real Zustand owners. The Proxy forwards each access at execution time, after
-// the enclosing owner-case beforeEach selects the live legacy store or isolated candidate. Keeping
-// one matrix prevents the two parity suites from drifting apart.
-let activeStore = useParseFlowStore;
-const useViewerStore = new Proxy({} as typeof useParseFlowStore, {
-  get: (_target, property) => activeStore[property as keyof typeof activeStore],
-});
-let activeResetAll = (): void => undefined;
-let activeProjectReset = (): void => undefined;
-let activeOwnerIsExactLeaf = false;
 
 export const PARSE_DATA_KEYS = [
   "tableParseStep",
@@ -142,23 +128,6 @@ const RESET_ARRAY_KEYS = [
 
 type ParseDataKey = (typeof PARSE_DATA_KEYS)[number];
 type ParseActionKey = (typeof PARSE_ACTION_KEYS)[number];
-type LegacyParseContract = Pick<
-  ReturnType<typeof useLegacyViewerStore.getState>,
-  ParseDataKey | ParseActionKey
->;
-type CandidateParseContract = Pick<ParseFlowState, ParseDataKey | ParseActionKey>;
-type ExactTypeEqual<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends
-    (<Value>() => Value extends Right ? 1 : 2)
-    ? (<Value>() => Value extends Right ? 1 : 2) extends
-        (<Value>() => Value extends Left ? 1 : 2)
-      ? true
-      : false
-    : false;
-const PARSE_CONTRACT_TYPES_MATCH: ExactTypeEqual<
-  LegacyParseContract,
-  CandidateParseContract
-> = true;
 
 const BBOX_A = [0.1, 0.2, 0.7, 0.8] as const;
 const BBOX_B = [0.2, 0.3, 0.8, 0.9] as const;
@@ -231,15 +200,20 @@ const CLIPBOARD: NonNullable<ParseState["paragraphClipboard"]> = {
 };
 
 function restoreOwner(): void {
-  useViewerStore.setState(useViewerStore.getInitialState(), true);
+  useParseFlowStore.setState(useParseFlowStore.getInitialState(), true);
 }
 
 function resetAllParseForIsolatedOwner(): void {
-  activeResetAll();
+  const owner = useParseFlowStore.getState();
+  owner.resetTableParse();
+  owner.resetKeynoteParse();
+  owner.resetNotesParse();
+  owner.resetSpecParse();
+  owner.resetGuidedParse();
 }
 
 function resetProjectParseForIsolatedOwner(): void {
-  activeProjectReset();
+  useParseFlowStore.getState().resetProjectParseState();
 }
 
 function pickParseData(state: ParseState): Pick<ParseState, ParseDataKey> {
@@ -267,7 +241,7 @@ function expectParseActionsStable(
 
 const PARSE_MUTABLE_DATA_KEY_SET = new Set<string>(PARSE_DATA_KEYS);
 
-function expectResidualViewerStable(before: ParseState, after: ParseState): void {
+function expectNonDataSurfaceStable(before: ParseState, after: ParseState): void {
   const previous = before as unknown as Record<string, unknown>;
   const current = after as unknown as Record<string, unknown>;
   const keys = new Set([...Object.keys(previous), ...Object.keys(current)]);
@@ -343,23 +317,7 @@ function nonDefaultParsePatch(): Pick<ParseState, ParseDataKey> {
   };
 }
 
-type ParseOwnerCase = {
-  readonly label: string;
-  readonly store: typeof useParseFlowStore;
-  readonly exactLeaf: boolean;
-  readonly resetAll: () => void;
-  readonly resetProject: () => void;
-};
-
-function defineParseOwnerContract(ownerCase: ParseOwnerCase): void {
-  describe(ownerCase.label, () => {
-    beforeEach(() => {
-      activeStore = ownerCase.store;
-      activeResetAll = ownerCase.resetAll;
-      activeProjectReset = ownerCase.resetProject;
-      activeOwnerIsExactLeaf = ownerCase.exactLeaf;
-      restoreOwner();
-    });
+beforeEach(restoreOwner);
 
 describe("P2.4 shared parse boundary and defaults", () => {
   it("owns an independent unique 35-data / 41-leaf-action contract", () => {
@@ -371,29 +329,21 @@ describe("P2.4 shared parse boundary and defaults", () => {
     expect(PARSE_TEST_ACTION_KEYS).toEqual(PARSE_ACTION_KEYS);
     expect(PROJECT_PARSE_RETAINED_KEYS).toHaveLength(3);
     expect(RESET_ALL_PARSE_RETAINED_KEYS).toHaveLength(8);
-    expect(PARSE_CONTRACT_TYPES_MATCH).toBe(true);
-    const state = useViewerStore.getState();
+    const state = useParseFlowStore.getState();
     for (const action of PARSE_ACTION_KEYS) expect(state[action]).toBeTypeOf("function");
-    if (activeOwnerIsExactLeaf) {
-      expect(Object.entries(state)
-        .filter(([, value]) => typeof value !== "function")
-        .map(([key]) => key)
-        .sort()).toEqual([...PARSE_DATA_KEYS].sort());
-      expect(Object.entries(state)
-        .filter(([, value]) => typeof value === "function")
-        .map(([key]) => key)
-        .sort()).toEqual([...PARSE_ACTION_KEYS, "resetProjectParseState"].sort());
-      expect(state.resetProjectParseState).toBeTypeOf("function");
-    } else {
-      for (const key of PARSE_DATA_KEYS) {
-        expect(Object.prototype.hasOwnProperty.call(state, key), `${key} remains live`).toBe(true);
-      }
-      expect(Object.prototype.hasOwnProperty.call(state, "resetProjectParseState")).toBe(false);
-    }
+    expect(Object.entries(state)
+      .filter(([, value]) => typeof value !== "function")
+      .map(([key]) => key)
+      .sort()).toEqual([...PARSE_DATA_KEYS].sort());
+    expect(Object.entries(state)
+      .filter(([, value]) => typeof value === "function")
+      .map(([key]) => key)
+      .sort()).toEqual([...PARSE_ACTION_KEYS, "resetProjectParseState"].sort());
+    expect(state.resetProjectParseState).toBeTypeOf("function");
   });
 
   it("freezes every construction default", () => {
-    expect(pickParseData(useViewerStore.getInitialState())).toEqual({
+    expect(pickParseData(useParseFlowStore.getInitialState())).toEqual({
       tableParseStep: "idle",
       tableParseRegion: null,
       tableParsedGrid: null,
@@ -440,53 +390,53 @@ describe("P2.4 shared parse boundary and defaults", () => {
       guidedParseCols: [],
     });
 
-    const initial = useViewerStore.getInitialState();
+    const initial = useParseFlowStore.getInitialState();
     expect(new Set(RESET_ARRAY_KEYS.map((key) => initial[key])).size).toBe(11);
   });
 });
 
 const PUBLICATION_CASES: readonly { name: ParseActionKey; invoke: () => void }[] = [
-  { name: "setTableParseRegion", invoke: () => useViewerStore.getState().setTableParseRegion(null) },
-  { name: "setTableParsedGrid", invoke: () => useViewerStore.getState().setTableParsedGrid(null) },
-  { name: "setTableParseMeta", invoke: () => useViewerStore.getState().setTableParseMeta(null) },
-  { name: "setTableCellStructure", invoke: () => useViewerStore.getState().setTableCellStructure(null) },
-  { name: "toggleCellHighlight", invoke: () => useViewerStore.getState().toggleCellHighlight(0, 0) },
-  { name: "setShowTableCellStructure", invoke: () => useViewerStore.getState().setShowTableCellStructure(false) },
-  { name: "addTableParseColumnBB", invoke: () => useViewerStore.getState().addTableParseColumnBB([...BBOX_A]) },
-  { name: "setTableParseColumnNames", invoke: () => { const state = useViewerStore.getState(); state.setTableParseColumnNames(state.tableParseColumnNames); } },
-  { name: "addTableParseRowBB", invoke: () => useViewerStore.getState().addTableParseRowBB([...BBOX_A]) },
-  { name: "setTableParseRowBBs", invoke: () => { const state = useViewerStore.getState(); state.setTableParseRowBBs(state.tableParseRowBBs); } },
-  { name: "resetTableParse", invoke: () => useViewerStore.getState().resetTableParse() },
-  { name: "setTableParseTab", invoke: () => useViewerStore.getState().setTableParseTab("all") },
-  { name: "setTableParseOptions", invoke: () => useViewerStore.getState().setTableParseOptions({}) },
-  { name: "setKeynoteParseTab", invoke: () => useViewerStore.getState().setKeynoteParseTab("all") },
-  { name: "setKeynoteParseRegion", invoke: () => useViewerStore.getState().setKeynoteParseRegion(null) },
-  { name: "addKeynoteColumnBB", invoke: () => useViewerStore.getState().addKeynoteColumnBB([...BBOX_A]) },
-  { name: "addKeynoteRowBB", invoke: () => useViewerStore.getState().addKeynoteRowBB([...BBOX_A]) },
-  { name: "setKeynoteYoloClass", invoke: () => useViewerStore.getState().setKeynoteYoloClass(null) },
-  { name: "setParsedKeynoteData", invoke: () => useViewerStore.getState().setParsedKeynoteData(null) },
-  { name: "addParsedKeynote", invoke: () => useViewerStore.getState().addParsedKeynote(KEYNOTE_ENTRY) },
-  { name: "resetKeynoteParse", invoke: () => useViewerStore.getState().resetKeynoteParse() },
-  { name: "setNotesParseRegion", invoke: () => useViewerStore.getState().setNotesParseRegion(null) },
-  { name: "addGuidedNotesRow", invoke: () => useViewerStore.getState().addGuidedNotesRow([...BBOX_A]) },
-  { name: "addGuidedNotesCol", invoke: () => useViewerStore.getState().addGuidedNotesCol([...BBOX_A]) },
-  { name: "resetNotesParse", invoke: () => useViewerStore.getState().resetNotesParse() },
-  { name: "setNotesFastManualActive", invoke: () => useViewerStore.getState().setNotesFastManualActive(false) },
-  { name: "setNotesFastManualGrid", invoke: () => useViewerStore.getState().setNotesFastManualGrid(null) },
-  { name: "setParseDraftRegion", invoke: () => useViewerStore.getState().setParseDraftRegion(null) },
-  { name: "setSpecParseRegion", invoke: () => useViewerStore.getState().setSpecParseRegion(null) },
-  { name: "addGuidedSpecSectionBB", invoke: () => useViewerStore.getState().addGuidedSpecSectionBB([...BBOX_A]) },
-  { name: "resetSpecParse", invoke: () => useViewerStore.getState().resetSpecParse() },
-  { name: "setParagraphOverlayActive", invoke: () => useViewerStore.getState().setParagraphOverlayActive(false) },
-  { name: "setParagraphBatch", invoke: () => { const state = useViewerStore.getState(); state.setParagraphBatch(state.paragraphBatch); } },
-  { name: "upsertPendingParagraph", invoke: () => useViewerStore.getState().upsertPendingParagraph(PARAGRAPH) },
-  { name: "removePendingParagraph", invoke: () => useViewerStore.getState().removePendingParagraph("absent") },
-  { name: "setParagraphClipboard", invoke: () => useViewerStore.getState().setParagraphClipboard(null) },
-  { name: "setGuidedParseActive", invoke: () => useViewerStore.getState().setGuidedParseActive(false) },
-  { name: "setGuidedParseRegion", invoke: () => useViewerStore.getState().setGuidedParseRegion(null) },
-  { name: "setGuidedParseRows", invoke: () => { const state = useViewerStore.getState(); state.setGuidedParseRows(state.guidedParseRows); } },
-  { name: "setGuidedParseCols", invoke: () => { const state = useViewerStore.getState(); state.setGuidedParseCols(state.guidedParseCols); } },
-  { name: "resetGuidedParse", invoke: () => useViewerStore.getState().resetGuidedParse() },
+  { name: "setTableParseRegion", invoke: () => useParseFlowStore.getState().setTableParseRegion(null) },
+  { name: "setTableParsedGrid", invoke: () => useParseFlowStore.getState().setTableParsedGrid(null) },
+  { name: "setTableParseMeta", invoke: () => useParseFlowStore.getState().setTableParseMeta(null) },
+  { name: "setTableCellStructure", invoke: () => useParseFlowStore.getState().setTableCellStructure(null) },
+  { name: "toggleCellHighlight", invoke: () => useParseFlowStore.getState().toggleCellHighlight(0, 0) },
+  { name: "setShowTableCellStructure", invoke: () => useParseFlowStore.getState().setShowTableCellStructure(false) },
+  { name: "addTableParseColumnBB", invoke: () => useParseFlowStore.getState().addTableParseColumnBB([...BBOX_A]) },
+  { name: "setTableParseColumnNames", invoke: () => { const state = useParseFlowStore.getState(); state.setTableParseColumnNames(state.tableParseColumnNames); } },
+  { name: "addTableParseRowBB", invoke: () => useParseFlowStore.getState().addTableParseRowBB([...BBOX_A]) },
+  { name: "setTableParseRowBBs", invoke: () => { const state = useParseFlowStore.getState(); state.setTableParseRowBBs(state.tableParseRowBBs); } },
+  { name: "resetTableParse", invoke: () => useParseFlowStore.getState().resetTableParse() },
+  { name: "setTableParseTab", invoke: () => useParseFlowStore.getState().setTableParseTab("all") },
+  { name: "setTableParseOptions", invoke: () => useParseFlowStore.getState().setTableParseOptions({}) },
+  { name: "setKeynoteParseTab", invoke: () => useParseFlowStore.getState().setKeynoteParseTab("all") },
+  { name: "setKeynoteParseRegion", invoke: () => useParseFlowStore.getState().setKeynoteParseRegion(null) },
+  { name: "addKeynoteColumnBB", invoke: () => useParseFlowStore.getState().addKeynoteColumnBB([...BBOX_A]) },
+  { name: "addKeynoteRowBB", invoke: () => useParseFlowStore.getState().addKeynoteRowBB([...BBOX_A]) },
+  { name: "setKeynoteYoloClass", invoke: () => useParseFlowStore.getState().setKeynoteYoloClass(null) },
+  { name: "setParsedKeynoteData", invoke: () => useParseFlowStore.getState().setParsedKeynoteData(null) },
+  { name: "addParsedKeynote", invoke: () => useParseFlowStore.getState().addParsedKeynote(KEYNOTE_ENTRY) },
+  { name: "resetKeynoteParse", invoke: () => useParseFlowStore.getState().resetKeynoteParse() },
+  { name: "setNotesParseRegion", invoke: () => useParseFlowStore.getState().setNotesParseRegion(null) },
+  { name: "addGuidedNotesRow", invoke: () => useParseFlowStore.getState().addGuidedNotesRow([...BBOX_A]) },
+  { name: "addGuidedNotesCol", invoke: () => useParseFlowStore.getState().addGuidedNotesCol([...BBOX_A]) },
+  { name: "resetNotesParse", invoke: () => useParseFlowStore.getState().resetNotesParse() },
+  { name: "setNotesFastManualActive", invoke: () => useParseFlowStore.getState().setNotesFastManualActive(false) },
+  { name: "setNotesFastManualGrid", invoke: () => useParseFlowStore.getState().setNotesFastManualGrid(null) },
+  { name: "setParseDraftRegion", invoke: () => useParseFlowStore.getState().setParseDraftRegion(null) },
+  { name: "setSpecParseRegion", invoke: () => useParseFlowStore.getState().setSpecParseRegion(null) },
+  { name: "addGuidedSpecSectionBB", invoke: () => useParseFlowStore.getState().addGuidedSpecSectionBB([...BBOX_A]) },
+  { name: "resetSpecParse", invoke: () => useParseFlowStore.getState().resetSpecParse() },
+  { name: "setParagraphOverlayActive", invoke: () => useParseFlowStore.getState().setParagraphOverlayActive(false) },
+  { name: "setParagraphBatch", invoke: () => { const state = useParseFlowStore.getState(); state.setParagraphBatch(state.paragraphBatch); } },
+  { name: "upsertPendingParagraph", invoke: () => useParseFlowStore.getState().upsertPendingParagraph(PARAGRAPH) },
+  { name: "removePendingParagraph", invoke: () => useParseFlowStore.getState().removePendingParagraph("absent") },
+  { name: "setParagraphClipboard", invoke: () => useParseFlowStore.getState().setParagraphClipboard(null) },
+  { name: "setGuidedParseActive", invoke: () => useParseFlowStore.getState().setGuidedParseActive(false) },
+  { name: "setGuidedParseRegion", invoke: () => useParseFlowStore.getState().setGuidedParseRegion(null) },
+  { name: "setGuidedParseRows", invoke: () => { const state = useParseFlowStore.getState(); state.setGuidedParseRows(state.guidedParseRows); } },
+  { name: "setGuidedParseCols", invoke: () => { const state = useParseFlowStore.getState(); state.setGuidedParseCols(state.guidedParseCols); } },
+  { name: "resetGuidedParse", invoke: () => useParseFlowStore.getState().resetGuidedParse() },
 ];
 
 const SIMPLE_DESTINATION_CASES: readonly {
@@ -496,30 +446,30 @@ const SIMPLE_DESTINATION_CASES: readonly {
   expected: unknown;
   identity?: unknown;
 }[] = [
-  { name: "setTableParseRegion", key: "tableParseRegion", invoke: () => useViewerStore.getState().setTableParseRegion([...BBOX_A]), expected: BBOX_A },
-  { name: "setTableParsedGrid", key: "tableParsedGrid", invoke: () => useViewerStore.getState().setTableParsedGrid(GRID), expected: GRID, identity: GRID },
-  { name: "setTableParseMeta", key: "tableParseMeta", invoke: () => useViewerStore.getState().setTableParseMeta(META), expected: META, identity: META },
-  { name: "setShowTableCellStructure", key: "showTableCellStructure", invoke: () => useViewerStore.getState().setShowTableCellStructure(true), expected: true },
-  { name: "setTableParseColumnNames", key: "tableParseColumnNames", invoke: () => { const value = ["TAG"]; useViewerStore.getState().setTableParseColumnNames(value); }, expected: ["TAG"] },
-  { name: "setTableParseRowBBs", key: "tableParseRowBBs", invoke: () => { const value: [number, number, number, number][] = [[...BBOX_A]]; useViewerStore.getState().setTableParseRowBBs(value); }, expected: [BBOX_A] },
-  { name: "setTableParseTab", key: "tableParseTab", invoke: () => useViewerStore.getState().setTableParseTab("compare"), expected: "compare" },
-  { name: "setTableParseOptions", key: "tableParseOptions", invoke: () => useViewerStore.getState().setTableParseOptions({ rowTolerance: 0.02 }), expected: { ...useViewerStore.getInitialState().tableParseOptions, rowTolerance: 0.02 } },
-  { name: "setKeynoteParseTab", key: "keynoteParseTab", invoke: () => useViewerStore.getState().setKeynoteParseTab("compare"), expected: "compare" },
-  { name: "setKeynoteParseRegion", key: "keynoteParseRegion", invoke: () => useViewerStore.getState().setKeynoteParseRegion([...BBOX_B]), expected: BBOX_B },
-  { name: "setKeynoteYoloClass", key: "keynoteYoloClass", invoke: () => { const value = { model: "fixture", className: "door_single" }; useViewerStore.getState().setKeynoteYoloClass(value); }, expected: { model: "fixture", className: "door_single" } },
-  { name: "setParsedKeynoteData", key: "parsedKeynoteData", invoke: () => { const value = [KEYNOTE_ENTRY]; useViewerStore.getState().setParsedKeynoteData(value); }, expected: [KEYNOTE_ENTRY] },
-  { name: "setNotesParseRegion", key: "notesParseRegion", invoke: () => useViewerStore.getState().setNotesParseRegion([...BBOX_A]), expected: BBOX_A },
-  { name: "setNotesFastManualActive", key: "notesFastManualActive", invoke: () => useViewerStore.getState().setNotesFastManualActive(true), expected: true },
-  { name: "setNotesFastManualGrid", key: "notesFastManualGrid", invoke: () => { const value = nonDefaultParsePatch().notesFastManualGrid; useViewerStore.getState().setNotesFastManualGrid(value); }, expected: nonDefaultParsePatch().notesFastManualGrid },
-  { name: "setParseDraftRegion", key: "parseDraftRegion", invoke: () => useViewerStore.getState().setParseDraftRegion(DRAFT), expected: DRAFT, identity: DRAFT },
-  { name: "setSpecParseRegion", key: "specParseRegion", invoke: () => useViewerStore.getState().setSpecParseRegion([...BBOX_B]), expected: BBOX_B },
-  { name: "setParagraphOverlayActive", key: "paragraphOverlayActive", invoke: () => useViewerStore.getState().setParagraphOverlayActive(true), expected: true },
-  { name: "setParagraphBatch", key: "paragraphBatch", invoke: () => { const value = [PARAGRAPH]; useViewerStore.getState().setParagraphBatch(value); }, expected: [PARAGRAPH] },
-  { name: "setParagraphClipboard", key: "paragraphClipboard", invoke: () => useViewerStore.getState().setParagraphClipboard(CLIPBOARD), expected: CLIPBOARD, identity: CLIPBOARD },
-  { name: "setGuidedParseActive", key: "guidedParseActive", invoke: () => useViewerStore.getState().setGuidedParseActive(true), expected: true },
-  { name: "setGuidedParseRegion", key: "guidedParseRegion", invoke: () => useViewerStore.getState().setGuidedParseRegion([...BBOX_A]), expected: BBOX_A },
-  { name: "setGuidedParseRows", key: "guidedParseRows", invoke: () => { const value = [0.25, 0.75]; useViewerStore.getState().setGuidedParseRows(value); }, expected: [0.25, 0.75] },
-  { name: "setGuidedParseCols", key: "guidedParseCols", invoke: () => { const value = [0.2, 0.8]; useViewerStore.getState().setGuidedParseCols(value); }, expected: [0.2, 0.8] },
+  { name: "setTableParseRegion", key: "tableParseRegion", invoke: () => useParseFlowStore.getState().setTableParseRegion([...BBOX_A]), expected: BBOX_A },
+  { name: "setTableParsedGrid", key: "tableParsedGrid", invoke: () => useParseFlowStore.getState().setTableParsedGrid(GRID), expected: GRID, identity: GRID },
+  { name: "setTableParseMeta", key: "tableParseMeta", invoke: () => useParseFlowStore.getState().setTableParseMeta(META), expected: META, identity: META },
+  { name: "setShowTableCellStructure", key: "showTableCellStructure", invoke: () => useParseFlowStore.getState().setShowTableCellStructure(true), expected: true },
+  { name: "setTableParseColumnNames", key: "tableParseColumnNames", invoke: () => { const value = ["TAG"]; useParseFlowStore.getState().setTableParseColumnNames(value); }, expected: ["TAG"] },
+  { name: "setTableParseRowBBs", key: "tableParseRowBBs", invoke: () => { const value: [number, number, number, number][] = [[...BBOX_A]]; useParseFlowStore.getState().setTableParseRowBBs(value); }, expected: [BBOX_A] },
+  { name: "setTableParseTab", key: "tableParseTab", invoke: () => useParseFlowStore.getState().setTableParseTab("compare"), expected: "compare" },
+  { name: "setTableParseOptions", key: "tableParseOptions", invoke: () => useParseFlowStore.getState().setTableParseOptions({ rowTolerance: 0.02 }), expected: { ...useParseFlowStore.getInitialState().tableParseOptions, rowTolerance: 0.02 } },
+  { name: "setKeynoteParseTab", key: "keynoteParseTab", invoke: () => useParseFlowStore.getState().setKeynoteParseTab("compare"), expected: "compare" },
+  { name: "setKeynoteParseRegion", key: "keynoteParseRegion", invoke: () => useParseFlowStore.getState().setKeynoteParseRegion([...BBOX_B]), expected: BBOX_B },
+  { name: "setKeynoteYoloClass", key: "keynoteYoloClass", invoke: () => { const value = { model: "fixture", className: "door_single" }; useParseFlowStore.getState().setKeynoteYoloClass(value); }, expected: { model: "fixture", className: "door_single" } },
+  { name: "setParsedKeynoteData", key: "parsedKeynoteData", invoke: () => { const value = [KEYNOTE_ENTRY]; useParseFlowStore.getState().setParsedKeynoteData(value); }, expected: [KEYNOTE_ENTRY] },
+  { name: "setNotesParseRegion", key: "notesParseRegion", invoke: () => useParseFlowStore.getState().setNotesParseRegion([...BBOX_A]), expected: BBOX_A },
+  { name: "setNotesFastManualActive", key: "notesFastManualActive", invoke: () => useParseFlowStore.getState().setNotesFastManualActive(true), expected: true },
+  { name: "setNotesFastManualGrid", key: "notesFastManualGrid", invoke: () => { const value = nonDefaultParsePatch().notesFastManualGrid; useParseFlowStore.getState().setNotesFastManualGrid(value); }, expected: nonDefaultParsePatch().notesFastManualGrid },
+  { name: "setParseDraftRegion", key: "parseDraftRegion", invoke: () => useParseFlowStore.getState().setParseDraftRegion(DRAFT), expected: DRAFT, identity: DRAFT },
+  { name: "setSpecParseRegion", key: "specParseRegion", invoke: () => useParseFlowStore.getState().setSpecParseRegion([...BBOX_B]), expected: BBOX_B },
+  { name: "setParagraphOverlayActive", key: "paragraphOverlayActive", invoke: () => useParseFlowStore.getState().setParagraphOverlayActive(true), expected: true },
+  { name: "setParagraphBatch", key: "paragraphBatch", invoke: () => { const value = [PARAGRAPH]; useParseFlowStore.getState().setParagraphBatch(value); }, expected: [PARAGRAPH] },
+  { name: "setParagraphClipboard", key: "paragraphClipboard", invoke: () => useParseFlowStore.getState().setParagraphClipboard(CLIPBOARD), expected: CLIPBOARD, identity: CLIPBOARD },
+  { name: "setGuidedParseActive", key: "guidedParseActive", invoke: () => useParseFlowStore.getState().setGuidedParseActive(true), expected: true },
+  { name: "setGuidedParseRegion", key: "guidedParseRegion", invoke: () => useParseFlowStore.getState().setGuidedParseRegion([...BBOX_A]), expected: BBOX_A },
+  { name: "setGuidedParseRows", key: "guidedParseRows", invoke: () => { const value = [0.25, 0.75]; useParseFlowStore.getState().setGuidedParseRows(value); }, expected: [0.25, 0.75] },
+  { name: "setGuidedParseCols", key: "guidedParseCols", invoke: () => { const value = [0.2, 0.8]; useParseFlowStore.getState().setGuidedParseCols(value); }, expected: [0.2, 0.8] },
 ];
 
 const SPECIAL_ACTION_KEYS = [
@@ -542,7 +492,7 @@ const SPECIAL_ACTION_KEYS = [
   "resetGuidedParse",
 ] as const satisfies readonly ParseActionKey[];
 
-describe("P2.4 shared legacy leaf publications", () => {
+describe("P2.4 sole parse leaf publications", () => {
   it("covers every action once and in the independent ledger order", () => {
     expect(PUBLICATION_CASES.map(({ name }) => name)).toEqual(PARSE_ACTION_KEYS);
     expect([
@@ -552,37 +502,37 @@ describe("P2.4 shared legacy leaf publications", () => {
   });
 
   it.each(PUBLICATION_CASES)("$name publishes exactly once, including semantic no-ops", ({ invoke }) => {
-    const before = useViewerStore.getState();
+    const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);
     const listener = vi.fn();
-    const unsubscribe = useViewerStore.subscribe(listener);
+    const unsubscribe = useParseFlowStore.subscribe(listener);
     invoke();
-    const after = useViewerStore.getState();
+    const after = useParseFlowStore.getState();
     expect(listener).toHaveBeenCalledTimes(1);
     expectParseActionsStable(actionsBefore, after);
-    expectResidualViewerStable(before, after);
+    expectNonDataSurfaceStable(before, after);
     unsubscribe();
   });
 });
 
 describe("P2.4 shared simple action destinations", () => {
   it.each(SIMPLE_DESTINATION_CASES)("$name changes exactly $key to its requested destination", ({ key, invoke, expected }) => {
-    const before = useViewerStore.getState();
+    const before = useParseFlowStore.getState();
     invoke();
-    const after = useViewerStore.getState();
+    const after = useParseFlowStore.getState();
     expect(changedParseKeys(before, after)).toEqual([key]);
     expect(after[key]).toEqual(expected);
-    expectResidualViewerStable(before, after);
+    expectNonDataSurfaceStable(before, after);
   });
 });
 
 describe("P2.4 shared compound actions and identity", () => {
   it("setTableCellStructure retains the caller object and derives visibility in one publication", () => {
     const listener = vi.fn();
-    const unsubscribe = useViewerStore.subscribe(listener);
-    const beforeSet = useViewerStore.getState();
-    useViewerStore.getState().setTableCellStructure(CELL_STRUCTURE);
-    const afterSet = useViewerStore.getState();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+    const beforeSet = useParseFlowStore.getState();
+    useParseFlowStore.getState().setTableCellStructure(CELL_STRUCTURE);
+    const afterSet = useParseFlowStore.getState();
     expect(listener).toHaveBeenCalledTimes(1);
     expect(changedParseKeys(beforeSet, afterSet)).toEqual([
       "showTableCellStructure",
@@ -590,11 +540,11 @@ describe("P2.4 shared compound actions and identity", () => {
     ]);
     expect(afterSet.tableCellStructure).toBe(CELL_STRUCTURE);
     expect(afterSet.showTableCellStructure).toBe(true);
-    expectResidualViewerStable(beforeSet, afterSet);
+    expectNonDataSurfaceStable(beforeSet, afterSet);
 
-    const beforeClear = useViewerStore.getState();
-    useViewerStore.getState().setTableCellStructure(null);
-    const afterClear = useViewerStore.getState();
+    const beforeClear = useParseFlowStore.getState();
+    useParseFlowStore.getState().setTableCellStructure(null);
+    const afterClear = useParseFlowStore.getState();
     expect(listener).toHaveBeenCalledTimes(2);
     expect(changedParseKeys(beforeClear, afterClear)).toEqual([
       "showTableCellStructure",
@@ -602,25 +552,25 @@ describe("P2.4 shared compound actions and identity", () => {
     ]);
     expect(afterClear.tableCellStructure).toBeNull();
     expect(afterClear.showTableCellStructure).toBe(false);
-    expectResidualViewerStable(beforeClear, afterClear);
+    expectNonDataSurfaceStable(beforeClear, afterClear);
     unsubscribe();
   });
 
   it("toggleCellHighlight publishes an empty patch without structure, then clones only the hit path", () => {
     const listener = vi.fn();
-    const unsubscribe = useViewerStore.subscribe(listener);
-    const beforeEmpty = useViewerStore.getState();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+    const beforeEmpty = useParseFlowStore.getState();
     beforeEmpty.toggleCellHighlight(0, 0);
-    const afterEmpty = useViewerStore.getState();
+    const afterEmpty = useParseFlowStore.getState();
     expect(listener).toHaveBeenCalledTimes(1);
     expect(changedParseKeys(beforeEmpty, afterEmpty)).toEqual([]);
-    expectResidualViewerStable(beforeEmpty, afterEmpty);
+    expectNonDataSurfaceStable(beforeEmpty, afterEmpty);
 
-    useViewerStore.setState({ tableCellStructure: CELL_STRUCTURE });
-    const beforeState = useViewerStore.getState();
+    useParseFlowStore.setState({ tableCellStructure: CELL_STRUCTURE });
+    const beforeState = useParseFlowStore.getState();
     const before = beforeState.tableCellStructure!;
-    useViewerStore.getState().toggleCellHighlight(0, 0);
-    const afterState = useViewerStore.getState();
+    useParseFlowStore.getState().toggleCellHighlight(0, 0);
+    const afterState = useParseFlowStore.getState();
     const after = afterState.tableCellStructure!;
     expect(listener).toHaveBeenCalledTimes(3);
     expect(changedParseKeys(beforeState, afterState)).toEqual(["tableCellStructure"]);
@@ -629,7 +579,7 @@ describe("P2.4 shared compound actions and identity", () => {
     expect(after.cells[0]).not.toBe(before.cells[0]);
     expect(after.cells[0].highlighted).toBe(true);
     expect(after.cells[1]).toBe(before.cells[1]);
-    expectResidualViewerStable(beforeState, afterState);
+    expectNonDataSurfaceStable(beforeState, afterState);
     unsubscribe();
   });
 
@@ -648,7 +598,7 @@ describe("P2.4 shared compound actions and identity", () => {
     const specRegion = [...BBOX_B] as [number, number, number, number];
     const guidedRegion = [...BBOX_A] as [number, number, number, number];
 
-    const state = useViewerStore.getState();
+    const state = useParseFlowStore.getState();
     state.setTableParseRegion(tableRegion);
     state.setTableParsedGrid(GRID);
     state.setTableParseMeta(META);
@@ -667,7 +617,7 @@ describe("P2.4 shared compound actions and identity", () => {
     state.setGuidedParseRows(guidedRows);
     state.setGuidedParseCols(guidedCols);
 
-    const after = useViewerStore.getState();
+    const after = useParseFlowStore.getState();
     expect(after.tableParseRegion).toBe(tableRegion);
     expect(after.tableParsedGrid).toBe(GRID);
     expect(after.tableParseMeta).toBe(META);
@@ -702,111 +652,111 @@ describe("P2.4 shared compound actions and identity", () => {
 
     for (const [dataKey, actionKey] of cases) {
       restoreOwner();
-      useViewerStore.setState({ [dataKey]: [first] } as Partial<ParseState>);
-      const beforeState = useViewerStore.getState();
+      useParseFlowStore.setState({ [dataKey]: [first] } as Partial<ParseState>);
+      const beforeState = useParseFlowStore.getState();
       const before = beforeState[dataKey];
       const listener = vi.fn();
-      const unsubscribe = useViewerStore.subscribe(listener);
-      (useViewerStore.getState()[actionKey] as (bbox: [number, number, number, number]) => void)(second);
-      const afterState = useViewerStore.getState();
+      const unsubscribe = useParseFlowStore.subscribe(listener);
+      (useParseFlowStore.getState()[actionKey] as (bbox: [number, number, number, number]) => void)(second);
+      const afterState = useParseFlowStore.getState();
       const after = afterState[dataKey];
       expect(listener, actionKey).toHaveBeenCalledTimes(1);
       expect(changedParseKeys(beforeState, afterState)).toEqual([dataKey]);
       expect(after).not.toBe(before);
       expect(after[0]).toBe(first);
       expect(after[1]).toBe(second);
-      expectResidualViewerStable(beforeState, afterState);
+      expectNonDataSurfaceStable(beforeState, afterState);
       unsubscribe();
     }
 
     restoreOwner();
-    useViewerStore.setState({ parsedKeynoteData: [KEYNOTE_ENTRY] });
-    const beforeState = useViewerStore.getState();
+    useParseFlowStore.setState({ parsedKeynoteData: [KEYNOTE_ENTRY] });
+    const beforeState = useParseFlowStore.getState();
     const before = beforeState.parsedKeynoteData!;
     const existingListener = vi.fn();
-    const unsubscribeExisting = useViewerStore.subscribe(existingListener);
+    const unsubscribeExisting = useParseFlowStore.subscribe(existingListener);
     const secondEntry = { ...KEYNOTE_ENTRY, pageNumber: 5 };
-    useViewerStore.getState().addParsedKeynote(secondEntry);
-    const afterState = useViewerStore.getState();
+    useParseFlowStore.getState().addParsedKeynote(secondEntry);
+    const afterState = useParseFlowStore.getState();
     const after = afterState.parsedKeynoteData!;
     expect(existingListener).toHaveBeenCalledTimes(1);
     expect(changedParseKeys(beforeState, afterState)).toEqual(["parsedKeynoteData"]);
     expect(after).not.toBe(before);
     expect(after[0]).toBe(KEYNOTE_ENTRY);
     expect(after[1]).toBe(secondEntry);
-    expectResidualViewerStable(beforeState, afterState);
+    expectNonDataSurfaceStable(beforeState, afterState);
     unsubscribeExisting();
 
     restoreOwner();
-    const emptyBefore = useViewerStore.getState();
+    const emptyBefore = useParseFlowStore.getState();
     const emptyListener = vi.fn();
-    const unsubscribeEmpty = useViewerStore.subscribe(emptyListener);
-    useViewerStore.getState().addParsedKeynote(KEYNOTE_ENTRY);
+    const unsubscribeEmpty = useParseFlowStore.subscribe(emptyListener);
+    useParseFlowStore.getState().addParsedKeynote(KEYNOTE_ENTRY);
     expect(emptyListener).toHaveBeenCalledTimes(1);
-    expect(changedParseKeys(emptyBefore, useViewerStore.getState())).toEqual([
+    expect(changedParseKeys(emptyBefore, useParseFlowStore.getState())).toEqual([
       "parsedKeynoteData",
     ]);
-    expect(useViewerStore.getState().parsedKeynoteData).toEqual([KEYNOTE_ENTRY]);
-    expectResidualViewerStable(emptyBefore, useViewerStore.getState());
+    expect(useParseFlowStore.getState().parsedKeynoteData).toEqual([KEYNOTE_ENTRY]);
+    expectNonDataSurfaceStable(emptyBefore, useParseFlowStore.getState());
     unsubscribeEmpty();
   });
 
   it("options always shallow-clone while preserving untouched nested-free values", () => {
     const listener = vi.fn();
-    const unsubscribe = useViewerStore.subscribe(listener);
-    const beforeState = useViewerStore.getState();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+    const beforeState = useParseFlowStore.getState();
     const before = beforeState.tableParseOptions;
-    useViewerStore.getState().setTableParseOptions({});
-    const afterEmptyState = useViewerStore.getState();
+    useParseFlowStore.getState().setTableParseOptions({});
+    const afterEmptyState = useParseFlowStore.getState();
     const afterEmpty = afterEmptyState.tableParseOptions;
     expect(listener).toHaveBeenCalledTimes(1);
     expect(changedParseKeys(beforeState, afterEmptyState)).toEqual(["tableParseOptions"]);
     expect(afterEmpty).not.toBe(before);
     expect(afterEmpty).toEqual(before);
-    expectResidualViewerStable(beforeState, afterEmptyState);
-    useViewerStore.getState().setTableParseOptions({ rowTolerance: 0.04 });
+    expectNonDataSurfaceStable(beforeState, afterEmptyState);
+    useParseFlowStore.getState().setTableParseOptions({ rowTolerance: 0.04 });
     expect(listener).toHaveBeenCalledTimes(2);
-    expect(changedParseKeys(afterEmptyState, useViewerStore.getState())).toEqual([
+    expect(changedParseKeys(afterEmptyState, useParseFlowStore.getState())).toEqual([
       "tableParseOptions",
     ]);
-    expect(useViewerStore.getState().tableParseOptions).toEqual({
+    expect(useParseFlowStore.getState().tableParseOptions).toEqual({
       ...afterEmpty,
       rowTolerance: 0.04,
     });
-    expectResidualViewerStable(afterEmptyState, useViewerStore.getState());
+    expectNonDataSurfaceStable(afterEmptyState, useParseFlowStore.getState());
     unsubscribe();
   });
 
   it("paragraph upsert/replace/remove always allocate and preserve index semantics", () => {
     const second = { ...PARAGRAPH, id: "paragraph-2" };
-    useViewerStore.setState({ paragraphBatch: [PARAGRAPH] });
+    useParseFlowStore.setState({ paragraphBatch: [PARAGRAPH] });
     const listener = vi.fn();
-    const unsubscribe = useViewerStore.subscribe(listener);
-    const beforeAppendState = useViewerStore.getState();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+    const beforeAppendState = useParseFlowStore.getState();
     const beforeAppend = beforeAppendState.paragraphBatch;
-    useViewerStore.getState().upsertPendingParagraph(second);
-    const afterAppendState = useViewerStore.getState();
+    useParseFlowStore.getState().upsertPendingParagraph(second);
+    const afterAppendState = useParseFlowStore.getState();
     const afterAppend = afterAppendState.paragraphBatch;
     expect(listener).toHaveBeenCalledTimes(1);
     expect(changedParseKeys(beforeAppendState, afterAppendState)).toEqual(["paragraphBatch"]);
     expect(afterAppend).not.toBe(beforeAppend);
     expect(afterAppend[0]).toBe(PARAGRAPH);
     expect(afterAppend[1]).toBe(second);
-    expectResidualViewerStable(beforeAppendState, afterAppendState);
+    expectNonDataSurfaceStable(beforeAppendState, afterAppendState);
 
     const replacement = { ...PARAGRAPH, rowText: { Note: "replacement" } };
-    useViewerStore.getState().upsertPendingParagraph(replacement);
-    const afterReplaceState = useViewerStore.getState();
+    useParseFlowStore.getState().upsertPendingParagraph(replacement);
+    const afterReplaceState = useParseFlowStore.getState();
     const afterReplace = afterReplaceState.paragraphBatch;
     expect(listener).toHaveBeenCalledTimes(2);
     expect(changedParseKeys(afterAppendState, afterReplaceState)).toEqual(["paragraphBatch"]);
     expect(afterReplace).not.toBe(afterAppend);
     expect(afterReplace[0]).toBe(replacement);
     expect(afterReplace[1]).toBe(second);
-    expectResidualViewerStable(afterAppendState, afterReplaceState);
+    expectNonDataSurfaceStable(afterAppendState, afterReplaceState);
 
-    useViewerStore.getState().removePendingParagraph("absent");
-    const afterAbsentState = useViewerStore.getState();
+    useParseFlowStore.getState().removePendingParagraph("absent");
+    const afterAbsentState = useParseFlowStore.getState();
     const afterAbsentRemove = afterAbsentState.paragraphBatch;
     expect(listener).toHaveBeenCalledTimes(3);
     expect(changedParseKeys(afterReplaceState, afterAbsentState)).toEqual(["paragraphBatch"]);
@@ -814,17 +764,17 @@ describe("P2.4 shared compound actions and identity", () => {
     expect(afterAbsentRemove).toEqual(afterReplace);
     expect(afterAbsentRemove[0]).toBe(replacement);
     expect(afterAbsentRemove[1]).toBe(second);
-    expectResidualViewerStable(afterReplaceState, afterAbsentState);
+    expectNonDataSurfaceStable(afterReplaceState, afterAbsentState);
 
-    useViewerStore.getState().removePendingParagraph("paragraph-2");
-    const afterPresentState = useViewerStore.getState();
+    useParseFlowStore.getState().removePendingParagraph("paragraph-2");
+    const afterPresentState = useParseFlowStore.getState();
     const afterPresentRemove = afterPresentState.paragraphBatch;
     expect(listener).toHaveBeenCalledTimes(4);
     expect(changedParseKeys(afterAbsentState, afterPresentState)).toEqual(["paragraphBatch"]);
     expect(afterPresentRemove).not.toBe(afterAbsentRemove);
     expect(afterPresentRemove).toEqual([replacement]);
     expect(afterPresentRemove[0]).toBe(replacement);
-    expectResidualViewerStable(afterAbsentState, afterPresentState);
+    expectNonDataSurfaceStable(afterAbsentState, afterPresentState);
     unsubscribe();
   });
 });
@@ -875,15 +825,15 @@ const RESET_CASES = [
 
 describe("P2.4 shared reset matrices", () => {
   it.each(RESET_CASES)("$name reset touches only its exact matrix and allocates reset containers", ({ action, touched }) => {
-    useViewerStore.setState(nonDefaultParsePatch());
-    const before = useViewerStore.getState();
+    useParseFlowStore.setState(nonDefaultParsePatch());
+    const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);
-    const initial = useViewerStore.getInitialState();
+    const initial = useParseFlowStore.getInitialState();
     const listener = vi.fn();
-    const unsubscribe = useViewerStore.subscribe(listener);
+    const unsubscribe = useParseFlowStore.subscribe(listener);
 
     (before[action] as () => void)();
-    const after = useViewerStore.getState();
+    const after = useParseFlowStore.getState();
 
     expect(listener).toHaveBeenCalledTimes(1);
     expect(changedParseKeys(before, after)).toEqual(sorted(touched));
@@ -905,38 +855,38 @@ describe("P2.4 shared reset matrices", () => {
       resetArrays.length,
     );
     expectParseActionsStable(actionsBefore, after);
-    expectResidualViewerStable(before, after);
+    expectNonDataSurfaceStable(before, after);
     unsubscribe();
 
     // Resetting an already-default flow still publishes and allocates each reset container. This
     // catches implementations that reuse construction arrays or suppress semantic no-ops.
     restoreOwner();
-    const defaultBefore = useViewerStore.getState();
+    const defaultBefore = useParseFlowStore.getState();
     const defaultActions = pickParseActions(defaultBefore);
     const defaultListener = vi.fn();
-    const unsubscribeDefault = useViewerStore.subscribe(defaultListener);
+    const unsubscribeDefault = useParseFlowStore.subscribe(defaultListener);
     (defaultBefore[action] as () => void)();
-    const defaultAfter = useViewerStore.getState();
+    const defaultAfter = useParseFlowStore.getState();
     const arrayKeys = touched.filter((key) => Array.isArray(defaultBefore[key]));
     expect(defaultListener).toHaveBeenCalledTimes(1);
     expect(changedParseKeys(defaultBefore, defaultAfter)).toEqual(sorted(arrayKeys));
     expect(new Set(arrayKeys.map((key) => defaultAfter[key])).size).toBe(arrayKeys.length);
     for (const key of arrayKeys) expect(defaultAfter[key]).not.toBe(defaultBefore[key]);
     expectParseActionsStable(defaultActions, defaultAfter);
-    expectResidualViewerStable(defaultBefore, defaultAfter);
+    expectNonDataSurfaceStable(defaultBefore, defaultAfter);
     unsubscribeDefault();
   });
 
   it("resetAllTools changes exactly 27 parse fields, retains eight references, and publishes five parse resets", () => {
-    useViewerStore.setState(nonDefaultParsePatch());
-    const before = useViewerStore.getState();
+    useParseFlowStore.setState(nonDefaultParsePatch());
+    const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);
-    const initial = useViewerStore.getInitialState();
+    const initial = useParseFlowStore.getInitialState();
     const publications: Array<Pick<ParseState, ParseDataKey>> = [];
-    const unsubscribe = useViewerStore.subscribe((state) => publications.push(pickParseData(state)));
+    const unsubscribe = useParseFlowStore.subscribe((state) => publications.push(pickParseData(state)));
 
     resetAllParseForIsolatedOwner();
-    const after = useViewerStore.getState();
+    const after = useParseFlowStore.getState();
 
     expect(publications).toHaveLength(5);
     const retainedSet = new Set<ParseDataKey>(RESET_ALL_PARSE_RETAINED_KEYS);
@@ -984,20 +934,20 @@ describe("P2.4 shared reset matrices", () => {
     expect(publications[3].paragraphBatch).not.toBe(publications[2].paragraphBatch);
     expect(publications[4].guidedParseActive).toBe(false);
     expectParseActionsStable(actionsBefore, after);
-    expectResidualViewerStable(before, after);
+    expectNonDataSurfaceStable(before, after);
     unsubscribe();
   });
 
   it("project reset changes exactly 32 parse fields and retains the three current-policy references", () => {
-    useViewerStore.setState(nonDefaultParsePatch());
-    const before = useViewerStore.getState();
+    useParseFlowStore.setState(nonDefaultParsePatch());
+    const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);
-    const initial = useViewerStore.getInitialState();
+    const initial = useParseFlowStore.getInitialState();
     const listener = vi.fn();
-    const unsubscribe = useViewerStore.subscribe(listener);
+    const unsubscribe = useParseFlowStore.subscribe(listener);
 
     resetProjectParseForIsolatedOwner();
-    const after = useViewerStore.getState();
+    const after = useParseFlowStore.getState();
 
     expect(listener).toHaveBeenCalledTimes(1);
     const retainedSet = new Set<ParseDataKey>(PROJECT_PARSE_RETAINED_KEYS);
@@ -1023,30 +973,4 @@ describe("P2.4 shared reset matrices", () => {
     expectParseActionsStable(actionsBefore, after);
     unsubscribe();
   });
-});
-
-  });
-}
-
-defineParseOwnerContract({
-  label: "live viewer parse owner",
-  store: useLegacyViewerStore as unknown as typeof useParseFlowStore,
-  exactLeaf: false,
-  resetAll: resetAllTools,
-  resetProject: resetProjectData,
-});
-
-defineParseOwnerContract({
-  label: "production-dead parseFlowStore candidate",
-  store: useParseFlowStore,
-  exactLeaf: true,
-  resetAll: () => {
-    const owner = useParseFlowStore.getState();
-    owner.resetTableParse();
-    owner.resetKeynoteParse();
-    owner.resetNotesParse();
-    owner.resetSpecParse();
-    owner.resetGuidedParse();
-  },
-  resetProject: () => useParseFlowStore.getState().resetProjectParseState(),
 });

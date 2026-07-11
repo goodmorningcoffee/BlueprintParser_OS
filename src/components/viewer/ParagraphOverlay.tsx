@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TextractLine, TextRegion } from "@/types";
-import type { PendingParagraph, ParagraphTemplate } from "@/stores/viewerStore";
+import type { PendingParagraph, ParagraphTemplate } from "@/stores/parseFlowStore";
 import { clusterLinesByYGap } from "@/lib/specnote-parser/cluster-lines";
 import {
   linesInside,
