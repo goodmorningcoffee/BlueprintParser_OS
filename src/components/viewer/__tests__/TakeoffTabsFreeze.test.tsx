@@ -740,7 +740,7 @@ describe("BucketFillAssignDialog — non-demo create is server-first with the NU
 
 describe("BucketFillAssignDialog — direct existing-item G6 boundary", () => {
   it("no publicId keeps the clicked existing-item fill local, consumes pending, and makes no request", async () => {
-    // Set the empty id BEFORE both helpers: after C3 this fixture and the hoisted action must
+    // Set the empty id BEFORE both helpers: under the cache backing this fixture and hoisted action must
     // address the same pre-bootstrap query key, not the default test key "pid".
     useViewerStore.setState({
       publicId: "",

@@ -10,6 +10,8 @@ import { useViewerStore } from "@/stores/viewerStore";
 import { seedSummariesCache } from "@/queries/useSummaries";
 // [refactor jul10 P2.2④] takeoff items+groups moved zustand → TanStack cache; loader seeds both keys.
 import { seedTakeoffCache } from "@/queries/useTakeoff";
+// [refactor jul11 P2.2⑥] annotations are chunk-seeded into one project cache entry.
+import { seedAnnotationsFromBootstrap } from "@/queries/useAnnotations";
 import { useSearch } from "@/hooks/useSearch";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
@@ -163,8 +165,19 @@ export default function DemoProjectPage() {
       if (qParam) useViewerStore.getState().setSearch(qParam);
 
       // ─── Hydrate initial chunk (already fetched in parallel above) ───
+      if (!chunkRes.ok) {
+        // Demo reload used to start from resetProjectData's empty array. Preserve that net behavior
+        // under the independently-owned cache even when the optional chunk request fails.
+        seedAnnotationsFromBootstrap(queryClient, data.id, null);
+      }
       if (chunkRes.ok) {
-        const chunk: ChunkResponse = await chunkRes.json();
+        let chunk: ChunkResponse;
+        try {
+          chunk = await chunkRes.json();
+        } catch (parseError) {
+          seedAnnotationsFromBootstrap(queryClient, data.id, null);
+          throw parseError;
+        }
 
         const keynoteMap: Record<number, any> = {};
         const csiMap: Record<number, any> = {};
@@ -180,12 +193,14 @@ export default function DemoProjectPage() {
           if (page.pageIntelligence) intelMap[page.pageNumber] = page.pageIntelligence;
         }
 
+        // [refactor jul11 P2.2⑥] Cache FIRST, then pages-window state in the SAME synchronous
+        // block; no await may split the annotation window from its loaded range (RACE-2).
+        seedAnnotationsFromBootstrap(queryClient, data.id, chunk);
         useViewerStore.setState(() => ({
           keynotes: keynoteMap,
           csiCodes: csiMap,
           textAnnotations: textAnnMap,
           pageIntelligence: intelMap,
-          annotations: chunk.annotations,
           loadedPageRange: { from: 1, to: chunk.pages.length > 0 ? Math.max(...chunk.pages.map((p: any) => p.pageNumber)) : Math.min(data.numPages || 1, 15) },
         }));
 

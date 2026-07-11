@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useViewerStore, useNavigation, useProject, usePanels, usePageData, useDetection } from "@/stores/viewerStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
 import { useSummaries } from "@/queries/useSummaries";
+import { useAnnotations } from "@/queries/useAnnotations";
 import Link from "next/link";
 import LabelingWizard from "./LabelingWizard";
 import HelpTooltip from "./HelpTooltip";
@@ -32,7 +33,10 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
     showViewAllPanel, toggleViewAllPanel,
   } = usePanels();
   const { allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
-  const { annotations, activeModels, setModelActive, searchQuery, setSearch } = useDetection();
+  const { activeModels, setModelActive, searchQuery, setSearch } = useDetection();
+  // [refactor jul11 P2.2⑥] Keep annotation-derived model controls reactive via the dedicated
+  // cache facade while detection filters/models remain in their zustand UI slice.
+  const { annotations } = useAnnotations();
 
   // Fields not in slice selectors
   const zoomIn = useViewerStore((s) => s.zoomIn);

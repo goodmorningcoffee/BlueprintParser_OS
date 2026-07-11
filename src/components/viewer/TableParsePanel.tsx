@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore, useProject } from "@/stores/viewerStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
+import { useAnnotations } from "@/queries/useAnnotations";
 import ParsedTableItem from "./ParsedTableItem";
 import AutoParseTab from "./AutoParseTab";
 import GuidedParseTab from "./GuidedParseTab";
@@ -43,7 +44,8 @@ export default function TableParsePanel() {
   const setTableParseTab = useViewerStore((s) => s.setTableParseTab);
   const pageNames = useViewerStore((s) => s.pageNames);
   const pageDrawingNumbers = useViewerStore((s) => s.pageDrawingNumbers);
-  const annotations = useViewerStore((s) => s.annotations);
+  // [refactor jul11 P2.2⑥] Server-owned annotation window now subscribes via its cache facade.
+  const { annotations } = useAnnotations();
   const addYoloTagsBulk = useViewerStore((s) => s.addYoloTagsBulk);
   const yoloTags = useViewerStore((s) => s.yoloTags);
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
@@ -192,11 +194,11 @@ export default function TableParsePanel() {
         // this response into another project's entry; SPEC §5-S3). Guard KEPT: promote returns
         // summaries:null on real paths (compute-reject swallow) and must not clear live data.
         if (result.summaries) seedSummariesCache(queryClient, pid, result.summaries as any);
-        refreshPageCsiSpatialMap(pageNumber);
+        refreshPageCsiSpatialMap(queryClient, pageNumber);
       } else {
         // Demo / no publicId: optimistic local-only save so the region renders.
         saveParsedToIntelligence(grid);
-        refreshPageCsiSpatialMap(pageNumber);
+        refreshPageCsiSpatialMap(queryClient, pageNumber);
       }
 
       // Success: revert the tab to its idle step so another parse can start

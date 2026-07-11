@@ -1,9 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { takeoffRedo, takeoffUndo } from "@/queries/useAnnotations";
 
 export function useKeyboardShortcuts() {
+  // [refactor jul10 P2.2⑥] Providers constructs this client once. Keep the listener mount-once;
+  // the module actions use qc for annotations and re-read every mutable zustand field on keydown.
+  const qc = useQueryClient();
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const store = useViewerStore.getState();
@@ -55,12 +60,12 @@ export function useKeyboardShortcuts() {
       if (store.activeTakeoffItemId !== null && !e.ctrlKey && !e.metaKey) {
         if (e.key === "z" || e.key === "Z") {
           e.preventDefault();
-          store.takeoffUndo();
+          takeoffUndo(qc);
           return;
         }
         if (e.key === "w" || e.key === "W") {
           e.preventDefault();
-          store.takeoffRedo();
+          takeoffRedo(qc);
           return;
         }
       }
@@ -81,5 +86,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- provider-stable qc; mount-once parity
 }

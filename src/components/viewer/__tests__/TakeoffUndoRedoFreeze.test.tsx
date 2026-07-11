@@ -8,16 +8,16 @@
 // caller, removes the wrong matching marker, restores in the wrong position, or mutates history on a
 // guarded undo must therefore fail here.
 //
-// [refactor jul11 P2.2⑥] MIGRATION DISCIPLINE: QueryClientProvider is present from the first render
-// even though the shortcut hook does not need it yet. C3 will close over useQueryClient() in its
-// []-dependency keydown effect; mounting the provider now proves that wiring without rewriting test
+// [refactor jul11 P2.2⑥] MIGRATION DISCIPLINE: QueryClientProvider is present from the first render.
+// C3 closes over useQueryClient() in its []-dependency keydown effect; mounting the provider proves
+// that wiring without rewriting test
 // bodies later. Annotation setup always goes through seedAnnotations(qc, rows), the domain's single
 // backing flip point. Likewise, EVERY annotation assertion goes through readCurrentAnnotations()
-// below, which delegates to the shared test seam that C3 flips beside the seed. Stack reads
+// below, which delegates to the cache-backed shared test seam. Stack reads
 // deliberately remain zustand-backed because the stacks do.
 //
-// Post-event assertions use waitFor. Today the store writes synchronously; after C3 Query observers
-// notify on a later task, and keeping the same read barrier prevents same-tick false positives.
+// Post-event assertions use waitFor because Query observers notify on a later task; the same read
+// barrier prevents same-tick false positives while stack writes remain synchronous zustand updates.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom";
@@ -261,6 +261,10 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
     const priorUndo = [takeoffAnnotation(90)];
     const priorRedo = [takeoffAnnotation(91)];
     seedAnnotations(qc, rows);
+    // Query structural sharing is allowed to retain/copy an equal-deep seed. The guard invariant
+    // is that the operation preserves the CACHE'S pre-event reference, not the caller input ref.
+    const rowsBefore = readCurrentAnnotations();
+    expect(rowsBefore).toEqual(rows);
     useViewerStore.setState({
       activeTakeoffItemId: null,
       pageNumber: 1,
@@ -276,7 +280,7 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
     const nullActiveEvent = pressKey("z");
     await waitFor(() => {
       expect(nullActiveEvent.defaultPrevented).toBe(false);
-      expect(readCurrentAnnotations()).toBe(rows);
+      expect(readCurrentAnnotations()).toBe(rowsBefore);
       expect(readHistory().takeoffUndoStack).toBe(priorUndo);
       expect(readHistory().takeoffRedoStack).toBe(priorRedo);
     });
@@ -287,7 +291,7 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
     const noMatchEvent = pressKey("z");
     await waitFor(() => {
       expect(noMatchEvent.defaultPrevented).toBe(true); // key recognized; operation itself no-ops
-      expect(readCurrentAnnotations()).toBe(rows);
+      expect(readCurrentAnnotations()).toBe(rowsBefore);
       expect(readHistory().takeoffUndoStack).toBe(priorUndo);
       // Load-bearing guard: a no-match undo must NOT clear existing redo history.
       expect(readHistory().takeoffRedoStack).toBe(priorRedo);
@@ -300,7 +304,7 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
     const emptyUndoRedoEvent = pressKey("w");
     await waitFor(() => {
       expect(emptyUndoRedoEvent.defaultPrevented).toBe(true);
-      expect(readCurrentAnnotations()).toBe(rows);
+      expect(readCurrentAnnotations()).toBe(rowsBefore);
       expect(readHistory().takeoffUndoStack).toEqual([]);
       expect(readHistory().takeoffRedoStack).toBe(priorRedo);
     });

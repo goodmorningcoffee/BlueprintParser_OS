@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { ClientAnnotation } from "@/types";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useAnnotations } from "@/queries/useAnnotations";
 import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
 
 interface AnnotationListItemProps {
@@ -23,7 +23,7 @@ export default function AnnotationListItem({
   const [expanded, setExpanded] = useState(false);
   const [note, setNote] = useState(annotation.note || "");
   const [saving, setSaving] = useState(false);
-  const updateAnnotation = useViewerStore((s) => s.updateAnnotation);
+  const { updateAnnotation } = useAnnotations();
 
   const confidence = annotation.data?.confidence as number | undefined;
   const csiCodes = (annotation.data?.csiCodes as string[]) || [];
@@ -38,6 +38,8 @@ export default function AnnotationListItem({
   async function handleSave() {
     setSaving(true);
     try {
+      // [refactor jul10 P2.2⑥] Preserve the legacy unguarded PUT (including in demo); this pass
+      // moves only the successful optimistic merge to cache and does not repair the demo gate.
       const normalizedCsi = normalizeCsiCodes(csiInput);
       const updatedData = { ...annotation.data, note, csiCodes: normalizedCsi.length > 0 ? normalizedCsi : undefined };
       const res = await fetch(`/api/annotations/${annotation.id}`, {

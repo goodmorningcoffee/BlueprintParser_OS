@@ -1,20 +1,26 @@
 /**
  * csi-spatial-refresh.ts
  *
- * Client-side utility to recompute the CSI spatial map from Zustand store state.
+ * Client-side utility to recompute the CSI spatial map from viewer/query client state.
  * Called after user parsing, YOLO load, or annotation CSI updates.
  *
  * csi-spatial.ts is client-safe (no Node.js deps), so this runs in the browser.
  */
 
+import type { QueryClient } from "@tanstack/react-query";
 import { computeCsiSpatialMap, type CsiSpatialGridConfig } from "@/lib/csi-spatial";
+import { readAnnotations } from "@/queries/useAnnotations";
 import { useViewerStore } from "@/stores/viewerStore";
 
 /**
- * Recompute the CSI spatial map for a given page using all available data
- * from the Zustand store, and update pageIntelligence with the result.
+ * Recompute the CSI spatial map for a given page using all available client data and update
+ * zustand-owned pageIntelligence with the result.
  */
-export function refreshPageCsiSpatialMap(pageNumber: number, gridConfig?: CsiSpatialGridConfig): void {
+export function refreshPageCsiSpatialMap(
+  qc: QueryClient,
+  pageNumber: number,
+  gridConfig?: CsiSpatialGridConfig,
+): void {
   const store = useViewerStore.getState();
 
   // Gather data sources
@@ -27,7 +33,9 @@ export function refreshPageCsiSpatialMap(pageNumber: number, gridConfig?: CsiSpa
   );
 
   // Collect YOLO + user annotations with CSI codes for this page
-  const dbAnnotations = store.annotations.filter(
+  // [refactor jul11 P2.2⑥] Handler-time bridge preserves the old live getState read while the
+  // server-owned window moves to its project cache. Never pass a render-captured annotation list.
+  const dbAnnotations = readAnnotations(qc, store.publicId).filter(
     (a) => a.pageNumber === pageNumber && (a as any).data?.csiCodes?.length > 0,
   );
 

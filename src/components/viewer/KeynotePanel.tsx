@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore, useProject } from "@/stores/viewerStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
+import { useAnnotations } from "@/queries/useAnnotations";
 import HelpTooltip from "./HelpTooltip";
 import KeynoteItem from "./KeynoteItem";
 import CompareEditTab from "./CompareEditTab";
@@ -46,7 +47,8 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const pageNames = useViewerStore((s) => s.pageNames);
   const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
   const textractData = useViewerStore((s) => s.textractData);
-  const annotations = useViewerStore((s) => s.annotations);
+  // [refactor jul11 P2.2⑥] Subscribe to the one chunk-windowed cache entry, not viewerStore.
+  const { annotations } = useAnnotations();
   const toggleKeynoteParsePanel = useViewerStore((s) => s.toggleKeynoteParsePanel);
   const keynoteParseTab = useViewerStore((s) => s.keynoteParseTab);
   const setKeynoteParseTab = useViewerStore((s) => s.setKeynoteParseTab);
@@ -171,7 +173,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     });
 
     if (!persistToDb) return;
-    refreshPageCsiSpatialMap(pageNumber);
+    refreshPageCsiSpatialMap(queryClient, pageNumber);
     if (canPersist(publicId, storeState.isDemo)) {
       const result = await promoteParsedRegion({
         publicId,
@@ -587,7 +589,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       }
 
       // Refresh spatial map
-      refreshPageCsiSpatialMap(pageNumber);
+      refreshPageCsiSpatialMap(queryClient, pageNumber);
 
       // Auto-persist on parse via the transactional promote upsert. Gated on
       // publicId (canPersist), NOT numeric projectId. Throws on failure → we

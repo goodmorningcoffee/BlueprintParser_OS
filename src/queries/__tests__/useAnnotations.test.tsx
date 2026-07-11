@@ -19,6 +19,7 @@ import { persistFetch } from "@/lib/client-persist";
 import { queryKeys } from "@/queries/queryKeys";
 import {
   readAnnotations,
+  seedAnnotationsFromBootstrap,
   takeoffRedo,
   takeoffUndo,
   useAnnotations,
@@ -296,6 +297,32 @@ describe("useAnnotations query configuration and notification profile", () => {
 });
 
 describe("read/write bridges and collection actions", () => {
+  it("bootstrap adapter seeds the passed project key and never the live store key", () => {
+    const client = freshClient();
+    useViewerStore.setState({ publicId: "LIVE-WRONG" });
+    const liveSentinel = [ann(99, { name: "must remain isolated" })];
+    client.setQueryData(queryKeys.annotations.all("LIVE-WRONG"), liveSentinel);
+    const seeded = [ann(1), ann(2)];
+
+    seedAnnotationsFromBootstrap(client, "SERVER-CANONICAL", { annotations: seeded });
+
+    expect(readAnnotations(client, "SERVER-CANONICAL")).toEqual(seeded);
+    expect(readAnnotations(client, "LIVE-WRONG")).toEqual(liveSentinel);
+  });
+
+  it.each([
+    { label: "null chunk", chunk: null },
+    { label: "omitted collection", chunk: {} },
+    { label: "null collection", chunk: { annotations: null } },
+  ])("bootstrap adapter clears a stale entry for $label", ({ chunk }) => {
+    const client = freshClient();
+    client.setQueryData(queryKeys.annotations.all("A"), [ann(77, { name: "stale" })]);
+
+    seedAnnotationsFromBootstrap(client, "A", chunk);
+
+    expect(readAnnotations(client, "A")).toEqual([]);
+  });
+
   it("readAnnotations returns one stable frozen fallback; writeAnns updates only its passed key", () => {
     const client = freshClient();
     const emptyA = readAnnotations(client, "missing-A");

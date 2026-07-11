@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/queries/queryKeys";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { KeynoteShapeData, CsiCode, ClientAnnotation, ScaleCalibrationData } from "@/types";
 
@@ -25,6 +27,7 @@ interface ChunkResponse {
  * Debounced to batch rapid navigation (arrow keys).
  */
 export function useChunkLoader() {
+  const queryClient = useQueryClient();
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const numPages = useViewerStore((s) => s.numPages);
   const publicId = useViewerStore((s) => s.publicId);
@@ -121,13 +124,21 @@ export function useChunkLoader() {
             return result;
           };
 
-          // Merge new chunk data with retained pages (using snapshot, not stale getState)
+          // [refactor jul11 P2.2⑥] Publish the annotation window to its project-keyed cache FIRST,
+          // then publish the related pages-window maps to zustand in the SAME synchronous block.
+          // NO await may appear between these writes: a split tick reopens RACE-2 and lets a render
+          // observe the new range with the old annotation window (or the inverse).
+          queryClient.setQueryData(
+            queryKeys.annotations.all(publicId),
+            chunk.annotations,
+          );
+
+          // Merge new chunk data with retained pages (using snapshot, not stale getState).
           useViewerStore.setState(() => ({
             keynotes: { ...evict(stateSnapshot.keynotes), ...keynoteMap },
             csiCodes: { ...evict(stateSnapshot.csiCodes), ...csiMap },
             textAnnotations: { ...evict(stateSnapshot.textAnnotations), ...textAnnMap },
             pageIntelligence: { ...evict(stateSnapshot.pageIntelligence), ...intelMap },
-            annotations: chunk.annotations,
             loadedPageRange: { from: actualFrom, to: actualTo },
             chunkLoading: false,
           }));
@@ -155,5 +166,5 @@ export function useChunkLoader() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [pageNumber, numPages, publicId, isDemo, loadedPageRange]);
+  }, [pageNumber, numPages, publicId, isDemo, loadedPageRange, queryClient]);
 }

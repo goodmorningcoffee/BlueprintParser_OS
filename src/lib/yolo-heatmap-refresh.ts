@@ -12,7 +12,9 @@
  * `yolo-heatmap.ts` is pure math (no Node deps) so this is safe in the browser.
  */
 
+import type { QueryClient } from "@tanstack/react-query";
 import { computeYoloHeatmap } from "@/lib/spatial/yolo-heatmap";
+import { readAnnotations } from "@/queries/useAnnotations";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { ClientAnnotation, YoloHeatmapGridConfig } from "@/types";
 
@@ -28,6 +30,7 @@ const DEFAULT_HEATMAP_CLASSES = ["text_box", "vertical_area", "horizontal_area"]
  * auto-table-detector Stage 2c might want a different class tuple).
  */
 export function refreshPageYoloHeatmap(
+  qc: QueryClient,
   pageNumber: number,
   opts?: {
     classes?: readonly string[];
@@ -37,8 +40,10 @@ export function refreshPageYoloHeatmap(
   const store = useViewerStore.getState();
   const classes = opts?.classes ?? DEFAULT_HEATMAP_CLASSES;
 
-  // Gather YOLO annotations on this page from the client-side store.
-  const yoloAnns = store.annotations.filter(
+  // [refactor jul11 P2.2⑥] DEAD module (zero external callers), retained compiling for a later
+  // dead-purge pass. The bridge keeps its handler-time read faithful without resurrecting store
+  // ownership; thread qc through both exports rather than hiding a global QueryClient.
+  const yoloAnns = readAnnotations(qc, store.publicId).filter(
     (a: ClientAnnotation) => a.pageNumber === pageNumber && a.source === "yolo",
   );
 
@@ -74,8 +79,9 @@ export function refreshPageYoloHeatmap(
  * affected pages and calls this once to cover all of them.
  */
 export function refreshPagesYoloHeatmap(
+  qc: QueryClient,
   pageNumbers: readonly number[],
-  opts?: Parameters<typeof refreshPageYoloHeatmap>[1],
+  opts?: Parameters<typeof refreshPageYoloHeatmap>[2],
 ): void {
-  for (const pn of pageNumbers) refreshPageYoloHeatmap(pn, opts);
+  for (const pn of pageNumbers) refreshPageYoloHeatmap(qc, pn, opts);
 }

@@ -5,6 +5,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore, useNavigation, useProject, usePageData, useDetection, useTextAnnotationDisplay, useYoloTags, useSymbolSearch } from "@/stores/viewerStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
 import { useSummaries } from "@/queries/useSummaries";
+import { useAnnotations } from "@/queries/useAnnotations";
 import { findPhraseMatches } from "./SearchHighlightOverlay";
 import { extractDisciplinePrefix, disciplineOrder } from "@/lib/page-utils";
 
@@ -20,7 +21,10 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   const { pageNumber, numPages, setPage } = useNavigation();
   const { pageNames, publicId } = useProject();
   const { keynotes, csiCodes, textractData, textAnnotations, activeCsiFilter, setCsiFilter } = usePageData();
-  const { annotations, activeAnnotationFilter, setAnnotationFilter, searchQuery } = useDetection();
+  const { activeAnnotationFilter, setAnnotationFilter, searchQuery } = useDetection();
+  // [refactor jul11 P2.2⑥] Page derivations follow the publicId-keyed annotation cache; the
+  // filter/search controls remain in useDetection's zustand UI slice.
+  const { annotations } = useAnnotations();
   const { activeTextAnnotationFilter, setTextAnnotationFilter } = useTextAnnotationDisplay();
   const { yoloTags, setActiveYoloTagId, setYoloTagFilter } = useYoloTags();
   const { symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches } = useSymbolSearch();

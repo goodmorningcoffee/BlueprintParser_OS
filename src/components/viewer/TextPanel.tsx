@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useViewerStore, useNavigation, usePageData, usePanels, useProject, useDetection, useTextAnnotationDisplay } from "@/stores/viewerStore";
+import { useAnnotations } from "@/queries/useAnnotations";
 import { TEXT_ANNOTATION_COLORS } from "@/types";
 import type { TextAnnotation, AnnotationCategory, ClientAnnotation } from "@/types";
 // [refactor jun17 P1.3] dual-envelope tolerant error reader — the migrated pages/textract-rerun +
@@ -32,7 +33,10 @@ export default function TextPanel({ embedded = false }: { embedded?: boolean } =
   const { pageNumber } = useNavigation();
   const { textractData, textAnnotations } = usePageData();
   const { textPanelTab: tab, setTextPanelTab: setTab } = usePanels();
-  const { searchQuery, annotations: allAnnotations } = useDetection();
+  const { searchQuery } = useDetection();
+  // [refactor jul11 P2.2⑥] Annotation rows left the broad detection UI slice; subscribing through
+  // the dedicated cache facade keeps this markup count reactive without retaining store ownership.
+  const { annotations: allAnnotations } = useAnnotations();
   const userMarkups = allAnnotations.filter((a) => a.source === "user");
 
   const pageData = textractData[pageNumber];

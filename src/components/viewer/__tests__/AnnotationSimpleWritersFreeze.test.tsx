@@ -139,7 +139,7 @@ async function advance(ms: number) {
 const fetchMock = vi.fn();
 
 beforeEach(() => {
-  // [refactor jul11 P2.2⑥] Production-equivalent QueryClient defaults matter: after C3, these
+  // [refactor jul11 P2.2⑥] Production-equivalent QueryClient defaults matter under C3: these
   // visible subscriber witnesses must observe the same notification schedule as the real viewer.
   qc = new QueryClient();
   useViewerStore.getState().resetProjectData();
@@ -219,8 +219,8 @@ describe("TagBrowseBar annotation edit freeze", () => {
     fireEvent.change(edit, { target: { value: "  D-02  " } });
     fireEvent.keyDown(edit, { key: "Enter" });
 
-    // Today this is a synchronous zustand update; after C3, AnnotationPanel receives the cache
-    // notification on a timer task. Keep one byte-stable behavioral assertion horizon for both.
+    // AnnotationPanel now receives the cache notification on a timer task. Keep the same
+    // byte-stable behavioral assertion horizon used across both backing implementations.
     await advance(0);
 
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();

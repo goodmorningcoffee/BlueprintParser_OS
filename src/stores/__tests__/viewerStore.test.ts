@@ -52,32 +52,9 @@ describe("viewerStore — panels", () => {
   });
 });
 
-describe("viewerStore — annotations", () => {
-  it("starts with empty annotations", () => {
-    expect(useViewerStore.getState().annotations).toEqual([]);
-  });
-
-  it("addAnnotation appends to list", () => {
-    useViewerStore.getState().addAnnotation({
-      id: 1, pageNumber: 1, name: "test", bbox: [0.1, 0.2, 0.3, 0.4],
-      note: null, source: "user", data: {},
-    });
-    expect(useViewerStore.getState().annotations).toHaveLength(1);
-    expect(useViewerStore.getState().annotations[0].name).toBe("test");
-  });
-
-  it("removeAnnotation removes by id", () => {
-    useViewerStore.getState().addAnnotation({
-      id: 1, pageNumber: 1, name: "a", bbox: [0, 0, 0.5, 0.5], note: null, source: "user", data: {},
-    });
-    useViewerStore.getState().addAnnotation({
-      id: 2, pageNumber: 1, name: "b", bbox: [0, 0, 0.5, 0.5], note: null, source: "yolo", data: {},
-    });
-    useViewerStore.getState().removeAnnotation(1);
-    expect(useViewerStore.getState().annotations).toHaveLength(1);
-    expect(useViewerStore.getState().annotations[0].id).toBe(2);
-  });
-});
+// [refactor jul11 P2.2⑥] Annotation CRUD/reset cases retired with the deleted store collection.
+// Cache/action coverage now lives in queries/__tests__/useAnnotations.test.tsx (including guards,
+// project isolation, structural sharing, bucket fill, and takeoff undo/redo).
 
 describe("viewerStore — detection visibility", () => {
   it("hiddenAnnotationIds starts empty", () => {
@@ -272,15 +249,10 @@ describe("viewerStore — resetProjectData", () => {
   it("clears project state back to defaults", () => {
     useViewerStore.getState().setNumPages(20);
     useViewerStore.getState().setPage(10);
-    useViewerStore.getState().addAnnotation({
-      id: 1, pageNumber: 1, name: "test", bbox: [0, 0, 0.5, 0.5],
-      note: null, source: "user", data: {},
-    });
 
     useViewerStore.getState().resetProjectData();
 
     expect(useViewerStore.getState().pageNumber).toBe(1);
-    expect(useViewerStore.getState().annotations).toEqual([]);
     expect(useViewerStore.getState().yoloTags).toEqual([]);
     expect(useViewerStore.getState().tableParseStep).toBe("idle");
   });

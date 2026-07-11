@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useYoloTags, usePageData } from "@/stores/viewerStore";
+import { readAnnotations, useAnnotations, writeAnns } from "@/queries/useAnnotations";
 import { useShapeParseInteraction } from "@/hooks/useShapeParseInteraction";
 import { TWENTY_COLORS, SHAPE_COLORS } from "@/types";
 import type { ClientAnnotation, YoloTag, Shape } from "@/types";
@@ -35,11 +37,15 @@ export default function DetectionPanel({
   embedded = false,
   lockedTab,
 }: { embedded?: boolean; lockedTab?: DetectionTab } = {}) {
+  const queryClient = useQueryClient();
   const { pageNumber, setPage } = useNavigation();
   const { toggleDetectionPanel } = usePanels();
   const { pageNames } = useProject();
+  // [refactor jul11 P2.2⑥] Annotation data now follows its publicId-keyed cache facade; the
+  // remaining useDetection fields stay zustand-owned UI/filter state.
+  const { annotations, setAnnotations } = useAnnotations();
   const {
-    annotations, activeModels, setModelActive,
+    activeModels, setModelActive,
     confidenceThreshold, setConfidenceThreshold,
     activeAnnotationFilter, setAnnotationFilter, setSearch,
     hiddenAnnotationIds, toggleAnnotationVisibility,
@@ -864,10 +870,14 @@ export default function DetectionPanel({
                     }
                     const data = await res.json();
                     if (data.annotations) {
-                      const current = useViewerStore.getState().annotations;
                       // Append the newly-saved rows; prior shape-parse rows
-                      // stay untouched (server no longer deletes them).
-                      useViewerStore.getState().setAnnotations([...current, ...data.annotations]);
+                      // stay untouched (server no longer deletes them). This handler historically
+                      // re-read live state AFTER its await, so keep that freshness with a functional
+                      // cache write rather than closing over the render-time annotations array.
+                      writeAnns(queryClient, publicId, (current) => [
+                        ...current,
+                        ...data.annotations,
+                      ]);
                       // Clear the pending-shapes panel — they've moved from
                       // "pending" to "saved" (now visible via annotations overlay).
                       setKeynotes(pageNumber, []);
@@ -899,6 +909,11 @@ export default function DetectionPanel({
                       shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                       return;
                     }
+                    // [refactor jul11 P2.2⑥] LOAD-BEARING capture before the request. Save-all
+                    // historically retained the pre-await zustand snapshot and therefore dropped a
+                    // concurrent annotation on success. Keep that frozen ANNOTATIONS-W1 behavior by
+                    // making the eventual cache write a value replacement, not a functional update.
+                    const capturedAnnotations = readAnnotations(queryClient, publicId);
                     setShapeSaving(true);
                     shapeParse.setError(null);
                     setShapeSaveSuccess(null);
@@ -941,8 +956,7 @@ export default function DetectionPanel({
                       }
                       const data = await res.json();
                       if (data.annotations) {
-                        const current = store.annotations;
-                        store.setAnnotations([...current, ...data.annotations]);
+                        setAnnotations([...capturedAnnotations, ...data.annotations]);
                         // Clear the pending-shapes panel for every page we saved.
                         for (const pn of allPageNums) {
                           store.setKeynotes(pn, []);

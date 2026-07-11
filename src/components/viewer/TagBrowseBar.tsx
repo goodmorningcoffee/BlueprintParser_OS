@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { writeAnns } from "@/queries/useAnnotations";
 
 /**
  * Floating tag instance navigator — shows when browsing tag instances.
@@ -9,6 +11,7 @@ import { useViewerStore } from "@/stores/viewerStore";
  * Includes inline edit to correct OCR text for the tag.
  */
 export default function TagBrowseBar() {
+  const queryClient = useQueryClient();
   const tagBrowseId = useViewerStore((s) => s.tagBrowseId);
   const tagBrowseIndex = useViewerStore((s) => s.tagBrowseIndex);
   const yoloTags = useViewerStore((s) => s.yoloTags);
@@ -90,17 +93,19 @@ export default function TagBrowseBar() {
     // Update the YoloTag text + name
     store.updateYoloTag(tag.id, { tagText: trimmed, name: trimmed });
 
-    // Update all annotation names that reference this tag
-    const updatedAnnotations = store.annotations.map((a) => {
-      if (a.source !== "takeoff" && a.data?.takeoffItemId) return a;
-      // Match by tag's instances — any annotation matching this tag's instances
-      const isInstance = tag.instances.some(
-        (inst) => inst.annotationId === a.id || (inst.annotationId === -1 && inst.pageNumber === a.pageNumber && inst.bbox[0] === a.bbox[0] && inst.bbox[1] === a.bbox[1])
-      );
-      if (isInstance) return { ...a, name: trimmed };
-      return a;
-    });
-    store.setAnnotations(updatedAnnotations);
+    // [refactor jul11 P2.2⑥] This synchronous handler used a fresh getState read, so preserve its
+    // live read-modify-write semantics with the cache's functional bridge (not a captured replace).
+    writeAnns(queryClient, store.publicId, (annotations) =>
+      annotations.map((a) => {
+        if (a.source !== "takeoff" && a.data?.takeoffItemId) return a;
+        // Match by tag's instances — any annotation matching this tag's instances
+        const isInstance = tag.instances.some(
+          (inst) => inst.annotationId === a.id || (inst.annotationId === -1 && inst.pageNumber === a.pageNumber && inst.bbox[0] === a.bbox[0] && inst.bbox[1] === a.bbox[1])
+        );
+        if (isInstance) return { ...a, name: trimmed };
+        return a;
+      }),
+    );
 
     // Refresh the highlight label
     store.tagBrowseNavigate(tag.id, tagBrowseIndex);

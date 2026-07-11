@@ -7,6 +7,7 @@ import { useViewerStore } from "@/stores/viewerStore";
 // (server-first item ops + group create; optimistic group rename/delete, move, edit-panel save;
 // NO rollback) is frozen — see TAKEOFF_IMPL/SPEC.md §3 + TakeoffCountFreeze.test.tsx.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
+import { useAnnotations } from "@/queries/useAnnotations";
 import { TAKEOFF_SHAPES, TWENTY_COLORS } from "@/types";
 import type { TakeoffShape, ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { SHAPE_ICONS, TakeoffEditPanel } from "./TakeoffShared";
@@ -14,11 +15,12 @@ import TakeoffGroupSection from "./TakeoffGroupSection";
 import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist";
 
 export default memo(function CountTab() {
-  const annotations = useViewerStore((s) => s.annotations);
+  // [refactor jul10 P2.2⑥] Value replacement preserves the existing captured-array lost-update
+  // profile of server-first delete/rename; this backing-store move must not repair it implicitly.
+  const { annotations, setAnnotations } = useAnnotations();
   const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
-  const setAnnotations = useViewerStore((s) => s.setAnnotations);
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
   const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();

@@ -5,6 +5,7 @@ import { useViewerStore, useSelection } from "@/stores/viewerStore";
 // [refactor jul10 P2.2⑤] annotation groups: zustand → TanStack cache facade (import-swap-only
 // surgery; destructure + every handler body byte-identical).
 import { useAnnotationGroups } from "@/queries/useAnnotationGroups";
+import { useAnnotations } from "@/queries/useAnnotations";
 import MarkupDialog from "./MarkupDialog";
 import { persistFetch, canPersist } from "@/lib/client-persist";
 import type { AnnotationGroup } from "@/types";
@@ -29,9 +30,11 @@ export default function GroupActionsBar() {
     hydrateGroupMemberships,
     annotationGroupMemberships,
   } = useAnnotationGroups();
+  // [refactor jul10 P2.2⑥] Server-first batch delete is unchanged; only its successful local
+  // removal target moves from zustand to the publicId-keyed annotation cache.
+  const { removeAnnotation } = useAnnotations();
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
-  const removeAnnotation = useViewerStore((s) => s.removeAnnotation);
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showAddPicker, setShowAddPicker] = useState(false);
@@ -371,4 +374,3 @@ export default function GroupActionsBar() {
     </>
   );
 }
-

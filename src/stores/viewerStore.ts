@@ -1,8 +1,6 @@
 import { create } from "zustand";
-import { canPersist, persistFetch } from "@/lib/client-persist";
 import type {
   ClientAnnotation,
-  ClientTakeoffItem, // still used: commitBucketFillToItem takes the item as a PARAMETER (④ left it zustand-internal)
   KeynoteShapeData,
   CsiCode,
   TextractPageData,
@@ -79,12 +77,8 @@ interface ViewerState {
   setSearchMatches: (matches: Record<number, SearchWordMatch[]>) => void;
   setSearchLoading: (loading: boolean) => void;
 
-  // ─── Annotations ─────────────────────────────────────────
-  annotations: ClientAnnotation[];
-  setAnnotations: (a: ClientAnnotation[]) => void;
-  addAnnotation: (a: ClientAnnotation) => void;
-  removeAnnotation: (id: number) => void;
-  updateAnnotation: (id: number, updates: Partial<ClientAnnotation>) => void;
+  // [refactor jul11 P2.2⑥] The server-owned, chunk-windowed annotation collection + CRUD actions
+  // live in src/queries/useAnnotations.ts. UI-only focus/selection/filter state stays here.
   /** One-shot signal to focus/select an annotation from outside AnnotationOverlay.
    *  AnnotationOverlay owns the local `selectedId` state; external callers
    *  (TakeoffPanel instance-click, AreaTab instance-click) set this field and
@@ -320,10 +314,8 @@ interface ViewerState {
   setBucketFillResolution: (r: 1000 | 2000 | 3000 | 4000) => void;
   bucketFillPendingPolygon: {
     vertices: { x: number; y: number }[];
-    /** Inner holes (courtyards) excluded from the net area calc. Rendered as
-     *  evenodd cutouts in the preview. Dropped at commit time because the
-     *  current annotation schema only stores a flat vertex array — see
-     *  featureRoadMap/debug_and_vector_methods_plan.md for follow-up work. */
+    /** Inner holes (courtyards) excluded from net area and rendered as evenodd cutouts.
+     *  Non-empty holes are persisted in annotation JSONB; empty/missing holes are omitted. */
     holes?: { vertices: { x: number; y: number }[] }[];
     method: string;
     bbox: [number, number, number, number];
@@ -331,7 +323,6 @@ interface ViewerState {
     unit: string;
   } | null;
   setBucketFillPendingPolygon: (v: ViewerState["bucketFillPendingPolygon"]) => void;
-  commitBucketFillToItem: (item: ClientTakeoffItem) => void;
   // ─── Split Area tool ────────────────────────────────────
   splitAreaActive: boolean;
   setSplitAreaActive: (v: boolean) => void;
@@ -364,11 +355,10 @@ interface ViewerState {
   setBucketFillBarrierMode: (v: boolean) => void;
   barrierPendingPoint: { x: number; y: number } | null;
   setBarrierPendingPoint: (v: { x: number; y: number } | null) => void;
-  // Takeoff undo/redo
+  // Takeoff undo/redo history stays UI/tool state. The cross-backend operations themselves live
+  // beside the annotation cache (`takeoffUndo/Redo(qc)` in queries/useAnnotations.ts).
   takeoffUndoStack: ClientAnnotation[];
   takeoffRedoStack: ClientAnnotation[];
-  takeoffUndo: () => void;
-  takeoffRedo: () => void;
 
   // ─── Auto-QTO ────────────────────────────────────────────
   // [refactor jul10 P2.2②] qtoWorkflows COLLECTION moved to the TanStack cache
@@ -704,17 +694,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setSearchMatches: (searchMatches) => set({ searchMatches }),
   setSearchLoading: (searchLoading) => set({ searchLoading }),
 
-  annotations: [],
-  setAnnotations: (annotations) => set({ annotations }),
-  addAnnotation: (a) => set((s) => ({ annotations: [...s.annotations, a] })),
-  removeAnnotation: (id) =>
-    set((s) => ({ annotations: s.annotations.filter((a) => a.id !== id) })),
-  updateAnnotation: (id, updates) =>
-    set((s) => ({
-      annotations: s.annotations.map((a) =>
-        a.id === id ? { ...a, ...updates } : a
-      ),
-    })),
+  // [refactor jul11 P2.2⑥] Annotation data/actions deleted here; useAnnotations owns them.
   focusAnnotationId: null,
   setFocusAnnotationId: (focusAnnotationId) => set({ focusAnnotationId }),
 
@@ -1010,66 +990,7 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setBucketFillResolution: (bucketFillResolution) => set({ bucketFillResolution }),
   bucketFillPendingPolygon: null,
   setBucketFillPendingPolygon: (bucketFillPendingPolygon) => set({ bucketFillPendingPolygon }),
-  commitBucketFillToItem: (item) => {
-    const s = get();
-    const pending = s.bucketFillPendingPolygon;
-    if (!pending) return;
-    // Only include `holes` when actually present — keeps JSONB clean for the
-    // common case (most rooms don't have courtyards). Preview and render paths
-    // both treat `undefined` and `[]` identically via `data.holes ?? []`.
-    const polygonData = {
-      type: "area-polygon" as const,
-      takeoffItemId: item.id,
-      color: item.color,
-      vertices: pending.vertices,
-      ...(pending.holes && pending.holes.length > 0 ? { holes: pending.holes } : {}),
-      areaSqUnits: pending.areaSqUnits,
-      unit: pending.unit,
-    };
-    const tempId = -Date.now();
-    set((prev) => ({
-      annotations: [...prev.annotations, {
-        id: tempId,
-        pageNumber: prev.pageNumber,
-        name: item.name,
-        bbox: pending.bbox,
-        note: null,
-        source: "takeoff" as const,
-        data: polygonData as unknown as Record<string, unknown>,
-      }],
-      bucketFillPendingPolygon: null,
-    }));
-    // Persist to server. [refactor jun13 P0.5-G6] Was the last raw-fetch
-    // mutation in this store: gated on !isDemo only (publicId can still be ""
-    // before bootstrap → the request shipped projectId:"" and 404'd) and
-    // .catch(console.error) swallowed every failure — user saw the fill,
-    // server never had it. Now: demo stays local-only by design; otherwise
-    // gate on canPersist and surface failures via bucketFillError (rendered
-    // by DrawingPreviewLayer). Optimistic-state rollback is P2's job.
-    if (!s.isDemo) {
-      if (!canPersist(s.publicId, s.isDemo)) {
-        set({ bucketFillError: "Project not ready yet — bucket fill was NOT saved. Redraw once the viewer finishes loading." });
-        return;
-      }
-      persistFetch("/api/annotations", {
-        projectId: s.publicId,
-        pageNumber: s.pageNumber,
-        name: item.name,
-        bbox: pending.bbox,
-        source: "takeoff",
-        data: polygonData,
-      })
-        .then((saved) => {
-          const savedId = (saved as { id?: number } | null)?.id;
-          if (savedId) set((prev) => ({
-            annotations: prev.annotations.map((a) => a.id === tempId ? { ...a, id: savedId } : a),
-          }));
-        })
-        .catch((err: Error) =>
-          set({ bucketFillError: `Bucket fill drawn locally but NOT saved: ${err.message}` })
-        );
-    }
-  },
+  // [refactor jul11 P2.2⑥] Cross-backend commit moved to useAnnotations().commitBucketFill.
   splitAreaActive: false,
   setSplitAreaActive: (splitAreaActive) =>
     set({
@@ -1100,35 +1021,9 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   setBucketFillBarrierMode: (bucketFillBarrierMode) => set({ bucketFillBarrierMode, barrierPendingPoint: null }),
   barrierPendingPoint: null,
   setBarrierPendingPoint: (barrierPendingPoint) => set({ barrierPendingPoint }),
-  // Takeoff undo/redo (per active item, current page)
+  // Takeoff undo/redo history; cache+stack operations live in useAnnotations.
   takeoffUndoStack: [],
   takeoffRedoStack: [],
-  takeoffUndo: () => set((s) => {
-    const activeId = s.activeTakeoffItemId;
-    if (!activeId) return s;
-    // Find last annotation for this item on current page
-    const pageNum = s.pageNumber;
-    const idx = [...s.annotations].reverse().findIndex(
-      (a) => a.source === "takeoff" && (a.data as any)?.takeoffItemId === activeId && a.pageNumber === pageNum
-    );
-    if (idx === -1) return s;
-    const realIdx = s.annotations.length - 1 - idx;
-    const removed = s.annotations[realIdx];
-    return {
-      annotations: s.annotations.filter((_, i) => i !== realIdx),
-      takeoffUndoStack: [...s.takeoffUndoStack, removed],
-      takeoffRedoStack: [],
-    };
-  }),
-  takeoffRedo: () => set((s) => {
-    if (s.takeoffUndoStack.length === 0) return s;
-    const restored = s.takeoffUndoStack[s.takeoffUndoStack.length - 1];
-    return {
-      annotations: [...s.annotations, restored],
-      takeoffUndoStack: s.takeoffUndoStack.slice(0, -1),
-      takeoffRedoStack: [...s.takeoffRedoStack, restored],
-    };
-  }),
 
   // ─── Auto-QTO ──────────────────────────────────────────── (collection → query cache, P2.2②)
   activeQtoWorkflow: null,
@@ -1565,8 +1460,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   // shape. Called from parent-panel toggles (Parse, Detection, Table, Keynote)
   // on close, and from cancel buttons inside parse panels. Explicitly does NOT
   // touch: selectedAnnotationIds, llmHighlight, showKeynotes overlay, chat,
-  // annotations, takeoffs, parsedKeynoteData (annotation groups now live in the
-  // query cache — P2.2⑤ — and are equally untouched). Those survive panel close
+  // takeoffs, parsedKeynoteData (annotation groups + annotations now live in
+  // project-keyed query caches — P2.2⑤/⑥ — and are equally untouched). Those survive panel close
   // so the user's saved work and multi-select state persist.
   resetAllTools: () => {
     const s = get();
@@ -1597,7 +1492,8 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       searchResults: [],
       searchMatches: {},
       searchLoading: false,
-      annotations: [],
+      // [refactor jul11 P2.2⑥] annotations reset deleted: loader seeds the publicId-keyed cache
+      // unconditionally before reveal; reset changing publicId to "" isolates the previous entry.
       pageNames: {},
       pageDrawingNumbers: {},
       projectId: 0,
@@ -1961,10 +1857,9 @@ export const usePageData = () =>
     setCsiFilter: s.setCsiFilter,
   })));
 
-/** YOLO detection model state + annotation list + filters */
+/** YOLO detection model state + visibility/search filters (annotation data lives in Query). */
 export const useDetection = () =>
   useViewerStore(useShallow((s) => ({
-    annotations: s.annotations,
     activeModels: s.activeModels,
     setModelActive: s.setModelActive,
     confidenceThreshold: s.confidenceThreshold,
@@ -2038,4 +1933,3 @@ export const useAnnotationFilters = () =>
 // loadedPageRange/chunkLoading pairs passed through from this store until ⑦), so any stale
 // `useSummaries` import from here compile-breaks instead of silently reading a dead slice.
 // A shrunk same-name store selector was explicitly rejected for that reason (SPEC §3).
-

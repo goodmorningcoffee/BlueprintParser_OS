@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useAnnotations } from "@/queries/useAnnotations";
 import type { AreaUnit, ClientAnnotation, ScaleCalibrationData } from "@/types";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
@@ -15,8 +16,9 @@ export default function CalibrationInput() {
   const calibrationPoints = useViewerStore((s) => s.calibrationPoints);
   const setScaleCalibration = useViewerStore((s) => s.setScaleCalibration);
   const resetCalibration = useViewerStore((s) => s.resetCalibration);
-  const annotations = useViewerStore((s) => s.annotations);
-  const setAnnotations = useViewerStore((s) => s.setAnnotations);
+  // [refactor jul10 P2.2⑥] Both demo and persisted calibration branches retain their original
+  // render-captured value replacement, including the post-await concurrent-write hazard.
+  const { annotations, setAnnotations } = useAnnotations();
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
 

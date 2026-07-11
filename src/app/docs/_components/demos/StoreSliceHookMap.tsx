@@ -10,6 +10,9 @@ const SLICES = [
   // already stale pre-migration); the facade lives in src/queries/useAnnotationGroups.ts
   // (groups+memberships in the query cache, Set indexes derived in-hook; selection stays zustand).
   { name: "useAnnotationGroups",     line: 146,  purpose: "→ src/queries facade (P2.2⑤): groups+memberships in query cache, selection stays zustand" },
+  // [refactor jul11 P2.2⑥] Flat chunk-windowed annotation data + CRUD moved to the facade;
+  // focus/selection/visibility/tool history remain zustand-owned.
+  { name: "useAnnotations",          line: 284,  purpose: "→ src/queries facade (P2.2⑥): annotations in query cache; UI/tool state stays zustand" },
   { name: "useDrawingState",         line: 1751, purpose: "_drawing/_drawStart/_drawEnd/_mousePos" },
   { name: "useSymbolSearch",         line: 1764, purpose: "results, confidence, dismissed" },
   { name: "useChat",                 line: 1971, purpose: "chatScope (messages → query cache, P2.2①)" },
@@ -17,7 +20,7 @@ const SLICES = [
   { name: "useKeynoteParse",         line: 1832, purpose: "step, region, yolo-class bind" },
   { name: "useProject",              line: 1859, purpose: "projectId, publicId, dataUrl, isDemo" },
   { name: "usePageData",             line: 1882, purpose: "pageNames, pageDrawingNumbers" },
-  { name: "useDetection",            line: 1901, purpose: "annotations, showDetections, filters" },
+  { name: "useDetection",            line: 1861, purpose: "detection models + visibility/search filters (annotation data → query cache)" },
   { name: "useYoloTags",             line: 1921, purpose: "tags, activeId, visibility, picking mode" },
   { name: "useTextAnnotationDisplay",line: 1940, purpose: "shown types + colors + hidden set" },
   { name: "useAnnotationFilters",    line: 1956, purpose: "active filter, csi filter, trade filter" },

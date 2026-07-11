@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 // value or a dep there (TAKEOFF_IMPL/SPEC.md §3.3 :372 row).
 import { useQueryClient } from "@tanstack/react-query";
 import { useTakeoffItems, readTakeoffItems } from "@/queries/useTakeoff";
+import { useAnnotations, readAnnotations } from "@/queries/useAnnotations";
 import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useYoloTags, useSymbolSearch, useAnnotationFilters } from "@/stores/viewerStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
@@ -139,10 +140,10 @@ export default memo(function AnnotationOverlay({
   const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
   const showTableCellStructure = useViewerStore((s) => s.showTableCellStructure);
   const toggleCellHighlight = useViewerStore((s) => s.toggleCellHighlight);
-  const annotations = useViewerStore((s) => s.annotations);
-  const addAnnotation = useViewerStore((s) => s.addAnnotation);
-  const removeAnnotation = useViewerStore((s) => s.removeAnnotation);
-  const updateAnnotation = useViewerStore((s) => s.updateAnnotation);
+  // [refactor jul11 P2.2⑥] Annotation data/actions now share the one chunk-seeded cache
+  // facade. This preserves the sacred overlay's data-only query subscription and keeps every
+  // existing persist/reconcile path at its original granularity.
+  const { annotations, addAnnotation, removeAnnotation, updateAnnotation } = useAnnotations();
   // [refactor jul10 P2.2④ D7] dead `addTakeoffItem` binding deleted — declared, never called.
   const keynotes = useViewerStore((s) => s.keynotes);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
@@ -1017,7 +1018,9 @@ export default memo(function AnnotationOverlay({
     const preview = useViewerStore.getState().splitPreview;
     if (!preview) return;
 
-    const currentAnnotations = useViewerStore.getState().annotations;
+    // [refactor jul11 P2.2⑥] Accept runs after an arbitrary preview lifetime, so it must read
+    // the live keyed cache here rather than closing over the render-captured annotations array.
+    const currentAnnotations = readAnnotations(qc, publicId);
     // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
     const currentItems = readTakeoffItems(qc, publicId);
     const target = currentAnnotations.find((a) => a.id === preview.targetAnnotationId);
@@ -1377,7 +1380,9 @@ export default memo(function AnnotationOverlay({
         setBucketFillLoading(true);
         setBucketFillPreview(null);
 
-        const existingPolygons = bfState.annotations
+        // [refactor jul11 P2.2⑥] Bucket-fill collision input is invocation-time state. Reading
+        // the cache bridge preserves getState freshness without resubscribing this handler.
+        const existingPolygons = readAnnotations(qc, publicId)
           .filter((a: any) => a.pageNumber === pageNumber && a.source === "takeoff"
             && a.data?.type === "area-polygon" && a.data?.vertices?.length >= 3)
           .map((a: any) => ({ vertices: a.data.vertices }));

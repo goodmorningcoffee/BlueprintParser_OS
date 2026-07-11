@@ -1,26 +1,37 @@
 // [refactor jul11 P2.2⑥] RACE-2 freeze for the annotation/window seed boundary.
 //
-// Today useChunkLoader publishes the page-window maps, loaded range, and annotations through one
-// zustand setState. C3 deliberately splits only the annotations write into TanStack Query while
-// keeping both writes in the same synchronous block. This probe freezes the user-visible contract:
+// Before C3, useChunkLoader published page-window maps, loaded range, and annotations through one
+// zustand setState. C3 split only the annotations write into TanStack Query while keeping both
+// writes in the same synchronous block. This probe freezes the user-visible contract:
 // one coherent render observes the new range + new annotations, and neither tear direction is
 // allowed: new range + old annotations OR old range + new annotations. The raw zustand subscriber
 // is the stricter ordering witness from SPEC §9: at the instant the new range publishes it reads
 // through the shared annotation seam, so a future `setState` followed by `setQueryData` fails even
-// if React batches the two notifications into a deceptively coherent commit. C3 changes only the
-// Probe's annotation subscription to useAnnotations(); `readSeededAnnotations` flips centrally.
+// if React batches the two notifications into a deceptively coherent commit. The Probe now uses a
+// real useAnnotations subscription and `readSeededAnnotations` owns imperative cache assertions.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useChunkLoader } from "@/hooks/useChunkLoader";
+import { readAnnotations, useAnnotations } from "@/queries/useAnnotations";
 import { useViewerStore } from "@/stores/viewerStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import type { ClientAnnotation } from "@/types";
 
 let qc: QueryClient;
 const fetchMock = vi.fn();
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
@@ -134,7 +145,9 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
     function Probe() {
       useChunkLoader();
       const range = useViewerStore((s) => s.loadedPageRange);
-      const annotations = useViewerStore((s) => s.annotations);
+      // [refactor jul11 P2.2⑥] Production subscription after the backing-store flip. Keeping this
+      // a real observer (not an imperative cache read) preserves the render-count half of RACE-2.
+      const { annotations } = useAnnotations();
       const keynotes = useViewerStore((s) => s.keynotes);
       snapshots.push({
         range,
@@ -191,5 +204,68 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
         keynoteTexts: ["new-keynote"],
       },
     ]);
+  });
+
+  it("keeps an in-flight response on its captured project key after a project switch", async () => {
+    const response = deferred<Response>();
+    fetchMock.mockReturnValueOnce(response.promise);
+
+    function LoaderOnly() {
+      useChunkLoader();
+      return null;
+    }
+
+    render(<LoaderOnly />, { wrapper });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // Stop the new project from dispatching its own chunk request; this test isolates the old
+    // request's late response. The broader pages-window global-state behavior belongs to domain ⑦.
+    const projectB = [annotation(99, "project-B-sentinel")];
+    act(() => {
+      useViewerStore.setState({ publicId: "project-B", numPages: 0 });
+      seedAnnotations(qc, projectB);
+    });
+
+    await act(async () => {
+      response.resolve({
+        ok: true,
+        json: async () => ({
+          from: 13,
+          to: 27,
+          pages: [],
+          annotations: [annotation(2, "late-project-A-window")],
+        }),
+      } as Response);
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(readAnnotations(qc, "pid").map((row) => row.id)).toEqual([2]),
+    );
+    expect(readAnnotations(qc, "project-B")).toEqual(projectB);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the current annotation window when a navigation chunk fetch fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 } as Response);
+    const before = readAnnotations(qc, "pid");
+
+    function LoaderOnly() {
+      useChunkLoader();
+      return null;
+    }
+
+    render(<LoaderOnly />, { wrapper });
+
+    await waitFor(() =>
+      expect(consoleError).toHaveBeenCalledWith(
+        "[useChunkLoader] Failed to load chunk:",
+        expect.objectContaining({ message: "Chunk fetch failed: 503" }),
+      ),
+    );
+    expect(readAnnotations(qc, "pid")).toBe(before);
+    expect(useViewerStore.getState().loadedPageRange).toBeNull();
+    expect(useViewerStore.getState().chunkLoading).toBe(false);
   });
 });

@@ -7,10 +7,10 @@ import { queryKeys } from "@/queries/queryKeys";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 
-// [refactor jul11 P2.2⑥] ANNOTATIONS cache facade — C2 is intentionally production-dead.
-// No consumer imports this file until C3 moves the flat, chunk-windowed annotations collection
-// out of viewerStore. Keeping extraction and wiring in separate commits gives the sacred viewer
-// path a clean revert boundary and makes "zero behavior change in C2" mechanically grep-able.
+// [refactor jul11 P2.2⑥] ANNOTATIONS cache facade. It landed production-dead in C2, then C3
+// moved the flat, chunk-windowed annotations collection out of viewerStore and wired consumers.
+// Keeping extraction and wiring in separate commits gave the sacred viewer path a clean revert
+// boundary and made C2's zero-behavior claim mechanically grep-able.
 // P2_DESIGN/ANNOTATIONS_IMPL/SPEC.md is the authoritative contract.
 //
 // EXTEND HERE:
@@ -19,7 +19,7 @@ import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 //   • live functional whole-array transform -> writeAnns(qc, publicId, updater)
 //   • future optimistic single-create       -> persistCreate(draft, options)
 //
-// Do not reach back into viewerStore.annotations after C3. `setAnnotations` is deliberately a
+// Do not reach back into the deleted viewerStore.annotations field. `setAnnotations` is deliberately a
 // VALUE replacement, while CRUD/writeAnns are functional: several existing post-await handlers
 // replace render-captured arrays and therefore have a frozen lost-update hazard (ANNOTATIONS-W1).
 // Making every write functional during the backing-store move would be a visible behavior change.
@@ -79,6 +79,26 @@ export function writeAnns(
   qc.setQueryData<ClientAnnotation[]>(
     queryKeys.annotations.all(publicId),
     (old = EMPTY_ANNOTATIONS) => updater(old),
+  );
+}
+
+/**
+ * [refactor jul11 P2.2⑥] Shared dashboard/demo bootstrap adapter.
+ *
+ * Both loaders must seed unconditionally—including an omitted/null collection becoming `[]`—so
+ * reopening the same project after a failed/partial bootstrap cannot reveal a stale cached window.
+ * `publicId` is explicit and server-canonical (`data.id` at both callers), never read from mutable
+ * route/store state. The live navigation loader has a separate same-block RACE-2 write because it
+ * must pair this domain with its pages-window zustand publication.
+ */
+export function seedAnnotationsFromBootstrap(
+  qc: QueryClient,
+  publicId: string,
+  chunk: { annotations?: ClientAnnotation[] | null } | null | undefined,
+): void {
+  qc.setQueryData<ClientAnnotation[]>(
+    queryKeys.annotations.all(publicId),
+    chunk?.annotations ?? [],
   );
 }
 

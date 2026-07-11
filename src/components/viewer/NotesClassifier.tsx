@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { persistFetch, canPersist } from "@/lib/client-persist";
@@ -29,6 +30,7 @@ type RowAction = "idle" | "promoting" | "rejecting";
  *   - Reject → append id to rejectedTextRegionIds, PATCH intelligence
  */
 export default function NotesClassifier({ onEditInParser }: NotesClassifierProps) {
+  const queryClient = useQueryClient();
   const projectId = useViewerStore((s) => s.projectId);
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
@@ -109,7 +111,7 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
         sourceTextRegionId: tr.id,
       })) as { updatedIntelligence: PageIntelligence };
       setPageIntelligence(pageNumber, payload.updatedIntelligence);
-      refreshPageCsiSpatialMap(pageNumber);
+      refreshPageCsiSpatialMap(queryClient, pageNumber);
     } catch (err) {
       setRowError(tr.id, err instanceof Error ? err.message : "Promote failed");
     } finally {
@@ -281,4 +283,3 @@ function Chip({
     </span>
   );
 }
-

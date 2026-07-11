@@ -48,11 +48,9 @@ export const queryKeys = {
   annotationGroups: {
     all: (publicId: string) => ["project", publicId, "annotationGroups"] as const,
   },
-  // ⑥ annotations — THE big one (optimistic tempId reconciliation; canvas selector hooks)
+  // ⑥ annotations — ONE flat chunk-windowed key (not per-page); optimistic temp reconciliation.
   annotations: {
     all: (publicId: string) => ["project", publicId, "annotations"] as const,
-    page: (publicId: string, pageNumber: number) =>
-      ["project", publicId, "annotations", pageNumber] as const,
   },
   // ⑦ pagesWindow (replaces useChunkLoader internals — SAME ±7/buffer/debounce)
   pagesWindow: {

@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade (items only — this
 // panel never reads groups; do not add useTakeoffGroups here).
 import { useTakeoffItems } from "@/queries/useTakeoff";
+import { takeoffRedo, takeoffUndo, useAnnotations } from "@/queries/useAnnotations";
 import { AREA_UNIT_MAP } from "@/types";
 import type { AreaPolygonData, AreaUnitSq, TakeoffTab } from "@/types";
 import { computeRealArea } from "@/lib/areaCalc";
@@ -25,9 +27,12 @@ const TAB_LABELS: Record<TakeoffTab, string> = {
 };
 
 export default function TakeoffPanel() {
+  // [refactor jul10 P2.2⑥] Providers owns one QueryClient for the app lifetime. The module actions
+  // use that stable client while re-reading current project/item/page/history state per click.
+  const qc = useQueryClient();
   const takeoffTab = useViewerStore((s) => s.takeoffTab);
   const setTakeoffTab = useViewerStore((s) => s.setTakeoffTab);
-  const annotations = useViewerStore((s) => s.annotations);
+  const { annotations } = useAnnotations();
   // [refactor jul10 P2.2④] cache-backed; the CSV debounce body below (:187-207 semantics — one
   // timer per itemId, single-column PUT body, console-only errors) is UNCHANGED and frozen
   // (TakeoffPanelFreeze TP-1/TP-2).
@@ -315,7 +320,7 @@ export default function TakeoffPanel() {
           <ColorDot color={activeItem.color} />
           <span className="text-xs font-medium flex-1 truncate">{activeItem.name}</span>
           <button
-            onClick={() => useViewerStore.getState().takeoffUndo()}
+            onClick={() => takeoffUndo(qc)}
             disabled={takeoffUndoStack.length === 0}
             className="text-xs px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-30"
             title="Undo last placement (Z)"
@@ -323,7 +328,7 @@ export default function TakeoffPanel() {
             &#8630;
           </button>
           <button
-            onClick={() => useViewerStore.getState().takeoffRedo()}
+            onClick={() => takeoffRedo(qc)}
             disabled={takeoffRedoStack.length === 0}
             className="text-xs px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-30"
             title="Redo (W)"

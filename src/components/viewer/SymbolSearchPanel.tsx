@@ -1,8 +1,11 @@
 "use client";
 
 import { useMemo, useEffect, useState, useRef, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore, useSymbolSearch, useProject, useNavigation } from "@/stores/viewerStore";
+import { readAnnotations } from "@/queries/useAnnotations";
+import { queryKeys } from "@/queries/queryKeys";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -15,6 +18,7 @@ interface SymbolSearchPanelProps {
 }
 
 export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSearchPanelProps) {
+  const queryClient = useQueryClient();
   const {
     symbolSearchActive,
     symbolSearchResults,
@@ -727,6 +731,10 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                     store.setSymbolSearchError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                     return;
                   }
+                  // [refactor jul11 P2.2⑥] LOAD-BEARING pre-await snapshot. Symbol save has a
+                  // characterized lost-update quirk: a concurrent annotation is discarded when the
+                  // response replaces this captured array. Do not turn the write below functional.
+                  const capturedAnnotations = readAnnotations(queryClient, publicId);
                   setSymbolSaving(true);
                   setSymbolSaveMsg(null);
                   try {
@@ -761,9 +769,11 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                     }
                     const data = await res.json();
                     if (data.annotations) {
-                      const current = store.annotations;
-                      const cleaned = current.filter((a) => !(a.source === "symbol-search" && pageNums.includes(a.pageNumber)));
-                      store.setAnnotations([...cleaned, ...data.annotations]);
+                      const cleaned = capturedAnnotations.filter((a) => !(a.source === "symbol-search" && pageNums.includes(a.pageNumber)));
+                      queryClient.setQueryData(
+                        queryKeys.annotations.all(publicId),
+                        [...cleaned, ...data.annotations],
+                      );
                       setSymbolSaveMsg(`Saved ${data.annotations.length} annotations`);
                       setTimeout(() => setSymbolSaveMsg(null), 3000);
                       // Clear the search UI — matches vanish from the panel

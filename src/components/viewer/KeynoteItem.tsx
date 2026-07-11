@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
+import { readAnnotations } from "@/queries/useAnnotations";
 import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import type { YoloTag } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
@@ -283,8 +284,9 @@ export default function KeynoteItem({
                 <div>
                   <label className="text-[9px] text-[var(--muted)] block">YOLO Class</label>
                   {(() => {
-                    const store = useViewerStore.getState();
-                    const yoloAnns = store.annotations.filter((a) => a.source === "yolo");
+                    // [refactor jul11 P2.2⑥] Preserve the old getState-style snapshot without
+                    // subscribing every keynote row to cache notifications; publicId is gated above.
+                    const yoloAnns = readAnnotations(queryClient, publicId).filter((a) => a.source === "yolo");
                     const groups: Record<string, { model: string; className: string; count: number }> = {};
                     for (const a of yoloAnns) {
                       const model = (a as any).data?.modelName || "unknown";

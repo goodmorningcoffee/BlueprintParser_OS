@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { unionBboxes } from "@/lib/specnote-parser";
@@ -27,6 +28,7 @@ interface PreviewSpec {
  *     for ship 1; iterates post-ship).
  */
 export default function SpecParser() {
+  const queryClient = useQueryClient();
   const projectId = useViewerStore((s) => s.projectId);
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
@@ -166,7 +168,7 @@ export default function SpecParser() {
         csiTags: p.csiTags ?? [],
       });
       setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
-      refreshPageCsiSpatialMap(pageNumber);
+      refreshPageCsiSpatialMap(queryClient, pageNumber);
       resetSpecParse();
       setPreview(null);
     } catch (err) {
@@ -206,7 +208,7 @@ export default function SpecParser() {
         category: "spec-dense-columns",
       });
       setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
-      refreshPageCsiSpatialMap(pageNumber);
+      refreshPageCsiSpatialMap(queryClient, pageNumber);
       setParagraphBatch([]);
       resetSpecParse();
       setPreview(null);

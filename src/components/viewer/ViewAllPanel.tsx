@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useViewerStore,
   usePanels,
@@ -14,6 +15,7 @@ import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 // [refactor jul10 P2.2⑤] annotation groups: zustand → TanStack cache facade (import-swap-only
 // surgery; destructure + edit/toggle/bulk handler bodies byte-identical).
 import { useAnnotationGroups } from "@/queries/useAnnotationGroups";
+import { readAnnotations, useAnnotations } from "@/queries/useAnnotations";
 import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem, TextAnnotation, ParsedRegion, ScheduleData, KeynoteData, LegendData, NotesData, SpecData } from "@/types";
 import TreeSection from "./TreeSection";
 import MarkupDialog from "./MarkupDialog";
@@ -113,11 +115,12 @@ function setTextAnnotationTypesHiddenBulk(types: string[], hide: boolean) {
 }
 
 export default function ViewAllPanel() {
+  const queryClient = useQueryClient();
   const { toggleViewAllPanel } = usePanels();
 
-  // Direct selectors — matches TakeoffPanel.tsx:28 convention for takeoff state
-  // + picks up the visibility fields that aren't in a slice hook.
-  const annotations = useViewerStore((s) => s.annotations);
+  // [refactor jul11 P2.2⑥] Domain rows subscribe through the publicId-keyed cache facade;
+  // visibility/filter controls below remain zustand-owned UI state.
+  const { annotations } = useAnnotations();
   // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (data only —
   // this panel writes nothing to takeoff; visibility toggles below stay zustand).
   const { takeoffItems } = useTakeoffItems();
@@ -316,7 +319,10 @@ export default function ViewAllPanel() {
     setPage(pageNumber);
     if (focusId === undefined) return;
     setFocusAnnotationId(focusId);
-    const ann = useViewerStore.getState().annotations.find((a) => a.id === focusId);
+    const publicId = useViewerStore.getState().publicId;
+    // [refactor jul11 P2.2⑥] Navigation is a handler-time lookup: read the live cache after the
+    // state updates above instead of closing over the panel's last rendered annotation array.
+    const ann = readAnnotations(queryClient, publicId).find((a) => a.id === focusId);
     if (ann) {
       useViewerStore.getState().setLlmHighlight({
         pageNumber: ann.pageNumber,

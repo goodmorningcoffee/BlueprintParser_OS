@@ -6,6 +6,7 @@ import { useViewerStore } from "@/stores/viewerStore";
 // below is UNCHANGED — it POSTs the NUMERIC projectId (frozen pre-existing quirk vs CountTab's
 // publicId body to the same endpoint; owner item, SPEC §8.3 — pinned by BF-3, do not "fix").
 import { useTakeoffItems } from "@/queries/useTakeoff";
+import { useAnnotations } from "@/queries/useAnnotations";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientTakeoffItem } from "@/types";
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -24,7 +25,9 @@ export default function BucketFillAssignDialog({
   cssScale,
 }: BucketFillAssignDialogProps) {
   const { takeoffItems, addTakeoffItem } = useTakeoffItems();
-  const commitBucketFillToItem = useViewerStore((s) => s.commitBucketFillToItem);
+  // [refactor jul10 P2.2⑥] Facade commit writes the annotation cache before consuming the
+  // pending zustand polygon; both create-and-assign and existing-item paths share that ordering.
+  const { commitBucketFill } = useAnnotations();
   const setBucketFillPendingPolygon = useViewerStore((s) => s.setBucketFillPendingPolygon);
   const publicId = useViewerStore((s) => s.publicId);
   const projectId = useViewerStore((s) => s.projectId);
@@ -91,7 +94,7 @@ export default function BucketFillAssignDialog({
         item = await res.json();
       }
       addTakeoffItem(item);
-      commitBucketFillToItem(item);
+      commitBucketFill(item);
     } catch (err) {
       console.error("Failed to create area item:", err);
       const msg = err instanceof Error ? err.message : "Failed to create item";
@@ -129,7 +132,7 @@ export default function BucketFillAssignDialog({
           {areaItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => commitBucketFillToItem(item)}
+              onClick={() => commitBucketFill(item)}
               style={{
                 display: "flex",
                 alignItems: "center",

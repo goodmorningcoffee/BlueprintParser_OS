@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
+import { useAnnotations } from "@/queries/useAnnotations";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { ColorDot, TakeoffEditPanel } from "./TakeoffShared";
@@ -65,13 +66,14 @@ function ScaleStatus() {
 
 // ─── Linear tab main component ─────────────────────────────
 export default memo(function LinearTab() {
-  const annotations = useViewerStore((s) => s.annotations);
+  // [refactor jul10 P2.2⑥] Annotation collection is cache-backed. The value setter is
+  // load-bearing: delete/rename intentionally replace this render-captured array after awaits.
+  const { annotations, setAnnotations } = useAnnotations();
   // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (dual
   // reader). Handler bodies UNCHANGED — orderings frozen per TAKEOFF_IMPL/SPEC.md §3.
   const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
-  const setAnnotations = useViewerStore((s) => s.setAnnotations);
   const publicId = useViewerStore((s) => s.publicId);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const isDemo = useViewerStore((s) => s.isDemo);

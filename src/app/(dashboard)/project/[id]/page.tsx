@@ -13,6 +13,8 @@ import { seedSummariesCache } from "@/queries/useSummaries";
 import { seedTakeoffFromBootstrap } from "@/queries/useTakeoff";
 // [refactor jul10 P2.2⑤] annotation groups moved zustand → TanStack cache; loader seeds the one key.
 import { seedAnnotationGroupsFromBootstrap } from "@/queries/useAnnotationGroups";
+// [refactor jul11 P2.2⑥] annotations are chunk-seeded into one project cache entry.
+import { seedAnnotationsFromBootstrap } from "@/queries/useAnnotations";
 import PDFViewer from "@/components/viewer/PDFViewer";
 import type {
   ClientAnnotation,
@@ -193,8 +195,21 @@ export default function ProjectPage() {
       await seedAnnotationGroupsFromBootstrap(queryClient, data.id, groupsRes);
 
       // ─── Hydrate initial chunk (already fetched in parallel above) ───
+      if (!chunkRes.ok) {
+        // Unconditional empty seed mirrors the old reset-before-load behavior. Without it, a
+        // same-project reopen after a failed chunk request could expose a stale cached window.
+        seedAnnotationsFromBootstrap(queryClient, data.id, null);
+      }
       if (chunkRes.ok) {
-        const chunk: ChunkResponse = await chunkRes.json();
+        let chunk: ChunkResponse;
+        try {
+          chunk = await chunkRes.json();
+        } catch (parseError) {
+          // Preserve the existing fatal JSON-parse path while clearing this independently-owned
+          // cache entry before the error screen is shown.
+          seedAnnotationsFromBootstrap(queryClient, data.id, null);
+          throw parseError;
+        }
 
         const keynoteMap: Record<number, KeynoteShapeData[]> = {};
         const csiMap: Record<number, CsiCode[]> = {};
@@ -210,12 +225,15 @@ export default function ProjectPage() {
           if (page.pageIntelligence) intelMap[page.pageNumber] = page.pageIntelligence;
         }
 
+        // [refactor jul11 P2.2⑥] Cache FIRST, then the related pages-window maps in the SAME
+        // synchronous block. Do not insert an await: seed-before-reveal and RACE-2 both depend on
+        // the render seeing the new annotation window and loaded range together.
+        seedAnnotationsFromBootstrap(queryClient, data.id, chunk);
         useViewerStore.setState(() => ({
           keynotes: keynoteMap,
           csiCodes: csiMap,
           textAnnotations: textAnnMap,
           pageIntelligence: intelMap,
-          annotations: chunk.annotations,
           loadedPageRange: { from: 1, to: chunk.pages.length > 0 ? Math.max(...chunk.pages.map((p: any) => p.pageNumber)) : Math.min(data.numPages || 1, 15) },
         }));
 

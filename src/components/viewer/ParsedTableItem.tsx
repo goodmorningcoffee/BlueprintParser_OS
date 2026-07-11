@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
+import { readAnnotations } from "@/queries/useAnnotations";
 // [refactor jul6 S029] apiErrorMessage: table-structure non-OK now serves the envelope
 import { promoteParsedRegion, canPersist, apiErrorMessage } from "@/lib/client-persist";
 import type { YoloTag } from "@/types";
@@ -556,8 +557,9 @@ export default memo(function ParsedTableItem({
                 <div>
                   <label className="text-[9px] text-[var(--muted)] block">YOLO Class</label>
                   {(() => {
-                    const store = useViewerStore.getState();
-                    const yoloAnns = store.annotations.filter((a) => a.source === "yolo");
+                    // [refactor jul11 P2.2⑥] Preserve this per-item render-time snapshot without
+                    // adding one cache subscription per table row; parent state still drives rerenders.
+                    const yoloAnns = readAnnotations(queryClient, publicId).filter((a) => a.source === "yolo");
                     const groups: Record<string, { model: string; className: string; count: number }> = {};
                     for (const a of yoloAnns) {
                       const model = (a as any).data?.modelName || "unknown";

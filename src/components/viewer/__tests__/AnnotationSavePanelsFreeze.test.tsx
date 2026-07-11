@@ -9,7 +9,7 @@
 // divergence point. A second,
 // models-locked DetectionPanel is deliberately used as the annotation observer instead of reading
 // `useViewerStore.getState().annotations`, so the assertions exercise a real subscribed production
-// read path and remain backing-agnostic after C3.
+// read path and stayed backing-agnostic through C3.
 //
 // The default global fetch mock is FAIL-LOUD. Each success/failure case opens only the exact raw
 // `/api/annotations` POST it owns; a future accidental GET, persist-helper swap, or extra request

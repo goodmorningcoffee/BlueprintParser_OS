@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
@@ -37,6 +38,7 @@ interface PreviewGrid {
  *     existing draw-rect gate, extractGridFromBBs builds the grid
  */
 export default function NotesParser() {
+  const queryClient = useQueryClient();
   const projectId = useViewerStore((s) => s.projectId);
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
@@ -316,7 +318,7 @@ export default function NotesParser() {
         category: "notes",
       });
       setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
-      refreshPageCsiSpatialMap(pageNumber);
+      refreshPageCsiSpatialMap(queryClient, pageNumber);
       setParagraphBatch([]);
       resetNotesParse();
       setPreview(null);
@@ -362,7 +364,7 @@ export default function NotesParser() {
         csiTags: grid.csiTags ?? [],
       });
       setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
-      refreshPageCsiSpatialMap(pageNumber);
+      refreshPageCsiSpatialMap(queryClient, pageNumber);
       resetNotesParse();
       setPreview(null);
     } catch (err) {
@@ -659,4 +661,3 @@ export default function NotesParser() {
     </div>
   );
 }
-
