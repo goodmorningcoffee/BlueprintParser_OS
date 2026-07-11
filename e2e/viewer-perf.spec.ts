@@ -33,6 +33,34 @@ import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 
 const world = JSON.parse(readFileSync("e2e/.state/world.json", "utf8"));
 
+// [refactor jul11 P2.2⑨] The old perf world had no tags, so the final server-collection
+// migration's canvas subscription gate was vacuous. Intercept only the viewer metadata response
+// and inject a deterministic, realistic project-wide graph: 120 mappings × 30 scored instances
+// spread across all 100 pages. Keeping this in the spec (rather than DB seed state) lets exact
+// detached pre/post commits run against the identical payload and leaves other E2E cases untouched.
+const PERF_YOLO_TAGS = Array.from({ length: 120 }, (_, tagIndex) => ({
+  id: `perf-tag-${tagIndex}`,
+  name: `D-${String(tagIndex + 1).padStart(3, "0")}`,
+  tagText: `D-${String(tagIndex + 1).padStart(3, "0")}`,
+  yoloClass: tagIndex % 3 === 0 ? "door_single" : tagIndex % 3 === 1 ? "window" : "fixture",
+  yoloModel: "perf-fixture-model",
+  source: tagIndex % 5 === 0 ? "keynote" : "schedule",
+  scope: tagIndex % 5 === 0 ? "page" : "project",
+  ...(tagIndex % 5 === 0 ? { pageNumber: (tagIndex % world.pages) + 1 } : {}),
+  instances: Array.from({ length: 30 }, (_, instanceIndex) => {
+    const pageNumber = ((tagIndex * 7 + instanceIndex * 11) % world.pages) + 1;
+    const x = ((tagIndex * 13 + instanceIndex * 3) % 80) / 100;
+    const y = ((tagIndex * 5 + instanceIndex * 17) % 80) / 100;
+    return {
+      pageNumber,
+      annotationId: -1,
+      bbox: [x, y, Math.min(x + 0.04, 0.99), Math.min(y + 0.03, 0.99)],
+      confidence: 0.9 + (instanceIndex % 10) / 100,
+      confidenceTier: "high",
+    };
+  }),
+}));
+
 async function settleFrames(page: import("@playwright/test").Page, n = 2) {
   await page.evaluate(
     (count) =>
@@ -158,6 +186,21 @@ test("viewer perf baseline on the synthetic 100-page set", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (e) => pageErrors.push(String(e)));
 
+  await page.route(`**/api/projects/${world.publicId}`, async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        projectIntelligence: {
+          ...(body.projectIntelligence ?? {}),
+          yoloTags: PERF_YOLO_TAGS,
+        },
+      },
+    });
+  });
+
   // ── login (golden path: real credentials form) ──
   await page.goto("/login");
   await page.getByPlaceholder("Email").first().fill(world.email);
@@ -194,7 +237,13 @@ test("viewer perf baseline on the synthetic 100-page set", async ({ page }) => {
     date: new Date().toISOString().slice(0, 10),
     mode: `dev-turbopack-offline-stub · median-of-${RUNS}`,
     runs: RUNS,
-    fixture: { pages: 100, approxMB: 62.6, underlays: "absent (404) — pure pdf.js canvas path" },
+    fixture: {
+      pages: 100,
+      approxMB: 62.6,
+      yoloTags: PERF_YOLO_TAGS.length,
+      yoloInstances: PERF_YOLO_TAGS.reduce((sum, tag) => sum + tag.instances.length, 0),
+      underlays: "absent (404) — pure pdf.js canvas path",
+    },
     navProtocol: "per-step sidebar scroll + thumbnail click (virtualized list)",
     coldOpenWarmMs: median(samples.map((s) => s.coldOpenWarmMs)),
     nav20Ms: median(samples.map((s) => s.nav20Ms)),

@@ -500,9 +500,8 @@ interface ViewerState {
   /** Shared Cmd+C/V clipboard. Persists across parser-mode switches +
    *  tool exits; cleared only by resetProjectData. */
   paragraphClipboard: ParagraphTemplate | null;
+  setParagraphClipboard: (t: ParagraphTemplate | null) => void;
   // ─── YOLO Tag UI state (collection lives in Query) ──────
-
-  // ─── YOLO Tags ─────────────────────────────────────────
   // [refactor jul11 P2.2⑨] The project collection + CRUD/persistence live in
   // queries/useYoloTags.ts. Only ephemeral selection/tool/browse state remains here.
   activeYoloTagId: string | null;
