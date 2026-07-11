@@ -503,7 +503,7 @@ function abortAwareFetch(
   settle: (attempt: number) => { ok: boolean; status?: number; body?: unknown },
 ) {
   let attempt = 0;
-  return vi.fn((_url: string, opts?: { signal?: AbortSignal }) =>
+  return vi.fn((_url: string, opts?: RequestInit) =>
     new Promise((resolve, reject) => {
       const signal = opts?.signal;
       const fail = () => {
@@ -524,6 +524,90 @@ function abortAwareFetch(
       }, 0);
     }),
   );
+}
+
+// Q-21 needs a request that remains pending across a deliberately unrelated parent rerender. Q-19
+// settles on the next macrotask, so it cannot detect an unstable effect dependency aborting the
+// request later. This controller-aware transport exposes that exact cleanup and suppresses a
+// success resolution after abort, matching native fetch rather than a promise-only mock.
+function controlledAbortAwareFetch(body: unknown) {
+  let capturedSignal: AbortSignal | undefined;
+  let resolveRequest: (() => void) | null = null;
+  const fetch = vi.fn((_url: string, opts?: RequestInit) =>
+    new Promise((resolve, reject) => {
+      capturedSignal = opts?.signal ?? undefined;
+      const fail = () => {
+        const error = new Error("The operation was aborted.");
+        error.name = "AbortError";
+        reject(error);
+      };
+      if (capturedSignal?.aborted) {
+        fail();
+        return;
+      }
+      capturedSignal?.addEventListener("abort", fail, { once: true });
+      resolveRequest = () => {
+        if (capturedSignal?.aborted) return;
+        resolve({ ok: true, status: 200, json: async () => body });
+      };
+    }),
+  );
+  return {
+    fetch,
+    signal: () => capturedSignal,
+    resolve: () => {
+      if (!resolveRequest) throw new Error("Mapping request has not started");
+      resolveRequest();
+    },
+  };
+}
+
+// Q-23 needs individually controlled mapping attempts. Keeping the abort signal and resolver
+// per call lets the tests distinguish "the old request was correctly retired" from both dangerous
+// alternatives: retaining stale work, or aborting it without dispatching the required replacement.
+function controlledAbortAwareFetchSequence() {
+  type PendingRequest = {
+    url: string;
+    opts?: RequestInit;
+    signal?: AbortSignal;
+    resolve: (body: unknown) => void;
+  };
+  const requests: PendingRequest[] = [];
+  const fetch = vi.fn((url: string, opts?: RequestInit) =>
+    new Promise((resolve, reject) => {
+      const signal = opts?.signal ?? undefined;
+      const fail = () => {
+        const error = new Error("The operation was aborted.");
+        error.name = "AbortError";
+        reject(error);
+      };
+      const request: PendingRequest = {
+        url,
+        opts,
+        signal,
+        resolve: (body) => {
+          if (signal?.aborted) return;
+          resolve({ ok: true, status: 200, json: async () => body });
+        },
+      };
+      requests.push(request);
+      if (signal?.aborted) {
+        fail();
+        return;
+      }
+      signal?.addEventListener("abort", fail, { once: true });
+    }),
+  );
+  const request = (index: number) => {
+    const found = requests[index];
+    if (!found) throw new Error(`Mapping request ${index + 1} has not started`);
+    return found;
+  };
+  return {
+    fetch,
+    request,
+    resolve: (index: number, body: unknown) => request(index).resolve(body),
+  };
 }
 
 // One matched YOLO instance per page → isYoloOnly builds a single line item; the review summary
@@ -569,23 +653,339 @@ describe("AutoQtoTab — mapping completes and advances to review (Q-19)", () =>
   });
 });
 
+describe("AutoQtoTab — unrelated rerender cannot abort active mapping (Q-21)", () => {
+  it("page-label publication while POST is pending keeps one request alive through review", async () => {
+    setViewerStoreStateForTest({ isDemo: true });
+    seedQtoWorkflows([mapWorkflow(17)]);
+    const controlled = controlledAbortAwareFetch({ results: MAP_RESULTS });
+    vi.stubGlobal("fetch", controlled.fetch);
+    renderTab();
+
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
+    fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
+    await waitFor(() => expect(screen.getByText("Mapping 2 tags")).toBeInTheDocument());
+    expect(controlled.fetch).toHaveBeenCalledTimes(1);
+    expect(controlled.fetch.mock.calls[0][0]).toBe("/api/projects/pid/map-tags-batch");
+    expect(JSON.parse(String(controlled.fetch.mock.calls[0][1]?.body))).toEqual({
+      tags: ["door_single"],
+      yoloClass: "door_single",
+      itemType: "yolo-only",
+      strictnessMode: "strict",
+    });
+
+    // AutoQtoTab reads pageNames, but MappingStep's request inputs are unchanged. For yolo-only
+    // workflows `effectiveTags` was rebuilt as a fresh one-element array on this rerender; effect
+    // cleanup then aborted the sole request while hasRun blocked a replacement, leaving the spinner
+    // forever. The signal assertion gives an immediate, source-discriminating RED failure.
+    act(() => useSessionStore.getState().setPageNames({ 1: "Unrelated label update" }));
+    expect(controlled.fetch).toHaveBeenCalledTimes(1);
+    expect(controlled.signal()).toBeDefined();
+    expect(controlled.signal()?.aborted).toBe(false);
+
+    await act(async () => controlled.resolve());
+    await waitFor(
+      () => expect(screen.getByText(/instances of 1 tags/)).toBeInTheDocument(),
+      { timeout: 3_000 },
+    );
+    expect(screen.queryByText("Mapping 2 tags")).not.toBeInTheDocument();
+  });
+});
+
+describe("AutoQtoTab — authoritative workflow reconciliation cannot abort mapping (Q-22)", () => {
+  it("fresh semantically-equal PUT row keeps the optimistic map POST alive through review", async () => {
+    setViewerStoreStateForTest({
+      isDemo: false,
+      numPages: 5,
+      pageNames: { 4: "A-401" },
+    });
+    const configureWorkflow = mapWorkflow(18);
+    configureWorkflow.step = "confirm-tags";
+    configureWorkflow.userEdits = {
+      quantityOverrides: {},
+      selectedPages: [4],
+    };
+
+    const controlled = controlledAbortAwareFetch({ results: MAP_RESULTS });
+    const network = vi.fn((url: string, opts?: { signal?: AbortSignal }) => {
+      if (url === `/api/qto-workflows?projectId=pid`) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [configureWorkflow],
+        });
+      }
+      if (url === `/api/projects/pid/map-tags-batch`) {
+        return controlled.fetch(url, opts);
+      }
+      throw new Error(`unexpected Q-22 fetch: ${String(url)}`);
+    });
+    vi.stubGlobal("fetch", network);
+
+    let resolvePut!: () => void;
+    persistFetchMock.mockImplementationOnce((_url, updates) =>
+      new Promise((resolve) => {
+        // A real server JSON round-trip returns fresh nested identities even when every value is
+        // semantically identical to the optimistic row installed immediately before this PUT.
+        const authoritative = JSON.parse(JSON.stringify({
+          ...configureWorkflow,
+          ...(updates as object),
+          // Not part of mapping identity. Completion must merge onto this latest server row rather
+          // than the optimistic render snapshot that originally dispatched the request.
+          materialLabel: "Server Doors",
+        })) as QtoWorkflow;
+        resolvePut = () => resolve(authoritative);
+      }),
+    );
+
+    renderTab();
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
+    fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
+    expect(screen.getByText("Step: confirm-tags")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Run Mapping (count all door_single, 1 pages)",
+    }));
+    await waitFor(() => expect(screen.getByText("Mapping 2 tags")).toBeInTheDocument());
+    expect(controlled.fetch).toHaveBeenCalledTimes(1);
+    expect(persistFetchMock).toHaveBeenCalledTimes(1);
+    expect(resolvePut).toBeTypeOf("function");
+
+    // Reconciliation replaces both the active workflow and collection row with fresh objects.
+    // It must not restart/abort the already-owned semantic mapping request.
+    await act(async () => {
+      resolvePut();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(controlled.fetch).toHaveBeenCalledTimes(1);
+    expect(controlled.signal()).toBeDefined();
+    expect(controlled.signal()?.aborted).toBe(false);
+
+    await act(async () => controlled.resolve());
+    await waitFor(
+      () => expect(screen.getByText(/instances of 1 tags/)).toBeInTheDocument(),
+      { timeout: 3_000 },
+    );
+    expect(screen.getByText("Server Doors")).toBeInTheDocument();
+    expect(screen.queryByText("Mapping 2 tags")).not.toBeInTheDocument();
+  });
+});
+
+describe("AutoQtoTab — changed mapping inputs replace the owned request (Q-23)", () => {
+  it("same workflow id + new YOLO class aborts the old POST and only the replacement reaches review", async () => {
+    setViewerStoreStateForTest({ isDemo: true });
+    const original = mapWorkflow(19);
+    seedQtoWorkflows([original]);
+    const controlled = controlledAbortAwareFetchSequence();
+    vi.stubGlobal("fetch", controlled.fetch);
+    renderTab();
+
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
+    fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
+    await waitFor(() => expect(controlled.fetch).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(controlled.request(0).opts?.body))).toEqual({
+      tags: ["door_single"],
+      yoloClass: "door_single",
+      itemType: "yolo-only",
+      strictnessMode: "strict",
+    });
+    expect(controlled.request(0).signal?.aborted).toBe(false);
+
+    // This is not reconciliation identity churn: the active row keeps the same durable id but its
+    // semantic request input genuinely changes. Publishing both views models an authoritative row
+    // update while preserving the active working-draft contract of the facade.
+    const changed = JSON.parse(JSON.stringify({
+      ...original,
+      yoloClassFilter: "window",
+    })) as QtoWorkflow;
+    act(() => {
+      qc.setQueryData(queryKeys.qtoWorkflows.all("pid"), [changed]);
+      useViewerStore.getState().setActiveQtoWorkflow(changed);
+    });
+
+    await waitFor(() => expect(controlled.fetch).toHaveBeenCalledTimes(2));
+    expect(controlled.request(0).signal?.aborted).toBe(true);
+    expect(controlled.request(1).signal?.aborted).toBe(false);
+    expect(JSON.parse(String(controlled.request(1).opts?.body))).toEqual({
+      tags: ["window"],
+      yoloClass: "window",
+      itemType: "yolo-only",
+      strictnessMode: "strict",
+    });
+    expect(screen.getByText("Step: map-tags")).toBeInTheDocument();
+
+    // An aborted native fetch cannot publish its stale result. Exercising its resolver explicitly
+    // proves the review transition below is owned by request #2, not a loose promise-only mock.
+    await act(async () => {
+      controlled.resolve(0, { results: MAP_RESULTS });
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Step: map-tags")).toBeInTheDocument();
+    expect(screen.getByText("Mapping 2 tags")).toBeInTheDocument();
+    expect(screen.queryByText(/instances of 1 tags/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/operation was aborted/i)).not.toBeInTheDocument();
+
+    await act(async () => {
+      controlled.resolve(1, {
+        results: {
+          window: [
+            { pageNumber: 3, bbox: [0.1, 0.2, 0.3, 0.4], confidence: 1, confidenceTier: "high" },
+          ],
+        },
+      });
+    });
+    await waitFor(() => expect(screen.getByText("Step: review")).toBeInTheDocument());
+    expect(screen.getByText("1 instances of 1 tags across 1 pages")).toBeInTheDocument();
+    expect(screen.getByText("window")).toBeInTheDocument();
+    expect(controlled.fetch).toHaveBeenCalledTimes(2);
+    expect(useViewerStore.getState().activeQtoWorkflow).toMatchObject({
+      id: 19,
+      step: "review",
+      yoloClassFilter: "window",
+    });
+    expect(useViewerStore.getState().activeQtoWorkflow?.lineItems?.[0]?.tag).toBe("window");
+  });
+});
+
+describe("AutoQtoTab — mapping ownership ends on unmount (Q-25)", () => {
+  it("unmount aborts the pending request", async () => {
+    setViewerStoreStateForTest({ isDemo: true });
+    seedQtoWorkflows([mapWorkflow(21)]);
+    const controlled = controlledAbortAwareFetchSequence();
+    vi.stubGlobal("fetch", controlled.fetch);
+    const view = renderTab();
+
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
+    fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
+    await waitFor(() => expect(controlled.fetch).toHaveBeenCalledTimes(1));
+    expect(controlled.request(0).signal?.aborted).toBe(false);
+
+    view.unmount();
+
+    expect(controlled.request(0).signal?.aborted).toBe(true);
+  });
+});
+
+describe("AutoQtoTab — schedule-backed mapping builds per-tag review rows (Q-26)", () => {
+  it("trims schedule tags, preserves row order/specs, and retains an unmatched tag", async () => {
+    setViewerStoreStateForTest({ isDemo: true });
+    seedQtoWorkflows([wf({
+      id: 22,
+      step: "map-tags",
+      itemType: "yolo-with-inner-text",
+      yoloClassFilter: "door_single",
+      parsedSchedule: {
+        headers: ["MARK", "WIDTH", "RATING"],
+        rows: [
+          { MARK: " D-102 ", WIDTH: "4-0", RATING: "90 min" },
+          { MARK: "D-101", WIDTH: "3-0", RATING: "20 min" },
+        ],
+        tagColumn: "MARK",
+        tableName: "DOOR SCHEDULE",
+        scheduleCategory: "door-schedule",
+        sourcePageNumber: 4,
+      },
+    })]);
+    const controlled = controlledAbortAwareFetch({
+      results: {
+        "D-102": [{
+          pageNumber: 5,
+          bbox: [0.1, 0.2, 0.3, 0.4],
+          confidence: 1,
+          confidenceTier: "high",
+        }],
+      },
+    });
+    vi.stubGlobal("fetch", controlled.fetch);
+    renderTab();
+
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
+    fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
+    await waitFor(() => expect(controlled.fetch).toHaveBeenCalledTimes(1));
+    expect(controlled.fetch.mock.calls[0][0]).toBe("/api/projects/pid/map-tags-batch");
+    expect(controlled.fetch.mock.calls[0][1]).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(JSON.parse(String(controlled.fetch.mock.calls[0][1]?.body))).toEqual({
+      tags: ["D-102", "D-101"],
+      yoloClass: "door_single",
+      itemType: "yolo-with-inner-text",
+      strictnessMode: "strict",
+    });
+
+    await act(async () => controlled.resolve());
+    await waitFor(() => expect(screen.getByText("Step: review")).toBeInTheDocument());
+
+    const active = useViewerStore.getState().activeQtoWorkflow;
+    expect(active).toMatchObject({ id: 22, step: "review" });
+    expect(active?.lineItems).toMatchObject([
+      {
+        tag: "D-102",
+        specs: { WIDTH: "4-0", RATING: "90 min" },
+        autoQuantity: 1,
+        instances: [{
+          pageNumber: 5,
+          bbox: [0.1, 0.2, 0.3, 0.4],
+          confidence: 1,
+          confidenceTier: "high",
+        }],
+        pages: [5],
+        flags: [],
+        notes: "",
+      },
+      {
+        tag: "D-101",
+        specs: { WIDTH: "3-0", RATING: "20 min" },
+        autoQuantity: 0,
+        instances: [],
+        pages: [],
+        flags: ["not-found"],
+        notes: "",
+      },
+    ]);
+    expect(active?.lineItems?.[0].specs).not.toHaveProperty("MARK");
+    expect(active?.lineItems?.[1].specs).not.toHaveProperty("MARK");
+  });
+});
+
 describe("AutoQtoTab — Retry re-arms a failed mapping (Q-20)", () => {
   it("first attempt errors → Retry → second attempt completes to review (retryTick pin)", async () => {
     setViewerStoreStateForTest({ isDemo: true });
     seedQtoWorkflows([mapWorkflow(16)]);
     // attempt 1 → server error (shows Retry); attempt 2 → success
-    vi.stubGlobal(
-      "fetch",
-      abortAwareFetch((n) =>
-        n === 1 ? { ok: false, status: 500 } : { ok: true, body: { results: MAP_RESULTS } },
-      ),
+    const retryFetch = abortAwareFetch((n) =>
+      n === 1 ? { ok: false, status: 500 } : { ok: true, body: { results: MAP_RESULTS } },
     );
+    vi.stubGlobal("fetch", retryFetch);
     renderTab();
 
     await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
     fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
     await waitFor(() => expect(screen.getByText("Retry")).toBeInTheDocument());
+    expect(retryFetch).toHaveBeenCalledTimes(1);
+    const expectedRequest = {
+      tags: ["door_single"],
+      yoloClass: "door_single",
+      itemType: "yolo-only",
+      strictnessMode: "strict",
+    };
+    expect(retryFetch.mock.calls[0][0]).toBe("/api/projects/pid/map-tags-batch");
+    expect(retryFetch.mock.calls[0][1]).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(JSON.parse(String(retryFetch.mock.calls[0][1]?.body))).toEqual(expectedRequest);
+
     fireEvent.click(screen.getByText("Retry"));
+    await waitFor(() => expect(retryFetch).toHaveBeenCalledTimes(2));
+    expect(retryFetch.mock.calls[1][0]).toBe("/api/projects/pid/map-tags-batch");
+    expect(retryFetch.mock.calls[1][1]).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(JSON.parse(String(retryFetch.mock.calls[1][1]?.body))).toEqual(expectedRequest);
     // Full-suite worker contention can delay the abort-aware zero-timeout mock beyond RTL's 1s
     // default even though the focused case completes immediately. This remains an eventual-state
     // contract, not a latency assertion (the 3s ceiling only removes scheduler flake).
@@ -593,6 +993,7 @@ describe("AutoQtoTab — Retry re-arms a failed mapping (Q-20)", () => {
       () => expect(screen.getByText(/instances of 1 tags/)).toBeInTheDocument(),
       { timeout: 3_000 },
     );
+    expect(retryFetch).toHaveBeenCalledTimes(2);
   });
 });
 

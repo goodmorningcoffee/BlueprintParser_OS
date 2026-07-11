@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -1007,15 +1007,10 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
   publicId: string;
 }) {
   const [error, setError] = useState<string | null>(null);
-  // [refactor jul10 MappingStep self-abort fix] The old code kept a `mapping` boolean that served as
-  // BOTH the re-entrancy guard AND an effect dependency, while the effect body called setMapping(true)
-  // — so the effect re-ran on its own state write, and the cleanup it returned (controller.abort())
-  // aborted the just-dispatched map-tags POST. The AbortError is swallowed below, so the spinner spun
-  // forever and completion was nondeterministic. `hasRun` already dedupes the single run, so the flag
-  // was redundant; `retryTick` restores the one thing `mapping`'s dep membership did on purpose —
-  // re-arm the effect when the user clicks Retry.
+  // [refactor jul11 P2.4 B4] retryTick is an explicit attempt dimension. Request lifecycle below is
+  // keyed by semantic wire/build inputs—not React object identities—so an authoritative PUT that
+  // returns fresh-but-equivalent workflow objects cannot abort the only mapping attempt.
   const [retryTick, setRetryTick] = useState(0);
-  const hasRun = useRef(false);
 
   const schedule = workflow.parsedSchedule;
   const tags = useMemo(() => {
@@ -1032,38 +1027,134 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
   // with, but MappingStep later builds just ONE line item keyed by the
   // yolo class name (not N duplicated line items).
   const isYoloOnly = workflow.itemType === "yolo-only";
-  const effectiveTags = isYoloOnly
-    ? (workflow.yoloClassFilter ? [workflow.yoloClassFilter] : [])
-    : tags;
+  // The effect cleanup aborts its request, so this derived array is part of request identity and
+  // must stay referentially stable across unrelated parent renders (for example page-label cache
+  // updates). A fresh yolo-only array here used to abort the sole request while hasRun blocked a
+  // replacement, recreating the spinner-forever failure after the original mapping-state fix.
+  const effectiveTags = useMemo(
+    () => isYoloOnly
+      ? (workflow.yoloClassFilter ? [workflow.yoloClassFilter] : [])
+      : tags,
+    [isYoloOnly, tags, workflow.yoloClassFilter],
+  );
+
+  const mappingRequest = useMemo(() => ({
+    tags: effectiveTags,
+    yoloClass: workflow.yoloClassFilter || undefined,
+    itemType: workflow.itemType,
+    tagShapeClass: workflow.tagShapeClass || undefined,
+    selectedPages,
+    // Auto-QTO always runs strict. Only tier=high matches survive — reproduces the pre-Phase-2
+    // applyExclusionFilter behavior (inside_table/title_block/outside_drawings are dropped).
+    strictnessMode: "strict" as const,
+  }), [
+    effectiveTags,
+    workflow.yoloClassFilter,
+    workflow.itemType,
+    workflow.tagShapeClass,
+    selectedPages,
+  ]);
+
+  // Canonical primitive identity. The schedule projection includes only fields used to build the
+  // eventual line items, and projects rows through header order so a server JSON round-trip with
+  // fresh objects/property insertion order stays equal while a real mapping input edit restarts.
+  const semanticRunKey = useMemo(() => {
+    const headers = schedule?.headers ?? [];
+    const projectionHeaders = schedule?.tagColumn && !headers.includes(schedule.tagColumn)
+      ? [...headers, schedule.tagColumn]
+      : headers;
+    const scheduleProjection = schedule
+      ? [
+          schedule.tagColumn,
+          headers,
+          (schedule.rows as Record<string, string>[]).map((row) =>
+            projectionHeaders.map((header) => row[header] ?? null),
+          ),
+        ]
+      : null;
+    return JSON.stringify([
+      publicId,
+      workflow.id,
+      workflow.itemType,
+      workflow.yoloClassFilter ?? null,
+      workflow.tagShapeClass ?? null,
+      selectedPages === undefined ? ["all"] : ["selected", ...selectedPages],
+      effectiveTags,
+      tags,
+      scheduleProjection,
+    ]);
+  }, [
+    publicId,
+    workflow.id,
+    workflow.itemType,
+    workflow.yoloClassFilter,
+    workflow.tagShapeClass,
+    selectedPages,
+    effectiveTags,
+    tags,
+    schedule,
+  ]);
+
+  // Passive request setup reads a same-commit snapshot; completion deliberately uses the latest
+  // authoritative workflow/callback so a mapping result cannot overwrite server-only row fields.
+  const mappingInputRef = useRef({
+    publicId,
+    schedule,
+    tags,
+    effectiveTags,
+    isYoloOnly,
+    request: mappingRequest,
+    yoloClassFilter: workflow.yoloClassFilter,
+  });
+  const latestCompletionRef = useRef({ semanticRunKey, workflow, updateWorkflowStep });
+  useLayoutEffect(() => {
+    mappingInputRef.current = {
+      publicId,
+      schedule,
+      tags,
+      effectiveTags,
+      isYoloOnly,
+      request: mappingRequest,
+      yoloClassFilter: workflow.yoloClassFilter,
+    };
+    latestCompletionRef.current = { semanticRunKey, workflow, updateWorkflowStep };
+  }, [
+    publicId,
+    schedule,
+    tags,
+    effectiveTags,
+    isYoloOnly,
+    mappingRequest,
+    workflow.yoloClassFilter,
+    semanticRunKey,
+    workflow,
+    updateWorkflowStep,
+  ]);
+  const activeAttemptRef = useRef<object | null>(null);
 
   useEffect(() => {
-    if (hasRun.current || !schedule) return;
-    if (effectiveTags.length === 0) return;
-    hasRun.current = true;
-    setError(null);
+    const input = mappingInputRef.current;
+    if (!input.schedule || input.effectiveTags.length === 0) return;
+
+    const attempt = {};
+    activeAttemptRef.current = attempt;
 
     const controller = new AbortController();
-    fetch(`/api/projects/${publicId}/map-tags-batch`, {
+    const stillCurrent = () =>
+      activeAttemptRef.current === attempt && !controller.signal.aborted;
+
+    fetch(`/api/projects/${input.publicId}/map-tags-batch`, {
       method: "POST",
       signal: controller.signal,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tags: effectiveTags,
-        yoloClass: workflow.yoloClassFilter || undefined,
-        itemType: workflow.itemType,
-        tagShapeClass: workflow.tagShapeClass || undefined,
-        selectedPages,
-        // Auto-QTO always runs strict. Only tier=high matches survive —
-        // reproduces the pre-Phase-2 applyExclusionFilter behavior
-        // (drops inside_table + inside_title_block + outside_drawings).
-        strictnessMode: "strict",
-      }),
+      body: JSON.stringify(input.request),
     })
       .then((res) => {
         if (!res.ok) throw new Error(`Server error ${res.status}`);
         return res.json();
       })
       .then(({ results }: { results: Record<string, ScoredMatch[]> }) => {
+        if (!stillCurrent()) return;
         // Build QtoLineItems. Auto-QTO filters to tier=high server-side, so
         // everything arriving here is kept. We preserve confidenceTier +
         // dropReason on the line-item instances so the review UI can still
@@ -1093,9 +1184,9 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
           return flags;
         };
 
-        if (isYoloOnly) {
+        if (input.isYoloOnly) {
           // Type 1 — single line item keyed by yolo class
-          const yoloKey = workflow.yoloClassFilter || "";
+          const yoloKey = input.yoloClassFilter || "";
           const instances = results[yoloKey] || [];
           lineItems = [{
             tag: yoloKey,
@@ -1108,14 +1199,14 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
           }];
         } else {
           // Types 2, 3, 4, 5 — per-tag line items
-          lineItems = tags.map((tag) => {
+          lineItems = input.tags.map((tag) => {
             const instances = results[tag] || [];
-            const scheduleRow = (schedule.rows as Record<string, string>[]).find(
-              (r) => r[schedule.tagColumn]?.trim() === tag
+            const scheduleRow = (input.schedule!.rows as Record<string, string>[]).find(
+              (r) => r[input.schedule!.tagColumn]?.trim() === tag
             );
             const specs: Record<string, string> = {};
-            for (const h of schedule.headers) {
-              if (h !== schedule.tagColumn) specs[h] = scheduleRow?.[h] || "";
+            for (const h of input.schedule!.headers) {
+              if (h !== input.schedule!.tagColumn) specs[h] = scheduleRow?.[h] || "";
             }
             return {
               tag,
@@ -1129,17 +1220,21 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
           });
         }
 
-        updateWorkflowStep(workflow, { step: "review", lineItems });
+        if (!stillCurrent()) return;
+        const latest = latestCompletionRef.current;
+        if (latest.semanticRunKey !== semanticRunKey) return;
+        void latest.updateWorkflowStep(latest.workflow, { step: "review", lineItems });
       })
       .catch((err) => {
-        if (err.name === "AbortError") return;
+        if (err.name === "AbortError" || !stillCurrent()) return;
         setError(err.message || "Mapping failed");
       });
 
-    return () => controller.abort();
-    // `retryTick` re-arms this effect on Retry (below); it replaces the removed `mapping` dep, which
-    // used to re-trigger the effect as a side effect of setMapping(false) in the Retry handler.
-  }, [tags, effectiveTags, isYoloOnly, schedule, workflow, publicId, updateWorkflowStep, selectedPages, retryTick]);
+    return () => {
+      if (activeAttemptRef.current === attempt) activeAttemptRef.current = null;
+      controller.abort();
+    };
+  }, [semanticRunKey, retryTick]);
 
   return (
     <div className="px-3 py-6 flex flex-col items-center gap-3">
@@ -1147,7 +1242,7 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
         <>
           <div className="text-red-400 text-xs text-center">{error}</div>
           <button
-            onClick={() => { hasRun.current = false; setError(null); setRetryTick((t) => t + 1); }}
+            onClick={() => { setError(null); setRetryTick((t) => t + 1); }}
             className="text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
           >
             Retry
