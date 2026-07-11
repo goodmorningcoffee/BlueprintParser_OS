@@ -10,6 +10,7 @@ import { isDemoFeatureEnabled, useProject, useSessionStore } from "@/stores/sess
 // [refactor jul10 P2.2②] qtoWorkflows collection moved zustand → TanStack cache; the facade hook
 // returns the same 4-field shape the old useQtoWorkflow() store selector did (SPEC §3).
 import { useQtoWorkflows } from "@/queries/useQtoWorkflows";
+import { enqueueQtoWorkflowWrite } from "@/queries/qtoWorkflowWriteQueue";
 // [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries } from "@/queries/useSummaries";
 import { readYoloTags, useYoloTagActions } from "@/queries/useYoloTags";
@@ -229,25 +230,44 @@ export default function AutoQtoTab() {
   }, [publicId, isDemo, qtoWorkflows, setActiveQtoWorkflow, setQtoWorkflows]);
 
   const updateWorkflowStep = useCallback(async (workflow: QtoWorkflow, updates: Partial<QtoWorkflow>) => {
-    // Always update Zustand
-    const updated = { ...workflow, ...updates };
-    setActiveQtoWorkflow(updated);
-    setQtoWorkflows(qtoWorkflows.map((w) => w.id === updated.id ? updated : w));
+    if (isDemo) {
+      // Demo workflows are session-only and never enter the persistence queue.
+      const updated = { ...workflow, ...updates };
+      setActiveQtoWorkflow(updated);
+      setQtoWorkflows((rows) => rows.map((w) => w.id === updated.id ? updated : w));
+      return;
+    }
 
-    // Skip API for demo (session-only, lost on reload)
-    if (isDemo) return;
+    const queued = enqueueQtoWorkflowWrite({
+      publicId,
+      workflow,
+      updates,
+      write: (body) => persistFetch(`/api/qto-workflows/${workflow.id}`, body, "PUT") as Promise<QtoWorkflow | null>,
+    });
+    const updated = queued.optimistic;
+
+    // UI publication stays immediate even when this request is waiting behind an older write.
+    setActiveQtoWorkflow(updated);
+    setQtoWorkflows((rows) => rows.map((w) => w.id === updated.id ? updated : w));
 
     try {
-      const serverUpdated = await persistFetch(`/api/qto-workflows/${workflow.id}`, updates, "PUT") as QtoWorkflow | null;
-      if (serverUpdated) {
-        setActiveQtoWorkflow(serverUpdated);
-        setQtoWorkflows(qtoWorkflows.map((w) => w.id === serverUpdated.id ? serverUpdated : w));
+      const serverUpdated = await queued.completion;
+      if (serverUpdated && queued.isCurrent()) {
+        // Never reopen an old workflow/project or overwrite a newer optimistic draft. The source
+        // project's cache row may still reconcile through its project-keyed facade safely.
+        const liveActive = useViewerStore.getState().activeQtoWorkflow;
+        if (useSessionStore.getState().publicId === publicId && liveActive === updated) {
+          setActiveQtoWorkflow(serverUpdated);
+        }
+        setQtoWorkflows((rows) => rows.map((w) => w.id === serverUpdated.id ? serverUpdated : w));
       }
     } catch (err) {
+      // A newer cumulative task supersedes this failure and will persist all desired fields.
+      if (!queued.isCurrent()) return;
       console.error("[auto-qto] Failed to update workflow:", err);
       window.alert(`Failed to save workflow: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
-  }, [isDemo, qtoWorkflows, setActiveQtoWorkflow, setQtoWorkflows]);
+  }, [publicId, isDemo, setActiveQtoWorkflow, setQtoWorkflows]);
 
   // ─── Demo feature gate ─────────────────────────────────
   if (isDemo && !isDemoFeatureEnabled("autoQto")) {

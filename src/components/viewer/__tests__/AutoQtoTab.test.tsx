@@ -771,6 +771,173 @@ describe("AutoQtoTab — authoritative workflow reconciliation cannot abort mapp
   });
 });
 
+describe("AutoQtoTab — workflow persistence is serialized through mapping (Q-24)", () => {
+  it("keeps review optimistic, waits PUT2 behind PUT1, and sends a cumulative final snapshot", async () => {
+    setViewerStoreStateForTest({
+      isDemo: false,
+      numPages: 5,
+      pageNames: { 4: "A-401" },
+    });
+    const configureWorkflow = mapWorkflow(20);
+    configureWorkflow.step = "confirm-tags";
+    configureWorkflow.userEdits = {
+      quantityOverrides: {},
+      selectedPages: [4],
+    };
+
+    const controlled = controlledAbortAwareFetchSequence();
+    const network = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === "/api/qto-workflows?projectId=pid") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [configureWorkflow],
+        });
+      }
+      if (url === "/api/projects/pid/map-tags-batch") {
+        return controlled.fetch(url, opts);
+      }
+      throw new Error(`unexpected Q-24 fetch: ${String(url)}`);
+    });
+    vi.stubGlobal("fetch", network);
+
+    type PendingPut = {
+      url: string;
+      body: Partial<QtoWorkflow>;
+      method: string | undefined;
+      resolve: (row: QtoWorkflow) => void;
+    };
+    const puts: PendingPut[] = [];
+    persistFetchMock.mockImplementation((url, body, method) =>
+      new Promise((resolve) => {
+        puts.push({
+          url,
+          body: body as Partial<QtoWorkflow>,
+          method,
+          resolve: (row) => resolve(row),
+        });
+      }),
+    );
+
+    renderTab();
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
+    fireEvent.click(within(prevWorkflowsRegion()).getByText("Doors"));
+    expect(screen.getByText("Step: confirm-tags")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {
+      name: "Run Mapping (count all door_single, 1 pages)",
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Step: map-tags")).toBeInTheDocument();
+      expect(controlled.fetch).toHaveBeenCalledTimes(1);
+      expect(puts).toHaveLength(1);
+    });
+    expect(controlled.request(0).url).toBe("/api/projects/pid/map-tags-batch");
+    expect(controlled.request(0).opts).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(JSON.parse(String(controlled.request(0).opts?.body))).toEqual({
+      tags: ["door_single"],
+      yoloClass: "door_single",
+      itemType: "yolo-only",
+      selectedPages: [4],
+      strictnessMode: "strict",
+    });
+    expect(puts[0]).toMatchObject({
+      url: "/api/qto-workflows/20",
+      method: "PUT",
+      body: {
+        step: "map-tags",
+        yoloClassFilter: "door_single",
+        itemType: "yolo-only",
+        userEdits: { quantityOverrides: {}, selectedPages: [4] },
+      },
+    });
+    expect(puts[0].body).not.toHaveProperty("materialLabel");
+    expect(puts[0].body).not.toHaveProperty("schedulePageNumber");
+
+    // Mapping may finish while the configure PUT is pending. Review is published immediately,
+    // but the final database write must remain queued so the server can never settle backward.
+    await act(async () => {
+      controlled.resolve(0, { results: MAP_RESULTS });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Step: review")).toBeInTheDocument();
+      expect(screen.getByText("2 instances of 1 tags across 2 pages")).toBeInTheDocument();
+    });
+    expect(puts).toHaveLength(1);
+    expect(useViewerStore.getState().activeQtoWorkflow?.step).toBe("review");
+    expect(
+      qc.getQueryData<QtoWorkflow[]>(queryKeys.qtoWorkflows.all("pid"))?.[0],
+    ).toMatchObject({ id: 20, step: "review" });
+
+    const put1Row = JSON.parse(JSON.stringify({
+      ...configureWorkflow,
+      ...puts[0].body,
+    })) as QtoWorkflow;
+    await act(async () => {
+      puts[0].resolve(put1Row);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(puts).toHaveLength(2));
+    // The stale server response cannot transiently regress either active UI or the cache while
+    // PUT2 is pending. This is the dangerous intermediate point that an eventual-only test misses.
+    expect(screen.getByText("Step: review")).toBeInTheDocument();
+    expect(controlled.fetch).toHaveBeenCalledTimes(1);
+    expect(useViewerStore.getState().activeQtoWorkflow?.step).toBe("review");
+    expect(
+      qc.getQueryData<QtoWorkflow[]>(queryKeys.qtoWorkflows.all("pid"))?.[0],
+    ).toMatchObject({ id: 20, step: "review", lineItems: expect.any(Array) });
+
+    expect(puts[1]).toMatchObject({
+      url: "/api/qto-workflows/20",
+      method: "PUT",
+      body: {
+        step: "review",
+        yoloClassFilter: "door_single",
+        itemType: "yolo-only",
+        tagShapeClass: null,
+        userEdits: { quantityOverrides: {}, selectedPages: [4] },
+      },
+    });
+    expect(puts[1].body).not.toHaveProperty("materialLabel");
+    expect(puts[1].body).not.toHaveProperty("schedulePageNumber");
+    expect(puts[1].body.parsedSchedule).toEqual(configureWorkflow.parsedSchedule);
+    expect(puts[1].body.lineItems?.[0]).toMatchObject({
+      tag: "door_single",
+      autoQuantity: 2,
+      pages: [4, 5],
+    });
+
+    const put2Row = JSON.parse(JSON.stringify({
+      ...configureWorkflow,
+      ...puts[1].body,
+    })) as QtoWorkflow;
+    await act(async () => {
+      puts[1].resolve(put2Row);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(persistFetchMock).toHaveBeenCalledTimes(2);
+    expect(controlled.fetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Step: review")).toBeInTheDocument();
+    expect(useViewerStore.getState().activeQtoWorkflow).toMatchObject({
+      id: 20,
+      step: "review",
+      yoloClassFilter: "door_single",
+    });
+    expect(
+      qc.getQueryData<QtoWorkflow[]>(queryKeys.qtoWorkflows.all("pid"))?.[0],
+    ).toMatchObject({ id: 20, step: "review" });
+  });
+});
+
 describe("AutoQtoTab — changed mapping inputs replace the owned request (Q-23)", () => {
   it("same workflow id + new YOLO class aborts the old POST and only the replacement reaches review", async () => {
     setViewerStoreStateForTest({ isDemo: true });

@@ -131,6 +131,16 @@ describe("useQtoWorkflows hook", () => {
     await waitFor(() => expect(result.current.qtoWorkflows).toEqual([row(3), row(2)]));
     // replace, not merge — row(1) is gone; key shape is the documented tuple
     expect(client.getQueryData(["project", "P", "qtoWorkflows"])).toEqual([row(3), row(2)]);
+
+    // Async row reconciliation uses the functional form so it cannot discard a sibling inserted
+    // while a PUT was pending. The facade still returns one full collection after the update.
+    act(() => result.current.setQtoWorkflows((rows) =>
+      rows.map((workflow) => workflow.id === 2 ? row(2, { step: "review" }) : workflow),
+    ));
+    await waitFor(() => expect(result.current.qtoWorkflows).toEqual([
+      row(3),
+      row(2, { step: "review" }),
+    ]));
   });
 
   it("T-Q6: two-publicId isolation — a write to A never touches B; return-to-A refetch reasserts server truth", async () => {

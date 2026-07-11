@@ -30,6 +30,7 @@
 "use client";
 
 import { useCallback } from "react";
+import type { SetStateAction } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerStore } from "@/stores/viewerStore";
@@ -68,13 +69,15 @@ export function useQtoWorkflows() {
     networkMode: "always",
   });
 
-  // REPLACE facade == the old zustand `set({ qtoWorkflows })`. Callers (startWorkflow /
-  // updateWorkflowStep) pass full arrays built from their render-snapshot of `qtoWorkflows` —
-  // preserving the replace shape keeps that closure-capture behavior byte-identical (do NOT
-  // "fix" to a functional updater here; that would change the characterized semantics).
+  // REPLACE remains compatible with the old zustand `set({ qtoWorkflows })`; the functional form
+  // is also accepted so async workflow reconciliation can update one row without overwriting rows
+  // added while its request was pending.
   const setQtoWorkflows = useCallback(
-    (next: QtoWorkflow[]) => {
-      qc.setQueryData(queryKeys.qtoWorkflows.all(publicId), next);
+    (next: SetStateAction<QtoWorkflow[]>) => {
+      qc.setQueryData<QtoWorkflow[]>(
+        queryKeys.qtoWorkflows.all(publicId),
+        (current) => typeof next === "function" ? next(current ?? []) : next,
+      );
     },
     [qc, publicId],
   );
