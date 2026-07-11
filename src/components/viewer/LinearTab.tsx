@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
@@ -16,7 +17,7 @@ import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist"
 
 // ─── Scale status bar (reuse pattern from AreaTab) ──────────
 function ScaleStatus() {
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const calibrationMode = useViewerStore((s) => s.calibrationMode);
   const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);

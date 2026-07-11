@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useAnnotations } from "@/queries/useAnnotations";
 import type { AreaUnit, ClientAnnotation, ScaleCalibrationData } from "@/types";
@@ -13,7 +14,7 @@ const AREA_UNITS: AreaUnit[] = ["ft", "in", "m", "cm"];
 
 /** Scale calibration distance input — used by AreaTab, reusable by future tools. */
 export default function CalibrationInput() {
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const calibrationPoints = useViewerStore((s) => s.calibrationPoints);
   const setScaleCalibration = useViewerStore((s) => s.setScaleCalibration);
   const resetCalibration = useViewerStore((s) => s.resetCalibration);

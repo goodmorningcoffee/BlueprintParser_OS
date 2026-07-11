@@ -14,7 +14,7 @@ import {
   MAX_RETAINED_TEXTRACT_PAGES,
   getTextractRetentionStats,
 } from "@/queries/textractCache";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore as useViewerStore } from "@/stores/viewerCoreStore";
 import { seedTextract } from "@/test/seed-textract";
 import type { TextractPageData } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";

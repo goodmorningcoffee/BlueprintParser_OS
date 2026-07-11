@@ -30,7 +30,7 @@ beforeEach(() => {
   useViewerCoreStore.setState(useViewerCoreStore.getInitialState(), true);
 });
 
-describe("viewerCoreStore — production-dead geometry owner", () => {
+describe("viewerCoreStore — dedicated geometry owner", () => {
   it("has exactly five data fields, nine actions, and the frozen defaults", () => {
     const state = useViewerCoreStore.getState();
     const dataFields = Object.entries(state)

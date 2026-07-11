@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useUiStore } from "@/stores/uiStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { takeoffRedo, takeoffUndo } from "@/queries/useAnnotations";
 import { navigateYoloTag } from "@/queries/useYoloTags";
@@ -14,10 +15,11 @@ export function useKeyboardShortcuts() {
   const qc = useQueryClient();
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Keep identity, UI, and tool/core snapshots adjacent at the original event-time boundary.
+      // Keep all owner snapshots adjacent at the original event-time boundary.
       const session = useSessionStore.getState();
       const ui = useUiStore.getState();
-      const store = useViewerStore.getState();
+      const core = useViewerCoreStore.getState();
+      const viewer = useViewerStore.getState();
 
       // Don't capture if user is typing in an input
       if (
@@ -52,25 +54,25 @@ export function useKeyboardShortcuts() {
         case "ArrowLeft":
         case "PageUp":
           e.preventDefault();
-          store.setPage(store.pageNumber - 1);
+          core.setPage(core.pageNumber - 1);
           break;
         case "ArrowRight":
         case "PageDown":
           e.preventDefault();
-          store.setPage(store.pageNumber + 1);
+          core.setPage(core.pageNumber + 1);
           break;
         case "Home":
           e.preventDefault();
-          store.setPage(1);
+          core.setPage(1);
           break;
         case "End":
           e.preventDefault();
-          store.setPage(store.numPages);
+          core.setPage(core.numPages);
           break;
       }
 
       // Takeoff undo/redo (Z/W keys, only when placing)
-      if (store.activeTakeoffItemId !== null && !e.ctrlKey && !e.metaKey) {
+      if (viewer.activeTakeoffItemId !== null && !e.ctrlKey && !e.metaKey) {
         if (e.key === "z" || e.key === "Z") {
           e.preventDefault();
           takeoffUndo(qc);
@@ -86,13 +88,13 @@ export function useKeyboardShortcuts() {
       if (e.ctrlKey || e.metaKey) {
         if (e.key === "=" || e.key === "+") {
           e.preventDefault();
-          store.zoomIn();
+          core.zoomIn();
         } else if (e.key === "-") {
           e.preventDefault();
-          store.zoomOut();
+          core.zoomOut();
         } else if (e.key === "0") {
           e.preventDefault();
-          store.zoomFit();
+          core.zoomFit();
         }
       }
     }

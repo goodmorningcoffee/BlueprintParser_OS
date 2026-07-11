@@ -20,7 +20,8 @@ import {
   useYoloTagActions,
   useYoloTagsForPage,
 } from "@/queries/useYoloTags";
-import { useViewerStore, useNavigation, useTableParse, useKeynoteParse, useSymbolSearch } from "@/stores/viewerStore";
+import { useViewerStore, useTableParse, useKeynoteParse, useSymbolSearch } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore, useAnnotationFiltersUi } from "@/stores/uiStore";
 import { toggleTableParsePanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
@@ -127,7 +128,8 @@ export default memo(function AnnotationOverlay({
   cssScale,
 }: AnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { pageNumber, mode } = useNavigation();
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
+  const mode = useViewerStore((s) => s.mode);
   const { projectId: projectDbId, publicId, isDemo } = useProject();
   // [refactor jul10 P2.2④] qc for the readTakeoffItems bridge (handler-time sync reads).
   // useQueryClient is provider-stable; it adds ZERO subscriptions to this component.

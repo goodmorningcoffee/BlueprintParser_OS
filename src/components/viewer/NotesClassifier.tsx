@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { persistFetch, canPersist } from "@/lib/client-persist";
@@ -39,7 +40,7 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
   const projectId = useSessionStore((s) => s.projectId);
   const publicId = useSessionStore((s) => s.publicId);
   const isDemo = useSessionStore((s) => s.isDemo);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   // Scoped subscription: rerender only when this page's intel changes,
   // not when any page's intel changes.
   const intel = usePageIntelligenceForPage(pageNumber);

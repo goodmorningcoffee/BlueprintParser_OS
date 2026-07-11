@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
@@ -17,7 +18,7 @@ import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist"
 
 // ─── Scale status bar (top of area tab) ─────────────────────
 function ScaleStatus() {
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const calibrationMode = useViewerStore((s) => s.calibrationMode);
   const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
@@ -80,7 +81,7 @@ export default memo(function AreaTab() {
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   const publicId = useSessionStore((s) => s.publicId);
-  const pageDimensions = useViewerStore((s) => s.pageDimensions);
+  const pageDimensions = useViewerCoreStore((s) => s.pageDimensions);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const isDemo = useSessionStore((s) => s.isDemo);
   const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();
@@ -366,7 +367,7 @@ export default memo(function AreaTab() {
                 key={inst.annId}
                 onClick={(e) => {
                   e.stopPropagation();
-                  useViewerStore.getState().setPage(inst.pageNumber);
+                  useViewerCoreStore.getState().setPage(inst.pageNumber);
                   useUiStore.getState().setFocusAnnotationId(inst.annId);
                 }}
                 className="flex items-center gap-2 px-2 py-0.5 text-[11px] rounded cursor-pointer hover:bg-[var(--surface-hover)]"

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useViewerStore, useNavigation, usePageData } from "@/stores/viewerStore";
+import { useViewerStore, usePageData } from "@/stores/viewerStore";
+import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
 import {
   useUiStore,
   usePanelVisibility,
@@ -35,8 +36,10 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(projectName);
   // Slice selectors
-  const { pageNumber, numPages, setPage, mode, setMode } = useNavigation();
-  const scale = useViewerStore((s) => s.scale);
+  const { pageNumber, numPages, setPage } = useNavigation();
+  const mode = useViewerStore((s) => s.mode);
+  const setMode = useViewerStore((s) => s.setMode);
+  const scale = useViewerCoreStore((s) => s.scale);
   const { publicId, isDemo, demoFeatureConfig } = useProject();
   const {
     showChatPanel,
@@ -62,9 +65,9 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const { annotations } = useAnnotations();
 
   // Fields not in slice selectors
-  const zoomIn = useViewerStore((s) => s.zoomIn);
-  const zoomOut = useViewerStore((s) => s.zoomOut);
-  const zoomFit = useViewerStore((s) => s.zoomFit);
+  const zoomIn = useViewerCoreStore((s) => s.zoomIn);
+  const zoomOut = useViewerCoreStore((s) => s.zoomOut);
+  const zoomFit = useViewerCoreStore((s) => s.zoomFit);
   const searchResults = useUiStore((s) => s.searchResults);
   const searchLoading = useUiStore((s) => s.searchLoading);
   const showDetections = useUiStore((s) => s.showDetections);

@@ -505,7 +505,7 @@ PDFViewer (root — scroll, zoom, keyboard shortcuts)
 
 ### Zustand Store
 
-Viewer state is being carved into explicit owners: `sessionStore` owns project identity/demo/page-label/labeling-session metadata; server collections use publicId-keyed Query facades; the remaining `viewerStore` temporarily owns UI, navigation, parse, and tool state. Prefer the domain hook/leaf store over direct cross-domain field access.
+Viewer state is split into explicit owners: `sessionStore` owns project identity/demo/page-label/labeling-session metadata; `uiStore` owns presentation state; `viewerCoreStore` owns page navigation, zoom, and page dimensions; server collections use publicId-keyed Query facades. The residual `viewerStore` temporarily owns parse, tool, calibration, and drawing state. Prefer the domain hook or leaf store over direct cross-domain field access.
 
 ---
 

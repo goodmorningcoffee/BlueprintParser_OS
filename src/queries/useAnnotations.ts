@@ -5,6 +5,7 @@ import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-quer
 import { canPersist, persistFetch } from "@/lib/client-persist";
 import { queryKeys } from "@/queries/queryKeys";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 
@@ -120,9 +121,10 @@ function reportPersistCreateError(error: Error, label?: string): void {
 
 /** Hoisted store action: remove the last active-item annotation on the current page. */
 export function takeoffUndo(qc: QueryClient): void {
-  // Identity and tool/page state had one Zustand owner before P2.3. Capture both new owners in
+  // Identity and tool/page state had one Zustand owner before P2.3. Capture all three new owners in
   // one synchronous block so the cache key and viewer predicate still describe one key event.
   const sessionSnapshot = useSessionStore.getState();
+  const coreSnapshot = useViewerCoreStore.getState();
   const viewerSnapshot = useViewerStore.getState();
   const activeId = viewerSnapshot.activeTakeoffItemId;
   if (!activeId) return;
@@ -133,7 +135,7 @@ export function takeoffUndo(qc: QueryClient): void {
       (annotation) =>
         annotation.source === "takeoff" &&
         annotation.data?.takeoffItemId === activeId &&
-        annotation.pageNumber === viewerSnapshot.pageNumber,
+        annotation.pageNumber === coreSnapshot.pageNumber,
     );
     if (reverseIndex === -1) return rows;
 
@@ -170,9 +172,10 @@ export function takeoffRedo(qc: QueryClient): void {
 function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void {
   return useCallback(
     (item: ClientTakeoffItem) => {
-      // Invocation-time snapshots preserve the singleton store action's freshness. Capture both
-      // stores adjacently, then use those values for cache key and request if navigation races.
+      // Invocation-time snapshots preserve the singleton store action's freshness. Capture all
+      // owners adjacently, then use those values for cache key and request if navigation races.
       const sessionSnapshot = useSessionStore.getState();
+      const coreSnapshot = useViewerCoreStore.getState();
       const viewerSnapshot = useViewerStore.getState();
       const pending = viewerSnapshot.bucketFillPendingPolygon;
       if (!pending) return;
@@ -191,7 +194,7 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
       const tempId = -Date.now();
       const optimistic: ClientAnnotation = {
         id: tempId,
-        pageNumber: viewerSnapshot.pageNumber,
+        pageNumber: coreSnapshot.pageNumber,
         name: item.name,
         bbox: pending.bbox,
         note: null,
@@ -218,7 +221,7 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
 
       void persistFetch("/api/annotations", {
         projectId: sessionSnapshot.publicId,
-        pageNumber: viewerSnapshot.pageNumber,
+        pageNumber: coreSnapshot.pageNumber,
         name: item.name,
         bbox: pending.bbox,
         source: "takeoff",

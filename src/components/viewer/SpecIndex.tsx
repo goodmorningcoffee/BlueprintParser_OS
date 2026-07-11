@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 // [refactor jul10 P2.2③; jul11 P2.2⑦] Summaries moved Zustand → TanStack Query. This component
 // deliberately keeps the narrow cache-only hook because it reads summaries only; active-window
 // range/loading ownership is isolated behind usePageWindow/PageWindowLoaderController.
@@ -20,7 +21,7 @@ interface SpecIndexProps {
  */
 export default function SpecIndex({ onOpenParser }: SpecIndexProps) {
   const { summaries } = useSummariesData();
-  const setPage = useViewerStore((s) => s.setPage);
+  const setPage = useViewerCoreStore((s) => s.setPage);
   const setSpecParseRegion = useViewerStore((s) => s.setSpecParseRegion);
   const [filter, setFilter] = useState("");
 

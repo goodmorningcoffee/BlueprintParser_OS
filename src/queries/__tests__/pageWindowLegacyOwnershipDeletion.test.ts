@@ -785,11 +785,13 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     const interfaceKeys = interfaces[0].members
       .map((member) => ("name" in member ? staticName(member.name) : null))
       .filter((name): name is string => name !== null);
-    expect(interfaceKeys).toEqual(expect.arrayContaining(["pageNumber", "setPage"]));
+    // P2.3 moved page navigation to viewerCore; keep a residual tool sentinel so this test still
+    // proves it parsed the live ViewerState rather than an empty/wrong interface.
+    expect(interfaceKeys).toEqual(expect.arrayContaining(["mode", "setMode"]));
     expectNoLegacyMembers(interfaceKeys);
 
     const storeKeys = directObjectKeys(findViewerStoreObject(viewerStore));
-    expect(storeKeys).toEqual(expect.arrayContaining(["pageNumber", "setPage"]));
+    expect(storeKeys).toEqual(expect.arrayContaining(["mode", "setMode"]));
     expectNoLegacyMembers(storeKeys);
   });
 
@@ -810,7 +812,7 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     expect(resetSetCalls).toHaveLength(1);
     const resetObject = resetSetCalls[0].arguments[0] as ts.ObjectLiteralExpression;
     const resetKeys = directObjectKeys(resetObject);
-    expect(resetKeys).toEqual(expect.arrayContaining(["pageNumber", "allTrades"]));
+    expect(resetKeys).toEqual(expect.arrayContaining(["allTrades"]));
     expectNoLegacyMembers(resetKeys);
 
     const pageData = findVariable(viewerStore, "usePageData");

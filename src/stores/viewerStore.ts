@@ -32,21 +32,6 @@ interface TagScanResults {
 }
 
 interface ViewerState {
-  // ─── Page navigation ─────────────────────────────────────
-  pageNumber: number;
-  numPages: number;
-  setPage: (n: number) => void;
-  setNumPages: (n: number) => void;
-
-  // ─── Zoom ────────────────────────────────────────────────
-  scale: number;
-  zoomIn: () => void;
-  zoomOut: () => void;
-  zoomFit: () => void;
-  pendingCenter: boolean;
-  clearPendingCenter: () => void;
-  setScale: (s: number) => void;
-
   // ─── Mode ────────────────────────────────────────────────
   // "group" mode powers the new multi-select / lasso tool. In this mode,
   // click-drag on empty canvas starts a marquee that selects every
@@ -89,8 +74,6 @@ interface ViewerState {
   setActiveTakeoffItemId: (id: number | null) => void;
 
   // ─── Takeoff Area ──────────────────────────────────────
-  pageDimensions: Record<number, { width: number; height: number }>;
-  setPageDimensions: (pageNum: number, width: number, height: number) => void;
   scaleCalibrations: Record<number, ScaleCalibrationData>;
   setScaleCalibration: (pageNum: number, cal: ScaleCalibrationData) => void;
   calibrationMode: "idle" | "point1" | "point2" | "input";
@@ -394,22 +377,6 @@ interface ViewerState {
 }
 
 export const useViewerStore = create<ViewerState>((set, get) => ({
-  pageNumber: 1,
-  numPages: 0,
-  setPage: (n) =>
-    set((s) => ({ pageNumber: Math.max(1, Math.min(n, s.numPages || 1)) })),
-  setNumPages: (n) => set({ numPages: n }),
-
-  scale: 1,
-  zoomIn: () => set((s) => ({ scale: Math.min(s.scale * (1 / 0.95), 10) })),
-  zoomOut: () => set((s) => ({ scale: Math.max(s.scale * 0.95, 0.2) })),
-  // Scale is computed at fit-time by PDFViewer (needs container + page dimensions).
-  // pendingCenter flag drives the centering + fit-scale effect there.
-  zoomFit: () => set({ pendingCenter: true }),
-  pendingCenter: false,
-  clearPendingCenter: () => set({ pendingCenter: false }),
-  setScale: (scale) => set({ scale }),
-
   mode: "move",
   // Switching modes disengages every competing tool so mode="markup" can't coexist
   // with bucketFillActive=true / symbolSearchActive=true / etc.
@@ -438,12 +405,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   activeTakeoffItemId: null,
   setActiveTakeoffItemId: (activeTakeoffItemId) => set({ activeTakeoffItemId, takeoffUndoStack: [], takeoffRedoStack: [] }),
 
-  pageDimensions: {},
-  setPageDimensions: (pageNum, width, height) => {
-    const existing = get().pageDimensions[pageNum];
-    if (existing && existing.width === width && existing.height === height) return;
-    set((s) => ({ pageDimensions: { ...s.pageDimensions, [pageNum]: { width, height } } }));
-  },
   scaleCalibrations: {},
   setScaleCalibration: (pageNum, cal) =>
     set((s) => ({ scaleCalibrations: { ...s.scaleCalibrations, [pageNum]: cal } })),
@@ -807,9 +768,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
 
   resetViewerState: () =>
     set({
-      pageNumber: 1,
-      numPages: 0,
-      scale: 1,
       // [refactor jul11 P2.2⑥] annotations reset deleted: loader seeds the publicId-keyed cache
       // unconditionally before reveal; the coordinator's preceding session reset re-keys observers.
       // [refactor jul11 P2.3] session identity/page-label fields and csiGraph are reset by the
@@ -826,7 +784,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       activeQtoWorkflow: null,
       // qtoWorkflows: cache-backed since P2.2② — reset deliberately does NOT touch the query
       // cache (RECIPE step 7; publicId-keyed isolation makes it unnecessary, SPEC §7).
-      pageDimensions: {},
       scaleCalibrations: {},
       calibrationMode: "idle",
       calibrationPoints: {},
@@ -888,28 +845,12 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
 // Typed Slice Selectors
 // ═══════════════════════════════════════════════════════════════════
 //
-// Use these instead of raw `useViewerStore((s) => s.field)` calls.
-// Each selector uses `useShallow` to prevent re-renders when
-// unrelated fields change. Components import these selectors
-// instead of accessing the store directly.
-//
-// Migration: Replace `useViewerStore((s) => s.pageNumber)` with
-// `const { pageNumber } = useNavigation()`
+// These remaining grouped selectors cover residual tool/parse sessions. Page/zoom/dimensions live
+// in viewerCoreStore and presentation lives in uiStore; do not rebuild cross-owner mega-slices here.
 //
 // Per REFACTORING_RESEARCH.md Part 1: "Store Slices + Bridge"
 
 import { useShallow } from "zustand/react/shallow";
-
-/** Page navigation + zoom state */
-export const useNavigation = () =>
-  useViewerStore(useShallow((s) => ({
-    pageNumber: s.pageNumber,
-    numPages: s.numPages,
-    mode: s.mode,
-    setPage: s.setPage,
-    setNumPages: s.setNumPages,
-    setMode: s.setMode,
-  })));
 
 // [refactor jul10 P2.2⑤] useAnnotationGroups selector DELETED — the facade now lives in
 // src/queries/useAnnotationGroups.ts (same name, 5-member live shape; the 4 dead members

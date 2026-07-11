@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
@@ -34,7 +35,7 @@ export default function SpecParser() {
   const projectId = useSessionStore((s) => s.projectId);
   const publicId = useSessionStore((s) => s.publicId);
   const isDemo = useSessionStore((s) => s.isDemo);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
 
   const specParseRegion = useViewerStore((s) => s.specParseRegion);
   const setSpecParseRegion = useViewerStore((s) => s.setSpecParseRegion);

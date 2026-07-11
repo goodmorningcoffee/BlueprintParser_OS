@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, memo } from "react";
-import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useKeynotesForPage } from "@/queries/usePageWindow";
 import { SHAPE_COLORS } from "@/types";

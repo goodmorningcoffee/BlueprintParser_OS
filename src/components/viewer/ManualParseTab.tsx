@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useViewerStore, useTableParse, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore, useTableParse } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
 import { useTextractForPage } from "@/queries/useTextract";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
 

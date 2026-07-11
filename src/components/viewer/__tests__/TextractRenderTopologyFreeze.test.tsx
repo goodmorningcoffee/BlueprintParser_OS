@@ -18,7 +18,7 @@ import {
 } from "@/queries/textractCache";
 import { queryKeys } from "@/queries/queryKeys";
 import { useUiStore } from "@/stores/uiStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore as useViewerStore } from "@/stores/viewerCoreStore";
 import type { TextractPageData } from "@/types";
 
 // Keep the two OCR-reading overlays real. The other PDFPage children are unrelated canvas/tool

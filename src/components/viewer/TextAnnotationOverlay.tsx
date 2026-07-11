@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useTextAnnotationsForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
@@ -20,7 +21,7 @@ export default memo(function TextAnnotationOverlay({
   cssScale,
 }: TextAnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const annotations = useTextAnnotationsForPage(pageNumber);
   const showTextAnnotations = useUiStore((s) => s.showTextAnnotations);
   const activeTypes = useUiStore((s) => s.activeTextAnnotationTypes);

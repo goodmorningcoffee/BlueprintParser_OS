@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useUiStore } from "@/stores/uiStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { resetProjectData, toggleDetectionPanel } from "@/stores/viewerCommands";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -9,28 +10,28 @@ beforeEach(() => {
   resetProjectData();
 });
 
-describe("viewerStore — navigation", () => {
+describe("viewerCoreStore — navigation", () => {
   it("has default page 1", () => {
-    expect(useViewerStore.getState().pageNumber).toBe(1);
+    expect(useViewerCoreStore.getState().pageNumber).toBe(1);
   });
 
   it("setPage updates pageNumber (clamped to numPages)", () => {
-    useViewerStore.getState().setNumPages(10);
-    useViewerStore.getState().setPage(5);
-    expect(useViewerStore.getState().pageNumber).toBe(5);
+    useViewerCoreStore.getState().setNumPages(10);
+    useViewerCoreStore.getState().setPage(5);
+    expect(useViewerCoreStore.getState().pageNumber).toBe(5);
   });
 
   it("setPage clamps to valid range", () => {
-    useViewerStore.getState().setNumPages(3);
-    useViewerStore.getState().setPage(10);
-    expect(useViewerStore.getState().pageNumber).toBe(3);
-    useViewerStore.getState().setPage(0);
-    expect(useViewerStore.getState().pageNumber).toBe(1);
+    useViewerCoreStore.getState().setNumPages(3);
+    useViewerCoreStore.getState().setPage(10);
+    expect(useViewerCoreStore.getState().pageNumber).toBe(3);
+    useViewerCoreStore.getState().setPage(0);
+    expect(useViewerCoreStore.getState().pageNumber).toBe(1);
   });
 
   it("setScale updates scale", () => {
-    useViewerStore.getState().setScale(2.5);
-    expect(useViewerStore.getState().scale).toBe(2.5);
+    useViewerCoreStore.getState().setScale(2.5);
+    expect(useViewerCoreStore.getState().scale).toBe(2.5);
   });
 
   it("setMode updates mode", () => {
@@ -146,12 +147,12 @@ describe("viewerStore — page drawing numbers", () => {
 
 describe("viewerStore — resetProjectData", () => {
   it("clears project state back to defaults", () => {
-    useViewerStore.getState().setNumPages(20);
-    useViewerStore.getState().setPage(10);
+    useViewerCoreStore.getState().setNumPages(20);
+    useViewerCoreStore.getState().setPage(10);
 
     resetProjectData();
 
-    expect(useViewerStore.getState().pageNumber).toBe(1);
+    expect(useViewerCoreStore.getState().pageNumber).toBe(1);
     expect(useViewerStore.getState().tableParseStep).toBe("idle");
   });
 });

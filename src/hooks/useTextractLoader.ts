@@ -9,7 +9,7 @@ import {
   setTextractProtectedPages,
 } from "@/queries/textractCache";
 import { useSessionStore } from "@/stores/sessionStore";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 
 interface TextractBatch {
   generation: number;
@@ -41,8 +41,8 @@ function cancelBatch(qc: QueryClient, batch: TextractBatch | null): void {
  */
 export function useTextractLoader(): void {
   const qc = useQueryClient();
-  const pageNumber = useViewerStore((state) => state.pageNumber);
-  const numPages = useViewerStore((state) => state.numPages);
+  const pageNumber = useViewerCoreStore((state) => state.pageNumber);
+  const numPages = useViewerCoreStore((state) => state.numPages);
   const publicId = useSessionStore((state) => state.publicId);
   const generationRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -101,19 +101,19 @@ export function useTextractLoader(): void {
         return;
       }
 
-      // Preserve the legacy timer-time snapshot boundary across the session/viewer carve. These
+      // Preserve the legacy timer-time snapshot boundary across the session/core carve. These
       // reads stay adjacent and synchronous so identity guards describe the same navigation turn.
       const liveSession = useSessionStore.getState();
-      const liveViewer = useViewerStore.getState();
+      const liveCore = useViewerCoreStore.getState();
       if (
         liveSession.publicId !== batch.publicId ||
-        liveViewer.numPages === 0 ||
+        liveCore.numPages === 0 ||
         generationRef.current !== batch.generation
       ) {
         return;
       }
 
-      const livePages = pagesAround(liveViewer.pageNumber, liveViewer.numPages);
+      const livePages = pagesAround(liveCore.pageNumber, liveCore.numPages);
       batch.pages = livePages;
       setTextractProtectedPages(qc, batch.publicId, livePages);
 

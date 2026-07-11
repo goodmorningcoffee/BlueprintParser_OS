@@ -86,12 +86,12 @@ function promiseAllAwait(node: ts.Node): node is ts.AwaitExpression {
   );
 }
 
-function viewerSetStateCall(node: ts.Node): node is ts.CallExpression {
+function coreSetStateCall(node: ts.Node): node is ts.CallExpression {
   return (
     ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&
     ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === "useViewerStore" &&
+    node.expression.expression.text === "useViewerCoreStore" &&
     node.expression.name.text === "setState"
   );
 }
@@ -149,7 +149,7 @@ describe("P2.3 authenticated session bootstrap ordering", () => {
     });
     expect(descendants(directStatement(sessionHydration, tryBlock), ts.isAwaitExpression)).toHaveLength(0);
 
-    const coreHydrations = descendants(tryBlock, viewerSetStateCall).filter((call) => {
+    const coreHydrations = descendants(tryBlock, coreSetStateCall).filter((call) => {
       const argument = call.arguments[0];
       return (
         !!argument &&

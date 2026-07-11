@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, memo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore, useKeynoteParse } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
@@ -353,7 +354,7 @@ export default memo(function PDFPage({
 
   // Background pre-render adjacent pages during idle time
   // After current page renders, pre-render N+1 and N-1 into the LRU cache
-  const numPages = useViewerStore((s) => s.numPages);
+  const numPages = useViewerCoreStore((s) => s.numPages);
   useEffect(() => {
     if (!pdfDoc || renderedScale === 0) return;
     const currentScale = scaleRef.current;
@@ -416,7 +417,7 @@ export default memo(function PDFPage({
   }, [pdfDoc, pageNumber, renderedScale, numPages, baseWidth, cacheRenderedPage]);
 
   // Push page dimensions to store for scale calibration math
-  const setPageDimensions = useViewerStore((s) => s.setPageDimensions);
+  const setPageDimensions = useViewerCoreStore((s) => s.setPageDimensions);
   useEffect(() => {
     if (pageSize.width > 0 && pageSize.height > 0) {
       setPageDimensions(pageNumber, pageSize.width, pageSize.height);

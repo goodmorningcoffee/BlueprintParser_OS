@@ -5,8 +5,10 @@ import { resetProjectData } from "@/stores/viewerCommands";
 // Keep the U0 fixture's local store variable stable while flipping its imported owner. The module
 // path is the ownership assertion: every data/action exercise below now runs against uiStore.
 import { useUiStore as useViewerStore } from "@/stores/uiStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore as useResidualViewerStore } from "@/stores/viewerStore";
 import {
+  CORE_TEST_STATE_KEYS,
   partitionViewerStoreTestState,
   setViewerStoreStateForTest,
   UI_TEST_STATE_KEYS,
@@ -250,30 +252,41 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     });
   });
 
-  it("routes the exact 60-key test seam session -> UI -> viewer and skips empty owners", () => {
+  it("routes exact UI/core seams session -> UI -> core -> viewer and skips empty owners", () => {
     expect(UI_TEST_STATE_KEYS).toEqual(UI_FIELDS);
+    expect(CORE_TEST_STATE_KEYS).toEqual([
+      "pageNumber",
+      "numPages",
+      "scale",
+      "pendingCenter",
+      "pageDimensions",
+    ]);
     const partitions = partitionViewerStoreTestState({
       publicId: "destination",
       searchQuery: "needle",
       pageNumber: 7,
+      mode: "markup",
     });
     expect(partitions).toEqual({
       session: { publicId: "destination" },
       ui: { searchQuery: "needle" },
-      viewer: { pageNumber: 7 },
+      core: { pageNumber: 7 },
+      viewer: { mode: "markup" },
     });
 
     const publications: string[] = [];
     const unsubscribeSession = useSessionStore.subscribe(() => publications.push("session"));
     const unsubscribeUi = useViewerStore.subscribe(() => publications.push("ui"));
+    const unsubscribeCore = useViewerCoreStore.subscribe(() => publications.push("core"));
     const unsubscribeViewer = useResidualViewerStore.subscribe(() => publications.push("viewer"));
 
     setViewerStoreStateForTest({
       publicId: "destination",
       searchQuery: "needle",
       pageNumber: 7,
+      mode: "markup",
     });
-    expect(publications).toEqual(["session", "ui", "viewer"]);
+    expect(publications).toEqual(["session", "ui", "core", "viewer"]);
 
     publications.length = 0;
     setViewerStoreStateForTest({ searchQuery: "ui-only" });
@@ -284,6 +297,7 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     expect(publications).toEqual([]);
     unsubscribeSession();
     unsubscribeUi();
+    unsubscribeCore();
     unsubscribeViewer();
   });
 

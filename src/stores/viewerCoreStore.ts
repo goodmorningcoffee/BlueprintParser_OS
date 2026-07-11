@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 
 export interface ViewerCoreData {
   pageNumber: number;
@@ -45,7 +46,7 @@ function freshViewerCoreReset(): Pick<
 }
 
 // Mode and temporary-pan state are tool interactions, not viewer geometry. Cross-store project
-// reset ordering stays in the neutral coordinator when this production-dead owner flips live.
+// reset ordering stays in the neutral coordinator rather than importing sibling stores here.
 export const useViewerCoreStore = create<ViewerCoreState>((set, get) => ({
   ...freshViewerCoreState(),
   setPage: (pageNumber) =>
@@ -71,3 +72,14 @@ export const useViewerCoreStore = create<ViewerCoreState>((set, get) => ({
   // Preserve the current pendingCenter omission. P2.5 owns the reset-policy decision.
   resetViewerCoreState: () => set(freshViewerCoreReset()),
 }));
+
+/** Page navigation compatibility surface, narrowed so tool mode changes cannot repaint readers. */
+export const useNavigation = () =>
+  useViewerCoreStore(
+    useShallow((state) => ({
+      pageNumber: state.pageNumber,
+      numPages: state.numPages,
+      setPage: state.setPage,
+      setNumPages: state.setNumPages,
+    })),
+  );

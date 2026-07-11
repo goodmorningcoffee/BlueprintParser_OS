@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useUiStore } from "@/stores/uiStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -117,14 +118,14 @@ export default function ProjectPage() {
       const data: ProjectResponse = await res.json();
       setProject(data);
 
-      // [refactor jul11 P2.3] Session identity and viewer page count now have separate leaf owners.
+      // [refactor jul11 P2.3] Session identity and viewer-core page count now have separate leaf owners.
       // Keep the two publications adjacent with no await; P2.5 adds generation-aware openProject.
       useSessionStore.setState({
         projectId: data.dbId,
         publicId: data.id,
         dataUrl: data.dataUrl,
       });
-      useViewerStore.setState({ numPages: data.numPages || 0 });
+      useViewerCoreStore.setState({ numPages: data.numPages || 0 });
 
       // [refactor jul11 P2.2⑨] Unconditional cache seed preserves reset-then-conditional-set net
       // behavior for omitted/null tags and prevents stale same-key resurrection. The helper also
@@ -294,7 +295,7 @@ export default function ProjectPage() {
   // Keyboard shortcuts
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      const store = useViewerStore.getState();
+      const store = useViewerCoreStore.getState();
 
       // Don't capture if user is typing in an input
       if (

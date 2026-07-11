@@ -3,6 +3,7 @@
 import { useMemo, useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { toggleKeynoteParsePanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
@@ -53,8 +54,8 @@ function keynoteDataToGrid(data: any): { headers: string[]; rows: Record<string,
  * remain intact.
  */
 export default function KeynotePanel({ embedded = false }: { embedded?: boolean } = {}) {
-  const pageNumber = useViewerStore((s) => s.pageNumber);
-  const setPage = useViewerStore((s) => s.setPage);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
+  const setPage = useViewerCoreStore((s) => s.setPage);
   const pageNames = useSessionStore((s) => s.pageNames);
   const pageIntelligence = usePageIntelligenceByPage();
   // Manual parsing intentionally captures the current page payload from this render. Guided parsing

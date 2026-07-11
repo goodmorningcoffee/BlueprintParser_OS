@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
-import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import {
   appendKeynotesForPage,
@@ -36,8 +37,8 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   const [region, setRegion] = useState<[number, number, number, number] | null>(null);
   const [drawing, setDrawing] = useState(false);
 
-  // Tear down local hook state when the user switches projects. resetProjectData
-  // in viewerStore clears the shared store fields (tableParseStep,
+  // Tear down local hook state when the user switches projects. The neutral resetProjectData
+  // coordinator clears the shared residual fields (tableParseStep,
   // symbolSearchActive, etc.) but cannot reach React useState owned by this
   // hook, so DetectionPanel staying mounted across a project switch caused the
   // prior project's drawn BB + drawing flag to bleed into the next project.

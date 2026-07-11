@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 
@@ -38,7 +39,7 @@ export default memo(function ParseRegionLayer({
   const keynoteParseRegion = useViewerStore((s) => s.keynoteParseRegion);
   const keynoteColumnBBs = useViewerStore((s) => s.keynoteColumnBBs);
   const keynoteRowBBs = useViewerStore((s) => s.keynoteRowBBs);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const intel = usePageIntelligenceForPage(pageNumber) as any;
   const hiddenParsedRegionIds = useUiStore((s) => s.hiddenParsedRegionIds);
   const parsedRegionColorMode = useUiStore((s) => s.parsedRegionColorMode);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useNavigation } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { migrateTextRegions } from "@/lib/text-region-migrate";

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useMemo, memo } from "react";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useCsiCodesForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
 import type { SearchWordMatch, TextractWord } from "@/types";
@@ -81,7 +82,7 @@ export default memo(function SearchHighlightOverlay({
   cssScale,
 }: SearchHighlightOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const searchMatches = useUiStore((s) => s.searchMatches);
   const searchQuery = useUiStore((s) => s.searchQuery);
   const activeCsiFilter = useUiStore((s) => s.activeCsiFilter);

@@ -1,7 +1,7 @@
 // @vitest-environment node
-// [refactor jul11 P2.3 V1] Production-dead ownership/topology freeze for pure viewer geometry.
-// Runtime parity lives in viewerCoreFreeze/viewerCoreStore.test; this source contract makes the
-// atomic owner flip auditable even through aliases, casts, computed keys, and imperative access.
+// [refactor jul11 P2.3 V2] Post-flip ownership/topology gate for pure viewer geometry.
+// Runtime parity lives in viewerCoreFreeze/viewerCoreStore.test; this source contract keeps the
+// live ownership auditable through aliases, casts, computed keys, and imperative access.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -22,10 +22,8 @@ const CORE_OWNER = {
   exportName: "useViewerCoreStore",
 } as const;
 
-// V1 flips only these two tuples for the escape oracle. The definition/default assertions below
-// deliberately prove both the live owner and the additive target before that atomic commit.
-const ACTIVE_CORE_OWNER = VIEWER_OWNER;
-const INACTIVE_CORE_OWNER = CORE_OWNER;
+const ACTIVE_CORE_OWNER = CORE_OWNER;
+const INACTIVE_CORE_OWNER = VIEWER_OWNER;
 
 const CORE_DATA_CONTRACT = {
   pageNumber: "1",
@@ -63,14 +61,11 @@ const CORE_BOUNDARY_EXCLUSIONS = [
 const CURRENT_NAVIGATION_SHAPE = [
   "pageNumber",
   "numPages",
-  "mode",
   "setPage",
   "setNumPages",
-  "setMode",
 ] as const;
 
 const CURRENT_NAVIGATION_CALL_TOPOLOGY: Record<string, number> = {
-  "src/components/viewer/AnnotationOverlay.tsx": 1,
   "src/components/viewer/AutoParseTab.tsx": 2,
   "src/components/viewer/AutoQtoTab.tsx": 1,
   "src/components/viewer/ChatPanel.tsx": 1,
@@ -570,7 +565,7 @@ function importedCallCount(
   }).length;
 }
 
-describe("P2.3 V1 production-dead viewerCore ownership", () => {
+describe("P2.3 V2 viewerCore ownership", () => {
   const viewerSource = parse(VIEWER_STORE_FILE);
   const coreSource = parse(CORE_STORE_FILE);
   const viewerInterface = findInterface(viewerSource, "ViewerState");
@@ -582,28 +577,52 @@ describe("P2.3 V1 production-dead viewerCore ownership", () => {
   const viewerObject = findStoreObject(viewerSource, "useViewerStore");
   const coreObject = findStoreObject(coreSource, "useViewerCoreStore");
   const coreDefaults = findFunctionReturnObject(coreSource, "freshViewerCoreState");
+  const coreReset = findFunctionReturnObject(coreSource, "freshViewerCoreReset");
 
-  it("pins the exact five data fields, eight legacy actions, and additive reset action", () => {
+  it("pins the exact five data fields, eight actions, reset, and deleted viewer definitions", () => {
     expect(coreDataKeys).toEqual(Object.keys(CORE_DATA_CONTRACT));
     expect(coreActionKeys).toEqual([...CORE_ACTIONS, "resetViewerCoreState"]);
 
     for (const [field, expected] of Object.entries(CORE_DATA_CONTRACT)) {
-      expect(viewerKeys, `${field} active interface`).toContain(field);
-      expect(() => directProperty(viewerObject, field)).not.toThrow();
-      expect(compact(propertyInitializer(viewerObject, field), viewerSource), `${field} live default`)
-        .toBe(expected);
-      expect(compact(propertyInitializer(coreDefaults, field), coreSource), `${field} target default`)
+      expect(viewerKeys, `${field} deleted viewer interface`).not.toContain(field);
+      expect(directObjectKeys(viewerObject), `${field} deleted viewer default`).not.toContain(field);
+      expect(compact(propertyInitializer(coreDefaults, field), coreSource), `${field} core default`)
         .toBe(expected);
     }
     for (const action of CORE_ACTIONS) {
-      expect(viewerKeys, `${action} active interface`).toContain(action);
-      expect(() => directProperty(viewerObject, action)).not.toThrow();
+      expect(viewerKeys, `${action} deleted viewer interface`).not.toContain(action);
+      expect(directObjectKeys(viewerObject), `${action} deleted viewer action`).not.toContain(action);
       expect(() => directProperty(coreObject, action)).not.toThrow();
     }
     expect(() => directProperty(coreObject, "resetViewerCoreState")).not.toThrow();
   });
 
-  it("keeps tool interaction and calibration state outside the additive core", () => {
+  it("pins the four-field core reset and rejects core keys in residual viewer reset", () => {
+    expect(directObjectKeys(coreReset)).toEqual([
+      "pageNumber",
+      "numPages",
+      "scale",
+      "pageDimensions",
+    ]);
+    expect(compact(propertyInitializer(coreReset, "pageNumber"), coreSource)).toBe("1");
+    expect(compact(propertyInitializer(coreReset, "numPages"), coreSource)).toBe("0");
+    expect(compact(propertyInitializer(coreReset, "scale"), coreSource)).toBe("1");
+    expect(compact(propertyInitializer(coreReset, "pageDimensions"), coreSource)).toBe("{}");
+    expect(directObjectKeys(coreReset)).not.toContain("pendingCenter");
+
+    const resetProperty = directProperty(viewerObject, "resetViewerState");
+    expect(ts.isPropertyAssignment(resetProperty)).toBe(true);
+    const patches = descendants(
+      (resetProperty as ts.PropertyAssignment).initializer,
+      ts.isObjectLiteralExpression,
+    );
+    const resetKeys = patches.flatMap((object) => directObjectKeys(object));
+    for (const member of Object.keys(CORE_DATA_CONTRACT)) {
+      expect(resetKeys, `${member} absent from residual viewer reset`).not.toContain(member);
+    }
+  });
+
+  it("keeps tool interaction and calibration state outside the live core", () => {
     const coreKeys = new Set([...coreDataKeys, ...coreActionKeys]);
     for (const member of CORE_BOUNDARY_EXCLUSIONS) {
       expect(viewerKeys, `${member} remains on viewer/tool owner`).toContain(member);
@@ -628,8 +647,8 @@ describe("P2.3 V1 production-dead viewerCore ownership", () => {
   });
 });
 
-describe("P2.3 V1 current mixed useNavigation topology", () => {
-  it("pins its sole owner, exact six-member shape, and production call graph", () => {
+describe("P2.3 V2 split useNavigation topology", () => {
+  it("pins its sole core owner, exact four-member shape, and production call graph", () => {
     const declarations = [VIEWER_STORE_FILE, CORE_STORE_FILE].flatMap((path) => {
       const source = parse(path);
       return descendants(
@@ -662,9 +681,33 @@ describe("P2.3 V1 current mixed useNavigation topology", () => {
     );
     expect(topology).toEqual(CURRENT_NAVIGATION_CALL_TOPOLOGY);
   });
+
+  it("keeps AnnotationOverlay on primitive page and mode selectors", () => {
+    const path = "src/components/viewer/AnnotationOverlay.tsx";
+    const source = parse(path);
+    expect(
+      importedCallCount(
+        source,
+        [VIEWER_OWNER.module, CORE_OWNER.module],
+        "useNavigation",
+      ),
+    ).toBe(0);
+    const coreAccesses = storeMemberAccesses(
+      source,
+      CORE_OWNER,
+      new Set(["pageNumber"]),
+    );
+    expect(coreAccesses).toEqual([{ kind: "selector", member: "pageNumber" }]);
+    const modeAccesses = storeMemberAccesses(
+      source,
+      VIEWER_OWNER,
+      new Set(["mode"]),
+    );
+    expect(modeAccesses).toEqual([{ kind: "selector", member: "mode" }]);
+  });
 });
 
-describe("P2.3 V1 flip-ready core access oracle", () => {
+describe("P2.3 V2 post-flip core access oracle", () => {
   it("self-calibrates aliases, casts, computed keys, getState, and setState", () => {
     const fixture = ts.createSourceFile(
       "viewer-core-owner-fixture.tsx",
@@ -698,7 +741,7 @@ describe("P2.3 V1 flip-ready core access oracle", () => {
     ]));
   });
 
-  it("keeps every production consumer on the live owner and the additive owner unused", () => {
+  it("keeps every production core access on viewerCore and the viewer escape owner empty", () => {
     const plausible = productionSourceFiles.filter((path) => {
       const text = textOf(path);
       return text.includes(VIEWER_OWNER.module) || text.includes(CORE_OWNER.module);
@@ -712,15 +755,7 @@ describe("P2.3 V1 flip-ready core access oracle", () => {
         .map((access) => `${path}:${access.kind}:${access.member}`),
     );
 
-    expect(active.length, "live viewer core members have real consumers").toBeGreaterThan(50);
+    expect(active.length, "viewerCore members have real consumers").toBeGreaterThan(50);
     expect(inactive).toEqual([]);
-    const inactiveImports = plausible.filter((path) =>
-      importedLocalNames(
-        parse(path),
-        INACTIVE_CORE_OWNER.module,
-        INACTIVE_CORE_OWNER.exportName,
-      ).size > 0,
-    );
-    expect(inactiveImports).toEqual([]);
   }, 15_000);
 });

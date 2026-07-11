@@ -2,6 +2,7 @@
 
 import { useMemo, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { useYoloTagCatalog } from "@/queries/useYoloTags";
@@ -23,7 +24,7 @@ export default memo(function ParsedTableCellOverlay({
   cssScale,
 }: ParsedTableCellOverlayProps) {
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const intel = usePageIntelligenceForPage(pageNumber) as any;
   const hiddenParsedRegionIds = useUiStore((s) => s.hiddenParsedRegionIds);
   // [refactor jul11 P2.2⑨] Hit regions need identity/text and only the presence of instances.

@@ -21,6 +21,7 @@ import {
   toggleTableParsePanel,
   toggleTakeoffPanel,
 } from "@/stores/viewerCommands";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 import type { YoloTag } from "@/types";
@@ -32,6 +33,7 @@ function restoreViewerStore(): void {
   // value. resetViewerState intentionally preserves several tool fields, so it is not sufficient
   // isolation for characterization that seeds otherwise-impossible competing-tool combinations.
   useViewerStore.setState(useViewerStore.getInitialState(), true);
+  useViewerCoreStore.setState(useViewerCoreStore.getInitialState(), true);
   useUiStore.setState(useUiStore.getInitialState(), true);
   useSessionStore.setState(useSessionStore.getInitialState(), true);
 }
@@ -72,25 +74,28 @@ function yoloTag(id: string, instances: YoloTag["instances"] = []): YoloTag {
 }
 
 describe("viewer UI command freeze — project reset", () => {
-  it("publishes session -> UI -> residual viewer synchronously and exactly once each", () => {
+  it("publishes session -> UI -> core -> residual viewer synchronously once each", () => {
     setViewerStoreStateForTest({
       publicId: "old-project",
       searchQuery: "needle",
       pageNumber: 7,
+      mode: "markup",
     });
     const publications: string[] = [];
     const unsubscribeSession = useSessionStore.subscribe(() => publications.push("session"));
     const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
+    const unsubscribeCore = useViewerCoreStore.subscribe(() => publications.push("core"));
     const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
 
     resetProjectData();
 
-    expect(publications).toEqual(["session", "ui", "viewer"]);
+    expect(publications).toEqual(["session", "ui", "core", "viewer"]);
     expect(useSessionStore.getState().publicId).toBe("");
     expect(useUiStore.getState().searchQuery).toBe("");
-    expect(useViewerStore.getState().pageNumber).toBe(1);
+    expect(useViewerCoreStore.getState().pageNumber).toBe(1);
     unsubscribeSession();
     unsubscribeUi();
+    unsubscribeCore();
     unsubscribeViewer();
   });
 });
@@ -423,24 +428,24 @@ describe("viewer UI command freeze — YOLO browse navigation", () => {
       tagBrowseIndex: 3,
       llmHighlight: oldHighlight,
     });
-    const missingViewerBaseline = useViewerStore.getState();
+    const missingCoreBaseline = useViewerCoreStore.getState();
     const missingUiBaseline = useUiStore.getState();
     const publications: string[] = [];
-    const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
+    const unsubscribeCore = useViewerCoreStore.subscribe(() => publications.push("core"));
     const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
 
     navigateYoloTag(queryClient, "project-A", "missing", 99);
     expect(publications).toEqual([]);
-    expect(useViewerStore.getState()).toBe(missingViewerBaseline);
+    expect(useViewerCoreStore.getState()).toBe(missingCoreBaseline);
     expect(useUiStore.getState()).toBe(missingUiBaseline);
 
     navigateYoloTag(queryClient, "project-A", "empty", 99);
-    unsubscribeViewer();
+    unsubscribeCore();
     unsubscribeUi();
 
     expect(publications).toEqual(["ui"]);
-    expect(useViewerStore.getState()).toBe(missingViewerBaseline);
-    expect(useViewerStore.getState().pageNumber).toBe(7);
+    expect(useViewerCoreStore.getState()).toBe(missingCoreBaseline);
+    expect(useViewerCoreStore.getState().pageNumber).toBe(7);
     expect(useUiStore.getState()).toMatchObject({
       searchQuery: "unrelated-current-value",
       activeYoloTagId: "empty",
@@ -461,17 +466,17 @@ describe("viewer UI command freeze — YOLO browse navigation", () => {
     useUiStore.setState({ searchQuery: "preserve-me" });
     const publications: string[] = [];
     const uiObservedPages: number[] = [];
-    const unsubscribeViewer = useViewerStore.subscribe(() => publications.push("viewer"));
+    const unsubscribeCore = useViewerCoreStore.subscribe(() => publications.push("core"));
     const unsubscribeUi = useUiStore.subscribe(() => {
       publications.push("ui");
-      uiObservedPages.push(useViewerStore.getState().pageNumber);
+      uiObservedPages.push(useViewerCoreStore.getState().pageNumber);
     });
 
     navigateYoloTag(queryClient, "project-A", "D-201", -1);
 
-    expect(publications).toEqual(["viewer", "ui"]);
+    expect(publications).toEqual(["core", "ui"]);
     expect(uiObservedPages).toEqual([5]);
-    expect(useViewerStore.getState().pageNumber).toBe(5);
+    expect(useViewerCoreStore.getState().pageNumber).toBe(5);
     expect(useUiStore.getState()).toMatchObject({
       searchQuery: "preserve-me",
       activeYoloTagId: "D-201",
@@ -485,12 +490,12 @@ describe("viewer UI command freeze — YOLO browse navigation", () => {
     });
 
     navigateYoloTag(queryClient, "project-A", "D-201", 4);
-    unsubscribeViewer();
+    unsubscribeCore();
     unsubscribeUi();
 
-    expect(publications).toEqual(["viewer", "ui", "viewer", "ui"]);
+    expect(publications).toEqual(["core", "ui", "core", "ui"]);
     expect(uiObservedPages).toEqual([5, 2]);
-    expect(useViewerStore.getState().pageNumber).toBe(2);
+    expect(useViewerCoreStore.getState().pageNumber).toBe(2);
     expect(useUiStore.getState()).toMatchObject({
       searchQuery: "preserve-me",
       tagBrowseIndex: 0,

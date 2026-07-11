@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useNavigation, useSymbolSearch } from "@/stores/viewerStore";
+import { useViewerStore, useSymbolSearch } from "@/stores/viewerStore";
+import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
 import {
   useUiStore,
   useLayoutUi,
@@ -51,8 +52,10 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const [containerWidth, setContainerWidth] = useState(1200);
 
   // Slice selectors — grouped subscriptions prevent cascading re-renders
-  const { pageNumber, numPages, setPage, setNumPages, mode, setMode } = useNavigation();
-  const { scale, setScale } = useViewerStore(useShallow((s) => ({ scale: s.scale, setScale: s.setScale })));
+  const { pageNumber, numPages, setPage, setNumPages } = useNavigation();
+  const mode = useViewerStore((s) => s.mode);
+  const setMode = useViewerStore((s) => s.setMode);
+  const { scale, setScale } = useViewerCoreStore(useShallow((s) => ({ scale: s.scale, setScale: s.setScale })));
   const tempPanMode = useViewerStore((s) => s.tempPanMode);
   const { publicId, dataUrl } = useProject();
   const {
@@ -95,7 +98,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   // Scroll to highlighted region (tag browse + LLM highlights)
   const llmHighlight = useUiStore((s) => s.llmHighlight);
-  const pageDimensions = useViewerStore((s) => s.pageDimensions);
+  const pageDimensions = useViewerCoreStore((s) => s.pageDimensions);
   useEffect(() => {
     if (!llmHighlight || !containerRef.current) return;
     const dim = pageDimensions[llmHighlight.pageNumber];
@@ -241,7 +244,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     }
   }, [publicId, numPages, setScale, setPage]);
 
-  const restorePageDimensions = useViewerStore((s) => s.pageDimensions);
+  const restorePageDimensions = useViewerCoreStore((s) => s.pageDimensions);
   useEffect(() => {
     if (hasAppliedRef.current) return;
     if (!pdfDoc) return;
@@ -288,7 +291,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
     const doSave = () => {
       if (!hasAppliedRef.current) return;
-      const current = useViewerStore.getState();
+      const current = useViewerCoreStore.getState();
       const session = useSessionStore.getState();
       if (session.publicId !== publicId) return;
       saveViewport(publicId, {
@@ -331,7 +334,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   }, [publicId, scale, pageNumber]);
 
   // Center when zoomFit is triggered (via store flag)
-  const { pendingCenter, clearPendingCenter } = useViewerStore(useShallow((s) => ({
+  const { pendingCenter, clearPendingCenter } = useViewerCoreStore(useShallow((s) => ({
     pendingCenter: s.pendingCenter,
     clearPendingCenter: s.clearPendingCenter,
   })));

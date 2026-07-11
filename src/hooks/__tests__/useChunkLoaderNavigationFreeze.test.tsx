@@ -19,6 +19,7 @@ import { queryKeys } from "@/queries/queryKeys";
 import { readAnnotations } from "@/queries/useAnnotations";
 import { readActivePageWindow } from "@/queries/usePageWindow";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { seedAnnotations } from "@/test/seed-annotations";
 import type { ClientAnnotation, CsiCode, KeynoteShapeData, TextAnnotation } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -239,7 +240,7 @@ describe("useChunkLoader navigation freeze — N1/N2 cadence and range", () => {
     { page: 100, url: "/api/projects/pid/pages?from=93&to=100" },
   ])("uses radius seven with clipping at page $page", ({ page, url }) => {
     fetchMock.mockReturnValue(new Promise<Response>(() => {}));
-    act(() => useViewerStore.setState({ pageNumber: page }));
+    act(() => useViewerCoreStore.setState({ pageNumber: page }));
     render(<LoaderOnly />, { wrapper });
 
     advance(100);
@@ -253,7 +254,7 @@ describe("useChunkLoader navigation freeze — N1/N2 cadence and range", () => {
 
   it.each([13, 27])("treats loaded-range endpoint %s as inclusive", (pageNumber) => {
     act(() => {
-      useViewerStore.setState({ pageNumber });
+      useViewerCoreStore.setState({ pageNumber });
       seedWindow({ loadedRange: { from: 13, to: 27 } });
     });
     render(<LoaderOnly />, { wrapper });
@@ -266,7 +267,7 @@ describe("useChunkLoader navigation freeze — N1/N2 cadence and range", () => {
   it("fetches a retained-map page that is outside the exact loaded range", () => {
     fetchMock.mockReturnValue(new Promise<Response>(() => {}));
     act(() => {
-      useViewerStore.setState({ pageNumber: 8 });
+      useViewerCoreStore.setState({ pageNumber: 8 });
       seedWindow({
         loadedRange: { from: 13, to: 27 },
         keynotes: { 8: [keynote("retained-only")] },
@@ -289,7 +290,7 @@ describe("useChunkLoader navigation freeze — N1/N2 cadence and range", () => {
     advance(99);
     expect(fetchMock).not.toHaveBeenCalled();
 
-    act(() => useViewerStore.setState({ pageNumber: 40 }));
+    act(() => useViewerCoreStore.setState({ pageNumber: 40 }));
     advance(99);
     expect(fetchMock).not.toHaveBeenCalled();
 
@@ -306,14 +307,14 @@ describe("useChunkLoader navigation freeze — N1/N2 cadence and range", () => {
     const recovery = deferred<Response>();
     fetchMock.mockReturnValueOnce(a.promise).mockReturnValueOnce(recovery.promise);
     act(() => {
-      useViewerStore.setState({ pageNumber: 50 });
+      useViewerCoreStore.setState({ pageNumber: 50 });
       seedWindow({ loadedRange: { from: 1, to: 15 } });
     });
     render(<LoaderOnly />, { wrapper });
 
     advance(100);
     const aSignal = signalForCall(0);
-    act(() => useViewerStore.setState({ pageNumber: 5 }));
+    act(() => useViewerCoreStore.setState({ pageNumber: 5 }));
     // Page 5 is still covered by the old range, so returning there creates no B intent and does not
     // abort A. When A replaces the range, range reactivity must schedule the recovery request.
     advance(500);
@@ -349,7 +350,7 @@ describe("useChunkLoader navigation freeze — N3/N4 overlapping ownership", () 
     const aSignal = signalForCall(0);
     expect(aSignal.aborted).toBe(false);
 
-    act(() => useViewerStore.setState({ pageNumber: 60 }));
+    act(() => useViewerCoreStore.setState({ pageNumber: 60 }));
     advance(99);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(aSignal.aborted).toBe(false);
@@ -373,7 +374,7 @@ describe("useChunkLoader navigation freeze — N3/N4 overlapping ownership", () 
     render(<LoaderOnly />, { wrapper });
 
     advance(100);
-    act(() => useViewerStore.setState({ pageNumber: 60 }));
+    act(() => useViewerCoreStore.setState({ pageNumber: 60 }));
     advance(100);
     await flushPromises();
 
@@ -400,7 +401,7 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
     render(<LoaderOnly />, { wrapper });
 
     advance(100);
-    act(() => useViewerStore.setState({ pageNumber: 60 }));
+    act(() => useViewerCoreStore.setState({ pageNumber: 60 }));
     advance(100);
     expect(signalForCall(0).aborted).toBe(true);
 
@@ -571,7 +572,7 @@ describe("useChunkLoader navigation freeze — N8 failure policy", () => {
     await flushPromises();
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    act(() => useViewerStore.setState({ pageNumber: 21 }));
+    act(() => useViewerCoreStore.setState({ pageNumber: 21 }));
     advance(100);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1]?.[0]).toBe(

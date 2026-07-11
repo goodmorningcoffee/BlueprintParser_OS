@@ -720,7 +720,7 @@ describe("commitBucketFill", () => {
     const client = freshClient();
     const failure = deferred<unknown>();
     persistFetchMock.mockReturnValueOnce(failure.promise);
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       pageNumber: 2,
       bucketFillPendingPolygon: pendingPolygon(),
     });
@@ -746,7 +746,7 @@ describe("commitBucketFill", () => {
   ])("keeps the optimistic id when bucket persistence returns $label", async ({ response }) => {
     const client = freshClient();
     persistFetchMock.mockResolvedValueOnce(response);
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       pageNumber: 2,
       bucketFillPendingPolygon: pendingPolygon(),
     });
@@ -766,7 +766,7 @@ describe("commitBucketFill", () => {
     persistFetchMock.mockReturnValueOnce(save.promise);
     const holes = [{ vertices: [{ x: 0.2, y: 0.2 }, { x: 0.3, y: 0.2 }, { x: 0.3, y: 0.3 }] }];
     const pending = pendingPolygon({ holes });
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       pageNumber: 5,
       bucketFillPendingPolygon: pending,
     });
@@ -826,7 +826,7 @@ describe("direct takeoff undo/redo bridges", () => {
     client.setQueryData(queryKeys.annotations.all("A"), [takeoffAnn(1, 7, 1)]);
     const priorUndo = [takeoffAnn(90)];
     const priorRedo = [takeoffAnn(91)];
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       activeTakeoffItemId: null,
       pageNumber: 1,
       takeoffUndoStack: priorUndo,
@@ -839,7 +839,7 @@ describe("direct takeoff undo/redo bridges", () => {
     expect(useViewerStore.getState().takeoffUndoStack).toBe(priorUndo);
     expect(useViewerStore.getState().takeoffRedoStack).toBe(priorRedo);
 
-    useViewerStore.setState({ activeTakeoffItemId: 7, pageNumber: 2 });
+    setViewerStoreStateForTest({ activeTakeoffItemId: 7, pageNumber: 2 });
     const undoBeforeNoMatch = useViewerStore.getState().takeoffUndoStack;
     const redoBeforeNoMatch = useViewerStore.getState().takeoffRedoStack;
     takeoffUndo(client);

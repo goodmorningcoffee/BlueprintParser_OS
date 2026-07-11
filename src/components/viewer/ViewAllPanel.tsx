@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   useViewerStore,
 } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import {
   useUiStore,
   useSelectionUi,
@@ -137,7 +138,7 @@ export default function ViewAllPanel() {
   const { takeoffGroups } = useTakeoffGroups();
   const hiddenTakeoffItemIds = useUiStore((s) => s.hiddenTakeoffItemIds);
   const toggleTakeoffItemVisibility = useUiStore((s) => s.toggleTakeoffItemVisibility);
-  const setPage = useViewerStore((s) => s.setPage);
+  const setPage = useViewerCoreStore((s) => s.setPage);
   const setFocusAnnotationId = useUiStore((s) => s.setFocusAnnotationId);
   const setActiveTakeoffItemId = useViewerStore((s) => s.setActiveTakeoffItemId);
   // Drawing numbers per page — join into every row so users see "p.12 · A-201"

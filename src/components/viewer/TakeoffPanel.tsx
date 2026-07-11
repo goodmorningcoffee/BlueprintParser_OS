@@ -3,6 +3,7 @@
 import { useMemo, useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade (items only — this
@@ -39,12 +40,12 @@ export default function TakeoffPanel() {
   // timer per itemId, single-column PUT body, console-only errors) is UNCHANGED and frozen
   // (TakeoffPanelFreeze TP-1/TP-2).
   const { takeoffItems, updateTakeoffItem } = useTakeoffItems();
-  const pageDimensions = useViewerStore((s) => s.pageDimensions);
+  const pageDimensions = useViewerCoreStore((s) => s.pageDimensions);
   const scaleCalibrations = useViewerStore((s) => s.scaleCalibrations);
   const activeTakeoffItemId = useViewerStore((s) => s.activeTakeoffItemId);
   const takeoffUndoStack = useViewerStore((s) => s.takeoffUndoStack);
   const takeoffRedoStack = useViewerStore((s) => s.takeoffRedoStack);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const calibrationMode = useViewerStore((s) => s.calibrationMode);
   const setCalibrationMode = useViewerStore((s) => s.setCalibrationMode);
   const resetCalibration = useViewerStore((s) => s.resetCalibration);
@@ -425,7 +426,7 @@ export default function TakeoffPanel() {
                                 key={inst.annId}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  useViewerStore.getState().setPage(inst.pageNumber);
+                                  useViewerCoreStore.getState().setPage(inst.pageNumber);
                                   useUiStore.getState().setFocusAnnotationId(inst.annId);
                                 }}
                                 className="flex items-center gap-2 px-2 py-0.5 text-[11px] rounded cursor-pointer hover:bg-[var(--surface-hover)]"

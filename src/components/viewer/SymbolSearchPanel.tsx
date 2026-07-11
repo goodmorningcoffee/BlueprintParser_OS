@@ -3,7 +3,8 @@
 import { useMemo, useEffect, useState, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useSymbolSearch, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore, useSymbolSearch } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations } from "@/queries/useAnnotations";
 import { queryKeys } from "@/queries/queryKeys";

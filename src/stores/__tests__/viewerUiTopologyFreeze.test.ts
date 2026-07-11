@@ -1,7 +1,7 @@
 // @vitest-environment node
 // [refactor jul11 P2.3 U2] POST-carve ownership/topology gate for the pure display slice.
 // This is deliberately a source contract: runtime store tests cover setter behavior, while this
-// file makes the upcoming additive uiStore + atomic flip reviewable and prevents a compatibility
+// file keeps the completed uiStore ownership flip reviewable and prevents a compatibility
 // shortcut from widening subscriptions on the hot viewer path.
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 const VIEWER_STORE_FILE = "src/stores/viewerStore.ts";
 const UI_STORE_FILE = "src/stores/uiStore.ts";
+const CORE_STORE_FILE = "src/stores/viewerCoreStore.ts";
 const VIEWER_COMMANDS_FILE = "src/stores/viewerCommands.ts";
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
 const YOLO_FACADE = "src/queries/useYoloTags.ts";
@@ -26,6 +27,11 @@ const UI_OWNER = {
   file: UI_STORE_FILE,
   module: "@/stores/uiStore",
   exportName: "useUiStore",
+} as const;
+const CORE_OWNER = {
+  file: CORE_STORE_FILE,
+  module: "@/stores/viewerCoreStore",
+  exportName: "useViewerCoreStore",
 } as const;
 const ACTIVE_UI_OWNER = UI_OWNER;
 const INACTIVE_UI_OWNER = VIEWER_OWNER;
@@ -141,7 +147,7 @@ const PURE_UI_MEMBER_NAMES = new Set<string>([
 // mutable server-row draft into a store merely because the current UI happens to display them.
 const UI_BOUNDARY_EXCLUSIONS = {
   serverMetadata: ["allTrades", "allCsiCodes"],
-  viewerCore: ["pageDimensions"],
+  viewerCore: ["pageNumber", "numPages", "scale", "pendingCenter", "pageDimensions"],
   toolInteraction: [
     "mode",
     "tempPanMode",
@@ -882,16 +888,22 @@ function rawSelectorMembers(
 describe("P2.3 U2 pure UI ownership contract", () => {
   const uiSource = parse(UI_STORE_FILE);
   const viewerSource = parse(VIEWER_STORE_FILE);
+  const coreSource = parse(CORE_STORE_FILE);
   const uiData = findInterface(uiSource, "UiData");
   const uiActions = findInterface(uiSource, "UiActions");
   const viewerState = findInterface(viewerSource, "ViewerState");
+  const coreData = findInterface(coreSource, "ViewerCoreData");
   const uiStoreObject = findStoreObject(uiSource, "useUiStore");
   const viewerStoreObject = findStoreObject(viewerSource, "useViewerStore");
   const defaultsObject = findFunctionReturnObject(uiSource, "freshUiState");
+  const coreDefaultsObject = findFunctionReturnObject(coreSource, "freshViewerCoreState");
   const interfaceKeys = [...uiData.members, ...uiActions.members]
     .map((member) => ("name" in member ? staticName(member.name) : null))
     .filter((name): name is string => name !== null);
   const viewerInterfaceKeys = viewerState.members
+    .map((member) => ("name" in member ? staticName(member.name) : null))
+    .filter((name): name is string => name !== null);
+  const coreInterfaceKeys = coreData.members
     .map((member) => ("name" in member ? staticName(member.name) : null))
     .filter((name): name is string => name !== null);
 
@@ -920,8 +932,14 @@ describe("P2.3 U2 pure UI ownership contract", () => {
     for (const field of exclusions) {
       expect(pureFields, `${field} must not enter pure UI ledger`).not.toContain(field);
       expect(interfaceKeys, `${field} excluded from uiStore`).not.toContain(field);
-      expect(viewerInterfaceKeys, `${field} remains on viewer owner`).toContain(field);
-      expect(() => directProperty(viewerStoreObject, field)).not.toThrow();
+      if ((UI_BOUNDARY_EXCLUSIONS.viewerCore as readonly string[]).includes(field)) {
+        expect(coreInterfaceKeys, `${field} remains on core owner`).toContain(field);
+        expect(() => directProperty(coreDefaultsObject, field)).not.toThrow();
+        expect(viewerInterfaceKeys, `${field} deleted residual owner`).not.toContain(field);
+      } else {
+        expect(viewerInterfaceKeys, `${field} remains on residual viewer owner`).toContain(field);
+        expect(() => directProperty(viewerStoreObject, field)).not.toThrow();
+      }
     }
   });
 
@@ -1078,13 +1096,15 @@ describe("P2.3 U2 yolo browse cross-store command", () => {
     const body = definitions[0].definition.body;
     expect(body).toBeTruthy();
     const constants = staticStringConstants(source);
-    const storeHooks = identifierAliases(
+    const coreStoreHooks = identifierAliases(
       source,
-      importedLocalNames(source, VIEWER_OWNER.module, VIEWER_OWNER.exportName),
+      importedLocalNames(source, CORE_OWNER.module, CORE_OWNER.exportName),
     );
-    const setters = methodAliases(source, storeHooks, "setState", constants);
-    const viewerPublications = descendants(body!, ts.isCallExpression)
-      .filter((call) => isMethodCall(call, storeHooks, setters, "setState", constants))
+    const coreSetters = methodAliases(source, coreStoreHooks, "setState", constants);
+    const corePublications = descendants(body!, ts.isCallExpression)
+      .filter((call) =>
+        isMethodCall(call, coreStoreHooks, coreSetters, "setState", constants),
+      )
       .map((call) => call.arguments[0])
       .filter((argument): argument is ts.ObjectLiteralExpression => ts.isObjectLiteralExpression(argument))
       .map((object) => directObjectKeys(object, constants));
@@ -1097,7 +1117,7 @@ describe("P2.3 U2 yolo browse cross-store command", () => {
       .filter((argument): argument is ts.ObjectLiteralExpression => ts.isObjectLiteralExpression(argument))
       .map((object) => directObjectKeys(object, constants));
 
-    expect(viewerPublications).toEqual([["pageNumber"]]);
+    expect(corePublications).toEqual([["pageNumber"]]);
     expect(uiPublications).toEqual([
       ["tagBrowseId", "tagBrowseIndex", "activeYoloTagId", "llmHighlight"],
       ["tagBrowseId", "tagBrowseIndex", "activeYoloTagId", "llmHighlight"],

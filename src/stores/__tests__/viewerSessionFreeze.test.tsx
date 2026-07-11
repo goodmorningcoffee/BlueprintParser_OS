@@ -4,6 +4,7 @@
 
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import {
   SESSION_TEST_STATE_KEYS,
@@ -205,7 +206,7 @@ describe("P2.3 demo feature compatibility policy", () => {
 });
 
 describe("P2.3 test state partition seam", () => {
-  it("partitions session keys while keeping viewer navigation in the viewer bucket", () => {
+  it("partitions session keys and viewer geometry into their exact owners", () => {
     expect(
       partitionViewerStoreTestState({
         publicId: "P",
@@ -215,7 +216,8 @@ describe("P2.3 test state partition seam", () => {
     ).toEqual({
       session: { publicId: "P", isDemo: true },
       ui: {},
-      viewer: { pageNumber: 6 },
+      core: { pageNumber: 6 },
+      viewer: {},
     });
   });
 
@@ -223,15 +225,17 @@ describe("P2.3 test state partition seam", () => {
     const publications: string[] = [];
     const sessionListener = vi.fn(() => {
       publications.push(
-        `session:${useSessionStore.getState().publicId}:${useViewerStore.getState().pageNumber}`,
+        `session:${useSessionStore.getState().publicId}:${useViewerCoreStore.getState().pageNumber}`,
       );
     });
-    const viewerListener = vi.fn(() => {
+    const coreListener = vi.fn(() => {
       publications.push(
-        `viewer:${useSessionStore.getState().publicId}:${useViewerStore.getState().pageNumber}`,
+        `core:${useSessionStore.getState().publicId}:${useViewerCoreStore.getState().pageNumber}`,
       );
     });
+    const viewerListener = vi.fn();
     const unsubscribeSession = useSessionStore.subscribe(sessionListener);
+    const unsubscribeCore = useViewerCoreStore.subscribe(coreListener);
     const unsubscribeViewer = useViewerStore.subscribe(viewerListener);
 
     setViewerStoreStateForTest({ publicId: "P", isDemo: true, pageNumber: 6 });
@@ -240,42 +244,51 @@ describe("P2.3 test state partition seam", () => {
       publicId: "P",
       isDemo: true,
     });
-    expect(useViewerStore.getState()).toMatchObject({
+    expect(useViewerCoreStore.getState()).toMatchObject({
       pageNumber: 6,
     });
     // Zustand accepts undeclared runtime keys, so positive assertions alone would not prove that
     // the helper stopped republishing a hidden session copy into viewerStore.
     for (const key of SESSION_TEST_STATE_KEYS) {
       expect(useViewerStore.getState()).not.toHaveProperty(key);
+      expect(useViewerCoreStore.getState()).not.toHaveProperty(key);
     }
     expect(useSessionStore.getState()).not.toHaveProperty("pageNumber");
 
     // Query keys/guards read sessionStore from viewer subscribers. Preserve the helper's explicit
     // session-first contract and prove each logical patch produces exactly one leaf publication.
     expect(sessionListener).toHaveBeenCalledTimes(1);
-    expect(viewerListener).toHaveBeenCalledTimes(1);
-    expect(publications).toEqual(["session:P:1", "viewer:P:6"]);
+    expect(coreListener).toHaveBeenCalledTimes(1);
+    expect(viewerListener).not.toHaveBeenCalled();
+    expect(publications).toEqual(["session:P:1", "core:P:6"]);
     unsubscribeSession();
+    unsubscribeCore();
     unsubscribeViewer();
   });
 
   it("does not publish an empty sibling-store patch", () => {
     const sessionListener = vi.fn();
+    const coreListener = vi.fn();
     const viewerListener = vi.fn();
     const unsubscribeSession = useSessionStore.subscribe(sessionListener);
+    const unsubscribeCore = useViewerCoreStore.subscribe(coreListener);
     const unsubscribeViewer = useViewerStore.subscribe(viewerListener);
 
     setViewerStoreStateForTest({ publicId: "session-only" });
     expect(sessionListener).toHaveBeenCalledTimes(1);
+    expect(coreListener).not.toHaveBeenCalled();
     expect(viewerListener).not.toHaveBeenCalled();
 
     sessionListener.mockClear();
+    coreListener.mockClear();
     viewerListener.mockClear();
     setViewerStoreStateForTest({ pageNumber: 4 });
     expect(sessionListener).not.toHaveBeenCalled();
-    expect(viewerListener).toHaveBeenCalledTimes(1);
+    expect(coreListener).toHaveBeenCalledTimes(1);
+    expect(viewerListener).not.toHaveBeenCalled();
 
     unsubscribeSession();
+    unsubscribeCore();
     unsubscribeViewer();
   });
 });

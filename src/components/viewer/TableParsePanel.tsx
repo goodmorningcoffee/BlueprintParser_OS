@@ -3,6 +3,7 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { toggleTableParsePanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
@@ -36,7 +37,7 @@ export default function TableParsePanel() {
   // [refactor jul10 P2.2③] context-only handle for the promote-refresher cache seed below —
   // useQueryClient carries ZERO subscription (no re-render on summaries writes).
   const queryClient = useQueryClient();
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const pageIntelligence = usePageIntelligenceByPage();
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
@@ -47,7 +48,7 @@ export default function TableParsePanel() {
   const tableParseStep = useViewerStore((s) => s.tableParseStep);
   const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
   const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
-  const setPage = useViewerStore((s) => s.setPage);
+  const setPage = useViewerCoreStore((s) => s.setPage);
   const tableParseTab = useViewerStore((s) => s.tableParseTab);
   const setTableParseTab = useViewerStore((s) => s.setTableParseTab);
   const pageNames = useSessionStore((s) => s.pageNames);

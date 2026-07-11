@@ -6,6 +6,7 @@ import {
   useLoadedPageRange,
 } from "@/queries/usePageWindow";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { PageWindowResponse } from "@/queries/pageWindowCore";
 import type { ScaleCalibrationData } from "@/types";
@@ -43,8 +44,8 @@ function chunkRequestIdentity(
  */
 export function useChunkLoader() {
   const queryClient = useQueryClient();
-  const pageNumber = useViewerStore((s) => s.pageNumber);
-  const numPages = useViewerStore((s) => s.numPages);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
+  const numPages = useViewerCoreStore((s) => s.numPages);
   const publicId = useSessionStore((s) => s.publicId);
   const isDemo = useSessionStore((s) => s.isDemo);
   // This is intentionally the loader's one cache observer. Range publication must reschedule the
@@ -106,12 +107,12 @@ export function useChunkLoader() {
       // Project policy and navigation now have separate owners. Read both back-to-back at the
       // original dispatch boundary; do not move either capture across an await or timer.
       const liveSession = useSessionStore.getState();
-      const liveViewer = useViewerStore.getState();
+      const liveCore = useViewerCoreStore.getState();
       // Effects normally clean up first, but this synchronous identity check closes the small window
       // between an external store identity change and React running that cleanup.
       if (liveSession.publicId !== publicId || liveSession.isDemo !== isDemo) return;
 
-      const currentPage = liveViewer.pageNumber;
+      const currentPage = liveCore.pageNumber;
       // Re-read the project-keyed cache at dispatch. The range may have changed during the real
       // 100 ms debounce, and the old state machine suppressed a now-redundant request here.
       const currentRange = readActivePageWindow(queryClient, publicId).loadedRange;

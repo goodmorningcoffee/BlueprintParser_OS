@@ -168,7 +168,7 @@ describe("TakeoffPanel takeoff undo/redo buttons", () => {
     seedAnnotations(qc, rows);
     // [refactor jul11 P2.2⑥] Current button enablement is history-length based. Seed one prior
     // undo row so the REAL button can invoke the action; the action must append, not replace, it.
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       activeTakeoffItemId: 7,
       pageNumber: 1,
       takeoffUndoStack: [priorUndo],
@@ -199,7 +199,7 @@ describe("TakeoffPanel takeoff undo/redo buttons", () => {
     // [refactor jul11 P2.2⑥] The current panel enables Redo from redoStack even though the action
     // restores from undoStack. Seed both independently so the click exercises the production action
     // and freezes its actual append/move semantics without reaching around the disabled button.
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       activeTakeoffItemId: 7,
       pageNumber: 1,
       takeoffUndoStack: [restored],
@@ -232,7 +232,7 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
       takeoffAnnotation(4), // last active-item/current-page match
       userAnnotation(5), // survives undo and precedes the restored row after W
     ]);
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       activeTakeoffItemId: 7,
       pageNumber: 1,
       takeoffUndoStack: [],
@@ -267,7 +267,7 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
     // is that the operation preserves the CACHE'S pre-event reference, not the caller input ref.
     const rowsBefore = readCurrentAnnotations();
     expect(rowsBefore).toEqual(rows);
-    useViewerStore.setState({
+    setViewerStoreStateForTest({
       activeTakeoffItemId: null,
       pageNumber: 1,
       takeoffUndoStack: priorUndo,
@@ -289,7 +289,7 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
 
     // The effect deliberately has [] deps, so changing these fields after mount also proves that the
     // handler reads live store state. Item 7 exists, but only on page 1; page 2 is the no-match guard.
-    useViewerStore.setState({ activeTakeoffItemId: 7, pageNumber: 2 });
+    setViewerStoreStateForTest({ activeTakeoffItemId: 7, pageNumber: 2 });
     const noMatchEvent = pressKey("z");
     await waitFor(() => {
       expect(noMatchEvent.defaultPrevented).toBe(true); // key recognized; operation itself no-ops
@@ -302,7 +302,7 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
     // W reaches the action when an item is active, but redo restores from undoStack. An empty
     // undo stack is therefore a second independent no-op guard; deleting it would duplicate or
     // invent a row from redo history during the C2 hoist.
-    useViewerStore.setState({ pageNumber: 1, takeoffUndoStack: [], takeoffRedoStack: priorRedo });
+    setViewerStoreStateForTest({ pageNumber: 1, takeoffUndoStack: [], takeoffRedoStack: priorRedo });
     const emptyUndoRedoEvent = pressKey("w");
     await waitFor(() => {
       expect(emptyUndoRedoEvent.defaultPrevented).toBe(true);

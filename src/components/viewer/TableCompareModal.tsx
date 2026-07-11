@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
@@ -31,7 +32,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   // [refactor jul10 P2.2③] context-only handle for the summaries cache seed (zero subscription).
   const queryClient = useQueryClient();
   const toggleModal = useUiStore((s) => s.toggleTableCompareModal);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const tableParsedGrid = useViewerStore((s) => s.tableParsedGrid);
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);

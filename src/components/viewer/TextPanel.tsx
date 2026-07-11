@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore } from "@/stores/viewerStore";
+import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
 import {
   useUiStore,
   usePanelTabs,
@@ -608,11 +609,11 @@ export function TextractTab({ pageNumber }: { pageNumber: number }) {
     const capturedPageNumber = pageNumber;
     const requestGeneration = ++requestGenerationRef.current;
     const isCurrentRequest = () => {
-      const liveViewer = useViewerStore.getState();
+      const liveCore = useViewerCoreStore.getState();
       const liveSession = useSessionStore.getState();
       return requestGenerationRef.current === requestGeneration
         && liveSession.publicId === capturedPublicId
-        && liveViewer.pageNumber === capturedPageNumber;
+        && liveCore.pageNumber === capturedPageNumber;
     };
 
     setLoading(true);

@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useNavigation, usePageData } from "@/stores/viewerStore";
+import { usePageData } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore, useSearchUiActions } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useCsiCodesForPage } from "@/queries/usePageWindow";

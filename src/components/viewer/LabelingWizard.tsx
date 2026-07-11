@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { apiErrorMessage } from "@/lib/client-persist";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 
 interface LabelingWizardProps {
@@ -13,8 +14,8 @@ interface LabelingWizardProps {
 
 export default function LabelingWizard({ onClose, projectName, isDemo }: LabelingWizardProps) {
   const publicId = useSessionStore((s) => s.publicId);
-  const numPages = useViewerStore((s) => s.numPages);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const numPages = useViewerCoreStore((s) => s.numPages);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
 
   // Persistent state in Zustand (survives tab switches)
   const wizardStep = useSessionStore((s) => s.labelingWizardStep);

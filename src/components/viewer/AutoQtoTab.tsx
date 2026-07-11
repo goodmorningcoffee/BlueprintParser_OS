@@ -2,7 +2,8 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore } from "@/stores/viewerStore";
+import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { toggleTableParsePanel } from "@/stores/viewerCommands";
 import { isDemoFeatureEnabled, useProject, useSessionStore } from "@/stores/sessionStore";
@@ -675,7 +676,7 @@ function ConfigureStep({ workflow, updateWorkflowStep, pageNames, summaries }: {
   summaries: any;
 }) {
   const schedule = workflow.parsedSchedule;
-  const numPages = useViewerStore((s) => s.numPages);
+  const numPages = useViewerCoreStore((s) => s.numPages);
 
   // SHIP 2: item-type drives which sub-controls are rendered + how the
   // engine dispatches. Defaults to "yolo-with-inner-text" for backward compat.

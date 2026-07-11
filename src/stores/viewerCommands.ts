@@ -7,13 +7,15 @@
 
 import { useSessionStore } from "@/stores/sessionStore";
 import { useUiStore } from "@/stores/uiStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 
 export function resetProjectData(): void {
   // Session first: every Query observer immediately re-keys away from the old project before the
-  // remaining UI/viewer reset publishes. All writes are synchronous; there is no await/paint gap.
+  // remaining UI/core/viewer reset publishes. All writes are synchronous; there is no await/paint gap.
   useSessionStore.getState().resetSession();
   useUiStore.getState().resetProjectUiState();
+  useViewerCoreStore.getState().resetViewerCoreState();
   useViewerStore.getState().resetViewerState();
 }
 

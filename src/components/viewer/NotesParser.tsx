@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
@@ -47,7 +48,7 @@ export default function NotesParser() {
   const projectId = useSessionStore((session) => session.projectId);
   const publicId = useSessionStore((session) => session.publicId);
   const isDemo = useSessionStore((session) => session.isDemo);
-  const pageNumber = useViewerStore((s) => s.pageNumber);
+  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const textractData = useTextractForPage(pageNumber);
 
   const notesParseRegion = useViewerStore((s) => s.notesParseRegion);

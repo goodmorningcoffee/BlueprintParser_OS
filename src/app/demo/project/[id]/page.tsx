@@ -7,6 +7,7 @@ import { useParams, useSearchParams } from "next/navigation";
 // QueryClient context is available here.
 import { useQueryClient } from "@tanstack/react-query";
 import { useUiStore } from "@/stores/uiStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -64,7 +65,7 @@ export default function DemoProjectPage() {
   const setProjectId = useSessionStore((s) => s.setProjectId);
   const setPublicId = useSessionStore((s) => s.setPublicId);
   const setDataUrl = useSessionStore((s) => s.setDataUrl);
-  const setNumPages = useViewerStore((s) => s.setNumPages);
+  const setNumPages = useViewerCoreStore((s) => s.setNumPages);
   const initDetectionModels = useUiStore((s) => s.initDetectionModels);
   const setPageNames = useSessionStore((s) => s.setPageNames);
   const setPageDrawingNumbers = useSessionStore((s) => s.setPageDrawingNumbers);
@@ -237,7 +238,7 @@ export default function DemoProjectPage() {
   // Keyboard shortcuts
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      const store = useViewerStore.getState();
+      const store = useViewerCoreStore.getState();
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||

@@ -1,6 +1,6 @@
 "use client";
 
-import { useNavigation } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
 import { useProject } from "@/stores/sessionStore";
 
 interface CompareEditTabProps {

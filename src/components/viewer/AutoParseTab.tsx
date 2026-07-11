@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useViewerStore, useTableParse, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore, useTableParse } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useProject } from "@/stores/sessionStore";
 import { exportTableCsv } from "@/lib/table-parse-utils";

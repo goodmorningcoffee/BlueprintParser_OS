@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
@@ -114,7 +115,7 @@ export default memo(function ParsedTableItem({
     if (!publicId || !table.region?.bbox) return;
     setDetectingCells(true);
     setDetectCellsError(null);
-    store.setPage(table.pageNum);
+    useViewerCoreStore.getState().setPage(table.pageNum);
     try {
       const resp = await fetch("/api/table-structure", {
         method: "POST",
@@ -506,7 +507,7 @@ export default memo(function ParsedTableItem({
                       tableName: table.name,
                     });
                     store.setTableParseRegion(table.region.bbox || null);
-                    store.setPage(table.pageNum);
+                    useViewerCoreStore.getState().setPage(table.pageNum);
                     useUiStore.getState().toggleTableCompareModal();
                   }}
                   className="flex-1 text-[9px] px-2 py-1 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"

@@ -770,7 +770,7 @@ describe("BucketFillAssignDialog — direct existing-item G6 boundary", () => {
   });
 
   it("persistence failure keeps the optimistic clicked-item fill and surfaces the error", async () => {
-    useViewerStore.setState({ bucketFillPendingPolygon: PENDING_POLYGON, pageNumber: 5 });
+    setViewerStoreStateForTest({ bucketFillPendingPolygon: PENDING_POLYGON, pageNumber: 5 });
     seedTakeoff(qc, [item({ id: 7, name: "Existing Room", shape: "polygon" })], []);
     seedAnnotations(qc, []);
     const save = deferred<unknown>();

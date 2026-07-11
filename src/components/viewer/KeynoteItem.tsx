@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
@@ -269,7 +270,7 @@ export default function KeynoteItem({
                       tableName: keynote.tableName || "Keynotes",
                     });
                     store.setTableParseRegion(region.bbox || null);
-                    store.setPage(keynote.pageNumber);
+                    useViewerCoreStore.getState().setPage(keynote.pageNumber);
                     useUiStore.getState().toggleTableCompareModal();
                   }}
                   className="flex-1 text-[9px] px-2 py-1 rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"

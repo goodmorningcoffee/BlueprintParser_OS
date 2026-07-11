@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import { useViewerStore } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
 import {
   useUiStore,
   useDetectionUi,

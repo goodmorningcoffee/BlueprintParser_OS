@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useViewerStore, useNavigation, useSymbolSearch } from "@/stores/viewerStore";
+import { useViewerStore, useSymbolSearch } from "@/stores/viewerStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import {

@@ -1,10 +1,9 @@
-// [refactor jul11 P2.3 S0] Backing-specific characterization for the page/zoom/dimensions core.
-// This file flips to viewerCore at the ownership commit; until then it proves the extraction has an
-// exact behavioral target. Tool interaction (`mode`/temp-pan) is deliberately excluded: the fresh
-// census assigns it to toolStore because mode changes tear down competing tools.
+// [refactor jul11 P2.3 V1] Post-flip characterization for the page/zoom/dimensions owner.
+// Tool interaction (`mode`/temp-pan) remains deliberately excluded because mode changes tear down
+// competing tools and therefore migrate with toolStore.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useViewerCoreStore as useViewerStore } from "@/stores/viewerCoreStore";
 import { resetProjectData } from "@/stores/viewerCommands";
 
 beforeEach(() => {
