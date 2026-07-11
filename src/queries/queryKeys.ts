@@ -69,6 +69,11 @@ export const queryKeys = {
   yoloTags: {
     all: (publicId: string) => ["project", publicId, "yoloTags"] as const,
   },
+  // P2.3 session carve: the only live consumer of the residual projectIntelligence blob needs
+  // csiGraph alone. Keep it separate so summaries/yoloTags are not silently duplicated here.
+  csiGraph: {
+    all: (publicId: string) => ["project", publicId, "csiGraph"] as const,
+  },
 } as const;
 
 export type QueryKeys = typeof queryKeys;
