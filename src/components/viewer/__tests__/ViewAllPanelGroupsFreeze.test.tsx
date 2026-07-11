@@ -124,8 +124,52 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  // Navigation DETECTOR temporarily holds Query observer timers so a row click can prove its
+  // handler-time cache read. Restore even after a failed assertion to prevent suite leakage.
+  if (vi.isFakeTimers()) {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+// ─── V-0: annotation navigation reads the live cache at action time ─────────────────────────
+
+describe("ViewAllPanel annotation navigation — live handler-time row lookup", () => {
+  it("uses a same-tick cache replacement's bbox/name when the already-rendered row is clicked", () => {
+    const rendered = {
+      ...ann(100),
+      pageNumber: 4,
+      name: "rendered-row",
+      bbox: [0.1, 0.2, 0.3, 0.4] as [number, number, number, number],
+    };
+    seedAnnotations(qc, [rendered]);
+    render(<ViewAllPanel />, { wrapper });
+    fireEvent.click(screen.getByText("Markup"));
+    fireEvent.click(screen.getByText("Page 4"));
+    const renderedRow = screen.getByTitle("rendered-row");
+
+    // [refactor jul11 P2.2⑥ DETECTOR] WHY fake only this notification window: the visible button
+    // must retain its old render closure while the cache already holds the action-time truth. The
+    // production readAnnotations bridge sees LIVE-* below; an `annotations.find(...)` mutation
+    // instead publishes the rendered bbox/name and is killed by the llmHighlight assertion.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const live = {
+      ...rendered,
+      name: "LIVE-cache-row",
+      bbox: [0.55, 0.6, 0.75, 0.8] as [number, number, number, number],
+    };
+    seedAnnotations(qc, [live]);
+    fireEvent.click(renderedRow);
+
+    expect(useViewerStore.getState().focusAnnotationId).toBe(100);
+    expect(useViewerStore.getState().llmHighlight).toEqual({
+      pageNumber: 4,
+      bbox: live.bbox,
+      label: live.name,
+    });
+  });
 });
 
 // ─── V-1: render — inactive styling, csi badge, memberCount from the live-annotation join ────

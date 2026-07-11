@@ -17,7 +17,7 @@ import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 //   • subscribed component read/write       -> useAnnotations()
 //   • handler/library live synchronous read -> readAnnotations(qc, publicId)
 //   • live functional whole-array transform -> writeAnns(qc, publicId, updater)
-//   • future optimistic single-create       -> persistCreate(draft, options)
+//   • optimistic single-create              -> persistCreate(draft, options)
 //
 // Do not reach back into the deleted viewerStore.annotations field. `setAnnotations` is deliberately a
 // VALUE replacement, while CRUD/writeAnns are functional: several existing post-await handlers
@@ -30,7 +30,15 @@ import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 // no await inserted between. Existing persistence paths keep optimistic rows on failure by design.
 
 export type AnnotationUpdater = (rows: ClientAnnotation[]) => ClientAnnotation[];
-export type NewAnnotationDraft = Omit<ClientAnnotation, "id">;
+/**
+ * The POST shape deliberately keeps server-defaulted fields optional.
+ *
+ * `persistCreate` normalizes those omissions only for the optimistic client row. This lets callers
+ * converge on one create seam without quietly changing their existing wire payloads (for example,
+ * markup historically omits `source`, while takeoff creates omit `note`).
+ */
+export type NewAnnotationDraft = Pick<ClientAnnotation, "pageNumber" | "name" | "bbox"> &
+  Partial<Pick<ClientAnnotation, "note" | "source" | "data">>;
 
 export interface PersistCreateOptions {
   /** Context for the default console reporter. Existing UI sites pass their own banner callback. */
@@ -103,8 +111,8 @@ export function seedAnnotationsFromBootstrap(
 }
 
 function reportPersistCreateError(error: Error, label?: string): void {
-  // [refactor jul11 P2.2⑥] There is no generic global annotation banner. Optional C4 adopters
-  // must pass their existing per-tool UI callback; the default stays visible to developers rather
+  // [refactor jul11 P2.2⑥] There is no generic global annotation banner. C4 adopters pass their
+  // existing per-tool UI callback; the default stays visible to developers/future callers rather
   // than swallowing a failed save. No timer is created here (important for unmount/test lifetime).
   console.error(`[ANNOTATIONS] ${label ?? "Annotation drawn locally but NOT saved"}:`, error);
 }
@@ -249,7 +257,17 @@ function usePersistCreate(
         ? readAnnotations(qc, publicId)
         : null;
       const tempId = -Date.now();
-      addAnnotation({ id: tempId, ...draft });
+      // [refactor jul11 P2.2⑥ C4] Normalize only the local row. The request below still spreads
+      // the caller's exact draft, so optional fields that were historically omitted stay omitted.
+      addAnnotation({
+        id: tempId,
+        pageNumber: draft.pageNumber,
+        name: draft.name,
+        bbox: draft.bbox,
+        note: draft.note ?? null,
+        source: draft.source ?? "user",
+        data: draft.data ?? null,
+      });
 
       // Optimistic local creation is always available, including demo/pre-bootstrap sessions.
       if (!canPersist(publicId, isDemo)) return tempId;

@@ -466,6 +466,46 @@ describe("persistCreate extensibility seam", () => {
     expect(readAnnotations(client, "A")).toEqual([{ id: 4242, ...input }]);
   });
 
+  it("normalizes omitted client defaults without adding them to the POST payload", async () => {
+    const client = freshClient();
+    const save = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(save.promise);
+    const { result } = renderHook(() => useAnnotations(), { wrapper: makeWrapper(client) });
+    const sparseDraft: NewAnnotationDraft = {
+      pageNumber: 8,
+      name: "wire-shape witness",
+      bbox: [0.1, 0.2, 0.3, 0.4],
+    };
+    let operation!: Promise<number>;
+
+    act(() => {
+      operation = result.current.persistCreate(sparseDraft);
+    });
+
+    expect(readAnnotations(client, "A")).toEqual([
+      {
+        id: TEMP_ID,
+        ...sparseDraft,
+        note: null,
+        source: "user",
+        data: null,
+      },
+    ]);
+    expect(persistFetchMock).toHaveBeenCalledWith("/api/annotations", {
+      projectId: "A",
+      ...sparseDraft,
+    });
+    expect(persistFetchMock.mock.calls[0]?.[1]).not.toHaveProperty("note");
+    expect(persistFetchMock.mock.calls[0]?.[1]).not.toHaveProperty("source");
+    expect(persistFetchMock.mock.calls[0]?.[1]).not.toHaveProperty("data");
+
+    save.resolve({ id: 8181 });
+    await act(async () => {
+      await operation;
+    });
+    expect(readAnnotations(client, "A")[0]?.id).toBe(8181);
+  });
+
   it("keeps and returns the temp id when a successful response has no truthy id", async () => {
     const client = freshClient();
     persistFetchMock.mockResolvedValueOnce({ id: 0, name: "invalid id" });
@@ -695,6 +735,26 @@ describe("commitBucketFill", () => {
     expect(useViewerStore.getState().bucketFillError).toBe(
       "Bucket fill drawn locally but NOT saved: Forbidden",
     );
+    expect(readAnnotations(client, "A").map((row) => row.id)).toEqual([TEMP_ID]);
+  });
+
+  it.each([
+    { label: "zero id", response: { id: 0 } },
+    { label: "missing id", response: {} },
+  ])("keeps the optimistic id when bucket persistence returns $label", async ({ response }) => {
+    const client = freshClient();
+    persistFetchMock.mockResolvedValueOnce(response);
+    useViewerStore.setState({
+      pageNumber: 2,
+      bucketFillPendingPolygon: pendingPolygon(),
+    });
+    const { result } = renderHook(() => useAnnotations(), { wrapper: makeWrapper(client) });
+
+    act(() => result.current.commitBucketFill(takeoffItem));
+    await flushMicrotasks();
+
+    // [refactor jul11 P2.2⑥ DETECTOR] The legacy reconciler accepts only truthy server IDs.
+    // Adopting 0/undefined would make the optimistic row unreachable to later ID-based actions.
     expect(readAnnotations(client, "A").map((row) => row.id)).toEqual([TEMP_ID]);
   });
 

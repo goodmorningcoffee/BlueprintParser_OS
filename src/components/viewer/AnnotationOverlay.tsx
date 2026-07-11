@@ -140,10 +140,16 @@ export default memo(function AnnotationOverlay({
   const tableCellStructure = useViewerStore((s) => s.tableCellStructure);
   const showTableCellStructure = useViewerStore((s) => s.showTableCellStructure);
   const toggleCellHighlight = useViewerStore((s) => s.toggleCellHighlight);
-  // [refactor jul11 P2.2⑥] Annotation data/actions now share the one chunk-seeded cache
-  // facade. This preserves the sacred overlay's data-only query subscription and keeps every
-  // existing persist/reconcile path at its original granularity.
-  const { annotations, addAnnotation, removeAnnotation, updateAnnotation } = useAnnotations();
+  // [refactor jul11 P2.2⑥] Annotation data/actions now share the one chunk-seeded cache facade.
+  // C4 converges the five independent create paths onto persistCreate; split stays explicit because
+  // its two-row PUT-before-POST order is load-bearing. The subscription remains data-only.
+  const {
+    annotations,
+    addAnnotation,
+    removeAnnotation,
+    updateAnnotation,
+    persistCreate,
+  } = useAnnotations();
   // [refactor jul10 P2.2④ D7] dead `addTakeoffItem` binding deleted — declared, never called.
   const keynotes = useViewerStore((s) => s.keynotes);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
@@ -874,44 +880,26 @@ export default memo(function AnnotationOverlay({
       unit,
     };
 
-    // Optimistic add
-    const tempId = -Date.now();
-    addAnnotation({
-      id: tempId,
+    // [refactor jul11 P2.2⑥ C4] The shared create seam keeps the exact old POST shape,
+    // optimistic no-rollback behavior, ID-only reconcile, demo gate, and visible error channel.
+    void persistCreate({
       pageNumber,
       name: activeItem.name,
       bbox,
-      note: null,
       source: "takeoff",
       data: polygonData as unknown as Record<string, unknown>,
+    }, {
+      onError: (err) => {
+        useViewerStore.getState().setBucketFillError(
+          err instanceof Error ? `Failed to save area: ${err.message}` : "Failed to save area",
+        );
+        setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+      },
     });
-
-    // Persist — surface failures via the visible bucket-fill error banner
-    // instead of silently dropping the saved polygon.
-    if (canPersist(publicId, isDemo)) {
-      (async () => {
-        try {
-          const saved = await persistFetch("/api/annotations", {
-            projectId: publicId,
-            pageNumber,
-            name: activeItem.name,
-            bbox,
-            source: "takeoff",
-            data: polygonData,
-          }) as { id?: number } | null;
-          if (saved?.id) updateAnnotation(tempId, { id: saved.id });
-        } catch (err) {
-          useViewerStore.getState().setBucketFillError(
-            err instanceof Error ? `Failed to save area: ${err.message}` : "Failed to save area",
-          );
-          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
-        }
-      })();
-    }
 
     resetPolygonDrawing();
     setMousePos(null);
-  }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, resetPolygonDrawing, isDemo]);
+  }, [scaleCalibrations, pageNumber, width, height, publicId, persistCreate, resetPolygonDrawing]);
 
   /** Prepare bucket fill preview for item assignment (doesn't create annotation yet) */
   const prepareBucketFillPolygon = useCallback(() => {
@@ -967,36 +955,22 @@ export default memo(function AnnotationOverlay({
         areaSqUnits,
         unit,
       };
-      const tempId = -Date.now();
-      addAnnotation({
-        id: tempId,
+      // [refactor jul11 P2.2⑥ C4] Same create recipe as freehand area; request omissions
+      // remain byte-for-shape identical because persistCreate normalizes only the cache row.
+      void persistCreate({
         pageNumber,
         name: activeItem.name,
         bbox,
-        note: null,
         source: "takeoff",
         data: polygonData as unknown as Record<string, unknown>,
+      }, {
+        onError: (err) => {
+          useViewerStore.getState().setBucketFillError(
+            err instanceof Error ? `Failed to save area: ${err.message}` : "Failed to save area",
+          );
+          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+        },
       });
-      if (canPersist(publicId, isDemo)) {
-        (async () => {
-          try {
-            const saved = await persistFetch("/api/annotations", {
-              projectId: publicId,
-              pageNumber,
-              name: activeItem.name,
-              bbox,
-              source: "takeoff",
-              data: polygonData,
-            }) as { id?: number } | null;
-            if (saved?.id) updateAnnotation(tempId, { id: saved.id });
-          } catch (err) {
-            useViewerStore.getState().setBucketFillError(
-              err instanceof Error ? `Failed to save area: ${err.message}` : "Failed to save area",
-            );
-            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
-          }
-        })();
-      }
       setBucketFillPreview(null);
       return;
     }
@@ -1011,7 +985,7 @@ export default memo(function AnnotationOverlay({
       unit,
     });
     setBucketFillPreview(null);
-  }, [scaleCalibrations, pageNumber, width, height, setBucketFillPreview, addAnnotation, updateAnnotation, publicId, isDemo]);
+  }, [scaleCalibrations, pageNumber, width, height, setBucketFillPreview, persistCreate, publicId]);
 
   /** Accept a pending Split Area preview: both halves stay under same takeoff item. */
   const acceptSplit = useCallback(() => {
@@ -1064,7 +1038,11 @@ export default memo(function AnnotationOverlay({
     const leftResult = computeData(preview.left, parentItem.id);
     const rightResult = computeData(preview.right, parentItem.id);
 
-    // 1. Create right-half annotation FIRST (safe ordering — if anything fails, original is intact)
+    // 1. Create right-half annotation FIRST (safe ordering — if anything fails, original is intact).
+    // [refactor jul11 P2.2⑥ C4] INTENTIONAL exception to persistCreate: split is a two-row
+    // transaction-shaped sequence (optimistic right -> optimistic left -> PUT left -> POST right).
+    // The shared one-row seam would dispatch the POST before the left update/PUT and subtly reorder
+    // failure behavior, so this load-bearing path stays explicit until it has a real transaction API.
     const tempAnnId = -Date.now() - 1;
     addAnnotation({
       id: tempAnnId,
@@ -1156,44 +1134,25 @@ export default memo(function AnnotationOverlay({
       segmentLengths: length.segments,
     };
 
-    // Optimistic add
-    const tempId = -Date.now();
-    addAnnotation({
-      id: tempId,
+    // [refactor jul11 P2.2⑥ C4] Shared optimistic-create recipe; failures remain local+visible.
+    void persistCreate({
       pageNumber,
       name: activeItem.name,
       bbox,
-      note: null,
       source: "takeoff",
       data: polylineData as unknown as Record<string, unknown>,
+    }, {
+      onError: (err) => {
+        useViewerStore.getState().setBucketFillError(
+          err instanceof Error ? `Failed to save line: ${err.message}` : "Failed to save line",
+        );
+        setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+      },
     });
-
-    // Persist — surface failures on the visible canvas error banner instead of
-    // silently dropping the saved line.
-    if (canPersist(publicId, isDemo)) {
-      (async () => {
-        try {
-          const saved = await persistFetch("/api/annotations", {
-            projectId: publicId,
-            pageNumber,
-            name: activeItem.name,
-            bbox,
-            source: "takeoff",
-            data: polylineData,
-          }) as { id?: number } | null;
-          if (saved?.id) updateAnnotation(tempId, { id: saved.id });
-        } catch (err) {
-          useViewerStore.getState().setBucketFillError(
-            err instanceof Error ? `Failed to save line: ${err.message}` : "Failed to save line",
-          );
-          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
-        }
-      })();
-    }
 
     resetPolygonDrawing();
     setMousePos(null);
-  }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, resetPolygonDrawing, isDemo]);
+  }, [scaleCalibrations, pageNumber, width, height, publicId, persistCreate, resetPolygonDrawing]);
 
   // Track which corner is being resized: null or "tl"|"tr"|"bl"|"br"
   const [resizeCorner, setResizeCorner] = useState<string | null>(null);
@@ -1578,40 +1537,22 @@ export default memo(function AnnotationOverlay({
           takeoffItemId: activeItem.id,
         };
 
-        // Optimistic add
-        const tempId = -Date.now();
-        addAnnotation({
-          id: tempId,
+        // [refactor jul11 P2.2⑥ C4] Count markers use the same optimistic-create seam as
+        // polygons and lines; tool-specific failure text/timing remains local to this caller.
+        void persistCreate({
           pageNumber,
           name: activeItem.name,
           bbox,
-          note: null,
           source: "takeoff",
           data: markerData as unknown as Record<string, unknown>,
+        }, {
+          onError: (err) => {
+            useViewerStore.getState().setBucketFillError(
+              err instanceof Error ? `Failed to save marker: ${err.message}` : "Failed to save marker",
+            );
+            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+          },
         });
-
-        // Persist — surface failures on the visible canvas error banner
-        // instead of silently dropping the saved marker.
-        if (canPersist(publicId, isDemo)) {
-          (async () => {
-            try {
-              const saved = await persistFetch("/api/annotations", {
-                projectId: publicId,
-                pageNumber,
-                name: activeItem.name,
-                bbox,
-                source: "takeoff",
-                data: markerData,
-              }) as { id?: number } | null;
-              if (saved?.id) updateAnnotation(tempId, { id: saved.id });
-            } catch (err) {
-              useViewerStore.getState().setBucketFillError(
-                err instanceof Error ? `Failed to save marker: ${err.message}` : "Failed to save marker",
-              );
-              setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
-            }
-          })();
-        }
 
         return;
       }
@@ -2087,7 +2028,7 @@ export default memo(function AnnotationOverlay({
       setDrawStart(pos);
       setDrawEnd(pos);
     },
-    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, projectDbId, pageNumber, addAnnotation, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError, splitAreaActive, splitLineA, splitPreview, setSplitLineEndpoint, setSplitPreview, setSplitError]
+    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, publicId, projectDbId, pageNumber, persistCreate, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, addYoloTag, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError, splitAreaActive, splitLineA, splitPreview, setSplitLineEndpoint, setSplitPreview, setSplitError]
   );
 
   const handleMouseMove = useCallback(
@@ -2600,38 +2541,23 @@ export default memo(function AnnotationOverlay({
         })();
       }
     } else {
-      // Create new annotation
-      const tempId = -Date.now();
-      addAnnotation({
-        id: tempId,
+      // [refactor jul11 P2.2⑥ C4] Markup historically omitted `source` and absent `data` from
+      // the POST. Optional draft fields preserve that wire shape while the cache row normalizes
+      // them to source="user" and data=null.
+      void persistCreate({
         pageNumber,
         name,
-        bbox: [minX, minY, maxX, maxY],
         note,
-        source: "user",
-        data: annotationData ?? null,
+        bbox: [minX, minY, maxX, maxY],
+        ...(annotationData ? { data: annotationData } : {}),
+      }, {
+        onError: (err) => {
+          useViewerStore.getState().setBucketFillError(
+            err instanceof Error ? `Failed to save markup: ${err.message}` : "Failed to save markup",
+          );
+          setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
+        },
       });
-
-      if (canPersist(publicId, isDemo)) {
-        (async () => {
-          try {
-            const saved = await persistFetch("/api/annotations", {
-              projectId: publicId,
-              pageNumber,
-              name,
-              note,
-              bbox: [minX, minY, maxX, maxY],
-              ...(annotationData ? { data: annotationData } : {}),
-            }) as { id?: number } | null;
-            if (saved?.id) updateAnnotation(tempId, { id: saved.id });
-          } catch (err) {
-            useViewerStore.getState().setBucketFillError(
-              err instanceof Error ? `Failed to save markup: ${err.message}` : "Failed to save markup",
-            );
-            setTimeout(() => useViewerStore.getState().setBucketFillError(null), 5000);
-          }
-        })();
-      }
     }
 
     setPendingMarkup(null);
@@ -2639,7 +2565,7 @@ export default memo(function AnnotationOverlay({
     setMarkupNote("");
     setMarkupCsi("");
     setEditingAnnotationId(null);
-  }, [pendingMarkup, markupName, markupNote, markupCsi, editingAnnotationId, pageNumber, publicId, addAnnotation, updateAnnotation, annotations, isDemo]);
+  }, [pendingMarkup, markupName, markupNote, markupCsi, editingAnnotationId, pageNumber, publicId, persistCreate, updateAnnotation, annotations, isDemo]);
 
   // Canvas gates — single source of truth so render-null and pointer-events can't drift.
   // Drift here has caused lasso + markup disappear bugs before (see group-tool fix 2026-04-19).

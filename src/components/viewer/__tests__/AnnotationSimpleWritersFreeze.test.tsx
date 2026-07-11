@@ -217,6 +217,13 @@ describe("TagBrowseBar annotation edit freeze", () => {
     fireEvent.click(screen.getByTitle("Edit tag text"));
     const edit = screen.getByRole("textbox");
     fireEvent.change(edit, { target: { value: "  D-02  " } });
+
+    // [refactor jul11 P2.2⑥ DETECTOR] WHY this write lands after the edit render but before
+    // Enter: saveEdit historically performed a handler-time getState() transform. TanStack cache
+    // notifications are deferred, so the mounted input still owns the pre-sentinel render while
+    // the functional writeAnns bridge must read this newer cache value synchronously. Replacing
+    // writeAnns with `setAnnotations(annotations.map(...))` drops id 104 and fails this pin.
+    seedAnnotations(qc, [...readAnnotationRows(), ann(104, { name: "Same-tick sentinel" })]);
     fireEvent.keyDown(edit, { key: "Enter" });
 
     // AnnotationPanel now receives the cache notification on a timer task. Keep the same
@@ -227,6 +234,7 @@ describe("TagBrowseBar annotation edit freeze", () => {
     expect(screen.queryByRole("button", { name: "D-01 1" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "D-02 1" })).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Unrelated 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Same-tick sentinel 1" })).toBeInTheDocument();
     expect(useViewerStore.getState().yoloTags[0]).toMatchObject({ name: "D-02", tagText: "D-02" });
     expect(useViewerStore.getState().llmHighlight?.label).toBe("D-02 — 1 of 2");
 
