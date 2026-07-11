@@ -40,7 +40,7 @@ interface KeynoteItemProps {
   onHighlight: (key: string) => void;
   onDelete: () => void;
   region?: any;
-  publicId?: string;
+  publicId: string;
   yoloTags: YoloTag[];
 }
 
@@ -398,18 +398,22 @@ export default function KeynoteItem({
                 <button
                   disabled={mapping}
                   onClick={async () => {
+                    // This rendered row, its duplicate cache, request URL, and guarded Query action
+                    // must share one identity. A live-store reread here can splice B's cache into a
+                    // retained A click before React commits the project-switch render.
+                    const identityPublicId = publicId;
+                    if (!identityPublicId) return;
                     setMapping(true);
                     setMapError(null);
                     try {
-                      const livePublicId = useSessionStore.getState().publicId;
                       const tags: string[] = [...new Set<string>(
                         keynote.keys.map((k) => k.key.trim()).filter(Boolean)
-                      )].filter((tag) => !readYoloTags(queryClient, livePublicId)
+                      )].filter((tag) => !readYoloTags(queryClient, identityPublicId)
                         .some((t) => t.tagText === tag && t.source === "keynote"));
 
                       if (tags.length === 0) { setShowMapTags(false); return; }
 
-                      const res = await fetch(`/api/projects/${publicId}/map-tags-batch`, {
+                      const res = await fetch(`/api/projects/${identityPublicId}/map-tags-batch`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
