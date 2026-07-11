@@ -222,6 +222,9 @@ describe("toolStore T2 — active source contract", () => {
     expect(viewerKeys).not.toContain("resetProjectToolState");
   });
 
+  // This walks the complete TS/TSX tree and can contend with sibling architecture scans in the
+  // full suite. Keep a local whole-source budget; the exact import/deletion assertions are unchanged
+  // and the file completes in seconds when isolated.
   it("is active in production and has no legacy viewerStore alias import", () => {
     const imports = sourceFiles()
       .filter((path) => path !== TOOL_FILE)
@@ -234,5 +237,5 @@ describe("toolStore T2 — active source contract", () => {
     expect(sourceFiles().filter((path) =>
       /import\s*\{\s*useViewerStore\s+as\s+useToolStore\s*\}\s*from\s*["']@\/stores\/viewerStore["']/.test(textOf(path)),
     )).toEqual([]);
-  }, 15_000);
+  }, 60_000);
 });

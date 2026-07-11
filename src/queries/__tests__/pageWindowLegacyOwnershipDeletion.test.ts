@@ -1115,6 +1115,9 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     }
   });
 
+  // This intentionally parses every production source. The suite can run several equivalent
+  // topology scans concurrently, so use a contention-safe local budget rather than Vitest's
+  // default/15s unit-test envelope; assertions remain source-exact and finish ~6s in isolation.
   it("pins whole-map observers to the approved scan-all product surfaces", () => {
     const productionSources = sourceFilesUnder("src").filter(isProductionSource);
     const actual = Object.fromEntries(
@@ -1141,5 +1144,5 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
         [...expectedFiles].sort(),
       );
     }
-  }, 15_000);
+  }, 60_000);
 });
