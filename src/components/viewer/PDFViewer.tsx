@@ -25,6 +25,7 @@ import ToolsPanel from "./ToolsPanel";
 import SymbolSearchPanel from "./SymbolSearchPanel";
 import ViewAllPanel from "./ViewAllPanel";
 import PageWindowLoaderController from "./PageWindowLoaderController";
+import TextractLoaderController from "./TextractLoaderController";
 import { loadViewport, saveViewport, type ViewerViewport } from "@/lib/viewer-state";
 
 interface PDFViewerProps {
@@ -46,7 +47,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const { pageNumber, numPages, setPage, setNumPages, mode, setMode } = useNavigation();
   const { scale, setScale } = useViewerStore(useShallow((s) => ({ scale: s.scale, setScale: s.setScale })));
   const tempPanMode = useViewerStore((s) => s.tempPanMode);
-  const { projectId, publicId, dataUrl } = useProject();
+  const { publicId, dataUrl } = useProject();
   const {
     symbolSearchActive, symbolSearchResults, symbolSearchLoading,
     symbolSearchTemplateBbox, symbolSearchError,
@@ -57,40 +58,6 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const templateTabOpen = useViewerStore(
     (s) => s.showParsePanel && s.parsePanelTab === "template",
   );
-
-  // Lazy-load textractData per page (debounced to batch rapid navigation)
-  const textractTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const textractAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => {
-    if (!projectId) return;
-
-    if (textractTimerRef.current) clearTimeout(textractTimerRef.current);
-    if (textractAbortRef.current) textractAbortRef.current.abort();
-
-    textractTimerRef.current = setTimeout(() => {
-      const controller = new AbortController();
-      textractAbortRef.current = controller;
-      const pagesToLoad = [pageNumber, pageNumber + 1, pageNumber - 1].filter((p) => p >= 1 && p <= numPages);
-
-      for (const p of pagesToLoad) {
-        const store = useViewerStore.getState();
-        if (store.textractData[p]) continue;
-        fetch(`/api/pages/textract?projectId=${projectId}&pageNumber=${p}`, { signal: controller.signal })
-          .then((r) => r.ok ? r.json() : null)
-          .then((data) => {
-            if (data?.textractData) {
-              useViewerStore.getState().setTextractData(p, data.textractData);
-            }
-          })
-          .catch(() => {});
-      }
-    }, 200);
-
-    return () => {
-      if (textractTimerRef.current) clearTimeout(textractTimerRef.current);
-      if (textractAbortRef.current) textractAbortRef.current.abort();
-    };
-  }, [pageNumber, projectId, numPages]);
 
   // Preload current page PNG via <link> — starts fetch before React commits the img element
   useEffect(() => {
@@ -523,8 +490,9 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   return (
     <>
-      {/* Keep range-driven rerenders and request lifetime out of this heavyweight component. */}
+      {/* Keep loader rerenders and request lifetime out of this heavyweight component. */}
       <PageWindowLoaderController />
+      <TextractLoaderController />
       {error ? (
         <div className="flex-1 flex items-center justify-center text-red-400">
           {error}
