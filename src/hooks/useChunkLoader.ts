@@ -21,6 +21,29 @@ interface ChunkResponse {
   annotations: ClientAnnotation[];
 }
 
+type ChunkRouteVariant = "auth" | "demo";
+
+interface ActiveChunkRequest {
+  generation: number;
+  publicId: string;
+  routeVariant: ChunkRouteVariant;
+  from: number;
+  to: number;
+  identityKey: string;
+  controller: AbortController;
+}
+
+function chunkRequestIdentity(
+  publicId: string,
+  routeVariant: ChunkRouteVariant,
+  from: number,
+  to: number,
+): string {
+  // Project + route variant are load-bearing. A plain "from-to" key caused a same-range request
+  // in a newly-opened project (or after auth/demo mode changed) to be incorrectly deduplicated.
+  return `${routeVariant}:${publicId}:${from}-${to}`;
+}
+
 /**
  * Sliding-window chunk loader. On page change, fetches new page data
  * if the current page is outside the loaded range.
@@ -34,12 +57,37 @@ export function useChunkLoader() {
   const isDemo = useViewerStore((s) => s.isDemo);
   const loadedPageRange = useViewerStore((s) => s.loadedPageRange);
 
-  const abortRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
+  const activeRequestRef = useRef<ActiveChunkRequest | null>(null);
   const lastRequestedRef = useRef<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // [refactor jul11 P2.2⑦ C1] Request lifetime is project/mode scoped, not page-effect scoped.
+  // Ordinary page/range effect cleanup must NOT abort an in-flight A while B is only a debounced
+  // intent: the existing cadence keeps A live until B actually dispatches. Identity cleanup is the
+  // stronger boundary. Invalidate/install-null BEFORE abort so an abort-aware fetch cannot let A's
+  // catch clear a newer request's bookkeeping.
+  useEffect(() => {
+    return () => {
+      const active = activeRequestRef.current;
+      generationRef.current += 1;
+      activeRequestRef.current = null;
+      lastRequestedRef.current = null;
+
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+
+      active?.controller.abort();
+      useViewerStore.getState().setChunkLoading(false);
+    };
+  }, [queryClient, publicId, isDemo]);
+
   useEffect(() => {
     if (!publicId || numPages === 0) return;
+
+    const routeVariant: ChunkRouteVariant = isDemo ? "demo" : "auth";
 
     // Check if current page is within loaded range
     if (loadedPageRange && pageNumber >= loadedPageRange.from && pageNumber <= loadedPageRange.to) {
@@ -49,7 +97,7 @@ export function useChunkLoader() {
     // Compute target chunk range
     const from = Math.max(1, pageNumber - CHUNK_RADIUS);
     const to = Math.min(numPages, pageNumber + CHUNK_RADIUS);
-    const rangeKey = `${from}-${to}`;
+    const rangeKey = chunkRequestIdentity(publicId, routeVariant, from, to);
 
     // Skip if already requested this exact range
     if (lastRequestedRef.current === rangeKey) return;
@@ -58,23 +106,47 @@ export function useChunkLoader() {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     // Debounce: wait for rapid page changes to settle
-    debounceRef.current = setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (debounceRef.current === timer) debounceRef.current = null;
+
       // Re-check after debounce (page may have changed again)
-      const currentPage = useViewerStore.getState().pageNumber;
-      const currentRange = useViewerStore.getState().loadedPageRange;
+      const liveState = useViewerStore.getState();
+      // Effects normally clean up first, but this synchronous identity check closes the small window
+      // between an external store identity change and React running that cleanup.
+      if (liveState.publicId !== publicId || liveState.isDemo !== isDemo) return;
+
+      const currentPage = liveState.pageNumber;
+      const currentRange = liveState.loadedPageRange;
       if (currentRange && currentPage >= currentRange.from && currentPage <= currentRange.to) return;
 
       const actualFrom = Math.max(1, currentPage - CHUNK_RADIUS);
       const actualTo = Math.min(numPages, currentPage + CHUNK_RADIUS);
-      const actualKey = `${actualFrom}-${actualTo}`;
+      const actualKey = chunkRequestIdentity(
+        publicId,
+        routeVariant,
+        actualFrom,
+        actualTo,
+      );
 
       if (lastRequestedRef.current === actualKey) return;
-      lastRequestedRef.current = actualKey;
 
-      // Abort any in-flight request
-      if (abortRef.current) abortRef.current.abort();
+      // [refactor jul11 P2.2⑦ C1] Install B completely BEFORE aborting A. An abort-aware A can
+      // reject immediately; its settlement must already be obsolete when its catch runs.
+      const previousRequest = activeRequestRef.current;
       const controller = new AbortController();
-      abortRef.current = controller;
+      const request: ActiveChunkRequest = {
+        generation: generationRef.current + 1,
+        publicId,
+        routeVariant,
+        from: actualFrom,
+        to: actualTo,
+        identityKey: actualKey,
+        controller,
+      };
+      generationRef.current = request.generation;
+      activeRequestRef.current = request;
+      lastRequestedRef.current = actualKey;
+      previousRequest?.controller.abort();
 
       useViewerStore.getState().setChunkLoading(true);
 
@@ -82,12 +154,17 @@ export function useChunkLoader() {
         ? `/api/demo/projects/${publicId}/pages?from=${actualFrom}&to=${actualTo}`
         : `/api/projects/${publicId}/pages?from=${actualFrom}&to=${actualTo}`;
 
-      // Capture current store state for eviction (before async gap)
-      const stateSnapshot = {
-        keynotes: useViewerStore.getState().keynotes,
-        csiCodes: useViewerStore.getState().csiCodes,
-        textAnnotations: useViewerStore.getState().textAnnotations,
-        pageIntelligence: useViewerStore.getState().pageIntelligence,
+      const isCurrentRequest = (): boolean => {
+        const active = activeRequestRef.current;
+        return (
+          active === request &&
+          generationRef.current === request.generation &&
+          active.publicId === request.publicId &&
+          active.routeVariant === request.routeVariant &&
+          active.from === request.from &&
+          active.to === request.to &&
+          active.identityKey === request.identityKey
+        );
       };
 
       fetch(endpoint, { signal: controller.signal })
@@ -96,6 +173,10 @@ export function useChunkLoader() {
           return res.json() as Promise<ChunkResponse>;
         })
         .then((chunk) => {
+          // Fetch mocks/transports are allowed to ignore AbortSignal. Generation + full identity are
+          // therefore the authoritative gate, checked after JSON and before the first side effect.
+          if (!isCurrentRequest()) return;
+
           const keynoteMap: Record<number, KeynoteShapeData[]> = {};
           const csiMap: Record<number, CsiCode[]> = {};
           const textAnnMap: Record<number, any[]> = {};
@@ -133,12 +214,14 @@ export function useChunkLoader() {
             chunk.annotations,
           );
 
-          // Merge new chunk data with retained pages (using snapshot, not stale getState).
-          useViewerStore.setState(() => ({
-            keynotes: { ...evict(stateSnapshot.keynotes), ...keynoteMap },
-            csiCodes: { ...evict(stateSnapshot.csiCodes), ...csiMap },
-            textAnnotations: { ...evict(stateSnapshot.textAnnotations), ...textAnnMap },
-            pageIntelligence: { ...evict(stateSnapshot.pageIntelligence), ...intelMap },
+          // [refactor jul11 P2.2⑦ PW-D3] Merge from response-time LIVE state. A local write made
+          // after dispatch survives when retained and not supplied by this response; response fields
+          // still win on covered pages, and pages outside the ±5 buffer still evict.
+          useViewerStore.setState((live) => ({
+            keynotes: { ...evict(live.keynotes), ...keynoteMap },
+            csiCodes: { ...evict(live.csiCodes), ...csiMap },
+            textAnnotations: { ...evict(live.textAnnotations), ...textAnnMap },
+            pageIntelligence: { ...evict(live.pageIntelligence), ...intelMap },
             loadedPageRange: { from: actualFrom, to: actualTo },
             chunkLoading: false,
           }));
@@ -152,19 +235,33 @@ export function useChunkLoader() {
               );
             }
           }
+
+          // Keep the successful identity in lastRequestedRef for exact-range dedupe. Only release
+          // the in-flight record; identity cleanup still invalidates the monotonically increasing
+          // generation on project/mode switch or unmount.
+          if (isCurrentRequest()) activeRequestRef.current = null;
         })
-        .catch((err) => {
-          if (err.name !== "AbortError") {
+        .catch((err: unknown) => {
+          // Obsolete A settlements are total no-ops: no logging, no loading flip, and—critically—no
+          // dedupe reset that could duplicate/abort the still-active B request.
+          if (!isCurrentRequest()) return;
+
+          activeRequestRef.current = null;
+          lastRequestedRef.current = null;
+          if ((err as { name?: unknown })?.name !== "AbortError") {
             console.error("[useChunkLoader] Failed to load chunk:", err);
           }
           // Reset so it can be retried
-          lastRequestedRef.current = null;
           useViewerStore.getState().setChunkLoading(false);
         });
     }, DEBOUNCE_MS);
+    debounceRef.current = timer;
 
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      // Page/range changes cancel only the pending intent. They deliberately do not abort the active
+      // transport; B dispatch or the separate identity cleanup owns abort semantics.
+      clearTimeout(timer);
+      if (debounceRef.current === timer) debounceRef.current = null;
     };
   }, [pageNumber, numPages, publicId, isDemo, loadedPageRange, queryClient]);
 }

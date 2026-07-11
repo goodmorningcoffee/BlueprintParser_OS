@@ -206,7 +206,7 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
     ]);
   });
 
-  it("keeps an in-flight response on its captured project key after a project switch", async () => {
+  it("drops an obsolete in-flight response after a project switch", async () => {
     const response = deferred<Response>();
     fetchMock.mockReturnValueOnce(response.promise);
 
@@ -217,14 +217,17 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
 
     render(<LoaderOnly />, { wrapper });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const firstSignal = (fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.signal;
 
-    // Stop the new project from dispatching its own chunk request; this test isolates the old
-    // request's late response. The broader pages-window global-state behavior belongs to domain ⑦.
+    // Stop the new project from dispatching its own chunk request; this test isolates A's ignored-
+    // signal late response. C1 reverses the old expectation: identity cleanup invalidates and aborts
+    // A, and generation ownership makes its eventual settlement a total no-op.
     const projectB = [annotation(99, "project-B-sentinel")];
     act(() => {
       useViewerStore.setState({ publicId: "project-B", numPages: 0 });
       seedAnnotations(qc, projectB);
     });
+    expect(firstSignal?.aborted).toBe(true);
 
     await act(async () => {
       response.resolve({
@@ -239,10 +242,10 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
       await Promise.resolve();
     });
 
-    await waitFor(() =>
-      expect(readAnnotations(qc, "pid").map((row) => row.id)).toEqual([2]),
-    );
+    expect(readAnnotations(qc, "pid").map((row) => row.id)).toEqual([1]);
     expect(readAnnotations(qc, "project-B")).toEqual(projectB);
+    expect(useViewerStore.getState().loadedPageRange).toBeNull();
+    expect(useViewerStore.getState().keynotes[20]).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
