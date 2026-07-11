@@ -24,7 +24,7 @@ import ParsePanel from "./ParsePanel";
 import ToolsPanel from "./ToolsPanel";
 import SymbolSearchPanel from "./SymbolSearchPanel";
 import ViewAllPanel from "./ViewAllPanel";
-import { useChunkLoader } from "@/hooks/useChunkLoader";
+import PageWindowLoaderController from "./PageWindowLoaderController";
 import { loadViewport, saveViewport, type ViewerViewport } from "@/lib/viewer-state";
 
 interface PDFViewerProps {
@@ -57,9 +57,6 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const templateTabOpen = useViewerStore(
     (s) => s.showParsePanel && s.parsePanelTab === "template",
   );
-
-  // Chunk loader: fetches page data when navigating beyond loaded range
-  useChunkLoader();
 
   // Lazy-load textractData per page (debounced to batch rapid navigation)
   const textractTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -524,16 +521,16 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   // Demo page sets helpMode: false, showTips: false directly — no auto-override needed
 
-  if (error) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-red-400">
-        {error}
-      </div>
-    );
-  }
-
   return (
-    <div className="flex-1 flex flex-col h-screen">
+    <>
+      {/* Keep range-driven rerenders and request lifetime out of this heavyweight component. */}
+      <PageWindowLoaderController />
+      {error ? (
+        <div className="flex-1 flex items-center justify-center text-red-400">
+          {error}
+        </div>
+      ) : (
+      <div className="flex-1 flex flex-col h-screen">
       <ViewerToolbar projectName={projectName} backHref={backHref} onRename={onRename} />
       <GroupActionsBar />
 
@@ -656,7 +653,9 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
       {/* Tag instance browser bar */}
       <TagBrowseBar />
-    </div>
+      </div>
+      )}
+    </>
   );
 }
 

@@ -3,9 +3,14 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore, useProject } from "@/stores/viewerStore";
-// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
+// [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
+import {
+  setPageIntelligenceForPage,
+  updatePageIntelligenceForPage,
+  usePageIntelligenceByPage,
+} from "@/queries/usePageWindow";
 import ParsedTableItem from "./ParsedTableItem";
 import AutoParseTab from "./AutoParseTab";
 import GuidedParseTab from "./GuidedParseTab";
@@ -28,7 +33,7 @@ export default function TableParsePanel() {
   // useQueryClient carries ZERO subscription (no re-render on summaries writes).
   const queryClient = useQueryClient();
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
+  const pageIntelligence = usePageIntelligenceByPage();
   const toggleTableParsePanel = useViewerStore((s) => s.toggleTableParsePanel);
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
@@ -54,7 +59,6 @@ export default function TableParsePanel() {
   const setParsedRegionColorMode = useViewerStore((s) => s.setParsedRegionColorMode);
   const focusedParsedRegionId = useViewerStore((s) => s.focusedParsedRegionId);
   const { publicId } = useProject();
-  const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
 
   const [showExportModal, setShowExportModal] = useState(false);
   // Guards against double-click save stacking duplicates. Ref (not state) so
@@ -92,10 +96,10 @@ export default function TableParsePanel() {
   const intel = pageIntelligence[pageNumber] as any;
 
   // ─── Save parsed grid to pageIntelligence ─────────────────
-  const saveParsedToIntelligence = useCallback((grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] }) => {
+  const saveParsedToIntelligence = useCallback((grid: { headers: string[]; rows: Record<string, string>[]; tagColumn?: string; tableName?: string; csiTags?: { code: string; description: string }[]; colBoundaries?: number[]; rowBoundaries?: number[] }, identityPublicId: string) => {
     const currentRegion = useViewerStore.getState().tableParseRegion;
-    const currentIntel = useViewerStore.getState().pageIntelligence[pageNumber] || {};
-    const existingRegions = (currentIntel as any)?.parsedRegions || [];
+    // Create the region once per invocation. Keeping Date.now() outside the updater makes the
+    // append's identity explicit and stable at the call-site boundary.
     const newRegion = {
       id: `parsed-${Date.now()}`,
       type: "schedule" as const,
@@ -114,11 +118,12 @@ export default function TableParsePanel() {
         ...(grid.rowBoundaries ? { rowBoundaries: grid.rowBoundaries } : {}),
       },
     };
-    setPageIntelligence(pageNumber, {
-      ...currentIntel,
-      parsedRegions: [...existingRegions, newRegion],
-    });
-  }, [pageNumber, setPageIntelligence]);
+    updatePageIntelligenceForPage(queryClient, identityPublicId, pageNumber, (current) => ({
+      ...(current ?? {}),
+      // /csi/detect returns the historical code/description subset; promotion enriches it.
+      parsedRegions: [...(current?.parsedRegions ?? []), newRegion as any],
+    }));
+  }, [pageNumber, queryClient]);
 
   // ─── CSI detect + persist to DB ───────────────────────────
   // Routes the parsed table through the transactional /api/regions/promote
@@ -188,17 +193,22 @@ export default function TableParsePanel() {
           csiTags: grid.csiTags || [],
         });
         // Adopt the server's authoritative intelligence + summaries.
-        setPageIntelligence(pageNumber, result.updatedIntelligence as any);
+        setPageIntelligenceForPage(
+          queryClient,
+          pid,
+          pageNumber,
+          result.updatedIntelligence as any,
+        );
         // [refactor jul10 P2.2③] cache seed under `pid` — the handler-time publicId the promote
         // request itself used — NOT a render-captured id (a mid-await project switch must not leak
         // this response into another project's entry; SPEC §5-S3). Guard KEPT: promote returns
         // summaries:null on real paths (compute-reject swallow) and must not clear live data.
         if (result.summaries) seedSummariesCache(queryClient, pid, result.summaries as any);
-        refreshPageCsiSpatialMap(queryClient, pageNumber);
+        refreshPageCsiSpatialMap(queryClient, pid, pageNumber);
       } else {
         // Demo / no publicId: optimistic local-only save so the region renders.
-        saveParsedToIntelligence(grid);
-        refreshPageCsiSpatialMap(queryClient, pageNumber);
+        saveParsedToIntelligence(grid, pid);
+        refreshPageCsiSpatialMap(queryClient, pid, pageNumber);
       }
 
       // Success: revert the tab to its idle step so another parse can start
@@ -215,7 +225,7 @@ export default function TableParsePanel() {
     } finally {
       isSavingRef.current = false;
     }
-  }, [pageNumber, saveParsedToIntelligence, resetTableParse, setPageIntelligence, queryClient]);
+  }, [pageNumber, saveParsedToIntelligence, resetTableParse, queryClient]);
 
   // ─── Shared memos ─────────────────────────────────────────
   const autoDetectedTables = useMemo(() => {
@@ -547,9 +557,17 @@ export default function TableParsePanel() {
                     publicId={publicId}
                     focusedParsedRegionId={focusedParsedRegionId}
                     onDelete={() => {
-                      const pi = useViewerStore.getState().pageIntelligence[t.pageNum] || {};
-                      const regions = ((pi as any)?.parsedRegions || []).filter((r: any) => r.id !== t.region.id);
-                      useViewerStore.getState().setPageIntelligence(t.pageNum, { ...pi, parsedRegions: regions });
+                      updatePageIntelligenceForPage(
+                        queryClient,
+                        publicId,
+                        t.pageNum,
+                        (current) => ({
+                          ...(current ?? {}),
+                          parsedRegions: (current?.parsedRegions ?? []).filter(
+                            (region) => region.id !== t.region.id,
+                          ),
+                        }),
+                      );
                     }}
                   />
                 ))}

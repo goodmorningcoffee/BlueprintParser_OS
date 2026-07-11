@@ -16,6 +16,11 @@ import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 // surgery; destructure + edit/toggle/bulk handler bodies byte-identical).
 import { useAnnotationGroups } from "@/queries/useAnnotationGroups";
 import { readAnnotations, useAnnotations } from "@/queries/useAnnotations";
+import {
+  useCsiCodesByPage,
+  usePageIntelligenceByPage,
+  useTextAnnotationsByPage,
+} from "@/queries/usePageWindow";
 import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem, TextAnnotation, ParsedRegion, ScheduleData, KeynoteData, LegendData, NotesData, SpecData } from "@/types";
 import TreeSection from "./TreeSection";
 import MarkupDialog from "./MarkupDialog";
@@ -183,7 +188,10 @@ export default function ViewAllPanel() {
     groupMembers,
     upsertAnnotationGroup,
   } = useAnnotationGroups();
-  const { csiCodes, textAnnotations, setCsiFilter, pageIntelligence } = usePageData();
+  const csiCodes = useCsiCodesByPage();
+  const textAnnotations = useTextAnnotationsByPage();
+  const pageIntelligence = usePageIntelligenceByPage();
+  const { setCsiFilter } = usePageData();
   const { selectedAnnotationIds, setSelectedAnnotationIds } = useSelection();
 
   // Section expand state — collapsed by default.

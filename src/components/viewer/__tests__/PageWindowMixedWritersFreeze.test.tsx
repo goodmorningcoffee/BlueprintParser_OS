@@ -1,0 +1,314 @@
+// [refactor jul11 P2.2⑦ C3] Call-site freezes for the mixed writer batch. These tests use the
+// public page-window facade rather than store fixtures so deleting Zustand ownership cannot make
+// them pass accidentally while production handlers keep stale read/write semantics.
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+import NotesClassifier from "@/components/viewer/NotesClassifier";
+import TableParsePanel from "@/components/viewer/TableParsePanel";
+import { useShapeParseInteraction } from "@/hooks/useShapeParseInteraction";
+import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
+import {
+  EMPTY_ACTIVE_PAGE_WINDOW,
+  type ActivePageWindow,
+} from "@/queries/pageWindowCore";
+import { queryKeys } from "@/queries/queryKeys";
+import {
+  appendKeynotesForPage,
+  readActivePageWindow,
+  readPageIntelligence,
+  setPageIntelligenceForPage,
+} from "@/queries/usePageWindow";
+import { useViewerStore } from "@/stores/viewerStore";
+import type {
+  ClientAnnotation,
+  KeynoteShapeData,
+  PageIntelligence,
+  TextAnnotation,
+  TextRegion,
+} from "@/types";
+
+// Drive TableParsePanel through its real orchestration callback without mounting the large parser
+// child. The grid already has CSI tags, so this isolates the local append path from CSI networking.
+vi.mock("@/components/viewer/AutoParseTab", () => ({
+  default: ({ detectCsiAndPersist }: { detectCsiAndPersist: (grid: unknown, opts: unknown) => Promise<void> }) => (
+    <button
+      onClick={() => void detectCsiAndPersist({
+        headers: ["Tag", "Description"],
+        rows: [{ Tag: "D1", Description: "Door" }],
+        tagColumn: "Tag",
+        tableName: "Door Schedule",
+        csiTags: [{ code: "08 10 00", description: "Doors" }],
+      }, { resetAfter: false })}
+    >
+      save local table
+    </button>
+  ),
+}));
+
+let qc: QueryClient;
+const fetchMock = vi.fn();
+
+function wrapper({ children }: { children: ReactNode }) {
+  return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+}
+
+function seedWindow(publicId: string, overrides: Partial<ActivePageWindow> = {}): void {
+  qc.setQueryData<ActivePageWindow>(queryKeys.pagesWindow.active(publicId), {
+    ...EMPTY_ACTIVE_PAGE_WINDOW,
+    ...overrides,
+  });
+  qc.setQueryData(queryKeys.annotations.all(publicId), []);
+}
+
+const noteRegion = {
+  id: "note-region",
+  type: "notes-numbered",
+  bbox: [0.1, 0.1, 0.3, 0.2],
+  confidence: 0.9,
+  headerText: "General Notes",
+  containedText: "1. Coordinate all work.",
+} as TextRegion;
+
+beforeEach(() => {
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  useViewerStore.getState().resetProjectData();
+  useViewerStore.setState({
+    projectId: 1,
+    publicId: "pid",
+    isDemo: false,
+    pageNumber: 4,
+  });
+  seedWindow("pid");
+});
+
+afterEach(() => {
+  cleanup();
+  qc.clear();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("mixed page-window writer semantics", () => {
+  it("Notes reject restores the exact render-captured value over a concurrent cache write", async () => {
+    const captured: PageIntelligence = { textRegions: [noteRegion] };
+    setPageIntelligenceForPage(qc, "pid", 4, captured);
+
+    let resolveFetch!: (response: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    }));
+    render(<NotesClassifier onEditInParser={() => undefined} />, { wrapper });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    expect(readPageIntelligence(qc, "pid", 4)?.rejectedTextRegionIds).toEqual([
+      "note-region",
+    ]);
+
+    // This arrives after the optimistic write but before PATCH failure. The deliberately stale
+    // rollback must replace it, matching the pre-migration handler rather than conflict-merging.
+    act(() => {
+      setPageIntelligenceForPage(qc, "pid", 4, {
+        rejectedTextRegionIds: ["concurrent"],
+        noteBlocks: [],
+      });
+    });
+    await act(async () => {
+      resolveFetch({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: "reject failed" }),
+      } as Response);
+    });
+
+    await waitFor(() => expect(readPageIntelligence(qc, "pid", 4)).toEqual(captured));
+    expect(readPageIntelligence(qc, "pid", 4)?.rejectedTextRegionIds).toBeUndefined();
+  });
+
+  it("classifier server adoption replaces the whole page before spatial refresh merges its field", async () => {
+    setPageIntelligenceForPage(qc, "pid", 4, {
+      textRegions: [noteRegion],
+      classifiedTables: [{ category: "stale-server-deleted-field" }] as never,
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        updatedIntelligence: { rejectedTextRegionIds: ["server-authoritative"] },
+      }),
+    } as Response);
+    render(<NotesClassifier onEditInParser={() => undefined} />, { wrapper });
+
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+
+    await waitFor(() => {
+      expect(readPageIntelligence(qc, "pid", 4)?.rejectedTextRegionIds).toEqual([
+        "server-authoritative",
+      ]);
+    });
+    const adopted = readPageIntelligence(qc, "pid", 4);
+    expect(adopted?.classifiedTables).toBeUndefined();
+    expect(adopted).toHaveProperty("csiSpatialMap");
+  });
+
+  it("TableParse local save appends against invocation-live regions and creates one stable id", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(12345);
+    useViewerStore.setState({
+      isDemo: true,
+      tableParseTab: "auto",
+      tableParseRegion: [0.1, 0.2, 0.8, 0.7],
+    });
+    const existing = { id: "concurrent-existing", type: "schedule", data: {} };
+    setPageIntelligenceForPage(qc, "pid", 4, {
+      parsedRegions: [existing] as never,
+    });
+    render(<TableParsePanel />, { wrapper });
+
+    fireEvent.click(screen.getByRole("button", { name: "save local table" }));
+
+    await waitFor(() => {
+      expect(readPageIntelligence(qc, "pid", 4)?.parsedRegions?.map((r) => r.id)).toEqual([
+        "concurrent-existing",
+        "parsed-12345",
+      ]);
+    });
+  });
+
+  it("CSI refresh consumes the same project's live cache inputs and changes only its PI map", () => {
+    const textAnnotations = [{
+      type: "csi-code",
+      category: "csi",
+      text: "08 10 00",
+      bbox: [0.1, 0.1, 0.1, 0.1],
+      confidence: 1,
+      wordIndices: [0],
+      csiTags: [{
+        code: "08 10 00",
+        description: "Doors",
+        trade: "Openings",
+        division: "08",
+      }],
+    }] satisfies TextAnnotation[];
+    const parsedRegion = {
+      id: "parsed-live",
+      type: "schedule",
+      bbox: [0.2, 0.2, 0.4, 0.4],
+      csiTags: [{
+        code: "09 20 00",
+        description: "Plaster and Gypsum Board",
+        trade: "Finishes",
+        division: "09",
+      }],
+      data: {},
+    };
+    const annotation = {
+      id: 7,
+      pageNumber: 4,
+      name: "concrete",
+      bbox: [0.5, 0.5, 0.6, 0.6],
+      note: null,
+      source: "user",
+      data: { csiCodes: ["03 30 00"] },
+    } satisfies ClientAnnotation;
+    const keynotes = {
+      4: [{ shape: "rectangle", text: "K", bbox: [0, 0, 1, 1] }],
+    } satisfies Record<number, KeynoteShapeData[]>;
+    const csiCodes = { 4: [] };
+    const otherPage = { rejectedTextRegionIds: ["stable"] };
+    seedWindow("pid", {
+      keynotes,
+      csiCodes,
+      textAnnotations: { 4: textAnnotations },
+      pageIntelligence: {
+        4: { parsedRegions: [parsedRegion] as never },
+        8: otherPage,
+      },
+    });
+    seedWindow("other", {
+      pageIntelligence: { 4: { rejectedTextRegionIds: ["other-project"] } },
+    });
+    qc.setQueryData(queryKeys.annotations.all("pid"), [annotation]);
+    const sameProjectBefore = readActivePageWindow(qc, "pid");
+    const otherBefore = readActivePageWindow(qc, "other");
+    const annotationsBefore = qc.getQueryData(queryKeys.annotations.all("pid"));
+
+    refreshPageCsiSpatialMap(qc, "pid", 4);
+
+    const after = readActivePageWindow(qc, "pid");
+    const codes = after.pageIntelligence[4]?.csiSpatialMap?.zones.flatMap((zone) =>
+      zone.divisions.flatMap((division) => division.codes),
+    );
+    expect(new Set(codes)).toEqual(new Set(["08 10 00", "09 20 00", "03 30 00"]));
+    expect(after.keynotes).toBe(sameProjectBefore.keynotes);
+    expect(after.csiCodes).toBe(sameProjectBefore.csiCodes);
+    expect(after.textAnnotations).toBe(sameProjectBefore.textAnnotations);
+    expect(after.pageIntelligence[8]).toBe(sameProjectBefore.pageIntelligence[8]);
+    expect(readActivePageWindow(qc, "other")).toBe(otherBefore);
+    expect(qc.getQueryData(queryKeys.annotations.all("pid"))).toBe(annotationsBefore);
+
+    // Explicit request identity is rejected after a project switch; even the target cache object
+    // remains untouched, rather than recomputing from the newly active project's YOLO store data.
+    const sameProjectBeforeMismatch = readActivePageWindow(qc, "pid");
+    useViewerStore.setState({ publicId: "other" });
+    refreshPageCsiSpatialMap(qc, "pid", 4);
+    expect(readActivePageWindow(qc, "pid")).toBe(sameProjectBeforeMismatch);
+  });
+
+  it("shape append stays action-only and appends over the response-time cache value", async () => {
+    const original = [{ shape: "rectangle", text: "original", bbox: [0, 0, 1, 1] }] satisfies KeynoteShapeData[];
+    seedWindow("pid", { keynotes: { 4: original } });
+    let resolveFetch!: (response: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    }));
+    const { result } = renderHook(
+      () => useShapeParseInteraction({ detectionTab: "shape" }),
+      { wrapper },
+    );
+    const activeQuery = qc.getQueryCache().find({
+      queryKey: queryKeys.pagesWindow.active("pid"),
+      exact: true,
+    });
+    expect(activeQuery?.getObserversCount()).toBe(0);
+
+    let request!: Promise<void>;
+    act(() => {
+      request = result.current.runOnPage();
+    });
+    appendKeynotesForPage(qc, "pid", 4, [{
+      shape: "circle",
+      text: "concurrent",
+      bbox: [0.1, 0.1, 0.2, 0.2],
+    }]);
+    await act(async () => {
+      resolveFetch({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          keynotes: [{ shape: "square", text: "response", bbox: [0.2, 0.2, 0.3, 0.3] }],
+        }),
+      } as Response);
+      await request;
+    });
+
+    expect(readActivePageWindow(qc, "pid").keynotes[4].map((item) => item.text)).toEqual([
+      "original",
+      "concurrent",
+      "response",
+    ]);
+    expect(activeQuery?.getObserversCount()).toBe(0);
+  });
+});

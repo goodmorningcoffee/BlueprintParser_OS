@@ -5,10 +5,11 @@
 // null default, seed→read, the v5 setQueryData(undefined)-no-op trap, value-replace, per-request
 // publicId provenance (S3), key isolation, and the staleTime/gcTime config.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, renderHook, act, waitFor } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { seedSummariesCache, useSummariesData, useSummaries } from "@/queries/useSummaries";
+import type { ActivePageWindow } from "@/queries/pageWindowCore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ProjectSummaries } from "@/types";
@@ -204,64 +205,40 @@ describe("useSummaries hooks", () => {
     }
   });
 
-  // [refactor jul10 P2.2③ closers] Mechanical pin of the SpecIndex/NotesIndex hot-path property
-  // (SPEC §2.3 / §7): the narrow hook exists PRECISELY so those two viewer-adjacent consumers
-  // never gain chunk-field re-renders they lacked under their old raw `s.summaries` selector
-  // (chunkLoading toggles on every chunk fetch; PDF-viewer perf is sacred). Before this case the
-  // property was only prose — a future "simplify: reuse useSummaries() everywhere" edit would
-  // have passed the whole suite. This probe counts renders: zustand chunk-field flips must cause
-  // ZERO, a summaries cache write must cause EXACTLY ONE.
-  it("narrow-hook topology: chunk-field store flips don't re-render; a cache write re-renders exactly once", async () => {
+  // [refactor jul11 P2.2⑦] Domain ⑦ removed the temporary Zustand chunk quartet. Pin the public
+  // compatibility hook to the same cache-only surface as useSummariesData so a future edit cannot
+  // quietly recreate dual ownership of active range/loading state.
+  it("useSummaries exposes only the cache-backed summary pair", async () => {
     useViewerStore.setState({ publicId: "p-A" });
     const client = freshClient();
     let renders = 0;
-    let seen: ProjectSummaries | null = null;
-    function Probe() {
+    const { result } = renderHook(() => {
       renders += 1;
-      seen = useSummariesData().summaries;
-      return null;
-    }
-    render(<Probe />, { wrapper: makeWrapper(client) });
-    const base = renders; // absolute mount count is harness detail; deltas are the pin
-    expect(seen).toBeNull();
+      return useSummaries();
+    }, { wrapper: makeWrapper(client) });
+    const baseline = renders;
 
-    // Flip BOTH chunk-loader fields the old 6-field selector subscribed to. async act flushes
-    // any scheduled work so a wrong-world re-render can't hide in a pending microtask.
-    await act(async () => {
-      useViewerStore.getState().setChunkLoading(true);
-      useViewerStore.getState().setLoadedPageRange({ from: 1, to: 15 });
-    });
-    expect(useViewerStore.getState().chunkLoading).toBe(true); // the flips really landed
-    expect(useViewerStore.getState().loadedPageRange).toEqual({ from: 1, to: 15 });
-    expect(renders).toBe(base); // ZERO re-renders — the narrow hook never sees chunk state
-
-    // Control flip: a summaries cache write MUST propagate — and as ONE batched render.
-    const s = summariesFixture({ allTrades: ["Topology"] });
-    act(() => seedSummariesCache(client, "p-A", s));
-    await waitFor(() => expect(renders).toBe(base + 1));
-    expect(seen).toEqual(s); // the extra render carried the new data (not an unrelated tick)
-  });
-
-  it("useSummaries facade returns the old 6-field selector shape; chunk pair stays zustand-wired", async () => {
-    useViewerStore.setState({ publicId: "p-A" });
-    const client = freshClient();
-    const { result } = renderHook(() => useSummaries(), { wrapper: makeWrapper(client) });
-
-    // exact old shape (viewerStore selector parity — consumers destructure these six)
+    expect(Object.keys(result.current).sort()).toEqual(["setSummaries", "summaries"]);
     expect(result.current.summaries).toBeNull();
     expect(typeof result.current.setSummaries).toBe("function");
-    expect(result.current.loadedPageRange).toBeNull();
-    expect(typeof result.current.setLoadedPageRange).toBe("function");
-    expect(result.current.chunkLoading).toBe(false);
-    expect(typeof result.current.setChunkLoading).toBe("function");
 
-    // chunk passthrough reads/writes the STORE (domain ⑦ — not migrated here)
-    act(() => result.current.setChunkLoading(true));
-    await waitFor(() => expect(result.current.chunkLoading).toBe(true));
-    expect(useViewerStore.getState().chunkLoading).toBe(true);
+    // Range/window writes must not recreate the old hidden passthrough subscription. Shape alone
+    // would not catch `usePageWindow*()` being called and then discarded inside useSummaries.
+    await act(async () => {
+      client.setQueryData<ActivePageWindow>(queryKeys.pagesWindow.active("p-A"), {
+        loadedRange: { from: 13, to: 27 },
+        keynotes: { 20: [] },
+        csiCodes: { 20: [] },
+        textAnnotations: { 20: [] },
+        pageIntelligence: { 20: {} },
+      });
+      await Promise.resolve();
+    });
+    expect(renders).toBe(baseline);
 
-    act(() => result.current.setLoadedPageRange({ from: 1, to: 15 }));
-    await waitFor(() => expect(result.current.loadedPageRange).toEqual({ from: 1, to: 15 }));
-    expect(useViewerStore.getState().loadedPageRange).toEqual({ from: 1, to: 15 });
+    const next = summariesFixture({ allTrades: ["Cache-only"] });
+    act(() => result.current.setSummaries(next));
+    await waitFor(() => expect(result.current.summaries).toEqual(next));
+    expect(renders).toBe(baseline + 1);
   });
 });

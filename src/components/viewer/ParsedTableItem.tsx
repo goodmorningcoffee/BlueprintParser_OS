@@ -6,6 +6,10 @@ import { useViewerStore } from "@/stores/viewerStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
 import { readAnnotations } from "@/queries/useAnnotations";
+import {
+  readPageIntelligence,
+  setPageIntelligenceForPage,
+} from "@/queries/usePageWindow";
 // [refactor jul6 S029] apiErrorMessage: table-structure non-OK now serves the envelope
 import { promoteParsedRegion, canPersist, apiErrorMessage } from "@/lib/client-persist";
 import type { YoloTag } from "@/types";
@@ -190,14 +194,17 @@ export default memo(function ParsedTableItem({
   ) => {
     if (!table.region?.id) return;
     const store = useViewerStore.getState();
-    const intel = store.pageIntelligence[table.pageNum] || {};
+    const intel = readPageIntelligence(queryClient, publicId, table.pageNum) || {};
     const regions = ((intel as any)?.parsedRegions || []).map((r: any) =>
       r.id === table.region.id
         ? { ...r, data: nextData, ...(category !== undefined ? { category } : {}) }
         : r,
     );
     // Optimistic local write so the edit shows immediately.
-    store.setPageIntelligence(table.pageNum, { ...intel, parsedRegions: regions });
+    setPageIntelligenceForPage(queryClient, publicId, table.pageNum, {
+      ...intel,
+      parsedRegions: regions,
+    });
 
     const { isDemo } = store;
     if (!canPersist(publicId, isDemo)) return; // demo / no publicId: local-only
@@ -213,7 +220,12 @@ export default memo(function ParsedTableItem({
       csiTags: table.region.csiTags ?? [],
     });
     // Adopt server-authoritative intelligence + summaries.
-    useViewerStore.getState().setPageIntelligence(table.pageNum, result.updatedIntelligence as any);
+    setPageIntelligenceForPage(
+      queryClient,
+      publicId,
+      table.pageNum,
+      result.updatedIntelligence as any,
+    );
     // [refactor jul10 P2.2③] cache seed under the `publicId` PROP — the id the promote request
     // used (SPEC §5-S3). Guard KEPT: promote returns summaries:null on real paths and must not
     // clear live data. useQueryClient is context-only — no per-item subscription (perf: this is a

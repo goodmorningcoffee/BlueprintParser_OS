@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useMemo, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useCsiCodesForPage } from "@/queries/usePageWindow";
 import type { SearchWordMatch, TextractWord } from "@/types";
 
 interface SearchHighlightOverlayProps {
@@ -83,7 +84,7 @@ export default memo(function SearchHighlightOverlay({
   const searchQuery = useViewerStore((s) => s.searchQuery);
   const activeCsiFilter = useViewerStore((s) => s.activeCsiFilter);
   const activeTradeFilter = useViewerStore((s) => s.activeTradeFilter);
-  const csiCodes = useViewerStore((s) => s.csiCodes);
+  const pageCsiCodes = useCsiCodesForPage(pageNumber);
   const textractData = useViewerStore((s) => s.textractData);
 
   const searchHits = searchMatches[pageNumber] || [];
@@ -120,8 +121,7 @@ export default memo(function SearchHighlightOverlay({
   // fall back to runtime phrase matching for old cached data without triggers.
   const csiHits = useMemo(() => {
     if (!activeCsiFilter) return [];
-    const pageCsi = csiCodes[pageNumber] || [];
-    const matchingCode = pageCsi.find((c) => c.code === activeCsiFilter);
+    const matchingCode = pageCsiCodes.find((c) => c.code === activeCsiFilter);
     if (!matchingCode) return [];
 
     if (matchingCode.triggers !== undefined) {
@@ -135,14 +135,13 @@ export default memo(function SearchHighlightOverlay({
     const phraseHits = findPhraseMatches(pageWords, matchingCode.description);
     if (phraseHits.length > 0) return phraseHits;
     return findWordMatches(pageWords, matchingCode.description);
-  }, [activeCsiFilter, csiCodes, textractData, pageNumber]);
+  }, [activeCsiFilter, pageCsiCodes, textractData, pageNumber]);
 
   // Trade highlight: use stored triggers from CSI detection when available,
   // fall back to runtime phrase matching for old cached data without triggers.
   const tradeHits = useMemo(() => {
     if (!activeTradeFilter) return [];
-    const pageCsi = csiCodes[pageNumber] || [];
-    const matchingCodes = pageCsi.filter((c) => c.trade === activeTradeFilter);
+    const matchingCodes = pageCsiCodes.filter((c) => c.trade === activeTradeFilter);
     if (matchingCodes.length === 0) return [];
 
     const hits: SearchWordMatch[] = [];
@@ -180,7 +179,7 @@ export default memo(function SearchHighlightOverlay({
     }
 
     return hits;
-  }, [activeTradeFilter, csiCodes, textractData, pageNumber]);
+  }, [activeTradeFilter, pageCsiCodes, textractData, pageNumber]);
 
   // Merge API search hits with local fallback
   const effectiveSearchHits = searchHits.length > 0 ? searchHits : localSearchHits;

@@ -1,25 +1,16 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "@/queries/queryKeys";
+import {
+  publishNavigationPageWindow,
+  readActivePageWindow,
+  useLoadedPageRange,
+} from "@/queries/usePageWindow";
 import { useViewerStore } from "@/stores/viewerStore";
-import type { KeynoteShapeData, CsiCode, ClientAnnotation, ScaleCalibrationData } from "@/types";
+import type { PageWindowResponse } from "@/queries/pageWindowCore";
+import type { ScaleCalibrationData } from "@/types";
 
 const CHUNK_RADIUS = 7; // current page ± 7 = 15-page window (covers 11-13 visible thumbnails + buffer)
-const EVICTION_BUFFER = 5; // keep extra pages beyond chunk before evicting
 const DEBOUNCE_MS = 100; // debounce rapid page changes (arrow keys)
-
-interface ChunkResponse {
-  from: number;
-  to: number;
-  pages: Array<{
-    pageNumber: number;
-    keynotes: KeynoteShapeData[] | null;
-    csiCodes: CsiCode[] | null;
-    textAnnotations: { annotations?: any[]; summary?: any } | null;
-    pageIntelligence: Record<string, any> | null;
-  }>;
-  annotations: ClientAnnotation[];
-}
 
 type ChunkRouteVariant = "auth" | "demo";
 
@@ -55,7 +46,9 @@ export function useChunkLoader() {
   const numPages = useViewerStore((s) => s.numPages);
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
-  const loadedPageRange = useViewerStore((s) => s.loadedPageRange);
+  // This is intentionally the loader's one cache observer. Range publication must reschedule the
+  // state machine when a completed far-away request evicts the page the user returned to.
+  const loadedPageRange = useLoadedPageRange();
 
   const generationRef = useRef(0);
   const activeRequestRef = useRef<ActiveChunkRequest | null>(null);
@@ -80,7 +73,6 @@ export function useChunkLoader() {
       }
 
       active?.controller.abort();
-      useViewerStore.getState().setChunkLoading(false);
     };
   }, [queryClient, publicId, isDemo]);
 
@@ -116,7 +108,9 @@ export function useChunkLoader() {
       if (liveState.publicId !== publicId || liveState.isDemo !== isDemo) return;
 
       const currentPage = liveState.pageNumber;
-      const currentRange = liveState.loadedPageRange;
+      // Re-read the project-keyed cache at dispatch. The range may have changed during the real
+      // 100 ms debounce, and the old state machine suppressed a now-redundant request here.
+      const currentRange = readActivePageWindow(queryClient, publicId).loadedRange;
       if (currentRange && currentPage >= currentRange.from && currentPage <= currentRange.to) return;
 
       const actualFrom = Math.max(1, currentPage - CHUNK_RADIUS);
@@ -148,8 +142,6 @@ export function useChunkLoader() {
       lastRequestedRef.current = actualKey;
       previousRequest?.controller.abort();
 
-      useViewerStore.getState().setChunkLoading(true);
-
       const endpoint = isDemo
         ? `/api/demo/projects/${publicId}/pages?from=${actualFrom}&to=${actualTo}`
         : `/api/projects/${publicId}/pages?from=${actualFrom}&to=${actualTo}`;
@@ -170,63 +162,27 @@ export function useChunkLoader() {
       fetch(endpoint, { signal: controller.signal })
         .then((res) => {
           if (!res.ok) throw new Error(`Chunk fetch failed: ${res.status}`);
-          return res.json() as Promise<ChunkResponse>;
+          return res.json() as Promise<PageWindowResponse>;
         })
         .then((chunk) => {
-          // Fetch mocks/transports are allowed to ignore AbortSignal. Generation + full identity are
-          // therefore the authoritative gate, checked after JSON and before the first side effect.
-          if (!isCurrentRequest()) return;
-
-          const keynoteMap: Record<number, KeynoteShapeData[]> = {};
-          const csiMap: Record<number, CsiCode[]> = {};
-          const textAnnMap: Record<number, any[]> = {};
-          const intelMap: Record<number, any> = {};
-
-          for (const page of chunk.pages) {
-            if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes as KeynoteShapeData[];
-            if (page.csiCodes) csiMap[page.pageNumber] = page.csiCodes as CsiCode[];
-            if (page.textAnnotations) {
-              const result = page.textAnnotations as any;
-              textAnnMap[page.pageNumber] = result.annotations || [];
-            }
-            if (page.pageIntelligence) intelMap[page.pageNumber] = page.pageIntelligence;
-          }
-
-          // Evict pages outside [from - buffer, to + buffer] to bound memory
-          const evictFrom = actualFrom - EVICTION_BUFFER;
-          const evictTo = actualTo + EVICTION_BUFFER;
-
-          const evict = <T>(record: Record<number, T>): Record<number, T> => {
-            const result: Record<number, T> = {};
-            for (const [key, val] of Object.entries(record)) {
-              const pn = Number(key);
-              if (pn >= evictFrom && pn <= evictTo) result[pn] = val;
-            }
-            return result;
-          };
-
-          // [refactor jul11 P2.2⑥] Publish the annotation window to its project-keyed cache FIRST,
-          // then publish the related pages-window maps to zustand in the SAME synchronous block.
-          // NO await may appear between these writes: a split tick reopens RACE-2 and lets a render
-          // observe the new range with the old annotation window (or the inverse).
-          queryClient.setQueryData(
-            queryKeys.annotations.all(publicId),
-            chunk.annotations,
+          // Fetch mocks/transports may ignore AbortSignal. The required predicate is evaluated by
+          // the paired publisher immediately before its first write; a stale response is a total
+          // no-op. Normalization, annotation-first order, response-time merge, and ±5 retention are
+          // centralized in the facade rather than duplicated in this transport state machine.
+          const published = publishNavigationPageWindow(
+            queryClient,
+            publicId,
+            chunk,
+            {
+              actualFrom,
+              actualTo,
+              isCurrent: isCurrentRequest,
+            },
           );
+          if (!published) return;
 
-          // [refactor jul11 P2.2⑦ PW-D3] Merge from response-time LIVE state. A local write made
-          // after dispatch survives when retained and not supplied by this response; response fields
-          // still win on covered pages, and pages outside the ±5 buffer still evict.
-          useViewerStore.setState((live) => ({
-            keynotes: { ...evict(live.keynotes), ...keynoteMap },
-            csiCodes: { ...evict(live.csiCodes), ...csiMap },
-            textAnnotations: { ...evict(live.textAnnotations), ...textAnnMap },
-            pageIntelligence: { ...evict(live.pageIntelligence), ...intelMap },
-            loadedPageRange: { from: actualFrom, to: actualTo },
-            chunkLoading: false,
-          }));
-
-          // Hydrate scale calibrations from new chunk
+          // Scale is a store/tool piggyback, not page-window cache data. It runs only after a current
+          // paired publication; stale responses can never hydrate it.
           for (const ann of chunk.annotations) {
             if (ann.source === "takeoff-scale" && (ann.data as any)?.type === "scale-calibration") {
               useViewerStore.getState().setScaleCalibration(
@@ -251,8 +207,6 @@ export function useChunkLoader() {
           if ((err as { name?: unknown })?.name !== "AbortError") {
             console.error("[useChunkLoader] Failed to load chunk:", err);
           }
-          // Reset so it can be retried
-          useViewerStore.getState().setChunkLoading(false);
         });
     }, DEBOUNCE_MS);
     debounceRef.current = timer;

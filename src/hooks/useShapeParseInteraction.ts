@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useViewerStore, useNavigation, usePageData } from "@/stores/viewerStore";
+import { useQueryClient } from "@tanstack/react-query";
+import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import {
+  appendKeynotesForPage,
+  mergeKeynotesByPage,
+} from "@/queries/usePageWindow";
 // [refactor jul5 S028] apiErrorMessage: shape-parse now serves {error:{code,message}} for
 // cascade errors (demo-gate 403 stays flat — apiErrorMessage reads both shapes).
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -11,10 +16,11 @@ export interface UseShapeParseInteractionOpts {
 }
 
 export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteractionOpts) {
+  const queryClient = useQueryClient();
   const { pageNumber } = useNavigation();
-  const { setKeynotes, setBatchKeynotes } = usePageData();
 
   const projectId = useViewerStore((s) => s.projectId);
+  const publicId = useViewerStore((s) => s.publicId);
   const tableParseRegion = useViewerStore((s) => s.tableParseRegion);
   const setTableParseRegion = useViewerStore((s) => s.setTableParseRegion);
   const setTableParseStep = useViewerStore((s) => s.setTableParseStep);
@@ -86,7 +92,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   }, [drawing, region, setMode, setTableParseStep]);
 
   const runOnPage = useCallback(async () => {
-    if (!projectId || loading) return;
+    if (!projectId || !publicId || loading) return;
     setLoading(true);
     setError(null);
     setWarnings([]);
@@ -102,10 +108,10 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
         return;
       }
       const data = await res.json();
-      // Append-only: multiple BB parses on the same page accumulate as pending
-      // shapes. The Save button flushes them; re-parsing adds more on top.
-      const existingPending = useViewerStore.getState().keynotes[pageNumber] ?? [];
-      setKeynotes(pageNumber, [...existingPending, ...(data.keynotes || [])]);
+      // [refactor jul11 P2.2⑦] Append against the response-time value under the request's captured
+      // project identity. This preserves the old live post-await append without allowing a late A
+      // response to write into whichever project happens to be globally open at settlement.
+      appendKeynotesForPage(queryClient, publicId, pageNumber, data.keynotes || []);
       if (data.warnings?.length) setWarnings(data.warnings);
       if (!showKeynotes) toggleKeynotes();
     } catch (err) {
@@ -113,10 +119,10 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
     } finally {
       setLoading(false);
     }
-  }, [projectId, loading, pageNumber, region, setKeynotes, showKeynotes, toggleKeynotes]);
+  }, [projectId, publicId, loading, pageNumber, region, queryClient, showKeynotes, toggleKeynotes]);
 
   const runOnAll = useCallback(async () => {
-    if (!projectId || loading) return;
+    if (!projectId || !publicId || loading) return;
     setLoading(true);
     setError(null);
     setWarnings([]);
@@ -132,7 +138,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
         return;
       }
       const data = await res.json();
-      if (data.byPage) setBatchKeynotes(data.byPage);
+      if (data.byPage) mergeKeynotesByPage(queryClient, publicId, data.byPage);
       if (data.warnings?.length) setWarnings(data.warnings);
       if (!showKeynotes) toggleKeynotes();
     } catch (err) {
@@ -140,7 +146,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
     } finally {
       setLoading(false);
     }
-  }, [projectId, loading, setBatchKeynotes, showKeynotes, toggleKeynotes]);
+  }, [projectId, publicId, loading, queryClient, showKeynotes, toggleKeynotes]);
 
   return {
     loading,

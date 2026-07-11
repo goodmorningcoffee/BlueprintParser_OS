@@ -10,13 +10,12 @@ import { useViewerStore } from "@/stores/viewerStore";
 import { seedSummariesCache } from "@/queries/useSummaries";
 // [refactor jul10 P2.2④] takeoff items+groups moved zustand → TanStack cache; loader seeds both keys.
 import { seedTakeoffCache } from "@/queries/useTakeoff";
-// [refactor jul11 P2.2⑥] annotations are chunk-seeded into one project cache entry.
-import { seedAnnotationsFromBootstrap } from "@/queries/useAnnotations";
+// [refactor jul11 P2.2⑦] One paired helper publishes annotations + the active page window.
+import { publishBootstrapPageWindow } from "@/queries/usePageWindow";
 import { useSearch } from "@/hooks/useSearch";
 import PDFViewer from "@/components/viewer/PDFViewer";
+import type { PageWindowResponse } from "@/queries/pageWindowCore";
 import type {
-  ClientAnnotation,
-  KeynoteShapeData,
   CsiCode,
   ProjectSummaries,
 } from "@/types";
@@ -37,21 +36,6 @@ interface ProjectResponse {
     name: string;
     drawingNumber: string | null;
   }>;
-}
-
-interface ChunkResponse {
-  from: number;
-  to: number;
-  pages: Array<{
-    pageNumber: number;
-    name: string;
-    drawingNumber: string | null;
-    keynotes: KeynoteShapeData[] | null;
-    csiCodes: CsiCode[] | null;
-    textAnnotations: { annotations?: any[]; summary?: any } | null;
-    pageIntelligence: Record<string, any> | null;
-  }>;
-  annotations: ClientAnnotation[];
 }
 
 export default function DemoProjectPage() {
@@ -166,43 +150,20 @@ export default function DemoProjectPage() {
 
       // ─── Hydrate initial chunk (already fetched in parallel above) ───
       if (!chunkRes.ok) {
-        // Demo reload used to start from resetProjectData's empty array. Preserve that net behavior
-        // under the independently-owned cache even when the optional chunk request fails.
-        seedAnnotationsFromBootstrap(queryClient, data.id, null);
+        // Demo reload clears both cached halves when its optional initial chunk request fails.
+        publishBootstrapPageWindow(queryClient, data.id, null, data.numPages);
       }
       if (chunkRes.ok) {
-        let chunk: ChunkResponse;
+        let chunk: PageWindowResponse;
         try {
           chunk = await chunkRes.json();
         } catch (parseError) {
-          seedAnnotationsFromBootstrap(queryClient, data.id, null);
+          publishBootstrapPageWindow(queryClient, data.id, null, data.numPages);
           throw parseError;
         }
 
-        const keynoteMap: Record<number, any> = {};
-        const csiMap: Record<number, any> = {};
-        const textAnnMap: Record<number, any[]> = {};
-        const intelMap: Record<number, any> = {};
-
-        for (const page of chunk.pages) {
-          if (page.keynotes) keynoteMap[page.pageNumber] = page.keynotes;
-          if (page.csiCodes) csiMap[page.pageNumber] = page.csiCodes;
-          if (page.textAnnotations) {
-            textAnnMap[page.pageNumber] = page.textAnnotations.annotations || [];
-          }
-          if (page.pageIntelligence) intelMap[page.pageNumber] = page.pageIntelligence;
-        }
-
-        // [refactor jul11 P2.2⑥] Cache FIRST, then pages-window state in the SAME synchronous
-        // block; no await may split the annotation window from its loaded range (RACE-2).
-        seedAnnotationsFromBootstrap(queryClient, data.id, chunk);
-        useViewerStore.setState(() => ({
-          keynotes: keynoteMap,
-          csiCodes: csiMap,
-          textAnnotations: textAnnMap,
-          pageIntelligence: intelMap,
-          loadedPageRange: { from: 1, to: chunk.pages.length > 0 ? Math.max(...chunk.pages.map((p: any) => p.pageNumber)) : Math.min(data.numPages || 1, 15) },
-        }));
+        // Annotation-first paired publication. Demo intentionally has no scale-hydration piggyback.
+        publishBootstrapPageWindow(queryClient, data.id, chunk, data.numPages);
 
         if (!data.summaries) {
           const allTradeSet = new Set<string>();

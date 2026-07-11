@@ -111,8 +111,8 @@ export function readTakeoffItems(qc: QueryClient, publicId: string): ClientTakeo
 //   • gcTime Infinity — CORRECTNESS, not a nicety (SPEC §2.1): enabled:false + throwing queryFn
 //     means there is NO refetch path, so a GC'd entry is unrecoverable until full reload.
 //     AnnotationOverlay usually pins an items observer but is NOT guaranteed mounted in every
-//     viewer state; demo temp rows (id:-Date.now()) live only in this cache. NOT a license for
-//     heavy domains (⑥⑦⑧ stay finite+LRU per RECIPE 8).
+//     viewer state; demo temp rows (id:-Date.now()) live only in this cache. Retention is
+//     domain-specific: ⑥/⑦ each own one project key and use Infinity; ⑧ textract is bounded.
 //
 // Action-identity note (do not "fix"): the old store handed every consumer ONE singleton
 // function per action; post-migration each component gets its own useCallback instance, stable

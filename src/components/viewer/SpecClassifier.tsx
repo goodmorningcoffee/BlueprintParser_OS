@@ -5,6 +5,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
 import { persistFetch, canPersist } from "@/lib/client-persist";
+import {
+  setPageIntelligenceForPage,
+  usePageIntelligenceForPage,
+} from "@/queries/usePageWindow";
 import type { PageIntelligence, TextRegion } from "@/types";
 
 interface SpecClassifierProps {
@@ -26,8 +30,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const intel = useViewerStore((s) => s.pageIntelligence[pageNumber]) as PageIntelligence | undefined;
-  const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
+  const intel = usePageIntelligenceForPage(pageNumber);
   const setSpecParseRegion = useViewerStore((s) => s.setSpecParseRegion);
   const [rowStates, setRowStates] = useState<Record<string, RowAction>>({});
   const [errorByRow, setErrorByRow] = useState<Record<string, string>>({});
@@ -42,7 +45,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
     if (pruned.length === intel.rejectedTextRegionIds.length) return;
     prunedKeyRef.current = key;
     const updated: PageIntelligence = { ...intel, rejectedTextRegionIds: pruned };
-    setPageIntelligence(pageNumber, updated);
+    setPageIntelligenceForPage(queryClient, publicId, pageNumber, updated);
     // Surface failures instead of silently swallowing: persistFetch throws on
     // !ok. On failure, reset the key so the next page visit retries the prune.
     (async () => {
@@ -56,7 +59,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
         prunedKeyRef.current = null;
       }
     })();
-  }, [projectId, publicId, isDemo, pageNumber, intel, setPageIntelligence]);
+  }, [projectId, publicId, isDemo, pageNumber, intel, queryClient]);
 
   const visibleRegions = useMemo(() => {
     if (!intel?.textRegions) return [];
@@ -95,8 +98,8 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
         type: "spec",
         sourceTextRegionId: tr.id,
       })) as { updatedIntelligence: PageIntelligence };
-      setPageIntelligence(pageNumber, payload.updatedIntelligence);
-      refreshPageCsiSpatialMap(queryClient, pageNumber);
+      setPageIntelligenceForPage(queryClient, publicId, pageNumber, payload.updatedIntelligence);
+      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
     } catch (err) {
       setRowError(tr.id, err instanceof Error ? err.message : "Promote failed");
     } finally {
@@ -122,7 +125,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
     }
     const nextRejected = [...existingRejected, tr.id];
     const updatedIntel: PageIntelligence = { ...intel, rejectedTextRegionIds: nextRejected };
-    setPageIntelligence(pageNumber, updatedIntel);
+    setPageIntelligenceForPage(queryClient, publicId, pageNumber, updatedIntel);
     try {
       // persistFetch awaits + checks ok + throws — never silently swallows.
       await persistFetch(
@@ -131,7 +134,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
         "PATCH",
       );
     } catch (err) {
-      setPageIntelligence(pageNumber, intel);
+      setPageIntelligenceForPage(queryClient, publicId, pageNumber, intel);
       setRowError(tr.id, err instanceof Error ? err.message : "Reject failed");
     } finally {
       setRowState(tr.id, "idle");

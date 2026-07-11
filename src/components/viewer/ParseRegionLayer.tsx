@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 
 interface ParseRegionLayerProps {
   width: number;
@@ -37,7 +38,7 @@ export default memo(function ParseRegionLayer({
   const keynoteColumnBBs = useViewerStore((s) => s.keynoteColumnBBs);
   const keynoteRowBBs = useViewerStore((s) => s.keynoteRowBBs);
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
+  const intel = usePageIntelligenceForPage(pageNumber) as any;
   const hiddenParsedRegionIds = useViewerStore((s) => s.hiddenParsedRegionIds);
   const parsedRegionColorMode = useViewerStore((s) => s.parsedRegionColorMode);
   const parseDraftRegion = useViewerStore((s) => s.parseDraftRegion);
@@ -148,7 +149,6 @@ export default memo(function ParseRegionLayer({
       ctx.fillText(String(ri + 1), rMinX * width - 12, rMinY * height + 12);
     }
     // ── Saved parsed regions (tables + keynotes) with stored color/opacity ─
-    const intel = pageIntelligence[pageNumber] as any;
     if (intel?.parsedRegions) {
       for (const region of intel.parsedRegions) {
         if (!region.bbox) continue;
@@ -322,10 +322,9 @@ export default memo(function ParseRegionLayer({
   }, [width, height, showParsedRegions,
     showTableParsePanel, tableParseRegion, tableParseColumnBBs, tableParseRowBBs,
     showKeynoteParsePanel, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs,
-    pageNumber, pageIntelligence, hiddenParsedRegionIds, parsedRegionColorMode,
+    pageNumber, intel, hiddenParsedRegionIds, parsedRegionColorMode,
     parseDraftRegion]);
 
-  const intel = pageIntelligence[pageNumber] as any;
   const hasSavedRegions = intel?.parsedRegions?.length > 0;
   const hasContent = showParsedRegions && (
     (showTableParsePanel && (tableParseRegion || tableParseColumnBBs.length > 0 || tableParseRowBBs.length > 0))

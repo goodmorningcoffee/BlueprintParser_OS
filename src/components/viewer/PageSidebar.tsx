@@ -3,7 +3,12 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore, useNavigation, useProject, usePageData, useDetection, useTextAnnotationDisplay, useYoloTags, useSymbolSearch } from "@/stores/viewerStore";
-// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
+import {
+  useCsiCodesByPage,
+  useKeynotesByPage,
+  useTextAnnotationsByPage,
+} from "@/queries/usePageWindow";
+// [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
 import { findPhraseMatches } from "./SearchHighlightOverlay";
@@ -20,7 +25,10 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   // Slice selectors (only re-render when relevant slice changes)
   const { pageNumber, numPages, setPage } = useNavigation();
   const { pageNames, publicId } = useProject();
-  const { keynotes, csiCodes, textractData, textAnnotations, activeCsiFilter, setCsiFilter } = usePageData();
+  const keynotes = useKeynotesByPage();
+  const csiCodes = useCsiCodesByPage();
+  const textAnnotations = useTextAnnotationsByPage();
+  const { textractData, activeCsiFilter, setCsiFilter } = usePageData();
   const { activeAnnotationFilter, setAnnotationFilter, searchQuery } = useDetection();
   // [refactor jul11 P2.2⑥] Page derivations follow the publicId-keyed annotation cache; the
   // filter/search controls remain in useDetection's zustand UI slice.

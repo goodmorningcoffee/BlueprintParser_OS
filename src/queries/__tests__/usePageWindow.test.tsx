@@ -223,6 +223,12 @@ describe("pagesWindow key and dormant query contract", () => {
     expect(hook.result.current.keynotes).toBe(first.keynotes);
 
     const query = client.getQueryCache().find({ queryKey: queryKeys.pagesWindow.active("A") });
+    const projectWindowQueries = client.getQueryCache().findAll({
+      queryKey: queryKeys.pagesWindow.all("A"),
+    });
+    expect(projectWindowQueries).toHaveLength(1);
+    expect(projectWindowQueries[0].queryKey).toEqual(queryKeys.pagesWindow.active("A"));
+    expect(projectWindowQueries.some((entry) => entry.queryKey.includes("center"))).toBe(false);
     expect(query?.state.status).toBe("success");
     expect(query?.state.fetchStatus).toBe("idle");
     expect(query?.isStale()).toBe(false);

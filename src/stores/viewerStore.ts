@@ -1,15 +1,10 @@
 import { create } from "zustand";
 import type {
   ClientAnnotation,
-  KeynoteShapeData,
-  CsiCode,
   TextractPageData,
-  PageIntelligence,
   SearchWordMatch,
   TakeoffTab,
   ScaleCalibrationData,
-  TextAnnotation,
-  TextAnnotationResult,
   YoloTag,
   SymbolSearchResult,
   SymbolSearchMatch,
@@ -135,32 +130,17 @@ interface ViewerState {
   labelingCredentials: { email: string; password: string } | null;
   setLabelingCredentials: (creds: { email: string; password: string } | null) => void;
 
-  // ─── Chunk-loader state (Project Summaries support) ──────
-  // [refactor jul10 P2.2③] summaries/setSummaries moved to the TanStack Query cache — facade in
-  // src/queries/useSummaries.ts. The chunk-loader pair below is domain ⑦'s surface; stays zustand.
-  loadedPageRange: { from: number; to: number } | null;
-  setLoadedPageRange: (range: { from: number; to: number } | null) => void;
-  chunkLoading: boolean;
-  setChunkLoading: (v: boolean) => void;
-
   // ─── Textract data per page ──────────────────────────────
   textractData: Record<number, TextractPageData>;
   setTextractData: (pageNum: number, data: TextractPageData) => void;
 
-  // ─── Keynotes per page ───────────────────────────────────
-  keynotes: Record<number, KeynoteShapeData[]>;
-  setKeynotes: (pageNum: number, data: KeynoteShapeData[]) => void;
-  setBatchKeynotes: (updates: Record<number, KeynoteShapeData[]>) => void;
-
-  // ─── CSI codes per page ──────────────────────────────────
-  csiCodes: Record<number, CsiCode[]>;
-  setCsiCodes: (pageNum: number, codes: CsiCode[]) => void;
+  // [refactor jul11 P2.2⑦] The active page window (loaded range, loading status, per-page
+  // keynotes/CSI/text annotations/page intelligence) is query-owned. See usePageWindow.ts and
+  // PageWindowLoaderController.tsx. Only project-wide CSI filter metadata remains in this store.
   allTrades: string[];
   setAllTrades: (trades: string[]) => void;
 
-  // ─── Text annotations ──────────────────────────────────────
-  textAnnotations: Record<number, TextAnnotation[]>;
-  setTextAnnotations: (pageNum: number, data: TextAnnotation[]) => void;
+  // ─── Text annotation display state ────────────────────────
   showTextAnnotations: boolean; // global nuke toggle
   toggleTextAnnotations: () => void;
   activeTextAnnotationTypes: Record<string, boolean>;
@@ -248,8 +228,6 @@ interface ViewerState {
   // ─── Page Intelligence ─────────────────────────────────
   showPageIntelPanel: boolean;
   togglePageIntelPanel: () => void;
-  pageIntelligence: Record<number, PageIntelligence>;
-  setPageIntelligence: (pageNum: number, data: PageIntelligence) => void;
 
   // ─── Takeoff ────────────────────────────────────────────
   // [refactor jul10 P2.2④] takeoffItems + takeoffGroups (and their collection actions,
@@ -762,30 +740,13 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
   labelingCredentials: null,
   setLabelingCredentials: (labelingCredentials) => set({ labelingCredentials }),
 
-  loadedPageRange: null,
-  setLoadedPageRange: (loadedPageRange) => set({ loadedPageRange }),
-  chunkLoading: false,
-  setChunkLoading: (chunkLoading) => set({ chunkLoading }),
-
   textractData: {},
   setTextractData: (pageNum, data) =>
     set((s) => ({ textractData: { ...s.textractData, [pageNum]: data } })),
 
-  keynotes: {},
-  setKeynotes: (pageNum, data) =>
-    set((s) => ({ keynotes: { ...s.keynotes, [pageNum]: data } })),
-  setBatchKeynotes: (updates) =>
-    set((s) => ({ keynotes: { ...s.keynotes, ...updates } })),
-
-  csiCodes: {},
-  setCsiCodes: (pageNum, codes) =>
-    set((s) => ({ csiCodes: { ...s.csiCodes, [pageNum]: codes } })),
   allTrades: [],
   setAllTrades: (allTrades) => set({ allTrades }),
 
-  textAnnotations: {},
-  setTextAnnotations: (pageNum, data) =>
-    set((s) => ({ textAnnotations: { ...s.textAnnotations, [pageNum]: data } })),
   showTextAnnotations: false,
   toggleTextAnnotations: () => set((s) => ({ showTextAnnotations: !s.showTextAnnotations })),
   activeTextAnnotationTypes: {},
@@ -910,8 +871,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
 
   showPageIntelPanel: false,
   togglePageIntelPanel: () => set((s) => ({ showPageIntelPanel: !s.showPageIntelPanel })),
-  pageIntelligence: {},
-  setPageIntelligence: (pageNum, data) => set((s) => ({ pageIntelligence: { ...s.pageIntelligence, [pageNum]: data } })),
 
   showTakeoffPanel: false,
   toggleTakeoffPanel: () =>
@@ -1506,17 +1465,12 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       // cache now (publicId-keyed entries give free cross-project isolation; the old key's entry
       // persists but is unobservable: reset sets publicId:"" which re-keys every subscriber, and
       // consumers are unmounted behind the loaders' `loading` gates until the fresh seed lands).
-      loadedPageRange: null,
-      chunkLoading: false,
       showLabelingWizard: false,
       labelingWizardStep: 1,
       labelingSessions: [],
       labelingCredentials: null,
       textractData: {},
-      keynotes: {},
-      csiCodes: {},
       allTrades: [],
-      textAnnotations: {},
       showTextAnnotations: false,
       activeTextAnnotationTypes: {},
       hiddenTextAnnotations: new Set<string>(),
@@ -1535,7 +1489,6 @@ export const useViewerStore = create<ViewerState>((set, get) => ({
       allCsiCodes: [],
       showCsiPanel: false,
       showPageIntelPanel: false,
-      pageIntelligence: {},
       sidebarCollapsed: false,
       annotationPanelCollapsed: false,
       showDetections: false,
@@ -1838,20 +1791,12 @@ export function isDemoFeatureEnabled(feature: string): boolean {
   return demoFeatureConfig[feature] !== false; // default: enabled unless explicitly off
 }
 
-/** Per-page data cache */
+/** Remaining per-page extraction data + project-wide CSI filter controls.
+ *  Active-window data lives behind src/queries/usePageWindow.ts (P2.2⑦). */
 export const usePageData = () =>
   useViewerStore(useShallow((s) => ({
     textractData: s.textractData,
     setTextractData: s.setTextractData,
-    keynotes: s.keynotes,
-    setKeynotes: s.setKeynotes,
-    setBatchKeynotes: s.setBatchKeynotes,
-    csiCodes: s.csiCodes,
-    setCsiCodes: s.setCsiCodes,
-    textAnnotations: s.textAnnotations,
-    setTextAnnotations: s.setTextAnnotations,
-    pageIntelligence: s.pageIntelligence,
-    setPageIntelligence: s.setPageIntelligence,
     allCsiCodes: s.allCsiCodes,
     activeCsiFilter: s.activeCsiFilter,
     setCsiFilter: s.setCsiFilter,
@@ -1928,8 +1873,6 @@ export const useAnnotationFilters = () =>
 // uses the cache facade src/queries/useQtoWorkflows.ts, which also surfaces the zustand-resident
 // activeQtoWorkflow pair. (Unlike chat's useChat, no second caller kept a slice alive.)
 
-// [refactor jul10 P2.2③] useSummaries selector DELETED — the NAME moved to the facade in
-// src/queries/useSummaries.ts (same 6-field shape: summaries/setSummaries cache-backed,
-// loadedPageRange/chunkLoading pairs passed through from this store until ⑦), so any stale
-// `useSummaries` import from here compile-breaks instead of silently reading a dead slice.
-// A shrunk same-name store selector was explicitly rejected for that reason (SPEC §3).
+// [refactor jul11 P2.2⑦] useSummaries remains a cache-only compatibility name in
+// src/queries/useSummaries.ts. Its temporary loaded-range/loading passthrough was removed with the
+// legacy window fields; consumers needing range or status use the page-window facade/controller.

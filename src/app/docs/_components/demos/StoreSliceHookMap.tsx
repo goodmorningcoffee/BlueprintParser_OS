@@ -1,43 +1,44 @@
-/** The Zustand slice hook map. Verified against src/stores/viewerStore.ts:
- *  useViewerStore (main) + 17 slice selectors starting at L1675 and ending at L1977.
- *  Each slice exposes a narrow subset so components re-render only on their own
- *  state changes. This is how the 1986-LOC store doesn't blow up re-render cost. */
+/** Viewer client-state access map. UI/tool state remains in narrow Zustand slices; server-owned
+ *  collections now sit behind project-keyed query facades. Keeping both families visible here
+ *  prevents future features from reaching around their domain's public API. */
 const SLICES = [
-  { name: "useNavigation",           line: 1675, purpose: "pageNumber, numPages, mode" },
-  { name: "usePanels",               line: 1686, purpose: "12 showX flags + toggles" },
-  { name: "useSelection",            line: 1726, purpose: "multi-select ids + helpers" },
+  { name: "useNavigation",           line: 1601, purpose: "pageNumber, numPages, mode" },
+  { name: "usePanels",               line: 1612, purpose: "12 showX flags + toggles" },
+  { name: "useSelection",            line: 1652, purpose: "multi-select ids + helpers" },
   // [refactor jul10 P2.2⑤] row rewritten: the store selector is deleted (its `line: 1737` was
   // already stale pre-migration); the facade lives in src/queries/useAnnotationGroups.ts
   // (groups+memberships in the query cache, Set indexes derived in-hook; selection stays zustand).
-  { name: "useAnnotationGroups",     line: 146,  purpose: "→ src/queries facade (P2.2⑤): groups+memberships in query cache, selection stays zustand" },
+  { name: "useAnnotationGroups",     line: 170,  purpose: "→ src/queries facade (P2.2⑤): groups+memberships in query cache, selection stays zustand" },
   // [refactor jul11 P2.2⑥] Flat chunk-windowed annotation data + CRUD moved to the facade;
   // focus/selection/visibility/tool history remain zustand-owned.
-  { name: "useAnnotations",          line: 284,  purpose: "→ src/queries facade (P2.2⑥): annotations in query cache; UI/tool state stays zustand" },
-  { name: "useDrawingState",         line: 1751, purpose: "_drawing/_drawStart/_drawEnd/_mousePos" },
-  { name: "useSymbolSearch",         line: 1764, purpose: "results, confidence, dismissed" },
-  { name: "useChat",                 line: 1971, purpose: "chatScope (messages → query cache, P2.2①)" },
-  { name: "useTableParse",           line: 1803, purpose: "step, region, grid, col/row BBs" },
-  { name: "useKeynoteParse",         line: 1832, purpose: "step, region, yolo-class bind" },
-  { name: "useProject",              line: 1859, purpose: "projectId, publicId, dataUrl, isDemo" },
-  { name: "usePageData",             line: 1882, purpose: "pageNames, pageDrawingNumbers" },
-  { name: "useDetection",            line: 1861, purpose: "detection models + visibility/search filters (annotation data → query cache)" },
-  { name: "useYoloTags",             line: 1921, purpose: "tags, activeId, visibility, picking mode" },
-  { name: "useTextAnnotationDisplay",line: 1940, purpose: "shown types + colors + hidden set" },
-  { name: "useAnnotationFilters",    line: 1956, purpose: "active filter, csi filter, trade filter" },
+  { name: "useAnnotations",          line: 302,  purpose: "→ src/queries facade (P2.2⑥): annotations in query cache; UI/tool state stays zustand" },
+  { name: "useDrawingState",         line: 1667, purpose: "_drawing/_drawStart/_drawEnd/_mousePos" },
+  { name: "useSymbolSearch",         line: 1680, purpose: "results, confidence, dismissed" },
+  { name: "useChat",                 line: 1709, purpose: "chatScope (messages → query cache, P2.2①)" },
+  { name: "useTableParse",           line: 1716, purpose: "step, region, grid, col/row BBs" },
+  { name: "useKeynoteParse",         line: 1745, purpose: "step, region, yolo-class bind" },
+  { name: "useProject",              line: 1772, purpose: "projectId, publicId, dataUrl, isDemo" },
+  // [refactor jul11 P2.2⑦] This store slice is intentionally small after the page-window carve:
+  // extraction/OCR remains for domain ⑧; active-window maps live in the query facade below.
+  { name: "usePageData",             line: 1796, purpose: "textract cache + project-wide CSI filter controls" },
+  { name: "useDetection",            line: 1806, purpose: "detection models + visibility/search filters (annotation data → query cache)" },
+  { name: "useYoloTags",             line: 1825, purpose: "tags, activeId, visibility, picking mode" },
+  { name: "useTextAnnotationDisplay",line: 1844, purpose: "shown types + colors + hidden set" },
+  { name: "useAnnotationFilters",    line: 1860, purpose: "active filter, csi filter, trade filter" },
   // [refactor jul10 P2.2②] row rewritten: the old entry was doubly stale (line pointed at useChat;
   // purpose described table-parse state). The store selector is deleted; the facade lives in
   // src/queries/useQtoWorkflows.ts (list → query cache; activeQtoWorkflow stays zustand).
-  { name: "useQtoWorkflows",         line: 2141, purpose: "→ src/queries facade (P2.2②): list in query cache, active stays zustand" },
-  // [refactor jul10 P2.2③] row rewritten: the store selector is deleted (its `line: 1977` was
-  // already stale); the facade lives in src/queries/useSummaries.ts (summaries → query cache;
-  // chunk-loader state loadedPageRange/chunkLoading stays zustand until domain ⑦).
-  { name: "useSummaries",            line: 2145, purpose: "→ src/queries facade (P2.2③): summaries in query cache, chunk-loader state stays zustand" },
+  { name: "useQtoWorkflows",         line: 37,   purpose: "→ src/queries facade (P2.2②): list in query cache, active stays zustand" },
+  // [refactor jul11 P2.2⑦] The temporary summary→chunk passthrough is gone; summaries and the
+  // active page window are independent cache domains with independent narrow subscriptions.
+  { name: "useSummaries",            line: 104,  purpose: "→ src/queries facade (P2.2③): cache-only project summaries" },
+  { name: "usePageWindow",           line: 43,   purpose: "→ src/queries facade (P2.2⑦): range + per-page keynote/CSI/text/PI maps" },
   // [refactor jul10 P2.2④] NEW row (takeoff never had a store slice selector — consumers read the
   // raw fields): items+groups now live in the query cache behind TWO deliberate hooks in
   // src/queries/useTakeoff.ts (no combined hook — canvas-adjacent items-only readers must not
   // gain group-write re-renders). UI fields (panel flag, active pointer, visibility set, tab)
   // stay zustand.
-  { name: "useTakeoffItems/Groups",  line: 94,   purpose: "→ src/queries facade (P2.2④): items+groups in query cache (two hooks), takeoff UI state stays zustand" },
+  { name: "useTakeoffItems/Groups",  line: 121,  purpose: "→ src/queries facade (P2.2④): items+groups in query cache (two hooks), takeoff UI state stays zustand" },
 ];
 
 export function StoreSliceHookMap() {
@@ -48,21 +49,21 @@ export function StoreSliceHookMap() {
         className="w-full h-auto text-[var(--fg)]"
         fill="currentColor"
         role="img"
-        aria-label="Viewer store slice hook map — central store with 17 slice selectors"
+        aria-label="Viewer client-state map — Zustand slices and project-keyed query facades"
       >
         <text x="480" y="22" textAnchor="middle" fontSize="14" fontWeight="bold">
-          viewerStore.ts — 17 slice hooks around one Zustand store
+          Viewer client state — {SLICES.length} narrow access surfaces
         </text>
         <text x="480" y="38" textAnchor="middle" fontSize="10" opacity="0.6">
-          Subscribe via slice hooks (not individual fields) to minimize re-renders. Line numbers are verbatim.
+          UI/tool state uses Zustand slices; server data uses project-keyed query facades.
         </text>
 
         {/* Central store */}
         <g>
           <circle cx="480" cy="400" r="78" fill="none" stroke="#60a5fa" strokeWidth="2.5" />
           <text x="480" y="390" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#60a5fa">useViewerStore</text>
-          <text x="480" y="408" textAnchor="middle" fontSize="10" opacity="0.75" fontFamily="monospace">L609</text>
-          <text x="480" y="424" textAnchor="middle" fontSize="9" opacity="0.6">(ViewerState, ~1400 LOC body)</text>
+          <text x="480" y="408" textAnchor="middle" fontSize="10" opacity="0.75" fontFamily="monospace">L642</text>
+          <text x="480" y="424" textAnchor="middle" fontSize="9" opacity="0.6">(UI/tool state; server collections use Query)</text>
         </g>
 
         {/* Ring of slice hooks */}
@@ -117,7 +118,7 @@ export function StoreSliceHookMap() {
         <g>
           <rect x="30" y="740" width="900" height="32" rx="4" fill="none" stroke="currentColor" opacity="0.35" />
           <text x="50" y="760" fontSize="10" opacity="0.75">
-            Rule: prefer a slice hook over <tspan fontFamily="monospace">useViewerStore(s =&gt; s.field)</tspan>. Slice hooks use <tspan fontFamily="monospace">useShallow</tspan>, so components only re-render when their slice actually changes.
+            Rule: use the domain facade shown here; direct store/cache access is reserved for documented handler-time bridges.
           </text>
         </g>
       </svg>

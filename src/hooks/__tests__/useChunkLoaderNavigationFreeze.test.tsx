@@ -1,31 +1,26 @@
-// [refactor jul11 P2.2⑦ C1] Navigation state-machine freeze (SPEC N1-N10).
-//
-// These tests intentionally exercise the pre-backing Zustand maps. C1 fixes request ownership and
-// response-time merging before C3 moves the same behavior behind the pagesWindow cache facade.
+// [refactor jul11 P2.2⑦ C3] Navigation state-machine freeze (SPEC N1-N11).
+// The request identity/cadence stays in useChunkLoader; all range/map witnesses use the project-keyed
+// active cache so this suite cannot hide a fallback to the deleted store ownership.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ReactNode } from "react";
+import ts from "typescript";
 import { useChunkLoader } from "@/hooks/useChunkLoader";
+import {
+  type ActivePageWindow,
+  type PageWindowResponse,
+  type PageWindowResponsePage,
+} from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
 import { readAnnotations } from "@/queries/useAnnotations";
+import { readActivePageWindow } from "@/queries/usePageWindow";
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedAnnotations } from "@/test/seed-annotations";
 import type { ClientAnnotation, CsiCode, KeynoteShapeData, TextAnnotation } from "@/types";
-
-interface TestChunk {
-  from: number;
-  to: number;
-  pages: Array<{
-    pageNumber: number;
-    keynotes: KeynoteShapeData[] | null;
-    csiCodes: CsiCode[] | null;
-    textAnnotations: { annotations?: TextAnnotation[]; summary?: unknown } | null;
-    pageIntelligence: Record<string, unknown> | null;
-  }>;
-  annotations: ClientAnnotation[];
-}
 
 let qc: QueryClient;
 const fetchMock = vi.fn();
@@ -90,7 +85,19 @@ function annotation(
   };
 }
 
-function emptyChunk(overrides: Partial<TestChunk> = {}): TestChunk {
+function page(
+  pageNumber: number,
+  overrides: Partial<PageWindowResponsePage> = {},
+): PageWindowResponsePage {
+  return {
+    pageNumber,
+    name: `Page ${pageNumber}`,
+    drawingNumber: null,
+    ...overrides,
+  };
+}
+
+function emptyChunk(overrides: Partial<PageWindowResponse> = {}): PageWindowResponse {
   return {
     from: 13,
     to: 27,
@@ -100,12 +107,69 @@ function emptyChunk(overrides: Partial<TestChunk> = {}): TestChunk {
   };
 }
 
-function okResponse(chunk: TestChunk): Response {
+function okResponse(chunk: PageWindowResponse): Response {
   return {
     ok: true,
     status: 200,
     json: vi.fn().mockResolvedValue(chunk),
   } as unknown as Response;
+}
+
+function active(overrides: Partial<ActivePageWindow> = {}): ActivePageWindow {
+  return {
+    loadedRange: null,
+    keynotes: {},
+    csiCodes: {},
+    textAnnotations: {},
+    pageIntelligence: {},
+    ...overrides,
+  };
+}
+
+function seedWindow(
+  overrides: Partial<ActivePageWindow> = {},
+  publicId = "pid",
+): ActivePageWindow {
+  const next = active(overrides);
+  qc.setQueryData(queryKeys.pagesWindow.active(publicId), next);
+  return next;
+}
+
+function updateWindow(
+  overrides: Partial<ActivePageWindow>,
+  publicId = "pid",
+): ActivePageWindow {
+  const next = { ...readActivePageWindow(qc, publicId), ...overrides };
+  qc.setQueryData(queryKeys.pagesWindow.active(publicId), next);
+  return next;
+}
+
+function currentWindow(publicId = "pid"): ActivePageWindow {
+  return readActivePageWindow(qc, publicId);
+}
+
+function descendants<T extends ts.Node>(
+  root: ts.Node,
+  predicate: (node: ts.Node) => node is T,
+): T[] {
+  const matches: T[] = [];
+  const visit = (node: ts.Node) => {
+    if (predicate(node)) matches.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return matches;
+}
+
+function parseSource(relativePath: string): ts.SourceFile {
+  const absolutePath = join(process.cwd(), relativePath);
+  return ts.createSourceFile(
+    absolutePath,
+    readFileSync(absolutePath, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
 }
 
 function signalForCall(index: number): AbortSignal {
@@ -150,14 +214,9 @@ beforeEach(() => {
     isDemo: false,
     pageNumber: 20,
     numPages: 100,
-    loadedPageRange: null,
-    chunkLoading: false,
-    keynotes: {},
-    csiCodes: {},
-    textAnnotations: {},
-    pageIntelligence: {},
     scaleCalibrations: {},
   });
+  seedWindow();
   seedAnnotations(qc, [annotation(1, "old-window")]);
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
@@ -191,12 +250,10 @@ describe("useChunkLoader navigation freeze — N1/N2 cadence and range", () => {
   });
 
   it.each([13, 27])("treats loaded-range endpoint %s as inclusive", (pageNumber) => {
-    act(() =>
-      useViewerStore.setState({
-        pageNumber,
-        loadedPageRange: { from: 13, to: 27 },
-      }),
-    );
+    act(() => {
+      useViewerStore.setState({ pageNumber });
+      seedWindow({ loadedRange: { from: 13, to: 27 } });
+    });
     render(<LoaderOnly />, { wrapper });
 
     advance(1_000);
@@ -206,13 +263,13 @@ describe("useChunkLoader navigation freeze — N1/N2 cadence and range", () => {
 
   it("fetches a retained-map page that is outside the exact loaded range", () => {
     fetchMock.mockReturnValue(new Promise<Response>(() => {}));
-    act(() =>
-      useViewerStore.setState({
-        pageNumber: 8,
-        loadedPageRange: { from: 13, to: 27 },
+    act(() => {
+      useViewerStore.setState({ pageNumber: 8 });
+      seedWindow({
+        loadedRange: { from: 13, to: 27 },
         keynotes: { 8: [keynote("retained-only")] },
-      }),
-    );
+      });
+    });
     render(<LoaderOnly />, { wrapper });
 
     advance(100);
@@ -246,12 +303,10 @@ describe("useChunkLoader navigation freeze — N1/N2 cadence and range", () => {
     const a = deferred<Response>();
     const recovery = deferred<Response>();
     fetchMock.mockReturnValueOnce(a.promise).mockReturnValueOnce(recovery.promise);
-    act(() =>
-      useViewerStore.setState({
-        pageNumber: 50,
-        loadedPageRange: { from: 1, to: 15 },
-      }),
-    );
+    act(() => {
+      useViewerStore.setState({ pageNumber: 50 });
+      seedWindow({ loadedRange: { from: 1, to: 15 } });
+    });
     render(<LoaderOnly />, { wrapper });
 
     advance(100);
@@ -265,8 +320,12 @@ describe("useChunkLoader navigation freeze — N1/N2 cadence and range", () => {
 
     a.resolve(okResponse(emptyChunk({ from: 43, to: 57 })));
     await flushPromises();
-    expect(useViewerStore.getState().loadedPageRange).toEqual({ from: 43, to: 57 });
+    expect(currentWindow().loadedRange).toEqual({ from: 43, to: 57 });
 
+    // TanStack schedules observer notification separately from the synchronous cache write. Flush
+    // that task/microtask before measuring the controller's newly scheduled 100 ms recovery intent.
+    advance(0);
+    await flushPromises();
     advance(99);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     advance(1);
@@ -301,7 +360,7 @@ describe("useChunkLoader navigation freeze — N3/N4 overlapping ownership", () 
     );
   });
 
-  it("prevents abort-aware A catch from clearing B loading or exact-range dedupe", async () => {
+  it("prevents abort-aware A catch from clearing B exact-range dedupe", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const b = deferred<Response>();
     fetchMock
@@ -317,17 +376,15 @@ describe("useChunkLoader navigation freeze — N3/N4 overlapping ownership", () 
     await flushPromises();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(useViewerStore.getState().chunkLoading).toBe(true);
     expect(signalForCall(1).aborted).toBe(false);
 
     // A range notification re-evaluates the same B identity. If A's catch cleared B's dedupe,
     // this schedules a third request and aborts the still-live B.
-    act(() => useViewerStore.setState({ loadedPageRange: { from: 1, to: 1 } }));
+    act(() => updateWindow({ loadedRange: { from: 1, to: 1 } }));
     advance(100);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(signalForCall(1).aborted).toBe(false);
-    expect(useViewerStore.getState().chunkLoading).toBe(true);
     expect(consoleError).not.toHaveBeenCalled();
   });
 });
@@ -337,7 +394,7 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
     const a = deferred<Response>();
     const b = deferred<Response>();
     fetchMock.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
-    useViewerStore.setState({ keynotes: { 20: [keynote("before")] } });
+    updateWindow({ keynotes: { 20: [keynote("before")] } });
     render(<LoaderOnly />, { wrapper });
 
     advance(100);
@@ -349,13 +406,12 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
       okResponse(
         emptyChunk({
           pages: [
-            {
-              pageNumber: 20,
+            page(20, {
               keynotes: [keynote("late-A")],
               csiCodes: [csi("late-A")],
               textAnnotations: { annotations: [textAnnotation("late-A")] },
-              pageIntelligence: { marker: "late-A" },
-            },
+              pageIntelligence: { rejectedTextRegionIds: ["late-A"] },
+            }),
           ],
           annotations: [
             annotation(2, "late-A-scale", 20, {
@@ -375,13 +431,12 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
     await flushPromises();
 
     expect(readAnnotations(qc, "pid").map((row) => row.id)).toEqual([1]);
-    expect(useViewerStore.getState().keynotes[20]?.[0]?.text).toBe("before");
-    expect(useViewerStore.getState().csiCodes[20]).toBeUndefined();
-    expect(useViewerStore.getState().textAnnotations[20]).toBeUndefined();
-    expect(useViewerStore.getState().pageIntelligence[20]).toBeUndefined();
-    expect(useViewerStore.getState().loadedPageRange).toBeNull();
+    expect(currentWindow().keynotes[20]?.[0]?.text).toBe("before");
+    expect(currentWindow().csiCodes[20]).toBeUndefined();
+    expect(currentWindow().textAnnotations[20]).toBeUndefined();
+    expect(currentWindow().pageIntelligence[20]).toBeUndefined();
+    expect(currentWindow().loadedRange).toBeNull();
     expect(useViewerStore.getState().scaleCalibrations[20]).toBeUndefined();
-    expect(useViewerStore.getState().chunkLoading).toBe(true);
   });
 
   it("aborts and invalidates A on project identity switch", async () => {
@@ -401,13 +456,12 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
       okResponse(
         emptyChunk({
           pages: [
-            {
-              pageNumber: 20,
+            page(20, {
               keynotes: [keynote("late-project-A")],
               csiCodes: null,
               textAnnotations: null,
-              pageIntelligence: { marker: "late-project-A" },
-            },
+              pageIntelligence: { rejectedTextRegionIds: ["late-project-A"] },
+            }),
           ],
           annotations: [annotation(2, "late-project-A")],
         }),
@@ -417,10 +471,10 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
 
     expect(readAnnotations(qc, "pid").map((row) => row.id)).toEqual([1]);
     expect(readAnnotations(qc, "project-B").map((row) => row.id)).toEqual([99]);
-    expect(useViewerStore.getState().loadedPageRange).toBeNull();
-    expect(useViewerStore.getState().keynotes[20]).toBeUndefined();
-    expect(useViewerStore.getState().pageIntelligence[20]).toBeUndefined();
-    expect(useViewerStore.getState().chunkLoading).toBe(false);
+    expect(currentWindow("pid").loadedRange).toBeNull();
+    expect(currentWindow("pid").keynotes[20]).toBeUndefined();
+    expect(currentWindow("pid").pageIntelligence[20]).toBeUndefined();
+    expect(currentWindow("project-B").loadedRange).toBeNull();
   });
 
   it("aborts and invalidates A on unmount, with Abort remaining silent", async () => {
@@ -438,13 +492,12 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
       okResponse(
         emptyChunk({
           pages: [
-            {
-              pageNumber: 20,
+            page(20, {
               keynotes: [keynote("late-unmount")],
               csiCodes: null,
               textAnnotations: null,
               pageIntelligence: null,
-            },
+            }),
           ],
           annotations: [annotation(2, "late-unmount")],
         }),
@@ -454,9 +507,8 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
 
     expect(consoleError).not.toHaveBeenCalled();
     expect(readAnnotations(qc, "pid").map((row) => row.id)).toEqual([1]);
-    expect(useViewerStore.getState().loadedPageRange).toBeNull();
-    expect(useViewerStore.getState().keynotes[20]).toBeUndefined();
-    expect(useViewerStore.getState().chunkLoading).toBe(false);
+    expect(currentWindow().loadedRange).toBeNull();
+    expect(currentWindow().keynotes[20]).toBeUndefined();
   });
 });
 
@@ -507,8 +559,7 @@ describe("useChunkLoader navigation freeze — N8 failure policy", () => {
       expect.objectContaining({ message: "Chunk fetch failed: 503" }),
     );
     expect(readAnnotations(qc, "pid")).toBe(beforeAnnotations);
-    expect(useViewerStore.getState().loadedPageRange).toBeNull();
-    expect(useViewerStore.getState().chunkLoading).toBe(false);
+    expect(currentWindow().loadedRange).toBeNull();
 
     act(() => {
       window.dispatchEvent(new Event("focus"));
@@ -544,7 +595,8 @@ describe("useChunkLoader navigation freeze — N8 failure policy", () => {
   ])("retains data and logs one $label", async ({ install, message }) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const beforeAnnotations = readAnnotations(qc, "pid");
-    useViewerStore.setState({ keynotes: { 20: [keynote("before")] } });
+    updateWindow({ keynotes: { 20: [keynote("before")] } });
+    const beforeWindow = currentWindow();
     install();
     render(<LoaderOnly />, { wrapper });
 
@@ -558,9 +610,9 @@ describe("useChunkLoader navigation freeze — N8 failure policy", () => {
       expect.objectContaining({ message }),
     );
     expect(readAnnotations(qc, "pid")).toBe(beforeAnnotations);
-    expect(useViewerStore.getState().keynotes[20]?.[0]?.text).toBe("before");
-    expect(useViewerStore.getState().loadedPageRange).toBeNull();
-    expect(useViewerStore.getState().chunkLoading).toBe(false);
+    expect(currentWindow()).toBe(beforeWindow);
+    expect(currentWindow().keynotes[20]?.[0]?.text).toBe("before");
+    expect(currentWindow().loadedRange).toBeNull();
   });
 });
 
@@ -575,9 +627,9 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
     const retainedKeynotes32 = [keynote("retained-32")];
     const retainedCsi8 = [csi("retained-8")];
     const retainedText8 = [textAnnotation("retained-8")];
-    const retainedIntel8 = { marker: "retained-8" };
+    const retainedIntel8 = { rejectedTextRegionIds: ["retained-8"] };
     act(() =>
-      useViewerStore.setState({
+      updateWindow({
         keynotes: {
           7: [keynote("evict-7")],
           8: retainedKeynotes8,
@@ -597,9 +649,9 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
         },
         pageIntelligence: {
           8: retainedIntel8,
-          20: { marker: "covered-local" },
-          33: { marker: "evict-33" },
-        } as any,
+          20: { rejectedTextRegionIds: ["covered-local"] },
+          33: { rejectedTextRegionIds: ["evict-33"] },
+        } as ActivePageWindow["pageIntelligence"],
       }),
     );
 
@@ -607,20 +659,19 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
       okResponse(
         emptyChunk({
           pages: [
-            {
-              pageNumber: 20,
+            page(20, {
               keynotes: [keynote("server")],
               csiCodes: [csi("server")],
               textAnnotations: { annotations: [textAnnotation("server")] },
-              pageIntelligence: { marker: "server" },
-            },
+              pageIntelligence: { rejectedTextRegionIds: ["server"] },
+            }),
           ],
         }),
       ),
     );
     await flushPromises();
 
-    const state = useViewerStore.getState();
+    const state = currentWindow();
     expect(state.keynotes[7]).toBeUndefined();
     expect(state.keynotes[8]).toBe(retainedKeynotes8);
     expect(state.keynotes[20]?.[0]?.text).toBe("server");
@@ -633,9 +684,9 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
     expect(state.textAnnotations[20]?.[0]?.text).toBe("server");
     expect(state.textAnnotations[33]).toBeUndefined();
     expect(state.pageIntelligence[8]).toBe(retainedIntel8);
-    expect(state.pageIntelligence[20]).toEqual({ marker: "server" });
+    expect(state.pageIntelligence[20]).toEqual({ rejectedTextRegionIds: ["server"] });
     expect(state.pageIntelligence[33]).toBeUndefined();
-    expect(state.loadedPageRange).toEqual({ from: 13, to: 27 });
+    expect(state.loadedRange).toEqual({ from: 13, to: 27 });
   });
 
   it("preserves sparse/null fields and ignores echoed response range", async () => {
@@ -645,19 +696,18 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
           from: 1,
           to: 2,
           pages: [
-            {
-              pageNumber: 20,
+            page(20, {
               keynotes: [],
               csiCodes: null,
               textAnnotations: { annotations: [] },
               pageIntelligence: {},
-            },
+            }),
           ],
         }),
       ),
     );
     const retainedCsi = [csi("retained-null-omission")];
-    useViewerStore.setState({
+    updateWindow({
       keynotes: { 20: [keynote("replaced-by-empty")] },
       csiCodes: { 20: retainedCsi },
     });
@@ -666,8 +716,8 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
     advance(100);
     await flushPromises();
 
-    const state = useViewerStore.getState();
-    expect(state.loadedPageRange).toEqual({ from: 13, to: 27 });
+    const state = currentWindow();
+    expect(state.loadedRange).toEqual({ from: 13, to: 27 });
     expect(state.keynotes[20]).toEqual([]);
     expect(state.csiCodes[20]).toBe(retainedCsi);
     expect(state.textAnnotations[20]).toEqual([]);
@@ -683,7 +733,7 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
     advance(100);
     await flushPromises();
 
-    expect(useViewerStore.getState().loadedPageRange).toEqual({ from: 13, to: 27 });
+    expect(currentWindow().loadedRange).toEqual({ from: 13, to: 27 });
   });
 
   it("keeps physical publication order annotations then range then scale", async () => {
@@ -702,17 +752,15 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
       okResponse(emptyChunk({ annotations: [scale] })),
     );
 
+    const annotationsKey = JSON.stringify(queryKeys.annotations.all("pid"));
+    const activeKey = JSON.stringify(queryKeys.pagesWindow.active("pid"));
     const unsubscribeQuery = qc.getQueryCache().subscribe((event) => {
-      if (
-        event.type === "updated" &&
-        JSON.stringify(event.query.queryKey) ===
-          JSON.stringify(queryKeys.annotations.all("pid"))
-      ) {
-        events.push("annotations");
-      }
+      if (event.type !== "updated") return;
+      const key = JSON.stringify(event.query.queryKey);
+      if (key === annotationsKey) events.push("annotations");
+      if (key === activeKey) events.push("range");
     });
     const unsubscribeStore = useViewerStore.subscribe((state, previous) => {
-      if (state.loadedPageRange !== previous.loadedPageRange) events.push("range");
       if (state.scaleCalibrations !== previous.scaleCalibrations) events.push("scale");
     });
 
@@ -726,5 +774,56 @@ describe("useChunkLoader navigation freeze — N9/N10 merge and sparse adoption"
     }
 
     expect(events).toEqual(["annotations", "range", "scale"]);
+  });
+});
+
+describe("useChunkLoader navigation freeze — N11 headless range observer", () => {
+  it("isolates the hook in one null controller mounted outside PDFViewer's error branch", () => {
+    const controller = parseSource(
+      "src/components/viewer/PageWindowLoaderController.tsx",
+    );
+    const viewer = parseSource("src/components/viewer/PDFViewer.tsx");
+
+    const controllerHookCalls = descendants(
+      controller,
+      (node): node is ts.CallExpression =>
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "useChunkLoader",
+    );
+    expect(controllerHookCalls).toHaveLength(1);
+    const nullReturns = descendants(
+      controller,
+      (node): node is ts.ReturnStatement =>
+        ts.isReturnStatement(node) && node.expression?.kind === ts.SyntaxKind.NullKeyword,
+    );
+    expect(nullReturns).toHaveLength(1);
+
+    const viewerHookCalls = descendants(
+      viewer,
+      (node): node is ts.CallExpression =>
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "useChunkLoader",
+    );
+    expect(viewerHookCalls).toHaveLength(0);
+
+    const controllerMounts = descendants(
+      viewer,
+      (node): node is ts.JsxSelfClosingElement =>
+        ts.isJsxSelfClosingElement(node) &&
+        ts.isIdentifier(node.tagName) &&
+        node.tagName.text === "PageWindowLoaderController",
+    );
+    expect(controllerMounts).toHaveLength(1);
+
+    // A controller nested inside `error ? ... : ...` would unmount in one branch. Keep it as the
+    // unconditional first sibling of that conditional so PDF failure retains request lifetime.
+    let ancestor: ts.Node | undefined = controllerMounts[0].parent;
+    while (ancestor) {
+      expect(ts.isConditionalExpression(ancestor)).toBe(false);
+      expect(ts.isIfStatement(ancestor)).toBe(false);
+      ancestor = ancestor.parent;
+    }
   });
 });

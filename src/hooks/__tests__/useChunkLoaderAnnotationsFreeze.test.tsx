@@ -1,21 +1,22 @@
-// [refactor jul11 P2.2⑥] RACE-2 freeze for the annotation/window seed boundary.
-//
-// Before C3, useChunkLoader published page-window maps, loaded range, and annotations through one
-// zustand setState. C3 split only the annotations write into TanStack Query while keeping both
-// writes in the same synchronous block. This probe freezes the user-visible contract:
+// [refactor jul11 P2.2⑦ C3] RACE-2 freeze for the paired annotation/window cache boundary.
+// This probe freezes the user-visible contract:
 // one coherent render observes the new range + new annotations, and neither tear direction is
-// allowed: new range + old annotations OR old range + new annotations. The raw zustand subscriber
-// is the stricter ordering witness from SPEC §9: at the instant the new range publishes it reads
-// through the shared annotation seam, so a future `setState` followed by `setQueryData` fails even
-// if React batches the two notifications into a deceptively coherent commit. The Probe now uses a
-// real useAnnotations subscription and `readSeededAnnotations` owns imperative cache assertions.
+// allowed: new range + old annotations OR old range + new annotations. A raw Query-cache subscriber
+// witnesses physical annotation-first order even if React coalesces both cache notifications.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useChunkLoader } from "@/hooks/useChunkLoader";
+import type { ActivePageWindow } from "@/queries/pageWindowCore";
+import { queryKeys } from "@/queries/queryKeys";
 import { readAnnotations, useAnnotations } from "@/queries/useAnnotations";
+import {
+  readActivePageWindow,
+  useKeynotesForPage,
+  useLoadedPageRange,
+} from "@/queries/usePageWindow";
 import { useViewerStore } from "@/stores/viewerStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import type { ClientAnnotation } from "@/types";
@@ -49,6 +50,26 @@ function annotation(id: number, name: string): ClientAnnotation {
   };
 }
 
+function active(overrides: Partial<ActivePageWindow> = {}): ActivePageWindow {
+  return {
+    loadedRange: null,
+    keynotes: {},
+    csiCodes: {},
+    textAnnotations: {},
+    pageIntelligence: {},
+    ...overrides,
+  };
+}
+
+function seedWindow(
+  overrides: Partial<ActivePageWindow> = {},
+  publicId = "pid",
+): ActivePageWindow {
+  const value = active(overrides);
+  qc.setQueryData(queryKeys.pagesWindow.active(publicId), value);
+  return value;
+}
+
 beforeEach(() => {
   qc = new QueryClient();
   useViewerStore.getState().resetProjectData();
@@ -57,8 +78,8 @@ beforeEach(() => {
     isDemo: false,
     pageNumber: 20,
     numPages: 100,
-    loadedPageRange: null,
-    chunkLoading: false,
+  });
+  seedWindow({
     keynotes: {
       1: [
         {
@@ -122,37 +143,31 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
       keynoteTexts: string[];
     }> = [];
 
-    // [refactor jul11 P2.2⑥] React can batch cross-store notifications, so render snapshots
-    // alone cannot prove write ordering. Subscribe to the zustand half directly and, precisely
-    // when it publishes the new range, synchronously read annotations through the shared C3 seam.
-    // After the flip this helper reads TanStack Query; the callback/assertion remains unchanged.
-    const unsubscribeRaw = useViewerStore.subscribe((state, previousState) => {
-      const range = state.loadedPageRange;
-      const previousRange = previousState.loadedPageRange;
-      if (
-        range?.from === 13 &&
-        range.to === 27 &&
-        (previousRange?.from !== 13 || previousRange.to !== 27)
-      ) {
-        rawRangePublications.push({
-          range,
-          annotationIds: readSeededAnnotations(qc).map((row) => row.id),
-          keynoteTexts: (state.keynotes[20] ?? []).map((row) => row.text),
-        });
-      }
+    // React can coalesce query notifications, so render snapshots alone cannot prove physical write
+    // order. At the active-key event, synchronously read the already-published annotations key.
+    const activeKey = JSON.stringify(queryKeys.pagesWindow.active("pid"));
+    const unsubscribeRaw = qc.getQueryCache().subscribe((event) => {
+      if (event.type !== "updated") return;
+      if (JSON.stringify(event.query.queryKey) !== activeKey) return;
+      const window = readActivePageWindow(qc, "pid");
+      const range = window.loadedRange;
+      if (range?.from !== 13 || range.to !== 27) return;
+      rawRangePublications.push({
+        range,
+        annotationIds: readSeededAnnotations(qc).map((row) => row.id),
+        keynoteTexts: (window.keynotes[20] ?? []).map((row) => row.text),
+      });
     });
 
     function Probe() {
       useChunkLoader();
-      const range = useViewerStore((s) => s.loadedPageRange);
-      // [refactor jul11 P2.2⑥] Production subscription after the backing-store flip. Keeping this
-      // a real observer (not an imperative cache read) preserves the render-count half of RACE-2.
+      const range = useLoadedPageRange();
       const { annotations } = useAnnotations();
-      const keynotes = useViewerStore((s) => s.keynotes);
+      const keynotes = useKeynotesForPage(20);
       snapshots.push({
         range,
         annotationIds: annotations.map((row) => row.id),
-        keynoteTexts: (keynotes[20] ?? []).map((row) => row.text),
+        keynoteTexts: keynotes.map((row) => row.text),
       });
       return null;
     }
@@ -167,7 +182,7 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
         ),
       );
       await waitFor(() =>
-        expect(useViewerStore.getState().loadedPageRange).toEqual({ from: 13, to: 27 }),
+        expect(readActivePageWindow(qc, "pid").loadedRange).toEqual({ from: 13, to: 27 }),
       );
     } finally {
       unsubscribeRaw();
@@ -194,9 +209,7 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
       ),
     ).toBe(false);
 
-    // SPEC §9 raw-subscriber interleave pin: when the zustand range/map half notifies,
-    // the shared annotation seam must ALREADY expose that same fetched window. This is exactly
-    // one publication; an await or reversed write order in C3 exposes [1] here and fails loudly.
+    // At the active-cache event, annotations must already expose the same fetched window.
     expect(rawRangePublications).toEqual([
       {
         range: { from: 13, to: 27 },
@@ -244,8 +257,9 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
 
     expect(readAnnotations(qc, "pid").map((row) => row.id)).toEqual([1]);
     expect(readAnnotations(qc, "project-B")).toEqual(projectB);
-    expect(useViewerStore.getState().loadedPageRange).toBeNull();
-    expect(useViewerStore.getState().keynotes[20]).toBeUndefined();
+    expect(readActivePageWindow(qc, "pid").loadedRange).toBeNull();
+    expect(readActivePageWindow(qc, "pid").keynotes[20]).toBeUndefined();
+    expect(readActivePageWindow(qc, "project-B").loadedRange).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -268,7 +282,6 @@ describe("useChunkLoader — annotation/window publication (RACE-2)", () => {
       ),
     );
     expect(readAnnotations(qc, "pid")).toBe(before);
-    expect(useViewerStore.getState().loadedPageRange).toBeNull();
-    expect(useViewerStore.getState().chunkLoading).toBe(false);
+    expect(readActivePageWindow(qc, "pid").loadedRange).toBeNull();
   });
 });

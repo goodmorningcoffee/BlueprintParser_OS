@@ -3,9 +3,14 @@
 import { useMemo, useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore, useProject } from "@/stores/viewerStore";
-// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
+// [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries, seedSummariesCache } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
+import {
+  setPageIntelligenceForPage,
+  updatePageIntelligenceForPage,
+  usePageIntelligenceByPage,
+} from "@/queries/usePageWindow";
 import HelpTooltip from "./HelpTooltip";
 import KeynoteItem from "./KeynoteItem";
 import CompareEditTab from "./CompareEditTab";
@@ -45,7 +50,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const pageNumber = useViewerStore((s) => s.pageNumber);
   const setPage = useViewerStore((s) => s.setPage);
   const pageNames = useViewerStore((s) => s.pageNames);
-  const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
+  const pageIntelligence = usePageIntelligenceByPage();
   const textractData = useViewerStore((s) => s.textractData);
   // [refactor jul11 P2.2⑥] Subscribe to the one chunk-windowed cache entry, not viewerStore.
   const { annotations } = useAnnotations();
@@ -70,7 +75,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const resetAllTools = useViewerStore((s) => s.resetAllTools);
   const projectId = useViewerStore((s) => s.projectId);
   const addYoloTagsBulk = useViewerStore((s) => s.addYoloTagsBulk);
-  const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
   const toggleTableCompareModal = useViewerStore((s) => s.toggleTableCompareModal);
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
@@ -120,8 +124,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     persistToDb: boolean = true,
   ) => {
     const storeState = useViewerStore.getState();
-    const currentIntel = storeState.pageIntelligence[pageNumber] || {};
-    const existingRegions = (currentIntel as any)?.parsedRegions || [];
     const headers = ["Key", "Description"];
     const rows = keys.map((k) => ({ Key: k.key, Description: k.description }));
 
@@ -167,13 +169,17 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       csiTags: csiTags || [],
       data,
     };
-    setPageIntelligence(pageNumber, {
-      ...currentIntel,
-      parsedRegions: [...existingRegions, newRegion],
-    });
+    // Functional publication is the handler-live read: preserve any page fields/regions written
+    // since render while installing this one already-created region synchronously.
+    updatePageIntelligenceForPage(queryClient, publicId, pageNumber, (current) => ({
+      ...(current ?? {}),
+      // The legacy keynote payload carries the CSI subset returned by /csi/detect; the server
+      // enriches it on promote. Keep that established wire shape at this compatibility boundary.
+      parsedRegions: [...(current?.parsedRegions ?? []), newRegion as any],
+    }));
 
     if (!persistToDb) return;
-    refreshPageCsiSpatialMap(queryClient, pageNumber);
+    refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
     if (canPersist(publicId, storeState.isDemo)) {
       const result = await promoteParsedRegion({
         publicId,
@@ -186,13 +192,18 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         csiTags: csiTags || [],
       });
       // Adopt the server's authoritative intelligence + summaries.
-      setPageIntelligence(pageNumber, result.updatedIntelligence as any);
+      setPageIntelligenceForPage(
+        queryClient,
+        publicId,
+        pageNumber,
+        result.updatedIntelligence as any,
+      );
       // [refactor jul10 P2.2③] cache seed under the render `publicId` (useProject) — the same id
       // the promote request above used (SPEC §5-S3). Guard KEPT: promote returns summaries:null
       // on real paths (compute-reject swallow) and must not clear live data.
       if (result.summaries) seedSummariesCache(queryClient, publicId, result.summaries as any);
     }
-  }, [pageNumber, keynoteParseRegion, setPageIntelligence, publicId, queryClient]);
+  }, [pageNumber, keynoteParseRegion, publicId, queryClient]);
 
   const [autoParsing, setAutoParsing] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
@@ -551,8 +562,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
       // Save as parsed keynote (optimistic local write).
       const store = useViewerStore.getState();
-      const currentIntel = store.pageIntelligence[pageNumber] || {};
-      const existingRegions = (currentIntel as any)?.parsedRegions || [];
       const bbox = (guidedParseRegion || [0, 0, 1, 1]) as [number, number, number, number];
       const regionId = regionIdFor(pageNumber, bbox);
       const data = {
@@ -572,10 +581,10 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         csiTags,
         data,
       };
-      store.setPageIntelligence(pageNumber, {
-        ...currentIntel,
-        parsedRegions: [...existingRegions, newRegion],
-      });
+      updatePageIntelligenceForPage(queryClient, publicId, pageNumber, (current) => ({
+        ...(current ?? {}),
+        parsedRegions: [...(current?.parsedRegions ?? []), newRegion as any],
+      }));
 
       // Also save as parsedKeynoteData for All Keynotes tab
       const tagHeader = result.headers[0];
@@ -589,7 +598,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       }
 
       // Refresh spatial map
-      refreshPageCsiSpatialMap(queryClient, pageNumber);
+      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
 
       // Auto-persist on parse via the transactional promote upsert. Gated on
       // publicId (canPersist), NOT numeric projectId. Throws on failure → we
@@ -605,7 +614,12 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           category: "keynote-table",
           csiTags,
         });
-        store.setPageIntelligence(pageNumber, promoteResult.updatedIntelligence as any);
+        setPageIntelligenceForPage(
+          queryClient,
+          publicId,
+          pageNumber,
+          promoteResult.updatedIntelligence as any,
+        );
         // [refactor jul10 P2.2③] was the ODD site: `store.setSummaries(...)` off the :542
         // getState() capture, not the getState().setSummaries form. Now the shared cache seed
         // under the render `publicId` — the same id the promote above used (SPEC §4.2, §5-S3).

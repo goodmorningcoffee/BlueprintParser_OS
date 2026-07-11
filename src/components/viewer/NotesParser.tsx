@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
+import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import { unionBboxes } from "@/lib/specnote-parser";
 // [refactor jul5 S026] apiErrorMessage: notes-parse now serves {error:{code,message}}
@@ -43,7 +44,6 @@ export default function NotesParser() {
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
   const textractData = useViewerStore((s) => s.textractData[pageNumber]);
 
   const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
@@ -317,8 +317,13 @@ export default function NotesParser() {
         data: data as unknown as Record<string, unknown>,
         category: "notes",
       });
-      setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
-      refreshPageCsiSpatialMap(queryClient, pageNumber);
+      setPageIntelligenceForPage(
+        queryClient,
+        publicId,
+        pageNumber,
+        payload.updatedIntelligence as PageIntelligence,
+      );
+      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
       setParagraphBatch([]);
       resetNotesParse();
       setPreview(null);
@@ -363,8 +368,13 @@ export default function NotesParser() {
         category: "notes",
         csiTags: grid.csiTags ?? [],
       });
-      setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
-      refreshPageCsiSpatialMap(queryClient, pageNumber);
+      setPageIntelligenceForPage(
+        queryClient,
+        publicId,
+        pageNumber,
+        payload.updatedIntelligence as PageIntelligence,
+      );
+      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
       resetNotesParse();
       setPreview(null);
     } catch (err) {

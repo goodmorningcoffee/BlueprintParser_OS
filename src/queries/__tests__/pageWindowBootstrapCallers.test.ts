@@ -3,9 +3,9 @@
 //
 // These pages are intentionally not mounted here: doing so would couple this narrow contract to Next
 // routing, auth, PDF rendering, and every other bootstrap domain. The TypeScript AST pins only the
-// load-bearing caller facts that the pure pageWindowCore tests cannot observe while that core remains
-// production-dead: eager Promise.all membership, reset/failure routing, canonical annotation keying,
-// paired publication adjacency, and auth/demo scale/fallback asymmetry.
+// load-bearing caller facts that the pure pageWindowCore tests cannot observe: eager Promise.all
+// membership, reset/failure routing, canonical paired publication, shared wire typing, and auth/demo
+// scale/fallback asymmetry.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -89,8 +89,8 @@ function isPromiseAllAwait(node: ts.Node): node is ts.AwaitExpression {
   );
 }
 
-function isSeedCall(node: ts.Node): node is ts.CallExpression {
-  return isIdentifierCall(node, "seedAnnotationsFromBootstrap");
+function isPublishCall(node: ts.Node): node is ts.CallExpression {
+  return isIdentifierCall(node, "publishBootstrapPageWindow");
 }
 
 function isCanonicalPublicId(node: ts.Node | undefined): boolean {
@@ -103,7 +103,7 @@ function isCanonicalPublicId(node: ts.Node | undefined): boolean {
   );
 }
 
-function isPagesWindowPublication(node: ts.Node): node is ts.CallExpression {
+function isOldPagesWindowPublication(node: ts.Node): node is ts.CallExpression {
   if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return false;
   if (
     !ts.isIdentifier(node.expression.expression) ||
@@ -120,6 +120,16 @@ function isPagesWindowPublication(node: ts.Node): node is ts.CallExpression {
       ts.isIdentifier(candidate.name) &&
       candidate.name.text === "loadedPageRange",
   ).length > 0;
+}
+
+function isCanonicalNumPages(node: ts.Node | undefined): boolean {
+  return (
+    !!node &&
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "data" &&
+    node.name.text === "numPages"
+  );
 }
 
 function directStatement(node: ts.Node, block: ts.Block): ts.Statement {
@@ -250,7 +260,7 @@ describe.each(LOADERS)("$label page-window bootstrap caller", (loader) => {
     expect(ancestors(promiseAll).filter(ts.isTryStatement)).toEqual([outerTry]);
   });
 
-  it("B2: publishes canonical annotations immediately before the current window and then piggybacks", () => {
+  it("B2: publishes one canonical paired value, then preserves scale/fallback piggybacks", () => {
     const source = parseLoader(loader.path);
     const outerTry = findOuterTry(source);
     const successIfs = outerTry.tryBlock.statements.filter(isChunkSuccessIf);
@@ -258,35 +268,56 @@ describe.each(LOADERS)("$label page-window bootstrap caller", (loader) => {
     expect(ts.isBlock(successIfs[0].thenStatement)).toBe(true);
     const successBlock = successIfs[0].thenStatement as ts.Block;
 
-    const successSeeds = descendants(successBlock, isSeedCall).filter(
+    const successPublications = descendants(successBlock, isPublishCall).filter(
       (call) => ts.isIdentifier(call.arguments[2]) && call.arguments[2].text === "chunk",
     );
-    expect(successSeeds).toHaveLength(1);
-    expect(successSeeds[0].arguments).toHaveLength(3);
-    expect(ts.isIdentifier(successSeeds[0].arguments[0])).toBe(true);
-    expect((successSeeds[0].arguments[0] as ts.Identifier).text).toBe("queryClient");
-    expect(isCanonicalPublicId(successSeeds[0].arguments[1])).toBe(true);
+    expect(successPublications).toHaveLength(1);
+    const publication = successPublications[0];
+    expect(publication.arguments).toHaveLength(4);
+    expect(ts.isIdentifier(publication.arguments[0])).toBe(true);
+    expect((publication.arguments[0] as ts.Identifier).text).toBe("queryClient");
+    expect(isCanonicalPublicId(publication.arguments[1])).toBe(true);
+    expect(isCanonicalNumPages(publication.arguments[3])).toBe(true);
 
-    const publications = descendants(successBlock, isPagesWindowPublication);
-    expect(publications).toHaveLength(1);
-    const seedStatement = directStatement(successSeeds[0], successBlock);
-    const publicationStatement = directStatement(publications[0], successBlock);
-    const seedIndex = successBlock.statements.indexOf(seedStatement);
+    const publicationStatement = directStatement(publication, successBlock);
     const publicationIndex = successBlock.statements.indexOf(publicationStatement);
-    expect(publicationIndex).toBe(seedIndex + 1);
-    expect(successBlock.statements.slice(seedIndex, publicationIndex).some(containsAwait)).toBe(false);
+    expect(publicationIndex).toBeGreaterThanOrEqual(0);
+    expect(containsAwait(publicationStatement)).toBe(false);
 
-    const rangeProperties = descendants(
-      publications[0],
-      (node): node is ts.PropertyAssignment =>
-        ts.isPropertyAssignment(node) &&
-        ts.isIdentifier(node.name) &&
-        node.name.text === "loadedPageRange",
+    // The paired helper is the sole owner: no old direct annotation seed, manual page-map
+    // publication, or loader-local wire interface may survive this cutover.
+    expect(
+      descendants(source, (node): node is ts.CallExpression =>
+        isIdentifierCall(node, "seedAnnotationsFromBootstrap"),
+      ),
+    ).toHaveLength(0);
+    expect(descendants(source, isOldPagesWindowPublication)).toHaveLength(0);
+    expect(
+      descendants(
+        source,
+        (node): node is ts.InterfaceDeclaration =>
+          ts.isInterfaceDeclaration(node) && node.name.text === "ChunkResponse",
+      ),
+    ).toHaveLength(0);
+
+    const chunkDeclarations = descendants(
+      successBlock,
+      (node): node is ts.VariableDeclaration =>
+        ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "chunk",
     );
-    expect(rangeProperties).toHaveLength(1);
-    expect(compact(rangeProperties[0].initializer, source)).toBe(
-      "{from:1,to:chunk.pages.length>0?Math.max(...chunk.pages.map((p:any)=>p.pageNumber)):Math.min(data.numPages||1,15)}",
-    );
+    expect(chunkDeclarations).toHaveLength(1);
+    expect(chunkDeclarations[0].type?.getText(source)).toBe("PageWindowResponse");
+    for (const oldMapName of ["keynoteMap", "csiMap", "textAnnMap", "intelMap"]) {
+      expect(
+        descendants(
+          successBlock,
+          (node): node is ts.VariableDeclaration =>
+            ts.isVariableDeclaration(node) &&
+            ts.isIdentifier(node.name) &&
+            node.name.text === oldMapName,
+        ),
+      ).toHaveLength(0);
+    }
 
     const scaleCalls = descendants(successBlock, (node): node is ts.CallExpression =>
       isIdentifierCall(node, "setScaleCalibration"),
@@ -318,11 +349,13 @@ describe.each(LOADERS)("$label page-window bootstrap caller", (loader) => {
     const failureIfs = outerTry.tryBlock.statements.filter(isChunkFailureIf);
     expect(failureIfs).toHaveLength(1);
     const httpFailure = failureIfs[0].thenStatement;
-    const httpClears = descendants(httpFailure, isSeedCall).filter(
+    const httpClears = descendants(httpFailure, isPublishCall).filter(
       (call) => call.arguments[2]?.kind === ts.SyntaxKind.NullKeyword,
     );
     expect(httpClears).toHaveLength(1);
+    expect(httpClears[0].arguments).toHaveLength(4);
     expect(isCanonicalPublicId(httpClears[0].arguments[1])).toBe(true);
+    expect(isCanonicalNumPages(httpClears[0].arguments[3])).toBe(true);
     expect(descendants(httpFailure, ts.isThrowStatement)).toHaveLength(0);
 
     const jsonAwaits = descendants(
@@ -341,13 +374,14 @@ describe.each(LOADERS)("$label page-window bootstrap caller", (loader) => {
     expect(jsonTry).not.toBe(outerTry);
     expect(jsonTry!.catchClause).toBeDefined();
     const catchBlock = jsonTry!.catchClause!.block;
-    const jsonClears = descendants(catchBlock, isSeedCall).filter(
+    const jsonClears = descendants(catchBlock, isPublishCall).filter(
       (call) => call.arguments[2]?.kind === ts.SyntaxKind.NullKeyword,
     );
     const throws = descendants(catchBlock, ts.isThrowStatement);
     expect(jsonClears).toHaveLength(1);
     expect(throws).toHaveLength(1);
     expect(isCanonicalPublicId(jsonClears[0].arguments[1])).toBe(true);
+    expect(isCanonicalNumPages(jsonClears[0].arguments[3])).toBe(true);
     expect(catchBlock.statements.indexOf(directStatement(jsonClears[0], catchBlock))).toBeLessThan(
       catchBlock.statements.indexOf(directStatement(throws[0], catchBlock)),
     );

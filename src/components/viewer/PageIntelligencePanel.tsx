@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useNavigation, usePageData, usePanels } from "@/stores/viewerStore";
+import { useNavigation, usePanels } from "@/stores/viewerStore";
+import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { migrateTextRegions } from "@/lib/text-region-migrate";
 
 /**
@@ -11,7 +12,7 @@ import { migrateTextRegions } from "@/lib/text-region-migrate";
  */
 export default function PageIntelligencePanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
-  const { pageIntelligence } = usePageData();
+  const intel = usePageIntelligenceForPage(pageNumber) as any;
   const { togglePageIntelPanel } = usePanels();
 
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -24,8 +25,6 @@ export default function PageIntelligencePanel({ embedded = false }: { embedded?:
     parsedRegions: true,
   });
   const [copied, setCopied] = useState(false);
-
-  const intel = pageIntelligence[pageNumber] as any;
 
   function toggleSection(key: string) {
     setExpandedSections((p) => ({ ...p, [key]: !p[key] }));

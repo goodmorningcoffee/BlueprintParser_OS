@@ -6,6 +6,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
+import {
+  readPageIntelligence,
+  setPageIntelligenceForPage,
+} from "@/queries/usePageWindow";
 import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import EditableGrid from "./EditableGrid";
 
@@ -29,7 +33,6 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const setTableParsedGrid = useViewerStore((s) => s.setTableParsedGrid);
   const tableParseMeta = useViewerStore((s) => s.tableParseMeta);
   const textractData = useViewerStore((s) => s.textractData);
-  const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
 
   // Source picker — "merged" (default) or a method name from tableParseMeta.methodResults.
   // Swapping rewrites tableParsedGrid's headers/rows so edits apply to the chosen source.
@@ -396,7 +399,8 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     const grid = useViewerStore.getState().tableParsedGrid;
     if (!grid) { toggleModal(); return; }
     const store = useViewerStore.getState();
-    const intel = store.pageIntelligence[pageNumber] || {};
+    const { publicId, isDemo } = store;
+    const intel = readPageIntelligence(queryClient, publicId, pageNumber) || {};
 
     // Locate the region being edited (match by headers, else by row-count) so
     // we can upsert it by its stable id.
@@ -430,7 +434,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     });
     const updatedIntel = { ...intel, parsedRegions: regions };
     // Optimistic local write so the grid edits show immediately.
-    store.setPageIntelligence(pageNumber, updatedIntel);
+    setPageIntelligenceForPage(queryClient, publicId, pageNumber, updatedIntel);
 
     // Sync back to parsedKeynoteData if this was a keynote edit.
     const knData = store.parsedKeynoteData;
@@ -458,7 +462,6 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       store.setParsedKeynoteData(updated);
     }
 
-    const { publicId, isDemo } = store;
     if (!canPersist(publicId, isDemo) || matchedId === null || matchedBbox === null) {
       // Demo / no publicId / no matching region — local-only write above.
       toggleModal();
@@ -478,7 +481,12 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
         data: edited?.data ?? {},
         csiTags: matchedCsiTags,
       });
-      useViewerStore.getState().setPageIntelligence(pageNumber, result.updatedIntelligence as any);
+      setPageIntelligenceForPage(
+        queryClient,
+        publicId,
+        pageNumber,
+        result.updatedIntelligence as any,
+      );
       // [refactor jul10 P2.2③] cache seed under the handler-time `publicId` (destructured from
       // the getState() `store` capture above — the id the promote request used; SPEC §5-S3).
       // Guard KEPT: promote returns summaries:null on real paths; must not clear live data.

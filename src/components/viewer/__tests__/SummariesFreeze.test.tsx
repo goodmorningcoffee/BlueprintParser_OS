@@ -12,7 +12,8 @@
 // Scope discipline: only summaries-DATA-driven behavior is frozen. Each case picks the assertion
 // that DISCRIMINATES the summaries source from that component's non-summaries fallback
 // (pageIntelligence / annotations / csiCodes), so a broken read-path can't false-pass off the
-// fallback. Chunk-loader state (loadedPageRange/chunkLoading) is domain ⑦ — never touched here.
+// fallback. Active page-window state is domain ⑦ and seeded separately only as fallback bait;
+// this suite does not assert its loader/range behavior.
 //
 // Harness gotchas baked in (RECIPE §gotchas + SPEC §6): jest-dom imported per file; jsdom lacks
 // scrollIntoView (ParsedTableItem focus effect) AND ResizeObserver (PageSidebar :295 container
@@ -27,6 +28,11 @@ import "@testing-library/jest-dom";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import {
+  EMPTY_ACTIVE_PAGE_WINDOW,
+  type ActivePageWindow,
+} from "@/queries/pageWindowCore";
+import { queryKeys } from "@/queries/queryKeys";
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedAnnotations } from "@/test/seed-annotations";
 import { seedSummaries } from "@/test/seed-summaries";
@@ -42,6 +48,15 @@ let qc: QueryClient;
 
 function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+}
+
+// [refactor jul11 P2.2⑦ M2] Backing-independent bait for the whole-map summary fallbacks below.
+// These consumers now read the project-keyed active window; UI/navigation setup remains in Zustand.
+function seedPageWindow(overrides: Partial<ActivePageWindow>): void {
+  qc.setQueryData(queryKeys.pagesWindow.active("pid"), {
+    ...EMPTY_ACTIVE_PAGE_WINDOW,
+    ...overrides,
+  });
 }
 
 // Full-shape ProjectSummaries fixture — required keys empty, cases override what they read.
@@ -160,7 +175,7 @@ describe("NotesIndex — seeded notesRegions render as rows (NI-1)", () => {
 
 describe("TableParsePanel — All Tables merges summaries with loaded intel, deduped (TPP-1)", () => {
   it("page-2 intel row wins over its summary twin; page-9 summary-only row appears lightweight", async () => {
-    useViewerStore.setState({
+    seedPageWindow({
       pageIntelligence: {
         2: {
           parsedRegions: [
@@ -293,6 +308,8 @@ describe("KeynotePanel — keynoteTablePages replaces the intel fallback wholesa
     useViewerStore.setState({
       // guided tab renders the 'Detected Keynote Tables' list (idle-step mount is cheap)
       keynoteParseTab: "guided",
+    });
+    seedPageWindow({
       // fallback bait: if the source-switch breaks and the component iterates pageIntelligence
       // despite summaries being present, p.3 appears and the negative assert fails.
       pageIntelligence: {
@@ -354,6 +371,8 @@ describe("PageSidebar — trade chip uses summaries.tradePageIndex over the csiC
     useViewerStore.setState({
       numPages: 10,
       activeTradeFilter: "Plumbing",
+    });
+    seedPageWindow({
       // fallback bait: csiCodes says only page 4 has Plumbing → a broken summaries read
       // renders "(1 pg)" and the exact-text assert fails.
       csiCodes: {

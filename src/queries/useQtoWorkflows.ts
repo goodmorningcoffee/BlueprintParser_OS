@@ -20,7 +20,8 @@
 //   gcTime Infinity          == old zustand persistence across unmount. REQUIRED: demo temp
 //                               workflows (id:-Date.now()) are CLIENT-ONLY and must survive
 //                               auto-qto sub-tab toggles (frozen Q-7). qto lists are small —
-//                               do NOT copy this to heavy domains (⑥⑦⑧ use finite+LRU).
+//                               do NOT copy this blindly: ⑥/⑦ each own one project key and use
+//                               Infinity deliberately; ⑧ textract is per-page and bounded.
 //   retry false              == old single attempt
 //   refetchOnWindowFocus/Reconnect false == old effect never refired on focus/reconnect
 //   NO row mapper            == old `setQtoWorkflows(await r.json())` stored RAW server rows

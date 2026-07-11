@@ -2,8 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useYoloTags, usePageData } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation, usePanels, useProject, useDetection, useYoloTags } from "@/stores/viewerStore";
 import { readAnnotations, useAnnotations, writeAnns } from "@/queries/useAnnotations";
+import {
+  setKeynotesForPage,
+  useKeynotesByPage,
+} from "@/queries/usePageWindow";
 import { useShapeParseInteraction } from "@/hooks/useShapeParseInteraction";
 import { TWENTY_COLORS, SHAPE_COLORS } from "@/types";
 import type { ClientAnnotation, YoloTag, Shape } from "@/types";
@@ -64,7 +68,9 @@ export default function DetectionPanel({
   const shapeParse = useShapeParseInteraction({ detectionTab });
   const [shapeSaving, setShapeSaving] = useState(false);
   const [shapeSaveSuccess, setShapeSaveSuccess] = useState<string | null>(null);
-  const { keynotes, setKeynotes } = usePageData();
+  // Whole-map subscription is intentional: Save All and the multi-page totals traverse every
+  // retained pending-shape page. Cache actions below remain explicit and project-keyed.
+  const keynotes = useKeynotesByPage();
   const setMode = useViewerStore((s) => s.setMode);
   const showKeynotes = useViewerStore((s) => s.showKeynotes);
   const toggleKeynotes = useViewerStore((s) => s.toggleKeynotes);
@@ -880,7 +886,7 @@ export default function DetectionPanel({
                       ]);
                       // Clear the pending-shapes panel — they've moved from
                       // "pending" to "saved" (now visible via annotations overlay).
-                      setKeynotes(pageNumber, []);
+                      setKeynotesForPage(queryClient, publicId, pageNumber, []);
                       // Reset the BB draw state so the user can start a new
                       // region without a manual cancel-click.
                       shapeParse.setRegion(null);
@@ -959,7 +965,7 @@ export default function DetectionPanel({
                         setAnnotations([...capturedAnnotations, ...data.annotations]);
                         // Clear the pending-shapes panel for every page we saved.
                         for (const pn of allPageNums) {
-                          store.setKeynotes(pn, []);
+                          setKeynotesForPage(queryClient, publicId, pn, []);
                         }
                         // Reset BB draw state so the next parse starts fresh.
                         shapeParse.setRegion(null);

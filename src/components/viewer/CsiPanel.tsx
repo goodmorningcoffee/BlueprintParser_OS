@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useNavigation, usePageData, usePanels, useProject, useDetection } from "@/stores/viewerStore";
+import { useCsiCodesForPage } from "@/queries/usePageWindow";
 import type { CsiCode } from "@/types";
 import HelpTooltip from "./HelpTooltip";
 
@@ -35,7 +36,8 @@ const DIVISION_NAMES: Record<string, string> = {
  */
 export default function CsiPanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
-  const { csiCodes, allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
+  const pageCsiCodes = useCsiCodesForPage(pageNumber);
+  const { allCsiCodes, activeCsiFilter, setCsiFilter } = usePageData();
   const { toggleCsiPanel } = usePanels();
   const { publicId, projectIntelligenceData } = useProject();
   const { setSearch } = useDetection();
@@ -51,7 +53,7 @@ export default function CsiPanel({ embedded = false }: { embedded?: boolean } = 
   // Get codes for current scope
   const currentCodes: CsiCode[] = useMemo(() => {
     if (scope === "page") {
-      return (csiCodes[pageNumber] || []) as CsiCode[];
+      return pageCsiCodes;
     }
     // Project scope: allCsiCodes is { code, description }[], convert to CsiCode-like
     return allCsiCodes.map(c => ({
@@ -60,7 +62,7 @@ export default function CsiPanel({ embedded = false }: { embedded?: boolean } = 
       trade: DIVISION_NAMES[c.code.substring(0, 2).replace(/\s/g, "")] || "Unknown",
       division: `${c.code.substring(0, 2)} 00 00`,
     }));
-  }, [scope, csiCodes, pageNumber, allCsiCodes]);
+  }, [scope, pageCsiCodes, allCsiCodes]);
 
   // Filter by search
   const filtered = useMemo(() => {

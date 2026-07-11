@@ -24,10 +24,10 @@ import type {
   TextAnnotation,
 } from "@/types";
 
-// [refactor jul11 P2.2⑦ C2] Production-dead active-page-window facade. The authoritative contract is
+// [refactor jul11 P2.2⑦ C3] Live active-page-window facade. The authoritative contract is
 // P2_DESIGN/PAGES_WINDOW_IMPL/SPEC.md. This module deliberately owns no transport observer: eager
 // bootstrap and the explicit navigation state machine remain imperative and publish through the paired
-// helpers below. C3 moves callers only after this isolated cache form and its selectors are proven.
+// helpers below. Components use narrow selectors unless they are on the scan-all product whitelist.
 
 export const EMPTY_KEYNOTES_FOR_PAGE = Object.freeze([]) as unknown as KeynoteShapeData[];
 export const EMPTY_CSI_CODES_FOR_PAGE = Object.freeze([]) as unknown as CsiCode[];

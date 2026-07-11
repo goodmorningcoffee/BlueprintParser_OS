@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, memo } from "react";
-import { useViewerStore, useNavigation, usePageData } from "@/stores/viewerStore";
+import { useViewerStore, useNavigation } from "@/stores/viewerStore";
+import { useKeynotesForPage } from "@/queries/usePageWindow";
 import { SHAPE_COLORS } from "@/types";
 import type { Shape } from "@/types";
 
@@ -22,11 +23,9 @@ export default memo(function KeynoteOverlay({
 }: KeynoteOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { pageNumber } = useNavigation();
-  const { keynotes } = usePageData();
+  const pageKeynotes = useKeynotesForPage(pageNumber);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
   const activeKeynoteFilter = useViewerStore((s) => s.activeKeynoteFilter);
-
-  const pageKeynotes = keynotes[pageNumber] || [];
 
   useEffect(() => {
     const canvas = canvasRef.current;

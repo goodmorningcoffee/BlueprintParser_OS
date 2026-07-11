@@ -1,12 +1,19 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore, useProject, useNavigation, isDemoFeatureEnabled } from "@/stores/viewerStore";
 // [refactor jul10 P2.2②] qtoWorkflows collection moved zustand → TanStack cache; the facade hook
 // returns the same 4-field shape the old useQtoWorkflow() store selector did (SPEC §3).
 import { useQtoWorkflows } from "@/queries/useQtoWorkflows";
-// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
+// [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries } from "@/queries/useSummaries";
+import {
+  ensurePageIntelligence,
+  PageWindowHttpError,
+  readPageIntelligence,
+  usePageIntelligenceByPage,
+} from "@/queries/usePageWindow";
 import type { QtoWorkflow, QtoLineItem, QtoFlag, QtoItemType } from "@/types";
 import type { ScoredMatch, DropReason } from "@/lib/tag-mapping";
 import { extractDisciplinePrefix, disciplineOrder, DISCIPLINE_NAMES } from "@/lib/page-utils";
@@ -96,10 +103,12 @@ function computeQtoPreflight(
 }
 
 export default function AutoQtoTab() {
+  const queryClient = useQueryClient();
   const { publicId } = useProject();
   const { setPage } = useNavigation();
   const { activeQtoWorkflow, setActiveQtoWorkflow, qtoWorkflows, setQtoWorkflows } = useQtoWorkflows();
-  const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
+  // Genuine whole-map reader: schedule detection and summary fallback span all retained pages.
+  const pageIntelligence = usePageIntelligenceByPage();
   const pageNames = useViewerStore((s) => s.pageNames);
   const isDemo = useViewerStore((s) => s.isDemo);
   const { summaries } = useSummaries();
@@ -355,7 +364,13 @@ export default function AutoQtoTab() {
                         rows = s.region.data.rows || [];
                         tagColumn = s.region.data.tagColumn || headers[0] || "";
                       } else {
-                        const localIntel = useViewerStore.getState().pageIntelligence[s.pageNum] as any;
+                        // Matching parsed data—not mere PI presence—is the only cache hit. Summary-
+                        // only rows with partial PI must still execute the exact-page detail request.
+                        const localIntel = readPageIntelligence(
+                          queryClient,
+                          publicId,
+                          s.pageNum,
+                        ) as any;
                         const localPr = localIntel?.parsedRegions?.find((r: any) =>
                           r.data?.tableName === s.name || r.category === s.category
                         );
@@ -366,34 +381,34 @@ export default function AutoQtoTab() {
                         } else {
                           setLoadingScheduleKey(key);
                           try {
-                            // [refactor jul11 P2.2⑦ PW-D8] Summary-only schedules can reach this
-                            // exact-page fallback in signed-out demos. The authenticated twin rejects
-                            // that request with 401, so choose the same visibility-aware route as the
-                            // navigation loader. This detail fetch still adopts PI only below.
-                            const detailEndpoint = isDemo
-                              ? `/api/demo/projects/${publicId}/pages?from=${s.pageNum}&to=${s.pageNum}`
-                              : `/api/projects/${publicId}/pages?from=${s.pageNum}&to=${s.pageNum}`;
-                            const res = await fetch(detailEndpoint);
-                            if (res.ok) {
-                              const data = await res.json();
-                              const pageData = data.pages?.[0];
-                              const pr = pageData?.pageIntelligence?.parsedRegions?.find((r: any) =>
-                                r.data?.tableName === s.name || r.category === s.category
-                              );
-                              if (pr?.data) {
-                                headers = pr.data.headers || [];
-                                rows = pr.data.rows || [];
-                                tagColumn = pr.data.tagColumn || headers[0] || "";
-                              }
-                              if (pageData?.pageIntelligence) {
-                                useViewerStore.getState().setPageIntelligence(s.pageNum, pageData.pageIntelligence);
-                              }
-                            } else {
-                              setScheduleError(`Failed to load schedule data (HTTP ${res.status})`);
+                            const detailIntel = await ensurePageIntelligence(queryClient, {
+                              publicId,
+                              pageNumber: s.pageNum,
+                              isDemo,
+                            });
+                            const pr = detailIntel?.parsedRegions?.find((r: any) =>
+                              r.data?.tableName === s.name || r.category === s.category
+                            );
+                            if (pr?.data) {
+                              // The category/table-name predicate above is the runtime schedule
+                              // discriminator. ParsedRegion's legacy union is not itself tagged by
+                              // `data`, so keep this compatibility read explicit and narrow.
+                              const scheduleData = pr.data as {
+                                headers?: string[];
+                                rows?: Record<string, string>[];
+                                tagColumn?: string;
+                              };
+                              headers = scheduleData.headers || [];
+                              rows = scheduleData.rows || [];
+                              tagColumn = scheduleData.tagColumn || headers[0] || "";
                             }
                           } catch (err) {
-                            console.error("[AUTO_QTO] Failed to fetch schedule data:", err);
-                            setScheduleError("Network error while loading schedule. Check your connection.");
+                            if (err instanceof PageWindowHttpError) {
+                              setScheduleError(`Failed to load schedule data (HTTP ${err.status})`);
+                            } else {
+                              console.error("[AUTO_QTO] Failed to fetch schedule data:", err);
+                              setScheduleError("Network error while loading schedule. Check your connection.");
+                            }
                           } finally {
                             setLoadingScheduleKey(null);
                           }

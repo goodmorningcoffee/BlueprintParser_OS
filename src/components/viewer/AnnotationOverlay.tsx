@@ -10,6 +10,10 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTakeoffItems, readTakeoffItems } from "@/queries/useTakeoff";
 import { useAnnotations, readAnnotations } from "@/queries/useAnnotations";
+import {
+  readPageIntelligence,
+  useKeynotesForPage,
+} from "@/queries/usePageWindow";
 import { useViewerStore, useNavigation, useProject, useTableParse, useKeynoteParse, useYoloTags, useSymbolSearch, useAnnotationFilters } from "@/stores/viewerStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
@@ -151,7 +155,9 @@ export default memo(function AnnotationOverlay({
     persistCreate,
   } = useAnnotations();
   // [refactor jul10 P2.2④ D7] dead `addTakeoffItem` binding deleted — declared, never called.
-  const keynotes = useViewerStore((s) => s.keynotes);
+  // [refactor jul11 P2.2⑦] Sacred canvas subscription is current-page only. Handler-time PI below
+  // remains an imperative read so parsed-region writes do not redraw this overlay unnecessarily.
+  const pageKeynotes = useKeynotesForPage(pageNumber);
   const setKeynoteFilter = useViewerStore((s) => s.setKeynoteFilter);
 
   // Drawing state lives in Zustand store — AnnotationOverlay does NOT subscribe.
@@ -306,7 +312,6 @@ export default memo(function AnnotationOverlay({
     return filtered;
   }, [annotations, pageNumber, showDetections, activeModels, hiddenClasses, confidenceThresholds, confidenceThreshold, activeCsiFilter, activeAnnotationFilter, isKeynoteYoloPicking, keynoteColA, hiddenAnnotationIds, splitAreaActive]);
 
-  const pageKeynotes = keynotes[pageNumber] || [];
 
   // Pre-indexed tag lookups: O(1) instead of yoloTags.find() in nested loops
   const tagTextIndex = useMemo(() => {
@@ -1731,7 +1736,7 @@ export default memo(function AnnotationOverlay({
             return;
           }
           // No annotation hit — try parsed table region hit-test
-          const pIntel = useViewerStore.getState().pageIntelligence[pageNumber] as any;
+          const pIntel = readPageIntelligence(qc, publicId, pageNumber) as any;
           if (pIntel?.parsedRegions) {
             const nrmX = pos.x / width;
             const nrmY = pos.y / height;

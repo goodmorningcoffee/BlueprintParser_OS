@@ -29,6 +29,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
+import { setKeynotesForPage } from "@/queries/usePageWindow";
 import type {
   ClientAnnotation,
   KeynoteShapeData,
@@ -133,7 +134,7 @@ function renderSymbolSaveSurface() {
 }
 
 function seedPendingShape() {
-  useViewerStore.setState({ keynotes: { 1: [pendingShape] } });
+  setKeynotesForPage(qc, useViewerStore.getState().publicId, 1, [pendingShape]);
 }
 
 function seedPendingSymbolSearch() {
@@ -313,12 +314,10 @@ describe("DetectionPanel shape-save — guard, raw-fetch failure, and append+cle
     // updater, until ANNOTATIONS-W1 is taken as a deliberate behavior change.
     const initial = survivor();
     seedAnnotations(qc, [initial]);
-    useViewerStore.setState({
-      keynotes: {
-        1: [pendingShape],
-        2: [{ ...pendingShape, text: "B2", bbox: [0.4, 0.4, 0.5, 0.5] }],
-      },
-    });
+    setKeynotesForPage(qc, "pid", 1, [pendingShape]);
+    setKeynotesForPage(qc, "pid", 2, [
+      { ...pendingShape, text: "B2", bbox: [0.4, 0.4, 0.5, 0.5] },
+    ]);
     const savedPage1 = annotation({ id: 43, name: "circle", source: "shape-parse", data: { modelName: "shape-parse", confidence: 0.9 } });
     const savedPage2 = annotation({ id: 44, name: "circle", source: "shape-parse", pageNumber: 2, data: { modelName: "shape-parse", confidence: 0.9 } });
     const response = deferred<unknown>();

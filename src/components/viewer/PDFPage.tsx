@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, memo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useViewerStore, useKeynoteParse } from "@/stores/viewerStore";
+import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import SearchHighlightOverlay from "./SearchHighlightOverlay";
 import TextAnnotationOverlay from "./TextAnnotationOverlay";
 import KeynoteOverlay from "./KeynoteOverlay";
@@ -88,7 +89,7 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
   const specParseRegion = useViewerStore((s) => s.specParseRegion);
   const notesParseRegion = useViewerStore((s) => s.notesParseRegion);
   const textractData = useViewerStore((s) => s.textractData[props.pageNumber]);
-  const pageIntel = useViewerStore((s) => s.pageIntelligence[props.pageNumber]);
+  const pageIntel = usePageIntelligenceForPage(props.pageNumber);
   const paragraphBatch = useViewerStore((s) => s.paragraphBatch);
   const paragraphClipboard = useViewerStore((s) => s.paragraphClipboard);
   const upsertPendingParagraph = useViewerStore((s) => s.upsertPendingParagraph);

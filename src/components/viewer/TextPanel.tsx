@@ -1,8 +1,15 @@
 "use client";
 
 import { useMemo, useState, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore, useNavigation, usePageData, usePanels, useProject, useDetection, useTextAnnotationDisplay } from "@/stores/viewerStore";
 import { useAnnotations } from "@/queries/useAnnotations";
+import {
+  setCsiCodesForPage,
+  useCsiCodesForPage,
+  useTextAnnotationsByPage,
+  useTextAnnotationsForPage,
+} from "@/queries/usePageWindow";
 import { TEXT_ANNOTATION_COLORS } from "@/types";
 import type { TextAnnotation, AnnotationCategory, ClientAnnotation } from "@/types";
 // [refactor jun17 P1.3] dual-envelope tolerant error reader — the migrated pages/textract-rerun +
@@ -31,7 +38,8 @@ const CATEGORY_LABELS: Record<AnnotationCategory, string> = {
  */
 export default function TextPanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
-  const { textractData, textAnnotations } = usePageData();
+  const { textractData } = usePageData();
+  const annotations = useTextAnnotationsForPage(pageNumber);
   const { textPanelTab: tab, setTextPanelTab: setTab } = usePanels();
   const { searchQuery } = useDetection();
   // [refactor jul11 P2.2⑥] Annotation rows left the broad detection UI slice; subscribing through
@@ -40,8 +48,6 @@ export default function TextPanel({ embedded = false }: { embedded?: boolean } =
   const userMarkups = allAnnotations.filter((a) => a.source === "user");
 
   const pageData = textractData[pageNumber];
-  const annotations = textAnnotations[pageNumber] || [];
-
   const TAB_LABELS: Record<string, string> = {
     ocr: "OCR",
     annotations: `Annotations (${annotations.length})`,
@@ -315,7 +321,9 @@ function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotati
 // ─── Graph Tab ────────────────────────────────────────────────
 
 function GraphTab({ pageNumber }: { pageNumber: number }) {
-  const { textAnnotations } = usePageData();
+  // Incoming references require all retained pages; keep this deliberate whole-map observer
+  // separate from TextPanel's current-page subscription.
+  const textAnnotations = useTextAnnotationsByPage();
   const { pageNames } = useProject();
   const { numPages, setPage } = useNavigation();
 
@@ -649,14 +657,13 @@ function TextractTab({ pageData, pageNumber }: { pageData: any; pageNumber: numb
  *  (no S3/Textract round-trip) and overwrites pages.csiCodes. Updates the
  *  in-store CSI data so trade filter highlights refresh without a page reload. */
 function CsiRecomputeSection({ pageNumber }: { pageNumber: number }) {
-  const { projectId: projectDbId } = useProject();
-  const setCsiCodes = useViewerStore((s) => s.setCsiCodes);
-  const csiCodes = useViewerStore((s) => s.csiCodes);
+  const queryClient = useQueryClient();
+  const { projectId: projectDbId, publicId } = useProject();
+  const currentPageCsi = useCsiCodesForPage(pageNumber);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ durationMs: number; stats: { codeCount: number; triggerCount: number; tradeCount: number } } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const currentPageCsi = csiCodes[pageNumber] || [];
   const currentStats = {
     codes: currentPageCsi.length,
     triggers: currentPageCsi.reduce((n, c) => n + (c.triggers?.length || 0), 0),
@@ -680,7 +687,9 @@ function CsiRecomputeSection({ pageNumber }: { pageNumber: number }) {
       }
       const data = await res.json();
       setResult({ durationMs: data.durationMs, stats: data.stats });
-      if (data.csiCodes && setCsiCodes) setCsiCodes(pageNumber, data.csiCodes);
+      if (data.csiCodes) {
+        setCsiCodesForPage(queryClient, publicId, pageNumber, data.csiCodes);
+      }
     } catch (e: any) {
       setError(e?.message || "Recompute failed");
     } finally {

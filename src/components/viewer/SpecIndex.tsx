@@ -2,9 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
-// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache. NARROW hook on purpose: this
-// component subscribed to ONLY s.summaries — the full 6-field facade would add chunkLoading-flip
-// re-renders it never had (chunkLoading toggles on every chunk fetch; viewer perf is sacred).
+// [refactor jul10 P2.2③; jul11 P2.2⑦] Summaries moved Zustand → TanStack Query. This component
+// deliberately keeps the narrow cache-only hook because it reads summaries only; active-window
+// range/loading ownership is isolated behind usePageWindow/PageWindowLoaderController.
 import { useSummariesData } from "@/queries/useSummaries";
 import type { SpecSummaryEntry } from "@/types";
 

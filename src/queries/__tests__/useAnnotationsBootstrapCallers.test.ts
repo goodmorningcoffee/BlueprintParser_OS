@@ -1,19 +1,13 @@
 // @vitest-environment node
-// [refactor jul11 P2.2⑥ DETECTOR] Bootstrap call-surface tripwire.
+// [refactor jul11 P2.2⑦ DETECTOR] Paired bootstrap call-surface tripwire.
 //
 // WHY SOURCE CONTRACT INSTEAD OF MOUNTING BOTH PAGES:
 // These two client pages orchestrate Next routing, auth/demo metadata, several parallel fetches,
 // PDF viewer state, and many unrelated cache domains. Mounting either solely to observe three
-// annotation seed statements would make this narrow invariant depend on most of the application.
-// The project already treats unmountable sacred surfaces as source-reviewed boundaries. This test
-// uses the TypeScript AST (not line snapshots or formatting regexes) to pin only the six facts that
-// mutation testing proved were otherwise invisible:
-//   1. exactly one success seed and two failure clears per page;
-//   2. every seed receives queryClient + server-canonical data.id;
-//   3. the success seed receives chunk;
-//   4. one null clear is inside !chunkRes.ok and one is inside the JSON catch;
-//   5. success cache publication precedes useViewerStore.setState in the same block;
-//   6. no await splits those two publications.
+// publication statements would make this narrow invariant depend on most of the application. The
+// TypeScript AST pins the paired helper as the sole annotation/window owner: one success + two clear
+// calls, canonical identity/range arguments, correct failure placement, no direct annotation write,
+// and no legacy pages-window Zustand publication.
 // Formatting, comments, and unrelated loader statements are intentionally ignored.
 
 import { readFileSync } from "node:fs";
@@ -56,15 +50,15 @@ function descendants<T extends ts.Node>(
   return matches;
 }
 
-function isSeedCall(node: ts.Node): node is ts.CallExpression {
+function isPublishCall(node: ts.Node): node is ts.CallExpression {
   return (
     ts.isCallExpression(node) &&
     ts.isIdentifier(node.expression) &&
-    node.expression.text === "seedAnnotationsFromBootstrap"
+    node.expression.text === "publishBootstrapPageWindow"
   );
 }
 
-function isPagesWindowPublication(node: ts.Node): node is ts.CallExpression {
+function isOldPagesWindowPublication(node: ts.Node): node is ts.CallExpression {
   if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return false;
   const isViewerSetState = (
     ts.isIdentifier(node.expression.expression) &&
@@ -84,6 +78,29 @@ function isPagesWindowPublication(node: ts.Node): node is ts.CallExpression {
           candidate.name.text === "loadedPageRange",
       ).length > 0,
   );
+}
+
+function isCanonicalNumPages(node: ts.Node | undefined): boolean {
+  return (
+    !!node &&
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "data" &&
+    node.name.text === "numPages"
+  );
+}
+
+function isDirectAnnotationWrite(node: ts.Node): node is ts.CallExpression {
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return false;
+  if (
+    !ts.isIdentifier(node.expression.expression) ||
+    node.expression.expression.text !== "queryClient" ||
+    node.expression.name.text !== "setQueryData"
+  ) {
+    return false;
+  }
+  const firstArgument = node.arguments[0];
+  return !!firstArgument && firstArgument.getText().includes("queryKeys.annotations");
 }
 
 function isQueryClient(node: ts.Node | undefined): boolean {
@@ -146,17 +163,18 @@ function containsAwait(node: ts.Node): boolean {
   return descendants(node, ts.isAwaitExpression).length > 0;
 }
 
-describe.each(LOADERS)("$label annotation bootstrap call surface", ({ path }) => {
-  it("has one canonical success seed plus HTTP and JSON failure clears", () => {
+describe.each(LOADERS)("$label paired bootstrap call surface", ({ path }) => {
+  it("has one canonical success publication plus HTTP and JSON paired clears", () => {
     const source = parseLoader(path);
-    const calls = descendants(source, isSeedCall);
+    const calls = descendants(source, isPublishCall);
 
     // Exact count kills a deleted success/failure call as well as accidental duplicate publication.
     expect(calls).toHaveLength(3);
     for (const call of calls) {
-      expect(call.arguments).toHaveLength(3);
+      expect(call.arguments).toHaveLength(4);
       expect(isQueryClient(call.arguments[0])).toBe(true);
       expect(isCanonicalPublicId(call.arguments[1])).toBe(true);
+      expect(isCanonicalNumPages(call.arguments[3])).toBe(true);
     }
 
     const successCalls = calls.filter((call) => isChunk(call.arguments[2]));
@@ -172,30 +190,23 @@ describe.each(LOADERS)("$label annotation bootstrap call surface", ({ path }) =>
     expect(jsonClears).toHaveLength(1);
   });
 
-  it("publishes cache before Zustand in the same block with no await between", () => {
+  it("leaves no split annotation write or legacy window-store publication", () => {
     const source = parseLoader(path);
-    const successCalls = descendants(source, isSeedCall).filter((call) =>
-      isChunk(call.arguments[2]),
-    );
-    expect(successCalls).toHaveLength(1);
+    expect(descendants(source, isDirectAnnotationWrite)).toHaveLength(0);
+    expect(descendants(source, isOldPagesWindowPublication)).toHaveLength(0);
+    expect(
+      descendants(
+        source,
+        (node): node is ts.CallExpression =>
+          ts.isCallExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "seedAnnotationsFromBootstrap",
+      ),
+    ).toHaveLength(0);
 
-    const seedStatement = seedExpressionStatement(successCalls[0]);
-    expect(ts.isBlock(seedStatement.parent)).toBe(true);
-    const block = seedStatement.parent as ts.Block;
-    const seedIndex = block.statements.indexOf(seedStatement);
-    const storeIndexes = block.statements
-      .map((statement, index) =>
-        descendants(statement, isPagesWindowPublication).length > 0 ? index : -1,
-      )
-      .filter((index) => index >= 0);
-
-    expect(storeIndexes).toHaveLength(1);
-    const storeIndex = storeIndexes[0];
-    expect(seedIndex).toBeGreaterThanOrEqual(0);
-    expect(storeIndex).toBeGreaterThan(seedIndex);
-
-    // Include the seed statement itself so `await seedAnnotationsFromBootstrap(...)` also fails.
-    const cacheToStoreSegment = block.statements.slice(seedIndex, storeIndex);
-    expect(cacheToStoreSegment.some(containsAwait)).toBe(false);
+    for (const publication of descendants(source, isPublishCall)) {
+      const statement = seedExpressionStatement(publication);
+      expect(containsAwait(statement)).toBe(false);
+    }
   });
 });

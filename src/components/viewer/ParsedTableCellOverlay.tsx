@@ -2,6 +2,7 @@
 
 import { useMemo, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 
 interface ParsedTableCellOverlayProps {
   width: number;
@@ -21,7 +22,7 @@ export default memo(function ParsedTableCellOverlay({
 }: ParsedTableCellOverlayProps) {
   const showParsedRegions = useViewerStore((s) => s.showParsedRegions);
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const pageIntelligence = useViewerStore((s) => s.pageIntelligence);
+  const intel = usePageIntelligenceForPage(pageNumber) as any;
   const hiddenParsedRegionIds = useViewerStore((s) => s.hiddenParsedRegionIds);
   const yoloTags = useViewerStore((s) => s.yoloTags);
   const activeYoloTagId = useViewerStore((s) => s.activeYoloTagId);
@@ -29,7 +30,6 @@ export default memo(function ParsedTableCellOverlay({
   const cells = useMemo(() => {
     if (!showParsedRegions || width === 0 || height === 0) return [];
 
-    const intel = pageIntelligence[pageNumber] as any;
     if (!intel?.parsedRegions) return [];
 
     const result: {
@@ -102,7 +102,7 @@ export default memo(function ParsedTableCellOverlay({
     }
 
     return result;
-  }, [showParsedRegions, width, height, pageNumber, pageIntelligence, hiddenParsedRegionIds, yoloTags]);
+  }, [showParsedRegions, width, height, pageNumber, intel, hiddenParsedRegionIds, yoloTags]);
 
   if (cells.length === 0) return null;
 

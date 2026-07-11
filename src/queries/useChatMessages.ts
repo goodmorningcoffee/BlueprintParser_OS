@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"; // v5.101 installed
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
@@ -46,7 +46,10 @@ export function seedChatCache(
 export function useChatMessages() {
   const publicId = useViewerStore((s) => s.publicId);
   const qc = useQueryClient();
-  const key = queryKeys.chatMessages.all(publicId); // ["project", publicId, "chatMessages"]
+  const key = useMemo(
+    () => queryKeys.chatMessages.all(publicId),
+    [publicId],
+  ); // ["project", publicId, "chatMessages"]
 
   const { data } = useQuery({
     queryKey: key,
@@ -66,24 +69,24 @@ export function useChatMessages() {
     // cache for the session — the loader re-seeds ONLY on a full project (re)load, NOT on a panel
     // toggle. A finite gcTime would GC them while the panel is closed > gcTime and reopen EMPTY =
     // a regression vs the old zustand field (which held them all session). Chat is text (KB-scale)
-    // so retention is cheap. NOTE: per-domain override — the recipe DEFAULT for heavy per-page
-    // siblings (⑥annotations ⑦pagesWindow ⑧textract) is FINITE gcTime + an in-hook LRU cap; they
-    // must NOT copy Infinity.
+    // so retention is cheap. NOTE: retention is per-domain, not a recipe-wide default: ⑥
+    // annotations and ⑦ pagesWindow each have one project key and also use Infinity; ⑧ textract
+    // is genuinely per-page/heavy and must use a bounded policy rather than copying chat.
     gcTime: Infinity,
   });
 
   // Functional updater is MANDATORY — mirrors the store's original set((s)=>({chatMessages:[...]})).
   // handleSend fires addChatMessage across awaits (:81 user, then EXACTLY ONE of :97 err / :168 done
   // / :173 catch); a captured-array spread would drop messages under a stale closure. `old = []`
-  // guards the pre-seed undefined. Deps are [qc, publicId] — `key` is a fresh array each render
-  // (do NOT list it); it is recomputed from publicId, so the closure always targets the right key.
+  // guards the pre-seed undefined. The key is memoized by project identity so React Compiler and
+  // the callbacks agree on the exact dependency instead of relying on an eslint exception.
   const addChatMessage = useCallback(
     (msg: ChatMsg) => qc.setQueryData<ChatMsg[]>(key, (old = []) => [...old, msg]),
-    [qc, publicId], // eslint-disable-line react-hooks/exhaustive-deps -- key derives from publicId
+    [qc, key],
   );
   const clearChatMessages = useCallback(
     () => qc.setQueryData<ChatMsg[]>(key, []),
-    [qc, publicId], // eslint-disable-line react-hooks/exhaustive-deps -- key derives from publicId
+    [qc, key],
   );
 
   // data is always ChatMsg[] (initialData guarantees non-undefined); `?? []` is belt-and-suspenders.

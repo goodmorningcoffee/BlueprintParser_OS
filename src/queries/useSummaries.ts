@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"; // v5.101 installed
-import { useShallow } from "zustand/react/shallow";
 import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ProjectSummaries } from "@/types";
@@ -17,14 +16,11 @@ import type { ProjectSummaries } from "@/types";
 // Three exports:
 //   • seedSummariesCache — the ONE write helper for all 8 production seed sites (2 loaders
 //     unconditional, 6 promote-refreshers guarded — see the two-semantics note below).
-//   • useSummariesData   — narrow cache-only read { summaries, setSummaries }. For SpecIndex /
-//     NotesIndex, which previously subscribed to ONLY s.summaries via a raw selector: giving them
-//     the full facade would ADD chunkLoading-flip re-renders they never had (chunkLoading toggles
-//     on every chunk fetch; PDF-viewer perf is sacred).
-//   • useSummaries       — full 6-field facade, byte-compatible with the deleted viewerStore
-//     selector (summaries/setSummaries from the cache + loadedPageRange/setLoadedPageRange/
-//     chunkLoading/setChunkLoading passthrough from zustand). Chunk-loader state is domain ⑦'s
-//     migration surface and STAYS zustand until then.
+//   • useSummariesData   — narrow cache-only read { summaries, setSummaries }. SpecIndex and
+//     NotesIndex use the explicit narrow name to document that they observe summaries only;
+//     active page-window transport/range data does not compose into this cache hook.
+//   • useSummaries       — compatibility name for cache-only summary readers. Its temporary
+//     chunk-loader passthrough disappeared in P2.2⑦ when the active range moved to pagesWindow.
 
 // [refactor jul10 P2.2③] Loader/refresher seed of the summaries cache.
 //
@@ -61,7 +57,10 @@ export function useSummariesData(): {
 } {
   const publicId = useViewerStore((s) => s.publicId);
   const qc = useQueryClient();
-  const key = queryKeys.summaries.all(publicId); // ["project", publicId, "summaries"]
+  const key = useMemo(
+    () => queryKeys.summaries.all(publicId),
+    [publicId],
+  ); // ["project", publicId, "summaries"]
 
   const { data } = useQuery({
     queryKey: key,
@@ -85,8 +84,9 @@ export function useSummariesData(): {
     // held summaries all session; the payload is KB-scale; refresher-written summaries are
     // server-persisted and the loader unconditionally re-seeds on re-entry, so a GC'd entry WOULD
     // be recoverable. Kept Infinity purely to match the old always-resident field. ④–⑨: do not
-    // cargo-cult "unrecoverable" here onto domains where it's false; heavy per-page domains
-    // (⑥⑦⑧) use finite gcTime + LRU per the recipe.
+    // cargo-cult "unrecoverable" here onto domains where it's false. ⑥ annotations and ⑦
+    // pagesWindow each have one project key and deliberately use Infinity; ⑧ textract is the
+    // genuinely per-page/heavy domain that needs a bounded retention policy.
     gcTime: Infinity,
   });
 
@@ -95,27 +95,16 @@ export function useSummariesData(): {
   // value-replace == the old `set({ summaries })`; zero read-modify-write callers exist.
   const setSummaries = useCallback(
     (next: ProjectSummaries | null) => qc.setQueryData(key, next),
-    [qc, publicId], // eslint-disable-line react-hooks/exhaustive-deps -- key derives from publicId
+    [qc, key],
   );
 
   // data can never be undefined given initialData; `?? null` keeps the type honest.
   return { summaries: data ?? null, setSummaries };
 }
 
-// [refactor jul10 P2.2③] Full 6-field facade — returns the exact shape of the deleted viewerStore
-// useSummaries selector so the 5 hook consumers (TableParsePanel, KeynotePanel, ViewerToolbar,
-// AutoQtoTab, PageSidebar) change only their import line. The chunk-loader quartet stays a zustand
-// useShallow passthrough (domain ⑦; reset lines + loader chunk-continuation writes untouched).
-// Re-render parity: these 5 callers already subscribed to all 6 fields via useShallow, so keeping
-// the chunk fields here preserves their existing re-render cadence exactly.
+// [refactor jul11 P2.2⑦] The compatibility facade is now deliberately cache-only. None of its
+// consumers used the former range/loading quartet; keeping it would preserve a second ownership
+// path after PageWindowLoaderController became authoritative.
 export function useSummaries() {
-  const chunk = useViewerStore(
-    useShallow((s) => ({
-      loadedPageRange: s.loadedPageRange,
-      setLoadedPageRange: s.setLoadedPageRange,
-      chunkLoading: s.chunkLoading,
-      setChunkLoading: s.setChunkLoading,
-    })),
-  );
-  return { ...useSummariesData(), ...chunk };
+  return useSummariesData();
 }

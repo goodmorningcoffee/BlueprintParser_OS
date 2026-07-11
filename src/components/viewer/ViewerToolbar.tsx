@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useViewerStore, useNavigation, useProject, usePanels, usePageData, useDetection } from "@/stores/viewerStore";
-// [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; same 6-field facade shape.
+// [refactor jul11 P2.2⑦] summaries is now the cache-only {summaries,setSummaries} facade.
 import { useSummaries } from "@/queries/useSummaries";
 import { useAnnotations } from "@/queries/useAnnotations";
 import Link from "next/link";

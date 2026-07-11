@@ -214,7 +214,7 @@ export function useAnnotationGroups() {
     refetchOnMount: true,
     // Behavior-invisible either way (GroupActionsBar keeps ≥1 observer alive all session —
     // unconditionally mounted in PDFViewer — and every open re-seeds); Infinity per takeoff/qto
-    // precedent + KB scale. NOT a license for heavy domains ⑥⑦⑧.
+    // precedent + KB scale. Retention remains domain-specific; ⑧ is the heavy per-page domain.
     gcTime: Infinity,
     // Old Promise.all fetch was single-attempt.
     retry: false,

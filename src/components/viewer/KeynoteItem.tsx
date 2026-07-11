@@ -6,6 +6,10 @@ import { useViewerStore } from "@/stores/viewerStore";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; refresher seeds the cache.
 import { seedSummariesCache } from "@/queries/useSummaries";
 import { readAnnotations } from "@/queries/useAnnotations";
+import {
+  readPageIntelligence,
+  setPageIntelligenceForPage,
+} from "@/queries/usePageWindow";
 import { promoteParsedRegion, canPersist } from "@/lib/client-persist";
 import type { YoloTag } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
@@ -86,6 +90,9 @@ export default function KeynoteItem({
     if (!trimmed) return;
     setNameError(null);
     const store = useViewerStore.getState();
+    // This prop is also the promote request identity. Keep both optimistic and authoritative
+    // replacements on that same project cache (the default empty id covers pre-project/demo use).
+    const identityPublicId = publicId ?? "";
     const oldName = keynote.tableName;
 
     // 1. Update parsedKeynoteData (find by identity, not index — array may be sorted differently)
@@ -101,7 +108,7 @@ export default function KeynoteItem({
     }
 
     // 2. Update matching parsedRegion in pageIntelligence (optimistic local write)
-    const intel = store.pageIntelligence[keynote.pageNumber] || {};
+    const intel = readPageIntelligence(queryClient, identityPublicId, keynote.pageNumber) || {};
     let matchedId: string | null = null;
     let matchedBbox: [number, number, number, number] | null = null;
     let matchedCsiTags: any[] = [];
@@ -118,7 +125,10 @@ export default function KeynoteItem({
       }
       return r;
     });
-    store.setPageIntelligence(keynote.pageNumber, { ...intel, parsedRegions: regions });
+    setPageIntelligenceForPage(queryClient, identityPublicId, keynote.pageNumber, {
+      ...intel,
+      parsedRegions: regions,
+    });
 
     // 3. Persist via the transactional promote upsert (same regionId → REPLACE)
     // instead of the old blob-overwrite. Gated on publicId (canPersist), NOT
@@ -137,7 +147,12 @@ export default function KeynoteItem({
         category: trimmed,
         csiTags: matchedCsiTags,
       });
-      useViewerStore.getState().setPageIntelligence(keynote.pageNumber, result.updatedIntelligence as any);
+      setPageIntelligenceForPage(
+        queryClient,
+        publicId!,
+        keynote.pageNumber,
+        result.updatedIntelligence as any,
+      );
       // [refactor jul10 P2.2③] cache seed under the `publicId` PROP (the id the promote used;
       // SPEC §5-S3) — non-null assertion is safe: canPersist gated above. Guard KEPT (promote
       // returns summaries:null on real paths; must not clear live data).

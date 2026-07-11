@@ -8,7 +8,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import AutoQtoTab from "@/components/viewer/AutoQtoTab";
+import {
+  EMPTY_ACTIVE_PAGE_WINDOW,
+  type ActivePageWindow,
+} from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
+import {
+  readActivePageWindow,
+  setPageIntelligenceForPage,
+} from "@/queries/usePageWindow";
 import { useViewerStore } from "@/stores/viewerStore";
 import { seedSummaries } from "@/test/seed-summaries";
 import type { ProjectSummaries, QtoWorkflow } from "@/types";
@@ -90,6 +98,13 @@ function renderActiveSchedule() {
   return render(<AutoQtoTab />, { wrapper });
 }
 
+function seedActivePageWindow(overrides: Partial<ActivePageWindow> = {}) {
+  qc.setQueryData<ActivePageWindow>(queryKeys.pagesWindow.active("pid"), {
+    ...EMPTY_ACTIVE_PAGE_WINDOW,
+    ...overrides,
+  });
+}
+
 function clickSummarySchedule() {
   fireEvent.click(screen.getByRole("button", { name: /Door Schedule/ }));
 }
@@ -103,9 +118,9 @@ beforeEach(() => {
     publicId: "pid",
     isDemo: true,
     pageNames: { 9: "A-009" },
-    pageIntelligence: {},
     activeQtoWorkflow: workflow,
   });
+  seedActivePageWindow();
   qc.setQueryData(queryKeys.qtoWorkflows.all("pid"), [workflow]);
   seedSummaries(qc, summaries);
 });
@@ -119,7 +134,7 @@ afterEach(() => {
 
 describe("AutoQto schedule detail fallback — P2.2⑦ freeze", () => {
   it("uses matching local parsed-region data without a `/pages` request", async () => {
-    useViewerStore.setState({ pageIntelligence: { 9: matchingPageIntelligence("local") } as never });
+    setPageIntelligenceForPage(qc, "pid", 9, matchingPageIntelligence("local") as never);
     renderActiveSchedule();
 
     clickSummarySchedule();
@@ -130,12 +145,12 @@ describe("AutoQto schedule detail fallback — P2.2⑦ freeze", () => {
 
   it("PI-present matching miss still fetches the signed-out demo detail route and adopts PI only", async () => {
     const serverIntel = matchingPageIntelligence("server");
-    useViewerStore.setState({
+    seedActivePageWindow({
       pageIntelligence: {
         9: { marker: "unmatched-local", parsedRegions: [{ category: "window-schedule" }] },
         4: { marker: "unrelated-page" },
       } as never,
-      loadedPageRange: { from: 1, to: 15 },
+      loadedRange: { from: 1, to: 15 },
     });
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -153,9 +168,10 @@ describe("AutoQto schedule detail fallback — P2.2⑦ freeze", () => {
     await waitFor(() => expect(screen.getByText("Step: confirm-tags")).toBeInTheDocument());
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith("/api/demo/projects/pid/pages?from=9&to=9");
-    expect(useViewerStore.getState().pageIntelligence[9]).toEqual(serverIntel);
-    expect(useViewerStore.getState().pageIntelligence[4]).toEqual({ marker: "unrelated-page" });
-    expect(useViewerStore.getState().loadedPageRange).toEqual({ from: 1, to: 15 });
+    const activeWindow = readActivePageWindow(qc, "pid");
+    expect(activeWindow.pageIntelligence[9]).toEqual(serverIntel);
+    expect(activeWindow.pageIntelligence[4]).toEqual({ marker: "unrelated-page" });
+    expect(activeWindow.loadedRange).toEqual({ from: 1, to: 15 });
   });
 
   it("uses the authenticated detail route outside demo mode", async () => {
@@ -189,7 +205,7 @@ describe("AutoQto schedule detail fallback — P2.2⑦ freeze", () => {
     await waitFor(() => expect(screen.getByText("Step: confirm-tags")).toBeInTheDocument());
     expect(fetchMock).toHaveBeenCalledWith("/api/projects/pid/pages?from=9&to=9");
     expect(fetchMock).not.toHaveBeenCalledWith("/api/demo/projects/pid/pages?from=9&to=9");
-    expect(useViewerStore.getState().pageIntelligence[9]).toEqual(serverIntel);
+    expect(readActivePageWindow(qc, "pid").pageIntelligence[9]).toEqual(serverIntel);
   });
 
   it("adopts truthy PI even when the named region is still absent, then shows the no-data result", async () => {
@@ -207,7 +223,9 @@ describe("AutoQto schedule detail fallback — P2.2⑦ freeze", () => {
     await waitFor(() =>
       expect(screen.getByText("Could not load schedule data. Try parsing the schedule first.")).toBeInTheDocument(),
     );
-    expect(useViewerStore.getState().pageIntelligence[9]).toEqual({ marker: "adopted-without-match" });
+    expect(readActivePageWindow(qc, "pid").pageIntelligence[9]).toEqual({
+      marker: "adopted-without-match",
+    });
     expect(screen.getByText("Step: select-schedule")).toBeInTheDocument();
   });
 

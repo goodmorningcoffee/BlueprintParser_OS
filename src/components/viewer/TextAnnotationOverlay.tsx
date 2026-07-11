@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
+import { useTextAnnotationsForPage } from "@/queries/usePageWindow";
 import { TEXT_ANNOTATION_COLORS } from "@/types";
 import type { TextAnnotation } from "@/types";
 
@@ -18,7 +19,7 @@ export default memo(function TextAnnotationOverlay({
 }: TextAnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const textAnnotations = useViewerStore((s) => s.textAnnotations);
+  const annotations = useTextAnnotationsForPage(pageNumber);
   const showTextAnnotations = useViewerStore((s) => s.showTextAnnotations);
   const activeTypes = useViewerStore((s) => s.activeTextAnnotationTypes);
   const hiddenSet = useViewerStore((s) => s.hiddenTextAnnotations);
@@ -30,8 +31,6 @@ export default memo(function TextAnnotationOverlay({
   const textractData = useViewerStore((s) => s.textractData);
   const setSearch = useViewerStore((s) => s.setSearch);
   const searchQuery = useViewerStore((s) => s.searchQuery);
-
-  const annotations = textAnnotations[pageNumber] || [];
 
   // Filter visible annotations
   const visible = useMemo(() => {

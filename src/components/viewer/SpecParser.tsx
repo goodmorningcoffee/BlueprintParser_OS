@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
+import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
 import { unionBboxes } from "@/lib/specnote-parser";
 // [refactor jul5 S026] apiErrorMessage: spec-parse now serves {error:{code,message}}
 import { promoteParsedRegion, canPersist, regionIdFor, apiErrorMessage } from "@/lib/client-persist";
@@ -33,7 +34,6 @@ export default function SpecParser() {
   const publicId = useViewerStore((s) => s.publicId);
   const isDemo = useViewerStore((s) => s.isDemo);
   const pageNumber = useViewerStore((s) => s.pageNumber);
-  const setPageIntelligence = useViewerStore((s) => s.setPageIntelligence);
 
   const specParseRegion = useViewerStore((s) => s.specParseRegion);
   const setSpecParseRegion = useViewerStore((s) => s.setSpecParseRegion);
@@ -167,8 +167,13 @@ export default function SpecParser() {
         category: "spec-dense-columns",
         csiTags: p.csiTags ?? [],
       });
-      setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
-      refreshPageCsiSpatialMap(queryClient, pageNumber);
+      setPageIntelligenceForPage(
+        queryClient,
+        publicId,
+        pageNumber,
+        payload.updatedIntelligence as PageIntelligence,
+      );
+      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
       resetSpecParse();
       setPreview(null);
     } catch (err) {
@@ -207,8 +212,13 @@ export default function SpecParser() {
         data: data as unknown as Record<string, unknown>,
         category: "spec-dense-columns",
       });
-      setPageIntelligence(pageNumber, payload.updatedIntelligence as PageIntelligence);
-      refreshPageCsiSpatialMap(queryClient, pageNumber);
+      setPageIntelligenceForPage(
+        queryClient,
+        publicId,
+        pageNumber,
+        payload.updatedIntelligence as PageIntelligence,
+      );
+      refreshPageCsiSpatialMap(queryClient, publicId, pageNumber);
       setParagraphBatch([]);
       resetSpecParse();
       setPreview(null);
