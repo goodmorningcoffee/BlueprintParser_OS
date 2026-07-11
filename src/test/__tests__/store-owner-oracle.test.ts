@@ -63,6 +63,59 @@ describe("store owner oracle — import, selector, and snapshot self-calibration
     expect(result.uncertain).toEqual([]);
   });
 
+  it("resolves every direct selector in a local registry while rejecting unresolved registry access", () => {
+    const resolved = scanStoreOwnerText("fixture.tsx", `
+      import { useViewerStore as importedStore } from "@/stores/viewerStore";
+      declare const kind: "table" | "notes";
+
+      const selectors = {
+        table: (state: any) => ({ alpha: state.alpha, beta: state.beta }),
+        notes: function notesSelector(state: any) { return state.gamma; },
+      } satisfies Record<typeof kind, (state: any) => unknown>;
+      const selectorAlias = selectors;
+      const selected = kind === "table" ? selectors.table : selectors.notes;
+
+      importedStore(useShallow(selected));
+      importedStore(selectorAlias["table"]);
+      importedStore(selectors.notes);
+    `, OWNER);
+
+    expect(signatures(resolved)).toEqual(expect.arrayContaining([
+      "selector:read:known:alpha",
+      "selector:read:known:beta",
+      "selector:read:known:gamma",
+    ]));
+    expect(resolved.uncertain).toEqual([]);
+
+    const unresolved = scanStoreOwnerText("fixture.tsx", `
+      import { useViewerStore as importedStore } from "@/stores/viewerStore";
+      declare const kind: string;
+      declare const external: Record<string, (state: any) => unknown>;
+      const selectors = { table: (state: any) => state.alpha };
+      const cleanRegistry = { table: (state: any) => state.beta };
+      const spreadRegistry = { ...selectors };
+
+      importedStore(selectors["missing"]);
+      importedStore(cleanRegistry[kind]);
+      importedStore(spreadRegistry[kind]);
+      importedStore(external[kind]);
+    `, OWNER);
+
+    expect(unresolved.uncertain.map(formatStoreOwnerFinding)).toEqual([
+      "selector:read:opaque:*",
+      "selector:read:opaque:*",
+      "selector:read:opaque:*",
+      "selector:read:opaque:*",
+    ]);
+    expect(unresolved.uncertain.map((finding) => finding.detail)).toEqual([
+      "selector could not be resolved locally",
+      "selector could not be resolved locally",
+      "selector could not be resolved locally",
+      "selector could not be resolved locally",
+    ]);
+    expect(signatures(unresolved)).toContain("selector:read:known:beta");
+  });
+
   it("finds whole hooks, getState/getInitialState aliases, destructuring, brackets, assignments, and Proxy snapshots", () => {
     const result = scanStoreOwnerText("fixture.tsx", `
       import { useViewerStore as importedStore } from "@/stores/viewerStore";

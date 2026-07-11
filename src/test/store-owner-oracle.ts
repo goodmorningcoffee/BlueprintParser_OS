@@ -504,10 +504,74 @@ interface FunctionResolution {
   readonly opaque: boolean;
 }
 
+interface FunctionRegistryResolution {
+  readonly registries: readonly ReadonlyMap<string, ts.Expression>[];
+  readonly opaque: boolean;
+}
+
+/**
+ * Resolve statically named values from a local object-literal function registry. Every possible
+ * value of an unresolved dynamic access is still analyzed for visibility, but `resolveFunctions`
+ * keeps that access opaque because the key could miss the registry. Spreads, methods, duplicate or
+ * computed keys, external maps, and cycles are opaque too. This is intentionally narrower than a
+ * general object-flow analysis and supports static exhaustive selections such as
+ * `PARSE_FLOW_ADAPTERS.table`.
+ */
+function resolveFunctionRegistries(
+  expression: ts.Expression,
+  assignments: ReadonlyMap<string, readonly ts.Expression[]>,
+  constants: ReadonlyMap<string, string>,
+  seen = new Set<string>(),
+): FunctionRegistryResolution {
+  const current = unwrapExpression(expression);
+  if (ts.isObjectLiteralExpression(current)) {
+    const registry = new Map<string, ts.Expression>();
+    let opaque = false;
+    for (const property of current.properties) {
+      if (!ts.isPropertyAssignment(property)) {
+        opaque = true;
+        continue;
+      }
+      const name = staticPropertyName(property.name, constants);
+      if (name === null || registry.has(name)) {
+        opaque = true;
+        continue;
+      }
+      registry.set(name, property.initializer);
+    }
+    return {
+      registries: registry.size > 0 ? [registry] : [],
+      opaque: opaque || registry.size === 0,
+    };
+  }
+  if (ts.isIdentifier(current)) {
+    if (seen.has(current.text)) return { registries: [], opaque: true };
+    const nextSeen = new Set(seen).add(current.text);
+    const assigned = assignments.get(current.text) ?? [];
+    const nested = assigned.map((candidate) =>
+      resolveFunctionRegistries(candidate, assignments, constants, nextSeen));
+    const registries = nested.flatMap((entry) => entry.registries);
+    return {
+      registries,
+      opaque: registries.length === 0 || nested.some((entry) => entry.opaque),
+    };
+  }
+  if (ts.isConditionalExpression(current)) {
+    const left = resolveFunctionRegistries(current.whenTrue, assignments, constants, seen);
+    const right = resolveFunctionRegistries(current.whenFalse, assignments, constants, seen);
+    return {
+      registries: [...left.registries, ...right.registries],
+      opaque: left.opaque || right.opaque,
+    };
+  }
+  return { registries: [], opaque: true };
+}
+
 function resolveFunctions(
   expression: ts.Expression,
   assignments: ReadonlyMap<string, readonly ts.Expression[]>,
   declarations: ReadonlyMap<string, readonly ts.FunctionLikeDeclaration[]>,
+  constants: ReadonlyMap<string, string>,
   seen = new Set<string>(),
 ): FunctionResolution {
   const current = unwrapExpression(expression);
@@ -518,7 +582,7 @@ function resolveFunctions(
     const direct = declarations.get(current.text) ?? [];
     const assigned = assignments.get(current.text) ?? [];
     const nested = assigned.map((candidate) =>
-      resolveFunctions(candidate, assignments, declarations, nextSeen));
+      resolveFunctions(candidate, assignments, declarations, constants, nextSeen));
     const functions = [...direct, ...nested.flatMap((entry) => entry.functions)];
     return {
       functions,
@@ -531,12 +595,44 @@ function resolveFunctions(
       ? callee.text
       : ts.isPropertyAccessExpression(callee) ? callee.name.text : null;
     if (name === "useShallow" && current.arguments[0]) {
-      return resolveFunctions(current.arguments[0], assignments, declarations, seen);
+      return resolveFunctions(current.arguments[0], assignments, declarations, constants, seen);
     }
   }
+  if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+    const registryResolution = resolveFunctionRegistries(
+      current.expression,
+      assignments,
+      constants,
+      seen,
+    );
+    const key = ts.isPropertyAccessExpression(current)
+      ? current.name.text
+      : elementName(current, constants);
+    const candidates: ts.Expression[] = [];
+    let missingStaticKey = false;
+    for (const registry of registryResolution.registries) {
+      if (key === null) {
+        candidates.push(...registry.values());
+      } else {
+        const candidate = registry.get(key);
+        if (candidate) candidates.push(candidate);
+        else missingStaticKey = true;
+      }
+    }
+    const nested = candidates.map((candidate) =>
+      resolveFunctions(candidate, assignments, declarations, constants, seen));
+    const functions = nested.flatMap((entry) => entry.functions);
+    return {
+      functions,
+      // An arbitrary dynamic key may miss every registry member at runtime. Analyze all possible
+      // functions for visibility, but remain fail-closed unless the access key is statically known.
+      opaque: key === null || registryResolution.opaque || missingStaticKey || functions.length === 0 ||
+        nested.some((entry) => entry.opaque),
+    };
+  }
   if (ts.isConditionalExpression(current)) {
-    const left = resolveFunctions(current.whenTrue, assignments, declarations, seen);
-    const right = resolveFunctions(current.whenFalse, assignments, declarations, seen);
+    const left = resolveFunctions(current.whenTrue, assignments, declarations, constants, seen);
+    const right = resolveFunctions(current.whenFalse, assignments, declarations, constants, seen);
     return {
       functions: [...left.functions, ...right.functions],
       opaque: left.opaque || right.opaque,
@@ -976,7 +1072,12 @@ export function scanStoreOwnerSource(
       addFinding(call, "wholeHook", "broad", "broad", null, "zero-argument store hook subscribes to the whole state");
       continue;
     }
-    const resolved = resolveFunctions(call.arguments[0], expressionAssignments, declarations);
+    const resolved = resolveFunctions(
+      call.arguments[0],
+      expressionAssignments,
+      declarations,
+      constants,
+    );
     for (const fn of resolved.functions) analyzeStateFunction(fn, "selector");
     if (resolved.opaque) {
       addFinding(call.arguments[0], "selector", "read", "opaque", null, "selector could not be resolved locally");
@@ -1245,7 +1346,12 @@ export function scanStoreOwnerSource(
       addFinding(call, "subscribe", "read", "opaque", null, "subscribe has no analyzable callback");
       continue;
     }
-    const resolved = resolveFunctions(call.arguments[0], expressionAssignments, declarations);
+    const resolved = resolveFunctions(
+      call.arguments[0],
+      expressionAssignments,
+      declarations,
+      constants,
+    );
     const singleArgumentListener = call.arguments.length === 1;
     for (const fn of resolved.functions) {
       analyzeStateFunction(

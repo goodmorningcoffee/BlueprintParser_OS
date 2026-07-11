@@ -45,6 +45,8 @@ const SPEC_PARSER = "src/components/viewer/SpecParser.tsx";
 const PARAGRAPH_OVERLAY = "src/components/viewer/ParagraphOverlay.tsx";
 const PARSED_TABLE_ITEM = "src/components/viewer/ParsedTableItem.tsx";
 const TABLE_COMPARE_MODAL = "src/components/viewer/TableCompareModal.tsx";
+const PARSE_FACADE_FILE = "src/hooks/useParseFlow.ts";
+const PARSE_FACADE_MODULE = "@/hooks/useParseFlow";
 
 const VIEWER_OWNER = {
   file: VIEWER_STORE_FILE,
@@ -251,11 +253,200 @@ const TABLE_HOOK_CALLERS = {
   "src/components/viewer/GuidedParseTab.tsx": 1,
   "src/components/viewer/ManualParseTab.tsx": 1,
 } as const;
+const POST_TABLE_FACADE_HOOK_CALLERS = {
+  "src/components/viewer/AnnotationOverlay.tsx": 1,
+} as const;
 
 const KEYNOTE_HOOK_CALLERS = {
   "src/components/viewer/AnnotationOverlay.tsx": 1,
   "src/components/viewer/PDFPage.tsx": 1,
 } as const;
+
+type ParseFacadePhase = "FACADE" | "TABLE" | "KEYNOTE" | "NOTES" | "SPEC";
+// A1 advances one complete kind family at a time. Never accept a union of old and new callers:
+// each intermediate commit must update this single phase switch with its atomic source migration.
+const PARSE_FACADE_PHASE: ParseFacadePhase = "FACADE";
+
+type ParseFacadeCall = {
+  readonly kind: "table" | "keynote" | "notes" | "spec";
+  readonly bindings: Readonly<Record<string, string>>;
+};
+type ParseFacadeCallers = Readonly<Record<string, readonly ParseFacadeCall[]>>;
+
+const TABLE_FACADE_CALLERS = {
+  "src/components/viewer/TableParsePanel.tsx": [{
+    kind: "table",
+    bindings: {
+      step: "tableParseStep",
+      region: "tableParseRegion",
+      setStep: "setTableParseStep",
+      setRegion: "setTableParseRegion",
+      reset: "resetTableParse",
+    },
+  }],
+  "src/components/viewer/AutoParseTab.tsx": [
+    {
+      kind: "table",
+      bindings: {
+        step: "tableParseStep",
+        region: "tableParseRegion",
+        setStep: "setTableParseStep",
+        setRegion: "setTableParseRegion",
+        reset: "resetTableParse",
+      },
+    },
+    { kind: "table", bindings: { region: "tableParseRegion" } },
+  ],
+  "src/components/viewer/GuidedParseTab.tsx": [{
+    kind: "table",
+    bindings: {
+      region: "tableParseRegion",
+      setStep: "setTableParseStep",
+      setRegion: "setTableParseRegion",
+    },
+  }],
+  "src/components/viewer/ManualParseTab.tsx": [{
+    kind: "table",
+    bindings: {
+      step: "tableParseStep",
+      region: "tableParseRegion",
+      setStep: "setTableParseStep",
+      setRegion: "setTableParseRegion",
+      reset: "resetTableParse",
+    },
+  }],
+} as const satisfies ParseFacadeCallers;
+
+const KEYNOTE_FACADE_CALLERS = {
+  "src/components/viewer/KeynotePanel.tsx": [{
+    kind: "keynote",
+    bindings: {
+      step: "keynoteParseStep",
+      region: "keynoteParseRegion",
+      setStep: "setKeynoteParseStep",
+      setRegion: "setKeynoteParseRegion",
+      reset: "resetKeynoteParse",
+    },
+  }],
+} as const satisfies ParseFacadeCallers;
+
+const NOTES_FACADE_CALLERS = {
+  "src/components/viewer/NotesPanel.tsx": [{
+    kind: "notes",
+    bindings: { region: "notesParseRegion" },
+  }],
+  "src/components/viewer/NotesParser.tsx": [{
+    kind: "notes",
+    bindings: {
+      region: "notesParseRegion",
+      setStep: "setNotesParseStep",
+      setRegion: "setNotesParseRegion",
+      reset: "resetNotesParse",
+    },
+  }],
+  "src/components/viewer/NotesClassifier.tsx": [{
+    kind: "notes",
+    bindings: { setRegion: "setNotesParseRegion" },
+  }],
+  "src/components/viewer/NotesIndex.tsx": [{
+    kind: "notes",
+    bindings: { setRegion: "setNotesParseRegion" },
+  }],
+} as const satisfies ParseFacadeCallers;
+
+const SPEC_FACADE_CALLERS = {
+  "src/components/viewer/SpecPanel.tsx": [{
+    kind: "spec",
+    bindings: { region: "specParseRegion" },
+  }],
+  "src/components/viewer/SpecParser.tsx": [{
+    kind: "spec",
+    bindings: {
+      region: "specParseRegion",
+      setStep: "setSpecParseStep",
+      setRegion: "setSpecParseRegion",
+      reset: "resetSpecParse",
+    },
+  }],
+  "src/components/viewer/SpecClassifier.tsx": [{
+    kind: "spec",
+    bindings: { setRegion: "setSpecParseRegion" },
+  }],
+  "src/components/viewer/SpecIndex.tsx": [{
+    kind: "spec",
+    bindings: { setRegion: "setSpecParseRegion" },
+  }],
+} as const satisfies ParseFacadeCallers;
+
+const EXPECTED_PARSE_FACADE_CALLERS = {
+  FACADE: {},
+  TABLE: TABLE_FACADE_CALLERS,
+  KEYNOTE: { ...TABLE_FACADE_CALLERS, ...KEYNOTE_FACADE_CALLERS },
+  NOTES: { ...TABLE_FACADE_CALLERS, ...KEYNOTE_FACADE_CALLERS, ...NOTES_FACADE_CALLERS },
+  SPEC: {
+    ...TABLE_FACADE_CALLERS,
+    ...KEYNOTE_FACADE_CALLERS,
+    ...NOTES_FACADE_CALLERS,
+    ...SPEC_FACADE_CALLERS,
+  },
+} as const satisfies Record<ParseFacadePhase, ParseFacadeCallers>;
+
+const PARSE_LIFECYCLE_MEMBERS = {
+  table: [
+    "tableParseStep", "tableParseRegion", "setTableParseRegion", "resetTableParse",
+  ],
+  keynote: [
+    "keynoteParseStep", "keynoteParseRegion", "setKeynoteParseRegion", "resetKeynoteParse",
+  ],
+  notes: [
+    "notesParseStep", "notesParseRegion", "setNotesParseRegion", "resetNotesParse",
+  ],
+  spec: [
+    "specParseStep", "specParseRegion", "setSpecParseRegion", "resetSpecParse",
+  ],
+} as const satisfies Record<ParseFacadeCall["kind"], readonly string[]>;
+const ALL_PARSE_LIFECYCLE_MEMBERS = new Set<string>(
+  Object.values(PARSE_LIFECYCLE_MEMBERS).flat(),
+);
+
+const EXPECTED_MIGRATED_LIFECYCLE_RESIDUALS = {
+  "src/components/viewer/TableParsePanel.tsx": ["getState:read:tableParseRegion"],
+  "src/components/viewer/AutoParseTab.tsx": [],
+  "src/components/viewer/GuidedParseTab.tsx": [],
+  "src/components/viewer/ManualParseTab.tsx": [],
+  "src/components/viewer/KeynotePanel.tsx": [
+    "selector:read:setTableParseRegion",
+    "getState:read:keynoteParseRegion",
+  ],
+  "src/components/viewer/NotesPanel.tsx": [],
+  "src/components/viewer/NotesParser.tsx": [],
+  "src/components/viewer/NotesClassifier.tsx": [],
+  "src/components/viewer/NotesIndex.tsx": [],
+  "src/components/viewer/SpecPanel.tsx": [],
+  "src/components/viewer/SpecParser.tsx": [],
+  "src/components/viewer/SpecClassifier.tsx": [],
+  "src/components/viewer/SpecIndex.tsx": [],
+} as const satisfies Record<string, readonly string[]>;
+
+const EXPECTED_MIGRATED_NEUTRAL_COMMANDS = {
+  "src/components/viewer/TableParsePanel.tsx": {},
+  "src/components/viewer/AutoParseTab.tsx": {},
+  "src/components/viewer/GuidedParseTab.tsx": {},
+  "src/components/viewer/ManualParseTab.tsx": {},
+  // Keynote retains this cross-kind compare-draft transition; its own command moves to the facade.
+  "src/components/viewer/KeynotePanel.tsx": { setTableParseStep: 1 },
+  "src/components/viewer/NotesPanel.tsx": {},
+  "src/components/viewer/NotesParser.tsx": {},
+  "src/components/viewer/NotesClassifier.tsx": {},
+  "src/components/viewer/NotesIndex.tsx": {},
+  "src/components/viewer/SpecPanel.tsx": {},
+  "src/components/viewer/SpecParser.tsx": {},
+  "src/components/viewer/SpecClassifier.tsx": {},
+  "src/components/viewer/SpecIndex.tsx": {},
+} as const satisfies Record<string, Readonly<Partial<Record<
+  (typeof NEUTRAL_STEP_COMMANDS)[number],
+  number
+>>>>;
 
 const PARSE_MEMBERS = new Set<string>([
   ...PARSE_DATA_KEYS,
@@ -564,6 +755,49 @@ function identifierAliases(root: ts.Node, seeds: Iterable<string>): Set<string> 
   return aliases;
 }
 
+function importedNamespaceNames(
+  source: ts.SourceFile,
+  moduleNames: readonly string[],
+): Set<string> {
+  const names = new Set<string>();
+  for (const statement of source.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !moduleNames.includes(statement.moduleSpecifier.text)
+    ) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) names.add(bindings.name.text);
+  }
+  return identifierAliases(source, names);
+}
+
+function namespaceTerminalCalls(
+  source: ts.SourceFile,
+  moduleNames: readonly string[],
+): Array<{ call: ts.CallExpression; name: string | null }> {
+  const namespaces = importedNamespaceNames(source, moduleNames);
+  return descendants(source, ts.isCallExpression).flatMap((call) => {
+    const callee = unwrap(call.expression);
+    if (ts.isPropertyAccessExpression(callee)) {
+      const receiver = unwrap(callee.expression);
+      return ts.isIdentifier(receiver) && namespaces.has(receiver.text)
+        ? [{ call, name: callee.name.text }]
+        : [];
+    }
+    if (ts.isElementAccessExpression(callee)) {
+      const receiver = unwrap(callee.expression);
+      if (!ts.isIdentifier(receiver) || !namespaces.has(receiver.text)) return [];
+      const argument = callee.argumentExpression && unwrap(callee.argumentExpression);
+      return [{
+        call,
+        name: argument && ts.isStringLiteralLike(argument) ? argument.text : null,
+      }];
+    }
+    return [];
+  });
+}
+
 function importedCalls(
   source: ts.SourceFile,
   moduleNames: readonly string[],
@@ -749,6 +983,46 @@ function groupedDestructure(source: ts.SourceFile, hookName: string): string[] {
   return bindingNames((current.parent as ts.VariableDeclaration).name);
 }
 
+function parseFacadeBindings(
+  call: ts.CallExpression,
+  source: ts.SourceFile,
+): Record<string, string> {
+  let current: ts.Node = call;
+  while (
+    current.parent &&
+    (ts.isParenthesizedExpression(current.parent) ||
+      ts.isAsExpression(current.parent) ||
+      ts.isNonNullExpression(current.parent))
+  ) current = current.parent;
+  expect(ts.isVariableDeclaration(current.parent), "useParseFlow destructure").toBe(true);
+  const name = (current.parent as ts.VariableDeclaration).name;
+  expect(ts.isObjectBindingPattern(name), "useParseFlow object binding").toBe(true);
+  return Object.fromEntries((name as ts.ObjectBindingPattern).elements.map((element) => {
+    expect(element.dotDotDotToken, "useParseFlow has no rest binding").toBeUndefined();
+    expect(ts.isIdentifier(element.name), "useParseFlow local binding").toBe(true);
+    const property = staticName(element.propertyName ?? element.name);
+    expect(property, "useParseFlow static property binding").not.toBeNull();
+    return [property!, (element.name as ts.Identifier).text];
+  }));
+}
+
+function productionParseFacadeCallers(): ParseFacadeCallers {
+  return Object.fromEntries(productionSourceFiles.flatMap((path) => {
+    const source = parse(path);
+    const calls = importedCalls(source, [PARSE_FACADE_MODULE], "useParseFlow");
+    if (calls.length === 0) return [];
+    return [[path, calls.map((call): ParseFacadeCall => {
+      expect(call.arguments, `${path} useParseFlow arguments`).toHaveLength(1);
+      const kind = call.arguments[0] && unwrap(call.arguments[0]);
+      expect(kind && ts.isStringLiteral(kind), `${path} literal parse kind`).toBe(true);
+      return {
+        kind: (kind as ts.StringLiteral).text as ParseFacadeCall["kind"],
+        bindings: parseFacadeBindings(call, source),
+      };
+    })]];
+  }));
+}
+
 function ownerScan(
   source: ts.SourceFile,
   descriptor: StoreOwnerDescriptor = ACTIVE_PARSE_DESCRIPTOR,
@@ -867,6 +1141,91 @@ function parseOwnerLoadKinds(path: string, source = parse(path)): string[] {
     ) loads.push("import-type");
   }
   return loads;
+}
+
+function resolvesToCandidate(
+  importerPath: string,
+  specifier: string,
+  moduleName: string,
+  file: string,
+): boolean {
+  const unresolved = specifier === moduleName
+    ? file
+    : specifier.startsWith("@/")
+      ? `src/${specifier.slice(2)}`
+      : specifier.startsWith(".")
+        ? join(dirname(importerPath), specifier)
+        : "";
+  const withoutExtension = (value: string) => value.replace(/\.(?:ts|tsx)$/, "");
+  return withoutExtension(unresolved) === withoutExtension(file);
+}
+
+function candidateLoadKinds(
+  path: string,
+  moduleName: string,
+  file: string,
+  source = parse(path),
+): string[] {
+  const loads: string[] = [];
+  for (const statement of source.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      resolvesToCandidate(path, statement.moduleSpecifier.text, moduleName, file)
+    ) loads.push("import");
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      resolvesToCandidate(path, statement.moduleSpecifier.text, moduleName, file)
+    ) loads.push("re-export");
+  }
+  for (const call of descendants(source, ts.isCallExpression)) {
+    const specifier = call.arguments[0];
+    if (
+      !specifier ||
+      !ts.isStringLiteralLike(specifier) ||
+      !resolvesToCandidate(path, specifier.text, moduleName, file)
+    ) continue;
+    const callee = unwrap(call.expression);
+    if (callee.kind === ts.SyntaxKind.ImportKeyword) loads.push("dynamic-import");
+    if (ts.isIdentifier(callee) && callee.text === "require") loads.push("require");
+  }
+  for (const importType of descendants(source, ts.isImportTypeNode)) {
+    const argument = importType.argument;
+    if (
+      ts.isLiteralTypeNode(argument) &&
+      ts.isStringLiteral(argument.literal) &&
+      resolvesToCandidate(path, argument.literal.text, moduleName, file)
+    ) loads.push("import-type");
+  }
+  return loads;
+}
+
+function unsafeHookAncestorLabels(call: ts.CallExpression, boundary: ts.Node): string[] {
+  const labels: string[] = [];
+  let current: ts.Node | undefined = call.parent;
+  while (current && current !== boundary) {
+    if (ts.isFunctionLike(current)) labels.push("nested-function");
+    else if (ts.isConditionalExpression(current)) labels.push("conditional");
+    else if (ts.isIfStatement(current)) labels.push("if");
+    else if (ts.isSwitchStatement(current)) labels.push("switch");
+    else if (
+      ts.isForStatement(current) || ts.isForInStatement(current) ||
+      ts.isForOfStatement(current) || ts.isWhileStatement(current) ||
+      ts.isDoStatement(current)
+    ) labels.push("loop");
+    else if (
+      ts.isBinaryExpression(current) && [
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.QuestionQuestionToken,
+      ].includes(current.operatorToken.kind)
+    ) labels.push("logical");
+    current = current.parent;
+  }
+  if (current !== boundary) labels.push("outside-hook");
+  return labels;
 }
 
 function activeOwnerBorrowerFiles(members: readonly string[]): string[] {
@@ -1004,7 +1363,7 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
 });
 
 describe("P2.4 phase-aware grouped parse hook contract", () => {
-  it("pins useTableParse's exact 17-member shape and six calls across four files", () => {
+  it("pins useTableParse's exact 17-member shape and phase-exact caller roster", () => {
     expect(hookShape("useTableParse", TABLE_HOOK_SHAPE)).toEqual(TABLE_HOOK_SHAPE);
     expect(exportedVariableCount(parse(ACTIVE_PARSE_OWNER.file), "useTableParse")).toBe(1);
     if (OWNERSHIP.inactiveDefinition === "exact-ledger") {
@@ -1014,7 +1373,11 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     } else if (existsRelative(INACTIVE_PARSE_OWNER.file)) {
       expect(exportedVariableCount(parse(INACTIVE_PARSE_OWNER.file), "useTableParse")).toBe(0);
     }
-    expect(importedCallTopology("useTableParse", ACTIVE_PARSE_OWNER)).toEqual(TABLE_HOOK_CALLERS);
+    expect(importedCallTopology("useTableParse", ACTIVE_PARSE_OWNER)).toEqual(
+      PARSE_FACADE_PHASE === "FACADE"
+        ? TABLE_HOOK_CALLERS
+        : POST_TABLE_FACADE_HOOK_CALLERS,
+    );
     expect(importedCallTopology("useTableParse", INACTIVE_PARSE_OWNER)).toEqual({});
   });
 
@@ -1030,6 +1393,292 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     }
     expect(importedCallTopology("useKeynoteParse", ACTIVE_PARSE_OWNER)).toEqual(KEYNOTE_HOOK_CALLERS);
     expect(importedCallTopology("useKeynoteParse", INACTIVE_PARSE_OWNER)).toEqual({});
+  });
+});
+
+describe("P2.4 A1 semantic parse facade topology", () => {
+  it("pins four exhaustive direct lifecycle adapters and a fail-closed owner scan", () => {
+    const source = parse(PARSE_FACADE_FILE);
+    const declaration = findVariable(source, "PARSE_FLOW_ADAPTERS");
+    expect(compact(declaration.type!, source)).toBe("ParseFlowAdapterMap");
+    const initializer = declaration.initializer && unwrap(declaration.initializer);
+    expect(initializer && ts.isObjectLiteralExpression(initializer), "adapter registry object")
+      .toBe(true);
+
+    const adapters = Object.fromEntries(
+      (initializer as ts.ObjectLiteralExpression).properties.map((property) => {
+        expect(ts.isPropertyAssignment(property), "plain adapter property").toBe(true);
+        const assignment = property as ts.PropertyAssignment;
+        const kind = staticName(assignment.name);
+        const selector = unwrap(assignment.initializer);
+        expect(kind, "static adapter kind").not.toBeNull();
+        expect(ts.isArrowFunction(selector), `${kind} adapter arrow`).toBe(true);
+        const body = unwrap((selector as ts.ArrowFunction).body as ts.Expression);
+        expect(ts.isObjectLiteralExpression(body), `${kind} lifecycle object`).toBe(true);
+        return [kind!, Object.fromEntries((body as ts.ObjectLiteralExpression).properties.map(
+          (entry) => {
+            expect(ts.isPropertyAssignment(entry), `${kind} direct lifecycle property`).toBe(true);
+            const lifecycleEntry = entry as ts.PropertyAssignment;
+            return [staticName(lifecycleEntry.name), compact(lifecycleEntry.initializer, source)];
+          },
+        ))];
+      }),
+    );
+    expect(adapters).toEqual({
+      table: {
+        kind: '"table"',
+        step: "state.tableParseStep",
+        region: "state.tableParseRegion",
+        setStep: "setTableParseStep",
+        setRegion: "state.setTableParseRegion",
+        reset: "state.resetTableParse",
+      },
+      keynote: {
+        kind: '"keynote"',
+        step: "state.keynoteParseStep",
+        region: "state.keynoteParseRegion",
+        setStep: "setKeynoteParseStep",
+        setRegion: "state.setKeynoteParseRegion",
+        reset: "state.resetKeynoteParse",
+      },
+      notes: {
+        kind: '"notes"',
+        step: "state.notesParseStep",
+        region: "state.notesParseRegion",
+        setStep: "setNotesParseStep",
+        setRegion: "state.setNotesParseRegion",
+        reset: "state.resetNotesParse",
+      },
+      spec: {
+        kind: '"spec"',
+        step: "state.specParseStep",
+        region: "state.specParseRegion",
+        setStep: "setSpecParseStep",
+        setRegion: "state.setSpecParseRegion",
+        reset: "state.resetSpecParse",
+      },
+    });
+
+    expect(knownMembers(expectFailClosedOwnerScan(source), "selector")).toEqual([
+      "tableParseStep", "tableParseRegion", "setTableParseRegion", "resetTableParse",
+      "keynoteParseStep", "keynoteParseRegion", "setKeynoteParseRegion", "resetKeynoteParse",
+      "notesParseStep", "notesParseRegion", "setNotesParseRegion", "resetNotesParse",
+      "specParseStep", "specParseRegion", "setSpecParseRegion", "resetSpecParse",
+    ]);
+  });
+
+  it("uses one unconditional shallow store hook and preserves the acyclic dependency direction", () => {
+    const source = parse(PARSE_FACADE_FILE);
+    const storeCalls = importedCalls(
+      source,
+      [ACTIVE_PARSE_OWNER.module],
+      ACTIVE_PARSE_OWNER.exportName,
+    );
+    expect(storeCalls, "one facade Zustand hook").toHaveLength(1);
+    const shallow = storeCalls[0].arguments[0] && unwrap(storeCalls[0].arguments[0]);
+    expect(shallow && ts.isCallExpression(shallow), "facade useShallow call").toBe(true);
+    expect(compact((shallow as ts.CallExpression).expression, source)).toBe("useShallow");
+    expect((shallow as ts.CallExpression).arguments).toHaveLength(1);
+    expect(compact((shallow as ts.CallExpression).arguments[0], source)).toBe("selector");
+
+    const hook = descendants(source, ts.isFunctionDeclaration).filter(
+      (candidate) => candidate.name?.text === "useParseFlow",
+    );
+    expect(hook).toHaveLength(1);
+    expect(hook[0].typeParameters).toHaveLength(1);
+    expect(hook[0].typeParameters?.[0].name.text).toBe("K");
+    expect(compact(hook[0].typeParameters?.[0].constraint!, source)).toBe("ParseKind");
+    expect(hook[0].parameters).toHaveLength(1);
+    expect((hook[0].parameters[0].name as ts.Identifier).text).toBe("kind");
+    expect(compact(hook[0].parameters[0].type!, source)).toBe("K");
+    expect(compact(hook[0].type!, source)).toBe("ParseFlowLifecycle<K>");
+    expect(hook[0].body?.statements, "facade hook has selector then unconditional return")
+      .toHaveLength(2);
+    expect(ts.isVariableStatement(hook[0].body!.statements[0])).toBe(true);
+    expect(ts.isReturnStatement(hook[0].body!.statements[1])).toBe(true);
+    const hookReturn = hook[0].body!.statements[1] as ts.ReturnStatement;
+    expect(hookReturn.expression && unwrap(hookReturn.expression)).toBe(storeCalls[0]);
+    expect(descendants(hook[0], ts.isCallExpression).filter((call) =>
+      call === storeCalls[0]
+    )).toHaveLength(1);
+    expect(unsafeHookAncestorLabels(storeCalls[0], hook[0])).toEqual([]);
+
+    const selector = descendants(hook[0], ts.isVariableDeclaration).filter(
+      (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "selector",
+    );
+    expect(selector).toHaveLength(1);
+    expect(compact(selector[0].initializer!, source)).toBe(
+      'kind==="table"?PARSE_FLOW_ADAPTERS.table:kind==="keynote"?PARSE_FLOW_ADAPTERS.keynote:' +
+      'kind==="notes"?PARSE_FLOW_ADAPTERS.notes:PARSE_FLOW_ADAPTERS.spec',
+    );
+
+    const fixture = ts.createSourceFile(
+      "parse-facade-hook-placement-fixture.ts",
+      `
+        function useFixture(flag: boolean) {
+          if (flag) storeHook();
+          flag && storeHook();
+          for (let i = 0; i < 1; i += 1) storeHook();
+          const nested = () => storeHook();
+          return flag ? storeHook() : null;
+        }
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const fixtureBoundary = descendants(fixture, ts.isFunctionDeclaration)[0];
+    const fixtureCalls = descendants(fixtureBoundary, ts.isCallExpression).filter((call) =>
+      ts.isIdentifier(call.expression) && call.expression.text === "storeHook"
+    );
+    expect(fixtureCalls.map((call) => unsafeHookAncestorLabels(call, fixtureBoundary))).toEqual([
+      ["if"],
+      ["logical"],
+      ["loop"],
+      ["nested-function"],
+      ["conditional"],
+    ]);
+
+    const dependencies = source.statements.filter(ts.isImportDeclaration)
+      .map((statement) => (statement.moduleSpecifier as ts.StringLiteral).text)
+      .sort();
+    expect(dependencies).toEqual([
+      "@/stores/parseFlowStore",
+      "@/stores/viewerCommands",
+      "@/types",
+      "zustand/react/shallow",
+    ]);
+    expect(importsModule(parse(PARSE_STORE_FILE), PARSE_FACADE_MODULE)).toBe(false);
+    expect(importsModule(parse(VIEWER_COMMANDS_FILE), PARSE_FACADE_MODULE)).toBe(false);
+  });
+
+  it("pins the phase-exact cold caller roster with literal kinds and lifecycle destructures", () => {
+    expect(productionParseFacadeCallers()).toEqual(
+      EXPECTED_PARSE_FACADE_CALLERS[PARSE_FACADE_PHASE],
+    );
+  });
+
+  it("pins migrated lifecycle residuals, live reads, and neutral-command removal", () => {
+    const expectedCallers: ParseFacadeCallers =
+      EXPECTED_PARSE_FACADE_CALLERS[PARSE_FACADE_PHASE];
+    const residualLedger: Readonly<Record<string, readonly string[]>> =
+      EXPECTED_MIGRATED_LIFECYCLE_RESIDUALS;
+    const commandLedger: Readonly<Record<string, Readonly<Partial<Record<
+      (typeof NEUTRAL_STEP_COMMANDS)[number],
+      number
+    >>>>> = EXPECTED_MIGRATED_NEUTRAL_COMMANDS;
+    for (const [path, calls] of Object.entries(expectedCallers)) {
+      const kinds = [...new Set(calls.map((call) => call.kind))];
+      expect(kinds, `${path} one semantic kind`).toHaveLength(1);
+      const residuals = ownerScan(parse(path), ACTIVE_PARSE_DESCRIPTOR).known
+        .filter((finding) => finding.member && ALL_PARSE_LIFECYCLE_MEMBERS.has(finding.member))
+        .map((finding) => `${finding.operation}:${finding.access}:${finding.member}`);
+      expect(residuals, `${path} direct lifecycle residuals`).toEqual(
+        residualLedger[path],
+      );
+
+      const commandCounts = Object.fromEntries(NEUTRAL_STEP_COMMANDS.flatMap((command) => {
+        const count = importedCalls(parse(path), ["@/stores/viewerCommands"], command).length;
+        return count > 0 ? [[command, count]] : [];
+      }));
+      const namespaceCalls = namespaceTerminalCalls(parse(path), ["@/stores/viewerCommands"]);
+      expect(namespaceCalls.filter(({ name }) =>
+        name === null || NEUTRAL_STEP_COMMANDS.includes(
+          name as (typeof NEUTRAL_STEP_COMMANDS)[number],
+        )
+      ), `${path} has no namespace-hidden neutral command`).toEqual([]);
+      expect(commandCounts, `${path} residual neutral commands`).toEqual(
+        commandLedger[path],
+      );
+    }
+
+    const fixture = ts.createSourceFile(
+      "parse-facade-command-provenance-fixture.ts",
+      `
+        import * as Commands from "@/stores/viewerCommands";
+        const alias = Commands;
+        declare const dynamicCommand: string;
+        Commands.setTableParseStep("review");
+        alias["setNotesParseStep"]("review");
+        alias[dynamicCommand]("review");
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    expect(namespaceTerminalCalls(fixture, ["@/stores/viewerCommands"])
+      .map(({ name }) => name)).toEqual([
+      "setTableParseStep",
+      "setNotesParseStep",
+      null,
+    ]);
+  });
+
+  it("pins zero hidden facade loads and exact value imports at every A1 phase", () => {
+    const expectedFiles = Object.keys(
+      EXPECTED_PARSE_FACADE_CALLERS[PARSE_FACADE_PHASE],
+    ).sort();
+    const loads = productionSourceFiles
+      .filter((path) => path !== PARSE_FACADE_FILE)
+      .flatMap((path) => candidateLoadKinds(
+        path,
+        PARSE_FACADE_MODULE,
+        PARSE_FACADE_FILE,
+      ).map((kind) => ({ path, kind })));
+    expect(loads).toEqual(expectedFiles.map((path) => ({ path, kind: "import" })));
+
+    for (const path of expectedFiles) {
+      const declarations = parse(path).statements.filter(
+        (statement): statement is ts.ImportDeclaration =>
+          ts.isImportDeclaration(statement) &&
+          ts.isStringLiteral(statement.moduleSpecifier) &&
+          resolvesToCandidate(
+            path,
+            statement.moduleSpecifier.text,
+            PARSE_FACADE_MODULE,
+            PARSE_FACADE_FILE,
+          ),
+      );
+      expect(declarations, `${path} one facade import`).toHaveLength(1);
+      const clause = declarations[0].importClause;
+      expect(clause?.isTypeOnly, `${path} facade value import`).toBe(false);
+      expect(clause?.namedBindings && ts.isNamedImports(clause.namedBindings),
+        `${path} named facade import`).toBe(true);
+      const binding = (clause?.namedBindings as ts.NamedImports).elements.filter((element) =>
+        (element.propertyName ?? element.name).text === "useParseFlow"
+      );
+      expect(binding, `${path} imports useParseFlow`).toHaveLength(1);
+      expect(binding[0].isTypeOnly, `${path} useParseFlow is a value`).toBe(false);
+    }
+
+    const fixturePath = "src/components/parse-facade-load-fixture.ts";
+    const fixture = ts.createSourceFile(
+      fixturePath,
+      `
+        import { useParseFlow } from "@/hooks/useParseFlow";
+        import { useParseFlow as relativeFlow } from "../hooks/useParseFlow";
+        export { ParseKind } from "@/hooks/useParseFlow";
+        const lazy = import("@/hooks/useParseFlow");
+        const commonJs = require("../hooks/useParseFlow");
+        type Inline = import("@/hooks/useParseFlow").ParseFlowLifecycle<"table">;
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    expect(candidateLoadKinds(
+      fixturePath,
+      PARSE_FACADE_MODULE,
+      PARSE_FACADE_FILE,
+      fixture,
+    )).toEqual([
+      "import",
+      "import",
+      "re-export",
+      "dynamic-import",
+      "require",
+      "import-type",
+    ]);
   });
 });
 
