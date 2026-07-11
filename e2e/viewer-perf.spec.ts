@@ -200,6 +200,12 @@ test("viewer perf baseline on the synthetic 100-page set", async ({ page }) => {
       },
     });
   });
+  // The offline fixture intentionally has no thumbnails. Fulfill that known 404 at the browser
+  // boundary so three reloads × virtualized thumbnail windows do not consume the middleware's
+  // unrelated 120-request/minute abuse bucket and brick the final measured reload.
+  await page.route("**/api/projects/*/thumbnail/*", (route) =>
+    route.fulfill({ status: 404, contentType: "text/plain", body: "not found" }),
+  );
 
   // ── login (golden path: real credentials form) ──
   await page.goto("/login");
