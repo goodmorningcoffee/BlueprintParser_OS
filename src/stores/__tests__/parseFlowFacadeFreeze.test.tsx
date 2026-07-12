@@ -13,6 +13,9 @@ import {
 import {
   useGuidedParseExtensions,
   useKeynoteParseExtensions,
+  useNotesParseExtensions,
+  useParagraphWorkspaceExtensions,
+  useParseDraftExtensions,
   useParseFlowStore,
   useTableParseExtensions,
   type ParseFlowState,
@@ -356,5 +359,97 @@ describe("P2.4 A1 Keynote and shared-guided extension composition", () => {
     expect(renders).toBe(baseline + 1);
     expect(result.current.guidedParseActive).toBe(true);
     expect(result.current.setGuidedParseActive).toBe(first.setGuidedParseActive);
+  });
+});
+
+describe("P2.4 A1 Notes and shared-workspace extension composition", () => {
+  it("keeps the exact three Notes render fields independent from lifecycle/workspaces", () => {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useNotesParseExtensions();
+    });
+    const state = useParseFlowStore.getState();
+    expect(result.current).toEqual({
+      guidedNotesRows: state.guidedNotesRows,
+      guidedNotesCols: state.guidedNotesCols,
+      notesFastManualGrid: state.notesFastManualGrid,
+    });
+    const first = result.current;
+    const baseline = renders;
+
+    act(() => useParseFlowStore.setState({
+      notesParseStep: "select-region",
+      notesParseRegion: BBOX,
+      guidedParseActive: true,
+      paragraphOverlayActive: true,
+    }));
+    expect(renders).toBe(baseline);
+    expect(result.current).toBe(first);
+
+    act(() => useParseFlowStore.setState({ guidedNotesRows: [BBOX] }));
+    expect(renders).toBe(baseline + 1);
+    expect(result.current.guidedNotesRows).toEqual([BBOX]);
+  });
+
+  it("exposes only the stable draft writer and never observes draft value changes", () => {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useParseDraftExtensions();
+    });
+    const state = useParseFlowStore.getState();
+    expect(result.current).toEqual({ setParseDraftRegion: state.setParseDraftRegion });
+    const first = result.current;
+    const baseline = renders;
+
+    act(() => result.current.setParseDraftRegion({
+      id: "draft-notes",
+      type: "notes",
+      category: "notes-preview",
+      bbox: BBOX,
+      confidence: 1,
+      data: {},
+    }));
+    expect(useParseFlowStore.getState().parseDraftRegion?.id).toBe("draft-notes");
+    expect(renders).toBe(baseline);
+    expect(result.current).toBe(first);
+  });
+
+  it("pins the five paragraph fields while excluding hot visibility and clipboard values", () => {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useParagraphWorkspaceExtensions();
+    });
+    const state = useParseFlowStore.getState();
+    expect(result.current).toEqual({
+      paragraphBatch: state.paragraphBatch,
+      setParagraphBatch: state.setParagraphBatch,
+      removePendingParagraph: state.removePendingParagraph,
+      upsertPendingParagraph: state.upsertPendingParagraph,
+      setParagraphOverlayActive: state.setParagraphOverlayActive,
+    });
+    const first = result.current;
+    const baseline = renders;
+
+    act(() => useParseFlowStore.setState({
+      notesParseStep: "select-region",
+      parseDraftRegion: null,
+      paragraphOverlayActive: true,
+      paragraphClipboard: { colBoundaries: [0, 1], headers: ["Key", "Note"] },
+    }));
+    expect(renders).toBe(baseline);
+    expect(result.current).toBe(first);
+
+    act(() => result.current.setParagraphBatch([{
+      id: "paragraph-1",
+      bbox: BBOX,
+      lines: [],
+      rowText: { Key: "1", Note: "Fixture" },
+    }]));
+    expect(renders).toBe(baseline + 1);
+    expect(result.current.paragraphBatch).toHaveLength(1);
+    expect(result.current.setParagraphBatch).toBe(first.setParagraphBatch);
   });
 });

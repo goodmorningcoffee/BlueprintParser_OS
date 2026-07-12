@@ -497,3 +497,33 @@ export const useGuidedParseExtensions = () =>
     setGuidedParseCols: state.setGuidedParseCols,
     resetGuidedParse: state.resetGuidedParse,
   })));
+
+/** Notes-only render inputs; shared draft/guided/paragraph workspaces stay separate. */
+export const useNotesParseExtensions = () =>
+  useParseFlowStore(useShallow((state) => ({
+    guidedNotesRows: state.guidedNotesRows,
+    guidedNotesCols: state.guidedNotesCols,
+    notesFastManualGrid: state.notesFastManualGrid,
+  })));
+
+/**
+ * Shared draft writer for Notes and Spec cold panels. The draft value remains a sacred primitive
+ * canvas read, so writers do not subscribe to and rerender for their own preview publications.
+ */
+export const useParseDraftExtensions = () =>
+  useParseFlowStore(useShallow((state) => ({
+    setParseDraftRegion: state.setParseDraftRegion,
+  })));
+
+/**
+ * Shared Notes/Spec paragraph workspace used by cold parsers. Overlay visibility and clipboard
+ * values stay out: PDFPage and ParagraphOverlay retain their exact hot-path projections.
+ */
+export const useParagraphWorkspaceExtensions = () =>
+  useParseFlowStore(useShallow((state) => ({
+    paragraphBatch: state.paragraphBatch,
+    setParagraphBatch: state.setParagraphBatch,
+    removePendingParagraph: state.removePendingParagraph,
+    upsertPendingParagraph: state.upsertPendingParagraph,
+    setParagraphOverlayActive: state.setParagraphOverlayActive,
+  })));

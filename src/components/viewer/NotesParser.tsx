@@ -2,9 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useParseFlowStore } from "@/stores/parseFlowStore";
+import { useParseFlow } from "@/hooks/useParseFlow";
+import {
+  useNotesParseExtensions,
+  useParagraphWorkspaceExtensions,
+  useParseDraftExtensions,
+  useParseFlowStore,
+} from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
-import { setNotesParseStep } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useTextractForPage } from "@/queries/useTextract";
@@ -52,20 +57,25 @@ export default function NotesParser() {
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const textractData = useTextractForPage(pageNumber);
 
-  const notesParseRegion = useParseFlowStore((s) => s.notesParseRegion);
-  const setNotesParseRegion = useParseFlowStore((s) => s.setNotesParseRegion);
-
-  const guidedNotesRows = useParseFlowStore((s) => s.guidedNotesRows);
-  const guidedNotesCols = useParseFlowStore((s) => s.guidedNotesCols);
-  const resetNotesParse = useParseFlowStore((s) => s.resetNotesParse);
-
-  const setParseDraftRegion = useParseFlowStore((s) => s.setParseDraftRegion);
-
-  const paragraphBatch = useParseFlowStore((s) => s.paragraphBatch);
-  const setParagraphBatch = useParseFlowStore((s) => s.setParagraphBatch);
-  const removePendingParagraph = useParseFlowStore((s) => s.removePendingParagraph);
-  const upsertPendingParagraph = useParseFlowStore((s) => s.upsertPendingParagraph);
-  const setParagraphOverlayActive = useParseFlowStore((s) => s.setParagraphOverlayActive);
+  const {
+    region: notesParseRegion,
+    setStep: setNotesParseStep,
+    setRegion: setNotesParseRegion,
+    reset: resetNotesParse,
+  } = useParseFlow("notes");
+  const {
+    guidedNotesRows,
+    guidedNotesCols,
+    notesFastManualGrid,
+  } = useNotesParseExtensions();
+  const { setParseDraftRegion } = useParseDraftExtensions();
+  const {
+    paragraphBatch,
+    setParagraphBatch,
+    removePendingParagraph,
+    upsertPendingParagraph,
+    setParagraphOverlayActive,
+  } = useParagraphWorkspaceExtensions();
 
   const [mode, setMode] = useState<NotesSubMode>("auto");
   const [preview, setPreview] = useState<PreviewGrid | null>(null);
@@ -150,7 +160,6 @@ export default function NotesParser() {
 
   // Mirror the Fast-manual overlay's grid into local preview so the standard
   // preview panel + Save path work identically across all four sub-modes.
-  const notesFastManualGrid = useParseFlowStore((s) => s.notesFastManualGrid);
   useEffect(() => {
     if (mode !== "fast-manual") return;
     if (!notesFastManualGrid) {

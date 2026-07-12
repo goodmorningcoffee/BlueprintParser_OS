@@ -289,6 +289,20 @@ const GUIDED_PARSE_EXTENSION_HOOK_SHAPE = [
   "resetGuidedParse",
 ] as const;
 
+const NOTES_EXTENSION_HOOK_SHAPE = [
+  "guidedNotesRows",
+  "guidedNotesCols",
+  "notesFastManualGrid",
+] as const;
+const PARSE_DRAFT_EXTENSION_HOOK_SHAPE = ["setParseDraftRegion"] as const;
+const PARAGRAPH_WORKSPACE_EXTENSION_HOOK_SHAPE = [
+  "paragraphBatch",
+  "setParagraphBatch",
+  "removePendingParagraph",
+  "upsertPendingParagraph",
+  "setParagraphOverlayActive",
+] as const;
+
 const TABLE_HOOK_CALLERS = {
   "src/components/viewer/AnnotationOverlay.tsx": 1,
   "src/components/viewer/AutoParseTab.tsx": 2,
@@ -384,11 +398,41 @@ const GUIDED_PARSE_EXTENSION_HOOK_BINDINGS = {
     resetGuidedParse: "resetGuidedParse",
   }],
 } as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
+const NOTES_EXTENSION_HOOK_CALLERS = {
+  "src/components/viewer/NotesParser.tsx": 1,
+} as const;
+const NOTES_EXTENSION_HOOK_BINDINGS = {
+  "src/components/viewer/NotesParser.tsx": [{
+    guidedNotesRows: "guidedNotesRows",
+    guidedNotesCols: "guidedNotesCols",
+    notesFastManualGrid: "notesFastManualGrid",
+  }],
+} as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
+const PARSE_DRAFT_EXTENSION_HOOK_CALLERS = {
+  "src/components/viewer/NotesParser.tsx": 1,
+} as const;
+const PARSE_DRAFT_EXTENSION_HOOK_BINDINGS = {
+  "src/components/viewer/NotesParser.tsx": [{
+    setParseDraftRegion: "setParseDraftRegion",
+  }],
+} as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
+const PARAGRAPH_WORKSPACE_EXTENSION_HOOK_CALLERS = {
+  "src/components/viewer/NotesParser.tsx": 1,
+} as const;
+const PARAGRAPH_WORKSPACE_EXTENSION_HOOK_BINDINGS = {
+  "src/components/viewer/NotesParser.tsx": [{
+    paragraphBatch: "paragraphBatch",
+    setParagraphBatch: "setParagraphBatch",
+    removePendingParagraph: "removePendingParagraph",
+    upsertPendingParagraph: "upsertPendingParagraph",
+    setParagraphOverlayActive: "setParagraphOverlayActive",
+  }],
+} as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
 
 type ParseFacadePhase = "FACADE" | "TABLE" | "KEYNOTE" | "NOTES" | "SPEC";
 // A1 advances one complete kind family at a time. Never accept a union of old and new callers:
 // each intermediate commit must update this single phase switch with its atomic source migration.
-const PARSE_FACADE_PHASE = "KEYNOTE" as ParseFacadePhase;
+const PARSE_FACADE_PHASE = "NOTES" as ParseFacadePhase;
 
 type ParseFacadeCall = {
   readonly kind: "table" | "keynote" | "notes" | "spec";
@@ -704,6 +748,16 @@ function findVariable(source: ts.SourceFile, name: string): ts.VariableDeclarati
       ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name,
   );
   expect(matches, `${name} declaration`).toHaveLength(1);
+  return matches[0];
+}
+
+function findVariableWithin(root: ts.Node, name: string): ts.VariableDeclaration {
+  const matches = descendants(
+    root,
+    (node): node is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name,
+  );
+  expect(matches, `${name} nested declaration`).toHaveLength(1);
   return matches[0];
 }
 
@@ -1311,6 +1365,9 @@ function groupedBorrowedMembers(source: ts.SourceFile): string[] {
     "useTableParseExtensions",
     "useKeynoteParseExtensions",
     "useGuidedParseExtensions",
+    "useNotesParseExtensions",
+    "useParseDraftExtensions",
+    "useParagraphWorkspaceExtensions",
   ].flatMap((hookName) =>
     importedCalls(source, [ACTIVE_PARSE_OWNER.module], hookName).flatMap((call) => {
       let current: ts.Node = call;
@@ -1744,6 +1801,9 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
       { module: PARSE_OWNER.module, name: "useTableParseExtensions" },
       { module: PARSE_OWNER.module, name: "useKeynoteParseExtensions" },
       { module: PARSE_OWNER.module, name: "useGuidedParseExtensions" },
+      { module: PARSE_OWNER.module, name: "useNotesParseExtensions" },
+      { module: PARSE_OWNER.module, name: "useParseDraftExtensions" },
+      { module: PARSE_OWNER.module, name: "useParagraphWorkspaceExtensions" },
       { module: PARSE_FACADE_MODULE, name: "useParseFlow" },
     ] as const;
     const unsupportedReferences = productionSourceFiles.flatMap((path) => {
@@ -1856,6 +1916,387 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
       "parsedKeynoteData",
       "setParsedKeynoteData",
     ]);
+  });
+
+  it("pins minimal Notes, draft, and paragraph extension surfaces", () => {
+    const contracts = [
+      {
+        hook: "useNotesParseExtensions",
+        shape: NOTES_EXTENSION_HOOK_SHAPE,
+        callers: NOTES_EXTENSION_HOOK_CALLERS,
+        bindings: NOTES_EXTENSION_HOOK_BINDINGS,
+      },
+      {
+        hook: "useParseDraftExtensions",
+        shape: PARSE_DRAFT_EXTENSION_HOOK_SHAPE,
+        callers: PARSE_DRAFT_EXTENSION_HOOK_CALLERS,
+        bindings: PARSE_DRAFT_EXTENSION_HOOK_BINDINGS,
+      },
+      {
+        hook: "useParagraphWorkspaceExtensions",
+        shape: PARAGRAPH_WORKSPACE_EXTENSION_HOOK_SHAPE,
+        callers: PARAGRAPH_WORKSPACE_EXTENSION_HOOK_CALLERS,
+        bindings: PARAGRAPH_WORKSPACE_EXTENSION_HOOK_BINDINGS,
+      },
+    ] as const;
+    for (const { hook, shape, callers, bindings } of contracts) {
+      expect(hookShape(hook, shape), `${hook} exact projection`).toEqual(shape);
+      expect(exportedVariableCount(parse(ACTIVE_PARSE_OWNER.file), hook), `${hook} export`)
+        .toBe(1);
+      expect(importedCallTopology(hook, ACTIVE_PARSE_OWNER), `${hook} callers`)
+        .toEqual(callers);
+      expect(importedCallTopology(hook, INACTIVE_PARSE_OWNER), `${hook} inactive calls`)
+        .toEqual({});
+      expect(productionHookBindingCallers(ACTIVE_PARSE_OWNER.module, hook), `${hook} bindings`)
+        .toEqual(bindings);
+    }
+
+    const notesSource = parse(NOTES_PARSER);
+    expect(knownMembers(expectFailClosedOwnerScan(notesSource), "getState")).toEqual([
+      "setGuidedParseActive",
+      "guidedParseRegion",
+      "setGuidedParseRegion",
+      "setGuidedParseActive",
+      "setGuidedParseActive",
+      "setNotesFastManualActive",
+      "setNotesFastManualGrid",
+      "setNotesFastManualActive",
+      "setNotesFastManualGrid",
+      "setGuidedParseRows",
+      "setGuidedParseCols",
+      "guidedParseRows",
+      "guidedParseCols",
+    ]);
+
+    const objectProperty = (
+      object: ts.ObjectLiteralExpression,
+      name: string,
+    ): ts.PropertyAssignment => {
+      const properties = object.properties.filter((property): property is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(property) && staticName(property.name) === name
+      );
+      expect(properties, `${name} object mapping`).toHaveLength(1);
+      return properties[0];
+    };
+    const objectMember = (object: ts.ObjectLiteralExpression, name: string): string =>
+      compact(objectProperty(object, name).initializer, notesSource);
+    const returnedObject = (root: ts.Node): ts.ObjectLiteralExpression => {
+      const objects = descendants(root, ts.isReturnStatement).flatMap((statement) => {
+        const expression = statement.expression && unwrap(statement.expression);
+        return expression && ts.isObjectLiteralExpression(expression) ? [expression] : [];
+      });
+      expect(objects, "one returned grid object").toHaveLength(1);
+      return objects[0];
+    };
+    const terminalActionCalls = (root: ts.Node, names: readonly string[]): string[] =>
+      descendants(root, ts.isCallExpression).filter((call) => {
+        const expression = unwrap(call.expression);
+        return ts.isPropertyAccessExpression(expression) && names.includes(expression.name.text);
+      }).map((call) => compact(call, notesSource));
+
+    const guidedBuilder = findVariable(notesSource, "buildGridFromGuided").initializer!;
+    expect(compact(findVariableWithin(guidedBuilder, "store").initializer!, notesSource))
+      .toBe("useParseFlowStore.getState()");
+    expect(compact(findVariableWithin(guidedBuilder, "rows").initializer!, notesSource))
+      .toBe("store.guidedParseRows");
+    expect(compact(findVariableWithin(guidedBuilder, "cols").initializer!, notesSource))
+      .toBe("store.guidedParseCols");
+    const guidedExtraction = descendants(guidedBuilder, ts.isCallExpression).filter((call) =>
+      compact(call.expression, notesSource) === "extractCellsFromGrid"
+    );
+    expect(guidedExtraction.map((call) => compact(call, notesSource))).toEqual([
+      "extractCellsFromGrid(textractData.words,rows,cols)",
+    ]);
+    const guidedReturn = returnedObject(guidedBuilder);
+    expect({
+      rowBoundaries: objectMember(guidedReturn, "rowBoundaries"),
+      colBoundaries: objectMember(guidedReturn, "colBoundaries"),
+    }).toEqual({ rowBoundaries: "rows", colBoundaries: "cols" });
+
+    const manualBuilder = findVariable(notesSource, "buildGridFromManualBBs").initializer!;
+    expect(compact(findVariableWithin(manualBuilder, "columns").initializer!, notesSource))
+      .toBe("guidedNotesCols");
+    expect(compact(findVariableWithin(manualBuilder, "rowBbs").initializer!, notesSource))
+      .toBe("guidedNotesRows");
+    expect(compact(findVariableWithin(manualBuilder, "xs").initializer!, notesSource)).toBe(
+      "[...columns.map((c)=>c[0]),columns[columns.length-1][2]]",
+    );
+    expect(compact(findVariableWithin(manualBuilder, "ys").initializer!, notesSource)).toBe(
+      "[...rowBbs.map((r)=>r[1]),rowBbs[rowBbs.length-1][3]]",
+    );
+    const manualReturn = returnedObject(manualBuilder);
+    expect({
+      colBoundaries: objectMember(manualReturn, "colBoundaries"),
+      rowBoundaries: objectMember(manualReturn, "rowBoundaries"),
+    }).toEqual({ colBoundaries: "xs", rowBoundaries: "ys" });
+
+    const draftInitializer = findVariable(notesSource, "draft").initializer!;
+    const draftRegion = returnedObject(draftInitializer);
+    const draftDataExpression = unwrap(objectProperty(draftRegion, "data").initializer);
+    expect(ts.isObjectLiteralExpression(draftDataExpression), "draft data object").toBe(true);
+    expect({
+      rowBoundaries: objectMember(
+        draftDataExpression as ts.ObjectLiteralExpression,
+        "rowBoundaries",
+      ),
+      colBoundaries: objectMember(
+        draftDataExpression as ts.ObjectLiteralExpression,
+        "colBoundaries",
+      ),
+    }).toEqual({
+      rowBoundaries: "preview.rowBoundaries",
+      colBoundaries: "preview.colBoundaries",
+    });
+
+    const persistPreview = findVariable(notesSource, "persistPreviewGrid").initializer!;
+    const persistedDataExpression = unwrap(
+      findVariableWithin(persistPreview, "data").initializer!,
+    );
+    expect(ts.isObjectLiteralExpression(persistedDataExpression), "persisted NotesData object")
+      .toBe(true);
+    expect({
+      rowBoundaries: objectMember(
+        persistedDataExpression as ts.ObjectLiteralExpression,
+        "rowBoundaries",
+      ),
+      colBoundaries: objectMember(
+        persistedDataExpression as ts.ObjectLiteralExpression,
+        "colBoundaries",
+      ),
+    }).toEqual({
+      rowBoundaries: "grid.rowBoundaries",
+      colBoundaries: "grid.colBoundaries",
+    });
+
+    const effects = descendants(notesSource, ts.isCallExpression).filter((call) =>
+      compact(call.expression, notesSource) === "useEffect"
+    );
+    const effectContaining = (needle: string): ts.CallExpression => {
+      const matches = effects.filter((effect) => effect.getText(notesSource).includes(needle));
+      expect(matches, `one effect containing ${needle}`).toHaveLength(1);
+      return matches[0];
+    };
+    const effectBody = (effect: ts.CallExpression, label: string): ts.Block => {
+      const callback = effect.arguments[0] && unwrap(effect.arguments[0]);
+      expect(callback && ts.isArrowFunction(callback), `${label} arrow callback`).toBe(true);
+      const body = (callback as ts.ArrowFunction).body;
+      expect(ts.isBlock(body), `${label} block body`).toBe(true);
+      return body as ts.Block;
+    };
+    const statementCall = (statement: ts.Statement, source = notesSource): string => {
+      expect(ts.isExpressionStatement(statement), "call expression statement").toBe(true);
+      const expression = (statement as ts.ExpressionStatement).expression;
+      expect(ts.isCallExpression(expression), "statement direct call").toBe(true);
+      return compact(expression, source);
+    };
+    const returnedCallbackBody = (statement: ts.Statement, label: string): ts.Block => {
+      expect(ts.isReturnStatement(statement), `${label} return`).toBe(true);
+      const expression = (statement as ts.ReturnStatement).expression;
+      expect(expression && ts.isArrowFunction(expression), `${label} returned arrow`).toBe(true);
+      const body = (expression as ts.ArrowFunction).body;
+      expect(ts.isBlock(body), `${label} cleanup block`).toBe(true);
+      return body as ts.Block;
+    };
+    const guidedEffect = effectContaining("store.setGuidedParseRegion(notesParseRegion)");
+    expect(descendants(guidedEffect, ts.isIfStatement)
+      .map((statement) => compact(statement.expression, notesSource))).toEqual([
+      'mode==="guided"&&notesParseRegion',
+      "!store.guidedParseRegion",
+    ]);
+    expect(terminalActionCalls(guidedEffect, [
+      "setGuidedParseActive",
+      "setGuidedParseRegion",
+    ])).toEqual([
+      "store.setGuidedParseActive(true)",
+      "store.setGuidedParseRegion(notesParseRegion)",
+      "store.setGuidedParseActive(false)",
+      "useParseFlowStore.getState().setGuidedParseActive(false)",
+    ]);
+    const guidedBody = effectBody(guidedEffect, "guided effect");
+    expect(guidedBody.statements).toHaveLength(3);
+    expect(ts.isVariableStatement(guidedBody.statements[0])).toBe(true);
+    expect(ts.isIfStatement(guidedBody.statements[1])).toBe(true);
+    const guidedBranch = guidedBody.statements[1] as ts.IfStatement;
+    expect(compact(guidedBranch.expression, notesSource))
+      .toBe('mode==="guided"&&notesParseRegion');
+    expect(ts.isBlock(guidedBranch.thenStatement)).toBe(true);
+    const guidedThen = guidedBranch.thenStatement as ts.Block;
+    expect(guidedThen.statements).toHaveLength(2);
+    expect(statementCall(guidedThen.statements[0])).toBe("store.setGuidedParseActive(true)");
+    expect(ts.isIfStatement(guidedThen.statements[1])).toBe(true);
+    const regionBranch = guidedThen.statements[1] as ts.IfStatement;
+    expect(compact(regionBranch.expression, notesSource)).toBe("!store.guidedParseRegion");
+    expect(ts.isBlock(regionBranch.thenStatement)).toBe(true);
+    expect((regionBranch.thenStatement as ts.Block).statements).toHaveLength(1);
+    expect(statementCall((regionBranch.thenStatement as ts.Block).statements[0]))
+      .toBe("store.setGuidedParseRegion(notesParseRegion)");
+    expect(regionBranch.elseStatement).toBeUndefined();
+    expect(guidedBranch.elseStatement && ts.isBlock(guidedBranch.elseStatement)).toBe(true);
+    const guidedElse = guidedBranch.elseStatement as ts.Block;
+    expect(guidedElse.statements).toHaveLength(1);
+    expect(statementCall(guidedElse.statements[0])).toBe("store.setGuidedParseActive(false)");
+    const guidedCleanup = returnedCallbackBody(guidedBody.statements[2], "guided effect");
+    expect(guidedCleanup.statements).toHaveLength(1);
+    expect(statementCall(guidedCleanup.statements[0]))
+      .toBe("useParseFlowStore.getState().setGuidedParseActive(false)");
+
+    const fastEffect = effectContaining("store.setNotesFastManualActive");
+    expect(descendants(fastEffect, ts.isIfStatement)
+      .map((statement) => compact(statement.expression, notesSource))).toEqual([
+      'mode!=="fast-manual"',
+    ]);
+    expect(terminalActionCalls(fastEffect, [
+      "setNotesFastManualActive",
+      "setNotesFastManualGrid",
+    ])).toEqual([
+      'store.setNotesFastManualActive(mode==="fast-manual"&&!!notesParseRegion)',
+      "store.setNotesFastManualGrid(null)",
+      "s.setNotesFastManualActive(false)",
+      "s.setNotesFastManualGrid(null)",
+    ]);
+    const fastBody = effectBody(fastEffect, "fast-manual effect");
+    expect(fastBody.statements).toHaveLength(4);
+    expect(ts.isVariableStatement(fastBody.statements[0])).toBe(true);
+    expect(statementCall(fastBody.statements[1])).toBe(
+      'store.setNotesFastManualActive(mode==="fast-manual"&&!!notesParseRegion)',
+    );
+    expect(ts.isIfStatement(fastBody.statements[2])).toBe(true);
+    const fastBranch = fastBody.statements[2] as ts.IfStatement;
+    expect(compact(fastBranch.expression, notesSource)).toBe('mode!=="fast-manual"');
+    expect(ts.isBlock(fastBranch.thenStatement)).toBe(true);
+    expect((fastBranch.thenStatement as ts.Block).statements).toHaveLength(1);
+    expect(statementCall((fastBranch.thenStatement as ts.Block).statements[0]))
+      .toBe("store.setNotesFastManualGrid(null)");
+    expect(fastBranch.elseStatement).toBeUndefined();
+    const fastCleanup = returnedCallbackBody(fastBody.statements[3], "fast-manual effect");
+    expect(fastCleanup.statements).toHaveLength(3);
+    expect(ts.isVariableStatement(fastCleanup.statements[0])).toBe(true);
+    expect(statementCall(fastCleanup.statements[1])).toBe("s.setNotesFastManualActive(false)");
+    expect(statementCall(fastCleanup.statements[2])).toBe("s.setNotesFastManualGrid(null)");
+
+    const fastMirrorEffect = effectContaining("notesFastManualGrid.headers");
+    const previewObjects = descendants(fastMirrorEffect, ts.isCallExpression).flatMap((call) => {
+      if (compact(call.expression, notesSource) !== "setPreview") return [];
+      const argument = call.arguments[0] && unwrap(call.arguments[0]);
+      return argument && ts.isObjectLiteralExpression(argument) ? [argument] : [];
+    });
+    expect(previewObjects, "one fast-manual preview publication").toHaveLength(1);
+    expect({
+      rowBoundaries: objectMember(previewObjects[0], "rowBoundaries"),
+      colBoundaries: objectMember(previewObjects[0], "colBoundaries"),
+    }).toEqual({
+      rowBoundaries: "notesFastManualGrid.rowBoundaries",
+      colBoundaries: "notesFastManualGrid.colBoundaries",
+    });
+
+    const propose = findVariable(notesSource, "runProposeGuided").initializer!;
+    expect(terminalActionCalls(propose, [
+      "setGuidedParseRows",
+      "setGuidedParseCols",
+    ])).toEqual([
+      "useParseFlowStore.getState().setGuidedParseRows(payload.proposedRows)",
+      "useParseFlowStore.getState().setGuidedParseCols(payload.proposedCols)",
+    ]);
+
+    const directFunctionCalls = (fn: ts.FunctionLikeDeclaration): ts.CallExpression[] =>
+      descendants(fn.body!, ts.isCallExpression).filter((call) => {
+        let current: ts.Node | undefined = call.parent;
+        while (current && !ts.isFunctionLike(current)) current = current.parent;
+        return current === fn;
+      });
+    const orderedHandlerCallees = new Set([
+      "setPreview",
+      "setError",
+      "setNotesParseRegion",
+      "setNotesParseStep",
+      "resetNotesParse",
+      "useToolStore.getState().setMode",
+    ]);
+    const stepHandlerTraces = descendants(notesSource, ts.isArrowFunction).flatMap((fn) => {
+      const trace = directFunctionCalls(fn)
+        .filter((call) => orderedHandlerCallees.has(compact(call.expression, notesSource)))
+        .map((call) => compact(call, notesSource));
+      return trace.some((call) => call.startsWith("setNotesParseStep(")) ? [trace] : [];
+    });
+    expect(stepHandlerTraces).toEqual([
+      [
+        "setPreview(null)",
+        "setError(null)",
+        "setNotesParseRegion(null)",
+        'setNotesParseStep("idle")',
+        "resetNotesParse()",
+      ],
+      [
+        'setNotesParseStep("select-region")',
+        'useToolStore.getState().setMode("pointer")',
+      ],
+      [
+        "resetNotesParse()",
+        'setNotesParseStep("select-region")',
+        'useToolStore.getState().setMode("pointer")',
+      ],
+      [
+        'setNotesParseStep("define-column")',
+        'useToolStore.getState().setMode("pointer")',
+      ],
+      [
+        'setNotesParseStep("define-row")',
+        'useToolStore.getState().setMode("pointer")',
+      ],
+    ]);
+
+    const classifierSource = parse("src/components/viewer/NotesClassifier.tsx");
+    const classifierEdit = findVariable(classifierSource, "handleEdit").initializer!;
+    expect(descendants(classifierEdit, ts.isCallExpression)
+      .filter((call) => ["setNotesParseRegion", "onEditInParser"]
+        .includes(compact(call.expression, classifierSource)))
+      .map((call) => compact(call, classifierSource))).toEqual([
+      "setNotesParseRegion([l,t,l+w,t+h])",
+      "onEditInParser()",
+    ]);
+    expect(ts.isArrowFunction(classifierEdit)).toBe(true);
+    const classifierBody = (classifierEdit as ts.ArrowFunction).body;
+    expect(ts.isBlock(classifierBody)).toBe(true);
+    expect((classifierBody as ts.Block).statements).toHaveLength(3);
+    expect(ts.isVariableStatement((classifierBody as ts.Block).statements[0])).toBe(true);
+    expect(statementCall((classifierBody as ts.Block).statements[1], classifierSource))
+      .toBe("setNotesParseRegion([l,t,l+w,t+h])");
+    expect(statementCall((classifierBody as ts.Block).statements[2], classifierSource))
+      .toBe("onEditInParser()");
+
+    const indexSource = parse("src/components/viewer/NotesIndex.tsx");
+    const rowClick = findVariable(indexSource, "handleRowClick").initializer!;
+    expect(descendants(rowClick, ts.isCallExpression)
+      .filter((call) => ["setPage", "setNotesParseRegion", "onOpenParser"]
+        .includes(compact(call.expression, indexSource)))
+      .map((call) => compact(call, indexSource))).toEqual([
+      "setPage(r.pageNum)",
+      "setNotesParseRegion([l,t,l+w,t+h])",
+      "setNotesParseRegion(null)",
+      "onOpenParser()",
+    ]);
+    const indexBranches = descendants(rowClick, ts.isIfStatement);
+    expect(indexBranches).toHaveLength(1);
+    expect(compact(indexBranches[0].expression, indexSource)).toBe("r.bbox");
+    const regionCalls = (root: ts.Node) => descendants(root, ts.isCallExpression)
+      .filter((call) => compact(call.expression, indexSource) === "setNotesParseRegion")
+      .map((call) => compact(call, indexSource));
+    expect(regionCalls(indexBranches[0].thenStatement)).toEqual([
+      "setNotesParseRegion([l,t,l+w,t+h])",
+    ]);
+    expect(indexBranches[0].elseStatement).toBeDefined();
+    expect(regionCalls(indexBranches[0].elseStatement!)).toEqual([
+      "setNotesParseRegion(null)",
+    ]);
+    expect(ts.isArrowFunction(rowClick)).toBe(true);
+    const rowClickBody = (rowClick as ts.ArrowFunction).body;
+    expect(ts.isBlock(rowClickBody)).toBe(true);
+    expect((rowClickBody as ts.Block).statements).toHaveLength(3);
+    expect(statementCall((rowClickBody as ts.Block).statements[0], indexSource))
+      .toBe("setPage(r.pageNum)");
+    expect((rowClickBody as ts.Block).statements[1]).toBe(indexBranches[0]);
+    expect(statementCall((rowClickBody as ts.Block).statements[2], indexSource))
+      .toBe("onOpenParser()");
   });
 });
 
