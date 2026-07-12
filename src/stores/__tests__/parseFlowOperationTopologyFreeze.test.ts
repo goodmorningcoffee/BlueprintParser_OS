@@ -869,6 +869,7 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
       "invalidateParseOperationKinds",
       "ParseKind",
       "ParseOperationRegistry",
+      "ParseOperationToken",
     ]);
     expect(compact(findFunction(source, "crossesParseOperationBoundary").body!, source)).toBe(
       '{return(currentStep==="idle")!==(nextStep==="idle");}',
@@ -930,8 +931,8 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
   });
 });
 
-describe("P2.4 A2a fail-closed caller and writer topology", () => {
-  it("keeps the operation facade production-dead, including every canvas-adjacent hot path", () => {
+describe("P2.4 A2b fail-closed caller and writer topology", () => {
+  it("activates the operation facade only in the five cold Table surfaces", () => {
     const production = productionFiles();
     const loads = production
       .filter((path) => path !== OPERATION_HOOK_FILE)
@@ -941,7 +942,13 @@ describe("P2.4 A2a fail-closed caller and writer topology", () => {
         OPERATION_HOOK_MODULE,
         OPERATION_HOOK_FILE,
       ).map((kind) => ({ path, kind })));
-    expect(loads).toEqual([]);
+    expect(loads).toEqual([
+      { path: "src/components/viewer/AutoParseTab.tsx", kind: "import" },
+      { path: "src/components/viewer/GuidedParseTab.tsx", kind: "import" },
+      { path: "src/components/viewer/ManualParseTab.tsx", kind: "import" },
+      { path: "src/components/viewer/TableCompareModal.tsx", kind: "import" },
+      { path: "src/components/viewer/TableParsePanel.tsx", kind: "import" },
+    ]);
 
     const hotFiles = [
       "src/components/viewer/AnnotationOverlay.tsx",

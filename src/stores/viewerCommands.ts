@@ -9,6 +9,7 @@ import {
   invalidateParseOperationKinds,
   type ParseKind,
   type ParseOperationRegistry,
+  type ParseOperationToken,
 } from "@/lib/parse-operation-state";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
@@ -88,6 +89,39 @@ export function setTableParseStep(tableParseStep: TableParseStep): void {
       tableParseStep,
     ),
   }));
+}
+
+/**
+ * Advance a Table wizard only for the async operation that still owns the Table lane.
+ *
+ * Generic `setTableParseStep` treats idle -> active as a user-created flow and therefore revokes
+ * the old operation. Auto/Guided/Manual completions instead need to enter review *inside* their
+ * existing flow. This command keeps the historic tool-first entry publication, retains the exact
+ * operation registry, and denies stale completions without publishing either store.
+ */
+export function setTableParseStepForOperation(
+  token: ParseOperationToken<"table">,
+  tableParseStep: TableParseStep,
+): boolean {
+  // Keep the runtime boundary fail-closed as well as the ordinary TypeScript call site. Casts and
+  // untyped/event payloads must not authorize Table through a same-revision token from another lane.
+  if (token.kind !== "table") return false;
+  const before = useParseFlowStore.getState();
+  const current = before.parseOperations.table;
+  if (!current.busy || current.revision !== token.revision) return false;
+
+  prepareParseEntry(before.tableParseStep, tableParseStep);
+
+  // Re-check in the functional write. Tool subscribers are synchronous; if one revokes the
+  // operation during the tool-first publication, the stale parse step still cannot land.
+  let committed = false;
+  useParseFlowStore.setState((state) => {
+    const live = state.parseOperations.table;
+    if (token.kind !== "table" || !live.busy || live.revision !== token.revision) return state;
+    committed = true;
+    return { tableParseStep };
+  });
+  return committed;
 }
 
 export function setKeynoteParseStep(keynoteParseStep: KeynoteParseStep): void {

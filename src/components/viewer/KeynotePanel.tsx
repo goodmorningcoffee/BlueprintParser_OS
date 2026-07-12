@@ -291,6 +291,9 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   // ─── Load existing keynote into Compare modal ───────────
   const loadExistingKeynote = useCallback((parsed: any) => {
     const grid = keynoteDataToGrid(parsed.data || {});
+    // The keynote row is handed into the shared Table review workspace. Revoke Table A before
+    // seeding the cross-kind grid/region so a late Table completion cannot overwrite this handoff.
+    useParseFlowStore.getState().invalidateParseOperation("table");
     setTableParseRegion(parsed.bbox ? [parsed.bbox[0], parsed.bbox[1], parsed.bbox[2], parsed.bbox[3]] : null);
     setTableParsedGrid({
       headers: grid.headers,

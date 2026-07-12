@@ -2,15 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParseFlow } from "@/hooks/useParseFlow";
+import { commitParseOperation, useParseOperation } from "@/hooks/useParseOperation";
 import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
+import { setTableParseStepForOperation } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useTextractForPage } from "@/queries/useTextract";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
+import type { DetectCsiAndPersist } from "./table-operation-types";
 
 interface ManualParseTabProps {
   yoloInTableRegion: { model: string; className: string; count: number }[];
-  detectCsiAndPersist: (grid: any, opts?: { resetAfter?: boolean }) => Promise<void>;
+  detectCsiAndPersist: DetectCsiAndPersist;
   tagYoloClass: { model: string; className: string } | null;
   setTagYoloClass: (cls: { model: string; className: string } | null) => void;
   handleMapTags: () => void;
@@ -47,6 +50,7 @@ export default function ManualParseTab({
     setRegion: setTableParseRegion,
     reset: resetTableParse,
   } = useParseFlow("table");
+  const tableOperation = useParseOperation("table");
   const {
     tableParsedGrid, setTableParsedGrid,
     tableParseColumnBBs, addTableParseColumnBB,
@@ -138,72 +142,88 @@ export default function ManualParseTab({
   // ─── Parse from column × row intersections ────────────────
   const parseFromIntersections = useCallback(async () => {
     if (!pageTextract || tableParseColumnBBs.length === 0 || tableParseRowBBs.length === 0) return;
-    setSaveError(null);
+    const started = tableOperation.begin();
+    if (started.status === "busy") return;
+    const token = started.token;
 
-    const words = pageTextract.words || [];
-    const headers = tableParseColumnBBs.map((_: any, i: number) =>
-      tableParseColumnNames[i]?.trim() || `Column ${String.fromCharCode(65 + i)}`
-    );
+    try {
+      const targetWords = pageTextract.words || [];
+      const targetColumnBBs = tableParseColumnBBs.map((bbox) => [...bbox] as typeof bbox);
+      const targetRowBBs = tableParseRowBBs.map((bbox) => [...bbox] as typeof bbox);
+      const targetColumnNames = [...tableParseColumnNames];
+      setSaveError(null);
 
-    const rows: Record<string, string>[] = [];
-    for (const rowBB of tableParseRowBBs) {
-      const row: Record<string, string> = {};
-      let hasContent = false;
-      for (let ci = 0; ci < tableParseColumnBBs.length; ci++) {
-        const colBB = tableParseColumnBBs[ci];
+      const headers = targetColumnBBs.map((_: any, i: number) =>
+        targetColumnNames[i]?.trim() || `Column ${String.fromCharCode(65 + i)}`
+      );
+
+      const rows: Record<string, string>[] = [];
+      for (const rowBB of targetRowBBs) {
+        const row: Record<string, string> = {};
+        let hasContent = false;
+        for (let ci = 0; ci < targetColumnBBs.length; ci++) {
+          const colBB = targetColumnBBs[ci];
         // Cell = intersection of column and row bounding boxes
-        const cellMinX = Math.max(colBB[0], rowBB[0]);
-        const cellMaxX = Math.min(colBB[2], rowBB[2]);
-        const cellMinY = Math.max(colBB[1], rowBB[1]);
-        const cellMaxY = Math.min(colBB[3], rowBB[3]);
+          const cellMinX = Math.max(colBB[0], rowBB[0]);
+          const cellMaxX = Math.min(colBB[2], rowBB[2]);
+          const cellMinY = Math.max(colBB[1], rowBB[1]);
+          const cellMaxY = Math.min(colBB[3], rowBB[3]);
 
         // Find words whose center falls inside the cell
-        const cellWords = words.filter((w: any) => {
-          const cx = w.bbox[0] + w.bbox[2] / 2;
-          const cy = w.bbox[1] + w.bbox[3] / 2;
-          return cx >= cellMinX && cx <= cellMaxX && cy >= cellMinY && cy <= cellMaxY;
-        });
+          const cellWords = targetWords.filter((w: any) => {
+            const cx = w.bbox[0] + w.bbox[2] / 2;
+            const cy = w.bbox[1] + w.bbox[3] / 2;
+            return cx >= cellMinX && cx <= cellMaxX && cy >= cellMinY && cy <= cellMaxY;
+          });
 
-        const text = cellWords
-          .sort((a: any, b: any) => a.bbox[0] - b.bbox[0])
-          .map((w: any) => w.text)
-          .join(" ");
+          const text = cellWords
+            .sort((a: any, b: any) => a.bbox[0] - b.bbox[0])
+            .map((w: any) => w.text)
+            .join(" ");
 
-        row[headers[ci]] = text;
-        if (text) hasContent = true;
+          row[headers[ci]] = text;
+          if (text) hasContent = true;
+        }
+        if (hasContent) rows.push(row);
       }
-      if (hasContent) rows.push(row);
-    }
 
     // Auto-detect tag column
-    const RE_TAG = /^[A-Z]{0,3}-?\d{1,4}[A-Z]?$/i;
-    let tagColumn: string | undefined;
-    for (const h of headers) {
-      let tagCount = 0, nonEmpty = 0;
-      for (const row of rows) {
-        const v = (row[h] || "").trim();
-        if (v) { nonEmpty++; if (RE_TAG.test(v)) tagCount++; }
+      const RE_TAG = /^[A-Z]{0,3}-?\d{1,4}[A-Z]?$/i;
+      let tagColumn: string | undefined;
+      for (const h of headers) {
+        let tagCount = 0, nonEmpty = 0;
+        for (const row of rows) {
+          const v = (row[h] || "").trim();
+          if (v) { nonEmpty++; if (RE_TAG.test(v)) tagCount++; }
+        }
+        if (nonEmpty > 0 && tagCount / nonEmpty >= 0.5) { tagColumn = h; break; }
       }
-      if (nonEmpty > 0 && tagCount / nonEmpty >= 0.5) { tagColumn = h; break; }
-    }
 
-    const grid = { headers, rows, tagColumn };
-    setTableParsedGrid(grid);
-    // Manual parse doesn't use the merger — clear source-picker meta so the
-    // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
-    useParseFlowStore.getState().setTableParseMeta(null);
-    setTableParseStep("review");
-    useToolStore.getState().setMode("move");
-    // Auto-persist immediately (no separate Save click). resetAfter:false keeps
-    // the parsed result + Map Tags review mounted. Await + surface failures so
-    // a parsed table is never silently lost (was previously fire-and-forget).
-    try {
-      await detectCsiAndPersist(grid, { resetAfter: false });
+      const grid = { headers, rows, tagColumn };
+      let reviewCommitted = false;
+      const completionPublished = commitParseOperation(token, () => {
+        setTableParsedGrid(grid);
+        // Manual parse doesn't use the merger — clear source-picker meta so the
+        // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
+        useParseFlowStore.getState().setTableParseMeta(null);
+        reviewCommitted = setTableParseStepForOperation(token, "review");
+        if (!reviewCommitted) return;
+        useToolStore.getState().setMode("move");
+      });
+      if (!completionPublished || !reviewCommitted) return;
+      // Auto-persist immediately (no separate Save click). resetAfter:false keeps
+      // the parsed result + Map Tags review mounted. Await + surface failures so
+      // a parsed table is never silently lost (was previously fire-and-forget).
+      await detectCsiAndPersist(grid, { resetAfter: false }, token);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Save failed");
+      commitParseOperation(token, () => {
+        setSaveError(err instanceof Error ? err.message : "Save failed");
+      });
+    } finally {
+      tableOperation.finish(token);
     }
   }, [pageTextract, tableParseColumnBBs, tableParseRowBBs, tableParseColumnNames,
-    setTableParsedGrid, setTableParseStep, detectCsiAndPersist]);
+    setTableParsedGrid, detectCsiAndPersist, tableOperation.begin, tableOperation.finish]);
 
   return (
     <div className="space-y-2">
@@ -230,6 +250,7 @@ export default function ManualParseTab({
           <span className="text-[10px] text-green-400">Region defined</span>
           <button
             onClick={() => {
+              tableOperation.invalidate();
               setTableParseRegion(null);
               setTableParseStep("idle");
               useToolStore.getState().setMode("move");
@@ -357,6 +378,7 @@ export default function ManualParseTab({
           <div className="text-[10px] text-[var(--muted)] uppercase tracking-wide px-1 mt-2">Step 4: Parse</div>
           <button
             onClick={parseFromIntersections}
+            disabled={tableOperation.busy}
             className="w-full text-xs px-3 py-2 rounded bg-pink-500/20 text-pink-300 border border-pink-500/30 hover:bg-pink-500/30 font-medium"
           >
             Parse Table ({tableParseColumnBBs.length} cols &times; {tableParseRowBBs.length} rows = {tableParseColumnBBs.length * tableParseRowBBs.length} cells)

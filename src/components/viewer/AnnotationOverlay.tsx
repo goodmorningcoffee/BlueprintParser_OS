@@ -1799,7 +1799,11 @@ export default memo(function AnnotationOverlay({
               if (nrmX >= rMinX && nrmX <= rMaxX && nrmY >= rMinY && nrmY <= rMaxY) {
                 e.stopPropagation();
                 if (!useUiStore.getState().showTableParsePanel) toggleTableParsePanel();
-                useParseFlowStore.getState().setTableParseTab("all");
+                const parse = useParseFlowStore.getState();
+                // Parsed-region navigation is a stored-tab/new-flow handoff. Keep the canvas hot
+                // path subscription-free while revoking any pending Table owner before the write.
+                parse.invalidateParseOperation("table");
+                parse.setTableParseTab("all");
                 useUiStore.getState().setFocusedParsedRegionId(region.id);
                 return;
               }

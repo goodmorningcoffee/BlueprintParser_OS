@@ -162,7 +162,7 @@ describe("I8 live action readers", () => {
         confidence: 1,
       }),
     } as unknown as Response);
-    const never = new Promise<void>(() => {});
+    const never = new Promise<boolean>(() => {});
     const detectCsiAndPersist = vi.fn(() => never);
 
     render(

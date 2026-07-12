@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useQueryClient } from "@tanstack/react-query";
+import { commitParseOperation, useParseOperation } from "@/hooks/useParseOperation";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -36,6 +37,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const tableParsedGrid = useParseFlowStore((s) => s.tableParsedGrid);
   const setTableParsedGrid = useParseFlowStore((s) => s.setTableParsedGrid);
   const tableParseMeta = useParseFlowStore((s) => s.tableParseMeta);
+  const tableOperation = useParseOperation("table");
   const textractData = useTextractForPage(pageNumber);
 
   // Source picker — "merged" (default) or a method name from tableParseMeta.methodResults.
@@ -55,7 +57,23 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const [activeCell, setActiveCell] = useState<{ row: number; col: number } | null>(null);
   // Surfaces a failed save so edits aren't silently dropped on close.
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [savingDone, setSavingDone] = useState(false);
+  const [savingRevision, setSavingRevision] = useState<number | null>(null);
+  const savingDone = tableOperation.busy && savingRevision === tableOperation.revision;
+
+  const closeModal = useCallback(() => {
+    // Manual close owns no completion token. Revoke the mounted modal instance before toggling so
+    // an abort-ignoring A can never close a later B instance through the global toggle.
+    tableOperation.invalidate();
+    toggleModal();
+  }, [tableOperation.invalidate, toggleModal]);
+
+  const modalPageRef = useRef(pageNumber);
+  useEffect(() => {
+    if (modalPageRef.current === pageNumber) return;
+    modalPageRef.current = pageNumber;
+    tableOperation.invalidate();
+  }, [pageNumber, tableOperation.invalidate]);
+  useEffect(() => () => tableOperation.invalidate(), [tableOperation.invalidate]);
 
   // Initialize modal size on open
   useEffect(() => {
@@ -332,6 +350,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   // Cell edit handlers — delegated to EditableGrid which owns its own edit state
   const handleCellChange = (rowIndex: number, column: string, value: string) => {
     if (!tableParsedGrid) return;
+    tableOperation.invalidate();
     const newRows = [...tableParsedGrid.rows];
     newRows[rowIndex] = { ...newRows[rowIndex], [column]: value };
     setTableParsedGrid({ ...tableParsedGrid, rows: newRows });
@@ -339,6 +358,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
 
   const handleHeaderRename = (colIndex: number, newName: string) => {
     if (!tableParsedGrid) return;
+    tableOperation.invalidate();
     const oldH = tableParsedGrid.headers[colIndex];
     const newHeaders = [...tableParsedGrid.headers];
     newHeaders[colIndex] = newName;
@@ -358,17 +378,18 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   // Escape key closes modal when no cell is being edited
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !activeCell) toggleModal();
+      if (e.key === "Escape" && !activeCell) closeModal();
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [toggleModal, activeCell]);
+  }, [closeModal, activeCell]);
 
   // Swap tableParsedGrid between the merged snapshot and any per-method raw grid.
   // Does NOT touch tableParseMeta — the dropdown stays populated so the user can
   // keep switching. Cell edits after a swap apply to the chosen source.
   const handleSourceChange = useCallback((source: string) => {
     if (!tableParsedGrid || !tableParseMeta) return;
+    tableOperation.invalidate();
     setSelectedSource(source);
     if (source === "merged") {
       const snap = tableParseMeta.mergedSnapshot;
@@ -392,7 +413,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       colBoundaries: method.colBoundaries,
       rowBoundaries: method.rowBoundaries,
     });
-  }, [tableParsedGrid, tableParseMeta, setTableParsedGrid]);
+  }, [tableOperation.invalidate, tableParsedGrid, tableParseMeta, setTableParsedGrid]);
 
   // Sync the edited grid back to pageIntelligence, then persist through the
   // transactional promote upsert (same regionId → REPLACE, never the old
@@ -401,7 +422,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   // old fire-and-forget so edits aren't silently lost on close.
   const handleDone = useCallback(async () => {
     const grid = useParseFlowStore.getState().tableParsedGrid;
-    if (!grid) { toggleModal(); return; }
+    if (!grid) { closeModal(); return; }
     const store = useParseFlowStore.getState();
     const { publicId, isDemo } = useSessionStore.getState();
     const intel = readPageIntelligence(queryClient, publicId, pageNumber) || {};
@@ -437,15 +458,14 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       return r;
     });
     const updatedIntel = { ...intel, parsedRegions: regions };
-    // Optimistic local write so the grid edits show immediately.
-    setPageIntelligenceForPage(queryClient, publicId, pageNumber, updatedIntel);
 
     // Sync back to parsedKeynoteData if this was a keynote edit.
     const knData = store.parsedKeynoteData;
+    let updatedKeynoteData: typeof knData = null;
     if (knData && grid.tableName) {
       const tagCol = grid.tagColumn || grid.headers[0];
       const descCols = grid.headers.filter((h: string) => h !== tagCol);
-      const updated = knData.map((kn: any) => {
+      updatedKeynoteData = knData.map((kn: any) => {
         if (kn.pageNumber !== pageNumber) return kn;
         if (kn.tableName !== grid.tableName) return kn;
         return {
@@ -463,18 +483,32 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
           }),
         };
       });
-      store.setParsedKeynoteData(updated);
     }
 
-    if (!canPersist(publicId, isDemo) || matchedId === null || matchedBbox === null) {
-      // Demo / no publicId / no matching region — local-only write above.
-      toggleModal();
-      return;
-    }
+    const started = tableOperation.begin();
+    if (started.status === "busy") return;
+    const token = started.token;
 
-    setSaveError(null);
-    setSavingDone(true);
     try {
+      // Query adoption is captured-key durable work, not a synchronous UI completion tail. Check
+      // authority before publishing it, then keep it outside commitParseOperation so Query
+      // subscribers cannot smuggle yielding/persistence work into the commit seam.
+      if (!tableOperation.isCurrent(token)) return;
+      setPageIntelligenceForPage(queryClient, publicId, pageNumber, updatedIntel);
+      commitParseOperation(token, () => {
+        if (updatedKeynoteData) store.setParsedKeynoteData(updatedKeynoteData);
+      });
+
+      if (!canPersist(publicId, isDemo) || matchedId === null || matchedBbox === null) {
+        // Demo / no publicId / no matching region — local-only write above.
+        commitParseOperation(token, toggleModal);
+        return;
+      }
+
+      commitParseOperation(token, () => {
+        setSaveError(null);
+        setSavingRevision(token.revision);
+      });
       const edited = (updatedIntel.parsedRegions as any[]).find((r) => r.id === matchedId);
       await saveParsedRegion(
         queryClient,
@@ -488,13 +522,23 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
           csiTags: matchedCsiTags,
         },
       );
-      toggleModal();
+      commitParseOperation(token, toggleModal);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Could not save edits");
+      commitParseOperation(token, () => {
+        setSaveError(err instanceof Error ? err.message : "Could not save edits");
+      });
     } finally {
-      setSavingDone(false);
+      tableOperation.finish(token);
     }
-  }, [pageNumber, toggleModal, queryClient]);
+  }, [
+    closeModal,
+    pageNumber,
+    queryClient,
+    tableOperation.begin,
+    tableOperation.finish,
+    tableOperation.isCurrent,
+    toggleModal,
+  ]);
 
   if (!tableParsedGrid || !tableParseRegion) return null;
 
@@ -502,7 +546,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const rows = tableParsedGrid.rows;
 
   return (
-    <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center" onClick={() => { if (!activeCell) toggleModal(); }}>
+    <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center" onClick={() => { if (!activeCell) closeModal(); }}>
       <div
         className="relative flex flex-col bg-[var(--bg)] border border-[var(--border)] rounded-xl overflow-hidden shadow-2xl"
         style={{ width: modalSize.w || "auto", height: modalSize.h || "auto" }}
@@ -566,7 +610,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-[var(--muted)]">{headers.length} cols, {rows.length} rows</span>
-            <button onClick={toggleModal} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none px-1">&times;</button>
+            <button onClick={closeModal} className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none px-1">&times;</button>
           </div>
         </div>
 
@@ -681,7 +725,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
           </div>
           <button
             onClick={handleDone}
-            disabled={savingDone}
+            disabled={tableOperation.busy}
             className="px-4 py-1.5 text-xs rounded bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50"
           >
             {savingDone ? "Saving…" : "Done"}

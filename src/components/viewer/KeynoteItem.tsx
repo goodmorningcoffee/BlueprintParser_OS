@@ -257,6 +257,9 @@ export default function KeynoteItem({
                   onClick={() => {
                     const store = useParseFlowStore.getState();
                     const grid = keynoteDataToGrid(region.data || {});
+                    // Cross-kind retained-row handoff starts a new Table modal instance. Revoke
+                    // Table A before the first shared workspace seed; keep this row hook-free.
+                    store.invalidateParseOperation("table");
                     store.setTableParsedGrid({
                       headers: grid.headers,
                       rows: grid.rows,

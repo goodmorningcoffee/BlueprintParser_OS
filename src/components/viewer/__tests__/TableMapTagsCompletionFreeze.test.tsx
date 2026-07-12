@@ -32,6 +32,7 @@ import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 import type { YoloTag } from "@/types";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 
 // Mount the real TableParsePanel orchestration but replace its large Auto tab with a narrow surface
 // that exposes the callback and all three local completion publications under test.
@@ -41,14 +42,28 @@ vi.mock("@/components/viewer/AutoParseTab", () => ({
     tagMappingDone,
     tagMappingCount,
     lastDropCounts,
+    setTagYoloClass,
+    setMapTagsStrictness,
+    setDrawingNumberPrefixes,
+    onTagColumnChange,
   }: {
     handleMapTags: () => void;
     tagMappingDone: boolean;
     tagMappingCount: number;
     lastDropCounts: Record<string, number> | null;
+    setTagYoloClass: (value: { model: string; className: string } | null) => void;
+    setMapTagsStrictness: (value: "strict" | "balanced" | "lenient") => void;
+    setDrawingNumberPrefixes: (value: string[]) => void;
+    onTagColumnChange: (value: string) => void;
   }) => (
     <div>
       <button onClick={handleMapTags}>run table map tags</button>
+      <button onClick={() => setTagYoloClass({ model: "next-model", className: "door" })}>
+        change table map class
+      </button>
+      <button onClick={() => setMapTagsStrictness("strict")}>change table map strictness</button>
+      <button onClick={() => setDrawingNumberPrefixes(["A-"])}>change table map scope</button>
+      <button onClick={() => onTagColumnChange("Description")}>change table map tag column</button>
       <span data-testid="mapping-done">{String(tagMappingDone)}</span>
       <span data-testid="mapping-count">{String(tagMappingCount)}</span>
       <span data-testid="mapping-drops">
@@ -244,16 +259,17 @@ describe("TableParsePanel Map Tags completion identity", () => {
     expectLocalCompletion(false, 0, null);
   });
 
-  it("keeps only the newest run when two abort-ignoring requests resolve newest-first", async () => {
+  it("rejects a same-turn duplicate map begin without replacing the admitted request", async () => {
     renderPanel();
     const runButton = screen.getByRole("button", { name: "run table map tags" });
 
-    fireEvent.click(runButton);
-    fireEvent.click(runButton);
-    expect(pendingRequests).toHaveLength(2);
-    expect((pendingRequests[0].init.signal as AbortSignal).aborted).toBe(true);
-    expect((pendingRequests[1].init.signal as AbortSignal).aborted).toBe(false);
-    expect(JSON.parse(String(pendingRequests[1].init.body))).toEqual({
+    act(() => {
+      (runButton as HTMLButtonElement).click();
+      (runButton as HTMLButtonElement).click();
+    });
+    expect(pendingRequests).toHaveLength(1);
+    expect((pendingRequests[0].init.signal as AbortSignal).aborted).toBe(false);
+    expect(JSON.parse(String(pendingRequests[0].init.body))).toEqual({
       tags: ["D1"],
       itemType: "text-only",
       strictnessMode: "balanced",
@@ -261,27 +277,85 @@ describe("TableParsePanel Map Tags completion identity", () => {
     });
 
     await act(async () => {
-      pendingRequests[1].response.resolve(mapResponse([302, 303], { newest: 2 }));
+      pendingRequests[0].response.resolve(mapResponse([302, 303], { admitted: 2 }));
       await flushAsyncCompletion();
     });
-    await waitFor(() => expectLocalCompletion(true, 1, { newest: 2 }));
-    const newestRows = readYoloTags(queryClient, PROJECT_A);
-    expect(newestRows[0].instances.map((instance) => instance.annotationId)).toEqual([302, 303]);
-    expect(newestRows[0]).toMatchObject({
+    await waitFor(() => expectLocalCompletion(true, 1, { admitted: 2 }));
+    const admittedRows = readYoloTags(queryClient, PROJECT_A);
+    expect(admittedRows[0].instances.map((instance) => instance.annotationId)).toEqual([302, 303]);
+    expect(admittedRows[0]).toMatchObject({
       tagText: "D1",
       source: "schedule",
       scope: "project",
       description: "Door one",
       mapScope: { strictness: "balanced" },
     });
+  });
+
+  it("allows B after a map-input invalidation and suppresses late A in reverse order", async () => {
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "run table map tags" }));
+    expect(pendingRequests).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "change table map strictness" }));
+    expect((pendingRequests[0].init.signal as AbortSignal).aborted).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "run table map tags" }));
+    expect(pendingRequests).toHaveLength(2);
+    expect((pendingRequests[1].init.signal as AbortSignal).aborted).toBe(false);
+    expect(JSON.parse(String(pendingRequests[1].init.body))).toMatchObject({
+      strictnessMode: "strict",
+    });
 
     await act(async () => {
-      pendingRequests[0].response.resolve(mapResponse([301], { superseded: 9 }));
+      pendingRequests[1].response.resolve(mapResponse([402, 403], { current_b: 2 }));
+      await flushAsyncCompletion();
+    });
+    await waitFor(() => expectLocalCompletion(true, 1, { current_b: 2 }));
+    const bRows = readYoloTags(queryClient, PROJECT_A);
+
+    await act(async () => {
+      pendingRequests[0].response.resolve(mapResponse([401], { stale_a: 9 }));
       await flushAsyncCompletion();
     });
 
-    expect(readYoloTags(queryClient, PROJECT_A)).toBe(newestRows);
-    expectLocalCompletion(true, 1, { newest: 2 });
+    expect(readYoloTags(queryClient, PROJECT_A)).toBe(bRows);
+    expectLocalCompletion(true, 1, { current_b: 2 });
+  });
+
+  it.each([
+    ["class", "change table map class"],
+    ["strictness", "change table map strictness"],
+    ["scope", "change table map scope"],
+    ["tag-column draft", "change table map tag column"],
+  ])("invalidates pending local completion when the %s input changes", async (_label, buttonName) => {
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "run table map tags" }));
+    expect(pendingRequests).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: buttonName }));
+    expect((pendingRequests[0].init.signal as AbortSignal).aborted).toBe(true);
+    await act(async () => {
+      pendingRequests[0].response.resolve(mapResponse([501], { stale_input: 1 }));
+      await flushAsyncCompletion();
+    });
+
+    expectLocalCompletion(false, 0, null);
+  });
+
+  it("allows captured Query adoption after reset but suppresses reset-stale local completion", async () => {
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "run table map tags" }));
+    expect(pendingRequests).toHaveLength(1);
+
+    act(() => useParseFlowStore.getState().resetTableParse());
+    expect((pendingRequests[0].init.signal as AbortSignal).aborted).toBe(false);
+    await act(async () => {
+      pendingRequests[0].response.resolve(mapResponse([601], { after_reset: 1 }));
+      await flushAsyncCompletion();
+    });
+
+    expect(readYoloTags(queryClient, PROJECT_A)[0].instances[0].annotationId).toBe(601);
+    expectLocalCompletion(false, 0, null);
   });
 
   it("invalidates an unmounted run even when its transport resolves after abort", async () => {
@@ -291,6 +365,7 @@ describe("TableParsePanel Map Tags completion identity", () => {
 
     view.unmount();
     expect((pendingRequests[0].init.signal as AbortSignal).aborted).toBe(true);
+    expect(useParseFlowStore.getState().parseOperations.table.busy).toBe(false);
     await act(async () => {
       pendingRequests[0].response.resolve(mapResponse([401], { after_unmount: 1 }));
       await flushAsyncCompletion();

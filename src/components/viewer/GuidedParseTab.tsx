@@ -4,19 +4,22 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { readTextractForPage } from "@/queries/textractCache";
 import { useParseFlow } from "@/hooks/useParseFlow";
+import { commitParseOperation, useParseOperation } from "@/hooks/useParseOperation";
 import {
   useGuidedParseExtensions,
   useParseFlowStore,
   useTableParseExtensions,
 } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
+import { setTableParseStepForOperation } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useProject } from "@/stores/sessionStore";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
+import type { DetectCsiAndPersist } from "./table-operation-types";
 
 interface GuidedParseTabProps {
-  detectCsiAndPersist: (grid: any, opts?: { resetAfter?: boolean }) => Promise<void>;
+  detectCsiAndPersist: DetectCsiAndPersist;
   yoloInTableRegion: { model: string; className: string; count: number }[];
   tagYoloClass: { model: string; className: string } | null;
   setTagYoloClass: (cls: { model: string; className: string } | null) => void;
@@ -52,6 +55,7 @@ export default function GuidedParseTab({
     setStep: setTableParseStep,
     setRegion: setTableParseRegion,
   } = useParseFlow("table");
+  const tableOperation = useParseOperation("table");
   const {
     tableParsedGrid, setTableParsedGrid,
   } = useTableParseExtensions();
@@ -76,7 +80,8 @@ export default function GuidedParseTab({
   const [showTune, setShowTune] = useState(false);
 
   // Proposal state
-  const [proposing, setProposing] = useState(false);
+  const [proposalRevision, setProposalRevision] = useState<number | null>(null);
+  const proposing = tableOperation.busy && proposalRevision === tableOperation.revision;
   const [proposalInfo, setProposalInfo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [parsed, setParsed] = useState(false);
@@ -87,39 +92,58 @@ export default function GuidedParseTab({
   const proposeGrid = useCallback(async (region?: [number, number, number, number]) => {
     const bbox = region || tableParseRegion;
     if (!bbox || !projectId) return;
-    setGuidedParseRegion(bbox);
-    setProposing(true);
+    // Tuning is latest-intent work: each debounced proposal supersedes the prior proposal token.
+    const started = tableOperation.begin("supersede");
+    if (started.status === "busy") return;
+    const token = started.token;
+    const target = {
+      projectId,
+      pageNumber,
+      regionBbox: [...bbox] as [number, number, number, number],
+      expectedCols,
+      rowTolerance,
+      colGap,
+      colConfidence,
+    };
+
+    setProposalRevision(token.revision);
+    setGuidedParseRegion(target.regionBbox);
     setError(null);
     try {
       const resp = await fetch("/api/table-parse/propose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          projectId,
-          pageNumber,
-          regionBbox: bbox,
-          layoutHint: expectedCols ? { columns: expectedCols } : undefined,
+          projectId: target.projectId,
+          pageNumber: target.pageNumber,
+          regionBbox: target.regionBbox,
+          layoutHint: target.expectedCols ? { columns: target.expectedCols } : undefined,
           gridOptions: {
-            rowTolerance,
-            minColGap: colGap,
-            minHitsRatio: colConfidence,
+            rowTolerance: target.rowTolerance,
+            minColGap: target.colGap,
+            minHitsRatio: target.colConfidence,
           },
         }),
       });
       if (!resp.ok) throw new Error("Proposal failed");
       const data = await resp.json();
-      setGuidedParseRows(data.proposedRows || []);
-      setGuidedParseCols(data.proposedCols || []);
-      setGuidedParseActive(true);
-      setProposalInfo(`${data.rowCount} rows × ${data.colCount} cols (conf: ${(data.confidence * 100).toFixed(0)}%)`);
+      commitParseOperation(token, () => {
+        setGuidedParseRows(data.proposedRows || []);
+        setGuidedParseCols(data.proposedCols || []);
+        setGuidedParseActive(true);
+        setProposalInfo(`${data.rowCount} rows × ${data.colCount} cols (conf: ${(data.confidence * 100).toFixed(0)}%)`);
+      });
     } catch (err: any) {
-      setError(err.message || "Failed to propose grid");
-      setProposalInfo(null);
+      commitParseOperation(token, () => {
+        setError(err.message || "Failed to propose grid");
+        setProposalInfo(null);
+      });
     } finally {
-      setProposing(false);
+      tableOperation.finish(token);
     }
   }, [projectId, pageNumber, tableParseRegion, rowTolerance, colGap, colConfidence, expectedCols,
-    setGuidedParseRegion, setGuidedParseRows, setGuidedParseCols, setGuidedParseActive]);
+    setGuidedParseRegion, setGuidedParseRows, setGuidedParseCols, setGuidedParseActive,
+    tableOperation.begin, tableOperation.finish]);
 
   // ─── Debounced re-propose on slider change ─────────────────
   useEffect(() => {
@@ -149,31 +173,44 @@ export default function GuidedParseTab({
       return;
     }
 
-    // Set parsed grid for review/map tags
-    setTableParsedGrid({ headers: result.headers, rows: result.rows });
-    // Guided parse doesn't use the merger — clear source-picker meta so the
-    // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
-    useParseFlowStore.getState().setTableParseMeta(null);
-    setTableParseStep("review");
+    const started = tableOperation.begin();
+    if (started.status === "busy") return;
+    const token = started.token;
 
-    // Save via shared detectCsiAndPersist — surface PATCH failures to the
-    // user via the local error state so we don't silently lose the parse.
     try {
+      // Set parsed grid for review/map tags.
+      let reviewCommitted = false;
+      const completionPublished = commitParseOperation(token, () => {
+        setTableParsedGrid({ headers: result.headers, rows: result.rows });
+        // Guided parse doesn't use the merger — clear source-picker meta so the
+        // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
+        useParseFlowStore.getState().setTableParseMeta(null);
+        reviewCommitted = setTableParseStepForOperation(token, "review");
+      });
+      if (!completionPublished || !reviewCommitted) return;
+
+      // Save via shared detectCsiAndPersist — surface PATCH failures to the
+      // user via the local error state so we don't silently lose the parse.
       await detectCsiAndPersist({
         headers: result.headers,
         rows: result.rows,
         tableName: `Table p.${pageNumber}`,
-      });
+      }, {
+        onAuthorizedSuccess: () => {
+          resetGuidedParse();
+          setParsed(true);
+          useToolStore.getState().setMode("move");
+        },
+      }, token);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
-      return;
+      commitParseOperation(token, () => {
+        setError(err instanceof Error ? err.message : "Save failed");
+      });
+    } finally {
+      tableOperation.finish(token);
     }
-
-    resetGuidedParse();
-    setParsed(true);
-    useToolStore.getState().setMode("move");
   }, [queryClient, publicId, pageNumber, guidedParseRows, guidedParseCols, resetGuidedParse, detectCsiAndPersist,
-    setTableParsedGrid, setTableParseStep]);
+    setTableParsedGrid, tableOperation.begin, tableOperation.finish]);
 
   // ─── Repeat row down ───────────────────────────────────────
   const repeatRowDown = useCallback(() => {
@@ -186,8 +223,9 @@ export default function GuidedParseTab({
       y += lastRowH;
       newRows.push(Math.min(y, bottom));
     }
+    tableOperation.invalidate();
     setGuidedParseRows(newRows);
-  }, [guidedParseRows, tableParseRegion, setGuidedParseRows]);
+  }, [guidedParseRows, tableParseRegion, setGuidedParseRows, tableOperation.invalidate]);
 
   // ─── Repeat column right ──────────────────────────────────
   const repeatColRight = useCallback(() => {
@@ -200,18 +238,20 @@ export default function GuidedParseTab({
       x += lastColW;
       newCols.push(Math.min(x, right));
     }
+    tableOperation.invalidate();
     setGuidedParseCols(newCols);
-  }, [guidedParseCols, tableParseRegion, setGuidedParseCols]);
+  }, [guidedParseCols, tableParseRegion, setGuidedParseCols, tableOperation.invalidate]);
 
   // ─── Cancel ────────────────────────────────────────────────
   const handleCancel = useCallback(() => {
+    tableOperation.invalidate();
     resetGuidedParse();
     setTableParseRegion(null);
     setProposalInfo(null);
     setError(null);
     setParsed(false);
     useToolStore.getState().setMode("move");
-  }, [resetGuidedParse, setTableParseRegion]);
+  }, [resetGuidedParse, setTableParseRegion, tableOperation.invalidate]);
 
   // ─── Set drawing mode on mount ─────────────────────────────
   useEffect(() => {
@@ -220,6 +260,7 @@ export default function GuidedParseTab({
       useToolStore.getState().setMode("pointer");
     }
     return () => {
+      tableOperation.invalidate();
       resetGuidedParse();
       setTableParseStep("idle");
     };
@@ -270,7 +311,10 @@ export default function GuidedParseTab({
                   <span className="text-[9px] text-[var(--fg)] tabular-nums">{rowTolerance.toFixed(3)}</span>
                 </div>
                 <input type="range" min={0.002} max={0.02} step={0.001} value={rowTolerance}
-                  onChange={(e) => setRowTolerance(parseFloat(e.target.value))}
+                  onChange={(e) => {
+                    tableOperation.invalidate();
+                    setRowTolerance(parseFloat(e.target.value));
+                  }}
                   className="w-full h-1 accent-pink-400" />
                 <div className="flex justify-between text-[8px] text-[var(--muted)]">
                   <span>Tight</span><span>Loose</span>
@@ -284,7 +328,10 @@ export default function GuidedParseTab({
                   <span className="text-[9px] text-[var(--fg)] tabular-nums">{colGap.toFixed(3)}</span>
                 </div>
                 <input type="range" min={0.005} max={0.05} step={0.005} value={colGap}
-                  onChange={(e) => setColGap(parseFloat(e.target.value))}
+                  onChange={(e) => {
+                    tableOperation.invalidate();
+                    setColGap(parseFloat(e.target.value));
+                  }}
                   className="w-full h-1 accent-pink-400" />
                 <div className="flex justify-between text-[8px] text-[var(--muted)]">
                   <span>More cols</span><span>Fewer cols</span>
@@ -298,7 +345,10 @@ export default function GuidedParseTab({
                   <span className="text-[9px] text-[var(--fg)] tabular-nums">{(colConfidence * 100).toFixed(0)}%</span>
                 </div>
                 <input type="range" min={0.1} max={0.8} step={0.05} value={colConfidence}
-                  onChange={(e) => setColConfidence(parseFloat(e.target.value))}
+                  onChange={(e) => {
+                    tableOperation.invalidate();
+                    setColConfidence(parseFloat(e.target.value));
+                  }}
                   className="w-full h-1 accent-pink-400" />
                 <div className="flex justify-between text-[8px] text-[var(--muted)]">
                   <span>Keep weak</span><span>Strict</span>
@@ -311,7 +361,10 @@ export default function GuidedParseTab({
                   <label className="text-[9px] text-[var(--muted)]">Expected Columns</label>
                   <select
                     value={expectedCols ?? "auto"}
-                    onChange={(e) => setExpectedCols(e.target.value === "auto" ? null : parseInt(e.target.value))}
+                    onChange={(e) => {
+                      tableOperation.invalidate();
+                      setExpectedCols(e.target.value === "auto" ? null : parseInt(e.target.value));
+                    }}
                     className="text-[9px] px-1 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] text-[var(--fg)]"
                   >
                     <option value="auto">Auto</option>
@@ -328,14 +381,14 @@ export default function GuidedParseTab({
           <div className="flex gap-2 px-1">
             <button
               onClick={repeatRowDown}
-              disabled={guidedParseRows.length < 3}
+              disabled={tableOperation.busy || guidedParseRows.length < 3}
               className="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/40 disabled:opacity-30"
             >
               Repeat ↓
             </button>
             <button
               onClick={repeatColRight}
-              disabled={guidedParseCols.length < 3}
+              disabled={tableOperation.busy || guidedParseCols.length < 3}
               className="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--muted)]/40 disabled:opacity-30"
             >
               Repeat →
@@ -352,7 +405,7 @@ export default function GuidedParseTab({
             </button>
             <button
               onClick={handleParse}
-              disabled={guidedParseRows.length < 2 || guidedParseCols.length < 2}
+              disabled={tableOperation.busy || guidedParseRows.length < 2 || guidedParseCols.length < 2}
               className="flex-1 text-[10px] px-2 py-1.5 rounded border border-pink-400/40 bg-pink-500/10 text-pink-300 hover:bg-pink-500/20 disabled:opacity-30"
             >
               Parse Grid

@@ -332,7 +332,6 @@ const TABLE_EXTENSION_HOOK_BINDINGS = {
     tableParsedGrid: "tableParsedGrid",
     setTableParsedGrid: "setTableParsedGrid",
     tableParseTab: "tableParseTab",
-    setTableParseTab: "setTableParseTab",
     tableParseOptions: "tableParseOptions",
     setTableParseOptions: "setTableParseOptions",
   }],
@@ -3315,7 +3314,7 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
     const compareText = compact(handleDone, compareSource);
     expect(compareText).toContain("useParseFlowStore.getState().tableParsedGrid");
     expect(compareText).toContain("store.parsedKeynoteData");
-    expect(compareText).toContain("store.setParsedKeynoteData(updated)");
+    expect(compareText).toContain("store.setParsedKeynoteData(updatedKeynoteData)");
   });
 
   it("pins PDF paragraph precedence and kind-specific exit", () => {

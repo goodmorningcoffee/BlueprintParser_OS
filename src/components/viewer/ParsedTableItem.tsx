@@ -492,6 +492,9 @@ export default memo(function ParsedTableItem({
                 <button
                   onClick={() => {
                     const store = useParseFlowStore.getState();
+                    // Loading a retained row into the modal creates a fresh Table review instance.
+                    // Revoke any pending parse/map/save before seeding its shared grid workspace.
+                    store.invalidateParseOperation("table");
                     store.setTableParsedGrid({
                       headers: table.region.data?.headers || [],
                       rows: table.region.data?.rows || [],

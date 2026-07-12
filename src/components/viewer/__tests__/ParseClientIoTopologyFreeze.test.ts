@@ -294,7 +294,7 @@ const EXPECTED_MAP_TRANSPORT_SITES: MapSite[] = [
     file: "src/components/viewer/TableParsePanel.tsx",
     owner: "handleMapTags",
     transport: "@/lib/client-map-tags.requestMapTagsBatch",
-    projectExpression: "publicId",
+    projectExpression: "target.publicId",
   },
 ];
 
@@ -373,11 +373,12 @@ const EXPECTED_MAP_TRANSPORT_ARGUMENTS: Record<string, MapTransportArguments> = 
     awaited: true,
   },
   "src/components/viewer/TableParsePanel.tsx:handleMapTags": {
-    project: "publicId",
+    project: "target.publicId",
     request: {
-      tags: "uniqueTags", yoloClass: "tagYoloClass?.className||undefined",
-      yoloModel: "tagYoloClass?.model||undefined", itemType: "itemType",
-      strictnessMode: "mapTagsStrictness", drawingNumberPrefixes: "drawingNumberPrefixes",
+      tags: "uniqueTags", yoloClass: "target.tagYoloClass?.className||undefined",
+      yoloModel: "target.tagYoloClass?.model||undefined", itemType: "itemType",
+      strictnessMode: "target.mapTagsStrictness",
+      drawingNumberPrefixes: "target.drawingNumberPrefixes",
     },
     options: { signal: "controller.signal" },
     awaited: true,

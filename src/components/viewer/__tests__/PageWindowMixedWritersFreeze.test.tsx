@@ -54,7 +54,7 @@ const tableSaveHarness = vi.hoisted(() => ({
 // Drive TableParsePanel through its real orchestration callback without mounting the large parser
 // child. The grid already has CSI tags, so this isolates the local append path from CSI networking.
 vi.mock("@/components/viewer/AutoParseTab", () => ({
-  default: ({ detectCsiAndPersist }: { detectCsiAndPersist: (grid: unknown, opts: unknown) => Promise<void> }) => (
+  default: ({ detectCsiAndPersist }: { detectCsiAndPersist: (grid: unknown, opts: unknown) => Promise<boolean> }) => (
     <>
       <button
         onClick={() => void detectCsiAndPersist({

@@ -12,6 +12,7 @@ import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 import {
+  setTableParseStepForOperation,
   resetAllTools,
   setKeynoteParseStep,
   setNotesParseStep,
@@ -181,6 +182,120 @@ describe("A2a neutral parse-step operation boundaries", () => {
       unsubscribeTool();
     });
   }
+});
+
+describe("A2b token-authorized Table completion boundary", () => {
+  it("advances an idle current owner to review tool-first without invalidating its token", () => {
+    useToolStore.setState({
+      mode: "markup",
+      bucketFillActive: true,
+      splitAreaActive: true,
+      symbolSearchActive: true,
+    });
+    const token = startOperation("table");
+    const beforeOperations = useParseFlowStore.getState().parseOperations;
+    const trace: string[] = [];
+    const unsubscribeTool = useToolStore.subscribe(() => trace.push("tool"));
+    const unsubscribeParse = useParseFlowStore.subscribe(() => trace.push("parse"));
+
+    expect(setTableParseStepForOperation(token, "review")).toBe(true);
+
+    const after = useParseFlowStore.getState();
+    expect(trace).toEqual(["tool", "parse"]);
+    expect(after.tableParseStep).toBe("review");
+    expect(after.parseOperations).toBe(beforeOperations);
+    expect(after.parseOperations.table).toEqual({ revision: token.revision, busy: true });
+    expect(after.isParseOperationCurrent(token)).toBe(true);
+    expect(useToolStore.getState()).toMatchObject({
+      mode: "move",
+      bucketFillActive: false,
+      splitAreaActive: false,
+      symbolSearchActive: false,
+    });
+    unsubscribeParse();
+    unsubscribeTool();
+  });
+
+  it("fails closed when a synchronous tool subscriber revokes the token before the parse write", () => {
+    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    const token = startOperation("table");
+    const unsubscribeTool = useToolStore.subscribe(() => {
+      useParseFlowStore.getState().invalidateParseOperation("table");
+    });
+
+    expect(setTableParseStepForOperation(token, "review")).toBe(false);
+
+    expect(useParseFlowStore.getState().tableParseStep).toBe("idle");
+    expect(useParseFlowStore.getState().parseOperations.table).toEqual({
+      revision: token.revision + 1,
+      busy: false,
+    });
+    expect(useToolStore.getState()).toMatchObject({ mode: "move", bucketFillActive: false });
+    unsubscribeTool();
+  });
+
+  it("denies a stale completion with no parse or tool publication", () => {
+    const token = startOperation("table");
+    useParseFlowStore.getState().invalidateParseOperation("table");
+    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    const beforeParse = useParseFlowStore.getState();
+    const beforeTool = useToolStore.getState();
+    const parseListener = vi.fn();
+    const toolListener = vi.fn();
+    const unsubscribeParse = useParseFlowStore.subscribe(parseListener);
+    const unsubscribeTool = useToolStore.subscribe(toolListener);
+
+    expect(setTableParseStepForOperation(token, "review")).toBe(false);
+
+    expect(useParseFlowStore.getState()).toBe(beforeParse);
+    expect(useToolStore.getState()).toBe(beforeTool);
+    expect(parseListener).not.toHaveBeenCalled();
+    expect(toolListener).not.toHaveBeenCalled();
+    unsubscribeTool();
+    unsubscribeParse();
+  });
+
+  it("denies a cast wrong-kind token even when its revision matches Table", () => {
+    const token = startOperation("table");
+    const wrongKind = { kind: "keynote", revision: token.revision } as unknown as typeof token;
+    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    const beforeParse = useParseFlowStore.getState();
+    const beforeTool = useToolStore.getState();
+    const parseListener = vi.fn();
+    const toolListener = vi.fn();
+    const unsubscribeParse = useParseFlowStore.subscribe(parseListener);
+    const unsubscribeTool = useToolStore.subscribe(toolListener);
+
+    expect(setTableParseStepForOperation(wrongKind, "review")).toBe(false);
+
+    expect(useParseFlowStore.getState()).toBe(beforeParse);
+    expect(useToolStore.getState()).toBe(beforeTool);
+    expect(parseListener).not.toHaveBeenCalled();
+    expect(toolListener).not.toHaveBeenCalled();
+    unsubscribeTool();
+    unsubscribeParse();
+  });
+
+  it("keeps active-to-active completion inside the current lane without touching tools", () => {
+    useParseFlowStore.setState({ tableParseStep: "select-region" });
+    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    const token = startOperation("table");
+    const beforeOperations = useParseFlowStore.getState().parseOperations;
+    const parseListener = vi.fn();
+    const toolListener = vi.fn();
+    const unsubscribeParse = useParseFlowStore.subscribe(parseListener);
+    const unsubscribeTool = useToolStore.subscribe(toolListener);
+
+    expect(setTableParseStepForOperation(token, "review")).toBe(true);
+
+    expect(parseListener).toHaveBeenCalledTimes(1);
+    expect(toolListener).not.toHaveBeenCalled();
+    expect(useParseFlowStore.getState().tableParseStep).toBe("review");
+    expect(useParseFlowStore.getState().parseOperations).toBe(beforeOperations);
+    expect(useParseFlowStore.getState().isParseOperationCurrent(token)).toBe(true);
+    unsubscribeTool();
+    unsubscribeParse();
+  });
 });
 
 describe("A2a raw parse-panel close boundaries", () => {
