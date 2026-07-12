@@ -42,11 +42,7 @@ infrastructure/terraform/main.tf
 models/
 
 # internal planning docs
-plans/
-REFACTORED_MARCH29.md
-bucket-fill.md
-csv-editor-panel.md
-symbol-search-fix.md
+gitignore/
 
 # vercel
 .vercel
