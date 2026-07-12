@@ -7,7 +7,6 @@ set -euo pipefail
 # Walks you through configuring BlueprintParser from zero to running.
 # Re-run anytime to update your configuration.
 #
-# Target: construction estimators/PMs who are tech-savvy but not developers.
 # ─────────────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
