@@ -410,17 +410,29 @@ const NOTES_EXTENSION_HOOK_BINDINGS = {
 } as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
 const PARSE_DRAFT_EXTENSION_HOOK_CALLERS = {
   "src/components/viewer/NotesParser.tsx": 1,
+  "src/components/viewer/SpecParser.tsx": 1,
 } as const;
 const PARSE_DRAFT_EXTENSION_HOOK_BINDINGS = {
   "src/components/viewer/NotesParser.tsx": [{
     setParseDraftRegion: "setParseDraftRegion",
   }],
+  "src/components/viewer/SpecParser.tsx": [{
+    setParseDraftRegion: "setParseDraftRegion",
+  }],
 } as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
 const PARAGRAPH_WORKSPACE_EXTENSION_HOOK_CALLERS = {
   "src/components/viewer/NotesParser.tsx": 1,
+  "src/components/viewer/SpecParser.tsx": 1,
 } as const;
 const PARAGRAPH_WORKSPACE_EXTENSION_HOOK_BINDINGS = {
   "src/components/viewer/NotesParser.tsx": [{
+    paragraphBatch: "paragraphBatch",
+    setParagraphBatch: "setParagraphBatch",
+    removePendingParagraph: "removePendingParagraph",
+    upsertPendingParagraph: "upsertPendingParagraph",
+    setParagraphOverlayActive: "setParagraphOverlayActive",
+  }],
+  "src/components/viewer/SpecParser.tsx": [{
     paragraphBatch: "paragraphBatch",
     setParagraphBatch: "setParagraphBatch",
     removePendingParagraph: "removePendingParagraph",
@@ -432,7 +444,7 @@ const PARAGRAPH_WORKSPACE_EXTENSION_HOOK_BINDINGS = {
 type ParseFacadePhase = "FACADE" | "TABLE" | "KEYNOTE" | "NOTES" | "SPEC";
 // A1 advances one complete kind family at a time. Never accept a union of old and new callers:
 // each intermediate commit must update this single phase switch with its atomic source migration.
-const PARSE_FACADE_PHASE = "NOTES" as ParseFacadePhase;
+const PARSE_FACADE_PHASE = "SPEC" as ParseFacadePhase;
 
 type ParseFacadeCall = {
   readonly kind: "table" | "keynote" | "notes" | "spec";
@@ -2297,6 +2309,228 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     expect((rowClickBody as ts.Block).statements[1]).toBe(indexBranches[0]);
     expect(statementCall((rowClickBody as ts.Block).statements[2], indexSource))
       .toBe("onOpenParser()");
+  }, 60_000);
+
+  it("pins the final Spec callers, handoffs, and reset/tool ordering", () => {
+    const specSource = parse(SPEC_PARSER);
+    for (const path of [
+      "src/components/viewer/SpecPanel.tsx",
+      SPEC_PARSER,
+      "src/components/viewer/SpecClassifier.tsx",
+      "src/components/viewer/SpecIndex.tsx",
+    ]) {
+      expect(knownMembers(expectFailClosedOwnerScan(parse(path)), "getState"), `${path} live reads`)
+        .toEqual([]);
+    }
+
+    const callTrace = (
+      root: ts.Node,
+      source: ts.SourceFile,
+      callees: readonly string[],
+    ): string[] => descendants(root, ts.isCallExpression)
+      .filter((call) => callees.includes(compact(call.expression, source)))
+      .map((call) => compact(call, source));
+    const directFunctionCalls = (fn: ts.FunctionLikeDeclaration): ts.CallExpression[] =>
+      descendants(fn.body!, ts.isCallExpression).filter((call) => {
+        let current: ts.Node | undefined = call.parent;
+        while (current && !ts.isFunctionLike(current)) current = current.parent;
+        return current === fn;
+      });
+    const specHandlerCallees = [
+      "setPreview",
+      "setError",
+      "setSpecParseRegion",
+      "setSpecParseStep",
+      "setParagraphBatch",
+      "resetSpecParse",
+      "useToolStore.getState().setMode",
+    ];
+    const stepHandlerTraces = descendants(specSource, ts.isArrowFunction).flatMap((fn) => {
+      const trace = directFunctionCalls(fn)
+        .filter((call) => specHandlerCallees.includes(compact(call.expression, specSource)))
+        .map((call) => compact(call, specSource));
+      return trace.some((call) => call.startsWith("setSpecParseStep(")) ? [trace] : [];
+    });
+    expect(stepHandlerTraces).toEqual([
+      [
+        "setPreview(null)",
+        "setError(null)",
+        "setSpecParseRegion(null)",
+        'setSpecParseStep("idle")',
+        "setParagraphBatch([])",
+        "resetSpecParse()",
+      ],
+      [
+        'setSpecParseStep("select-region")',
+        'useToolStore.getState().setMode("pointer")',
+      ],
+      [
+        "resetSpecParse()",
+        'setSpecParseStep("select-region")',
+        'useToolStore.getState().setMode("pointer")',
+      ],
+    ]);
+
+    const runAuto = findVariable(specSource, "runAuto").initializer!;
+    const payloadBranch = descendants(runAuto, ts.isIfStatement).filter((statement) =>
+      compact(statement.expression, specSource) === "!payload.sections?.length"
+    );
+    expect(payloadBranch).toHaveLength(1);
+    expect(payloadBranch[0].elseStatement).toBeDefined();
+    expect(callTrace(payloadBranch[0].elseStatement!, specSource, [
+      "setPreview",
+      "persistPreview",
+    ])).toEqual([
+      "setPreview(payload)",
+      "persistPreview(payload,specParseRegion)",
+    ]);
+
+    expect(callTrace(findVariable(specSource, "persistPreview").initializer!, specSource, [
+      "resetSpecParse",
+      "setPreview",
+    ])).toEqual([
+      "resetSpecParse()",
+      "setPreview(null)",
+    ]);
+    expect(callTrace(findVariable(specSource, "saveFromBatch").initializer!, specSource, [
+      "setParagraphBatch",
+      "resetSpecParse",
+      "setPreview",
+    ])).toEqual([
+      "setParagraphBatch([])",
+      "resetSpecParse()",
+      "setPreview(null)",
+    ]);
+
+    const pinSaveSuccessOwnership = (
+      functionName: string,
+      successTail: readonly string[],
+    ) => {
+      const root = findVariable(specSource, functionName).initializer!;
+      const tries = descendants(root, ts.isTryStatement);
+      expect(tries, `${functionName} one try/catch/finally`).toHaveLength(1);
+      const statement = tries[0];
+      expect(statement.catchClause, `${functionName} catch`).toBeDefined();
+      expect(statement.finallyBlock, `${functionName} finally`).toBeDefined();
+      const tail = statement.tryBlock.statements.slice(-(successTail.length + 1));
+      expect(tail).toHaveLength(successTail.length + 1);
+      expect(ts.isExpressionStatement(tail[0]), `${functionName} awaited save statement`)
+        .toBe(true);
+      const awaitExpression = (tail[0] as ts.ExpressionStatement).expression;
+      expect(ts.isAwaitExpression(awaitExpression), `${functionName} awaits save`).toBe(true);
+      const saveCall = unwrap((awaitExpression as ts.AwaitExpression).expression);
+      expect(ts.isCallExpression(saveCall), `${functionName} save call`).toBe(true);
+      expect(compact((saveCall as ts.CallExpression).expression, specSource))
+        .toBe("saveParsedRegion");
+      expect(tail.slice(1).map((entry) => compact(entry, specSource))).toEqual(successTail);
+      expect(statement.catchClause!.block.statements.map((entry) => compact(entry, specSource)))
+        .toEqual(['setError(errinstanceofError?err.message:"Savefailed");']);
+      expect(statement.finallyBlock!.statements.map((entry) => compact(entry, specSource)))
+        .toEqual([
+          "isSavingRef.current=false;",
+          "setSaving(false);",
+        ]);
+    };
+    pinSaveSuccessOwnership("persistPreview", [
+      "resetSpecParse();",
+      "setPreview(null);",
+    ]);
+    pinSaveSuccessOwnership("saveFromBatch", [
+      "setParagraphBatch([]);",
+      "resetSpecParse();",
+      "setPreview(null);",
+    ]);
+
+    const sectionFieldMappings = (root: ts.Node, source = specSource) => {
+      const fields = descendants(root, ts.isPropertyAssignment).filter((property) =>
+        ["sectionHeader", "body"].includes(staticName(property.name) ?? "")
+      );
+      return Object.fromEntries(fields.map((property) => [
+        staticName(property.name)!,
+        compact(property.initializer, source),
+      ]));
+    };
+    const expectedSectionFields = {
+      sectionHeader: 'p.rowText.sectionHeader??""',
+      body: 'p.rowText.body??""',
+    };
+    expect(sectionFieldMappings(findVariable(specSource, "draft").initializer!))
+      .toEqual(expectedSectionFields);
+    expect(sectionFieldMappings(findVariable(specSource, "saveFromBatch").initializer!))
+      .toEqual(expectedSectionFields);
+
+    const persistedPreview = findVariable(specSource, "persistPreview").initializer!;
+    const persistedPreviewData = findVariableWithin(persistedPreview, "data").initializer!;
+    const persistedSections = descendants(persistedPreviewData, ts.isPropertyAssignment).filter(
+      (property) => staticName(property.name) === "sections",
+    );
+    expect(persistedSections).toHaveLength(1);
+    expect(compact(persistedSections[0].initializer, specSource)).toBe("p.sections");
+
+    const swappedSectionFixture = ts.createSourceFile(
+      "spec-section-swap-fixture.ts",
+      `({
+        sectionHeader: p.rowText.body ?? "",
+        body: p.rowText.sectionHeader ?? "",
+      });`,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    expect(sectionFieldMappings(swappedSectionFixture, swappedSectionFixture)).toEqual({
+      sectionHeader: 'p.rowText.body??""',
+      body: 'p.rowText.sectionHeader??""',
+    });
+    expect(sectionFieldMappings(swappedSectionFixture, swappedSectionFixture))
+      .not.toEqual(expectedSectionFields);
+
+    const assertThreeStatementHandoff = (
+      path: string,
+      handlerName: string,
+      regionCallee: string,
+      callbackCallee: string,
+    ) => {
+      const source = parse(path);
+      const handler = findVariable(source, handlerName).initializer!;
+      expect(ts.isArrowFunction(handler)).toBe(true);
+      const body = (handler as ts.ArrowFunction).body;
+      expect(ts.isBlock(body)).toBe(true);
+      const statements = (body as ts.Block).statements;
+      expect(statements).toHaveLength(3);
+      expect(ts.isVariableStatement(statements[0])).toBe(true);
+      const statementCall = (statement: ts.Statement): string => {
+        expect(ts.isExpressionStatement(statement)).toBe(true);
+        const expression = (statement as ts.ExpressionStatement).expression;
+        expect(ts.isCallExpression(expression)).toBe(true);
+        return compact(expression, source);
+      };
+      expect(statementCall(statements[1])).toBe(`${regionCallee}([l,t,l+w,t+h])`);
+      expect(statementCall(statements[2])).toBe(`${callbackCallee}()`);
+    };
+    assertThreeStatementHandoff(
+      "src/components/viewer/SpecClassifier.tsx",
+      "handleEdit",
+      "setSpecParseRegion",
+      "onEditInParser",
+    );
+
+    const indexSource = parse("src/components/viewer/SpecIndex.tsx");
+    const rowClick = findVariable(indexSource, "handleRowClick").initializer!;
+    expect(ts.isArrowFunction(rowClick)).toBe(true);
+    const rowClickBody = (rowClick as ts.ArrowFunction).body;
+    expect(ts.isBlock(rowClickBody)).toBe(true);
+    const indexStatements = (rowClickBody as ts.Block).statements;
+    expect(indexStatements).toHaveLength(3);
+    expect(compact(indexStatements[0], indexSource)).toBe("setPage(r.pageNum);");
+    expect(ts.isIfStatement(indexStatements[1])).toBe(true);
+    const bboxBranch = indexStatements[1] as ts.IfStatement;
+    expect(compact(bboxBranch.expression, indexSource)).toBe("r.bbox");
+    expect(callTrace(bboxBranch.thenStatement, indexSource, ["setSpecParseRegion"]))
+      .toEqual(["setSpecParseRegion([l,t,l+w,t+h])"]);
+    expect(bboxBranch.elseStatement).toBeDefined();
+    expect(callTrace(bboxBranch.elseStatement!, indexSource, ["setSpecParseRegion"]))
+      .toEqual(["setSpecParseRegion(null)"]);
+    expect(compact(indexStatements[2], indexSource)).toBe("onOpenParser();");
   });
 });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useParseFlowStore } from "@/stores/parseFlowStore";
+import { useParseFlow } from "@/hooks/useParseFlow";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 // [refactor jul10 P2.2③; jul11 P2.2⑦] Summaries moved Zustand → TanStack Query. This component
 // deliberately keeps the narrow cache-only hook because it reads summaries only; active-window
@@ -22,7 +22,7 @@ interface SpecIndexProps {
 export default function SpecIndex({ onOpenParser }: SpecIndexProps) {
   const { summaries } = useSummariesData();
   const setPage = useViewerCoreStore((s) => s.setPage);
-  const setSpecParseRegion = useParseFlowStore((s) => s.setSpecParseRegion);
+  const { setRegion: setSpecParseRegion } = useParseFlow("spec");
   const [filter, setFilter] = useState("");
 
   const rows = useMemo(() => {

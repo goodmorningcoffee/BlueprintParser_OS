@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParseFlowStore } from "@/stores/parseFlowStore";
+import { useParseFlow } from "@/hooks/useParseFlow";
 import { useSessionStore } from "@/stores/sessionStore";
 import SpecIndex from "./SpecIndex";
 import SpecClassifier from "./SpecClassifier";
@@ -20,7 +20,7 @@ interface SpecPanelProps {
  */
 export default function SpecPanel({ embedded = false }: SpecPanelProps) {
   const [tab, setTab] = useState<SpecSubTab>("index");
-  const specParseRegion = useParseFlowStore((s) => s.specParseRegion);
+  const { region: specParseRegion } = useParseFlow("spec");
   const projectId = useSessionStore((s) => s.projectId);
 
   useEffect(() => {
