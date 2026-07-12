@@ -223,6 +223,22 @@ const TABLE_HOOK_SHAPE = [
   "resetTableParse",
 ] as const;
 
+const TABLE_EXTENSION_HOOK_SHAPE = [
+  "tableParsedGrid",
+  "setTableParsedGrid",
+  "tableParseColumnBBs",
+  "addTableParseColumnBB",
+  "tableParseRowBBs",
+  "addTableParseRowBB",
+  "setTableParseRowBBs",
+  "tableParseColumnNames",
+  "setTableParseColumnNames",
+  "tableParseTab",
+  "setTableParseTab",
+  "tableParseOptions",
+  "setTableParseOptions",
+] as const;
+
 const KEYNOTE_HOOK_SHAPE = [
   "keynoteParseStep",
   "keynoteParseRegion",
@@ -256,6 +272,43 @@ const TABLE_HOOK_CALLERS = {
 const POST_TABLE_FACADE_HOOK_CALLERS = {
   "src/components/viewer/AnnotationOverlay.tsx": 1,
 } as const;
+const TABLE_EXTENSION_HOOK_CALLERS = {
+  "src/components/viewer/AutoParseTab.tsx": 1,
+  "src/components/viewer/GuidedParseTab.tsx": 1,
+  "src/components/viewer/ManualParseTab.tsx": 1,
+  "src/components/viewer/TableParsePanel.tsx": 1,
+} as const;
+const TABLE_EXTENSION_HOOK_BINDINGS = {
+  "src/components/viewer/AutoParseTab.tsx": [{
+    tableParsedGrid: "tableParsedGrid",
+    setTableParsedGrid: "setTableParsedGrid",
+    tableParseTab: "tableParseTab",
+    setTableParseTab: "setTableParseTab",
+    tableParseOptions: "tableParseOptions",
+    setTableParseOptions: "setTableParseOptions",
+  }],
+  "src/components/viewer/GuidedParseTab.tsx": [{
+    tableParsedGrid: "tableParsedGrid",
+    setTableParsedGrid: "setTableParsedGrid",
+  }],
+  "src/components/viewer/ManualParseTab.tsx": [{
+    tableParsedGrid: "tableParsedGrid",
+    setTableParsedGrid: "setTableParsedGrid",
+    tableParseColumnBBs: "tableParseColumnBBs",
+    addTableParseColumnBB: "addTableParseColumnBB",
+    tableParseRowBBs: "tableParseRowBBs",
+    addTableParseRowBB: "addTableParseRowBB",
+    setTableParseRowBBs: "setTableParseRowBBs",
+    tableParseColumnNames: "tableParseColumnNames",
+    setTableParseColumnNames: "setTableParseColumnNames",
+  }],
+  "src/components/viewer/TableParsePanel.tsx": [{
+    tableParsedGrid: "tableParsedGrid",
+    setTableParsedGrid: "setTableParsedGrid",
+    tableParseTab: "tableParseTab",
+    setTableParseTab: "setTableParseTab",
+  }],
+} as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
 
 const KEYNOTE_HOOK_CALLERS = {
   "src/components/viewer/AnnotationOverlay.tsx": 1,
@@ -265,7 +318,7 @@ const KEYNOTE_HOOK_CALLERS = {
 type ParseFacadePhase = "FACADE" | "TABLE" | "KEYNOTE" | "NOTES" | "SPEC";
 // A1 advances one complete kind family at a time. Never accept a union of old and new callers:
 // each intermediate commit must update this single phase switch with its atomic source migration.
-const PARSE_FACADE_PHASE: ParseFacadePhase = "FACADE";
+const PARSE_FACADE_PHASE = "TABLE" as ParseFacadePhase;
 
 type ParseFacadeCall = {
   readonly kind: "table" | "keynote" | "notes" | "spec";
@@ -418,6 +471,36 @@ const EXPECTED_MIGRATED_LIFECYCLE_RESIDUALS = {
     "selector:read:setTableParseRegion",
     "getState:read:keynoteParseRegion",
   ],
+  "src/components/viewer/NotesPanel.tsx": [],
+  "src/components/viewer/NotesParser.tsx": [],
+  "src/components/viewer/NotesClassifier.tsx": [],
+  "src/components/viewer/NotesIndex.tsx": [],
+  "src/components/viewer/SpecPanel.tsx": [],
+  "src/components/viewer/SpecParser.tsx": [],
+  "src/components/viewer/SpecClassifier.tsx": [],
+  "src/components/viewer/SpecIndex.tsx": [],
+} as const satisfies Record<string, readonly string[]>;
+
+const EXPECTED_MIGRATED_DIRECT_SELECTORS = {
+  "src/components/viewer/TableParsePanel.tsx": [],
+  "src/components/viewer/AutoParseTab.tsx": [
+    "tableCellStructure",
+    "setTableCellStructure",
+    "showTableCellStructure",
+    "setShowTableCellStructure",
+  ],
+  "src/components/viewer/GuidedParseTab.tsx": [
+    "guidedParseActive",
+    "guidedParseRows",
+    "guidedParseCols",
+    "setGuidedParseActive",
+    "setGuidedParseRegion",
+    "setGuidedParseRows",
+    "setGuidedParseCols",
+    "resetGuidedParse",
+  ],
+  "src/components/viewer/ManualParseTab.tsx": [],
+  "src/components/viewer/KeynotePanel.tsx": ["setTableParsedGrid", "setTableParseRegion"],
   "src/components/viewer/NotesPanel.tsx": [],
   "src/components/viewer/NotesParser.tsx": [],
   "src/components/viewer/NotesClassifier.tsx": [],
@@ -813,6 +896,83 @@ function importedCalls(
   });
 }
 
+function expressionEnvelope(node: ts.Node): ts.Node {
+  let current = node;
+  while (
+    current.parent &&
+    ((ts.isParenthesizedExpression(current.parent) && current.parent.expression === current) ||
+      (ts.isAsExpression(current.parent) && current.parent.expression === current) ||
+      (ts.isTypeAssertionExpression(current.parent) && current.parent.expression === current) ||
+      (ts.isNonNullExpression(current.parent) && current.parent.expression === current) ||
+      (ts.isSatisfiesExpression(current.parent) && current.parent.expression === current))
+  ) current = current.parent;
+  return current;
+}
+
+function isNonReferencePropertyName(identifier: ts.Identifier): boolean {
+  const parent = identifier.parent;
+  return (
+    (ts.isPropertyAccessExpression(parent) && parent.name === identifier) ||
+    (ts.isQualifiedName(parent) && parent.right === identifier) ||
+    (ts.isPropertyAssignment(parent) && parent.name === identifier) ||
+    (ts.isMethodDeclaration(parent) && parent.name === identifier) ||
+    (ts.isMethodSignature(parent) && parent.name === identifier) ||
+    (ts.isPropertyDeclaration(parent) && parent.name === identifier) ||
+    (ts.isPropertySignature(parent) && parent.name === identifier) ||
+    (ts.isGetAccessorDeclaration(parent) && parent.name === identifier) ||
+    (ts.isSetAccessorDeclaration(parent) && parent.name === identifier) ||
+    (ts.isBindingElement(parent) && parent.propertyName === identifier) ||
+    (ts.isJsxAttribute(parent) && parent.name === identifier) ||
+    (ts.isLabeledStatement(parent) && parent.label === identifier) ||
+    ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) &&
+      parent.label === identifier)
+  );
+}
+
+/**
+ * Returns every imported-hook reference outside the deliberately small supported grammar:
+ * named import -> optional simple identifier alias chain -> direct call. This makes invocation
+ * provenance fail closed for `.call`/`.apply`/`.bind`, optional calls, argument passing, object
+ * storage, comma expressions, and future indirect forms that a direct-callee counter cannot see.
+ */
+function unsupportedImportedHookReferences(
+  source: ts.SourceFile,
+  moduleNames: readonly string[],
+  importedName: string,
+): string[] {
+  const aliases = identifierAliases(
+    source,
+    importedLocalNames(source, moduleNames, importedName),
+  );
+  return descendants(source, ts.isIdentifier).flatMap((identifier) => {
+    if (!aliases.has(identifier.text)) return [];
+    const parent = identifier.parent;
+    if (ts.isImportSpecifier(parent) || isNonReferencePropertyName(identifier)) return [];
+
+    const envelope = expressionEnvelope(identifier);
+    if (
+      ts.isVariableDeclaration(envelope.parent) &&
+      envelope.parent.name === envelope &&
+      envelope.parent.initializer &&
+      ts.isIdentifier(unwrap(envelope.parent.initializer)) &&
+      aliases.has((unwrap(envelope.parent.initializer) as ts.Identifier).text)
+    ) return [];
+    if (
+      ts.isVariableDeclaration(envelope.parent) &&
+      envelope.parent.initializer === envelope &&
+      ts.isIdentifier(envelope.parent.name) &&
+      aliases.has(envelope.parent.name.text)
+    ) return [];
+    if (
+      ts.isCallExpression(envelope.parent) &&
+      envelope.parent.expression === envelope &&
+      !envelope.parent.questionDotToken
+    ) return [];
+
+    return [`${identifier.text}:${ts.SyntaxKind[parent.kind]}`];
+  });
+}
+
 function importedCallTopology(
   importedName: string,
   owner: typeof VIEWER_OWNER | typeof PARSE_OWNER,
@@ -1023,6 +1183,19 @@ function productionParseFacadeCallers(): ParseFacadeCallers {
   }));
 }
 
+function productionHookBindingCallers(
+  moduleName: string,
+  hookName: string,
+): Readonly<Record<string, readonly Readonly<Record<string, string>>[]>> {
+  return Object.fromEntries(productionSourceFiles.flatMap((path) => {
+    const source = parse(path);
+    const calls = importedCalls(source, [moduleName], hookName);
+    return calls.length > 0
+      ? [[path, calls.map((call) => parseFacadeBindings(call, source))]]
+      : [];
+  }));
+}
+
 function ownerScan(
   source: ts.SourceFile,
   descriptor: StoreOwnerDescriptor = ACTIVE_PARSE_DESCRIPTOR,
@@ -1101,7 +1274,7 @@ function resolvesToParseOwner(importerPath: string, specifier: string): boolean 
   const unresolved = specifier === PARSE_OWNER.module
     ? PARSE_OWNER.file.slice(0, -3)
     : specifier.startsWith("@/")
-      ? `src/${specifier.slice(2)}`
+      ? join("src", specifier.slice(2))
       : specifier.startsWith(".")
         ? join(dirname(importerPath), specifier)
         : "";
@@ -1143,6 +1316,21 @@ function parseOwnerLoadKinds(path: string, source = parse(path)): string[] {
   return loads;
 }
 
+function nonCanonicalParseOwnerImports(
+  path: string,
+  source = parse(path),
+): string[] {
+  return source.statements.flatMap((statement) => {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !resolvesToParseOwner(path, statement.moduleSpecifier.text) ||
+      statement.moduleSpecifier.text === PARSE_OWNER.module
+    ) return [];
+    return [statement.moduleSpecifier.text];
+  });
+}
+
 function resolvesToCandidate(
   importerPath: string,
   specifier: string,
@@ -1152,7 +1340,7 @@ function resolvesToCandidate(
   const unresolved = specifier === moduleName
     ? file
     : specifier.startsWith("@/")
-      ? `src/${specifier.slice(2)}`
+      ? join("src", specifier.slice(2))
       : specifier.startsWith(".")
         ? join(dirname(importerPath), specifier)
         : "";
@@ -1342,6 +1530,8 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
     expect(productionSourceFiles.some((path) => parseOwnerLoadKinds(path).length > 0)).toBe(true);
   });
 
+  // This proof resolves four definitions across the full production tree. Keep its timeout local
+  // so concurrent source-exact gates do not turn a correct ownership result into a timing failure.
   it("keeps the four step writers out of the leaf and defined only by the neutral command module", () => {
     for (const command of NEUTRAL_STEP_COMMANDS) {
       expect(PARSE_LEAF_ACTION_KEYS).not.toContain(command);
@@ -1359,7 +1549,7 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
         "useParseFlowStore.setState",
       ]);
     }
-  }, 15_000);
+  }, 60_000);
 });
 
 describe("P2.4 phase-aware grouped parse hook contract", () => {
@@ -1394,6 +1584,113 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     expect(importedCallTopology("useKeynoteParse", ACTIVE_PARSE_OWNER)).toEqual(KEYNOTE_HOOK_CALLERS);
     expect(importedCallTopology("useKeynoteParse", INACTIVE_PARSE_OWNER)).toEqual({});
   });
+
+  it("pins the 13-member Table extension hook and exact cold caller roster", () => {
+    expect(hookShape("useTableParseExtensions", TABLE_EXTENSION_HOOK_SHAPE))
+      .toEqual(TABLE_EXTENSION_HOOK_SHAPE);
+    expect(exportedVariableCount(parse(ACTIVE_PARSE_OWNER.file), "useTableParseExtensions"))
+      .toBe(1);
+    expect(importedCallTopology("useTableParseExtensions", ACTIVE_PARSE_OWNER))
+      .toEqual(TABLE_EXTENSION_HOOK_CALLERS);
+    expect(importedCallTopology("useTableParseExtensions", INACTIVE_PARSE_OWNER)).toEqual({});
+    expect(productionHookBindingCallers(
+      ACTIVE_PARSE_OWNER.module,
+      "useTableParseExtensions",
+    )).toEqual(TABLE_EXTENSION_HOOK_BINDINGS);
+
+    const namespaceLoads = productionSourceFiles.filter((path) =>
+      parse(path).statements.some((statement) =>
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(statement.moduleSpecifier) &&
+        resolvesToParseOwner(path, statement.moduleSpecifier.text) &&
+        !!statement.importClause?.namedBindings &&
+        ts.isNamespaceImport(statement.importClause.namedBindings)
+      )
+    );
+    expect(namespaceLoads, "parse hooks cannot hide behind namespace imports").toEqual([]);
+    const nonStaticLoads = productionSourceFiles
+      .filter((path) => path !== ACTIVE_PARSE_OWNER.file)
+      .flatMap((path) => parseOwnerLoadKinds(path)
+        .filter((kind) => kind !== "import")
+        .map((kind) => ({ path, kind })));
+    expect(nonStaticLoads, "parse hooks cannot hide behind non-static loads").toEqual([]);
+
+    // The binding/caller ledgers above intentionally key off the canonical alias. Reject every
+    // other specifier that resolves to the same store so a relative or extension-qualified import
+    // cannot stay runtime-valid while disappearing from those exact ledgers.
+    const nonCanonicalImports = productionSourceFiles.flatMap((path) =>
+      nonCanonicalParseOwnerImports(path).map((specifier) => ({ path, specifier }))
+    );
+    expect(nonCanonicalImports, "parse hooks must use the canonical store import").toEqual([]);
+
+    const fixturePath = "src/components/viewer/parse-owner-import-fixture.ts";
+    const fixture = ts.createSourceFile(
+      fixturePath,
+      `
+        import { useParseFlowStore } from "@/stores/parseFlowStore";
+        import { useTableParseExtensions } from "../../stores/parseFlowStore";
+        import { useTableParse } from "@/stores/./parseFlowStore";
+        import { useKeynoteParse } from "@/stores/../stores/parseFlowStore";
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    expect(nonCanonicalParseOwnerImports(fixturePath, fixture)).toEqual([
+      "../../stores/parseFlowStore",
+      "@/stores/./parseFlowStore",
+      "@/stores/../stores/parseFlowStore",
+    ]);
+
+    const guardedHooks = [
+      { module: PARSE_OWNER.module, name: "useTableParse" },
+      { module: PARSE_OWNER.module, name: "useKeynoteParse" },
+      { module: PARSE_OWNER.module, name: "useTableParseExtensions" },
+      { module: PARSE_FACADE_MODULE, name: "useParseFlow" },
+    ] as const;
+    const unsupportedReferences = productionSourceFiles.flatMap((path) => {
+      const source = parse(path);
+      return guardedHooks.flatMap(({ module, name }) =>
+        unsupportedImportedHookReferences(source, [module], name)
+          .map((reference) => ({ path, hook: name, reference }))
+      );
+    });
+    expect(unsupportedReferences, "parse hooks use only direct, proven invocations").toEqual([]);
+
+    const invocationFixture = ts.createSourceFile(
+      "src/components/viewer/parse-hook-invocation-fixture.tsx",
+      `
+        import { useParseFlow } from "@/hooks/useParseFlow";
+        import {
+          useKeynoteParse,
+          useTableParse,
+          useTableParseExtensions,
+        } from "@/stores/parseFlowStore";
+        declare function consume(value: unknown): void;
+        const directAlias = useParseFlow;
+        directAlias("table");
+        useTableParse.call(null);
+        useTableParseExtensions["apply"](null, []);
+        const bound = useParseFlow.bind(null, "table");
+        consume(useParseFlow);
+        const bag = { useTableParse };
+        useKeynoteParse?.();
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
+    expect(guardedHooks.flatMap(({ module, name }) =>
+      unsupportedImportedHookReferences(invocationFixture, [module], name)
+    )).toEqual([
+      "useTableParse:PropertyAccessExpression",
+      "useTableParse:ShorthandPropertyAssignment",
+      "useKeynoteParse:CallExpression",
+      "useTableParseExtensions:ElementAccessExpression",
+      "useParseFlow:PropertyAccessExpression",
+      "useParseFlow:CallExpression",
+    ]);
+  }, 60_000);
 });
 
 describe("P2.4 A1 semantic parse facade topology", () => {
@@ -1567,21 +1864,27 @@ describe("P2.4 A1 semantic parse facade topology", () => {
       (typeof NEUTRAL_STEP_COMMANDS)[number],
       number
     >>>>> = EXPECTED_MIGRATED_NEUTRAL_COMMANDS;
+    const selectorLedger: Readonly<Record<string, readonly string[]>> =
+      EXPECTED_MIGRATED_DIRECT_SELECTORS;
     for (const [path, calls] of Object.entries(expectedCallers)) {
       const kinds = [...new Set(calls.map((call) => call.kind))];
       expect(kinds, `${path} one semantic kind`).toHaveLength(1);
-      const residuals = ownerScan(parse(path), ACTIVE_PARSE_DESCRIPTOR).known
+      const source = parse(path);
+      const directOwnerScan = expectFailClosedOwnerScan(source, ACTIVE_PARSE_DESCRIPTOR);
+      const residuals = directOwnerScan.known
         .filter((finding) => finding.member && ALL_PARSE_LIFECYCLE_MEMBERS.has(finding.member))
         .map((finding) => `${finding.operation}:${finding.access}:${finding.member}`);
       expect(residuals, `${path} direct lifecycle residuals`).toEqual(
         residualLedger[path],
       );
+      expect(knownMembers(directOwnerScan, "selector"), `${path} direct selector residuals`)
+        .toEqual(selectorLedger[path]);
 
       const commandCounts = Object.fromEntries(NEUTRAL_STEP_COMMANDS.flatMap((command) => {
-        const count = importedCalls(parse(path), ["@/stores/viewerCommands"], command).length;
+        const count = importedCalls(source, ["@/stores/viewerCommands"], command).length;
         return count > 0 ? [[command, count]] : [];
       }));
-      const namespaceCalls = namespaceTerminalCalls(parse(path), ["@/stores/viewerCommands"]);
+      const namespaceCalls = namespaceTerminalCalls(source, ["@/stores/viewerCommands"]);
       expect(namespaceCalls.filter(({ name }) =>
         name === null || NEUTRAL_STEP_COMMANDS.includes(
           name as (typeof NEUTRAL_STEP_COMMANDS)[number],
@@ -1657,6 +1960,8 @@ describe("P2.4 A1 semantic parse facade topology", () => {
       `
         import { useParseFlow } from "@/hooks/useParseFlow";
         import { useParseFlow as relativeFlow } from "../hooks/useParseFlow";
+        import { useParseFlow as dotFlow } from "@/hooks/./useParseFlow";
+        import { useParseFlow as parentFlow } from "@/hooks/../hooks/useParseFlow";
         export { ParseKind } from "@/hooks/useParseFlow";
         const lazy = import("@/hooks/useParseFlow");
         const commonJs = require("../hooks/useParseFlow");
@@ -1672,6 +1977,8 @@ describe("P2.4 A1 semantic parse facade topology", () => {
       PARSE_FACADE_FILE,
       fixture,
     )).toEqual([
+      "import",
+      "import",
       "import",
       "import",
       "re-export",

@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useParseFlowStore, useTableParse } from "@/stores/parseFlowStore";
+import { useParseFlow } from "@/hooks/useParseFlow";
+import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
-import { setTableParseStep } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useProject } from "@/stores/sessionStore";
@@ -86,12 +86,17 @@ export default function AutoParseTab({
   const { pageNumber } = useNavigation();
   const { projectId, isDemo } = useProject();
   const {
-    tableParseStep,
-    tableParseRegion, setTableParseRegion,
+    step: tableParseStep,
+    region: tableParseRegion,
+    setStep: setTableParseStep,
+    setRegion: setTableParseRegion,
+    reset: resetTableParse,
+  } = useParseFlow("table");
+  const {
     tableParsedGrid, setTableParsedGrid,
-    resetTableParse, tableParseTab, setTableParseTab,
+    tableParseTab, setTableParseTab,
     tableParseOptions, setTableParseOptions,
-  } = useTableParse();
+  } = useTableParseExtensions();
   const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
 
   const [autoParsing, setAutoParsing] = useState(false);
@@ -259,7 +264,17 @@ export default function AutoParseTab({
         setAutoParsing(false);
       }
     },
-    [proposedRegions, projectId, pageNumber, isDemo, setTableParsedGrid, detectCsiAndPersist]
+    [
+      proposedRegions,
+      projectId,
+      pageNumber,
+      isDemo,
+      tableParseOptions,
+      setTableParsedGrid,
+      setTableParseRegion,
+      setTableParseStep,
+      detectCsiAndPersist,
+    ]
   );
 
   const exportCsv = () => {
@@ -674,7 +689,7 @@ function MethodDrillDown({
 function DetectCellStructureButton() {
   const { projectId } = useProject();
   const { pageNumber } = useNavigation();
-  const { tableParseRegion } = useTableParse();
+  const { region: tableParseRegion } = useParseFlow("table");
   const tableCellStructure = useParseFlowStore((s) => s.tableCellStructure);
   const setTableCellStructure = useParseFlowStore((s) => s.setTableCellStructure);
   // TATR-OVERLAY: visibility toggle for the cell overlay on the canvas

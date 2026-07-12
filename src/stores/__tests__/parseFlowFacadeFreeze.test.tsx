@@ -10,7 +10,11 @@ import {
   type ParseKind,
   type ParseStepMap,
 } from "@/hooks/useParseFlow";
-import { useParseFlowStore, type ParseFlowState } from "@/stores/parseFlowStore";
+import {
+  useParseFlowStore,
+  useTableParseExtensions,
+  type ParseFlowState,
+} from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
   setKeynoteParseStep,
@@ -236,5 +240,45 @@ describe("P2.4 A1 parse facade publication and subscription contract", () => {
     rerender({ kind: "keynote" });
     expect(result.current.kind).toBe("keynote");
     expect(result.current.setStep).toBe(setKeynoteParseStep);
+  });
+});
+
+describe("P2.4 A1 Table extension composition", () => {
+  it("returns the exact 13 non-lifecycle fields and ignores lifecycle-only publications", () => {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useTableParseExtensions();
+    });
+    const state = useParseFlowStore.getState();
+    expect(result.current).toEqual({
+      tableParsedGrid: state.tableParsedGrid,
+      setTableParsedGrid: state.setTableParsedGrid,
+      tableParseColumnBBs: state.tableParseColumnBBs,
+      addTableParseColumnBB: state.addTableParseColumnBB,
+      tableParseRowBBs: state.tableParseRowBBs,
+      addTableParseRowBB: state.addTableParseRowBB,
+      setTableParseRowBBs: state.setTableParseRowBBs,
+      tableParseColumnNames: state.tableParseColumnNames,
+      setTableParseColumnNames: state.setTableParseColumnNames,
+      tableParseTab: state.tableParseTab,
+      setTableParseTab: state.setTableParseTab,
+      tableParseOptions: state.tableParseOptions,
+      setTableParseOptions: state.setTableParseOptions,
+    });
+    const first = result.current;
+    const baseline = renders;
+
+    act(() => useParseFlowStore.setState({
+      tableParseStep: "review",
+      tableParseRegion: BBOX,
+    }));
+    expect(renders).toBe(baseline);
+    expect(result.current).toBe(first);
+
+    act(() => result.current.setTableParsedGrid({ headers: ["TAG"], rows: [] }));
+    expect(renders).toBe(baseline + 1);
+    expect(result.current.tableParsedGrid).toEqual({ headers: ["TAG"], rows: [] });
+    expect(result.current.setTableParsedGrid).toBe(first.setTableParsedGrid);
   });
 });

@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParseFlowStore, useTableParse } from "@/stores/parseFlowStore";
+import { useParseFlow } from "@/hooks/useParseFlow";
+import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
-import { setTableParseStep } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useTextractForPage } from "@/queries/useTextract";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
@@ -41,14 +41,18 @@ export default function ManualParseTab({
   const { pageNumber } = useNavigation();
   const pageTextract = useTextractForPage(pageNumber);
   const {
-    tableParseStep,
-    tableParseRegion,
+    step: tableParseStep,
+    region: tableParseRegion,
+    setStep: setTableParseStep,
+    setRegion: setTableParseRegion,
+    reset: resetTableParse,
+  } = useParseFlow("table");
+  const {
     tableParsedGrid, setTableParsedGrid,
     tableParseColumnBBs, addTableParseColumnBB,
     tableParseRowBBs, addTableParseRowBB, setTableParseRowBBs,
     tableParseColumnNames, setTableParseColumnNames,
-    resetTableParse,
-  } = useTableParse();
+  } = useTableParseExtensions();
 
   // Snapshot of tableParseRowBBs before a "Repeat Down" mass-add — lets the
   // user unwind the entire batch as one step (visible Undo button + Cmd-Z).
@@ -198,7 +202,8 @@ export default function ManualParseTab({
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Save failed");
     }
-  }, [pageTextract, tableParseColumnBBs, tableParseRowBBs, tableParseColumnNames, setTableParsedGrid, detectCsiAndPersist]);
+  }, [pageTextract, tableParseColumnBBs, tableParseRowBBs, tableParseColumnNames,
+    setTableParsedGrid, setTableParseStep, detectCsiAndPersist]);
 
   return (
     <div className="space-y-2">
@@ -225,7 +230,7 @@ export default function ManualParseTab({
           <span className="text-[10px] text-green-400">Region defined</span>
           <button
             onClick={() => {
-              useParseFlowStore.getState().setTableParseRegion(null);
+              setTableParseRegion(null);
               setTableParseStep("idle");
               useToolStore.getState().setMode("move");
             }}

@@ -3,9 +3,9 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { readTextractForPage } from "@/queries/textractCache";
-import { useParseFlowStore, useTableParse } from "@/stores/parseFlowStore";
+import { useParseFlow } from "@/hooks/useParseFlow";
+import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
-import { setTableParseStep } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useProject } from "@/stores/sessionStore";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
@@ -44,9 +44,13 @@ export default function GuidedParseTab({
   // Context-only handle: guided parsing reads Textract at click time and creates zero observers.
   const queryClient = useQueryClient();
   const {
-    tableParseRegion, setTableParseRegion,
+    region: tableParseRegion,
+    setStep: setTableParseStep,
+    setRegion: setTableParseRegion,
+  } = useParseFlow("table");
+  const {
     tableParsedGrid, setTableParsedGrid,
-  } = useTableParse();
+  } = useTableParseExtensions();
 
   // Guided parse store fields
   const guidedParseActive = useParseFlowStore((s) => s.guidedParseActive);
@@ -163,7 +167,7 @@ export default function GuidedParseTab({
     setParsed(true);
     useToolStore.getState().setMode("move");
   }, [queryClient, publicId, pageNumber, guidedParseRows, guidedParseCols, resetGuidedParse, detectCsiAndPersist,
-    setTableParsedGrid]);
+    setTableParsedGrid, setTableParseStep]);
 
   // ─── Repeat row down ───────────────────────────────────────
   const repeatRowDown = useCallback(() => {

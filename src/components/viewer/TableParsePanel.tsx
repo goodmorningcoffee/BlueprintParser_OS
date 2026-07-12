@@ -2,11 +2,11 @@
 
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useParseFlowStore } from "@/stores/parseFlowStore";
+import { useParseFlow } from "@/hooks/useParseFlow";
+import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
   resetAllTools,
-  setTableParseStep,
   toggleTableParsePanel,
 } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -58,16 +58,21 @@ export default function TableParsePanel() {
   const queryClient = useQueryClient();
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const pageIntelligence = usePageIntelligenceByPage();
-  const tableParseRegion = useParseFlowStore((s) => s.tableParseRegion);
-  const setTableParseRegion = useParseFlowStore((s) => s.setTableParseRegion);
-  const tableParsedGrid = useParseFlowStore((s) => s.tableParsedGrid);
-  const setTableParsedGrid = useParseFlowStore((s) => s.setTableParsedGrid);
-  const resetTableParse = useParseFlowStore((s) => s.resetTableParse);
-  const tableParseStep = useParseFlowStore((s) => s.tableParseStep);
+  const {
+    step: tableParseStep,
+    region: tableParseRegion,
+    setStep: setTableParseStep,
+    setRegion: setTableParseRegion,
+    reset: resetTableParse,
+  } = useParseFlow("table");
+  const {
+    tableParsedGrid,
+    setTableParsedGrid,
+    tableParseTab,
+    setTableParseTab,
+  } = useTableParseExtensions();
   const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
   const setPage = useViewerCoreStore((s) => s.setPage);
-  const tableParseTab = useParseFlowStore((s) => s.tableParseTab);
-  const setTableParseTab = useParseFlowStore((s) => s.setTableParseTab);
   const pageNames = useSessionStore((s) => s.pageNames);
   const pageDrawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
   // [refactor jul11 P2.2⑥] Server-owned annotation window now subscribes via its cache facade.
@@ -414,7 +419,7 @@ export default function TableParsePanel() {
       setTableParseStep("review");
       useToolStore.getState().setMode("move");
     },
-    [setTableParseRegion, setTableParsedGrid]
+    [setTableParseRegion, setTableParsedGrid, setTableParseStep]
   );
 
   const { summaries } = useSummaries();

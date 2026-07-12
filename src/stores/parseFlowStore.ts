@@ -413,6 +413,28 @@ export const useTableParse = () =>
     resetTableParse: state.resetTableParse,
   })));
 
+/**
+ * [refactor jul11 P2.4 A1] Cold-panel Table fields outside the shared lifecycle facade.
+ * Sacred AnnotationOverlay keeps the legacy combined hook; migrated panels compose this extension
+ * bundle with `useParseFlow("table")` so lifecycle and Table-only state stay independently typed.
+ */
+export const useTableParseExtensions = () =>
+  useParseFlowStore(useShallow((state) => ({
+    tableParsedGrid: state.tableParsedGrid,
+    setTableParsedGrid: state.setTableParsedGrid,
+    tableParseColumnBBs: state.tableParseColumnBBs,
+    addTableParseColumnBB: state.addTableParseColumnBB,
+    tableParseRowBBs: state.tableParseRowBBs,
+    addTableParseRowBB: state.addTableParseRowBB,
+    setTableParseRowBBs: state.setTableParseRowBBs,
+    tableParseColumnNames: state.tableParseColumnNames,
+    setTableParseColumnNames: state.setTableParseColumnNames,
+    tableParseTab: state.tableParseTab,
+    setTableParseTab: state.setTableParseTab,
+    tableParseOptions: state.tableParseOptions,
+    setTableParseOptions: state.setTableParseOptions,
+  })));
+
 /** Exact legacy 21-member Keynote + shared-guided grouped surface. */
 export const useKeynoteParse = () =>
   useParseFlowStore(useShallow((state) => ({
