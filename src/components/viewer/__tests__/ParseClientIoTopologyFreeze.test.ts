@@ -192,17 +192,21 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
   },
   "src/components/viewer/NotesParser.tsx:persistPreviewGrid": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    target: {
+      publicId: "target.publicId", isDemo: "target.isDemo", pageNumber: "target.pageNumber",
+    },
     promotion: {
-      via: '"parser"', type: '"notes"', regionId: "regionIdFor(pageNumber,region)",
-      bboxMinMax: "region", data: "data", category: '"notes"', csiTags: "grid.csiTags??[]",
+      via: '"parser"', type: '"notes"', regionId: "regionIdFor(target.pageNumber,target.region)",
+      bboxMinMax: "target.region", data: "data", category: '"notes"', csiTags: "input.csiTags??[]",
     },
   },
   "src/components/viewer/NotesParser.tsx:saveFromParagraphBatch": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    target: {
+      publicId: "target.publicId", isDemo: "target.isDemo", pageNumber: "target.pageNumber",
+    },
     promotion: {
-      via: '"parser"', type: '"notes"', regionId: "regionIdFor(pageNumber,unionBbox)",
+      via: '"parser"', type: '"notes"', regionId: "regionIdFor(target.pageNumber,unionBbox)",
       bboxMinMax: "unionBbox", data: "data", category: '"notes"',
     },
   },
@@ -224,18 +228,22 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
   },
   "src/components/viewer/SpecParser.tsx:persistPreview": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    target: {
+      publicId: "target.publicId", isDemo: "target.isDemo", pageNumber: "target.pageNumber",
+    },
     promotion: {
-      via: '"parser"', type: '"spec"', regionId: "regionIdFor(pageNumber,region)",
-      bboxMinMax: "region", data: "data", category: '"spec-dense-columns"',
-      csiTags: "p.csiTags??[]",
+      via: '"parser"', type: '"spec"', regionId: "regionIdFor(target.pageNumber,target.region)",
+      bboxMinMax: "target.region", data: "data", category: '"spec-dense-columns"',
+      csiTags: "input.csiTags??[]",
     },
   },
   "src/components/viewer/SpecParser.tsx:saveFromBatch": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    target: {
+      publicId: "target.publicId", isDemo: "target.isDemo", pageNumber: "target.pageNumber",
+    },
     promotion: {
-      via: '"parser"', type: '"spec"', regionId: "regionIdFor(pageNumber,unionBbox)",
+      via: '"parser"', type: '"spec"', regionId: "regionIdFor(target.pageNumber,unionBbox)",
       bboxMinMax: "unionBbox", data: "data", category: '"spec-dense-columns"',
     },
   },

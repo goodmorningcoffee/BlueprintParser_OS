@@ -4,12 +4,30 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParseFlow } from "@/hooks/useParseFlow";
 import {
+  commitParseOperation,
+  useParseOperation,
+  type ParseOperationToken,
+} from "@/hooks/useParseOperation";
+import {
   useNotesParseExtensions,
   useParagraphWorkspaceExtensions,
-  useParseDraftExtensions,
   useParseFlowStore,
 } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
+import {
+  completeNotesParseOperation,
+  invalidateGuidedParseOperations,
+  invalidateNotesWorkspaceOperations,
+  invalidateParseOperationForWorkspace,
+  invalidateParagraphParseOperations,
+  leaveNotesParserWorkspace,
+  removeParagraphForUser,
+  resetNotesParseWorkspace,
+  setParagraphBatchForUser,
+  transitionNotesParserMode,
+  upsertParagraphForUser,
+  type ParseWorkspaceLease,
+} from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useTextractForPage } from "@/queries/useTextract";
@@ -18,7 +36,7 @@ import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
 import { unionBboxes } from "@/lib/specnote-parser";
 // [refactor jul5 S026] apiErrorMessage: notes-parse now serves {error:{code,message}}
 import { canPersist, regionIdFor, apiErrorMessage } from "@/lib/client-persist";
-import type { BboxLTWH, NotesData, ParsedRegion } from "@/types";
+import type { NotesData, ParsedRegion } from "@/types";
 
 type NotesSubMode = "auto" | "guided" | "paragraph" | "fast-manual" | "manual";
 
@@ -28,6 +46,49 @@ interface PreviewGrid {
   rowBoundaries?: number[];
   colBoundaries?: number[];
   csiTags?: { code: string; description: string }[];
+}
+
+type NotesBbox = [number, number, number, number];
+
+type NotesOperationTarget = Readonly<{
+  projectId: number;
+  publicId: string | null;
+  isDemo: boolean;
+  pageNumber: number;
+  region: NotesBbox;
+  mode: NotesSubMode;
+}>;
+
+function clonePreviewGrid(grid: PreviewGrid): PreviewGrid {
+  return {
+    headers: [...grid.headers],
+    rows: grid.rows.map((row) => ({ ...row })),
+    rowBoundaries: grid.rowBoundaries ? [...grid.rowBoundaries] : undefined,
+    colBoundaries: grid.colBoundaries ? [...grid.colBoundaries] : undefined,
+    csiTags: grid.csiTags?.map((tag) => ({ ...tag })),
+  };
+}
+
+function notesDraftFor(grid: PreviewGrid, region: NotesBbox): ParsedRegion {
+  const [x0, y0, x1, y1] = region;
+  return {
+    id: "draft-notes",
+    type: "notes",
+    category: "notes-preview",
+    bbox: [x0, y0, x1, y1],
+    confidence: 0.85,
+    source: "user",
+    data: {
+      headers: grid.headers,
+      rows: grid.rows,
+      tagColumn: grid.headers[0],
+      tableName: "(preview)",
+      rowCount: grid.rows.length,
+      columnCount: grid.headers.length,
+      rowBoundaries: grid.rowBoundaries,
+      colBoundaries: grid.colBoundaries,
+    },
+  };
 }
 
 /**
@@ -60,181 +121,162 @@ export default function NotesParser() {
   const {
     region: notesParseRegion,
     setStep: setNotesParseStep,
-    setRegion: setNotesParseRegion,
-    reset: resetNotesParse,
   } = useParseFlow("notes");
+  const notesOperation = useParseOperation("notes");
   const {
     guidedNotesRows,
     guidedNotesCols,
     notesFastManualGrid,
   } = useNotesParseExtensions();
-  const { setParseDraftRegion } = useParseDraftExtensions();
   const {
     paragraphBatch,
-    setParagraphBatch,
-    removePendingParagraph,
-    upsertPendingParagraph,
-    setParagraphOverlayActive,
   } = useParagraphWorkspaceExtensions();
 
   const [mode, setMode] = useState<NotesSubMode>("auto");
   const [preview, setPreview] = useState<PreviewGrid | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [loadingRevision, setLoadingRevision] = useState<number | null>(null);
+  const [savingRevision, setSavingRevision] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const isSavingRef = useRef(false);
+  const loading = notesOperation.busy && loadingRevision === notesOperation.revision;
+  const saving = notesOperation.busy && savingRevision === notesOperation.revision;
+  const cleanupLeaseRef = useRef<ParseWorkspaceLease | null>(null);
 
-  // Derive the draft ParsedRegion via useMemo so its identity is stable while
-  // inputs are stable. Without this, every effect fire (and downstream
-  // ParseRegionLayer canvas redraw) triggers even when the payload is
-  // structurally unchanged across re-renders.
-  const draft = useMemo<ParsedRegion | null>(() => {
-    if (!preview || !notesParseRegion) return null;
-    const [x0, y0, x1, y1] = notesParseRegion;
-    return {
-      id: "draft-notes",
-      type: "notes",
-      category: "notes-preview",
-      bbox: [x0, y0, x1, y1],
-      confidence: 0.85,
-      source: "user",
-      data: {
-        headers: preview.headers,
-        rows: preview.rows,
-        tagColumn: preview.headers[0],
-        tableName: "(preview)",
-        rowCount: preview.rows.length,
-        columnCount: preview.headers.length,
-        rowBoundaries: preview.rowBoundaries,
-        colBoundaries: preview.colBoundaries,
-      },
-    };
-  }, [preview, notesParseRegion]);
+  const visiblePreview = useMemo<PreviewGrid | null>(() => {
+    if (mode !== "fast-manual") return preview;
+    return notesFastManualGrid ? clonePreviewGrid(notesFastManualGrid) : null;
+  }, [mode, notesFastManualGrid, preview]);
 
+  // Page identity and the mounted parser instance are authority boundaries even while its wizard
+  // step is idle. Teardown also clears the three derived overlay gates in one parse publication.
+  const operationPageRef = useRef(pageNumber);
   useEffect(() => {
-    setParseDraftRegion(draft);
-  }, [draft, setParseDraftRegion]);
-
-  // Clear draft on unmount
-  useEffect(() => {
-    return () => setParseDraftRegion(null);
-  }, [setParseDraftRegion]);
-
-  // Toggle the shared guidedParseActive flag when entering/leaving Guided mode
-  // so PDFPage's KeynoteGuidedOverlaySlot renders the drag-adjust overlay.
-  // Only one parser is active at a time so sharing the flag is safe.
-  useEffect(() => {
-    const store = useParseFlowStore.getState();
-    if (mode === "guided" && notesParseRegion) {
-      store.setGuidedParseActive(true);
-      if (!store.guidedParseRegion) {
-        store.setGuidedParseRegion(notesParseRegion);
-      }
-    } else {
-      store.setGuidedParseActive(false);
+    if (operationPageRef.current === pageNumber) return;
+    operationPageRef.current = pageNumber;
+    cleanupLeaseRef.current = invalidateParseOperationForWorkspace("notes");
+  }, [pageNumber]);
+  // Parent tab/panel commands own Guided teardown before unmount. The component cleanup therefore
+  // touches only Notes/Spec draft state; a newer independent Table/Keynote Guided generation wins.
+  useEffect(() => () => {
+    if (cleanupLeaseRef.current) {
+      leaveNotesParserWorkspace(cleanupLeaseRef.current, false);
     }
-    return () => {
-      useParseFlowStore.getState().setGuidedParseActive(false);
-    };
-  }, [mode, notesParseRegion]);
-
-  // Toggle the Fast-manual overlay slot when entering/leaving that sub-mode.
-  useEffect(() => {
-    const store = useParseFlowStore.getState();
-    store.setNotesFastManualActive(mode === "fast-manual" && !!notesParseRegion);
-    if (mode !== "fast-manual") {
-      store.setNotesFastManualGrid(null);
-    }
-    return () => {
-      const s = useParseFlowStore.getState();
-      s.setNotesFastManualActive(false);
-      s.setNotesFastManualGrid(null);
-    };
-  }, [mode, notesParseRegion]);
-
-  // Toggle ParagraphOverlay activation on paragraph sub-mode entry/exit.
-  useEffect(() => {
-    setParagraphOverlayActive(mode === "paragraph" && !!notesParseRegion);
-    return () => setParagraphOverlayActive(false);
-  }, [mode, notesParseRegion, setParagraphOverlayActive]);
-
-  // Mirror the Fast-manual overlay's grid into local preview so the standard
-  // preview panel + Save path work identically across all four sub-modes.
-  useEffect(() => {
-    if (mode !== "fast-manual") return;
-    if (!notesFastManualGrid) {
-      setPreview(null);
-      return;
-    }
-    setPreview({
-      headers: notesFastManualGrid.headers,
-      rows: notesFastManualGrid.rows,
-      rowBoundaries: notesFastManualGrid.rowBoundaries,
-      colBoundaries: notesFastManualGrid.colBoundaries,
-    });
-  }, [mode, notesFastManualGrid]);
+  }, []);
 
   const regionReady = !!notesParseRegion;
 
+  const captureTarget = (region: NotesBbox): NotesOperationTarget => ({
+    projectId,
+    publicId,
+    isDemo,
+    pageNumber,
+    region: [...region] as NotesBbox,
+    mode,
+  });
+
   const runAuto = async () => {
     if (!projectId || !notesParseRegion) return;
-    setLoading(true);
-    setError(null);
+    const target = captureTarget(notesParseRegion);
+    const started = notesOperation.begin();
+    if (started.status !== "started") return;
+    const token = started.token;
     try {
+      const workspaceLease = invalidateParagraphParseOperations("notes");
+      if (!notesOperation.isCurrent(token)) return;
+      cleanupLeaseRef.current = workspaceLease;
+      if (!commitParseOperation(token, () => {
+        setLoadingRevision(token.revision);
+        setSavingRevision(null);
+        setError(null);
+      })) return;
+
       const res = await fetch("/api/notes-parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          projectId,
-          pageNumber,
-          regionBbox: notesParseRegion,
+          projectId: target.projectId,
+          pageNumber: target.pageNumber,
+          regionBbox: target.region,
         }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Parse failed" }));
         throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
       }
-      const payload = (await res.json()) as PreviewGrid & { note?: string };
+      const response = (await res.json()) as PreviewGrid & { note?: string };
+      if (!notesOperation.isCurrent(token)) return;
+      const payload = clonePreviewGrid(response);
       if (!payload.headers?.length || !payload.rows?.length) {
-        setError(payload.note ?? "No numbered items found in region");
-        setPreview(null);
+        commitParseOperation(token, () => {
+          setError(response.note ?? "No numbered items found in region");
+          setPreview(null);
+          useParseFlowStore.getState().setParseDraftRegion(null);
+        });
       } else {
-        setPreview(payload);
-        // Auto-persist on parse completion so the note is saved without an
-        // explicit "Save Notes" click. Stable regionId → re-parse upserts.
-        void persistPreviewGrid(payload, notesParseRegion);
+        const published = commitParseOperation(token, () => {
+          setPreview(payload);
+          setLoadingRevision(null);
+          setSavingRevision(token.revision);
+          setError(null);
+          // Shared publication is deliberately last: a synchronous B may revoke A, after which the
+          // inherited helper below rechecks before launching persistence.
+          useParseFlowStore.getState().setParseDraftRegion(notesDraftFor(payload, target.region));
+        });
+        if (!published || !notesOperation.isCurrent(token)) return;
+        // Preserve Auto's visible fire-and-forget phase transition while the outer root retains its
+        // sole revision through the inherited durable continuation.
+        await persistPreviewGrid(payload, target.region, token, target);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Parse failed");
+      commitParseOperation(token, () => {
+        setError(err instanceof Error ? err.message : "Parse failed");
+      });
     } finally {
-      setLoading(false);
+      notesOperation.finish(token);
     }
   };
 
   const runProposeGuided = async () => {
     if (!projectId || !notesParseRegion) return;
-    setLoading(true);
-    setError(null);
+    const target = captureTarget(notesParseRegion);
+    const started = notesOperation.begin("supersede");
+    if (started.status !== "started") return;
+    const token = started.token;
     try {
+      const workspaceLease = invalidateGuidedParseOperations("notes");
+      if (!notesOperation.isCurrent(token)) return;
+      cleanupLeaseRef.current = workspaceLease;
+      if (!commitParseOperation(token, () => {
+        setLoadingRevision(token.revision);
+        setSavingRevision(null);
+        setError(null);
+      })) return;
       const res = await fetch("/api/notes-parse/propose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          projectId,
-          pageNumber,
-          regionBbox: notesParseRegion,
+          projectId: target.projectId,
+          pageNumber: target.pageNumber,
+          regionBbox: target.region,
         }),
       });
       if (!res.ok) throw new Error("Propose failed");
       const payload = (await res.json()) as { proposedRows: number[]; proposedCols: number[] };
       // Populate the shared guided slice (keynote uses the same) so
-      // GuidedParseOverlay can render via PDFPage's notes slot.
-      useParseFlowStore.getState().setGuidedParseRows(payload.proposedRows);
-      useParseFlowStore.getState().setGuidedParseCols(payload.proposedCols);
+      // GuidedParseOverlay can render via PDFPage's notes slot. Each shared publication is followed
+      // by a fresh currentness check because Zustand subscribers run synchronously.
+      if (!commitParseOperation(token, () => {
+        useParseFlowStore.getState().setGuidedParseRows([...payload.proposedRows]);
+      })) return;
+      if (!notesOperation.isCurrent(token)) return;
+      commitParseOperation(token, () => {
+        useParseFlowStore.getState().setGuidedParseCols([...payload.proposedCols]);
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Propose failed");
+      commitParseOperation(token, () => {
+        setError(err instanceof Error ? err.message : "Propose failed");
+      });
     } finally {
-      setLoading(false);
+      notesOperation.finish(token);
     }
   };
 
@@ -291,7 +333,7 @@ export default function NotesParser() {
     const last = paragraphBatch[paragraphBatch.length - 1];
     const [x0, y0, x1, y1] = last.bbox;
     const h = y1 - y0;
-    upsertPendingParagraph({
+    upsertParagraphForUser({
       id: `para-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       bbox: [x0, y1, x1, y1 + h],
       lines: [],
@@ -300,48 +342,68 @@ export default function NotesParser() {
   };
 
   const saveFromParagraphBatch = async () => {
-    if (!canPersist(publicId, isDemo) || !notesParseRegion || paragraphBatch.length === 0 || isSavingRef.current) return;
-    isSavingRef.current = true;
-    setSaving(true);
-    setError(null);
+    if (!canPersist(publicId, isDemo) || !notesParseRegion || paragraphBatch.length === 0) return;
+    const target = captureTarget(notesParseRegion);
+    const capturedBatch = paragraphBatch.map((paragraph) => ({
+      ...paragraph,
+      bbox: [...paragraph.bbox] as NotesBbox,
+      lines: [...paragraph.lines],
+      rowText: { ...paragraph.rowText },
+      colBoundaries: paragraph.colBoundaries ? [...paragraph.colBoundaries] : undefined,
+    }));
+    const started = notesOperation.begin();
+    if (started.status !== "started") return;
+    const token = started.token;
     try {
-      const unionBbox = unionBboxes(paragraphBatch.map((p) => p.bbox));
+      const workspaceLease = invalidateParagraphParseOperations("notes");
+      if (!notesOperation.isCurrent(token)) return;
+      cleanupLeaseRef.current = workspaceLease;
+      if (!commitParseOperation(token, () => {
+        setSavingRevision(token.revision);
+        setLoadingRevision(null);
+        setError(null);
+      })) return;
+
+      const unionBbox = unionBboxes(capturedBatch.map((p) => p.bbox));
       const headers = ["Key", "Note"];
-      const rows = paragraphBatch.map((p) => ({
+      const rows = capturedBatch.map((p) => ({
         Key: p.rowText.Key ?? "",
         Note: p.rowText.Note ?? p.rowText.Value ?? "",
       }));
-      const rowBoundaries = paragraphBatch.map((p) => p.bbox[1]);
-      rowBoundaries.push(paragraphBatch[paragraphBatch.length - 1].bbox[3]);
+      const rowBoundaries = capturedBatch.map((p) => p.bbox[1]);
+      rowBoundaries.push(capturedBatch[capturedBatch.length - 1].bbox[3]);
       const data: NotesData = {
         headers,
         rows,
         tagColumn: headers[0],
-        tableName: `Notes p.${pageNumber} — ${paragraphBatch.length} paragraph${paragraphBatch.length === 1 ? "" : "s"}`,
+        tableName: `Notes p.${target.pageNumber} — ${capturedBatch.length} paragraph${capturedBatch.length === 1 ? "" : "s"}`,
         rowCount: rows.length,
         columnCount: headers.length,
         rowBoundaries,
       };
       await saveParsedRegion(
         queryClient,
-        { publicId, isDemo, pageNumber },
+        { publicId: target.publicId, isDemo: target.isDemo, pageNumber: target.pageNumber },
         {
           via: "parser",
           type: "notes",
-          regionId: regionIdFor(pageNumber, unionBbox),
+          regionId: regionIdFor(target.pageNumber, unionBbox),
           bboxMinMax: unionBbox,
           data: data as unknown as Record<string, unknown>,
           category: "notes",
         },
       );
-      setParagraphBatch([]);
-      resetNotesParse();
-      setPreview(null);
+      if (!notesOperation.isCurrent(token)) return;
+      commitParseOperation(token, () => {
+        setPreview(null);
+        completeNotesParseOperation(token);
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      commitParseOperation(token, () => {
+        setError(err instanceof Error ? err.message : "Save failed");
+      });
     } finally {
-      isSavingRef.current = false;
-      setSaving(false);
+      notesOperation.finish(token);
     }
   };
 
@@ -351,58 +413,122 @@ export default function NotesParser() {
   // race React state updates. Stable regionId → re-parse upserts (replaces).
   const persistPreviewGrid = async (
     grid: PreviewGrid,
-    region: [number, number, number, number],
-  ) => {
-    if (!canPersist(publicId, isDemo) || isSavingRef.current) return;
-    isSavingRef.current = true;
-    setSaving(true);
-    setError(null);
+    region: NotesBbox,
+    inheritedToken?: ParseOperationToken<"notes">,
+    inheritedTarget?: NotesOperationTarget,
+    publishPreview = false,
+  ): Promise<boolean> => {
+    const target = inheritedTarget ?? captureTarget(region);
+    if (!canPersist(target.publicId, target.isDemo)) return false;
+    const input = clonePreviewGrid(grid);
+    const ownsToken = inheritedToken === undefined;
+    let token = inheritedToken;
+    if (ownsToken) {
+      const started = notesOperation.begin();
+      if (started.status !== "started") return false;
+      token = started.token;
+    }
+    if (!token) return false;
     try {
+      if (ownsToken) {
+        const workspaceLease = target.mode === "guided"
+          ? invalidateNotesWorkspaceOperations("notes")
+          : invalidateParagraphParseOperations("notes");
+        if (!notesOperation.isCurrent(token)) return false;
+        cleanupLeaseRef.current = workspaceLease;
+        if (!commitParseOperation(token, () => {
+          setSavingRevision(token.revision);
+          setLoadingRevision(null);
+          setError(null);
+          if (publishPreview) {
+            setPreview(input);
+            useParseFlowStore.getState().setParseDraftRegion(notesDraftFor(input, target.region));
+          }
+        })) return false;
+      } else if (!notesOperation.isCurrent(token)) {
+        return false;
+      }
+
+      // A shared draft subscriber may synchronously hand the workspace to B during the authorized
+      // publication above. Durable work must not start after that handoff.
+      if (!notesOperation.isCurrent(token)) return false;
+
       const data: NotesData = {
-        headers: grid.headers,
-        rows: grid.rows,
-        tagColumn: grid.headers[0],
-        tableName: `Notes p.${pageNumber}`,
-        rowCount: grid.rows.length,
-        columnCount: grid.headers.length,
-        rowBoundaries: grid.rowBoundaries,
-        colBoundaries: grid.colBoundaries,
+        headers: input.headers,
+        rows: input.rows,
+        tagColumn: input.headers[0],
+        tableName: `Notes p.${target.pageNumber}`,
+        rowCount: input.rows.length,
+        columnCount: input.headers.length,
+        rowBoundaries: input.rowBoundaries,
+        colBoundaries: input.colBoundaries,
       };
       await saveParsedRegion(
         queryClient,
-        { publicId, isDemo, pageNumber },
+        { publicId: target.publicId, isDemo: target.isDemo, pageNumber: target.pageNumber },
         {
           via: "parser",
           type: "notes",
-          regionId: regionIdFor(pageNumber, region),
-          bboxMinMax: region,
+          regionId: regionIdFor(target.pageNumber, target.region),
+          bboxMinMax: target.region,
           data: data as unknown as Record<string, unknown>,
           category: "notes",
-          csiTags: grid.csiTags ?? [],
+          csiTags: input.csiTags ?? [],
         },
       );
-      resetNotesParse();
-      setPreview(null);
+      if (!notesOperation.isCurrent(token)) return false;
+      let completed = false;
+      commitParseOperation(token, () => {
+        setPreview(null);
+        completed = completeNotesParseOperation(token, {
+          guided: target.mode === "guided",
+          fastManual: target.mode === "fast-manual",
+        });
+      });
+      return completed;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      commitParseOperation(token, () => {
+        setError(err instanceof Error ? err.message : "Save failed");
+      });
+      return false;
     } finally {
-      isSavingRef.current = false;
-      setSaving(false);
+      if (ownsToken) notesOperation.finish(token);
     }
   };
 
   const handleSave = async () => {
     if (mode === "paragraph") return saveFromParagraphBatch();
-    if (!notesParseRegion || !preview) return;
-    return persistPreviewGrid(preview, notesParseRegion);
+    if (!notesParseRegion || !visiblePreview) return;
+    return persistPreviewGrid(visiblePreview, notesParseRegion);
   };
 
   const handleClear = () => {
+    setMode("auto");
     setPreview(null);
     setError(null);
-    setNotesParseRegion(null);
-    setNotesParseStep("idle");
-    resetNotesParse();
+    resetNotesParseWorkspace("idle", {
+      guided: mode === "guided",
+      fastManual: mode === "fast-manual",
+    });
+  };
+
+  const handleModeChange = (nextMode: NotesSubMode) => {
+    if (nextMode === mode) return;
+    cleanupLeaseRef.current = transitionNotesParserMode(nextMode, notesParseRegion);
+    setMode(nextMode);
+    setPreview(null);
+    setError(null);
+  };
+
+  const handleRedraw = () => {
+    useToolStore.getState().setMode("pointer");
+    setMode("auto");
+    setPreview(null);
+    setError(null);
+    resetNotesParseWorkspace("select-region", {
+      guided: mode === "guided",
+      fastManual: mode === "fast-manual",
+    });
   };
 
   const regionLabel = useMemo(() => {
@@ -418,15 +544,12 @@ export default function NotesParser() {
         {(["auto", "guided", "paragraph", "fast-manual", "manual"] as const).map((m) => (
           <button
             key={m}
-            onClick={() => {
-              setMode(m);
-              setPreview(null);
-              setError(null);
-            }}
+            onClick={() => handleModeChange(m)}
+            disabled={!regionReady && m !== "auto"}
             className={`flex-1 px-1 py-1.5 text-[9px] font-medium ${
               mode === m
                 ? "text-blue-300 border-b-2 border-blue-400"
-                : "text-[var(--muted)] hover:text-[var(--fg)]"
+                : "text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-40"
             }`}
           >
             {m === "auto" ? "Auto" : m === "guided" ? "Guided" : m === "paragraph" ? "Paragraph" : m === "fast-manual" ? "Fast-manual" : "Manual"}
@@ -450,11 +573,7 @@ export default function NotesParser() {
             </button>
           ) : (
             <button
-              onClick={() => {
-                resetNotesParse();
-                setNotesParseStep("select-region");
-                useToolStore.getState().setMode("pointer");
-              }}
+              onClick={handleRedraw}
               className="text-[9px] px-1.5 py-0.5 rounded text-[var(--muted)] hover:text-red-400"
             >
               Redraw
@@ -494,8 +613,9 @@ export default function NotesParser() {
                 const grid = buildGridFromGuided();
                 if (!grid) setError("Need at least 2 rows and 2 columns to build grid");
                 else {
-                  setPreview(grid);
-                  if (notesParseRegion) void persistPreviewGrid(grid, notesParseRegion);
+                  if (notesParseRegion) {
+                    void persistPreviewGrid(grid, notesParseRegion, undefined, undefined, true);
+                  }
                 }
               }}
               disabled={!regionReady}
@@ -528,7 +648,9 @@ export default function NotesParser() {
                 Repeat +1 single
               </button>
               <button
-                onClick={() => setParagraphBatch([])}
+                onClick={() => {
+                  setParagraphBatchForUser([]);
+                }}
                 disabled={paragraphBatch.length === 0}
                 className="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-red-400 disabled:opacity-40"
               >
@@ -549,7 +671,9 @@ export default function NotesParser() {
                       {p.rowText.Value ? ` · ${p.rowText.Value.slice(0, 48)}${p.rowText.Value.length > 48 ? "…" : ""}` : ""}
                     </span>
                     <button
-                      onClick={() => removePendingParagraph(p.id)}
+                      onClick={() => {
+                        removeParagraphForUser(p.id);
+                      }}
                       className="text-red-400/70 hover:text-red-400 shrink-0"
                       title="Remove"
                     >
@@ -612,8 +736,9 @@ export default function NotesParser() {
                 const grid = buildGridFromManualBBs();
                 if (!grid) setError("Need at least 2 columns and 1 row drawn");
                 else {
-                  setPreview(grid);
-                  if (notesParseRegion) void persistPreviewGrid(grid, notesParseRegion);
+                  if (notesParseRegion) {
+                    void persistPreviewGrid(grid, notesParseRegion, undefined, undefined, true);
+                  }
                 }
               }}
               disabled={!regionReady}
@@ -629,28 +754,28 @@ export default function NotesParser() {
         )}
 
         {/* Preview */}
-        {preview && (
+        {visiblePreview && (
           <div className="rounded border border-[var(--border)] bg-[var(--surface-2)]/50 p-2 space-y-1">
             <div className="text-[10px] font-semibold text-blue-300">
-              Preview: {preview.rows.length} rows &times; {preview.headers.length} cols
+              Preview: {visiblePreview.rows.length} rows &times; {visiblePreview.headers.length} cols
             </div>
-            {preview.csiTags && preview.csiTags.length > 0 && (
+            {visiblePreview.csiTags && visiblePreview.csiTags.length > 0 && (
               <div className="text-[9px] text-[var(--muted)]">
-                {preview.csiTags.length} CSI tag{preview.csiTags.length === 1 ? "" : "s"} detected
+                {visiblePreview.csiTags.length} CSI tag{visiblePreview.csiTags.length === 1 ? "" : "s"} detected
               </div>
             )}
             <div className="max-h-32 overflow-y-auto text-[9px] font-mono text-[var(--fg)]/80 leading-tight">
-              {preview.rows.slice(0, 10).map((row, ri) => (
+              {visiblePreview.rows.slice(0, 10).map((row, ri) => (
                 <div key={ri} className="flex gap-1">
-                  <span className="text-blue-300 w-6 shrink-0">{row[preview.headers[0]]}</span>
+                  <span className="text-blue-300 w-6 shrink-0">{row[visiblePreview.headers[0]]}</span>
                   <span className="flex-1 truncate">
-                    {preview.headers.slice(1).map((h) => row[h]).filter(Boolean).join(" | ")}
+                    {visiblePreview.headers.slice(1).map((h) => row[h]).filter(Boolean).join(" | ")}
                   </span>
                 </div>
               ))}
-              {preview.rows.length > 10 && (
+              {visiblePreview.rows.length > 10 && (
                 <div className="text-[var(--muted)]/70 italic">
-                  … and {preview.rows.length - 10} more
+                  … and {visiblePreview.rows.length - 10} more
                 </div>
               )}
             </div>
@@ -668,7 +793,7 @@ export default function NotesParser() {
         </button>
         <button
           onClick={handleSave}
-          disabled={saving || (mode === "paragraph" ? paragraphBatch.length === 0 : !preview)}
+          disabled={saving || (mode === "paragraph" ? paragraphBatch.length === 0 : !visiblePreview)}
           className="flex-1 text-[10px] px-2 py-1 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40"
         >
           {saving ? "Saving…" : "Save Notes"}

@@ -5,7 +5,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
-import { toggleTableParsePanel } from "@/stores/viewerCommands";
+import {
+  openSpecsNotesParseTab,
+  toggleTableParsePanel,
+} from "@/stores/viewerCommands";
 import { isDemoFeatureEnabled, useProject, useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2②] qtoWorkflows collection moved zustand → TanStack cache; the facade hook
 // returns the same 4-field shape the old useQtoWorkflow() store selector did (SPEC §3).
@@ -338,11 +341,7 @@ export default function AutoQtoTab() {
                   Table Parse
                 </button>
                 <button
-                  onClick={() => {
-                    const ui = useUiStore.getState();
-                    if (!ui.showSpecsNotesPanel) ui.toggleSpecsNotesPanel();
-                    ui.setSpecsNotesTab("keynotes");
-                  }}
+                  onClick={() => openSpecsNotesParseTab("keynotes")}
                   className="flex-1 text-[10px] px-2 py-1.5 rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
                 >
                   Keynote Parse

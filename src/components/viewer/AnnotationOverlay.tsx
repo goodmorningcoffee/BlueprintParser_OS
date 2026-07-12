@@ -27,9 +27,11 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore, useAnnotationFiltersUi } from "@/stores/uiStore";
 import {
   acceptKeynoteParseRegion,
+  acceptNotesParseRegion,
+  acceptSpecParseRegion,
+  addGuidedNotesColumnForUser,
+  addGuidedNotesRowForUser,
   setKeynoteParseStep,
-  setNotesParseStep,
-  setSpecParseStep,
   setTableParseStep,
   toggleTableParsePanel,
 } from "@/stores/viewerCommands";
@@ -2294,25 +2296,23 @@ export default memo(function AnnotationOverlay({
     // Notes parse BBs (Stage 4)
     const notesStep = useParseFlowStore.getState().notesParseStep;
     if (notesStep === "select-region") {
-      useParseFlowStore.getState().setNotesParseRegion([minX, minY, maxX, maxY]);
-      setNotesParseStep("idle");
+      acceptNotesParseRegion([minX, minY, maxX, maxY]);
       useToolStore.getState().setMode("move");
       return;
     }
     if (notesStep === "define-column") {
-      useParseFlowStore.getState().addGuidedNotesCol([minX, minY, maxX, maxY]);
+      addGuidedNotesColumnForUser([minX, minY, maxX, maxY]);
       return;
     }
     if (notesStep === "define-row") {
-      useParseFlowStore.getState().addGuidedNotesRow([minX, minY, maxX, maxY]);
+      addGuidedNotesRowForUser([minX, minY, maxX, maxY]);
       return;
     }
 
     // Spec parse BBs (Stage 5)
     const specStep = useParseFlowStore.getState().specParseStep;
     if (specStep === "select-region") {
-      useParseFlowStore.getState().setSpecParseRegion([minX, minY, maxX, maxY]);
-      setSpecParseStep("idle");
+      acceptSpecParseRegion([minX, minY, maxX, maxY]);
       useToolStore.getState().setMode("move");
       return;
     }

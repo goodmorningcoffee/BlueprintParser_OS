@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParseFlow } from "@/hooks/useParseFlow";
+import { transitionSpecParserMode } from "@/stores/viewerCommands";
 import { useSessionStore } from "@/stores/sessionStore";
 import SpecIndex from "./SpecIndex";
 import SpecClassifier from "./SpecClassifier";
@@ -31,13 +32,19 @@ export default function SpecPanel({ embedded = false }: SpecPanelProps) {
     setTab("index");
   }, [projectId]);
 
+  const handleTabChange = (nextTab: SpecSubTab) => {
+    if (nextTab === tab) return;
+    transitionSpecParserMode();
+    setTab(nextTab);
+  };
+
   const content = (
     <>
       <div className="flex border-b border-[var(--border)]">
         {(["index", "classifier", "parser"] as const).map((t) => (
           <button
             key={t}
-            onClick={() => setTab(t)}
+            onClick={() => handleTabChange(t)}
             className={`flex-1 px-1.5 py-1.5 text-[9px] font-medium ${
               tab === t
                 ? "text-violet-300 border-b-2 border-violet-400"

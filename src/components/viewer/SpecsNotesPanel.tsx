@@ -1,7 +1,10 @@
 "use client";
 
-import { useUiStore, usePanelTabs, usePanelTabActions } from "@/stores/uiStore";
-import { useParseFlowStore } from "@/stores/parseFlowStore";
+import { useUiStore, usePanelTabs } from "@/stores/uiStore";
+import {
+  setSpecsNotesParseTab,
+  toggleSpecsNotesParsePanel,
+} from "@/stores/viewerCommands";
 import KeynotePanel from "./KeynotePanel";
 import NotesPanel from "./NotesPanel";
 import SpecPanel from "./SpecPanel";
@@ -20,24 +23,16 @@ import SpecPanel from "./SpecPanel";
  * close button, outer header) is suppressed.
  */
 export default function SpecsNotesPanel() {
-  const toggleSpecsNotesPanel = useUiStore((s) => s.toggleSpecsNotesPanel);
   const { specsNotesTab } = usePanelTabs();
-  const { setSpecsNotesTab } = usePanelTabActions();
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
   const toggleParsedRegions = useUiStore((s) => s.toggleParsedRegions);
 
   const handleClose = () => {
-    if (specsNotesTab === "keynotes") {
-      useParseFlowStore.getState().invalidateParseOperation("keynote");
-    }
-    toggleSpecsNotesPanel();
+    toggleSpecsNotesParsePanel();
   };
 
   const handleTabChange = (tab: typeof specsNotesTab) => {
-    if (tab !== specsNotesTab && (tab === "keynotes" || specsNotesTab === "keynotes")) {
-      useParseFlowStore.getState().invalidateParseOperation("keynote");
-    }
-    setSpecsNotesTab(tab);
+    setSpecsNotesParseTab(tab);
   };
 
   return (

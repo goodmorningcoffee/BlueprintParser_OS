@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, memo } from "react";
+import type { ParseWorkspaceLease } from "@/stores/viewerCommands";
 
 interface GuidedParseOverlayProps {
   /** Whether the overlay should render (gate set by the calling panel). */
@@ -12,11 +13,11 @@ interface GuidedParseOverlayProps {
   /** X-coordinate positions for column boundaries, normalized 0-1. */
   cols: number[];
   /** Row setter — called on drag or double-click-to-add. */
-  setRows: (rows: number[]) => void;
+  setRows: (rows: number[], lease: ParseWorkspaceLease) => void;
   /** Column setter — called on drag or double-click-to-add. */
-  setCols: (cols: number[]) => void;
+  setCols: (cols: number[], lease: ParseWorkspaceLease) => void;
   /** Revoke shared parser owners once, before the first user edit in a gesture. */
-  onGridEditStart: () => void;
+  onGridEditStart: () => ParseWorkspaceLease;
   width: number;
   height: number;
   cssScale: number;
@@ -55,6 +56,13 @@ export default memo(function GuidedParseOverlay({
   // Local drag state -- not in the store because it's transient
   const [dragging, setDragging] = useState<DragTarget>(null);
   const dragRef = useRef<DragTarget>(null); // mirror for event handlers
+  const dragLeaseRef = useRef<ParseWorkspaceLease | null>(null);
+
+  useEffect(() => {
+    if (active) return;
+    dragRef.current = null;
+    dragLeaseRef.current = null;
+  }, [active]);
 
   // ── Drawing ──────────────────────────────────────────────
   const draw = useCallback(() => {
@@ -201,7 +209,7 @@ export default memo(function GuidedParseOverlay({
       if (target) {
         e.preventDefault();
         e.stopPropagation();
-        onGridEditStart();
+        dragLeaseRef.current = onGridEditStart();
         dragRef.current = target;
         setDragging(target);
       }
@@ -212,7 +220,8 @@ export default memo(function GuidedParseOverlay({
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
       const target = dragRef.current;
-      if (!target || !region) return;
+      const lease = dragLeaseRef.current;
+      if (!target || !lease || !region) return;
       e.preventDefault();
 
       const { x, y } = getCanvasPos(e);
@@ -228,7 +237,7 @@ export default memo(function GuidedParseOverlay({
         const normalized = Math.max(lo + 0.001, Math.min(hi - 0.001, x / width));
         const next = [...cols];
         next[target.index] = normalized;
-        setCols(next);
+        setCols(next, lease);
       } else if (target.kind === "row") {
         const sorted = [...rows].map((v, i) => ({ v, i }));
         sorted.sort((a, b) => a.v - b.v);
@@ -238,7 +247,7 @@ export default memo(function GuidedParseOverlay({
         const normalized = Math.max(lo + 0.001, Math.min(hi - 0.001, y / height));
         const next = [...rows];
         next[target.index] = normalized;
-        setRows(next);
+        setRows(next, lease);
       }
     },
     [region, rows, cols, width, height, setRows, setCols, getCanvasPos]
@@ -246,20 +255,21 @@ export default memo(function GuidedParseOverlay({
 
   const handleMouseUp = useCallback(() => {
     dragRef.current = null;
+    dragLeaseRef.current = null;
     setDragging(null);
   }, []);
 
   // Attach global listeners while dragging so we don't lose the drag
   // if the mouse leaves the canvas.
   useEffect(() => {
-    if (!dragging) return;
+    if (!active || !dragging) return;
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [dragging, handleMouseMove, handleMouseUp]);
+  }, [active, dragging, handleMouseMove, handleMouseUp]);
 
   // ── Double-click to add a new boundary ──────────────────
   const handleDoubleClick = useCallback(
@@ -286,12 +296,12 @@ export default memo(function GuidedParseOverlay({
 
       if (distToVertEdge > distToHorzEdge) {
         // Closer to top/bottom edge -> add a row line
-        onGridEditStart();
-        setRows([...rows, ny]);
+        const lease = onGridEditStart();
+        setRows([...rows, ny], lease);
       } else {
         // Closer to left/right edge -> add a column line
-        onGridEditStart();
-        setCols([...cols, nx]);
+        const lease = onGridEditStart();
+        setCols([...cols, nx], lease);
       }
     },
     [region, rows, cols, width, height, getCanvasPos, hitTest, setRows, setCols, onGridEditStart]

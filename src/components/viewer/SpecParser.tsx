@@ -4,10 +4,27 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParseFlow } from "@/hooks/useParseFlow";
 import {
+  commitParseOperation,
+  useParseOperation,
+  type ParseOperationToken,
+} from "@/hooks/useParseOperation";
+import {
   useParagraphWorkspaceExtensions,
-  useParseDraftExtensions,
+  useParseFlowStore,
 } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
+import {
+  completeSpecParseOperation,
+  invalidateParseOperationForWorkspace,
+  invalidateParagraphParseOperations,
+  leaveSpecParserWorkspace,
+  removeParagraphForUser,
+  resetSpecParseWorkspace,
+  setParagraphBatchForUser,
+  transitionSpecParserMode,
+  upsertParagraphForUser,
+  type ParseWorkspaceLease,
+} from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { saveParsedRegion } from "@/queries/parsedRegions";
@@ -22,6 +39,40 @@ interface PreviewSpec {
   sections: Array<{ sectionHeader: string; body: string }>;
   rowBoundaries?: number[];
   csiTags?: CsiCode[];
+}
+
+type SpecBbox = [number, number, number, number];
+
+type SpecOperationTarget = Readonly<{
+  projectId: number;
+  publicId: string | null;
+  isDemo: boolean;
+  pageNumber: number;
+  region: SpecBbox;
+}>;
+
+function clonePreviewSpec(preview: PreviewSpec): PreviewSpec {
+  return {
+    sections: preview.sections.map((section) => ({ ...section })),
+    rowBoundaries: preview.rowBoundaries ? [...preview.rowBoundaries] : undefined,
+    csiTags: preview.csiTags?.map((tag) => ({ ...tag })),
+  };
+}
+
+function specDraftFor(preview: PreviewSpec, region: SpecBbox): ParsedRegion {
+  const [x0, y0, x1, y1] = region;
+  return {
+    id: "draft-spec",
+    type: "spec",
+    category: "spec-preview",
+    bbox: [x0, y0, x1, y1],
+    confidence: 0.85,
+    source: "user",
+    data: {
+      sections: preview.sections,
+      tableName: "(preview)",
+    } satisfies SpecData,
+  };
 }
 
 /**
@@ -44,107 +95,96 @@ export default function SpecParser() {
   const {
     region: specParseRegion,
     setStep: setSpecParseStep,
-    setRegion: setSpecParseRegion,
-    reset: resetSpecParse,
   } = useParseFlow("spec");
+  const specOperation = useParseOperation("spec");
   const {
     paragraphBatch,
-    setParagraphBatch,
-    removePendingParagraph,
-    upsertPendingParagraph,
-    setParagraphOverlayActive,
   } = useParagraphWorkspaceExtensions();
-  const { setParseDraftRegion } = useParseDraftExtensions();
-
   const [mode, setMode] = useState<SpecSubMode>("auto");
   const [preview, setPreview] = useState<PreviewSpec | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [loadingRevision, setLoadingRevision] = useState<number | null>(null);
+  const [savingRevision, setSavingRevision] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const isSavingRef = useRef(false);
+  const loading = specOperation.busy && loadingRevision === specOperation.revision;
+  const saving = specOperation.busy && savingRevision === specOperation.revision;
+  const cleanupLeaseRef = useRef<ParseWorkspaceLease | null>(null);
 
-  // Draft region preview for ParseRegionLayer — union-bbox of batch when in
-  // paragraph mode, else the auto/manual preview region.
-  const draft = useMemo<ParsedRegion | null>(() => {
-    if (mode === "paragraph" && paragraphBatch.length > 0) {
-      const unionMinMax = unionBboxes(paragraphBatch.map((p) => p.bbox));
-      const [x0, y0, x1, y1] = unionMinMax;
-      return {
-        id: "draft-spec",
-        type: "spec",
-        category: "spec-preview",
-        bbox: [x0, y0, x1, y1],
-        confidence: 0.85,
-        source: "user",
-        data: {
-          sections: paragraphBatch.map((p) => ({
-            sectionHeader: p.rowText.sectionHeader ?? "",
-            body: p.rowText.body ?? "",
-          })),
-          tableName: `(draft — ${paragraphBatch.length} paragraph${paragraphBatch.length === 1 ? "" : "s"})`,
-        } satisfies SpecData,
-      };
+  const operationPageRef = useRef(pageNumber);
+  useEffect(() => {
+    if (operationPageRef.current === pageNumber) return;
+    operationPageRef.current = pageNumber;
+    cleanupLeaseRef.current = invalidateParseOperationForWorkspace("spec");
+  }, [pageNumber]);
+  useEffect(() => () => {
+    if (cleanupLeaseRef.current) {
+      leaveSpecParserWorkspace(cleanupLeaseRef.current);
     }
-    if (!preview || !specParseRegion) return null;
-    const [x0, y0, x1, y1] = specParseRegion;
-    return {
-      id: "draft-spec",
-      type: "spec",
-      category: "spec-preview",
-      bbox: [x0, y0, x1, y1],
-      confidence: 0.85,
-      source: "user",
-      data: {
-        sections: preview.sections,
-        tableName: "(preview)",
-      } satisfies SpecData,
-    };
-  }, [mode, paragraphBatch, preview, specParseRegion]);
-
-  useEffect(() => {
-    setParseDraftRegion(draft);
-  }, [draft, setParseDraftRegion]);
-
-  useEffect(() => {
-    return () => setParseDraftRegion(null);
-  }, [setParseDraftRegion]);
-
-  // Toggle ParagraphOverlay activation on paragraph sub-mode entry/exit.
-  useEffect(() => {
-    setParagraphOverlayActive(mode === "paragraph" && !!specParseRegion);
-    return () => setParagraphOverlayActive(false);
-  }, [mode, specParseRegion, setParagraphOverlayActive]);
+  }, []);
 
   const regionReady = !!specParseRegion;
 
+  const captureTarget = (region: SpecBbox): SpecOperationTarget => ({
+    projectId,
+    publicId,
+    isDemo,
+    pageNumber,
+    region: [...region] as SpecBbox,
+  });
+
   const runAuto = async () => {
     if (!projectId || !specParseRegion) return;
-    setLoading(true);
-    setError(null);
+    const target = captureTarget(specParseRegion);
+    const started = specOperation.begin();
+    if (started.status !== "started") return;
+    const token = started.token;
     try {
+      const workspaceLease = invalidateParagraphParseOperations("spec");
+      if (!specOperation.isCurrent(token)) return;
+      cleanupLeaseRef.current = workspaceLease;
+      if (!commitParseOperation(token, () => {
+        setLoadingRevision(token.revision);
+        setSavingRevision(null);
+        setError(null);
+      })) return;
       const res = await fetch("/api/spec-parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, pageNumber, regionBbox: specParseRegion }),
+        body: JSON.stringify({
+          projectId: target.projectId,
+          pageNumber: target.pageNumber,
+          regionBbox: target.region,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Parse failed" }));
         throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
       }
-      const payload = (await res.json()) as PreviewSpec & { note?: string };
+      const response = (await res.json()) as PreviewSpec & { note?: string };
+      if (!specOperation.isCurrent(token)) return;
+      const payload = clonePreviewSpec(response);
       if (!payload.sections?.length) {
-        setError(payload.note ?? "No spec section headers detected in region");
-        setPreview(null);
+        commitParseOperation(token, () => {
+          setError(response.note ?? "No spec section headers detected in region");
+          setPreview(null);
+          useParseFlowStore.getState().setParseDraftRegion(null);
+        });
       } else {
-        setPreview(payload);
-        // Auto-persist on parse completion so the spec is saved without an
-        // explicit "Save Spec" click. Stable regionId → re-parse upserts.
-        void persistPreview(payload, specParseRegion);
+        const published = commitParseOperation(token, () => {
+          setPreview(payload);
+          setLoadingRevision(null);
+          setSavingRevision(token.revision);
+          setError(null);
+          useParseFlowStore.getState().setParseDraftRegion(specDraftFor(payload, target.region));
+        });
+        if (!published || !specOperation.isCurrent(token)) return;
+        await persistPreview(payload, target.region, token, target);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Parse failed");
+      commitParseOperation(token, () => {
+        setError(err instanceof Error ? err.message : "Parse failed");
+      });
     } finally {
-      setLoading(false);
+      specOperation.finish(token);
     }
   };
 
@@ -153,38 +193,66 @@ export default function SpecParser() {
   // region explicitly so the auto path doesn't race React state updates.
   const persistPreview = async (
     p: PreviewSpec,
-    region: [number, number, number, number],
-  ) => {
-    if (!canPersist(publicId, isDemo) || isSavingRef.current) return;
-    isSavingRef.current = true;
-    setSaving(true);
-    setError(null);
+    region: SpecBbox,
+    inheritedToken?: ParseOperationToken<"spec">,
+    inheritedTarget?: SpecOperationTarget,
+  ): Promise<boolean> => {
+    const target = inheritedTarget ?? captureTarget(region);
+    if (!canPersist(target.publicId, target.isDemo)) return false;
+    const input = clonePreviewSpec(p);
+    const ownsToken = inheritedToken === undefined;
+    let token = inheritedToken;
+    if (ownsToken) {
+      const started = specOperation.begin();
+      if (started.status !== "started") return false;
+      token = started.token;
+    }
+    if (!token) return false;
     try {
+      if (ownsToken) {
+        const workspaceLease = invalidateParagraphParseOperations("spec");
+        if (!specOperation.isCurrent(token)) return false;
+        cleanupLeaseRef.current = workspaceLease;
+        if (!commitParseOperation(token, () => {
+          setSavingRevision(token.revision);
+          setLoadingRevision(null);
+          setError(null);
+        })) return false;
+      } else if (!specOperation.isCurrent(token)) {
+        return false;
+      }
       const data: SpecData = {
-        sections: p.sections,
-        tableName: `Spec p.${pageNumber}`,
-        csiTags: p.csiTags,
+        sections: input.sections,
+        tableName: `Spec p.${target.pageNumber}`,
+        csiTags: input.csiTags,
       };
       await saveParsedRegion(
         queryClient,
-        { publicId, isDemo, pageNumber },
+        { publicId: target.publicId, isDemo: target.isDemo, pageNumber: target.pageNumber },
         {
           via: "parser",
           type: "spec",
-          regionId: regionIdFor(pageNumber, region),
-          bboxMinMax: region,
+          regionId: regionIdFor(target.pageNumber, target.region),
+          bboxMinMax: target.region,
           data: data as unknown as Record<string, unknown>,
           category: "spec-dense-columns",
-          csiTags: p.csiTags ?? [],
+          csiTags: input.csiTags ?? [],
         },
       );
-      resetSpecParse();
-      setPreview(null);
+      if (!specOperation.isCurrent(token)) return false;
+      let completed = false;
+      commitParseOperation(token, () => {
+        setPreview(null);
+        completed = completeSpecParseOperation(token);
+      });
+      return completed;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      commitParseOperation(token, () => {
+        setError(err instanceof Error ? err.message : "Save failed");
+      });
+      return false;
     } finally {
-      isSavingRef.current = false;
-      setSaving(false);
+      if (ownsToken) specOperation.finish(token);
     }
   };
 
@@ -194,39 +262,58 @@ export default function SpecParser() {
   };
 
   const saveFromBatch = async () => {
-    if (!canPersist(publicId, isDemo) || !specParseRegion || paragraphBatch.length === 0 || isSavingRef.current) return;
-    isSavingRef.current = true;
-    setSaving(true);
-    setError(null);
+    if (!canPersist(publicId, isDemo) || !specParseRegion || paragraphBatch.length === 0) return;
+    const target = captureTarget(specParseRegion);
+    const capturedBatch = paragraphBatch.map((paragraph) => ({
+      ...paragraph,
+      bbox: [...paragraph.bbox] as SpecBbox,
+      lines: [...paragraph.lines],
+      rowText: { ...paragraph.rowText },
+      colBoundaries: paragraph.colBoundaries ? [...paragraph.colBoundaries] : undefined,
+    }));
+    const started = specOperation.begin();
+    if (started.status !== "started") return;
+    const token = started.token;
     try {
-      const unionBbox = unionBboxes(paragraphBatch.map((p) => p.bbox));
+      const workspaceLease = invalidateParagraphParseOperations("spec");
+      if (!specOperation.isCurrent(token)) return;
+      cleanupLeaseRef.current = workspaceLease;
+      if (!commitParseOperation(token, () => {
+        setSavingRevision(token.revision);
+        setLoadingRevision(null);
+        setError(null);
+      })) return;
+      const unionBbox = unionBboxes(capturedBatch.map((p) => p.bbox));
       const data: SpecData = {
-        sections: paragraphBatch.map((p) => ({
+        sections: capturedBatch.map((p) => ({
           sectionHeader: p.rowText.sectionHeader ?? "",
           body: p.rowText.body ?? "",
         })),
-        tableName: `Spec p.${pageNumber} — ${paragraphBatch.length} section${paragraphBatch.length === 1 ? "" : "s"}`,
+        tableName: `Spec p.${target.pageNumber} — ${capturedBatch.length} section${capturedBatch.length === 1 ? "" : "s"}`,
       };
       await saveParsedRegion(
         queryClient,
-        { publicId, isDemo, pageNumber },
+        { publicId: target.publicId, isDemo: target.isDemo, pageNumber: target.pageNumber },
         {
           via: "parser",
           type: "spec",
-          regionId: regionIdFor(pageNumber, unionBbox),
+          regionId: regionIdFor(target.pageNumber, unionBbox),
           bboxMinMax: unionBbox,
           data: data as unknown as Record<string, unknown>,
           category: "spec-dense-columns",
         },
       );
-      setParagraphBatch([]);
-      resetSpecParse();
-      setPreview(null);
+      if (!specOperation.isCurrent(token)) return;
+      commitParseOperation(token, () => {
+        setPreview(null);
+        completeSpecParseOperation(token);
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      commitParseOperation(token, () => {
+        setError(err instanceof Error ? err.message : "Save failed");
+      });
     } finally {
-      isSavingRef.current = false;
-      setSaving(false);
+      specOperation.finish(token);
     }
   };
 
@@ -236,7 +323,7 @@ export default function SpecParser() {
     const [x0, y0, x1, y1] = last.bbox;
     const h = y1 - y0;
     const newBbox: [number, number, number, number] = [x0, y1, x1, y1 + h];
-    upsertPendingParagraph({
+    upsertParagraphForUser({
       id: `para-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       bbox: newBbox,
       lines: [],
@@ -250,12 +337,26 @@ export default function SpecParser() {
   };
 
   const handleClear = () => {
+    setMode("auto");
     setPreview(null);
     setError(null);
-    setSpecParseRegion(null);
-    setSpecParseStep("idle");
-    setParagraphBatch([]);
-    resetSpecParse();
+    resetSpecParseWorkspace();
+  };
+
+  const handleModeChange = (nextMode: SpecSubMode) => {
+    if (nextMode === mode) return;
+    cleanupLeaseRef.current = transitionSpecParserMode(nextMode, specParseRegion);
+    setMode(nextMode);
+    setPreview(null);
+    setError(null);
+  };
+
+  const handleRedraw = () => {
+    useToolStore.getState().setMode("pointer");
+    setMode("auto");
+    setPreview(null);
+    setError(null);
+    resetSpecParseWorkspace("select-region");
   };
 
   const regionLabel = useMemo(() => {
@@ -272,15 +373,12 @@ export default function SpecParser() {
         {(["auto", "paragraph", "manual"] as const).map((m) => (
           <button
             key={m}
-            onClick={() => {
-              setMode(m);
-              setPreview(null);
-              setError(null);
-            }}
+            onClick={() => handleModeChange(m)}
+            disabled={!regionReady && m !== "auto"}
             className={`flex-1 px-1 py-1.5 text-[9px] font-medium ${
               mode === m
                 ? "text-violet-300 border-b-2 border-violet-400"
-                : "text-[var(--muted)] hover:text-[var(--fg)]"
+                : "text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-40"
             }`}
           >
             {m === "auto" ? "Auto" : m === "paragraph" ? "Paragraph" : "Manual"}
@@ -303,11 +401,7 @@ export default function SpecParser() {
             </button>
           ) : (
             <button
-              onClick={() => {
-                resetSpecParse();
-                setSpecParseStep("select-region");
-                useToolStore.getState().setMode("pointer");
-              }}
+              onClick={handleRedraw}
               className="text-[9px] px-1.5 py-0.5 rounded text-[var(--muted)] hover:text-red-400"
             >
               Redraw
@@ -350,7 +444,9 @@ export default function SpecParser() {
                 Repeat +1 single
               </button>
               <button
-                onClick={() => setParagraphBatch([])}
+                onClick={() => {
+                  setParagraphBatchForUser([]);
+                }}
                 disabled={paragraphBatch.length === 0}
                 className="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-red-400 disabled:opacity-40"
               >
@@ -370,7 +466,9 @@ export default function SpecParser() {
                       {p.rowText.body ? ` · ${p.rowText.body.slice(0, 48)}${p.rowText.body.length > 48 ? "…" : ""}` : ""}
                     </span>
                     <button
-                      onClick={() => removePendingParagraph(p.id)}
+                      onClick={() => {
+                        removeParagraphForUser(p.id);
+                      }}
                       className="text-red-400/70 hover:text-red-400 shrink-0"
                       title="Remove"
                     >

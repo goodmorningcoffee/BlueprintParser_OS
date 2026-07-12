@@ -1,8 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useParseFlow } from "@/hooks/useParseFlow";
-import { useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { openNotesParseTarget } from "@/stores/viewerCommands";
 // [refactor jul10 P2.2③; jul11 P2.2⑦] Summaries moved Zustand → TanStack Query. This component
 // deliberately keeps the narrow cache-only hook because it reads summaries only; active-window
 // range/loading ownership is isolated behind usePageWindow/PageWindowLoaderController.
@@ -30,8 +29,6 @@ interface NotesIndexProps {
  */
 export default function NotesIndex({ onOpenParser }: NotesIndexProps) {
   const { summaries } = useSummariesData();
-  const setPage = useViewerCoreStore((s) => s.setPage);
-  const { setRegion: setNotesParseRegion } = useParseFlow("notes");
   const [filter, setFilter] = useState("");
 
   const rows = useMemo(() => {
@@ -75,13 +72,12 @@ export default function NotesIndex({ onOpenParser }: NotesIndexProps) {
   }
 
   const handleRowClick = (r: NotesSummaryEntry) => {
-    setPage(r.pageNum);
     if (r.bbox) {
       // textRegion.bbox is LTWH → convert to MinMax for the viewer store
       const [l, t, w, h] = r.bbox;
-      setNotesParseRegion([l, t, l + w, t + h]);
+      openNotesParseTarget(r.pageNum, [l, t, l + w, t + h]);
     } else {
-      setNotesParseRegion(null);
+      openNotesParseTarget(r.pageNum, null);
     }
     onOpenParser();
   };

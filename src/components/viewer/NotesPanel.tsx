@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParseFlow } from "@/hooks/useParseFlow";
+import { transitionNotesParserMode } from "@/stores/viewerCommands";
 import { useSessionStore } from "@/stores/sessionStore";
 import NotesIndex from "./NotesIndex";
 import NotesClassifier from "./NotesClassifier";
@@ -42,13 +43,19 @@ export default function NotesPanel({ embedded = false }: NotesPanelProps) {
     setTab("index");
   }, [projectId]);
 
+  const handleTabChange = (nextTab: NotesSubTab) => {
+    if (nextTab === tab) return;
+    transitionNotesParserMode();
+    setTab(nextTab);
+  };
+
   const content = (
     <>
       <div className="flex border-b border-[var(--border)]">
         {(["index", "classifier", "parser"] as const).map((t) => (
           <button
             key={t}
-            onClick={() => setTab(t)}
+            onClick={() => handleTabChange(t)}
             className={`flex-1 px-1.5 py-1.5 text-[9px] font-medium ${
               tab === t
                 ? "text-blue-300 border-b-2 border-blue-400"

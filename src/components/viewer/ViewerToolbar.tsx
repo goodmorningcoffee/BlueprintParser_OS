@@ -16,6 +16,7 @@ import {
   toggleTakeoffPanel,
   toggleDetectionPanel,
   toggleParsePanel,
+  toggleSpecsNotesParsePanel,
   toggleTableParsePanel,
 } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
@@ -52,7 +53,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
     showToolsPanel,
     showViewAllPanel,
   } = usePanelVisibility();
-  const { toggleChatPanel, toggleSpecsNotesPanel, toggleToolsPanel, toggleViewAllPanel } =
+  const { toggleChatPanel, toggleToolsPanel, toggleViewAllPanel } =
     usePanelUiActions();
   const { allCsiCodes } = usePageData();
   const activeCsiFilter = useUiStore((s) => s.activeCsiFilter);
@@ -646,7 +647,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
         </HelpTooltip>
         <HelpTooltip id="specs-notes-button">
           <button
-            onClick={toggleSpecsNotesPanel}
+            onClick={toggleSpecsNotesParsePanel}
             className={`px-2 py-0.5 text-[10px] leading-tight text-center rounded-r ${
               showSpecsNotesPanel
                 ? "text-amber-300 bg-amber-400/12"

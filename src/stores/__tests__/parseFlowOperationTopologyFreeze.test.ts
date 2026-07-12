@@ -925,18 +925,44 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
     }
     expect(rawParseOperationWrites(source)).toEqual([
       "operationBoundaryPatch:property",
-      "invalidateGuidedParseOperations:property",
+      "invalidateGuidedParseOperations:shorthand",
       "invalidateKeynoteTableOperations:property",
       "resetKeynoteGuidedParse:property",
+      "invalidateParagraphParseOperations:shorthand",
+      "invalidateNotesWorkspaceOperations:shorthand",
+      "invalidateParseOperationForWorkspace:shorthand",
+      "beginGuidedGridEdit:shorthand",
+      "beginParagraphWorkspaceEdit:shorthand",
+      "acceptNotesParseRegion:property",
+      "acceptSpecParseRegion:property",
+      "openNotesParseTarget:property",
+      "openNotesParseTarget:property",
+      "openSpecParseTarget:property",
+      "completeNotesParseOperation:property",
+      "completeSpecParseOperation:property",
+      "resetNotesParseWorkspace:property",
+      "resetSpecParseWorkspace:property",
+      "leaveNotesParserWorkspace:property",
+      "leaveSpecParserWorkspace:property",
+      "transitionNotesParserMode:shorthand",
+      "transitionSpecParserMode:shorthand",
+      "setParagraphBatchForUser:property",
+      "upsertParagraphForUser:property",
+      "removeParagraphForUser:property",
+      "addGuidedNotesColumnForUser:property",
+      "addGuidedNotesRowForUser:property",
       "acceptKeynoteParseRegion:property",
+      "leaveSpecsNotesParseTab:property",
+      "leaveSpecsNotesParseTab:property",
+      "leaveSpecsNotesParseTab:property",
       "toggleTableParsePanel:property",
       "toggleKeynoteParsePanel:property",
     ]);
   });
 });
 
-describe("P2.4 A2b/A2c fail-closed caller and writer topology", () => {
-  it("activates the operation facade only in the five cold Table surfaces plus KeynotePanel", () => {
+describe("P2.4 A2b/A2c/A2d fail-closed caller and writer topology", () => {
+  it("activates the operation facade only in the cold Table, Keynote, Notes, and Spec surfaces", () => {
     const production = productionFiles();
     const loads = production
       .filter((path) => path !== OPERATION_HOOK_FILE)
@@ -951,6 +977,8 @@ describe("P2.4 A2b/A2c fail-closed caller and writer topology", () => {
       { path: "src/components/viewer/GuidedParseTab.tsx", kind: "import" },
       { path: "src/components/viewer/KeynotePanel.tsx", kind: "import" },
       { path: "src/components/viewer/ManualParseTab.tsx", kind: "import" },
+      { path: "src/components/viewer/NotesParser.tsx", kind: "import" },
+      { path: "src/components/viewer/SpecParser.tsx", kind: "import" },
       { path: "src/components/viewer/TableCompareModal.tsx", kind: "import" },
       { path: "src/components/viewer/TableParsePanel.tsx", kind: "import" },
     ]);

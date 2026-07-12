@@ -263,7 +263,6 @@ const GROUPED_HOOK_CALL_TOPOLOGY = {
   },
   usePanelTabActions: {
     "src/components/viewer/ParsePanel.tsx": 1,
-    "src/components/viewer/SpecsNotesPanel.tsx": 1,
     "src/components/viewer/TextPanel.tsx": 1,
     "src/components/viewer/ToolsPanel.tsx": 1,
   },

@@ -268,10 +268,10 @@ describe("A2c Keynote invalidation and shared-workspace topology", () => {
       .toContain("beforeHandoff={invalidateKeynoteTableOperations}");
     expect(compact(text(COMPARE_TAB)))
       .toContain("beforeHandoff();setPage(t.pageNum);loadExistingParsed(t.region)");
-    expectOrder(SPECS_NOTES, "handleClose", 'invalidateParseOperation("keynote")', "toggleSpecsNotesPanel()");
     expect(compact(namedRoot(SPECS_NOTES, "handleClose")))
-      .toContain('if(specsNotesTab==="keynotes")');
-    expectOrder(SPECS_NOTES, "handleTabChange", 'invalidateParseOperation("keynote")', "setSpecsNotesTab(tab)");
+      .toContain("toggleSpecsNotesParsePanel()");
+    expect(compact(namedRoot(SPECS_NOTES, "handleTabChange")))
+      .toContain("setSpecsNotesParseTab(tab)");
 
     const panel = compact(text(KEYNOTE));
     expect(panel).not.toContain("keynoteOperation.invalidate();resetKeynoteParse()");
@@ -295,19 +295,58 @@ describe("A2c Keynote invalidation and shared-workspace topology", () => {
     );
   });
 
-  it("uses one shared Guided invalidation command and invokes it once per canvas gesture", () => {
+  it("begins one shared Guided lease per canvas gesture and guards every leased write", () => {
     const command = compact(namedRoot(COMMANDS, "invalidateGuidedParseOperations"));
     expect(command).toContain('invalidateParseOperationKinds(state.parseOperations,kinds)');
     expect(command).toContain('["table","keynote","notes"]');
 
-    const slot = compact(namedRoot(PDF_PAGE, "invalidateGuidedGridOperations"));
-    expect(slot).toContain("invalidateGuidedParseOperations()");
-    expect(compact(text(PDF_PAGE))).toContain("onGridEditStart={invalidateGuidedGridOperations}");
+    const begin = compact(namedRoot(COMMANDS, "beginGuidedGridEdit"));
+    expect(begin).toMatch(
+      /invalidateParseOperationKinds\(state\.parseOperations,\["table","keynote","notes"\],?\)/,
+    );
+    expect(begin).toContain("lease=workspaceLease(parseOperations)");
+    expect(begin).toContain("returnlease");
+
+    for (const [setter, field] of [
+      ["setGuidedParseRowsForLease", "guidedParseRows"],
+      ["setGuidedParseColsForLease", "guidedParseCols"],
+    ] as const) {
+      const guarded = compact(namedRoot(COMMANDS, setter));
+      expect(guarded).toContain(
+        "if(!matchesGuidedLease(state.parseOperations,lease))returnstate",
+      );
+      expect(guarded).toContain(`return{${field}}`);
+    }
+
+    // PDFPage stays hook-free and owns only a module-stable imperative wrapper. The overlay receives
+    // the guarded commands directly, so no closure/subscription enters the canvas pointer path.
+    const slot = compact(namedRoot(PDF_PAGE, "beginGuidedGridOperations"));
+    expect(slot).toContain("returnbeginGuidedGridEdit()");
+    const pdfPage = compact(text(PDF_PAGE));
+    expect(pdfPage).toContain("setRows={setGuidedParseRowsForLease}");
+    expect(pdfPage).toContain("setCols={setGuidedParseColsForLease}");
+    expect(pdfPage).toContain("onGridEditStart={beginGuidedGridOperations}");
+    expect(pdfPage.match(/beginGuidedGridEdit\(\)/g)).toHaveLength(1);
+
+    const mouseDown = compact(namedRoot(GUIDED_OVERLAY, "handleMouseDown"));
+    expect(mouseDown).toContain("dragLeaseRef.current=onGridEditStart()");
+    expect(mouseDown.match(/onGridEditStart\(\)/g)).toHaveLength(1);
+
+    const mouseMove = compact(namedRoot(GUIDED_OVERLAY, "handleMouseMove"));
+    expect(mouseMove).toContain("constlease=dragLeaseRef.current");
+    expect(mouseMove).toContain("setRows(next,lease)");
+    expect(mouseMove).toContain("setCols(next,lease)");
+    expect(mouseMove).not.toContain("onGridEditStart()");
+
+    const doubleClick = compact(namedRoot(GUIDED_OVERLAY, "handleDoubleClick"));
+    expect(doubleClick).toContain("constlease=onGridEditStart();setRows([...rows,ny],lease)");
+    expect(doubleClick).toContain("constlease=onGridEditStart();setCols([...cols,nx],lease)");
+    expect(doubleClick.match(/onGridEditStart\(\)/g)).toHaveLength(2);
+
     const overlay = compact(source(GUIDED_OVERLAY));
-    expect(overlay).toContain("onGridEditStart();dragRef.current=target");
-    expect(overlay).toContain("onGridEditStart();setRows([...rows,ny])");
-    expect(overlay).toContain("onGridEditStart();setCols([...cols,nx])");
     expect(overlay.match(/onGridEditStart\(\)/g)).toHaveLength(3);
+    expect(overlay).toContain("if(active)return;dragRef.current=null;dragLeaseRef.current=null");
+    expect(overlay).toContain("if(!active||!dragging)return");
 
     for (const [path, owner, excludedKind] of [
       [KEYNOTE, "proposeGrid", "keynote"],

@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useParseFlow } from "@/hooks/useParseFlow";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
+import { acceptSpecParseRegion } from "@/stores/viewerCommands";
 import { persistFetch, canPersist } from "@/lib/client-persist";
 import { saveParsedRegion } from "@/queries/parsedRegions";
 import {
@@ -33,7 +33,6 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
   const isDemo = useSessionStore((s) => s.isDemo);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const intel = usePageIntelligenceForPage(pageNumber);
-  const { setRegion: setSpecParseRegion } = useParseFlow("spec");
   const [rowStates, setRowStates] = useState<Record<string, RowAction>>({});
   const [errorByRow, setErrorByRow] = useState<Record<string, string>>({});
   // React commits the disabled button state after the event. This keyed synchronous barrier closes
@@ -119,7 +118,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
 
   const handleEdit = (tr: TextRegion) => {
     const [l, t, w, h] = tr.bbox;
-    setSpecParseRegion([l, t, l + w, t + h]);
+    acceptSpecParseRegion([l, t, l + w, t + h]);
     onEditInParser();
   };
 

@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TextractLine, TextRegion } from "@/types";
 import type { PendingParagraph, ParagraphTemplate } from "@/stores/parseFlowStore";
+import type { ParseWorkspaceLease } from "@/stores/viewerCommands";
 import { clusterLinesByYGap } from "@/lib/specnote-parser/cluster-lines";
 import {
   linesInside,
@@ -31,9 +32,11 @@ interface ParagraphOverlayProps {
   regionKind: ParagraphRegionKind;
   paragraphBatch: PendingParagraph[];
   paragraphClipboard: ParagraphTemplate | null;
-  onParagraphUpsert: (p: PendingParagraph) => void;
-  onParagraphRemove: (paragraphId: string) => void;
+  onParagraphUpsert: (p: PendingParagraph, lease: ParseWorkspaceLease) => void;
+  onParagraphRemove: (paragraphId: string, lease: ParseWorkspaceLease) => void;
   onClipboardCapture: (template: ParagraphTemplate) => void;
+  /** Called once at a successful user mutation boundary, never for drag mousemoves. */
+  onWorkspaceEditStart: () => ParseWorkspaceLease;
   onExit: () => void;
   width: number;
   height: number;
@@ -97,6 +100,7 @@ export default memo(function ParagraphOverlay({
   onParagraphUpsert,
   onParagraphRemove,
   onClipboardCapture,
+  onWorkspaceEditStart,
   onExit,
   width,
   height,
@@ -109,6 +113,7 @@ export default memo(function ParagraphOverlay({
   const [clicksOutside, setClicksOutside] = useState(0);
   const [drag, setDrag] = useState<DragTarget | null>(null);
   const dragRef = useRef<DragTarget | null>(null);
+  const dragLeaseRef = useRef<ParseWorkspaceLease | null>(null);
 
   // Cluster cache: per-region clusters + one "__fallback__" for uncategorized lines.
   // Rebuilds only when inputs change (Stage 1 output, page lines, tolerance, outer region).
@@ -133,6 +138,10 @@ export default memo(function ParagraphOverlay({
     hoverRef.current = null;
     setFocusedParagraphId(null);
     setClicksOutside(0);
+    if (!active) {
+      dragRef.current = null;
+      dragLeaseRef.current = null;
+    }
   }, [outerBbox, active]);
 
   // ── Drawing ────────────────────────────────────────────
@@ -353,6 +362,7 @@ export default memo(function ParagraphOverlay({
       if (handle) {
         e.preventDefault();
         e.stopPropagation();
+        dragLeaseRef.current = onWorkspaceEditStart();
         dragRef.current = handle;
         setDrag(handle);
         setFocusedParagraphId(handle.paragraphId);
@@ -383,7 +393,7 @@ export default memo(function ParagraphOverlay({
       // Clicked inside outer region but not on a paragraph → reset counter
       setClicksOutside(0);
     },
-    [hitTestHandle, hitTestBody, toNormalized, isInsideOuter, onExit, width, height],
+    [hitTestHandle, hitTestBody, toNormalized, isInsideOuter, onWorkspaceEditStart, onExit, width, height],
   );
 
   const handleDoubleClick = useCallback(
@@ -405,18 +415,20 @@ export default memo(function ParagraphOverlay({
         lines: [...cluster],
         rowText: rowTextFor(regionKind, cluster),
       };
-      onParagraphUpsert(p);
+      const lease = onWorkspaceEditStart();
+      onParagraphUpsert(p, lease);
       setFocusedParagraphId(p.id);
       setClicksOutside(0);
     },
-    [toNormalized, isInsideOuter, findContainingRegionId, clusterCache, regionKind, onParagraphUpsert],
+    [toNormalized, isInsideOuter, findContainingRegionId, clusterCache, regionKind, onWorkspaceEditStart, onParagraphUpsert],
   );
 
   // Global drag handlers
   const dragMoveHandler = useCallback(
     (e: MouseEvent) => {
       const target = dragRef.current;
-      if (!target) return;
+      const lease = dragLeaseRef.current;
+      if (!target || !lease) return;
       const p = paragraphBatch.find((x) => x.id === target.paragraphId);
       if (!p) return;
       const { x, y } = toNormalized(e.clientX, e.clientY);
@@ -427,25 +439,26 @@ export default memo(function ParagraphOverlay({
       else if (target.edge === "bottom") nextBbox = [x0, y0, x1, Math.max(y0 + MIN, y)];
       else if (target.edge === "left") nextBbox = [Math.min(x1 - MIN, x), y0, x1, y1];
       else if (target.edge === "right") nextBbox = [x0, y0, Math.max(x0 + MIN, x), y1];
-      onParagraphUpsert({ ...p, bbox: nextBbox });
+      onParagraphUpsert({ ...p, bbox: nextBbox }, lease);
     },
     [paragraphBatch, toNormalized, onParagraphUpsert],
   );
 
   const dragEndHandler = useCallback(() => {
     dragRef.current = null;
+    dragLeaseRef.current = null;
     setDrag(null);
   }, []);
 
   useEffect(() => {
-    if (!drag) return;
+    if (!drag || !active) return;
     window.addEventListener("mousemove", dragMoveHandler);
     window.addEventListener("mouseup", dragEndHandler);
     return () => {
       window.removeEventListener("mousemove", dragMoveHandler);
       window.removeEventListener("mouseup", dragEndHandler);
     };
-  }, [drag, dragMoveHandler, dragEndHandler]);
+  }, [active, drag, dragMoveHandler, dragEndHandler]);
 
   // Cursor feedback
   const handleCanvasMouseMoveForCursor = useCallback(
@@ -498,8 +511,9 @@ export default memo(function ParagraphOverlay({
       [srcMinX, 0, srcMaxX, 0],
       [p.bbox[0], 0, p.bbox[2], 0],
     );
-    onParagraphUpsert({ ...p, colBoundaries: nextCols });
-  }, [paragraphClipboard, focusedParagraphId, paragraphBatch, onParagraphUpsert]);
+    const lease = onWorkspaceEditStart();
+    onParagraphUpsert({ ...p, colBoundaries: nextCols }, lease);
+  }, [paragraphClipboard, focusedParagraphId, paragraphBatch, onWorkspaceEditStart, onParagraphUpsert]);
 
   useParagraphClipboard({
     enabled: active,
@@ -516,13 +530,14 @@ export default memo(function ParagraphOverlay({
         if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
         if (target?.isContentEditable) return;
         e.preventDefault();
-        onParagraphRemove(focusedParagraphId);
+        const lease = onWorkspaceEditStart();
+        onParagraphRemove(focusedParagraphId, lease);
         setFocusedParagraphId(null);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [active, focusedParagraphId, onParagraphRemove]);
+  }, [active, focusedParagraphId, onWorkspaceEditStart, onParagraphRemove]);
 
   if (!active || !outerBbox) return null;
 

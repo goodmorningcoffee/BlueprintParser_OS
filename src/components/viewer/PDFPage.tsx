@@ -2,11 +2,26 @@
 
 import { useEffect, useRef, useState, useCallback, memo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useParseFlowStore, useKeynoteParse } from "@/stores/parseFlowStore";
+import {
+  useParseFlowStore,
+  useKeynoteParse,
+} from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
-import { invalidateGuidedParseOperations } from "@/stores/viewerCommands";
+import {
+  beginGuidedGridEdit,
+  beginNotesFastManualEdit,
+  beginParagraphWorkspaceEdit,
+  removeParagraphForLease,
+  resetNotesParseWorkspace,
+  resetSpecParseWorkspace,
+  setGuidedParseColsForLease,
+  setGuidedParseRowsForLease,
+  setNotesFastManualGridFromOverlay,
+  upsertParagraphForLease,
+  type ParseWorkspaceLease,
+} from "@/stores/viewerCommands";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
 import SearchHighlightOverlay from "./SearchHighlightOverlay";
@@ -34,8 +49,24 @@ const MAX_CACHED_PAGES = 8;
 
 // One imperative publication per drag/add gesture; no operation hook or per-mousemove invalidation
 // belongs on the PDF hot path.
-function invalidateGuidedGridOperations(): void {
-  invalidateGuidedParseOperations();
+function beginGuidedGridOperations(): ParseWorkspaceLease {
+  return beginGuidedGridEdit();
+}
+
+function beginParagraphWorkspaceOperations(): ParseWorkspaceLease {
+  return beginParagraphWorkspaceEdit();
+}
+
+function beginNotesFastManualOperation(): ParseWorkspaceLease {
+  return beginNotesFastManualEdit();
+}
+
+function exitNotesParagraphWorkspace(): void {
+  resetNotesParseWorkspace();
+}
+
+function exitSpecParagraphWorkspace(): void {
+  resetSpecParseWorkspace();
 }
 
 const KeynoteGuidedOverlaySlot = memo(function KeynoteGuidedOverlaySlot(props: {
@@ -48,8 +79,6 @@ const KeynoteGuidedOverlaySlot = memo(function KeynoteGuidedOverlaySlot(props: {
     guidedParseRegion,
     guidedParseRows,
     guidedParseCols,
-    setGuidedParseRows,
-    setGuidedParseCols,
   } = useKeynoteParse();
   return (
     <GuidedParseOverlay
@@ -57,9 +86,9 @@ const KeynoteGuidedOverlaySlot = memo(function KeynoteGuidedOverlaySlot(props: {
       region={guidedParseRegion}
       rows={guidedParseRows}
       cols={guidedParseCols}
-      setRows={setGuidedParseRows}
-      setCols={setGuidedParseCols}
-      onGridEditStart={invalidateGuidedGridOperations}
+      setRows={setGuidedParseRowsForLease}
+      setCols={setGuidedParseColsForLease}
+      onGridEditStart={beginGuidedGridOperations}
       width={props.width}
       height={props.height}
       cssScale={props.cssScale}
@@ -77,14 +106,14 @@ const NotesFastManualOverlaySlot = memo(function NotesFastManualOverlaySlot(prop
   const notesParseRegion = useParseFlowStore((s) => s.notesParseRegion);
   // Keep the exact-page observer inside this memo slot so adjacent OCR cannot invalidate it.
   const textractData = useTextractForPage(props.pageNumber);
-  const setNotesFastManualGrid = useParseFlowStore((s) => s.setNotesFastManualGrid);
   const lines = textractData?.lines ?? [];
   return (
     <FastManualParseOverlay
       active={active}
       textractLines={lines}
       regionBbox={notesParseRegion}
-      onGridChange={setNotesFastManualGrid}
+      onGridChange={setNotesFastManualGridFromOverlay}
+      onGridEditStart={beginNotesFastManualOperation}
       width={props.width}
       height={props.height}
       cssScale={props.cssScale}
@@ -106,11 +135,7 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
   const pageIntel = usePageIntelligenceForPage(props.pageNumber);
   const paragraphBatch = useParseFlowStore((s) => s.paragraphBatch);
   const paragraphClipboard = useParseFlowStore((s) => s.paragraphClipboard);
-  const upsertPendingParagraph = useParseFlowStore((s) => s.upsertPendingParagraph);
-  const removePendingParagraph = useParseFlowStore((s) => s.removePendingParagraph);
   const setParagraphClipboard = useParseFlowStore((s) => s.setParagraphClipboard);
-  const resetNotesParse = useParseFlowStore((s) => s.resetNotesParse);
-  const resetSpecParse = useParseFlowStore((s) => s.resetSpecParse);
 
   // Phase 2.5 temporary: prefer spec region when present, else notes region.
   // Phase 2.6 will unify into a single `parseRegion` slot.
@@ -129,10 +154,7 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
   // Matches the classifier's line-height-factor default scaled for each family.
   const yGapTolerance = isSpec ? CLUSTER_Y_TOLERANCE_FACTOR * 0.035 * 8 : CLUSTER_Y_TOLERANCE_FACTOR * 0.025 * 4;
 
-  const onExit = useCallback(() => {
-    if (isSpec) resetSpecParse();
-    else resetNotesParse();
-  }, [isSpec, resetSpecParse, resetNotesParse]);
+  const onExit = isSpec ? exitSpecParagraphWorkspace : exitNotesParagraphWorkspace;
 
   return (
     <ParagraphOverlay
@@ -144,9 +166,10 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
       regionKind={regionKind}
       paragraphBatch={paragraphBatch}
       paragraphClipboard={paragraphClipboard}
-      onParagraphUpsert={upsertPendingParagraph}
-      onParagraphRemove={removePendingParagraph}
+      onParagraphUpsert={upsertParagraphForLease}
+      onParagraphRemove={removeParagraphForLease}
       onClipboardCapture={setParagraphClipboard}
+      onWorkspaceEditStart={beginParagraphWorkspaceOperations}
       onExit={onExit}
       width={props.width}
       height={props.height}

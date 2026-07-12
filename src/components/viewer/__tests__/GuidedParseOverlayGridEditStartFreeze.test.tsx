@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
-// [refactor jul12 P2.4 A2c] Shared Guided grid edit invalidation cadence witness.
+// [refactor jul12 P2.4 A2c/A2d] Shared Guided grid edit invalidation + lease cadence witness.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 
 import GuidedParseOverlay from "@/components/viewer/GuidedParseOverlay";
+import type { ParseWorkspaceLease } from "@/stores/viewerCommands";
+
+const LEASE: ParseWorkspaceLease = {
+  tableRevision: 11,
+  keynoteRevision: 12,
+  notesRevision: 13,
+  specRevision: 14,
+};
 
 function noopContext(): CanvasRenderingContext2D {
   return {
@@ -44,7 +52,7 @@ function renderOverlay(overrides: Partial<React.ComponentProps<typeof GuidedPars
     cols: [0.3],
     setRows: vi.fn(),
     setCols: vi.fn(),
-    onGridEditStart: vi.fn(),
+    onGridEditStart: vi.fn(() => LEASE),
     width: 100,
     height: 100,
     cssScale: 1,
@@ -78,6 +86,8 @@ describe("A2c GuidedParseOverlay grid edit authority", () => {
     fireEvent.mouseMove(window, { clientX: 40, clientY: 50 });
 
     expect(props.setCols).toHaveBeenCalledTimes(2);
+    expect(props.setCols).toHaveBeenNthCalledWith(1, [0.35], LEASE);
+    expect(props.setCols).toHaveBeenNthCalledWith(2, [0.4], LEASE);
     expect(props.onGridEditStart).toHaveBeenCalledTimes(1);
 
     fireEvent.mouseUp(window);
@@ -92,13 +102,13 @@ describe("A2c GuidedParseOverlay grid edit authority", () => {
     // Near the top edge, the overlay adds a horizontal row boundary.
     fireEvent.doubleClick(canvas, { clientX: 50, clientY: 20 });
     expect(props.onGridEditStart).toHaveBeenCalledTimes(1);
-    expect(props.setRows).toHaveBeenCalledWith([0.5, 0.2]);
+    expect(props.setRows).toHaveBeenCalledWith([0.5, 0.2], LEASE);
     expect(props.setCols).not.toHaveBeenCalled();
 
     // Near the left edge, it adds a vertical column boundary.
     fireEvent.doubleClick(canvas, { clientX: 20, clientY: 70 });
     expect(props.onGridEditStart).toHaveBeenCalledTimes(2);
-    expect(props.setCols).toHaveBeenCalledWith([0.3, 0.2]);
+    expect(props.setCols).toHaveBeenCalledWith([0.3, 0.2], LEASE);
     expect(props.setRows).toHaveBeenCalledTimes(1);
   });
 });

@@ -37,6 +37,7 @@ import PDFPage from "../PDFPage";
 import PageSidebar from "../PageSidebar";
 import {
   invalidateGuidedParseOperations,
+  invalidateParagraphParseOperations,
   resetProjectData,
 } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
@@ -197,6 +198,16 @@ describe("I7 PDFPage exact-page render topology", () => {
     // A Guided drag publishes operation authority once at mousedown. PDFPage has no operation
     // subscription, so that exact publication must not commit this viewer-sacred subtree.
     act(() => { invalidateGuidedParseOperations(); });
+    expect(commits).toBe(baseline);
+
+    // Notes and Spec paragraph gestures revoke both owners of their shared workspace without
+    // changing any PDFPage render input. The operation-only publication must stay off this tree.
+    act(() => { invalidateParagraphParseOperations(); });
+    expect(commits).toBe(baseline);
+
+    // Fast Manual is Notes-owned, so its edit-start publication retains Spec while revoking Notes.
+    // It is still operation-only and therefore must not commit PDFPage or its memoized slots.
+    act(() => { invalidateParagraphParseOperations("spec"); });
     expect(commits).toBe(baseline);
 
     await act(async () => {

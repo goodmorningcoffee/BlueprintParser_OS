@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BboxLTWH, TextractLine } from "@/types";
+import type { ParseWorkspaceLease } from "@/stores/viewerCommands";
 
 interface FastManualGrid {
   headers: string[];
@@ -18,7 +19,9 @@ interface FastManualParseOverlayProps {
   /** Region the user drew — normalized MinMax [x0, y0, x1, y1]. */
   regionBbox: [number, number, number, number] | null;
   /** Called after each double-click with the current cumulative grid. */
-  onGridChange: (grid: FastManualGrid | null) => void;
+  onGridChange: (grid: FastManualGrid | null, lease: ParseWorkspaceLease) => void;
+  /** Called once before each valid user grid mutation; lifecycle clears do not call it. */
+  onGridEditStart: () => ParseWorkspaceLease;
   width: number;
   height: number;
   cssScale: number;
@@ -46,6 +49,7 @@ export default memo(function FastManualParseOverlay({
   textractLines,
   regionBbox,
   onGridChange,
+  onGridEditStart,
   width,
   height,
   cssScale,
@@ -54,12 +58,13 @@ export default memo(function FastManualParseOverlay({
   const [selectedLines, setSelectedLines] = useState<TextractLine[]>([]);
   const [columns, setColumns] = useState<number[]>([]); // X-boundaries, sorted
 
-  // Clear state when region or active changes
+  // Clear primitive-local state when region or active changes. The parent workspace commands own
+  // the external grid clear atomically with region/mode invalidation; a passive old effect must not
+  // erase a newer user generation through onGridChange(null).
   useEffect(() => {
     setSelectedLines([]);
     setColumns([]);
-    onGridChange(null);
-  }, [regionBbox, active]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [regionBbox, active]);
 
   // Derived filtered lines (inside the region). Memoized so the filter
   // doesn't re-run on every render — with 200+ page-lines, the wasted
@@ -162,6 +167,7 @@ export default memo(function FastManualParseOverlay({
       if (!hit) return;
       // Skip if already selected
       if (selectedLines.some((l) => l === hit || (l.text === hit.text && l.bbox[1] === hit.bbox[1]))) return;
+      const lease = onGridEditStart();
 
       let nextColumns = columns;
       if (columns.length === 0) {
@@ -203,21 +209,23 @@ export default memo(function FastManualParseOverlay({
       const headers = nextColumns.length === 3 ? ["Key", "Note"] : nextColumns.slice(0, -1).map((_, i) => i === 0 ? "Key" : `Col${i + 1}`);
       const rows = nextSelected.map((line) => binLineIntoColumns(line, nextColumns, headers));
       const rowBoundaries = computeRowBoundaries(nextSelected);
-      onGridChange({ headers, rows, colBoundaries: nextColumns, rowBoundaries });
+      onGridChange({ headers, rows, colBoundaries: nextColumns, rowBoundaries }, lease);
     },
-    [active, regionBbox, linesInRegion, selectedLines, columns, cssScale, width, getCanvasPos, onGridChange],
+    [active, regionBbox, linesInRegion, selectedLines, columns, cssScale, width, getCanvasPos, onGridEditStart, onGridChange],
   );
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (!active) return;
       if (e.key === "Escape") {
+        if (selectedLines.length === 0 && columns.length === 0) return;
+        const lease = onGridEditStart();
         setSelectedLines([]);
         setColumns([]);
-        onGridChange(null);
+        onGridChange(null, lease);
       }
     },
-    [active, onGridChange],
+    [active, selectedLines.length, columns.length, onGridEditStart, onGridChange],
   );
 
   useEffect(() => {

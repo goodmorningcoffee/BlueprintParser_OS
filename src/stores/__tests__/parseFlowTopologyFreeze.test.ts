@@ -415,18 +415,10 @@ const NOTES_EXTENSION_HOOK_BINDINGS = {
     notesFastManualGrid: "notesFastManualGrid",
   }],
 } as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
-const PARSE_DRAFT_EXTENSION_HOOK_CALLERS = {
-  "src/components/viewer/NotesParser.tsx": 1,
-  "src/components/viewer/SpecParser.tsx": 1,
-} as const;
-const PARSE_DRAFT_EXTENSION_HOOK_BINDINGS = {
-  "src/components/viewer/NotesParser.tsx": [{
-    setParseDraftRegion: "setParseDraftRegion",
-  }],
-  "src/components/viewer/SpecParser.tsx": [{
-    setParseDraftRegion: "setParseDraftRegion",
-  }],
-} as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
+const PARSE_DRAFT_EXTENSION_HOOK_CALLERS = {} as const;
+const PARSE_DRAFT_EXTENSION_HOOK_BINDINGS = {} as const satisfies Readonly<
+  Record<string, readonly Readonly<Record<string, string>>[]>
+>;
 const PARAGRAPH_WORKSPACE_EXTENSION_HOOK_CALLERS = {
   "src/components/viewer/NotesParser.tsx": 1,
   "src/components/viewer/SpecParser.tsx": 1,
@@ -434,17 +426,9 @@ const PARAGRAPH_WORKSPACE_EXTENSION_HOOK_CALLERS = {
 const PARAGRAPH_WORKSPACE_EXTENSION_HOOK_BINDINGS = {
   "src/components/viewer/NotesParser.tsx": [{
     paragraphBatch: "paragraphBatch",
-    setParagraphBatch: "setParagraphBatch",
-    removePendingParagraph: "removePendingParagraph",
-    upsertPendingParagraph: "upsertPendingParagraph",
-    setParagraphOverlayActive: "setParagraphOverlayActive",
   }],
   "src/components/viewer/SpecParser.tsx": [{
     paragraphBatch: "paragraphBatch",
-    setParagraphBatch: "setParagraphBatch",
-    removePendingParagraph: "removePendingParagraph",
-    upsertPendingParagraph: "upsertPendingParagraph",
-    setParagraphOverlayActive: "setParagraphOverlayActive",
   }],
 } as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
 
@@ -525,17 +509,7 @@ const NOTES_FACADE_CALLERS = {
     bindings: {
       region: "notesParseRegion",
       setStep: "setNotesParseStep",
-      setRegion: "setNotesParseRegion",
-      reset: "resetNotesParse",
     },
-  }],
-  "src/components/viewer/NotesClassifier.tsx": [{
-    kind: "notes",
-    bindings: { setRegion: "setNotesParseRegion" },
-  }],
-  "src/components/viewer/NotesIndex.tsx": [{
-    kind: "notes",
-    bindings: { setRegion: "setNotesParseRegion" },
   }],
 } as const satisfies ParseFacadeCallers;
 
@@ -549,17 +523,7 @@ const SPEC_FACADE_CALLERS = {
     bindings: {
       region: "specParseRegion",
       setStep: "setSpecParseStep",
-      setRegion: "setSpecParseRegion",
-      reset: "resetSpecParse",
     },
-  }],
-  "src/components/viewer/SpecClassifier.tsx": [{
-    kind: "spec",
-    bindings: { setRegion: "setSpecParseRegion" },
-  }],
-  "src/components/viewer/SpecIndex.tsx": [{
-    kind: "spec",
-    bindings: { setRegion: "setSpecParseRegion" },
   }],
 } as const satisfies ParseFacadeCallers;
 
@@ -2004,19 +1968,13 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
 
     const notesSource = parse(NOTES_PARSER);
     expect(knownMembers(expectFailClosedOwnerScan(notesSource), "getState")).toEqual([
-      "setGuidedParseActive",
-      "guidedParseRegion",
-      "setGuidedParseRegion",
-      "setGuidedParseActive",
-      "setGuidedParseActive",
-      "setNotesFastManualActive",
-      "setNotesFastManualGrid",
-      "setNotesFastManualActive",
-      "setNotesFastManualGrid",
+      "setParseDraftRegion",
+      "setParseDraftRegion",
       "setGuidedParseRows",
       "setGuidedParseCols",
       "guidedParseRows",
       "guidedParseCols",
+      "setParseDraftRegion",
     ]);
 
     const objectProperty = (
@@ -2081,404 +2039,88 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
       rowBoundaries: objectMember(manualReturn, "rowBoundaries"),
     }).toEqual({ colBoundaries: "xs", rowBoundaries: "ys" });
 
-    const draftInitializer = findVariable(notesSource, "draft").initializer!;
-    const draftRegion = returnedObject(draftInitializer);
-    const draftDataExpression = unwrap(objectProperty(draftRegion, "data").initializer);
-    expect(ts.isObjectLiteralExpression(draftDataExpression), "draft data object").toBe(true);
-    expect({
-      rowBoundaries: objectMember(
-        draftDataExpression as ts.ObjectLiteralExpression,
-        "rowBoundaries",
-      ),
-      colBoundaries: objectMember(
-        draftDataExpression as ts.ObjectLiteralExpression,
-        "colBoundaries",
-      ),
-    }).toEqual({
-      rowBoundaries: "preview.rowBoundaries",
-      colBoundaries: "preview.colBoundaries",
-    });
-
-    const persistPreview = findVariable(notesSource, "persistPreviewGrid").initializer!;
-    const persistedDataExpression = unwrap(
-      findVariableWithin(persistPreview, "data").initializer!,
-    );
-    expect(ts.isObjectLiteralExpression(persistedDataExpression), "persisted NotesData object")
-      .toBe(true);
-    expect({
-      rowBoundaries: objectMember(
-        persistedDataExpression as ts.ObjectLiteralExpression,
-        "rowBoundaries",
-      ),
-      colBoundaries: objectMember(
-        persistedDataExpression as ts.ObjectLiteralExpression,
-        "colBoundaries",
-      ),
-    }).toEqual({
-      rowBoundaries: "grid.rowBoundaries",
-      colBoundaries: "grid.colBoundaries",
-    });
-
-    const effects = descendants(notesSource, ts.isCallExpression).filter((call) =>
-      compact(call.expression, notesSource) === "useEffect"
-    );
-    const effectContaining = (needle: string): ts.CallExpression => {
-      const matches = effects.filter((effect) => effect.getText(notesSource).includes(needle));
-      expect(matches, `one effect containing ${needle}`).toHaveLength(1);
-      return matches[0];
-    };
-    const effectBody = (effect: ts.CallExpression, label: string): ts.Block => {
-      const callback = effect.arguments[0] && unwrap(effect.arguments[0]);
-      expect(callback && ts.isArrowFunction(callback), `${label} arrow callback`).toBe(true);
-      const body = (callback as ts.ArrowFunction).body;
-      expect(ts.isBlock(body), `${label} block body`).toBe(true);
-      return body as ts.Block;
-    };
-    const statementCall = (statement: ts.Statement, source = notesSource): string => {
-      expect(ts.isExpressionStatement(statement), "call expression statement").toBe(true);
-      const expression = (statement as ts.ExpressionStatement).expression;
-      expect(ts.isCallExpression(expression), "statement direct call").toBe(true);
-      return compact(expression, source);
-    };
-    const returnedCallbackBody = (statement: ts.Statement, label: string): ts.Block => {
-      expect(ts.isReturnStatement(statement), `${label} return`).toBe(true);
-      const expression = (statement as ts.ReturnStatement).expression;
-      expect(expression && ts.isArrowFunction(expression), `${label} returned arrow`).toBe(true);
-      const body = (expression as ts.ArrowFunction).body;
-      expect(ts.isBlock(body), `${label} cleanup block`).toBe(true);
-      return body as ts.Block;
-    };
-    const guidedEffect = effectContaining("store.setGuidedParseRegion(notesParseRegion)");
-    expect(descendants(guidedEffect, ts.isIfStatement)
-      .map((statement) => compact(statement.expression, notesSource))).toEqual([
-      'mode==="guided"&&notesParseRegion',
-      "!store.guidedParseRegion",
-    ]);
-    expect(terminalActionCalls(guidedEffect, [
-      "setGuidedParseActive",
-      "setGuidedParseRegion",
-    ])).toEqual([
-      "store.setGuidedParseActive(true)",
-      "store.setGuidedParseRegion(notesParseRegion)",
-      "store.setGuidedParseActive(false)",
-      "useParseFlowStore.getState().setGuidedParseActive(false)",
-    ]);
-    const guidedBody = effectBody(guidedEffect, "guided effect");
-    expect(guidedBody.statements).toHaveLength(3);
-    expect(ts.isVariableStatement(guidedBody.statements[0])).toBe(true);
-    expect(ts.isIfStatement(guidedBody.statements[1])).toBe(true);
-    const guidedBranch = guidedBody.statements[1] as ts.IfStatement;
-    expect(compact(guidedBranch.expression, notesSource))
-      .toBe('mode==="guided"&&notesParseRegion');
-    expect(ts.isBlock(guidedBranch.thenStatement)).toBe(true);
-    const guidedThen = guidedBranch.thenStatement as ts.Block;
-    expect(guidedThen.statements).toHaveLength(2);
-    expect(statementCall(guidedThen.statements[0])).toBe("store.setGuidedParseActive(true)");
-    expect(ts.isIfStatement(guidedThen.statements[1])).toBe(true);
-    const regionBranch = guidedThen.statements[1] as ts.IfStatement;
-    expect(compact(regionBranch.expression, notesSource)).toBe("!store.guidedParseRegion");
-    expect(ts.isBlock(regionBranch.thenStatement)).toBe(true);
-    expect((regionBranch.thenStatement as ts.Block).statements).toHaveLength(1);
-    expect(statementCall((regionBranch.thenStatement as ts.Block).statements[0]))
-      .toBe("store.setGuidedParseRegion(notesParseRegion)");
-    expect(regionBranch.elseStatement).toBeUndefined();
-    expect(guidedBranch.elseStatement && ts.isBlock(guidedBranch.elseStatement)).toBe(true);
-    const guidedElse = guidedBranch.elseStatement as ts.Block;
-    expect(guidedElse.statements).toHaveLength(1);
-    expect(statementCall(guidedElse.statements[0])).toBe("store.setGuidedParseActive(false)");
-    const guidedCleanup = returnedCallbackBody(guidedBody.statements[2], "guided effect");
-    expect(guidedCleanup.statements).toHaveLength(1);
-    expect(statementCall(guidedCleanup.statements[0]))
-      .toBe("useParseFlowStore.getState().setGuidedParseActive(false)");
-
-    const fastEffect = effectContaining("store.setNotesFastManualActive");
-    expect(descendants(fastEffect, ts.isIfStatement)
-      .map((statement) => compact(statement.expression, notesSource))).toEqual([
-      'mode!=="fast-manual"',
-    ]);
-    expect(terminalActionCalls(fastEffect, [
-      "setNotesFastManualActive",
-      "setNotesFastManualGrid",
-    ])).toEqual([
-      'store.setNotesFastManualActive(mode==="fast-manual"&&!!notesParseRegion)',
-      "store.setNotesFastManualGrid(null)",
-      "s.setNotesFastManualActive(false)",
-      "s.setNotesFastManualGrid(null)",
-    ]);
-    const fastBody = effectBody(fastEffect, "fast-manual effect");
-    expect(fastBody.statements).toHaveLength(4);
-    expect(ts.isVariableStatement(fastBody.statements[0])).toBe(true);
-    expect(statementCall(fastBody.statements[1])).toBe(
-      'store.setNotesFastManualActive(mode==="fast-manual"&&!!notesParseRegion)',
-    );
-    expect(ts.isIfStatement(fastBody.statements[2])).toBe(true);
-    const fastBranch = fastBody.statements[2] as ts.IfStatement;
-    expect(compact(fastBranch.expression, notesSource)).toBe('mode!=="fast-manual"');
-    expect(ts.isBlock(fastBranch.thenStatement)).toBe(true);
-    expect((fastBranch.thenStatement as ts.Block).statements).toHaveLength(1);
-    expect(statementCall((fastBranch.thenStatement as ts.Block).statements[0]))
-      .toBe("store.setNotesFastManualGrid(null)");
-    expect(fastBranch.elseStatement).toBeUndefined();
-    const fastCleanup = returnedCallbackBody(fastBody.statements[3], "fast-manual effect");
-    expect(fastCleanup.statements).toHaveLength(3);
-    expect(ts.isVariableStatement(fastCleanup.statements[0])).toBe(true);
-    expect(statementCall(fastCleanup.statements[1])).toBe("s.setNotesFastManualActive(false)");
-    expect(statementCall(fastCleanup.statements[2])).toBe("s.setNotesFastManualGrid(null)");
-
-    const fastMirrorEffect = effectContaining("notesFastManualGrid.headers");
-    const previewObjects = descendants(fastMirrorEffect, ts.isCallExpression).flatMap((call) => {
-      if (compact(call.expression, notesSource) !== "setPreview") return [];
-      const argument = call.arguments[0] && unwrap(call.arguments[0]);
-      return argument && ts.isObjectLiteralExpression(argument) ? [argument] : [];
-    });
-    expect(previewObjects, "one fast-manual preview publication").toHaveLength(1);
-    expect({
-      rowBoundaries: objectMember(previewObjects[0], "rowBoundaries"),
-      colBoundaries: objectMember(previewObjects[0], "colBoundaries"),
-    }).toEqual({
-      rowBoundaries: "notesFastManualGrid.rowBoundaries",
-      colBoundaries: "notesFastManualGrid.colBoundaries",
-    });
-
-    const propose = findVariable(notesSource, "runProposeGuided").initializer!;
-    expect(terminalActionCalls(propose, [
-      "setGuidedParseRows",
-      "setGuidedParseCols",
-    ])).toEqual([
-      "useParseFlowStore.getState().setGuidedParseRows(payload.proposedRows)",
-      "useParseFlowStore.getState().setGuidedParseCols(payload.proposedCols)",
-    ]);
-
-    const directFunctionCalls = (fn: ts.FunctionLikeDeclaration): ts.CallExpression[] =>
-      descendants(fn.body!, ts.isCallExpression).filter((call) => {
-        let current: ts.Node | undefined = call.parent;
-        while (current && !ts.isFunctionLike(current)) current = current.parent;
-        return current === fn;
-      });
-    const orderedHandlerCallees = new Set([
-      "setPreview",
-      "setError",
-      "setNotesParseRegion",
-      "setNotesParseStep",
-      "resetNotesParse",
-      "useToolStore.getState().setMode",
-    ]);
-    const stepHandlerTraces = descendants(notesSource, ts.isArrowFunction).flatMap((fn) => {
-      const trace = directFunctionCalls(fn)
-        .filter((call) => orderedHandlerCallees.has(compact(call.expression, notesSource)))
-        .map((call) => compact(call, notesSource));
-      return trace.some((call) => call.startsWith("setNotesParseStep(")) ? [trace] : [];
-    });
-    expect(stepHandlerTraces).toEqual([
-      [
-        "setPreview(null)",
-        "setError(null)",
-        "setNotesParseRegion(null)",
-        'setNotesParseStep("idle")',
-        "resetNotesParse()",
-      ],
-      [
-        'setNotesParseStep("select-region")',
-        'useToolStore.getState().setMode("pointer")',
-      ],
-      [
-        "resetNotesParse()",
-        'setNotesParseStep("select-region")',
-        'useToolStore.getState().setMode("pointer")',
-      ],
-      [
-        'setNotesParseStep("define-column")',
-        'useToolStore.getState().setMode("pointer")',
-      ],
-      [
-        'setNotesParseStep("define-row")',
-        'useToolStore.getState().setMode("pointer")',
-      ],
-    ]);
+    const notesText = compact(notesSource, notesSource);
+    const commandCalls = (name: string): string[] => importedCalls(
+      notesSource,
+      ["@/stores/viewerCommands"],
+      name,
+    ).map((call) => compact(call, notesSource));
+    expect(notesText).toContain("rowBoundaries:grid.rowBoundaries");
+    expect(notesText).toContain("colBoundaries:grid.colBoundaries");
+    expect(notesText).toContain("rowBoundaries:input.rowBoundaries");
+    expect(notesText).toContain("colBoundaries:input.colBoundaries");
+    expect(compact(findVariable(notesSource, "cleanupLeaseRef").initializer!, notesSource))
+      .toBe("useRef<ParseWorkspaceLease|null>(null)");
+    expect(commandCalls("invalidateParseOperationForWorkspace"))
+      .toEqual(['invalidateParseOperationForWorkspace("notes")']);
+    expect(commandCalls("leaveNotesParserWorkspace"))
+      .toEqual(["leaveNotesParserWorkspace(cleanupLeaseRef.current,false)"]);
+    expect(commandCalls("transitionNotesParserMode"))
+      .toEqual(["transitionNotesParserMode(nextMode,notesParseRegion)"]);
+    expect(commandCalls("captureParseWorkspaceLease")).toEqual([]);
+    expect(commandCalls("syncNotesParserModeForLease")).toEqual([]);
+    expect(commandCalls("activateNotesGuidedWorkspace")).toEqual([]);
+    expect(commandCalls("syncNotesFastManualWorkspace")).toEqual([]);
+    expect(commandCalls("syncParagraphWorkspaceActive")).toEqual([]);
+    expect(notesText).not.toContain("workspaceRevisions");
+    expect(notesText).not.toContain("modeSyncLease");
+    expect(notesText).not.toContain("operations.notes.busy||operations.spec.busy");
+    expect(notesText).toContain("if(cleanupLeaseRef.current){leaveNotesParserWorkspace(");
+    expect(notesText).toContain('invalidateGuidedParseOperations("notes")');
+    expect(notesText).toContain("setGuidedParseRows([...payload.proposedRows])");
+    expect(notesText).toContain("setGuidedParseCols([...payload.proposedCols])");
+    expect(notesText).toContain("resetNotesParseWorkspace(\"idle\"");
+    expect(notesText).toContain("resetNotesParseWorkspace(\"select-region\"");
 
     const classifierSource = parse("src/components/viewer/NotesClassifier.tsx");
-    const classifierEdit = findVariable(classifierSource, "handleEdit").initializer!;
-    expect(descendants(classifierEdit, ts.isCallExpression)
-      .filter((call) => ["setNotesParseRegion", "onEditInParser"]
-        .includes(compact(call.expression, classifierSource)))
-      .map((call) => compact(call, classifierSource))).toEqual([
-      "setNotesParseRegion([l,t,l+w,t+h])",
-      "onEditInParser()",
-    ]);
-    expect(ts.isArrowFunction(classifierEdit)).toBe(true);
-    const classifierBody = (classifierEdit as ts.ArrowFunction).body;
-    expect(ts.isBlock(classifierBody)).toBe(true);
-    expect((classifierBody as ts.Block).statements).toHaveLength(3);
-    expect(ts.isVariableStatement((classifierBody as ts.Block).statements[0])).toBe(true);
-    expect(statementCall((classifierBody as ts.Block).statements[1], classifierSource))
-      .toBe("setNotesParseRegion([l,t,l+w,t+h])");
-    expect(statementCall((classifierBody as ts.Block).statements[2], classifierSource))
-      .toBe("onEditInParser()");
+    const classifierEdit = compact(findVariable(classifierSource, "handleEdit").initializer!, classifierSource);
+    expect(classifierEdit).toContain("acceptNotesParseRegion([l,t,l+w,t+h])");
+    expect(classifierEdit.indexOf("acceptNotesParseRegion"))
+      .toBeLessThan(classifierEdit.indexOf("onEditInParser"));
 
     const indexSource = parse("src/components/viewer/NotesIndex.tsx");
-    const rowClick = findVariable(indexSource, "handleRowClick").initializer!;
-    expect(descendants(rowClick, ts.isCallExpression)
-      .filter((call) => ["setPage", "setNotesParseRegion", "onOpenParser"]
-        .includes(compact(call.expression, indexSource)))
-      .map((call) => compact(call, indexSource))).toEqual([
-      "setPage(r.pageNum)",
-      "setNotesParseRegion([l,t,l+w,t+h])",
-      "setNotesParseRegion(null)",
-      "onOpenParser()",
-    ]);
-    const indexBranches = descendants(rowClick, ts.isIfStatement);
-    expect(indexBranches).toHaveLength(1);
-    expect(compact(indexBranches[0].expression, indexSource)).toBe("r.bbox");
-    const regionCalls = (root: ts.Node) => descendants(root, ts.isCallExpression)
-      .filter((call) => compact(call.expression, indexSource) === "setNotesParseRegion")
-      .map((call) => compact(call, indexSource));
-    expect(regionCalls(indexBranches[0].thenStatement)).toEqual([
-      "setNotesParseRegion([l,t,l+w,t+h])",
-    ]);
-    expect(indexBranches[0].elseStatement).toBeDefined();
-    expect(regionCalls(indexBranches[0].elseStatement!)).toEqual([
-      "setNotesParseRegion(null)",
-    ]);
-    expect(ts.isArrowFunction(rowClick)).toBe(true);
-    const rowClickBody = (rowClick as ts.ArrowFunction).body;
-    expect(ts.isBlock(rowClickBody)).toBe(true);
-    expect((rowClickBody as ts.Block).statements).toHaveLength(3);
-    expect(statementCall((rowClickBody as ts.Block).statements[0], indexSource))
-      .toBe("setPage(r.pageNum)");
-    expect((rowClickBody as ts.Block).statements[1]).toBe(indexBranches[0]);
-    expect(statementCall((rowClickBody as ts.Block).statements[2], indexSource))
-      .toBe("onOpenParser()");
+    const rowClick = compact(findVariable(indexSource, "handleRowClick").initializer!, indexSource);
+    expect(rowClick).toContain("openNotesParseTarget(r.pageNum,[l,t,l+w,t+h])");
+    expect(rowClick).toContain("openNotesParseTarget(r.pageNum,null)");
+    expect(rowClick).not.toContain("setPage(");
+    expect(rowClick).not.toContain("acceptNotesParseRegion(");
+    expect(rowClick).not.toContain("resetNotesParseWorkspace(");
+    expect(rowClick.indexOf("openNotesParseTarget"))
+      .toBeLessThan(rowClick.indexOf("onOpenParser"));
   }, 60_000);
 
   it("pins the final Spec callers, handoffs, and reset/tool ordering", () => {
     const specSource = parse(SPEC_PARSER);
-    for (const path of [
-      "src/components/viewer/SpecPanel.tsx",
-      SPEC_PARSER,
-      "src/components/viewer/SpecClassifier.tsx",
-      "src/components/viewer/SpecIndex.tsx",
-    ]) {
-      expect(knownMembers(expectFailClosedOwnerScan(parse(path)), "getState"), `${path} live reads`)
-        .toEqual([]);
-    }
-
-    const callTrace = (
-      root: ts.Node,
-      source: ts.SourceFile,
-      callees: readonly string[],
-    ): string[] => descendants(root, ts.isCallExpression)
-      .filter((call) => callees.includes(compact(call.expression, source)))
-      .map((call) => compact(call, source));
-    const directFunctionCalls = (fn: ts.FunctionLikeDeclaration): ts.CallExpression[] =>
-      descendants(fn.body!, ts.isCallExpression).filter((call) => {
-        let current: ts.Node | undefined = call.parent;
-        while (current && !ts.isFunctionLike(current)) current = current.parent;
-        return current === fn;
-      });
-    const specHandlerCallees = [
-      "setPreview",
-      "setError",
-      "setSpecParseRegion",
-      "setSpecParseStep",
-      "setParagraphBatch",
-      "resetSpecParse",
-      "useToolStore.getState().setMode",
-    ];
-    const stepHandlerTraces = descendants(specSource, ts.isArrowFunction).flatMap((fn) => {
-      const trace = directFunctionCalls(fn)
-        .filter((call) => specHandlerCallees.includes(compact(call.expression, specSource)))
-        .map((call) => compact(call, specSource));
-      return trace.some((call) => call.startsWith("setSpecParseStep(")) ? [trace] : [];
-    });
-    expect(stepHandlerTraces).toEqual([
-      [
-        "setPreview(null)",
-        "setError(null)",
-        "setSpecParseRegion(null)",
-        'setSpecParseStep("idle")',
-        "setParagraphBatch([])",
-        "resetSpecParse()",
-      ],
-      [
-        'setSpecParseStep("select-region")',
-        'useToolStore.getState().setMode("pointer")',
-      ],
-      [
-        "resetSpecParse()",
-        'setSpecParseStep("select-region")',
-        'useToolStore.getState().setMode("pointer")',
-      ],
+    expect(knownMembers(expectFailClosedOwnerScan(specSource), "getState")).toEqual([
+      "setParseDraftRegion",
+      "setParseDraftRegion",
     ]);
 
-    const runAuto = findVariable(specSource, "runAuto").initializer!;
-    const payloadBranch = descendants(runAuto, ts.isIfStatement).filter((statement) =>
-      compact(statement.expression, specSource) === "!payload.sections?.length"
-    );
-    expect(payloadBranch).toHaveLength(1);
-    expect(payloadBranch[0].elseStatement).toBeDefined();
-    expect(callTrace(payloadBranch[0].elseStatement!, specSource, [
-      "setPreview",
-      "persistPreview",
-    ])).toEqual([
-      "setPreview(payload)",
-      "persistPreview(payload,specParseRegion)",
-    ]);
-
-    expect(callTrace(findVariable(specSource, "persistPreview").initializer!, specSource, [
-      "resetSpecParse",
-      "setPreview",
-    ])).toEqual([
-      "resetSpecParse()",
-      "setPreview(null)",
-    ]);
-    expect(callTrace(findVariable(specSource, "saveFromBatch").initializer!, specSource, [
-      "setParagraphBatch",
-      "resetSpecParse",
-      "setPreview",
-    ])).toEqual([
-      "setParagraphBatch([])",
-      "resetSpecParse()",
-      "setPreview(null)",
-    ]);
-
-    const pinSaveSuccessOwnership = (
-      functionName: string,
-      successTail: readonly string[],
-    ) => {
-      const root = findVariable(specSource, functionName).initializer!;
-      const tries = descendants(root, ts.isTryStatement);
-      expect(tries, `${functionName} one try/catch/finally`).toHaveLength(1);
-      const statement = tries[0];
-      expect(statement.catchClause, `${functionName} catch`).toBeDefined();
-      expect(statement.finallyBlock, `${functionName} finally`).toBeDefined();
-      const tail = statement.tryBlock.statements.slice(-(successTail.length + 1));
-      expect(tail).toHaveLength(successTail.length + 1);
-      expect(ts.isExpressionStatement(tail[0]), `${functionName} awaited save statement`)
-        .toBe(true);
-      const awaitExpression = (tail[0] as ts.ExpressionStatement).expression;
-      expect(ts.isAwaitExpression(awaitExpression), `${functionName} awaits save`).toBe(true);
-      const saveCall = unwrap((awaitExpression as ts.AwaitExpression).expression);
-      expect(ts.isCallExpression(saveCall), `${functionName} save call`).toBe(true);
-      expect(compact((saveCall as ts.CallExpression).expression, specSource))
-        .toBe("saveParsedRegion");
-      expect(tail.slice(1).map((entry) => compact(entry, specSource))).toEqual(successTail);
-      expect(statement.catchClause!.block.statements.map((entry) => compact(entry, specSource)))
-        .toEqual(['setError(errinstanceofError?err.message:"Savefailed");']);
-      expect(statement.finallyBlock!.statements.map((entry) => compact(entry, specSource)))
-        .toEqual([
-          "isSavingRef.current=false;",
-          "setSaving(false);",
-        ]);
-    };
-    pinSaveSuccessOwnership("persistPreview", [
-      "resetSpecParse();",
-      "setPreview(null);",
-    ]);
-    pinSaveSuccessOwnership("saveFromBatch", [
-      "setParagraphBatch([]);",
-      "resetSpecParse();",
-      "setPreview(null);",
-    ]);
+    const specText = compact(specSource, specSource);
+    const commandCalls = (name: string): string[] => importedCalls(
+      specSource,
+      ["@/stores/viewerCommands"],
+      name,
+    ).map((call) => compact(call, specSource));
+    expect(compact(findVariable(specSource, "cleanupLeaseRef").initializer!, specSource))
+      .toBe("useRef<ParseWorkspaceLease|null>(null)");
+    expect(commandCalls("invalidateParseOperationForWorkspace"))
+      .toEqual(['invalidateParseOperationForWorkspace("spec")']);
+    expect(commandCalls("leaveSpecParserWorkspace"))
+      .toEqual(["leaveSpecParserWorkspace(cleanupLeaseRef.current)"]);
+    expect(commandCalls("transitionSpecParserMode"))
+      .toEqual(["transitionSpecParserMode(nextMode,specParseRegion)"]);
+    expect(commandCalls("captureParseWorkspaceLease")).toEqual([]);
+    expect(commandCalls("syncSpecParserModeForLease")).toEqual([]);
+    expect(specText).not.toContain("workspaceRevisions");
+    expect(specText).not.toContain("modeSyncLease");
+    expect(specText).not.toContain("operations.notes.busy||operations.spec.busy");
+    expect(specText).toContain("if(cleanupLeaseRef.current){leaveSpecParserWorkspace(");
+    expect(specText).toContain("awaitpersistPreview(payload,target.region,token,target)");
+    expect(specText).toContain('invalidateParagraphParseOperations("spec")');
+    expect(specText).toContain("completeSpecParseOperation(token)");
+    expect(specText).toContain('resetSpecParseWorkspace("select-region")');
+    expect(specText).not.toContain("isSavingRef");
 
     const sectionFieldMappings = (root: ts.Node, source = specSource) => {
       const fields = descendants(root, ts.isPropertyAssignment).filter((property) =>
@@ -2489,87 +2131,28 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
         compact(property.initializer, source),
       ]));
     };
-    const expectedSectionFields = {
-      sectionHeader: 'p.rowText.sectionHeader??""',
-      body: 'p.rowText.body??""',
-    };
-    expect(sectionFieldMappings(findVariable(specSource, "draft").initializer!))
-      .toEqual(expectedSectionFields);
     expect(sectionFieldMappings(findVariable(specSource, "saveFromBatch").initializer!))
-      .toEqual(expectedSectionFields);
+      .toEqual({
+        sectionHeader: 'p.rowText.sectionHeader??""',
+        body: 'p.rowText.body??""',
+      });
+    expect(specText).toContain("sections:input.sections");
 
-    const persistedPreview = findVariable(specSource, "persistPreview").initializer!;
-    const persistedPreviewData = findVariableWithin(persistedPreview, "data").initializer!;
-    const persistedSections = descendants(persistedPreviewData, ts.isPropertyAssignment).filter(
-      (property) => staticName(property.name) === "sections",
-    );
-    expect(persistedSections).toHaveLength(1);
-    expect(compact(persistedSections[0].initializer, specSource)).toBe("p.sections");
-
-    const swappedSectionFixture = ts.createSourceFile(
-      "spec-section-swap-fixture.ts",
-      `({
-        sectionHeader: p.rowText.body ?? "",
-        body: p.rowText.sectionHeader ?? "",
-      });`,
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS,
-    );
-    expect(sectionFieldMappings(swappedSectionFixture, swappedSectionFixture)).toEqual({
-      sectionHeader: 'p.rowText.body??""',
-      body: 'p.rowText.sectionHeader??""',
-    });
-    expect(sectionFieldMappings(swappedSectionFixture, swappedSectionFixture))
-      .not.toEqual(expectedSectionFields);
-
-    const assertThreeStatementHandoff = (
-      path: string,
-      handlerName: string,
-      regionCallee: string,
-      callbackCallee: string,
-    ) => {
-      const source = parse(path);
-      const handler = findVariable(source, handlerName).initializer!;
-      expect(ts.isArrowFunction(handler)).toBe(true);
-      const body = (handler as ts.ArrowFunction).body;
-      expect(ts.isBlock(body)).toBe(true);
-      const statements = (body as ts.Block).statements;
-      expect(statements).toHaveLength(3);
-      expect(ts.isVariableStatement(statements[0])).toBe(true);
-      const statementCall = (statement: ts.Statement): string => {
-        expect(ts.isExpressionStatement(statement)).toBe(true);
-        const expression = (statement as ts.ExpressionStatement).expression;
-        expect(ts.isCallExpression(expression)).toBe(true);
-        return compact(expression, source);
-      };
-      expect(statementCall(statements[1])).toBe(`${regionCallee}([l,t,l+w,t+h])`);
-      expect(statementCall(statements[2])).toBe(`${callbackCallee}()`);
-    };
-    assertThreeStatementHandoff(
-      "src/components/viewer/SpecClassifier.tsx",
-      "handleEdit",
-      "setSpecParseRegion",
-      "onEditInParser",
-    );
+    const classifierSource = parse("src/components/viewer/SpecClassifier.tsx");
+    const classifierEdit = compact(findVariable(classifierSource, "handleEdit").initializer!, classifierSource);
+    expect(classifierEdit).toContain("acceptSpecParseRegion([l,t,l+w,t+h])");
+    expect(classifierEdit.indexOf("acceptSpecParseRegion"))
+      .toBeLessThan(classifierEdit.indexOf("onEditInParser"));
 
     const indexSource = parse("src/components/viewer/SpecIndex.tsx");
-    const rowClick = findVariable(indexSource, "handleRowClick").initializer!;
-    expect(ts.isArrowFunction(rowClick)).toBe(true);
-    const rowClickBody = (rowClick as ts.ArrowFunction).body;
-    expect(ts.isBlock(rowClickBody)).toBe(true);
-    const indexStatements = (rowClickBody as ts.Block).statements;
-    expect(indexStatements).toHaveLength(3);
-    expect(compact(indexStatements[0], indexSource)).toBe("setPage(r.pageNum);");
-    expect(ts.isIfStatement(indexStatements[1])).toBe(true);
-    const bboxBranch = indexStatements[1] as ts.IfStatement;
-    expect(compact(bboxBranch.expression, indexSource)).toBe("r.bbox");
-    expect(callTrace(bboxBranch.thenStatement, indexSource, ["setSpecParseRegion"]))
-      .toEqual(["setSpecParseRegion([l,t,l+w,t+h])"]);
-    expect(bboxBranch.elseStatement).toBeDefined();
-    expect(callTrace(bboxBranch.elseStatement!, indexSource, ["setSpecParseRegion"]))
-      .toEqual(["setSpecParseRegion(null)"]);
-    expect(compact(indexStatements[2], indexSource)).toBe("onOpenParser();");
+    const rowClick = compact(findVariable(indexSource, "handleRowClick").initializer!, indexSource);
+    expect(rowClick).toContain("openSpecParseTarget(r.pageNum,[l,t,l+w,t+h])");
+    expect(rowClick).toContain("openSpecParseTarget(r.pageNum,null)");
+    expect(rowClick).not.toContain("setPage(");
+    expect(rowClick).not.toContain("acceptSpecParseRegion(");
+    expect(rowClick).not.toContain("resetSpecParseWorkspace(");
+    expect(rowClick.indexOf("openSpecParseTarget"))
+      .toBeLessThan(rowClick.indexOf("onOpenParser"));
   }, 60_000);
 });
 
@@ -3102,25 +2685,36 @@ describe("P2.4 phase-aware sacred parse subscription topology", () => {
       "guidedParseRegion",
       "guidedParseRows",
       "guidedParseCols",
-      "setGuidedParseRows",
-      "setGuidedParseCols",
     ]);
+    const sourceText = compact(source, source);
+    expect(sourceText).toContain(
+      "functionbeginGuidedGridOperations():ParseWorkspaceLease{returnbeginGuidedGridEdit();}",
+    );
+    expect(sourceText).toContain("setRows={setGuidedParseRowsForLease}");
+    expect(sourceText).toContain("setCols={setGuidedParseColsForLease}");
+    expect(sourceText).toContain("onGridEditStart={beginGuidedGridOperations}");
+    expect(sourceText).toContain(
+      "functionbeginNotesFastManualOperation():ParseWorkspaceLease{returnbeginNotesFastManualEdit();}",
+    );
+    expect(sourceText).toContain("onGridChange={setNotesFastManualGridFromOverlay}");
+    expect(sourceText).toContain("onGridEditStart={beginNotesFastManualOperation}");
+    expect(sourceText).toContain(
+      "functionbeginParagraphWorkspaceOperations():ParseWorkspaceLease{returnbeginParagraphWorkspaceEdit();}",
+    );
+    expect(sourceText).toContain("onParagraphUpsert={upsertParagraphForLease}");
+    expect(sourceText).toContain("onParagraphRemove={removeParagraphForLease}");
+    expect(sourceText).toContain("onWorkspaceEditStart={beginParagraphWorkspaceOperations}");
     expect(importedCalls(source, [ACTIVE_PARSE_OWNER.module], "useTableParse"))
       .toHaveLength(0);
     expect(knownMembers(expectFailClosedOwnerScan(source), "selector")).toEqual([
       "notesFastManualActive",
       "notesParseRegion",
-      "setNotesFastManualGrid",
       "paragraphOverlayActive",
       "specParseRegion",
       "notesParseRegion",
       "paragraphBatch",
       "paragraphClipboard",
-      "upsertPendingParagraph",
-      "removePendingParagraph",
       "setParagraphClipboard",
-      "resetNotesParse",
-      "resetSpecParse",
     ]);
   });
 
@@ -3340,7 +2934,8 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
     const onExit = findVariable(source, "onExit");
     expect(compact(outerBbox.initializer!, source)).toBe("specParseRegion??notesParseRegion");
     expect(compact(isSpec.initializer!, source)).toBe("!!specParseRegion");
-    expect(compact(onExit, source)).toContain("if(isSpec)resetSpecParse();elseresetNotesParse();");
+    expect(compact(onExit, source))
+      .toBe("onExit=isSpec?exitSpecParagraphWorkspace:exitNotesParagraphWorkspace");
   });
 });
 
