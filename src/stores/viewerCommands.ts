@@ -5,6 +5,11 @@
 // P2.3 therefore preserves today's reset output behind this neutral command. P2.5 replaces it with
 // the generation/AbortController-aware openProject orchestrator and an explicit survival policy.
 
+import {
+  invalidateParseOperationKinds,
+  type ParseKind,
+  type ParseOperationRegistry,
+} from "@/lib/parse-operation-state";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
@@ -50,24 +55,81 @@ function prepareParseEntry(currentStep: string, nextStep: string): void {
   }
 }
 
+/**
+ * User entry and cancel are ownership boundaries. Active-to-active transitions stay in the same
+ * flow; A2b gives async-owned idle-to-review completion a separate token-authorized command so it
+ * cannot invalidate itself through this generic user boundary.
+ */
+function crossesParseOperationBoundary(currentStep: string, nextStep: string): boolean {
+  return (currentStep === "idle") !== (nextStep === "idle");
+}
+
+function operationBoundaryPatch(
+  parseOperations: ParseOperationRegistry,
+  kind: ParseKind,
+  currentStep: string,
+  nextStep: string,
+): { parseOperations?: ParseOperationRegistry } {
+  if (!crossesParseOperationBoundary(currentStep, nextStep)) return {};
+  return {
+    parseOperations: invalidateParseOperationKinds(parseOperations, [kind]),
+  };
+}
+
 export function setTableParseStep(tableParseStep: TableParseStep): void {
-  prepareParseEntry(useParseFlowStore.getState().tableParseStep, tableParseStep);
-  useParseFlowStore.setState({ tableParseStep });
+  const currentStep = useParseFlowStore.getState().tableParseStep;
+  prepareParseEntry(currentStep, tableParseStep);
+  useParseFlowStore.setState((state) => ({
+    tableParseStep,
+    ...operationBoundaryPatch(
+      state.parseOperations,
+      "table",
+      state.tableParseStep,
+      tableParseStep,
+    ),
+  }));
 }
 
 export function setKeynoteParseStep(keynoteParseStep: KeynoteParseStep): void {
-  prepareParseEntry(useParseFlowStore.getState().keynoteParseStep, keynoteParseStep);
-  useParseFlowStore.setState({ keynoteParseStep });
+  const currentStep = useParseFlowStore.getState().keynoteParseStep;
+  prepareParseEntry(currentStep, keynoteParseStep);
+  useParseFlowStore.setState((state) => ({
+    keynoteParseStep,
+    ...operationBoundaryPatch(
+      state.parseOperations,
+      "keynote",
+      state.keynoteParseStep,
+      keynoteParseStep,
+    ),
+  }));
 }
 
 export function setNotesParseStep(notesParseStep: NotesParseStep): void {
-  prepareParseEntry(useParseFlowStore.getState().notesParseStep, notesParseStep);
-  useParseFlowStore.setState({ notesParseStep });
+  const currentStep = useParseFlowStore.getState().notesParseStep;
+  prepareParseEntry(currentStep, notesParseStep);
+  useParseFlowStore.setState((state) => ({
+    notesParseStep,
+    ...operationBoundaryPatch(
+      state.parseOperations,
+      "notes",
+      state.notesParseStep,
+      notesParseStep,
+    ),
+  }));
 }
 
 export function setSpecParseStep(specParseStep: SpecParseStep): void {
-  prepareParseEntry(useParseFlowStore.getState().specParseStep, specParseStep);
-  useParseFlowStore.setState({ specParseStep });
+  const currentStep = useParseFlowStore.getState().specParseStep;
+  prepareParseEntry(currentStep, specParseStep);
+  useParseFlowStore.setState((state) => ({
+    specParseStep,
+    ...operationBoundaryPatch(
+      state.parseOperations,
+      "spec",
+      state.specParseStep,
+      specParseStep,
+    ),
+  }));
 }
 
 /** Seven-publication universal tool/parse teardown preserved across the S2 ownership split. */
@@ -134,7 +196,7 @@ export function toggleTableParsePanel(): void {
 
   if (closing) {
     // Preserve the old raw mode transition. Calling setMode would clear additional live tools.
-    useParseFlowStore.setState({
+    useParseFlowStore.setState((state) => ({
       tableParseStep: "idle",
       tableParseRegion: null,
       tableParsedGrid: null,
@@ -147,7 +209,9 @@ export function toggleTableParsePanel(): void {
       guidedParseRegion: null,
       guidedParseRows: [],
       guidedParseCols: [],
-    });
+      // The close remains one raw parse publication while revoking any async Table owner.
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+    }));
     // Preserve the legacy raw mode assignment: setMode would clear unrelated active tools.
     useToolStore.setState({ mode: "move" });
   }
@@ -158,7 +222,7 @@ export function toggleKeynoteParsePanel(): void {
   const closing = useUiStore.getState().showKeynoteParsePanel;
 
   if (closing) {
-    useParseFlowStore.setState({
+    useParseFlowStore.setState((state) => ({
       keynoteParseStep: "idle",
       keynoteParseRegion: null,
       keynoteColumnBBs: [],
@@ -169,7 +233,9 @@ export function toggleKeynoteParsePanel(): void {
       guidedParseRegion: null,
       guidedParseRows: [],
       guidedParseCols: [],
-    });
+      // The close remains one raw parse publication while revoking any async Keynote owner.
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["keynote"]),
+    }));
     useToolStore.setState({ mode: "move" });
   }
   useUiStore.getState().setPanelVisibility({ showKeynoteParsePanel: !closing });

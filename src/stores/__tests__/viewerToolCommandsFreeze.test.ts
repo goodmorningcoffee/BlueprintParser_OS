@@ -246,7 +246,9 @@ describe("P2.3 T2 parse-step cross-boundary characterization", () => {
         const afterTool = useToolStore.getState();
         const afterParse = useParseFlowStore.getState();
         expect(changedValueKeys(beforeTool, afterTool)).toEqual([...PARSE_ENTRY_TOOL_KEYS].sort());
-        expect(changedValueKeys(beforeParse, afterParse)).toEqual([parseCase.key]);
+        expect(changedValueKeys(beforeParse, afterParse)).toEqual(
+          [parseCase.key, "parseOperations"].sort(),
+        );
         expect(afterParse[parseCase.key]).toBe(target);
         expect(afterTool).toMatchObject({
           mode: "move",
@@ -283,7 +285,9 @@ describe("P2.3 T2 parse-step cross-boundary characterization", () => {
 
       expect(trace).toEqual(["tool", "parse"]);
       expect(changedValueKeys(beforeTool, useToolStore.getState())).toEqual([]);
-      expect(changedValueKeys(beforeParse, useParseFlowStore.getState())).toEqual([parseCase.key]);
+      expect(changedValueKeys(beforeParse, useParseFlowStore.getState())).toEqual(
+        [parseCase.key, "parseOperations"].sort(),
+      );
       unsubscribeTool();
       unsubscribeParse();
     });
@@ -303,7 +307,9 @@ describe("P2.3 T2 parse-step cross-boundary characterization", () => {
       const afterParse = useParseFlowStore.getState();
       expect(trace).toEqual(["tool", "parse"]);
       expect(changedValueKeys(beforeTool, afterTool)).toEqual([...PARSE_ENTRY_TOOL_KEYS].sort());
-      expect(changedValueKeys(beforeParse, afterParse)).toEqual([parseCase.key]);
+      expect(changedValueKeys(beforeParse, afterParse)).toEqual(
+        [parseCase.key, "parseOperations"].sort(),
+      );
       expect(afterParse[parseCase.key]).toBe("select-region");
       expect(afterTool).toMatchObject({
         mode: "move",
@@ -353,7 +359,9 @@ describe("P2.3 T2 parse-step cross-boundary characterization", () => {
       invokeParseStep(parseCase.action, "idle");
       expect(parseListener).toHaveBeenCalledTimes(3);
       expect(toolListener).not.toHaveBeenCalled();
-      expect(changedValueKeys(beforeIdle, useParseFlowStore.getState())).toEqual([parseCase.key]);
+      expect(changedValueKeys(beforeIdle, useParseFlowStore.getState())).toEqual(
+        [parseCase.key, "parseOperations"].sort(),
+      );
 
       const after = useToolStore.getState();
       expect(after).toMatchObject({

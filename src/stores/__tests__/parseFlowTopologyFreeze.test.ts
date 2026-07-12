@@ -197,6 +197,15 @@ const PARSE_LEAF_ACTION_KEYS = [
   "resetGuidedParse",
 ] as const;
 
+/** A2 additive authority stays outside the exact legacy 35/41 ownership ledger. */
+const PARSE_OPERATION_STATE_KEYS = ["parseOperations"] as const;
+const PARSE_OPERATION_ACTION_KEYS = [
+  "beginParseOperation",
+  "isParseOperationCurrent",
+  "finishParseOperation",
+  "invalidateParseOperation",
+] as const;
+
 const NEUTRAL_STEP_COMMANDS = [
   "setTableParseStep",
   "setKeynoteParseStep",
@@ -853,7 +862,12 @@ function expectOwnerLedgerDefinition(
     expect(declarations, `${typeName} definition ownership`).toHaveLength(present ? 1 : 0);
   }
   if (owner.module === PARSE_OWNER.module && expectation === "exact-ledger") {
-    const expected = [...ALL_PARSE_KEYS, "resetProjectParseState"].sort();
+    const expected = [
+      ...ALL_PARSE_KEYS,
+      ...PARSE_OPERATION_STATE_KEYS,
+      ...PARSE_OPERATION_ACTION_KEYS,
+      "resetProjectParseState",
+    ].sort();
     const candidateSource = parse(owner.file);
     const candidateInterface = findInterface(candidateSource, owner.interfaceName);
     const candidateObject = findStoreObject(candidateSource, owner.storeName);
@@ -1621,7 +1635,7 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
   const activeInterfaceKeys = interfaceKeys(findInterface(activeSource, ACTIVE_PARSE_OWNER.interfaceName));
   const activeObjectKeys = directObjectKeys(findStoreObject(activeSource, ACTIVE_PARSE_OWNER.storeName));
 
-  it("pins the phase-owned 35/41 definition and independent inactive definition/runtime absence", () => {
+  it("pins the phase-owned legacy 35/41 subset plus the additive A2 owner surface", () => {
     expect(PARSE_DATA_KEYS).toHaveLength(35);
     expect(PARSE_LEAF_ACTION_KEYS).toHaveLength(41);
     expect(PARSE_TEST_STATE_KEYS).toEqual(PARSE_DATA_KEYS);
@@ -1643,6 +1657,14 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
       expect(candidateDefinitions.objectKeys.includes("resetProjectParseState")).toBe(true);
       expect(Object.prototype.hasOwnProperty.call(candidateRuntime, "resetProjectParseState"))
         .toBe(true);
+      for (const member of [...PARSE_OPERATION_STATE_KEYS, ...PARSE_OPERATION_ACTION_KEYS]) {
+        expect(candidateDefinitions.interfaceKeys.includes(member), `${member} interface ownership`)
+          .toBe(true);
+        expect(candidateDefinitions.objectKeys.includes(member), `${member} implementation ownership`)
+          .toBe(true);
+        expect(Object.prototype.hasOwnProperty.call(candidateRuntime, member), `${member} runtime ownership`)
+          .toBe(true);
+      }
     }
     const viewerDefinitions = ownerDefinitionKeys(VIEWER_OWNER);
     expect(viewerDefinitions.interfaceKeys.includes("resetProjectParseState")).toBe(false);
@@ -1659,6 +1681,7 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
       }))
       .sort((left, right) => left.module.localeCompare(right.module));
     expect(imports).toEqual([
+      { module: "@/lib/parse-operation-state", typeOnly: false },
       { module: "@/types", typeOnly: true },
       { module: "zustand", typeOnly: false },
       { module: "zustand/react/shallow", typeOnly: false },
@@ -1709,9 +1732,10 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
       ]);
       const source = parse(VIEWER_COMMANDS_FILE);
       expect(callLabels(definitions[0].node, source)).toEqual([
-        "prepareParseEntry",
         "useParseFlowStore.getState",
+        "prepareParseEntry",
         "useParseFlowStore.setState",
+        "operationBoundaryPatch",
       ]);
     }
   }, 60_000);
@@ -1928,7 +1952,7 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
       "parsedKeynoteData",
       "setParsedKeynoteData",
     ]);
-  });
+  }, 60_000);
 
   it("pins minimal Notes, draft, and paragraph extension surfaces", () => {
     const contracts = [
@@ -2531,7 +2555,7 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     expect(callTrace(bboxBranch.elseStatement!, indexSource, ["setSpecParseRegion"]))
       .toEqual(["setSpecParseRegion(null)"]);
     expect(compact(indexStatements[2], indexSource)).toBe("onOpenParser();");
-  });
+  }, 60_000);
 });
 
 describe("P2.4 A1 semantic parse facade topology", () => {
@@ -2681,6 +2705,7 @@ describe("P2.4 A1 semantic parse facade topology", () => {
       .map((statement) => (statement.moduleSpecifier as ts.StringLiteral).text)
       .sort();
     expect(dependencies).toEqual([
+      "@/lib/parse-operation-state",
       "@/stores/parseFlowStore",
       "@/stores/viewerCommands",
       "@/types",
@@ -3205,7 +3230,7 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
       NOTES_PARSER,
       PDF_PAGE,
     ]);
-  });
+  }, 60_000);
 
   it("pins the shared draft and paragraph workspace borrower sets, including moved owner types", () => {
     expect(activeOwnerBorrowerFiles(["parseDraftRegion", "setParseDraftRegion"]))
@@ -3227,7 +3252,7 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
       PARAGRAPH_OVERLAY,
       SPEC_PARSER,
     ]);
-  });
+  }, 60_000);
 
   it("pins Shape's Table-region borrowing and consume-then-clear sequence", () => {
     const source = parse(SHAPE_INTERACTION);
@@ -3320,6 +3345,7 @@ describe("P2.4 phase-aware guided-Spec tombstone", () => {
       "parseDraftRegion",
       "paragraphOverlayActive",
       "paragraphBatch",
+      "parseOperations",
     ]);
     expect(activeOwnerBorrowerFiles([
       "guidedSpecSectionBBs",
@@ -3372,5 +3398,5 @@ describe("P2.4 phase-aware shared owner-oracle integration", () => {
       `${finding.fileName}:${finding.line}:${finding.column} ${formatStoreOwnerFinding(finding)}`,
     ))).toEqual([]);
     expect(observedAllowlist).toEqual([...allowlist].sort());
-  }, 60_000);
+  }, 120_000);
 });

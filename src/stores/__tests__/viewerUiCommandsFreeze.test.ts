@@ -303,6 +303,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       "guidedParseCols",
       "guidedParseRegion",
       "guidedParseRows",
+      "parseOperations",
       "tableParseColumnBBs",
       "tableParseColumnNames",
       "tableParseMeta",
@@ -408,6 +409,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       "keynoteParseTab",
       "keynoteRowBBs",
       "keynoteYoloClass",
+      "parseOperations",
     ]);
     expect(changedValueKeys(beforeUi, useUiStore.getState())).toEqual(["showKeynoteParsePanel"]);
     expect(after).toMatchObject({

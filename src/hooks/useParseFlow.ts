@@ -12,10 +12,11 @@ import {
   setSpecParseStep,
   setTableParseStep,
 } from "@/stores/viewerCommands";
+import type { ParseKind } from "@/lib/parse-operation-state";
 import type { BboxMinMax } from "@/types";
 
-/** The four user-facing parse lifecycles. Shared workspaces remain explicit extensions. */
-export type ParseKind = "table" | "keynote" | "notes" | "spec";
+/** Keep the A1 public type import stable while A2's pure registry becomes its canonical owner. */
+export type { ParseKind } from "@/lib/parse-operation-state";
 
 /** Derive every step union from its real flat owner instead of coupling equal-looking kinds. */
 export type ParseStepMap = {

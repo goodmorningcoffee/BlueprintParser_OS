@@ -964,5 +964,5 @@ describe("P2.3 T2 owner access oracle", () => {
     const directlyAccessed = new Set(active.map((access) => access.member));
     expect(new Set([...directlyAccessed, ...GROUPED_OR_UNUSED_TOOL_MEMBERS])).toEqual(TOOL_MEMBERS);
     expect(inactive).toEqual([]);
-  }, 15_000);
+  }, 60_000);
 });

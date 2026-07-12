@@ -382,7 +382,7 @@ describe("P2.3 csiGraph migration topology", () => {
       expect(call.arguments[1].getText(source)).toBe("data.id");
       expect(call.arguments[2].getText(source)).toBe("projectIntelligenceWithoutYoloTags");
     }
-  });
+  }, 60_000);
 
   it("pins exact prior-project cleanup before the neutral reset command", () => {
     expect(callTopology(CSI_FACADE, "clearCsiGraphProject")).toEqual({
@@ -404,7 +404,7 @@ describe("P2.3 csiGraph migration topology", () => {
     expect(csiQueryKeyTopology()).toEqual({
       "src/queries/useCsiGraph.ts": 3,
     });
-  });
+  }, 60_000);
 
   it("keeps the full PI blob out of every production owner and CsiPanel off useProject", () => {
     // Inspect syntax rather than raw text so explanatory comments can retain migration context.

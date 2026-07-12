@@ -1,6 +1,16 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 
+import {
+  createParseOperationRegistry,
+  invalidateParseOperationKinds,
+  PARSE_KINDS,
+  type BeginParseOperationPolicy,
+  type BeginParseOperationResult,
+  type ParseKind,
+  type ParseOperationRegistry,
+  type ParseOperationToken,
+} from "@/lib/parse-operation-state";
 import type { ParsedRegion, TextractLine } from "@/types";
 
 /**
@@ -182,6 +192,16 @@ export interface ParseFlowState {
   setGuidedParseCols: (cols: number[]) => void;
   resetGuidedParse: () => void;
 
+  // ─── Per-kind async operation authority (A2 additive contract) ───
+  parseOperations: ParseOperationRegistry;
+  beginParseOperation: <K extends ParseKind>(
+    kind: K,
+    policy?: BeginParseOperationPolicy,
+  ) => BeginParseOperationResult<K>;
+  isParseOperationCurrent: (token: ParseOperationToken) => boolean;
+  finishParseOperation: (token: ParseOperationToken) => boolean;
+  invalidateParseOperation: (kind: ParseKind) => void;
+
   /**
    * Project-reset seam. It intentionally preserves the characterized three-field policy:
    * tableCellStructure, showTableCellStructure, and tableParseOptions retain their references.
@@ -189,7 +209,7 @@ export interface ParseFlowState {
   resetProjectParseState: () => void;
 }
 
-export const useParseFlowStore = create<ParseFlowState>((set) => ({
+export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
   tableParseStep: "idle",
   tableParseRegion: null,
   setTableParseRegion: (tableParseRegion) => set({ tableParseRegion }),
@@ -225,7 +245,7 @@ export const useParseFlowStore = create<ParseFlowState>((set) => ({
   addTableParseRowBB: (bb) =>
     set((state) => ({ tableParseRowBBs: [...state.tableParseRowBBs, bb] })),
   setTableParseRowBBs: (tableParseRowBBs) => set({ tableParseRowBBs }),
-  resetTableParse: () => set({
+  resetTableParse: () => set((state) => ({
     tableParseStep: "idle",
     tableParseRegion: null,
     tableParsedGrid: null,
@@ -235,7 +255,8 @@ export const useParseFlowStore = create<ParseFlowState>((set) => ({
     tableParseColumnNames: [],
     tableParseRowBBs: [],
     // Intentionally retain showTableCellStructure, tab, and options.
-  }),
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+  })),
   tableParseTab: "all",
   setTableParseTab: (tableParseTab) => set({ tableParseTab }),
   tableParseOptions: {
@@ -269,14 +290,15 @@ export const useParseFlowStore = create<ParseFlowState>((set) => ({
   addParsedKeynote: (entry) => set((state) => ({
     parsedKeynoteData: [...(state.parsedKeynoteData || []), entry],
   })),
-  resetKeynoteParse: () => set({
+  resetKeynoteParse: () => set((state) => ({
     keynoteParseStep: "idle",
     keynoteParseRegion: null,
     keynoteColumnBBs: [],
     keynoteRowBBs: [],
     keynoteYoloClass: null,
     // Intentionally retain keynoteParseTab and parsedKeynoteData.
-  }),
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["keynote"]),
+  })),
 
   notesParseStep: "idle",
   notesParseRegion: null,
@@ -287,7 +309,7 @@ export const useParseFlowStore = create<ParseFlowState>((set) => ({
   guidedNotesCols: [],
   addGuidedNotesCol: (bb) =>
     set((state) => ({ guidedNotesCols: [...state.guidedNotesCols, bb] })),
-  resetNotesParse: () => set({
+  resetNotesParse: () => set((state) => ({
     notesParseStep: "idle",
     notesParseRegion: null,
     guidedNotesRows: [],
@@ -296,7 +318,8 @@ export const useParseFlowStore = create<ParseFlowState>((set) => ({
     paragraphOverlayActive: false,
     paragraphBatch: [],
     // Fast-manual state, clipboard, and the shared guided grid intentionally survive.
-  }),
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes"]),
+  })),
 
   parseDraftRegion: null,
   setParseDraftRegion: (parseDraftRegion) => set({ parseDraftRegion }),
@@ -311,7 +334,7 @@ export const useParseFlowStore = create<ParseFlowState>((set) => ({
   guidedSpecSectionBBs: [],
   addGuidedSpecSectionBB: (bb) =>
     set((state) => ({ guidedSpecSectionBBs: [...state.guidedSpecSectionBBs, bb] })),
-  resetSpecParse: () => set({
+  resetSpecParse: () => set((state) => ({
     specParseStep: "idle",
     specParseRegion: null,
     guidedSpecSectionBBs: [],
@@ -319,7 +342,8 @@ export const useParseFlowStore = create<ParseFlowState>((set) => ({
     paragraphOverlayActive: false,
     paragraphBatch: [],
     // Clipboard intentionally survives. Notes and Spec each publish their own fresh batch reset.
-  }),
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["spec"]),
+  })),
 
   paragraphOverlayActive: false,
   setParagraphOverlayActive: (paragraphOverlayActive) => set({ paragraphOverlayActive }),
@@ -354,8 +378,54 @@ export const useParseFlowStore = create<ParseFlowState>((set) => ({
     guidedParseCols: [],
   }),
 
-  resetProjectParseState: () => set({
+  parseOperations: createParseOperationRegistry(),
+  beginParseOperation: <K extends ParseKind>(
+    kind: K,
+    policy: BeginParseOperationPolicy = "reject",
+  ): BeginParseOperationResult<K> => {
+    let result: BeginParseOperationResult<K> = { status: "busy" };
+    set((state) => {
+      const current = state.parseOperations[kind];
+      if (current.busy && policy === "reject") return state;
+
+      const revision = current.revision + 1;
+      result = { status: "started", token: { kind, revision } };
+      return {
+        parseOperations: {
+          ...state.parseOperations,
+          [kind]: { revision, busy: true },
+        },
+      };
+    });
+    return result;
+  },
+  isParseOperationCurrent: (token) => {
+    const current = get().parseOperations[token.kind];
+    return current.busy && current.revision === token.revision;
+  },
+  finishParseOperation: (token) => {
+    let finished = false;
+    set((state) => {
+      const current = state.parseOperations[token.kind];
+      if (!current.busy || current.revision !== token.revision) return state;
+
+      finished = true;
+      return {
+        parseOperations: {
+          ...state.parseOperations,
+          [token.kind]: { revision: current.revision, busy: false },
+        },
+      };
+    });
+    return finished;
+  },
+  invalidateParseOperation: (kind) => set((state) => ({
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, [kind]),
+  })),
+
+  resetProjectParseState: () => set((state) => ({
     // Exact legacy project-reset policy: 32 touched, with three Table fields retained above.
+    // A2 adds only the monotonic four-kind invalidation below; no legacy survival policy changes.
     tableParseTab: "all",
     tableParseStep: "idle",
     tableParseRegion: null,
@@ -388,7 +458,8 @@ export const useParseFlowStore = create<ParseFlowState>((set) => ({
     guidedParseRegion: null,
     guidedParseRows: [],
     guidedParseCols: [],
-  }),
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, PARSE_KINDS),
+  })),
 }));
 
 /** Exact legacy 17-member Table grouped surface. Step writes remain neutral commands. */

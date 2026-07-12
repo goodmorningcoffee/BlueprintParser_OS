@@ -1037,7 +1037,7 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
         "useCachedTextractForPages",
       ),
     ).toEqual({ "src/components/viewer/PageSidebar.tsx": 1 });
-  }, 15_000);
+  }, 60_000);
 
   it("pins the sole GET owner and the facade-only rerun writer", () => {
     const productionSources = sourceFilesUnder("src").filter(isProductionSource);

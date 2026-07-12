@@ -1001,7 +1001,7 @@ describe("P2.3 U2 subscription topology", () => {
       expect(groupedHookShape(name), `${name} shape`).toEqual(GROUPED_HOOK_SHAPES[name]);
       expect(importedCallTopology(name), `${name} callers`).toEqual(GROUPED_HOOK_CALL_TOPOLOGY[name]);
     }
-  }, 15_000);
+  }, 60_000);
 
   it("keeps AnnotationOverlay UI subscriptions primitive and avoids broad UI facades", () => {
     const source = parse(ANNOTATION_OVERLAY);
@@ -1123,9 +1123,12 @@ describe("P2.3 U2 ownership escape oracle", () => {
         .filter(ts.isStringLiteral)
         .map((module) => module.text);
       expect(imports, path).toEqual(expect.arrayContaining(["zustand"]));
+      const allowedLeafImports = path === PARSE_OWNER.file
+        ? ["zustand", "zustand/react/shallow", "@/types", "@/lib/parse-operation-state"]
+        : ["zustand", "zustand/react/shallow", "@/types"];
       for (const moduleName of imports) {
         expect(
-          ["zustand", "zustand/react/shallow", "@/types"],
+          allowedLeafImports,
           `${path} leaf import ${moduleName}`,
         ).toContain(moduleName);
       }

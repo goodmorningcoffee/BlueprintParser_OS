@@ -95,6 +95,18 @@ export const PARSE_ACTION_KEYS = [
   "resetGuidedParse",
 ] as const satisfies readonly (keyof ParseState)[];
 
+/** A2 is additive: keep the characterized 35/41 contract exact as a named legacy subset. */
+const PARSE_OPERATION_DATA_KEYS = [
+  "parseOperations",
+] as const satisfies readonly (keyof ParseState)[];
+
+const PARSE_OPERATION_ACTION_KEYS = [
+  "beginParseOperation",
+  "isParseOperationCurrent",
+  "finishParseOperation",
+  "invalidateParseOperation",
+] as const satisfies readonly (keyof ParseState)[];
+
 export const PROJECT_PARSE_RETAINED_KEYS = [
   "tableCellStructure",
   "showTableCellStructure",
@@ -239,14 +251,25 @@ function expectParseActionsStable(
   }
 }
 
-const PARSE_MUTABLE_DATA_KEY_SET = new Set<string>(PARSE_DATA_KEYS);
+const PARSE_MUTABLE_DATA_KEY_SET = new Set<string>([
+  ...PARSE_DATA_KEYS,
+  ...PARSE_OPERATION_DATA_KEYS,
+]);
 
-function expectNonDataSurfaceStable(before: ParseState, after: ParseState): void {
+function expectNonDataSurfaceStable(
+  before: ParseState,
+  after: ParseState,
+  options: { allowOperationChange?: boolean } = {},
+): void {
   const previous = before as unknown as Record<string, unknown>;
   const current = after as unknown as Record<string, unknown>;
   const keys = new Set([...Object.keys(previous), ...Object.keys(current)]);
   for (const key of keys) {
-    if (PARSE_MUTABLE_DATA_KEY_SET.has(key)) continue;
+    if (PARSE_MUTABLE_DATA_KEY_SET.has(key)) {
+      if (key !== "parseOperations" || options.allowOperationChange) continue;
+      expect(current[key], "retains additive operation registry").toBe(previous[key]);
+      continue;
+    }
     expect(
       Object.prototype.hasOwnProperty.call(current, key),
       `retains every non-parse-data key ${key}`,
@@ -334,11 +357,15 @@ describe("P2.4 shared parse boundary and defaults", () => {
     expect(Object.entries(state)
       .filter(([, value]) => typeof value !== "function")
       .map(([key]) => key)
-      .sort()).toEqual([...PARSE_DATA_KEYS].sort());
+      .sort()).toEqual([...PARSE_DATA_KEYS, ...PARSE_OPERATION_DATA_KEYS].sort());
     expect(Object.entries(state)
       .filter(([, value]) => typeof value === "function")
       .map(([key]) => key)
-      .sort()).toEqual([...PARSE_ACTION_KEYS, "resetProjectParseState"].sort());
+      .sort()).toEqual([
+        ...PARSE_ACTION_KEYS,
+        ...PARSE_OPERATION_ACTION_KEYS,
+        "resetProjectParseState",
+      ].sort());
     expect(state.resetProjectParseState).toBeTypeOf("function");
   });
 
@@ -501,7 +528,7 @@ describe("P2.4 sole parse leaf publications", () => {
     ].sort()).toEqual([...PARSE_ACTION_KEYS].sort());
   });
 
-  it.each(PUBLICATION_CASES)("$name publishes exactly once, including semantic no-ops", ({ invoke }) => {
+  it.each(PUBLICATION_CASES)("$name publishes exactly once, including semantic no-ops", ({ name, invoke }) => {
     const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);
     const listener = vi.fn();
@@ -510,7 +537,14 @@ describe("P2.4 sole parse leaf publications", () => {
     const after = useParseFlowStore.getState();
     expect(listener).toHaveBeenCalledTimes(1);
     expectParseActionsStable(actionsBefore, after);
-    expectNonDataSurfaceStable(before, after);
+    expectNonDataSurfaceStable(before, after, {
+      allowOperationChange: [
+        "resetTableParse",
+        "resetKeynoteParse",
+        "resetNotesParse",
+        "resetSpecParse",
+      ].includes(name),
+    });
     unsubscribe();
   });
 });
@@ -855,7 +889,9 @@ describe("P2.4 shared reset matrices", () => {
       resetArrays.length,
     );
     expectParseActionsStable(actionsBefore, after);
-    expectNonDataSurfaceStable(before, after);
+    expectNonDataSurfaceStable(before, after, {
+      allowOperationChange: action !== "resetGuidedParse",
+    });
     unsubscribe();
 
     // Resetting an already-default flow still publishes and allocates each reset container. This
@@ -873,7 +909,9 @@ describe("P2.4 shared reset matrices", () => {
     expect(new Set(arrayKeys.map((key) => defaultAfter[key])).size).toBe(arrayKeys.length);
     for (const key of arrayKeys) expect(defaultAfter[key]).not.toBe(defaultBefore[key]);
     expectParseActionsStable(defaultActions, defaultAfter);
-    expectNonDataSurfaceStable(defaultBefore, defaultAfter);
+    expectNonDataSurfaceStable(defaultBefore, defaultAfter, {
+      allowOperationChange: action !== "resetGuidedParse",
+    });
     unsubscribeDefault();
   });
 
@@ -934,7 +972,7 @@ describe("P2.4 shared reset matrices", () => {
     expect(publications[3].paragraphBatch).not.toBe(publications[2].paragraphBatch);
     expect(publications[4].guidedParseActive).toBe(false);
     expectParseActionsStable(actionsBefore, after);
-    expectNonDataSurfaceStable(before, after);
+    expectNonDataSurfaceStable(before, after, { allowOperationChange: true });
     unsubscribe();
   });
 
