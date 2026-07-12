@@ -11,6 +11,8 @@ import {
   type ParseStepMap,
 } from "@/hooks/useParseFlow";
 import {
+  useGuidedParseExtensions,
+  useKeynoteParseExtensions,
   useParseFlowStore,
   useTableParseExtensions,
   type ParseFlowState,
@@ -280,5 +282,79 @@ describe("P2.4 A1 Table extension composition", () => {
     expect(renders).toBe(baseline + 1);
     expect(result.current.tableParsedGrid).toEqual({ headers: ["TAG"], rows: [] });
     expect(result.current.setTableParsedGrid).toBe(first.setTableParsedGrid);
+  });
+});
+
+describe("P2.4 A1 Keynote and shared-guided extension composition", () => {
+  it("keeps the exact ten Keynote fields independent from lifecycle and guided publications", () => {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useKeynoteParseExtensions();
+    });
+    const state = useParseFlowStore.getState();
+    expect(result.current).toEqual({
+      keynoteParseTab: state.keynoteParseTab,
+      setKeynoteParseTab: state.setKeynoteParseTab,
+      keynoteColumnBBs: state.keynoteColumnBBs,
+      addKeynoteColumnBB: state.addKeynoteColumnBB,
+      keynoteRowBBs: state.keynoteRowBBs,
+      addKeynoteRowBB: state.addKeynoteRowBB,
+      keynoteYoloClass: state.keynoteYoloClass,
+      setKeynoteYoloClass: state.setKeynoteYoloClass,
+      parsedKeynoteData: state.parsedKeynoteData,
+      addParsedKeynote: state.addParsedKeynote,
+    });
+    const first = result.current;
+    const baseline = renders;
+
+    act(() => useParseFlowStore.setState({
+      keynoteParseStep: "review",
+      keynoteParseRegion: BBOX,
+      guidedParseActive: true,
+    }));
+    expect(renders).toBe(baseline);
+    expect(result.current).toBe(first);
+
+    act(() => result.current.setKeynoteParseTab("manual"));
+    expect(renders).toBe(baseline + 1);
+    expect(result.current.keynoteParseTab).toBe("manual");
+    expect(result.current.setKeynoteParseTab).toBe(first.setKeynoteParseTab);
+  });
+
+  it("keeps the exact nine shared-grid fields independent from every kind lifecycle", () => {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useGuidedParseExtensions();
+    });
+    const state = useParseFlowStore.getState();
+    expect(result.current).toEqual({
+      guidedParseActive: state.guidedParseActive,
+      setGuidedParseActive: state.setGuidedParseActive,
+      guidedParseRegion: state.guidedParseRegion,
+      setGuidedParseRegion: state.setGuidedParseRegion,
+      guidedParseRows: state.guidedParseRows,
+      setGuidedParseRows: state.setGuidedParseRows,
+      guidedParseCols: state.guidedParseCols,
+      setGuidedParseCols: state.setGuidedParseCols,
+      resetGuidedParse: state.resetGuidedParse,
+    });
+    const first = result.current;
+    const baseline = renders;
+
+    act(() => useParseFlowStore.setState({
+      tableParseStep: "review",
+      keynoteParseRegion: BBOX,
+      notesParseStep: "select-region",
+      specParseRegion: BBOX,
+    }));
+    expect(renders).toBe(baseline);
+    expect(result.current).toBe(first);
+
+    act(() => result.current.setGuidedParseActive(true));
+    expect(renders).toBe(baseline + 1);
+    expect(result.current.guidedParseActive).toBe(true);
+    expect(result.current.setGuidedParseActive).toBe(first.setGuidedParseActive);
   });
 });

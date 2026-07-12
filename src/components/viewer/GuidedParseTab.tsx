@@ -4,7 +4,11 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { readTextractForPage } from "@/queries/textractCache";
 import { useParseFlow } from "@/hooks/useParseFlow";
-import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
+import {
+  useGuidedParseExtensions,
+  useParseFlowStore,
+  useTableParseExtensions,
+} from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useProject } from "@/stores/sessionStore";
@@ -52,15 +56,17 @@ export default function GuidedParseTab({
     tableParsedGrid, setTableParsedGrid,
   } = useTableParseExtensions();
 
-  // Guided parse store fields
-  const guidedParseActive = useParseFlowStore((s) => s.guidedParseActive);
-  const guidedParseRows = useParseFlowStore((s) => s.guidedParseRows);
-  const guidedParseCols = useParseFlowStore((s) => s.guidedParseCols);
-  const setGuidedParseActive = useParseFlowStore((s) => s.setGuidedParseActive);
-  const setGuidedParseRegion = useParseFlowStore((s) => s.setGuidedParseRegion);
-  const setGuidedParseRows = useParseFlowStore((s) => s.setGuidedParseRows);
-  const setGuidedParseCols = useParseFlowStore((s) => s.setGuidedParseCols);
-  const resetGuidedParse = useParseFlowStore((s) => s.resetGuidedParse);
+  // Shared grid workspace: explicit beside the Table lifecycle because it is also used by Keynote.
+  const {
+    guidedParseActive,
+    guidedParseRows,
+    guidedParseCols,
+    setGuidedParseActive,
+    setGuidedParseRegion,
+    setGuidedParseRows,
+    setGuidedParseCols,
+    resetGuidedParse,
+  } = useGuidedParseExtensions();
 
   // Tuning sliders
   const [rowTolerance, setRowTolerance] = useState(0.006);

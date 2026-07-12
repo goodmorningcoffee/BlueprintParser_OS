@@ -33,6 +33,7 @@ import {
 const VIEWER_STORE_FILE = "src/stores/viewerStore.ts";
 const PARSE_STORE_FILE = "src/stores/parseFlowStore.ts";
 const VIEWER_COMMANDS_FILE = "src/stores/viewerCommands.ts";
+const VIEWER_COMMANDS_MODULE = "@/stores/viewerCommands";
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
 const DRAWING_PREVIEW = "src/components/viewer/DrawingPreviewLayer.tsx";
 const PDF_PAGE = "src/components/viewer/PDFPage.tsx";
@@ -263,6 +264,31 @@ const KEYNOTE_HOOK_SHAPE = [
   "resetGuidedParse",
 ] as const;
 
+const KEYNOTE_EXTENSION_HOOK_SHAPE = [
+  "keynoteParseTab",
+  "setKeynoteParseTab",
+  "keynoteColumnBBs",
+  "addKeynoteColumnBB",
+  "keynoteRowBBs",
+  "addKeynoteRowBB",
+  "keynoteYoloClass",
+  "setKeynoteYoloClass",
+  "parsedKeynoteData",
+  "addParsedKeynote",
+] as const;
+
+const GUIDED_PARSE_EXTENSION_HOOK_SHAPE = [
+  "guidedParseActive",
+  "setGuidedParseActive",
+  "guidedParseRegion",
+  "setGuidedParseRegion",
+  "guidedParseRows",
+  "setGuidedParseRows",
+  "guidedParseCols",
+  "setGuidedParseCols",
+  "resetGuidedParse",
+] as const;
+
 const TABLE_HOOK_CALLERS = {
   "src/components/viewer/AnnotationOverlay.tsx": 1,
   "src/components/viewer/AutoParseTab.tsx": 2,
@@ -314,11 +340,55 @@ const KEYNOTE_HOOK_CALLERS = {
   "src/components/viewer/AnnotationOverlay.tsx": 1,
   "src/components/viewer/PDFPage.tsx": 1,
 } as const;
+const KEYNOTE_EXTENSION_HOOK_CALLERS = {
+  "src/components/viewer/KeynotePanel.tsx": 1,
+} as const;
+const KEYNOTE_EXTENSION_HOOK_BINDINGS = {
+  "src/components/viewer/KeynotePanel.tsx": [{
+    keynoteParseTab: "keynoteParseTab",
+    setKeynoteParseTab: "setKeynoteParseTab",
+    keynoteColumnBBs: "keynoteColumnBBs",
+    addKeynoteColumnBB: "addKeynoteColumnBB",
+    keynoteRowBBs: "keynoteRowBBs",
+    addKeynoteRowBB: "addKeynoteRowBB",
+    keynoteYoloClass: "keynoteYoloClass",
+    setKeynoteYoloClass: "setKeynoteYoloClass",
+    parsedKeynoteData: "parsedKeynoteData",
+    addParsedKeynote: "addParsedKeynote",
+  }],
+} as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
+const GUIDED_PARSE_EXTENSION_HOOK_CALLERS = {
+  "src/components/viewer/GuidedParseTab.tsx": 1,
+  "src/components/viewer/KeynotePanel.tsx": 1,
+} as const;
+const GUIDED_PARSE_EXTENSION_HOOK_BINDINGS = {
+  "src/components/viewer/GuidedParseTab.tsx": [{
+    guidedParseActive: "guidedParseActive",
+    guidedParseRows: "guidedParseRows",
+    guidedParseCols: "guidedParseCols",
+    setGuidedParseActive: "setGuidedParseActive",
+    setGuidedParseRegion: "setGuidedParseRegion",
+    setGuidedParseRows: "setGuidedParseRows",
+    setGuidedParseCols: "setGuidedParseCols",
+    resetGuidedParse: "resetGuidedParse",
+  }],
+  "src/components/viewer/KeynotePanel.tsx": [{
+    guidedParseActive: "guidedParseActive",
+    guidedParseRegion: "guidedParseRegion",
+    guidedParseRows: "guidedParseRows",
+    guidedParseCols: "guidedParseCols",
+    setGuidedParseActive: "setGuidedParseActive",
+    setGuidedParseRegion: "setGuidedParseRegion",
+    setGuidedParseRows: "setGuidedParseRows",
+    setGuidedParseCols: "setGuidedParseCols",
+    resetGuidedParse: "resetGuidedParse",
+  }],
+} as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
 
 type ParseFacadePhase = "FACADE" | "TABLE" | "KEYNOTE" | "NOTES" | "SPEC";
 // A1 advances one complete kind family at a time. Never accept a union of old and new callers:
 // each intermediate commit must update this single phase switch with its atomic source migration.
-const PARSE_FACADE_PHASE = "TABLE" as ParseFacadePhase;
+const PARSE_FACADE_PHASE = "KEYNOTE" as ParseFacadePhase;
 
 type ParseFacadeCall = {
   readonly kind: "table" | "keynote" | "notes" | "spec";
@@ -489,16 +559,8 @@ const EXPECTED_MIGRATED_DIRECT_SELECTORS = {
     "showTableCellStructure",
     "setShowTableCellStructure",
   ],
-  "src/components/viewer/GuidedParseTab.tsx": [
-    "guidedParseActive",
-    "guidedParseRows",
-    "guidedParseCols",
-    "setGuidedParseActive",
-    "setGuidedParseRegion",
-    "setGuidedParseRows",
-    "setGuidedParseCols",
-    "resetGuidedParse",
-  ],
+  // Shared guided state has its own explicit extension facade after the Keynote slice.
+  "src/components/viewer/GuidedParseTab.tsx": [],
   "src/components/viewer/ManualParseTab.tsx": [],
   "src/components/viewer/KeynotePanel.tsx": ["setTableParsedGrid", "setTableParseRegion"],
   "src/components/viewer/NotesPanel.tsx": [],
@@ -930,12 +992,28 @@ function isNonReferencePropertyName(identifier: ts.Identifier): boolean {
 }
 
 /**
- * Returns every imported-hook reference outside the deliberately small supported grammar:
+ * Returns every imported callable reference outside the deliberately small supported grammar:
  * named import -> optional simple identifier alias chain -> direct call. This makes invocation
  * provenance fail closed for `.call`/`.apply`/`.bind`, optional calls, argument passing, object
  * storage, comma expressions, and future indirect forms that a direct-callee counter cannot see.
  */
-function unsupportedImportedHookReferences(
+function importedCallableReferences(
+  source: ts.SourceFile,
+  moduleNames: readonly string[],
+  importedName: string,
+): ts.Identifier[] {
+  const aliases = identifierAliases(
+    source,
+    importedLocalNames(source, moduleNames, importedName),
+  );
+  return descendants(source, ts.isIdentifier).filter((identifier) => {
+    if (!aliases.has(identifier.text)) return false;
+    const parent = identifier.parent;
+    return !ts.isImportSpecifier(parent) && !isNonReferencePropertyName(identifier);
+  });
+}
+
+function unsupportedImportedCallableReferences(
   source: ts.SourceFile,
   moduleNames: readonly string[],
   importedName: string,
@@ -944,10 +1022,8 @@ function unsupportedImportedHookReferences(
     source,
     importedLocalNames(source, moduleNames, importedName),
   );
-  return descendants(source, ts.isIdentifier).flatMap((identifier) => {
-    if (!aliases.has(identifier.text)) return [];
+  return importedCallableReferences(source, moduleNames, importedName).flatMap((identifier) => {
     const parent = identifier.parent;
-    if (ts.isImportSpecifier(parent) || isNonReferencePropertyName(identifier)) return [];
 
     const envelope = expressionEnvelope(identifier);
     if (
@@ -1229,7 +1305,13 @@ function knownMembers(
 }
 
 function groupedBorrowedMembers(source: ts.SourceFile): string[] {
-  return ["useTableParse", "useKeynoteParse"].flatMap((hookName) =>
+  return [
+    "useTableParse",
+    "useKeynoteParse",
+    "useTableParseExtensions",
+    "useKeynoteParseExtensions",
+    "useGuidedParseExtensions",
+  ].flatMap((hookName) =>
     importedCalls(source, [ACTIVE_PARSE_OWNER.module], hookName).flatMap((call) => {
       let current: ts.Node = call;
       while (
@@ -1320,15 +1402,12 @@ function nonCanonicalParseOwnerImports(
   path: string,
   source = parse(path),
 ): string[] {
-  return source.statements.flatMap((statement) => {
-    if (
-      !ts.isImportDeclaration(statement) ||
-      !ts.isStringLiteral(statement.moduleSpecifier) ||
-      !resolvesToParseOwner(path, statement.moduleSpecifier.text) ||
-      statement.moduleSpecifier.text === PARSE_OWNER.module
-    ) return [];
-    return [statement.moduleSpecifier.text];
-  });
+  return nonCanonicalCandidateImports(
+    path,
+    PARSE_OWNER.module,
+    PARSE_OWNER.file,
+    source,
+  );
 }
 
 function resolvesToCandidate(
@@ -1346,6 +1425,23 @@ function resolvesToCandidate(
         : "";
   const withoutExtension = (value: string) => value.replace(/\.(?:ts|tsx)$/, "");
   return withoutExtension(unresolved) === withoutExtension(file);
+}
+
+function nonCanonicalCandidateImports(
+  path: string,
+  moduleName: string,
+  file: string,
+  source = parse(path),
+): string[] {
+  return source.statements.flatMap((statement) => {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !resolvesToCandidate(path, statement.moduleSpecifier.text, moduleName, file) ||
+      statement.moduleSpecifier.text === moduleName
+    ) return [];
+    return [statement.moduleSpecifier.text];
+  });
 }
 
 function candidateLoadKinds(
@@ -1646,12 +1742,14 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
       { module: PARSE_OWNER.module, name: "useTableParse" },
       { module: PARSE_OWNER.module, name: "useKeynoteParse" },
       { module: PARSE_OWNER.module, name: "useTableParseExtensions" },
+      { module: PARSE_OWNER.module, name: "useKeynoteParseExtensions" },
+      { module: PARSE_OWNER.module, name: "useGuidedParseExtensions" },
       { module: PARSE_FACADE_MODULE, name: "useParseFlow" },
     ] as const;
     const unsupportedReferences = productionSourceFiles.flatMap((path) => {
       const source = parse(path);
       return guardedHooks.flatMap(({ module, name }) =>
-        unsupportedImportedHookReferences(source, [module], name)
+        unsupportedImportedCallableReferences(source, [module], name)
           .map((reference) => ({ path, hook: name, reference }))
       );
     });
@@ -1681,7 +1779,7 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
       ts.ScriptKind.TSX,
     );
     expect(guardedHooks.flatMap(({ module, name }) =>
-      unsupportedImportedHookReferences(invocationFixture, [module], name)
+      unsupportedImportedCallableReferences(invocationFixture, [module], name)
     )).toEqual([
       "useTableParse:PropertyAccessExpression",
       "useTableParse:ShorthandPropertyAssignment",
@@ -1691,6 +1789,74 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
       "useParseFlow:CallExpression",
     ]);
   }, 60_000);
+
+  it("pins Keynote-only and shared-guided extensions without changing sacred callers", () => {
+    expect(hookShape("useKeynoteParseExtensions", KEYNOTE_EXTENSION_HOOK_SHAPE))
+      .toEqual(KEYNOTE_EXTENSION_HOOK_SHAPE);
+    expect(hookShape("useGuidedParseExtensions", GUIDED_PARSE_EXTENSION_HOOK_SHAPE))
+      .toEqual(GUIDED_PARSE_EXTENSION_HOOK_SHAPE);
+    expect(exportedVariableCount(parse(ACTIVE_PARSE_OWNER.file), "useKeynoteParseExtensions"))
+      .toBe(1);
+    expect(exportedVariableCount(parse(ACTIVE_PARSE_OWNER.file), "useGuidedParseExtensions"))
+      .toBe(1);
+    expect(importedCallTopology("useKeynoteParseExtensions", ACTIVE_PARSE_OWNER))
+      .toEqual(KEYNOTE_EXTENSION_HOOK_CALLERS);
+    expect(importedCallTopology("useGuidedParseExtensions", ACTIVE_PARSE_OWNER))
+      .toEqual(GUIDED_PARSE_EXTENSION_HOOK_CALLERS);
+    expect(importedCallTopology("useKeynoteParseExtensions", INACTIVE_PARSE_OWNER)).toEqual({});
+    expect(importedCallTopology("useGuidedParseExtensions", INACTIVE_PARSE_OWNER)).toEqual({});
+    expect(productionHookBindingCallers(
+      ACTIVE_PARSE_OWNER.module,
+      "useKeynoteParseExtensions",
+    )).toEqual(KEYNOTE_EXTENSION_HOOK_BINDINGS);
+    expect(productionHookBindingCallers(
+      ACTIVE_PARSE_OWNER.module,
+      "useGuidedParseExtensions",
+    )).toEqual(GUIDED_PARSE_EXTENSION_HOOK_BINDINGS);
+
+    const keynoteSource = parse(KEYNOTE_PANEL);
+    const liveBoundaryBindings = (source: ts.SourceFile) => Object.fromEntries(
+      ["storeState", "colBBs", "rowBBs"].map((name) => {
+        const declaration = findVariable(source, name);
+        expect(declaration.initializer, `${name} live initializer`).toBeDefined();
+        return [name, compact(declaration.initializer!, source)];
+      }),
+    );
+    const expectedBoundaryBindings = {
+      storeState: "useParseFlowStore.getState()",
+      colBBs: "storeState.keynoteColumnBBs",
+      rowBBs: "storeState.keynoteRowBBs",
+    };
+    expect(liveBoundaryBindings(keynoteSource)).toEqual(expectedBoundaryBindings);
+
+    const swappedAliasFixture = ts.createSourceFile(
+      "keynote-live-boundary-swap-fixture.ts",
+      `
+        const storeState = useParseFlowStore.getState();
+        const colBBs = storeState.keynoteRowBBs;
+        const rowBBs = storeState.keynoteColumnBBs;
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    expect(liveBoundaryBindings(swappedAliasFixture)).toEqual({
+      storeState: "useParseFlowStore.getState()",
+      colBBs: "storeState.keynoteRowBBs",
+      rowBBs: "storeState.keynoteColumnBBs",
+    });
+    expect(liveBoundaryBindings(swappedAliasFixture)).not.toEqual(expectedBoundaryBindings);
+
+    // These reads are deliberately invocation-live. Capturing them from either render extension
+    // could overwrite BBs/data published after render or propose against a stale region.
+    expect(knownMembers(expectFailClosedOwnerScan(keynoteSource), "getState")).toEqual([
+      "keynoteColumnBBs",
+      "keynoteRowBBs",
+      "keynoteParseRegion",
+      "parsedKeynoteData",
+      "setParsedKeynoteData",
+    ]);
+  });
 });
 
 describe("P2.4 A1 semantic parse facade topology", () => {
@@ -1916,6 +2082,177 @@ describe("P2.4 A1 semantic parse facade topology", () => {
       null,
     ]);
   });
+
+  it("makes neutral-command module and invocation provenance fail closed", () => {
+    const candidateNamespaceImports = (path: string, source = parse(path)) =>
+      source.statements.flatMap((statement) => {
+        if (
+          !ts.isImportDeclaration(statement) ||
+          !ts.isStringLiteral(statement.moduleSpecifier) ||
+          !resolvesToCandidate(
+            path,
+            statement.moduleSpecifier.text,
+            VIEWER_COMMANDS_MODULE,
+            VIEWER_COMMANDS_FILE,
+          ) ||
+          !statement.importClause?.namedBindings ||
+          !ts.isNamespaceImport(statement.importClause.namedBindings)
+        ) return [];
+        return [statement.moduleSpecifier.text];
+      });
+
+    const commandConsumers = productionSourceFiles.filter(
+      (path) => path !== VIEWER_COMMANDS_FILE,
+    );
+    expect(commandConsumers.flatMap((path) =>
+      nonCanonicalCandidateImports(
+        path,
+        VIEWER_COMMANDS_MODULE,
+        VIEWER_COMMANDS_FILE,
+      ).map((specifier) => ({ path, specifier }))
+    ), "viewer commands must use the canonical static import").toEqual([]);
+    expect(commandConsumers.flatMap((path) =>
+      candidateLoadKinds(path, VIEWER_COMMANDS_MODULE, VIEWER_COMMANDS_FILE)
+        .filter((kind) => kind !== "import")
+        .map((kind) => ({ path, kind }))
+    ), "viewer commands cannot hide behind non-static loads").toEqual([]);
+    expect(commandConsumers.flatMap((path) =>
+      candidateNamespaceImports(path).map((specifier) => ({ path, specifier }))
+    ), "viewer commands cannot hide behind namespace imports").toEqual([]);
+
+    const unsupportedReferences = commandConsumers
+      // The semantic facade is audited separately below because its four references are deliberate
+      // value pass-throughs rather than direct calls.
+      .filter((path) => path !== PARSE_FACADE_FILE)
+      .flatMap((path) => {
+        const source = parse(path);
+        return NEUTRAL_STEP_COMMANDS.flatMap((command) =>
+          unsupportedImportedCallableReferences(
+            source,
+            [VIEWER_COMMANDS_MODULE],
+            command,
+          ).map((reference) => ({ path, command, reference }))
+        );
+      });
+    expect(unsupportedReferences, "neutral commands use only direct proven calls").toEqual([]);
+
+    const isAdapterSetStepReference = (
+      identifier: ts.Identifier,
+      adapterRegistry: ts.Expression,
+    ): boolean => {
+      const assignment = identifier.parent;
+      if (
+        !ts.isPropertyAssignment(assignment) ||
+        assignment.initializer !== identifier ||
+        staticName(assignment.name) !== "setStep"
+      ) return false;
+      let current: ts.Node | undefined = assignment;
+      while (current && current !== adapterRegistry) current = current.parent;
+      return current === adapterRegistry;
+    };
+
+    const facadeSource = parse(PARSE_FACADE_FILE);
+    const adapterRegistry = findVariable(facadeSource, "PARSE_FLOW_ADAPTERS").initializer;
+    expect(adapterRegistry, "facade adapter registry initializer").toBeDefined();
+    const facadeReferenceTopology = Object.fromEntries(NEUTRAL_STEP_COMMANDS.map((command) => {
+      const references = importedCallableReferences(
+        facadeSource,
+        [VIEWER_COMMANDS_MODULE],
+        command,
+      );
+      expect(references, `${command} has one facade reference`).toHaveLength(1);
+      expect(
+        isAdapterSetStepReference(references[0], adapterRegistry!),
+        `${command} is only the exact adapter setStep value`,
+      ).toBe(true);
+      return [command, references.map((identifier) => ts.SyntaxKind[identifier.parent.kind])];
+    }));
+    expect(facadeReferenceTopology).toEqual({
+      setTableParseStep: ["PropertyAssignment"],
+      setKeynoteParseStep: ["PropertyAssignment"],
+      setNotesParseStep: ["PropertyAssignment"],
+      setSpecParseStep: ["PropertyAssignment"],
+    });
+
+    const fixturePath = "src/components/viewer/neutral-command-provenance-fixture.ts";
+    const fixture = ts.createSourceFile(
+      fixturePath,
+      `
+        import { setKeynoteParseStep as legacyStep } from "@/stores/viewerCommands";
+        import { setNotesParseStep as relativeStep } from "../../stores/viewerCommands";
+        import * as Commands from "@/stores/viewerCommands";
+        declare function consume(value: unknown): void;
+        legacyStep("idle");
+        legacyStep.call(null, "idle");
+        legacyStep["bind"](null);
+        consume(legacyStep);
+        Commands.setSpecParseStep("idle");
+        const lazy = import("@/stores/viewerCommands");
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    expect(candidateLoadKinds(
+      fixturePath,
+      VIEWER_COMMANDS_MODULE,
+      VIEWER_COMMANDS_FILE,
+      fixture,
+    )).toEqual(["import", "import", "import", "dynamic-import"]);
+    expect(nonCanonicalCandidateImports(
+      fixturePath,
+      VIEWER_COMMANDS_MODULE,
+      VIEWER_COMMANDS_FILE,
+      fixture,
+    )).toEqual(["../../stores/viewerCommands"]);
+    expect(candidateNamespaceImports(fixturePath, fixture)).toEqual([
+      VIEWER_COMMANDS_MODULE,
+    ]);
+    expect(unsupportedImportedCallableReferences(
+      fixture,
+      [VIEWER_COMMANDS_MODULE],
+      "setKeynoteParseStep",
+    )).toEqual([
+      "legacyStep:PropertyAccessExpression",
+      "legacyStep:ElementAccessExpression",
+      "legacyStep:CallExpression",
+    ]);
+
+    const facadeEscapeFixture = ts.createSourceFile(
+      "src/hooks/neutral-command-facade-escape-fixture.ts",
+      `
+        import { setKeynoteParseStep } from "@/stores/viewerCommands";
+        const PARSE_FLOW_ADAPTERS = {
+          keynote: { setStep: setKeynoteParseStep },
+        };
+        setKeynoteParseStep("idle");
+        setKeynoteParseStep.call(null, "idle");
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const fixtureRegistry = findVariable(
+      facadeEscapeFixture,
+      "PARSE_FLOW_ADAPTERS",
+    ).initializer!;
+    const fixtureReferences = importedCallableReferences(
+      facadeEscapeFixture,
+      [VIEWER_COMMANDS_MODULE],
+      "setKeynoteParseStep",
+    );
+    expect(fixtureReferences.map((identifier) => ts.SyntaxKind[identifier.parent.kind])).toEqual([
+      "PropertyAssignment",
+      "CallExpression",
+      "PropertyAccessExpression",
+    ]);
+    expect(fixtureReferences.filter((identifier) =>
+      !isAdapterSetStepReference(identifier, fixtureRegistry)
+    ).map((identifier) => ts.SyntaxKind[identifier.parent.kind])).toEqual([
+      "CallExpression",
+      "PropertyAccessExpression",
+    ]);
+  }, 60_000);
 
   it("pins zero hidden facade loads and exact value imports at every A1 phase", () => {
     const expectedFiles = Object.keys(

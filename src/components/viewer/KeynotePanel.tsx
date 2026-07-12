@@ -2,11 +2,15 @@
 
 import { useMemo, useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useParseFlowStore } from "@/stores/parseFlowStore";
+import { useParseFlow } from "@/hooks/useParseFlow";
+import {
+  useGuidedParseExtensions,
+  useKeynoteParseExtensions,
+  useParseFlowStore,
+} from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
   resetAllTools,
-  setKeynoteParseStep,
   setTableParseStep,
   toggleKeynoteParsePanel,
 } from "@/stores/viewerCommands";
@@ -66,22 +70,27 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const pageTextract = useTextractForPage(pageNumber);
   // [refactor jul11 P2.2⑥] Subscribe to the one chunk-windowed cache entry, not viewerStore.
   const { annotations } = useAnnotations();
-  const keynoteParseTab = useParseFlowStore((s) => s.keynoteParseTab);
-  const setKeynoteParseTab = useParseFlowStore((s) => s.setKeynoteParseTab);
-  const keynoteParseStep = useParseFlowStore((s) => s.keynoteParseStep);
-  const keynoteParseRegion = useParseFlowStore((s) => s.keynoteParseRegion);
-  const setKeynoteParseRegion = useParseFlowStore((s) => s.setKeynoteParseRegion);
-  const keynoteColumnBBs = useParseFlowStore((s) => s.keynoteColumnBBs);
-  const addKeynoteColumnBB = useParseFlowStore((s) => s.addKeynoteColumnBB);
-  const keynoteRowBBs = useParseFlowStore((s) => s.keynoteRowBBs);
-  const addKeynoteRowBB = useParseFlowStore((s) => s.addKeynoteRowBB);
-  const keynoteYoloClass = useParseFlowStore((s) => s.keynoteYoloClass);
-  const setKeynoteYoloClass = useParseFlowStore((s) => s.setKeynoteYoloClass);
-  const parsedKeynoteData = useParseFlowStore((s) => s.parsedKeynoteData);
-  const addParsedKeynote = useParseFlowStore((s) => s.addParsedKeynote);
+  const {
+    step: keynoteParseStep,
+    region: keynoteParseRegion,
+    setStep: setKeynoteParseStep,
+    setRegion: setKeynoteParseRegion,
+    reset: resetKeynoteParse,
+  } = useParseFlow("keynote");
+  const {
+    keynoteParseTab,
+    setKeynoteParseTab,
+    keynoteColumnBBs,
+    addKeynoteColumnBB,
+    keynoteRowBBs,
+    addKeynoteRowBB,
+    keynoteYoloClass,
+    setKeynoteYoloClass,
+    parsedKeynoteData,
+    addParsedKeynote,
+  } = useKeynoteParseExtensions();
   const activeKeynoteHighlight = useUiStore((s) => s.activeKeynoteHighlight);
   const setActiveKeynoteHighlight = useUiStore((s) => s.setActiveKeynoteHighlight);
-  const resetKeynoteParse = useParseFlowStore((s) => s.resetKeynoteParse);
   const projectId = useSessionStore((s) => s.projectId);
   // One collection observer owns the whole keynote list. Passing the same row array down avoids
   // creating one query observer per expanded/collapsed KeynoteItem.
@@ -97,16 +106,18 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   // subscription; summaries publication happens inside the captured-target command.
   const queryClient = useQueryClient();
 
-  // Guided parse state
-  const guidedParseActive = useParseFlowStore((s) => s.guidedParseActive);
-  const guidedParseRegion = useParseFlowStore((s) => s.guidedParseRegion);
-  const guidedParseRows = useParseFlowStore((s) => s.guidedParseRows);
-  const guidedParseCols = useParseFlowStore((s) => s.guidedParseCols);
-  const setGuidedParseActive = useParseFlowStore((s) => s.setGuidedParseActive);
-  const setGuidedParseRegion = useParseFlowStore((s) => s.setGuidedParseRegion);
-  const setGuidedParseRows = useParseFlowStore((s) => s.setGuidedParseRows);
-  const setGuidedParseCols = useParseFlowStore((s) => s.setGuidedParseCols);
-  const resetGuidedParse = useParseFlowStore((s) => s.resetGuidedParse);
+  // This proposed-grid workspace is shared with Table guided parsing, not Keynote-owned state.
+  const {
+    guidedParseActive,
+    guidedParseRegion,
+    guidedParseRows,
+    guidedParseCols,
+    setGuidedParseActive,
+    setGuidedParseRegion,
+    setGuidedParseRows,
+    setGuidedParseCols,
+    resetGuidedParse,
+  } = useGuidedParseExtensions();
 
   // Guards against double-click save stacking. Same pattern as TableParsePanel —
   // Manual + Auto both call this helper; Guided bypasses it and writes inline.

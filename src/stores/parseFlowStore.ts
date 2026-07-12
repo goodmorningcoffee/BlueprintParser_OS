@@ -460,3 +460,40 @@ export const useKeynoteParse = () =>
     setGuidedParseCols: state.setGuidedParseCols,
     resetGuidedParse: state.resetGuidedParse,
   })));
+
+/**
+ * [refactor jul11 P2.4 A1] Keynote-only state outside the common lifecycle and shared grid.
+ * Event-time deletion keeps its imperative `setParsedKeynoteData` read so a render snapshot cannot
+ * overwrite a newer table; the hook exposes only the render-reactive fields used by cold panels.
+ */
+export const useKeynoteParseExtensions = () =>
+  useParseFlowStore(useShallow((state) => ({
+    keynoteParseTab: state.keynoteParseTab,
+    setKeynoteParseTab: state.setKeynoteParseTab,
+    keynoteColumnBBs: state.keynoteColumnBBs,
+    addKeynoteColumnBB: state.addKeynoteColumnBB,
+    keynoteRowBBs: state.keynoteRowBBs,
+    addKeynoteRowBB: state.addKeynoteRowBB,
+    keynoteYoloClass: state.keynoteYoloClass,
+    setKeynoteYoloClass: state.setKeynoteYoloClass,
+    parsedKeynoteData: state.parsedKeynoteData,
+    addParsedKeynote: state.addParsedKeynote,
+  })));
+
+/**
+ * Shared proposed-grid workspace used by Table guided parsing and Keynote guided parsing.
+ * It deliberately has no parse kind: the flat owner permits dormant cross-kind reuse, so callers
+ * compose this beside a lifecycle facade instead of pretending the workspace belongs to Keynote.
+ */
+export const useGuidedParseExtensions = () =>
+  useParseFlowStore(useShallow((state) => ({
+    guidedParseActive: state.guidedParseActive,
+    setGuidedParseActive: state.setGuidedParseActive,
+    guidedParseRegion: state.guidedParseRegion,
+    setGuidedParseRegion: state.setGuidedParseRegion,
+    guidedParseRows: state.guidedParseRows,
+    setGuidedParseRows: state.setGuidedParseRows,
+    guidedParseCols: state.guidedParseCols,
+    setGuidedParseCols: state.setGuidedParseCols,
+    resetGuidedParse: state.resetGuidedParse,
+  })));
