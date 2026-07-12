@@ -12,6 +12,11 @@ import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 import {
+  acceptKeynoteParseRegion,
+  completeKeynoteParseOperation,
+  invalidateGuidedParseOperations,
+  invalidateKeynoteTableOperations,
+  resetKeynoteGuidedParse,
   setTableParseStepForOperation,
   resetAllTools,
   setKeynoteParseStep,
@@ -80,6 +85,221 @@ function expectOtherStatusIdentities(
 
 beforeEach(() => {
   restoreStores();
+});
+
+describe("A2c shared Guided operation boundary", () => {
+  it("invalidates Table and Notes in one publication while retaining the admitted Keynote owner", () => {
+    const tokens = {
+      table: startOperation("table"),
+      keynote: startOperation("keynote"),
+      notes: startOperation("notes"),
+      spec: startOperation("spec"),
+    };
+    const before = useParseFlowStore.getState().parseOperations;
+    const listener = vi.fn();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+
+    invalidateGuidedParseOperations("keynote");
+
+    const after = useParseFlowStore.getState().parseOperations;
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(after.keynote).toBe(before.keynote);
+    expect(after.keynote).toEqual({ revision: tokens.keynote.revision, busy: true });
+    expect(after.table).toEqual({ revision: tokens.table.revision + 1, busy: false });
+    expect(after.notes).toEqual({ revision: tokens.notes.revision + 1, busy: false });
+    expect(after.spec).toBe(before.spec);
+    expect(after.spec).toEqual({ revision: tokens.spec.revision, busy: true });
+    unsubscribe();
+  });
+
+  it("invalidates all three shared owners, but never Spec, for a direct grid edit", () => {
+    const tokens = {
+      table: startOperation("table"),
+      keynote: startOperation("keynote"),
+      notes: startOperation("notes"),
+      spec: startOperation("spec"),
+    };
+    const beforeSpec = useParseFlowStore.getState().parseOperations.spec;
+    const listener = vi.fn();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+
+    invalidateGuidedParseOperations();
+
+    const after = useParseFlowStore.getState().parseOperations;
+    expect(listener).toHaveBeenCalledTimes(1);
+    for (const kind of ["table", "keynote", "notes"] as const) {
+      expect(after[kind]).toEqual({ revision: tokens[kind].revision + 1, busy: false });
+    }
+    expect(after.spec).toBe(beforeSpec);
+    unsubscribe();
+  });
+
+  it("revokes a Keynote-to-Table handoff in one publication while retaining peer identities", () => {
+    const tokens = {
+      table: startOperation("table"),
+      keynote: startOperation("keynote"),
+      notes: startOperation("notes"),
+      spec: startOperation("spec"),
+    };
+    const before = useParseFlowStore.getState().parseOperations;
+    const listener = vi.fn();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+
+    invalidateKeynoteTableOperations();
+
+    const after = useParseFlowStore.getState().parseOperations;
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(after.table).toEqual({ revision: tokens.table.revision + 1, busy: false });
+    expect(after.keynote).toEqual({ revision: tokens.keynote.revision + 1, busy: false });
+    expect(after.notes).toBe(before.notes);
+    expect(after.spec).toBe(before.spec);
+    unsubscribe();
+  });
+
+  it("accepts a Keynote canvas region and revokes its owner in one atomic publication", () => {
+    useParseFlowStore.setState({ keynoteParseStep: "select-region" });
+    const token = startOperation("keynote");
+    const before = useParseFlowStore.getState().parseOperations;
+    const listener = vi.fn();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+
+    acceptKeynoteParseRegion([0.1, 0.2, 0.8, 0.9]);
+
+    const after = useParseFlowStore.getState();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(after.keynoteParseRegion).toEqual([0.1, 0.2, 0.8, 0.9]);
+    expect(after.keynoteParseStep).toBe("idle");
+    expect(after.parseOperations.keynote).toEqual({
+      revision: token.revision + 1,
+      busy: false,
+    });
+    expectOtherStatusIdentities("keynote", before, after.parseOperations);
+    unsubscribe();
+  });
+
+  it("resets Keynote and its shared Guided workspace in one publication", () => {
+    const tokens = {
+      table: startOperation("table"),
+      keynote: startOperation("keynote"),
+      notes: startOperation("notes"),
+      spec: startOperation("spec"),
+    };
+    useParseFlowStore.setState({
+      keynoteParseStep: "review",
+      keynoteParseRegion: [0.1, 0.2, 0.8, 0.9],
+      keynoteColumnBBs: [[0.1, 0.2, 0.4, 0.9]],
+      keynoteRowBBs: [[0.1, 0.2, 0.8, 0.4]],
+      keynoteYoloClass: { model: "fixture", className: "door" },
+      guidedParseActive: true,
+      guidedParseRegion: [0.1, 0.2, 0.8, 0.9],
+      guidedParseRows: [0.2, 0.9],
+      guidedParseCols: [0.1, 0.8],
+    });
+    const beforeSpec = useParseFlowStore.getState().parseOperations.spec;
+    const listener = vi.fn();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+
+    resetKeynoteGuidedParse();
+
+    const after = useParseFlowStore.getState();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(after).toMatchObject({
+      keynoteParseStep: "idle",
+      keynoteParseRegion: null,
+      keynoteColumnBBs: [],
+      keynoteRowBBs: [],
+      keynoteYoloClass: null,
+      guidedParseActive: false,
+      guidedParseRegion: null,
+      guidedParseRows: [],
+      guidedParseCols: [],
+    });
+    for (const kind of ["table", "keynote", "notes"] as const) {
+      expect(after.parseOperations[kind]).toEqual({
+        revision: tokens[kind].revision + 1,
+        busy: false,
+      });
+    }
+    expect(after.parseOperations.spec).toBe(beforeSpec);
+    expect(after.parseOperations.spec).toEqual({ revision: tokens.spec.revision, busy: true });
+    unsubscribe();
+  });
+});
+
+describe("A2c token-authorized Keynote completion boundary", () => {
+  it("moves the tool first and leaves the terminal Keynote reset as A's final publication", () => {
+    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    useParseFlowStore.setState({
+      keynoteParseStep: "review",
+      keynoteParseRegion: [0.1, 0.2, 0.8, 0.9],
+      keynoteColumnBBs: [[0.1, 0.2, 0.4, 0.9]],
+    });
+    const token = startOperation("keynote");
+    const trace: string[] = [];
+    const unsubscribeTool = useToolStore.subscribe(() => trace.push("tool"));
+    const unsubscribeParse = useParseFlowStore.subscribe(() => trace.push("parse"));
+
+    expect(completeKeynoteParseOperation(token)).toBe(true);
+
+    expect(trace).toEqual(["tool", "parse"]);
+    expect(useParseFlowStore.getState()).toMatchObject({
+      keynoteParseStep: "idle",
+      keynoteParseRegion: null,
+      keynoteColumnBBs: [],
+      parseOperations: {
+        keynote: { revision: token.revision + 1, busy: false },
+      },
+    });
+    expect(useToolStore.getState()).toMatchObject({ mode: "move", bucketFillActive: false });
+    unsubscribeParse();
+    unsubscribeTool();
+  });
+
+  it("stops before reset when a synchronous tool subscriber revokes A", () => {
+    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    useParseFlowStore.setState({ keynoteParseRegion: [0.1, 0.2, 0.8, 0.9] });
+    const token = startOperation("keynote");
+    const unsubscribeTool = useToolStore.subscribe(() => {
+      useParseFlowStore.getState().invalidateParseOperation("keynote");
+      useParseFlowStore.setState({ keynoteParseRegion: [0.2, 0.3, 0.9, 0.95] });
+    });
+
+    expect(completeKeynoteParseOperation(token)).toBe(false);
+
+    expect(useParseFlowStore.getState().keynoteParseRegion).toEqual([0.2, 0.3, 0.9, 0.95]);
+    expect(useParseFlowStore.getState().parseOperations.keynote).toEqual({
+      revision: token.revision + 1,
+      busy: false,
+    });
+    unsubscribeTool();
+  });
+
+  it("stops after shared reset when its subscriber starts B", () => {
+    useToolStore.setState({ mode: "markup" });
+    useParseFlowStore.setState({
+      keynoteParseRegion: [0.1, 0.2, 0.8, 0.9],
+      guidedParseActive: true,
+      guidedParseRows: [0.2, 0.9],
+      guidedParseCols: [0.1, 0.8],
+    });
+    const token = startOperation("keynote");
+    let armed = true;
+    const unsubscribeParse = useParseFlowStore.subscribe((state, previous) => {
+      if (!armed || previous.guidedParseActive === state.guidedParseActive || state.guidedParseActive) {
+        return;
+      }
+      armed = false;
+      state.invalidateParseOperation("keynote");
+      useParseFlowStore.setState({ keynoteParseRegion: [0.2, 0.3, 0.9, 0.95] });
+      startOperation("keynote");
+    });
+
+    expect(completeKeynoteParseOperation(token, { resetGuided: true })).toBe(false);
+
+    expect(useParseFlowStore.getState().keynoteParseRegion).toEqual([0.2, 0.3, 0.9, 0.95]);
+    expect(useParseFlowStore.getState().parseOperations.keynote.busy).toBe(true);
+    unsubscribeParse();
+  });
 });
 
 describe("A2a neutral parse-step operation boundaries", () => {
@@ -298,8 +518,8 @@ describe("A2b token-authorized Table completion boundary", () => {
   });
 });
 
-describe("A2a raw parse-panel close boundaries", () => {
-  it("Table close revokes Table authority in its one raw parse patch", () => {
+describe("A2c raw parse-panel close boundaries", () => {
+  it("Table close revokes every shared Guided owner in its one raw parse patch", () => {
     useUiStore.setState({ showTableParsePanel: true });
     useToolStore.setState({ mode: "markup" });
     useParseFlowStore.setState({
@@ -312,7 +532,11 @@ describe("A2a raw parse-panel close boundaries", () => {
       guidedParseRows: [0.2, 0.9],
       guidedParseCols: [0.1, 0.8],
     });
-    const token = startOperation("table");
+    const tokens = {
+      table: startOperation("table"),
+      keynote: startOperation("keynote"),
+      notes: startOperation("notes"),
+    };
     const beforeOperations = useParseFlowStore.getState().parseOperations;
     const trace: string[] = [];
     const unsubscribeParse = useParseFlowStore.subscribe(() => trace.push("parse"));
@@ -333,8 +557,13 @@ describe("A2a raw parse-panel close boundaries", () => {
       guidedParseRows: [],
       guidedParseCols: [],
     });
-    expect(after.parseOperations.table).toEqual({ revision: token.revision + 1, busy: false });
-    expectOtherStatusIdentities("table", beforeOperations, after.parseOperations);
+    for (const kind of ["table", "keynote", "notes"] as const) {
+      expect(after.parseOperations[kind]).toEqual({
+        revision: tokens[kind].revision + 1,
+        busy: false,
+      });
+    }
+    expect(after.parseOperations.spec).toBe(beforeOperations.spec);
     expect(useToolStore.getState().mode).toBe("move");
     expect(useUiStore.getState().showTableParsePanel).toBe(false);
     unsubscribeUi();
@@ -342,7 +571,7 @@ describe("A2a raw parse-panel close boundaries", () => {
     unsubscribeParse();
   });
 
-  it("Keynote close revokes Keynote authority in its one raw parse patch", () => {
+  it("Keynote close revokes every shared Guided owner in its one raw parse patch", () => {
     useUiStore.setState({ showKeynoteParsePanel: true });
     useToolStore.setState({ mode: "markup" });
     useParseFlowStore.setState({
@@ -356,7 +585,11 @@ describe("A2a raw parse-panel close boundaries", () => {
       guidedParseRows: [0.2, 0.9],
       guidedParseCols: [0.1, 0.8],
     });
-    const token = startOperation("keynote");
+    const tokens = {
+      table: startOperation("table"),
+      keynote: startOperation("keynote"),
+      notes: startOperation("notes"),
+    };
     const beforeOperations = useParseFlowStore.getState().parseOperations;
     const trace: string[] = [];
     const unsubscribeParse = useParseFlowStore.subscribe(() => trace.push("parse"));
@@ -378,8 +611,13 @@ describe("A2a raw parse-panel close boundaries", () => {
       guidedParseRows: [],
       guidedParseCols: [],
     });
-    expect(after.parseOperations.keynote).toEqual({ revision: token.revision + 1, busy: false });
-    expectOtherStatusIdentities("keynote", beforeOperations, after.parseOperations);
+    for (const kind of ["table", "keynote", "notes"] as const) {
+      expect(after.parseOperations[kind]).toEqual({
+        revision: tokens[kind].revision + 1,
+        busy: false,
+      });
+    }
+    expect(after.parseOperations.spec).toBe(beforeOperations.spec);
     expect(useToolStore.getState().mode).toBe("move");
     expect(useUiStore.getState().showKeynoteParsePanel).toBe(false);
     unsubscribeUi();

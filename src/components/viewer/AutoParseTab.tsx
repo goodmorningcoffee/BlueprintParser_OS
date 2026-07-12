@@ -437,7 +437,10 @@ export default function AutoParseTab({
               {existingParsed.map((p: any, i: number) => (
                 <button
                   key={i}
-                  onClick={() => loadExistingParsed(p)}
+                  onClick={() => {
+                    invalidateTableOperation();
+                    loadExistingParsed(p);
+                  }}
                   className="w-full text-left text-[11px] px-2 py-1.5 rounded border border-green-500/30 hover:bg-green-500/5"
                 >
                   <span className="font-medium text-green-400">{p.category}</span>

@@ -15,6 +15,8 @@ interface GuidedParseOverlayProps {
   setRows: (rows: number[]) => void;
   /** Column setter — called on drag or double-click-to-add. */
   setCols: (cols: number[]) => void;
+  /** Revoke shared parser owners once, before the first user edit in a gesture. */
+  onGridEditStart: () => void;
   width: number;
   height: number;
   cssScale: number;
@@ -43,6 +45,7 @@ export default memo(function GuidedParseOverlay({
   cols,
   setRows,
   setCols,
+  onGridEditStart,
   width,
   height,
   cssScale,
@@ -198,11 +201,12 @@ export default memo(function GuidedParseOverlay({
       if (target) {
         e.preventDefault();
         e.stopPropagation();
+        onGridEditStart();
         dragRef.current = target;
         setDragging(target);
       }
     },
-    [region, getCanvasPos, hitTest]
+    [region, getCanvasPos, hitTest, onGridEditStart]
   );
 
   const handleMouseMove = useCallback(
@@ -282,13 +286,15 @@ export default memo(function GuidedParseOverlay({
 
       if (distToVertEdge > distToHorzEdge) {
         // Closer to top/bottom edge -> add a row line
+        onGridEditStart();
         setRows([...rows, ny]);
       } else {
         // Closer to left/right edge -> add a column line
+        onGridEditStart();
         setCols([...cols, nx]);
       }
     },
-    [region, rows, cols, width, height, getCanvasPos, hitTest, setRows, setCols]
+    [region, rows, cols, width, height, getCanvasPos, hitTest, setRows, setCols, onGridEditStart]
   );
 
   // ── Cursor style ────────────────────────────────────────

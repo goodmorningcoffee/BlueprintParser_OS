@@ -35,7 +35,10 @@ vi.mock("../ParsedTableCellOverlay", () => ({ default: () => null }));
 
 import PDFPage from "../PDFPage";
 import PageSidebar from "../PageSidebar";
-import { resetProjectData } from "@/stores/viewerCommands";
+import {
+  invalidateGuidedParseOperations,
+  resetProjectData,
+} from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 let qc: QueryClient;
@@ -190,6 +193,11 @@ describe("I7 PDFPage exact-page render topology", () => {
     });
     expect(current?.getObserversCount()).toBe(4); // Search + text-annotation + Notes + Paragraph.
     const baseline = commits;
+
+    // A Guided drag publishes operation authority once at mousedown. PDFPage has no operation
+    // subscription, so that exact publication must not commit this viewer-sacred subtree.
+    act(() => { invalidateGuidedParseOperations(); });
+    expect(commits).toBe(baseline);
 
     await act(async () => {
       await replaceTextractForPage(qc, "P", 8, pageData("adjacent"));

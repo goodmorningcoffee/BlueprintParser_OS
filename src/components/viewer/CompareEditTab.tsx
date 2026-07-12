@@ -7,12 +7,15 @@ interface CompareEditTabProps {
   allParsedTables: any[];
   loadExistingParsed: (parsed: any) => void;
   toggleTableCompareModal: () => void;
+  /** Revoke the source flow before page or shared modal state publishes. */
+  beforeHandoff: () => void;
 }
 
 export default function CompareEditTab({
   allParsedTables,
   loadExistingParsed,
   toggleTableCompareModal,
+  beforeHandoff,
 }: CompareEditTabProps) {
   const { pageNumber, setPage } = useNavigation();
   const { pageNames } = useProject();
@@ -44,6 +47,7 @@ export default function CompareEditTab({
                   <button
                     key={`cur-${i}`}
                     onClick={() => {
+                      beforeHandoff();
                       loadExistingParsed(t.region);
                       toggleTableCompareModal();
                     }}
@@ -68,6 +72,7 @@ export default function CompareEditTab({
                   <button
                     key={`other-${i}`}
                     onClick={() => {
+                      beforeHandoff();
                       setPage(t.pageNum);
                       loadExistingParsed(t.region);
                       toggleTableCompareModal();

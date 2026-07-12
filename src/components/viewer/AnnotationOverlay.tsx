@@ -26,6 +26,7 @@ import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore, useAnnotationFiltersUi } from "@/stores/uiStore";
 import {
+  acceptKeynoteParseRegion,
   setKeynoteParseStep,
   setNotesParseStep,
   setSpecParseStep,
@@ -1612,6 +1613,7 @@ export default memo(function AnnotationOverlay({
           if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
             e.stopPropagation();
             const model = (ann as any).data?.modelName || "unknown";
+            useParseFlowStore.getState().invalidateParseOperation("keynote");
             setKeynoteYoloClass({ model, className: ann.name });
             return;
           }
@@ -2272,17 +2274,20 @@ export default memo(function AnnotationOverlay({
 
     // Keynote parse BBs
     if (keynoteParseStep === "select-region") {
-      useParseFlowStore.getState().setKeynoteParseRegion([minX, minY, maxX, maxY]);
-      setKeynoteParseStep("idle");
+      acceptKeynoteParseRegion([minX, minY, maxX, maxY]);
       useToolStore.getState().setMode("move");
       return;
     }
     if (keynoteParseStep === "define-column") {
-      useParseFlowStore.getState().addKeynoteColumnBB([minX, minY, maxX, maxY]);
+      const parse = useParseFlowStore.getState();
+      parse.invalidateParseOperation("keynote");
+      parse.addKeynoteColumnBB([minX, minY, maxX, maxY]);
       return;
     }
     if (keynoteParseStep === "define-row") {
-      useParseFlowStore.getState().addKeynoteRowBB([minX, minY, maxX, maxY]);
+      const parse = useParseFlowStore.getState();
+      parse.invalidateParseOperation("keynote");
+      parse.addKeynoteRowBB([minX, minY, maxX, maxY]);
       return;
     }
 

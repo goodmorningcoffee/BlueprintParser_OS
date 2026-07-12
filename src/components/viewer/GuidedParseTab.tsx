@@ -11,7 +11,10 @@ import {
   useTableParseExtensions,
 } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
-import { setTableParseStepForOperation } from "@/stores/viewerCommands";
+import {
+  invalidateGuidedParseOperations,
+  setTableParseStepForOperation,
+} from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useProject } from "@/stores/sessionStore";
 import { extractCellsFromGrid } from "@/lib/ocr-grid-detect";
@@ -96,6 +99,9 @@ export default function GuidedParseTab({
     const started = tableOperation.begin("supersede");
     if (started.status === "busy") return;
     const token = started.token;
+    // Keynote/Notes share this grid. Revoke peer owners before Table's first workspace seed while
+    // retaining this newly admitted Table token.
+    invalidateGuidedParseOperations("table");
     const target = {
       projectId,
       pageNumber,
@@ -106,9 +112,14 @@ export default function GuidedParseTab({
       colConfidence,
     };
 
-    setProposalRevision(token.revision);
-    setGuidedParseRegion(target.regionBbox);
-    setError(null);
+    const admitted = commitParseOperation(token, () => {
+      setProposalRevision(token.revision);
+      setGuidedParseRegion(target.regionBbox);
+      setError(null);
+    });
+    // The peer invalidation above is a synchronous publication. A subscriber may revoke Table A;
+    // deny both its shared seed and its request in that case.
+    if (!admitted || !tableOperation.isCurrent(token)) return;
     try {
       const resp = await fetch("/api/table-parse/propose", {
         method: "POST",
@@ -143,7 +154,7 @@ export default function GuidedParseTab({
     }
   }, [projectId, pageNumber, tableParseRegion, rowTolerance, colGap, colConfidence, expectedCols,
     setGuidedParseRegion, setGuidedParseRows, setGuidedParseCols, setGuidedParseActive,
-    tableOperation.begin, tableOperation.finish]);
+    tableOperation.begin, tableOperation.finish, tableOperation.isCurrent]);
 
   // ─── Debounced re-propose on slider change ─────────────────
   useEffect(() => {
@@ -176,6 +187,7 @@ export default function GuidedParseTab({
     const started = tableOperation.begin();
     if (started.status === "busy") return;
     const token = started.token;
+    invalidateGuidedParseOperations("table");
 
     try {
       // Set parsed grid for review/map tags.
@@ -223,9 +235,9 @@ export default function GuidedParseTab({
       y += lastRowH;
       newRows.push(Math.min(y, bottom));
     }
-    tableOperation.invalidate();
+    invalidateGuidedParseOperations();
     setGuidedParseRows(newRows);
-  }, [guidedParseRows, tableParseRegion, setGuidedParseRows, tableOperation.invalidate]);
+  }, [guidedParseRows, tableParseRegion, setGuidedParseRows]);
 
   // ─── Repeat column right ──────────────────────────────────
   const repeatColRight = useCallback(() => {
@@ -238,20 +250,20 @@ export default function GuidedParseTab({
       x += lastColW;
       newCols.push(Math.min(x, right));
     }
-    tableOperation.invalidate();
+    invalidateGuidedParseOperations();
     setGuidedParseCols(newCols);
-  }, [guidedParseCols, tableParseRegion, setGuidedParseCols, tableOperation.invalidate]);
+  }, [guidedParseCols, tableParseRegion, setGuidedParseCols]);
 
   // ─── Cancel ────────────────────────────────────────────────
   const handleCancel = useCallback(() => {
-    tableOperation.invalidate();
+    invalidateGuidedParseOperations();
     resetGuidedParse();
     setTableParseRegion(null);
     setProposalInfo(null);
     setError(null);
     setParsed(false);
     useToolStore.getState().setMode("move");
-  }, [resetGuidedParse, setTableParseRegion, tableOperation.invalidate]);
+  }, [resetGuidedParse, setTableParseRegion]);
 
   // ─── Set drawing mode on mount ─────────────────────────────
   useEffect(() => {
@@ -260,7 +272,7 @@ export default function GuidedParseTab({
       useToolStore.getState().setMode("pointer");
     }
     return () => {
-      tableOperation.invalidate();
+      invalidateGuidedParseOperations();
       resetGuidedParse();
       setTableParseStep("idle");
     };
@@ -312,7 +324,7 @@ export default function GuidedParseTab({
                 </div>
                 <input type="range" min={0.002} max={0.02} step={0.001} value={rowTolerance}
                   onChange={(e) => {
-                    tableOperation.invalidate();
+                    invalidateGuidedParseOperations();
                     setRowTolerance(parseFloat(e.target.value));
                   }}
                   className="w-full h-1 accent-pink-400" />
@@ -329,7 +341,7 @@ export default function GuidedParseTab({
                 </div>
                 <input type="range" min={0.005} max={0.05} step={0.005} value={colGap}
                   onChange={(e) => {
-                    tableOperation.invalidate();
+                    invalidateGuidedParseOperations();
                     setColGap(parseFloat(e.target.value));
                   }}
                   className="w-full h-1 accent-pink-400" />
@@ -346,7 +358,7 @@ export default function GuidedParseTab({
                 </div>
                 <input type="range" min={0.1} max={0.8} step={0.05} value={colConfidence}
                   onChange={(e) => {
-                    tableOperation.invalidate();
+                    invalidateGuidedParseOperations();
                     setColConfidence(parseFloat(e.target.value));
                   }}
                   className="w-full h-1 accent-pink-400" />
@@ -362,7 +374,7 @@ export default function GuidedParseTab({
                   <select
                     value={expectedCols ?? "auto"}
                     onChange={(e) => {
-                      tableOperation.invalidate();
+                      invalidateGuidedParseOperations();
                       setExpectedCols(e.target.value === "auto" ? null : parseInt(e.target.value));
                     }}
                     className="text-[9px] px-1 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] text-[var(--fg)]"

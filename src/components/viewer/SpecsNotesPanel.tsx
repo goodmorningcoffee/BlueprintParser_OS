@@ -1,6 +1,7 @@
 "use client";
 
 import { useUiStore, usePanelTabs, usePanelTabActions } from "@/stores/uiStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import KeynotePanel from "./KeynotePanel";
 import NotesPanel from "./NotesPanel";
 import SpecPanel from "./SpecPanel";
@@ -25,6 +26,20 @@ export default function SpecsNotesPanel() {
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
   const toggleParsedRegions = useUiStore((s) => s.toggleParsedRegions);
 
+  const handleClose = () => {
+    if (specsNotesTab === "keynotes") {
+      useParseFlowStore.getState().invalidateParseOperation("keynote");
+    }
+    toggleSpecsNotesPanel();
+  };
+
+  const handleTabChange = (tab: typeof specsNotesTab) => {
+    if (tab !== specsNotesTab && (tab === "keynotes" || specsNotesTab === "keynotes")) {
+      useParseFlowStore.getState().invalidateParseOperation("keynote");
+    }
+    setSpecsNotesTab(tab);
+  };
+
   return (
     <div className="w-80 flex flex-col h-full border border-[var(--border)] bg-[var(--surface)] shadow-lg">
       {/* Header */}
@@ -41,7 +56,7 @@ export default function SpecsNotesPanel() {
             </button>
           )}
           <button
-            onClick={toggleSpecsNotesPanel}
+            onClick={handleClose}
             className="text-[var(--muted)] hover:text-[var(--fg)] text-lg leading-none"
           >
             &times;
@@ -54,7 +69,7 @@ export default function SpecsNotesPanel() {
         {(["spec-parse", "notes-parse", "keynotes"] as const).map((tab) => (
           <button
             key={tab}
-            onClick={() => setSpecsNotesTab(tab)}
+            onClick={() => handleTabChange(tab)}
             className={`flex-1 px-1.5 py-1.5 text-[9px] font-medium ${
               specsNotesTab === tab
                 ? "text-amber-300 border-b-2 border-amber-400"

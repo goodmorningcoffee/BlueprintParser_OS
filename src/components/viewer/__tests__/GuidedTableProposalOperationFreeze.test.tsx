@@ -81,6 +81,55 @@ afterEach(() => {
 });
 
 describe("A2b Guided Table proposal authority", () => {
+  it("denies the shared seed and request when peer invalidation synchronously revokes Table A", () => {
+    const keynote = useParseFlowStore.getState().beginParseOperation("keynote");
+    const notes = useParseFlowStore.getState().beginParseOperation("notes");
+    expect(keynote.status).toBe("started");
+    expect(notes.status).toBe("started");
+    let armed = true;
+    const unsubscribe = useParseFlowStore.subscribe((state, previous) => {
+      if (
+        !armed ||
+        !previous.parseOperations.notes.busy ||
+        state.parseOperations.notes.busy ||
+        !state.parseOperations.table.busy
+      ) return;
+      armed = false;
+      state.invalidateParseOperation("table");
+      useParseFlowStore.setState({ guidedParseRegion: [0.2, 0.3, 0.9, 0.95] });
+    });
+
+    try {
+      render(
+        <GuidedParseTab
+          detectCsiAndPersist={vi.fn(async () => true)}
+          yoloInTableRegion={[]}
+          tagYoloClass={null}
+          setTagYoloClass={vi.fn()}
+          handleMapTags={vi.fn()}
+          tagMappingDone={false}
+          tagMappingCount={0}
+          setTagMappingDone={vi.fn()}
+          mapTagsStrictness="balanced"
+          setMapTagsStrictness={vi.fn()}
+          drawingNumberPrefixes={[]}
+          setDrawingNumberPrefixes={vi.fn()}
+          availablePrefixes={[]}
+          lastDropCounts={null}
+        />,
+        { wrapper },
+      );
+
+      expect(pending).toHaveLength(0);
+      expect(useParseFlowStore.getState().guidedParseRegion)
+        .toEqual([0.2, 0.3, 0.9, 0.95]);
+      expect(useParseFlowStore.getState().parseOperations.table.busy).toBe(false);
+      expect(screen.queryByText("Proposing grid...")).not.toBeInTheDocument();
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("invalidates A immediately on tuning, supersedes with B, and ignores reverse A settlement", async () => {
     const view = render(
       <GuidedParseTab

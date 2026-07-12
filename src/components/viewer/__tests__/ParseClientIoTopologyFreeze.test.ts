@@ -161,18 +161,26 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
   },
   "src/components/viewer/KeynotePanel.tsx:parseFromGuidedGrid": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "session.isDemo", pageNumber: "pageNumber" },
+    target: {
+      publicId: "target.publicId",
+      isDemo: "target.isDemo",
+      pageNumber: "target.pageNumber",
+    },
     promotion: {
-      via: '"parser"', type: '"keynote"', regionId: "regionId", bboxMinMax: "bbox",
+      via: '"parser"', type: '"keynote"', regionId: "regionId", bboxMinMax: "target.bbox",
       data: "data", category: '"keynote-table"', csiTags: "csiTags",
     },
   },
   "src/components/viewer/KeynotePanel.tsx:saveKeynoteToIntelligence": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "sessionState.isDemo", pageNumber: "pageNumber" },
+    target: {
+      publicId: "target.publicId",
+      isDemo: "target.isDemo",
+      pageNumber: "target.pageNumber",
+    },
     promotion: {
       via: '"parser"', type: '"keynote"', regionId: "regionId", bboxMinMax: "bbox",
-      data: "data", category: '"keynote-table"', csiTags: "csiTags||[]",
+      data: "data", category: '"keynote-table"', csiTags: "csiTags",
     },
   },
   "src/components/viewer/NotesClassifier.tsx:handleAccept": {
@@ -1280,7 +1288,7 @@ describe("P2.4 C3 parse client-I/O topology", () => {
       {
         file: "src/components/viewer/KeynotePanel.tsx",
         owner: "parseFromGuidedGrid",
-        condition: "canPersist(publicId,session.isDemo)",
+        condition: "canPersist(target.publicId,target.isDemo)",
         commandInConsequent: true,
         refreshInAlternative: true,
         refreshInConsequent: false,
@@ -1288,7 +1296,7 @@ describe("P2.4 C3 parse client-I/O topology", () => {
       {
         file: "src/components/viewer/KeynotePanel.tsx",
         owner: "saveKeynoteToIntelligence",
-        condition: "canPersist(publicId,sessionState.isDemo)",
+        condition: "canPersist(target.publicId,target.isDemo)",
         commandInConsequent: true,
         refreshInAlternative: true,
         refreshInConsequent: false,

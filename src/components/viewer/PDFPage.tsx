@@ -6,6 +6,7 @@ import { useParseFlowStore, useKeynoteParse } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
+import { invalidateGuidedParseOperations } from "@/stores/viewerCommands";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";
 import SearchHighlightOverlay from "./SearchHighlightOverlay";
@@ -31,6 +32,12 @@ interface CacheEntry {
 
 const MAX_CACHED_PAGES = 8;
 
+// One imperative publication per drag/add gesture; no operation hook or per-mousemove invalidation
+// belongs on the PDF hot path.
+function invalidateGuidedGridOperations(): void {
+  invalidateGuidedParseOperations();
+}
+
 const KeynoteGuidedOverlaySlot = memo(function KeynoteGuidedOverlaySlot(props: {
   width: number;
   height: number;
@@ -52,6 +59,7 @@ const KeynoteGuidedOverlaySlot = memo(function KeynoteGuidedOverlaySlot(props: {
       cols={guidedParseCols}
       setRows={setGuidedParseRows}
       setCols={setGuidedParseCols}
+      onGridEditStart={invalidateGuidedGridOperations}
       width={props.width}
       height={props.height}
       cssScale={props.cssScale}
@@ -168,6 +176,9 @@ export default memo(function PDFPage({
   const initialRenderDoneRef = useRef(false);
   const pdfRenderedForPageRef = useRef(0); // tracks which page pdf.js has rendered
   const scaleRef = useRef(scale);
+  // Legacy render-time mirror is consumed by async raster work; moving it to an effect changes
+  // the scale visible between commit and effect. A2c does not alter that viewer-sacred timing.
+  // eslint-disable-next-line react-hooks/refs
   scaleRef.current = scale;
 
   // LRU page render cache — stores last N rendered pages as ImageBitmaps
@@ -468,6 +479,9 @@ export default memo(function PDFPage({
           transformOrigin: "top left",
           willChange: "transform",
           opacity: canvasReady ? 1 : 0,
+          // Legacy first-render fade reads its imperative latch during render. Preserve the exact
+          // canvas-swap behavior while A2c only wires a gesture-start command below.
+          // eslint-disable-next-line react-hooks/refs
           transition: !initialRenderDoneRef.current ? "opacity 150ms ease-in" : undefined,
         }}
       />

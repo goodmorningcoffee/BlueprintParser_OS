@@ -7,6 +7,7 @@ import { commitParseOperation, useParseOperation } from "@/hooks/useParseOperati
 import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
+  invalidateGuidedParseOperations,
   resetAllTools,
   toggleTableParsePanel,
 } from "@/stores/viewerCommands";
@@ -440,9 +441,6 @@ export default function TableParsePanel() {
   // ─── Load existing parsed region ──────────────────────────
   const loadExistingParsed = useCallback(
     (parsed: any) => {
-      // Existing-region edit is a fresh synchronous flow. Revoke A before seeding any of B's
-      // region/grid workspace; the generic idle->review command remains a second fail-safe boundary.
-      invalidateTableOperation();
       const d = parsed.data;
       setTableParseRegion(parsed.bbox ? [parsed.bbox[0], parsed.bbox[1], parsed.bbox[2], parsed.bbox[3]] : null);
       setTableParsedGrid({
@@ -457,7 +455,7 @@ export default function TableParsePanel() {
       setTableParseStep("review");
       useToolStore.getState().setMode("move");
     },
-    [invalidateTableOperation, setTableParseRegion, setTableParsedGrid, setTableParseStep]
+    [setTableParseRegion, setTableParsedGrid, setTableParseStep]
   );
 
   const { summaries } = useSummaries();
@@ -540,7 +538,13 @@ export default function TableParsePanel() {
   }, [invalidateTableOperation]);
 
   const handleTableTabChange = useCallback((tab: typeof tableParseTab) => {
-    if (useParseFlowStore.getState().tableParseTab !== tab) invalidateTableOperation();
+    const currentTab = useParseFlowStore.getState().tableParseTab;
+    if (currentTab !== tab) {
+      invalidateTableOperation();
+      if (currentTab === "guided" || tab === "guided") {
+        invalidateGuidedParseOperations("table");
+      }
+    }
     setTableParseTab(tab);
     useToolStore.getState().setMode("move");
   }, [invalidateTableOperation, setTableParseTab]);
@@ -722,6 +726,7 @@ export default function TableParsePanel() {
             allParsedTables={allParsedTables}
             loadExistingParsed={loadExistingParsed}
             toggleTableCompareModal={toggleTableCompareModal}
+            beforeHandoff={invalidateTableOperation}
           />
         )}
       </div>

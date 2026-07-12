@@ -32,6 +32,7 @@ export function resetProjectData(): void {
 
 type TableParseStep = "idle" | "select-region" | "define-column" | "define-row" | "review";
 type KeynoteParseStep = TableParseStep;
+type ParseRegion = [number, number, number, number];
 type NotesParseStep = TableParseStep;
 type SpecParseStep = "idle" | "select-region" | "define-sections" | "review";
 
@@ -75,6 +76,54 @@ function operationBoundaryPatch(
   return {
     parseOperations: invalidateParseOperationKinds(parseOperations, [kind]),
   };
+}
+
+/**
+ * Revoke the Table/Keynote/Notes owners that share the guided-grid workspace in one publication.
+ * `except` keeps a newly admitted root current while it hands the shared workspace away from peers.
+ * Direct grid edits omit it because the edit itself is a new user-owned workspace generation.
+ */
+export function invalidateGuidedParseOperations(
+  except?: "table" | "keynote" | "notes",
+): void {
+  const sharedKinds = ["table", "keynote", "notes"] as const;
+  const kinds = sharedKinds.filter((kind) => kind !== except);
+  useParseFlowStore.setState((state) => ({
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, kinds),
+  }));
+}
+
+/** Revoke a retained-Keynote -> Table-review handoff atomically before its first shared seed. */
+export function invalidateKeynoteTableOperations(): void {
+  useParseFlowStore.setState((state) => ({
+    parseOperations: invalidateParseOperationKinds(
+      state.parseOperations,
+      ["keynote", "table"],
+    ),
+  }));
+}
+
+/**
+ * Clear Keynote and its shared Guided workspace in one parse publication. This is the user reset
+ * boundary; splitting invalidation from cleanup would let a synchronous subscriber start B in the
+ * gap and then have B's workspace erased by A's remaining reset calls.
+ */
+export function resetKeynoteGuidedParse(): void {
+  useParseFlowStore.setState((state) => ({
+    keynoteParseStep: "idle",
+    keynoteParseRegion: null,
+    keynoteColumnBBs: [],
+    keynoteRowBBs: [],
+    keynoteYoloClass: null,
+    guidedParseActive: false,
+    guidedParseRegion: null,
+    guidedParseRows: [],
+    guidedParseCols: [],
+    parseOperations: invalidateParseOperationKinds(
+      state.parseOperations,
+      ["table", "keynote", "notes"],
+    ),
+  }));
 }
 
 export function setTableParseStep(tableParseStep: TableParseStep): void {
@@ -136,6 +185,44 @@ export function setKeynoteParseStep(keynoteParseStep: KeynoteParseStep): void {
       keynoteParseStep,
     ),
   }));
+}
+
+/**
+ * Accept one canvas-drawn Keynote region as a single user boundary. Region, idle destination, and
+ * owner revocation must publish atomically: a subscriber cannot start B between separate writes.
+ */
+export function acceptKeynoteParseRegion(keynoteParseRegion: ParseRegion): void {
+  useParseFlowStore.setState((state) => ({
+    keynoteParseRegion,
+    keynoteParseStep: "idle",
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["keynote"]),
+  }));
+}
+
+/**
+ * Finish a current Keynote wizard without letting a synchronous subscriber start B between A's
+ * reset and A's final tool write. Tool/shared cleanup happens first with a currentness recheck after
+ * every publication; the Keynote reset is last and performs the terminal revision invalidation.
+ */
+export function completeKeynoteParseOperation(
+  token: ParseOperationToken<"keynote">,
+  options?: { resetGuided?: boolean },
+): boolean {
+  if (token.kind !== "keynote" || !useParseFlowStore.getState().isParseOperationCurrent(token)) {
+    return false;
+  }
+
+  useToolStore.getState().setMode("move");
+  if (!useParseFlowStore.getState().isParseOperationCurrent(token)) return false;
+
+  if (options?.resetGuided) {
+    useParseFlowStore.getState().resetGuidedParse();
+    if (!useParseFlowStore.getState().isParseOperationCurrent(token)) return false;
+  }
+
+  // This reset invalidates the token and is deliberately the final publication owned by A.
+  useParseFlowStore.getState().resetKeynoteParse();
+  return true;
 }
 
 export function setNotesParseStep(notesParseStep: NotesParseStep): void {
@@ -243,8 +330,12 @@ export function toggleTableParsePanel(): void {
       guidedParseRegion: null,
       guidedParseRows: [],
       guidedParseCols: [],
-      // The close remains one raw parse publication while revoking any async Table owner.
-      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+      // Closing erases the Table/Keynote/Notes shared Guided workspace, so all three owners are
+      // revoked in this same raw publication. Spec remains independent.
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        ["table", "keynote", "notes"],
+      ),
     }));
     // Preserve the legacy raw mode assignment: setMode would clear unrelated active tools.
     useToolStore.setState({ mode: "move" });
@@ -267,8 +358,12 @@ export function toggleKeynoteParsePanel(): void {
       guidedParseRegion: null,
       guidedParseRows: [],
       guidedParseCols: [],
-      // The close remains one raw parse publication while revoking any async Keynote owner.
-      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["keynote"]),
+      // Closing erases the Table/Keynote/Notes shared Guided workspace, so all three owners are
+      // revoked in this same raw publication. Spec remains independent.
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        ["table", "keynote", "notes"],
+      ),
     }));
     useToolStore.setState({ mode: "move" });
   }

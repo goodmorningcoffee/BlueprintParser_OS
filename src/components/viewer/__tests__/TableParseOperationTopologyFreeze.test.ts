@@ -287,12 +287,23 @@ describe("A2b exact Table operation topology", () => {
 describe("A2b Table invalidation topology", () => {
   it("invalidates stored tab and retained-row handoffs before their first B publication", () => {
     expectOrder(TABLE_PANEL, "handleTableTabChange", "invalidateTableOperation()", "setTableParseTab(tab)");
-    expectOrder(TABLE_PANEL, "loadExistingParsed", "invalidateTableOperation()", "setTableParseRegion(");
-    expectOrder("src/components/viewer/KeynotePanel.tsx", "loadExistingKeynote",
-      'invalidateParseOperation("table")', "setTableParseRegion(");
+    expect(compact(namedRoot(TABLE_PANEL, "loadExistingParsed")))
+      .not.toContain("invalidateTableOperation()");
+    expect(compact(source(TABLE_PANEL))).toContain(
+      "beforeHandoff={invalidateTableOperation}",
+    );
+    expect(compact(namedRoot("src/components/viewer/KeynotePanel.tsx", "loadExistingKeynote")))
+      .not.toContain("invalidateParseOperation(");
+
+    const keynoteItem = readFileSync(
+      join(process.cwd(), "src/components/viewer/KeynoteItem.tsx"),
+      "utf8",
+    ).replace(/\s+/g, "");
+    expect(keynoteItem).toMatch(
+      /invalidateKeynoteTableOperations\(\).*setTableParsedGrid\(/,
+    );
 
     for (const path of [
-      "src/components/viewer/KeynoteItem.tsx",
       "src/components/viewer/ParsedTableItem.tsx",
       "src/components/viewer/AnnotationOverlay.tsx",
     ]) {
@@ -306,6 +317,9 @@ describe("A2b Table invalidation topology", () => {
     }
 
     const compactAuto = compact(source(AUTO));
+    expect(compactAuto).toContain(
+      "onClick={()=>{invalidateTableOperation();loadExistingParsed(p);}}",
+    );
     expect(compactAuto).toContain(
       "onClick={()=>{invalidateTableOperation();toggleTableCompareModal();}}",
     );
@@ -333,20 +347,21 @@ describe("A2b Table invalidation topology", () => {
     ]) expect(compact(namedRoot(TABLE_PANEL, owner))).toContain("invalidateTableOperation()");
 
     const guided = readFileSync(join(process.cwd(), GUIDED), "utf8");
-    expect(guided.match(/tableOperation\.invalidate\(\)/g)?.length).toBe(8);
+    expect(guided.match(/invalidateGuidedParseOperations\(\)/g)?.length).toBe(8);
+    expect(guided.match(/invalidateGuidedParseOperations\("table"\)/g)?.length).toBe(2);
     expect(compact(namedRoot(GUIDED, "proposeGrid")))
       .toContain('tableOperation.begin("supersede")');
-    expectOrder(GUIDED, "repeatRowDown", "tableOperation.invalidate()", "setGuidedParseRows(");
-    expectOrder(GUIDED, "repeatColRight", "tableOperation.invalidate()", "setGuidedParseCols(");
-    expectOrder(GUIDED, "handleCancel", "tableOperation.invalidate()", "resetGuidedParse()");
+    expectOrder(GUIDED, "repeatRowDown", "invalidateGuidedParseOperations()", "setGuidedParseRows(");
+    expectOrder(GUIDED, "repeatColRight", "invalidateGuidedParseOperations()", "setGuidedParseCols(");
+    expectOrder(GUIDED, "handleCancel", "invalidateGuidedParseOperations()", "resetGuidedParse()");
     const compactGuided = compact(source(GUIDED));
     for (const setter of [
       "setRowTolerance",
       "setColGap",
       "setColConfidence",
       "setExpectedCols",
-    ]) expect(compactGuided).toContain(`tableOperation.invalidate();${setter}(`);
-    expect(compactGuided).toContain("return()=>{tableOperation.invalidate();resetGuidedParse()");
+    ]) expect(compactGuided).toContain(`invalidateGuidedParseOperations();${setter}(`);
+    expect(compactGuided).toContain("return()=>{invalidateGuidedParseOperations();resetGuidedParse()");
 
     expectOrder(MODAL, "handleCellChange", "tableOperation.invalidate()", "setTableParsedGrid(");
     expectOrder(MODAL, "handleHeaderRename", "tableOperation.invalidate()", "setTableParsedGrid(");

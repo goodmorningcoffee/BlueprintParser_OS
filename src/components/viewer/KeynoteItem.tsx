@@ -6,6 +6,7 @@ import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
+import { invalidateKeynoteTableOperations } from "@/stores/viewerCommands";
 import { readAnnotations } from "@/queries/useAnnotations";
 import {
   readPageIntelligence,
@@ -258,8 +259,9 @@ export default function KeynoteItem({
                     const store = useParseFlowStore.getState();
                     const grid = keynoteDataToGrid(region.data || {});
                     // Cross-kind retained-row handoff starts a new Table modal instance. Revoke
-                    // Table A before the first shared workspace seed; keep this row hook-free.
-                    store.invalidateParseOperation("table");
+                    // both source Keynote A and destination Table A before the first shared seed;
+                    // keep this row hook-free.
+                    invalidateKeynoteTableOperations();
                     store.setTableParsedGrid({
                       headers: grid.headers,
                       rows: grid.rows,

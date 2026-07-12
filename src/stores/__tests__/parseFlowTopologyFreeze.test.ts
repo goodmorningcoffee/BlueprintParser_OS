@@ -403,7 +403,6 @@ const GUIDED_PARSE_EXTENSION_HOOK_BINDINGS = {
     setGuidedParseRegion: "setGuidedParseRegion",
     setGuidedParseRows: "setGuidedParseRows",
     setGuidedParseCols: "setGuidedParseCols",
-    resetGuidedParse: "resetGuidedParse",
   }],
 } as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
 const NOTES_EXTENSION_HOOK_CALLERS = {
@@ -511,7 +510,6 @@ const KEYNOTE_FACADE_CALLERS = {
       step: "keynoteParseStep",
       region: "keynoteParseRegion",
       setStep: "setKeynoteParseStep",
-      setRegion: "setKeynoteParseRegion",
       reset: "resetKeynoteParse",
     },
   }],
@@ -1910,44 +1908,62 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     )).toEqual(GUIDED_PARSE_EXTENSION_HOOK_BINDINGS);
 
     const keynoteSource = parse(KEYNOTE_PANEL);
-    const liveBoundaryBindings = (source: ts.SourceFile) => Object.fromEntries(
-      ["storeState", "colBBs", "rowBBs"].map((name) => {
-        const declaration = findVariable(source, name);
-        expect(declaration.initializer, `${name} live initializer`).toBeDefined();
-        return [name, compact(declaration.initializer!, source)];
-      }),
-    );
-    const expectedBoundaryBindings = {
-      storeState: "useParseFlowStore.getState()",
-      colBBs: "storeState.keynoteColumnBBs",
-      rowBBs: "storeState.keynoteRowBBs",
+    const capturedTargetBindings = (source: ts.SourceFile) => {
+      const declaration = findVariable(source, "captureKeynoteTarget");
+      expect(declaration.initializer && ts.isCallExpression(declaration.initializer),
+        "captureKeynoteTarget useCallback").toBe(true);
+      const callback = (declaration.initializer as ts.CallExpression).arguments[0];
+      expect(callback && ts.isArrowFunction(callback), "capture target callback").toBe(true);
+      const body = (callback as ts.ArrowFunction).body;
+      expect(ts.isExpression(body), "capture target expression body").toBe(true);
+      const object = unwrap(body as ts.Expression);
+      expect(ts.isObjectLiteralExpression(object), "capture target object").toBe(true);
+      return Object.fromEntries((object as ts.ObjectLiteralExpression).properties.flatMap((property) => {
+        if (ts.isShorthandPropertyAssignment(property)) {
+          return [[property.name.text, property.name.text]];
+        }
+        if (!ts.isPropertyAssignment(property)) return [];
+        const name = staticName(property.name);
+        return name ? [[name, compact(property.initializer, source)]] : [];
+      }));
     };
-    expect(liveBoundaryBindings(keynoteSource)).toEqual(expectedBoundaryBindings);
+    const expectedBoundaryBindings = {
+      publicId: "publicId",
+      isDemo: "isDemo",
+      pageNumber: "pageNumber",
+      bbox: "bbox?[...bbox]asKeynoteBbox:[0,0,1,1]",
+      columnBBs: "keynoteColumnBBs.map((entry)=>[...entry]asKeynoteBbox)",
+      rowBBs: "keynoteRowBBs.map((entry)=>[...entry]asKeynoteBbox)",
+    };
+    expect(capturedTargetBindings(keynoteSource)).toEqual(expectedBoundaryBindings);
 
     const swappedAliasFixture = ts.createSourceFile(
       "keynote-live-boundary-swap-fixture.ts",
       `
-        const storeState = useParseFlowStore.getState();
-        const colBBs = storeState.keynoteRowBBs;
-        const rowBBs = storeState.keynoteColumnBBs;
+        const captureKeynoteTarget = useCallback(() => ({
+          publicId,
+          isDemo,
+          pageNumber,
+          bbox: [0, 0, 1, 1],
+          columnBBs: keynoteRowBBs.map((entry) => [...entry]),
+          rowBBs: keynoteColumnBBs.map((entry) => [...entry]),
+        }), []);
       `,
       ts.ScriptTarget.Latest,
       true,
       ts.ScriptKind.TS,
     );
-    expect(liveBoundaryBindings(swappedAliasFixture)).toEqual({
-      storeState: "useParseFlowStore.getState()",
-      colBBs: "storeState.keynoteRowBBs",
-      rowBBs: "storeState.keynoteColumnBBs",
+    expect(capturedTargetBindings(swappedAliasFixture)).toMatchObject({
+      columnBBs: "keynoteRowBBs.map((entry)=>[...entry])",
+      rowBBs: "keynoteColumnBBs.map((entry)=>[...entry])",
     });
-    expect(liveBoundaryBindings(swappedAliasFixture)).not.toEqual(expectedBoundaryBindings);
+    expect(capturedTargetBindings(swappedAliasFixture)).not.toEqual(expectedBoundaryBindings);
 
-    // These reads are deliberately invocation-live. Capturing them from either render extension
-    // could overwrite BBs/data published after render or propose against a stale region.
+    // Proposal region and retained-row data remain invocation-live. Save boundaries are now copied
+    // synchronously by captureKeynoteTarget before A crosses its first await.
     expect(knownMembers(expectFailClosedOwnerScan(keynoteSource), "getState")).toEqual([
-      "keynoteColumnBBs",
-      "keynoteRowBBs",
       "keynoteParseRegion",
+      "keynoteParseTab",
       "parsedKeynoteData",
       "setParsedKeynoteData",
     ]);

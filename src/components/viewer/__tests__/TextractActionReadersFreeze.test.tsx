@@ -8,7 +8,7 @@
 // GuidedParseTab render topology explicit; KeynotePanel is allowed exactly its one separate normal
 // (render-captured) page observer and no second observer for the guided action.
 
-import type { ReactNode } from "react";
+import { Profiler, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -28,7 +28,10 @@ vi.mock("../MarkupDialog", () => ({ default: () => null }));
 import AnnotationOverlay from "../AnnotationOverlay";
 import GuidedParseTab from "../GuidedParseTab";
 import KeynotePanel from "../KeynotePanel";
-import { resetProjectData } from "@/stores/viewerCommands";
+import {
+  invalidateGuidedParseOperations,
+  resetProjectData,
+} from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 const extractMock = vi.mocked(extractCellsFromGrid);
@@ -115,6 +118,22 @@ afterEach(() => {
 });
 
 describe("I8 live action readers", () => {
+  it("keeps AnnotationOverlay at zero commits for a Guided drag authority publication", async () => {
+    let commits = 0;
+    render(
+      <Profiler id="annotation-overlay" onRender={() => { commits += 1; }}>
+        <AnnotationOverlay width={100} height={100} cssScale={1} />
+      </Profiler>,
+      { wrapper },
+    );
+    await act(async () => Promise.resolve());
+    const baseline = commits;
+
+    act(() => { invalidateGuidedParseOperations(); });
+
+    expect(commits).toBe(baseline);
+  });
+
   it("AnnotationOverlay mounts zero observers and double-click OCR fallback sees a same-tick replacement", () => {
     seedTextract(pageData("captured-old"));
     const { container } = render(

@@ -908,9 +908,9 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
       ]);
     }
 
-    for (const [commandName, kind] of [
-      ["toggleTableParsePanel", "table"],
-      ["toggleKeynoteParsePanel", "keynote"],
+    for (const commandName of [
+      "toggleTableParsePanel",
+      "toggleKeynoteParsePanel",
     ] as const) {
       const command = findFunction(source, commandName);
       const writes = callsNamed(command, "setState").filter(
@@ -920,19 +920,23 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
       const object = arrowReturnedObjectFromCall(writes[0]);
       const operationPatch = propertyInitializer(object, "parseOperations");
       expect(compact(operationPatch, source)).toBe(
-        `invalidateParseOperationKinds(state.parseOperations,["${kind}"])`,
+        'invalidateParseOperationKinds(state.parseOperations,["table","keynote","notes"],)',
       );
     }
     expect(rawParseOperationWrites(source)).toEqual([
       "operationBoundaryPatch:property",
+      "invalidateGuidedParseOperations:property",
+      "invalidateKeynoteTableOperations:property",
+      "resetKeynoteGuidedParse:property",
+      "acceptKeynoteParseRegion:property",
       "toggleTableParsePanel:property",
       "toggleKeynoteParsePanel:property",
     ]);
   });
 });
 
-describe("P2.4 A2b fail-closed caller and writer topology", () => {
-  it("activates the operation facade only in the five cold Table surfaces", () => {
+describe("P2.4 A2b/A2c fail-closed caller and writer topology", () => {
+  it("activates the operation facade only in the five cold Table surfaces plus KeynotePanel", () => {
     const production = productionFiles();
     const loads = production
       .filter((path) => path !== OPERATION_HOOK_FILE)
@@ -945,6 +949,7 @@ describe("P2.4 A2b fail-closed caller and writer topology", () => {
     expect(loads).toEqual([
       { path: "src/components/viewer/AutoParseTab.tsx", kind: "import" },
       { path: "src/components/viewer/GuidedParseTab.tsx", kind: "import" },
+      { path: "src/components/viewer/KeynotePanel.tsx", kind: "import" },
       { path: "src/components/viewer/ManualParseTab.tsx", kind: "import" },
       { path: "src/components/viewer/TableCompareModal.tsx", kind: "import" },
       { path: "src/components/viewer/TableParsePanel.tsx", kind: "import" },

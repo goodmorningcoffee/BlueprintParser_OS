@@ -657,7 +657,7 @@ describe("P2.3 T2 resetAllTools characterization", () => {
 describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
   const source = parseSource(ANNOTATION_OVERLAY);
 
-  it("pins all four select-region completion branches as region -> idle step -> raw tool move", () => {
+  it("pins select-region completion, including Keynote's atomic boundary command", () => {
     const declarations = descendants(
       source,
       (node): node is ts.VariableDeclaration =>
@@ -692,10 +692,9 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
     ]);
     expect(branch('keynoteParseStep==="select-region"')).toEqual([
       {
-        callee: "useParseFlowStore.getState().setKeynoteParseRegion",
+        callee: "acceptKeynoteParseRegion",
         arguments: ["[minX,minY,maxX,maxY]"],
       },
-      { callee: "setKeynoteParseStep", arguments: ['"idle"'] },
       { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
     ]);
     expect(branch('notesStep==="select-region"')).toEqual([
