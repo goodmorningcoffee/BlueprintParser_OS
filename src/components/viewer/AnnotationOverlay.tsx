@@ -1725,7 +1725,7 @@ export default memo(function AnnotationOverlay({
       // (a) the multiSelect.handleAnnotationClick call inside the bbox-hit
       // loop below, and (b) the empty-canvas "mode === 'group'" lasso-start
       // at the bottom of this block.
-      if (mode === "pointer" || mode === "group") {
+      if ((mode === "pointer" || mode === "group") && !useToolStore.getState().tagAddingMode) {
         // TATR cell click: single click = search by text, double click = toggle highlight.
         // Gated on showTableCellStructure so the user can disable cell-level
         // interaction without losing the underlying data.

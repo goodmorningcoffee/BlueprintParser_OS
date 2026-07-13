@@ -356,8 +356,8 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
               type="button"
               onClick={() => {
                 const s = useToolStore.getState();
-                s.setSymbolSearchActive(true);
                 s.setMode("pointer");
+                s.setSymbolSearchActive(true);
               }}
               className="w-full text-xs font-medium px-3 py-1.5 rounded bg-cyan-600 text-white hover:bg-cyan-500"
             >

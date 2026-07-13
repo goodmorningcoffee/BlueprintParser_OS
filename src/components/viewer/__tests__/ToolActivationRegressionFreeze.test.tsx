@@ -1,0 +1,159 @@
+// @vitest-environment jsdom
+
+// [refactor jul13 P2.3 AT0] Real component witnesses for two legacy activation-order bugs.
+// These tests deliberately enter through the production panel buttons and canvas event handler:
+// a store-only assertion would miss the pointer branch that used to swallow tag-add drawing.
+
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
+import { resetProjectData } from "@/stores/viewerCommands";
+import { useToolStore } from "@/stores/toolStore";
+import { useViewerStore } from "@/stores/viewerStore";
+import { seedAnnotations } from "@/test/seed-annotations";
+import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
+import type { YoloTag } from "@/types";
+import DetectionPanel from "../DetectionPanel";
+import SymbolSearchPanel from "../SymbolSearchPanel";
+
+vi.mock("../DrawingPreviewLayer", () => ({ default: () => null }));
+vi.mock("../MarkupDialog", () => ({ default: () => null }));
+
+import AnnotationOverlay from "../AnnotationOverlay";
+
+const PUBLIC_ID = "activation-fixture";
+const TAG_ID = "tag-fixture";
+
+const tag: YoloTag = {
+  id: TAG_ID,
+  name: "T-101",
+  tagText: "T-101",
+  yoloClass: "Door",
+  yoloModel: "Fixture Model",
+  source: "manual",
+  scope: "project",
+  instances: [],
+};
+
+let queryClient: QueryClient;
+
+function wrapper({ children }: { children: ReactNode }) {
+  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+}
+
+function noopContext(): CanvasRenderingContext2D {
+  const target = { measureText: () => ({ width: 0 }) };
+  return new Proxy(target, {
+    get(object, property) {
+      if (property in object) return object[property as keyof typeof object];
+      return () => {};
+    },
+    set(object, property, value) {
+      Reflect.set(object, property, value);
+      return true;
+    },
+  }) as unknown as CanvasRenderingContext2D;
+}
+
+function canvasRect(): DOMRect {
+  return {
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    right: 100,
+    bottom: 100,
+    width: 100,
+    height: 100,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+beforeEach(() => {
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  resetProjectData();
+  setViewerStoreStateForTest({
+    projectId: 41,
+    publicId: PUBLIC_ID,
+    isDemo: true,
+    pageNumber: 1,
+    numPages: 1,
+    pageNames: { 1: "A-101" },
+    mode: "move",
+    _drawing: false,
+    _drawStart: { x: 0, y: 0 },
+    _drawEnd: { x: 0, y: 0 },
+  });
+  seedAnnotations(queryClient, []);
+  seedYoloTagsFromBootstrap(queryClient, PUBLIC_ID, { yoloTags: [tag] });
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(noopContext());
+});
+
+afterEach(() => {
+  cleanup();
+  queryClient.clear();
+  vi.restoreAllMocks();
+});
+
+describe("panel-to-canvas specialized activation", () => {
+  it("keeps Symbol Start active after choosing its base pointer mode", async () => {
+    render(<SymbolSearchPanel pdfDoc={null} embedded />, { wrapper });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start — Draw Template" }));
+
+    await waitFor(() => {
+      expect(useToolStore.getState().symbolSearchActive).toBe(true);
+      expect(screen.getByText(/Crosshair active/)).toBeInTheDocument();
+    });
+  });
+
+  it("routes Add Missing through tag drawing before the base pointer branch", async () => {
+    const { container } = render(
+      <>
+        <DetectionPanel embedded lockedTab="tags" />
+        <AnnotationOverlay width={100} height={100} cssScale={1} />
+      </>,
+      { wrapper },
+    );
+
+    const tagRow = screen.getByText("T-101").parentElement;
+    if (!tagRow) throw new Error("Expected production tag row");
+    fireEvent.click(within(tagRow).getByRole("button", { name: "▶" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add Missing" }));
+
+    expect(useToolStore.getState()).toMatchObject({
+      mode: "pointer",
+      tagAddingMode: TAG_ID,
+    });
+
+    const canvas = await waitFor(() => {
+      const candidate = container.querySelector("canvas");
+      if (!(candidate instanceof HTMLCanvasElement)) {
+        throw new Error("Expected AnnotationOverlay canvas after tag activation");
+      }
+      return candidate;
+    });
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(canvasRect());
+
+    act(() => {
+      fireEvent.mouseDown(canvas, { clientX: 10, clientY: 20, button: 0 });
+    });
+
+    expect(useViewerStore.getState()).toMatchObject({
+      _drawing: true,
+      _drawStart: { x: 10, y: 20 },
+      _drawEnd: { x: 10, y: 20 },
+    });
+  });
+});
