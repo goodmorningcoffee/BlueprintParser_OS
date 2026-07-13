@@ -20,6 +20,7 @@ import { resetProjectData } from "@/stores/viewerCommands";
 import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
 import { seedAnnotations } from "@/test/seed-annotations";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
+import type { ClientTakeoffItem } from "@/types";
 
 vi.mock("../DrawingPreviewLayer", () => ({ default: () => null }));
 vi.mock("../MarkupDialog", () => ({ default: () => null }));
@@ -28,6 +29,19 @@ import AnnotationOverlay from "../AnnotationOverlay";
 
 const PUBLIC_ID = "active-tool-profiler";
 let queryClient: QueryClient;
+
+function takeoffItem(
+  over: Partial<ClientTakeoffItem> & { id: number; name: string },
+): ClientTakeoffItem {
+  return {
+    shape: "circle",
+    color: "#ef4444",
+    size: 10,
+    sortOrder: 0,
+    groupId: null,
+    ...over,
+  };
+}
 
 function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
@@ -145,5 +159,87 @@ describe("AnnotationOverlay active-tool render budget", () => {
     const renewedTagActivation = useToolStore.getState().activeTool;
     expect(renewedTagActivation).toEqual({ kind: "tagAdd", tagId: "tag-B" });
     expect(renewedTagActivation).not.toBe(firstTagActivation);
+  });
+
+  it("keeps dormant polygon and linear takeoff drafts out while Bucket owns the canvas", async () => {
+    queryClient.setQueryData(queryKeys.takeoff.items(PUBLIC_ID), [
+      takeoffItem({ id: 41, name: "Dormant Area", shape: "polygon" }),
+      takeoffItem({ id: 42, name: "Dormant Linear", shape: "linear" }),
+    ]);
+
+    let commits = 0;
+    render(
+      <Profiler id="active-tool-overlay-bucket" onRender={() => { commits += 1; }}>
+        <AnnotationOverlay width={100} height={100} cssScale={1} />
+      </Profiler>,
+      { wrapper },
+    );
+    await act(async () => Promise.resolve());
+
+    act(() => useToolStore.getState().setBucketFillActive(true));
+    expect(useToolStore.getState().activeTool).toEqual({ kind: "bucketFill" });
+
+    // Establish each dormant takeoff item separately because activeTakeoffItemId is still a
+    // legitimate AnnotationOverlay input while Bucket assigns its eventual result.
+    act(() => useToolStore.setState({
+      activeTakeoffItemId: 41,
+      polygonDrawingMode: "idle",
+      polygonVertices: [],
+    }));
+    const polygonBaseline = commits;
+    act(() => useToolStore.setState({
+      polygonDrawingMode: "drawing",
+      polygonVertices: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.5, y: 0.1 },
+        { x: 0.5, y: 0.5 },
+      ],
+    }));
+    expect(commits).toBe(polygonBaseline);
+
+    act(() => useToolStore.setState({
+      activeTakeoffItemId: 42,
+      polygonDrawingMode: "idle",
+      polygonVertices: [],
+    }));
+    const linearBaseline = commits;
+    act(() => useToolStore.setState({
+      polygonDrawingMode: "drawing",
+      polygonVertices: [
+        { x: 0.2, y: 0.2 },
+        { x: 0.8, y: 0.8 },
+      ],
+    }));
+    expect(commits).toBe(linearBaseline);
+    expect(useToolStore.getState().activeTool).toEqual({ kind: "bucketFill" });
+  });
+
+  it("keeps Keynote, Notes, and Spec peer-flow publications out while Table owns the canvas", async () => {
+    let commits = 0;
+    render(
+      <Profiler id="active-tool-overlay-table" onRender={() => { commits += 1; }}>
+        <AnnotationOverlay width={100} height={100} cssScale={1} />
+      </Profiler>,
+      { wrapper },
+    );
+    await act(async () => Promise.resolve());
+
+    act(() => {
+      useToolStore.setState({ activeTool: { kind: "parseRect", flow: "table" } });
+      useParseFlowStore.setState({ tableParseStep: "select-region" });
+    });
+    expect(useToolStore.getState().activeTool).toEqual({ kind: "parseRect", flow: "table" });
+    const tableBaseline = commits;
+
+    act(() => useParseFlowStore.setState({
+      keynoteParseStep: "define-column",
+      keynoteParseRegion: [0.1, 0.1, 0.4, 0.4],
+      keynoteColumnBBs: [[0.1, 0.1, 0.2, 0.4]],
+      notesParseStep: "define-column",
+      notesParseRegion: [0.2, 0.2, 0.5, 0.5],
+      specParseStep: "select-region",
+      specParseRegion: [0.3, 0.3, 0.6, 0.6],
+    }));
+    expect(commits).toBe(tableBaseline);
   });
 });

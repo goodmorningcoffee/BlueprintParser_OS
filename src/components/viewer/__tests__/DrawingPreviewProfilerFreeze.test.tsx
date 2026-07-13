@@ -16,18 +16,33 @@ import { useToolStore } from "@/stores/toolStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
+import type { ClientTakeoffItem } from "@/types";
 import DrawingPreviewLayer from "../DrawingPreviewLayer";
 
 const PUBLIC_ID = "drawing-preview-profiler";
 let queryClient: QueryClient;
 let clearRect: ReturnType<typeof vi.fn>;
+let fillText: ReturnType<typeof vi.fn>;
+
+function takeoffItem(
+  over: Partial<ClientTakeoffItem> & { id: number; name: string },
+): ClientTakeoffItem {
+  return {
+    shape: "circle",
+    color: "#ef4444",
+    size: 10,
+    sortOrder: 0,
+    groupId: null,
+    ...over,
+  };
+}
 
 function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
 function noopContext(): CanvasRenderingContext2D {
-  const target = { clearRect, measureText: () => ({ width: 0 }) };
+  const target = { clearRect, fillText, measureText: () => ({ width: 0 }) };
   return new Proxy(target, {
     get(object, property) {
       if (property in object) return object[property as keyof typeof object];
@@ -58,6 +73,7 @@ beforeEach(() => {
   });
   queryClient.setQueryData(queryKeys.takeoff.items(PUBLIC_ID), []);
   clearRect = vi.fn();
+  fillText = vi.fn();
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(noopContext());
 });
 
@@ -190,5 +206,115 @@ describe("DrawingPreviewLayer active-tool render budget", () => {
     act(() => useViewerStore.setState({ _drawEnd: { x: 55, y: 66 } }));
     expect(commits).toBe(symbolBaseline + 1);
     expect(clearRect).toHaveBeenCalledTimes(dormantCanvasBaseline + 1);
+  });
+
+  it("keeps dormant polygon and linear takeoff drafts commit- and ghost-free under Bucket", async () => {
+    queryClient.setQueryData(queryKeys.takeoff.items(PUBLIC_ID), [
+      takeoffItem({ id: 51, name: "Dormant Area", shape: "polygon" }),
+      takeoffItem({ id: 52, name: "Dormant Linear", shape: "linear" }),
+    ]);
+
+    let commits = 0;
+    render(
+      <Profiler id="drawing-preview-bucket" onRender={() => { commits += 1; }}>
+        <DrawingPreviewLayer width={100} height={100} cssScale={1} />
+      </Profiler>,
+      { wrapper },
+    );
+    await act(async () => Promise.resolve());
+
+    act(() => useToolStore.getState().setBucketFillActive(true));
+    expect(useToolStore.getState().activeTool).toEqual({ kind: "bucketFill" });
+
+    act(() => useToolStore.setState({
+      activeTakeoffItemId: 51,
+      polygonDrawingMode: "idle",
+      polygonVertices: [],
+    }));
+    const polygonCommitBaseline = commits;
+    const polygonCanvasBaseline = clearRect.mock.calls.length;
+    const polygonTextBaseline = fillText.mock.calls.length;
+    act(() => useToolStore.setState({
+      polygonDrawingMode: "drawing",
+      polygonVertices: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.5, y: 0.1 },
+        { x: 0.5, y: 0.5 },
+      ],
+    }));
+    expect(commits).toBe(polygonCommitBaseline);
+    expect(clearRect).toHaveBeenCalledTimes(polygonCanvasBaseline);
+    expect(fillText).toHaveBeenCalledTimes(polygonTextBaseline);
+    expect(fillText).not.toHaveBeenCalledWith(
+      "Click first point or Enter to close",
+      expect.anything(),
+      expect.anything(),
+    );
+
+    act(() => useToolStore.setState({
+      activeTakeoffItemId: 52,
+      polygonDrawingMode: "idle",
+      polygonVertices: [],
+    }));
+    const linearCommitBaseline = commits;
+    const linearCanvasBaseline = clearRect.mock.calls.length;
+    const linearTextBaseline = fillText.mock.calls.length;
+    act(() => useToolStore.setState({
+      polygonDrawingMode: "drawing",
+      polygonVertices: [
+        { x: 0.2, y: 0.2 },
+        { x: 0.8, y: 0.8 },
+      ],
+    }));
+    expect(commits).toBe(linearCommitBaseline);
+    expect(clearRect).toHaveBeenCalledTimes(linearCanvasBaseline);
+    expect(fillText).toHaveBeenCalledTimes(linearTextBaseline);
+    expect(fillText).not.toHaveBeenCalledWith(
+      "Double-click or Enter to finish",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(useToolStore.getState().activeTool).toEqual({ kind: "bucketFill" });
+  });
+
+  it("keeps Keynote, Notes, and Spec peer-flow publications commit- and ghost-free under Table", async () => {
+    let commits = 0;
+    render(
+      <Profiler id="drawing-preview-table" onRender={() => { commits += 1; }}>
+        <DrawingPreviewLayer width={100} height={100} cssScale={1} />
+      </Profiler>,
+      { wrapper },
+    );
+    await act(async () => Promise.resolve());
+
+    act(() => {
+      useViewerStore.setState({
+        _drawing: true,
+        _drawStart: { x: 10, y: 20 },
+        _drawEnd: { x: 70, y: 80 },
+      });
+      useToolStore.setState({ activeTool: { kind: "parseRect", flow: "table" } });
+      useParseFlowStore.setState({ tableParseStep: "select-region" });
+    });
+    expect(useToolStore.getState().activeTool).toEqual({ kind: "parseRect", flow: "table" });
+    expect(fillText).toHaveBeenCalledWith("Table Region", expect.anything(), expect.anything());
+    const tableCommitBaseline = commits;
+    const tableCanvasBaseline = clearRect.mock.calls.length;
+    const tableTextBaseline = fillText.mock.calls.length;
+
+    act(() => useParseFlowStore.setState({
+      keynoteParseStep: "define-column",
+      keynoteParseRegion: [0.1, 0.1, 0.4, 0.4],
+      notesParseStep: "define-column",
+      notesParseRegion: [0.2, 0.2, 0.5, 0.5],
+      specParseStep: "select-region",
+      specParseRegion: [0.3, 0.3, 0.6, 0.6],
+    }));
+    expect(commits).toBe(tableCommitBaseline);
+    expect(clearRect).toHaveBeenCalledTimes(tableCanvasBaseline);
+    expect(fillText).toHaveBeenCalledTimes(tableTextBaseline);
+    expect(fillText).not.toHaveBeenCalledWith("Column", expect.anything(), expect.anything());
+    expect(fillText).not.toHaveBeenCalledWith("Notes Column", expect.anything(), expect.anything());
+    expect(fillText).not.toHaveBeenCalledWith("Spec Region", expect.anything(), expect.anything());
   });
 });
