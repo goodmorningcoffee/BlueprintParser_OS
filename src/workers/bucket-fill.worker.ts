@@ -267,14 +267,8 @@ export function morphClose(
   for (let y = 0; y < h; y++) {
     const row = y * w;
     const packedRow = y * wordsPerRow;
-    for (let wordIndex = 0; wordIndex < wordsPerRow; wordIndex++) {
-      const firstX = wordIndex << 5;
-      const lastX = Math.min(w, firstX + 32);
-      let word = 0;
-      for (let x = firstX; x < lastX; x++) {
-        if (bin[row + x] === 0) word |= 1 << (x - firstX);
-      }
-      packed[packedRow + wordIndex] = word;
+    for (let x = 0; x < w; x++) {
+      if (bin[row + x] === 0) packed[packedRow + (x >>> 5)] |= 1 << (x & 31);
     }
   }
 
@@ -294,13 +288,8 @@ export function morphClose(
   for (let y = 0; y < h; y++) {
     const row = y * w;
     const packedRow = y * wordsPerRow;
-    for (let wordIndex = 0; wordIndex < wordsPerRow; wordIndex++) {
-      const firstX = wordIndex << 5;
-      const lastX = Math.min(w, firstX + 32);
-      const word = expanded[packedRow + wordIndex];
-      for (let x = firstX; x < lastX; x++) {
-        output[row + x] = (word & (1 << (x - firstX))) !== 0 ? 255 : 0;
-      }
+    for (let x = 0; x < w; x++) {
+      output[row + x] = (expanded[packedRow + (x >>> 5)] & (1 << (x & 31))) !== 0 ? 255 : 0;
     }
   }
   return output;
@@ -364,20 +353,94 @@ function fillPolygonOnBinary(
   }
 }
 
-// ─── Scanline flood fill ─────────────────────────────────────────
-
-export function floodFill(
-  bin: Uint8Array, w: number, h: number,
-  seedX: number, seedY: number
-): {
-  filled: Uint8Array;
-  area: number;
+export interface SolidRoomRectangle {
   minX: number;
   minY: number;
   maxX: number;
   maxY: number;
+}
+
+/**
+ * Prove that the entire binary raster is one solid white rectangle on a black
+ * background. A square morphological close is the identity for that shape as
+ * long as the room survives the dilation radius.
+ */
+export function detectSolidRoomRectangle(
+  bin: Uint8Array,
+  w: number,
+  h: number,
+  radius: number,
+): SolidRoomRectangle | null {
+  const firstWhite = bin.indexOf(255);
+  if (firstWhite < 0) return null;
+  const minY = Math.floor(firstWhite / w);
+  const minX = firstWhite - minY * w;
+  const firstRowEnd = (minY + 1) * w;
+  const firstBlack = bin.indexOf(0, firstWhite);
+  const maxXExclusive = firstBlack < 0 || firstBlack >= firstRowEnd
+    ? w
+    : firstBlack - minY * w;
+  if (maxXExclusive <= minX) return null;
+  const firstExtraWhite = bin.indexOf(255, minY * w + maxXExclusive);
+  if (firstExtraWhite >= 0 && firstExtraWhite < firstRowEnd) return null;
+
+  let maxYExclusive = h;
+  for (let y = minY; y < h; y++) {
+    const row = y * w;
+    const rowEnd = row + w;
+    const rowFirstWhite = bin.indexOf(255, row);
+    if (rowFirstWhite < 0 || rowFirstWhite >= rowEnd) {
+      maxYExclusive = y;
+      break;
+    }
+    if (rowFirstWhite !== row + minX) return null;
+    const rowFirstBlack = bin.indexOf(0, row + minX);
+    const rowMaxXExclusive = rowFirstBlack < 0 || rowFirstBlack >= rowEnd
+      ? w
+      : rowFirstBlack - row;
+    if (rowMaxXExclusive !== maxXExclusive) return null;
+    const rowExtraWhite = bin.indexOf(255, row + maxXExclusive);
+    if (rowExtraWhite >= 0 && rowExtraWhite < rowEnd) return null;
+  }
+  if (bin.indexOf(255, maxYExclusive * w) >= 0) return null;
+  if (maxXExclusive - minX <= radius * 2 || maxYExclusive - minY <= radius * 2) return null;
+  return {
+    minX,
+    minY,
+    maxX: maxXExclusive - 1,
+    maxY: maxYExclusive - 1,
+  };
+}
+
+// ─── Scanline flood fill ─────────────────────────────────────────
+
+export interface FloodFillState extends SolidRoomRectangle {
+  filled: Uint8Array;
+  area: number;
   firstIndex: number;
-} {
+}
+
+export function floodSolidRoomRectangle(
+  rectangle: SolidRoomRectangle,
+  w: number,
+  h: number,
+): FloodFillState {
+  const filled = new Uint8Array(w * h);
+  for (let y = rectangle.minY; y <= rectangle.maxY; y++) {
+    filled.fill(1, y * w + rectangle.minX, y * w + rectangle.maxX + 1);
+  }
+  return {
+    filled,
+    area: (rectangle.maxX - rectangle.minX + 1) * (rectangle.maxY - rectangle.minY + 1),
+    ...rectangle,
+    firstIndex: rectangle.minY * w + rectangle.minX,
+  };
+}
+
+export function floodFill(
+  bin: Uint8Array, w: number, h: number,
+  seedX: number, seedY: number
+): FloodFillState {
   const filled = new Uint8Array(w * h);
   if (bin[seedY * w + seedX] === 0) {
     return { filled, area: 0, minX: w, minY: h, maxX: -1, maxY: -1, firstIndex: -1 };
@@ -617,7 +680,8 @@ function processFill(req: BucketFillRequest): Omit<BucketFillResult, "requestId"
   // near-noop but still ran — users wanted an explicit "no smoothing" mode
   // for plans with thin-wall mullions where morphology bridged real gaps).
   const radius = req.dilation <= 0 ? 0 : Math.ceil(req.dilation / 2);
-  const closed = radius > 0 ? morphClose(bin, w, h, radius) : bin;
+  const solidRoom = detectSolidRoomRectangle(bin, w, h, radius);
+  const closed = radius > 0 && !solidRoom ? morphClose(bin, w, h, radius) : bin;
 
   // 4. Burn user-drawn barrier lines (explicit door seals).
   for (const b of req.barriers) {
@@ -637,7 +701,14 @@ function processFill(req: BucketFillRequest): Omit<BucketFillResult, "requestId"
   //    like any other; the flood stops at letter boundaries. Text bboxes are
   //    preserved on the request payload for a future Tier 2 pass that adds
   //    enclosed-text area back to the reported sqft.
-  const flood = floodFill(closed, w, h, seedPx, seedPy);
+  const canUseSolidRoomFlood = solidRoom !== null &&
+    req.barriers.length === 0 &&
+    req.polygonBarriers.length === 0 &&
+    seedPx >= solidRoom.minX && seedPx <= solidRoom.maxX &&
+    seedPy >= solidRoom.minY && seedPy <= solidRoom.maxY;
+  const flood = canUseSolidRoomFlood
+    ? floodSolidRoomRectangle(solidRoom!, w, h)
+    : floodFill(closed, w, h, seedPx, seedPy);
   const { filled, area } = flood;
 
   // 8. Net area was counted as pixels were first marked by the flood. Holes

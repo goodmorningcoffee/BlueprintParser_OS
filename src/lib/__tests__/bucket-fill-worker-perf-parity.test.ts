@@ -9,8 +9,10 @@ import { describe, expect, it } from "vitest";
 import {
   bucketRgbaBinarize,
   bucketRgbaHistogram,
+  detectSolidRoomRectangle,
   findHoleBorders,
   floodFill,
+  floodSolidRoomRectangle,
   morphClose,
   traceBorder,
 } from "@/workers/bucket-fill.worker";
@@ -53,7 +55,7 @@ function randomBinary(length: number, seed: number): Uint8Array {
   let state = seed >>> 0;
   return Uint8Array.from({ length }, () => {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    return (state & 1) === 0 ? 0 : 255;
+    return (state >>> 31) === 0 ? 0 : 255;
   });
 }
 
@@ -187,6 +189,39 @@ describe("bucket worker 4000px fast-path parity", () => {
     const w = 7, h = 5, radius = 32;
     const input = randomBinary(w * h, 0x5eed);
     expect(morphClose(input, w, h, radius)).toEqual(closeReference(input, w, h, radius));
+  });
+
+  it("proves solid rectangles are morphology identities and floods them exactly", () => {
+    for (const { w, h, minX, minY, maxX, maxY } of [
+      { w: 17, h: 13, minX: 0, minY: 0, maxX: 12, maxY: 10 },
+      { w: 33, h: 19, minX: 5, minY: 3, maxX: 27, maxY: 15 },
+      { w: 65, h: 21, minX: 17, minY: 0, maxX: 64, maxY: 20 },
+    ]) {
+      const input = new Uint8Array(w * h);
+      for (let y = minY; y <= maxY; y++) {
+        input.fill(255, y * w + minX, y * w + maxX + 1);
+      }
+      for (const radius of [0, 1, 2, 3, 4, 5]) {
+        if (maxX - minX + 1 <= radius * 2 || maxY - minY + 1 <= radius * 2) continue;
+        const rectangle = detectSolidRoomRectangle(input, w, h, radius);
+        expect(rectangle).toEqual({ minX, minY, maxX, maxY });
+        expect(morphClose(input, w, h, radius)).toEqual(input);
+        expect(floodSolidRoomRectangle(rectangle!, w, h))
+          .toEqual(floodFill(input, w, h, minX, minY));
+      }
+    }
+
+    const punctured = new Uint8Array(20 * 16);
+    for (let y = 3; y <= 12; y++) punctured.fill(255, y * 20 + 4, y * 20 + 16);
+    punctured[8 * 20 + 9] = 0;
+    expect(detectSolidRoomRectangle(punctured, 20, 16, 2)).toBeNull();
+    punctured[8 * 20 + 9] = 255;
+    punctured[15 * 20 + 19] = 255;
+    expect(detectSolidRoomRectangle(punctured, 20, 16, 2)).toBeNull();
+
+    const tooNarrow = new Uint8Array(9 * 9);
+    for (let y = 2; y <= 6; y++) tooNarrow.fill(255, y * 9 + 3, y * 9 + 6);
+    expect(detectSolidRoomRectangle(tooNarrow, 9, 9, 2)).toBeNull();
   });
 
   it("matches an independent BFS mask, area, and bounds oracle", () => {
