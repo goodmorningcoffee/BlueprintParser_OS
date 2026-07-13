@@ -295,7 +295,7 @@ describe("A2b exact Table operation topology", () => {
       .toContain("meta:null");
 
     const review = compact(namedRoot(COMMANDS, "publishTableReviewForOperation"));
-    expect(review).toContain('prepareParseEntry(before.tableParseStep,"review")');
+    expect(review).toContain('prepareParseEntry(before.tableParseStep,"review",token)');
     expect(review).toContain("if(!useParseFlowStore.getState().isParseOperationCurrent(token))returnfalse");
     expect(review.match(/useParseFlowStore\.setState/g)).toHaveLength(1);
     expect(review).toContain("tableParsedGrid:publication.grid");
@@ -319,6 +319,9 @@ describe("A2b exact Table operation topology", () => {
     expect(terminal).toContain("returncompleted");
     expect(terminal).not.toMatch(/\bresetTableParse\(/);
     expect(terminal).not.toMatch(/\bresetGuidedParse\(/);
+    expect(terminal).toContain(
+      'if(ownsParseToolAuthority(token)){useToolStore.getState().setMode("move");}',
+    );
     expect(terminal.indexOf('setMode("move")'))
       .toBeLessThan(terminal.indexOf("useParseFlowStore.setState"));
     expect(terminal.indexOf("useParseFlowStore.setState"))

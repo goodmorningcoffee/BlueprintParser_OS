@@ -1732,6 +1732,7 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
       .sort((left, right) => left.module.localeCompare(right.module));
     expect(imports).toEqual([
       { module: "@/lib/parse-operation-state", typeOnly: false },
+      { module: "@/lib/parse-tool-authority", typeOnly: false },
       { module: "@/types", typeOnly: true },
       { module: "zustand", typeOnly: false },
       { module: "zustand/react/shallow", typeOnly: false },

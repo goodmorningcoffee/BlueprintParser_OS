@@ -490,6 +490,9 @@ describe("A2c Keynote invalidation and shared-workspace topology", () => {
 
     const completion = compact(namedRoot(COMMANDS, "completeKeynoteParseOperation"));
     expect(completion).toContain("setMode(\"move\")");
+    expect(completion).toContain(
+      'if(ownsParseToolAuthority(token)){useToolStore.getState().setMode("move");}',
+    );
     expect(completion).toContain("isParseOperationCurrent(token)");
     expect(completion.match(/useParseFlowStore\.setState/g)).toHaveLength(1);
     expect(completion).toContain(

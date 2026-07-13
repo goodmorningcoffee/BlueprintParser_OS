@@ -14,6 +14,7 @@ import { takeoffRedo, takeoffUndo, useAnnotations } from "@/queries/useAnnotatio
 import { AREA_UNIT_MAP } from "@/types";
 import type { AreaPolygonData, AreaUnitSq, TakeoffTab } from "@/types";
 import { computeRealArea } from "@/lib/areaCalc";
+import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
 import CountTab from "./CountTab";
 import AreaTab from "./AreaTab";
 import LinearTab from "./LinearTab";
@@ -324,6 +325,8 @@ export default function TakeoffPanel() {
           <ColorDot color={activeItem.color} />
           <span className="text-xs font-medium flex-1 truncate">{activeItem.name}</span>
           <button
+            onPointerDown={() => invalidateParseToolAuthority()}
+            onKeyDown={() => invalidateParseToolAuthority()}
             onClick={() => takeoffUndo(qc)}
             disabled={takeoffUndoStack.length === 0}
             className="text-xs px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-30"
@@ -332,6 +335,8 @@ export default function TakeoffPanel() {
             &#8630;
           </button>
           <button
+            onPointerDown={() => invalidateParseToolAuthority()}
+            onKeyDown={() => invalidateParseToolAuthority()}
             onClick={() => takeoffRedo(qc)}
             disabled={takeoffRedoStack.length === 0}
             className="text-xs px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-30"

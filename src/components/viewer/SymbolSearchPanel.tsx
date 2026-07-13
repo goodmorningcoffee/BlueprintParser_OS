@@ -3,12 +3,17 @@
 import { useMemo, useEffect, useState, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
+import {
+  publishSettledSymbolSearchActive,
+  useSymbolSearch,
+  useToolStore,
+} from "@/stores/toolStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { navigateViewerPage } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations } from "@/queries/useAnnotations";
 import { queryKeys } from "@/queries/queryKeys";
+import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -242,7 +247,11 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
     "idle";
 
   return (
-    <div className={embedded ? "flex flex-col h-full overflow-hidden" : "flex flex-col w-72 max-h-[60vh] bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden"}>
+    <div
+      className={embedded ? "flex flex-col h-full overflow-hidden" : "flex flex-col w-72 max-h-[60vh] bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden"}
+      onPointerDownCapture={() => invalidateParseToolAuthority()}
+      onKeyDownCapture={() => invalidateParseToolAuthority()}
+    >
       {/* Header — hidden in embedded mode; parent orchestrator provides its own. */}
       {!embedded && (
         <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] bg-cyan-900/20">
@@ -786,7 +795,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                       // users see "done" instead of "still showing results."
                       store.setSymbolSearchResults(null);
                       store.setSymbolSearchTemplateBbox(null);
-                      store.setSymbolSearchActive(false);
+                      publishSettledSymbolSearchActive(false);
                     }
                   } catch (err) {
                     console.error("[SYMBOL_SEARCH] Save failed:", err);

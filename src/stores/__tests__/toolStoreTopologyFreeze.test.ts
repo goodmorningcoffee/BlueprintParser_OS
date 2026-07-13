@@ -61,6 +61,24 @@ const SYMBOL_HOOK_KEYS = [
   "setSymbolSearchConfig", "symbolSearchPreset", "setSymbolSearchPreset",
 ] as const;
 
+const TOOL_AUTHORITY_INTENT_ACTIONS = [
+  "setMode",
+  "setTempPanMode",
+  "setActiveTakeoffItemId",
+  "setCalibrationMode",
+  "resetCalibration",
+  "setPolygonDrawingMode",
+  "resetPolygonDrawing",
+  "setBucketFillActive",
+  "setSplitAreaActive",
+  "setBucketFillBarrierMode",
+  "setYoloTagPickingMode",
+  "setTagAddingMode",
+  "setSymbolSearchActive",
+  "clearSymbolSearch",
+  "resetProjectToolState",
+] as const;
+
 function textOf(path: string): string {
   return readFileSync(join(process.cwd(), path), "utf8");
 }
@@ -173,7 +191,12 @@ describe("toolStore T2 — active source contract", () => {
       .filter(ts.isImportDeclaration)
       .map((statement) => (statement.moduleSpecifier as ts.StringLiteral).text)
       .sort();
-    expect(modules).toEqual(["@/types", "zustand", "zustand/react/shallow"]);
+    expect(modules).toEqual([
+      "@/lib/parse-tool-authority",
+      "@/types",
+      "zustand",
+      "zustand/react/shallow",
+    ]);
     expect(textOf(TOOL_FILE)).not.toMatch(/@\/stores\/(?:viewer|session|ui|viewerCore)/);
     expect(textOf(TOOL_FILE)).not.toMatch(/@\/(?:queries|components)\//);
   });
@@ -197,6 +220,23 @@ describe("toolStore T2 — active source contract", () => {
       .filter((object) => objectKeys(object).includes("tempPanMode"));
     expect(objects).toHaveLength(1);
     expect(objectKeys(objects[0])).toEqual(RESET_KEYS);
+  });
+
+  it("revokes parse tool authority before every activation-ledger publication", () => {
+    for (const action of TOOL_AUTHORITY_INTENT_ACTIONS) {
+      const initializer = directProperty(toolObject, action).initializer;
+      const calls = descendants(initializer, ts.isCallExpression);
+      const invalidations = calls.filter((call) =>
+        ts.isIdentifier(call.expression) && call.expression.text === "invalidateParseToolAuthority"
+      );
+      const publications = calls.filter((call) =>
+        ts.isIdentifier(call.expression) && call.expression.text === "set"
+      );
+      expect(invalidations, `${action} one non-reactive invalidation`).toHaveLength(1);
+      expect(publications, `${action} one preserved Zustand publication`).toHaveLength(1);
+      expect(invalidations[0].getStart(toolSource), `${action} invalidates before publish`)
+        .toBeLessThan(publications[0].getStart(toolSource));
+    }
   });
 
   it("copies the exact legacy 23-member useSymbolSearch projection", () => {

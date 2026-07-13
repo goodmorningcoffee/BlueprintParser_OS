@@ -11,6 +11,7 @@ import {
   type ParseOperationRegistry,
   type ParseOperationToken,
 } from "@/lib/parse-operation-state";
+import { claimParseToolAuthority } from "@/lib/parse-tool-authority";
 import type { ParsedRegion, TextractLine } from "@/types";
 
 /**
@@ -400,7 +401,8 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
       if (current.busy && policy === "reject") return state;
 
       const revision = current.revision + 1;
-      result = { status: "started", token: { kind, revision } };
+      const token = claimParseToolAuthority({ kind, revision });
+      result = { status: "started", token };
       return {
         parseOperations: {
           ...state.parseOperations,

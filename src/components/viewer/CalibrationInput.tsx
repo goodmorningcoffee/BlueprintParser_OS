@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useToolStore } from "@/stores/toolStore";
+import {
+  publishSettledCalibrationReset,
+  useToolStore,
+} from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useAnnotations } from "@/queries/useAnnotations";
@@ -9,6 +12,7 @@ import type { AreaUnit, ClientAnnotation, ScaleCalibrationData } from "@/types";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
 import { apiErrorMessage } from "@/lib/client-persist";
+import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
 
 const AREA_UNITS: AreaUnit[] = ["ft", "in", "m", "cm"];
 
@@ -32,6 +36,7 @@ export default function CalibrationInput() {
   async function handleOk() {
     const dist = parseFloat(distance);
     if (!dist || dist <= 0 || !calibrationPoints.p1 || !calibrationPoints.p2) return;
+    invalidateParseToolAuthority();
 
     setSaving(true);
     setError(null);
@@ -75,7 +80,7 @@ export default function CalibrationInput() {
         ),
         tempAnn,
       ]);
-      resetCalibration();
+      publishSettledCalibrationReset();
       setDistance("");
       setSaving(false);
       return;
@@ -110,7 +115,7 @@ export default function CalibrationInput() {
           saved,
         ]);
         setScaleCalibration(pageNumber, cal);
-        resetCalibration();
+        publishSettledCalibrationReset();
         setDistance("");
       } else {
         const errData = await res.json().catch(() => null);

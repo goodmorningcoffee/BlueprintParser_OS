@@ -11,8 +11,14 @@ import {
   invalidateParseOperationKinds,
   PARSE_KINDS,
 } from "@/lib/parse-operation-state";
+import {
+  claimParseToolAuthority,
+  invalidateParseToolAuthority,
+  ownsParseToolAuthority,
+} from "@/lib/parse-tool-authority";
 
 const OPERATION_STATE_FILE = "src/lib/parse-operation-state.ts";
+const TOOL_AUTHORITY_FILE = "src/lib/parse-tool-authority.ts";
 const PARSE_STORE_FILE = "src/stores/parseFlowStore.ts";
 const VIEWER_COMMANDS_FILE = "src/stores/viewerCommands.ts";
 const OPERATION_HOOK_FILE = "src/hooks/useParseOperation.ts";
@@ -302,6 +308,8 @@ type OwnerInvariantFeatures = Readonly<{
   beginUsesKindLane: boolean;
   beginRejectsBusyWithState: boolean;
   beginIsMonotonicAndAtomic: boolean;
+  beginClaimsExactReturnedToken: boolean;
+  beginClaimsOnceAfterRejectBeforePublication: boolean;
   currentUsesKindLane: boolean;
   currentRequiresBusyAndRevision: boolean;
   finishSingleWrite: boolean;
@@ -321,6 +329,9 @@ function ownerInvariantFeatures(source: ts.SourceFile): OwnerInvariantFeatures {
   const beginText = compact(begin, source);
   const currentText = compact(current, source);
   const finishText = compact(finish, source);
+  const beginClaim = "consttoken=claimParseToolAuthority({kind,revision})";
+  const beginReject = 'if(current.busy&&policy==="reject")returnstate';
+  const beginPublication = "return{parseOperations:";
   const resets = Object.entries(KIND_RESETS).every(([action, kind]) => {
     const text = compact(propertyInitializer(object, action), source);
     return text.includes(
@@ -338,6 +349,14 @@ function ownerInvariantFeatures(source: ts.SourceFile): OwnerInvariantFeatures {
       beginText.includes("constrevision=current.revision+1") &&
       beginText.includes("[kind]:{revision,busy:true}") &&
       !beginText.includes("revision:0"),
+    beginClaimsExactReturnedToken:
+      beginText.includes(beginClaim) &&
+      beginText.includes('result={status:"started",token}') &&
+      callsNamed(begin, "claimParseToolAuthority").length === 1,
+    beginClaimsOnceAfterRejectBeforePublication:
+      callsNamed(begin, "claimParseToolAuthority").length === 1 &&
+      beginText.indexOf(beginReject) < beginText.indexOf(beginClaim) &&
+      beginText.indexOf(beginClaim) < beginText.indexOf(beginPublication),
     currentUsesKindLane: currentText.includes("get().parseOperations[token.kind]"),
     currentRequiresBusyAndRevision:
       currentText.includes("current.busy&&current.revision===token.revision"),
@@ -712,6 +731,28 @@ describe("P2.4 A2a pure operation registry topology", () => {
     expect(registryObject && ts.isObjectLiteralExpression(registryObject)).toBe(true);
     expect(directObjectKeys(registryObject as ts.ObjectLiteralExpression)).toEqual(PARSE_KINDS);
   });
+
+  it("pins the dependency-free exact-identity global tool capability", () => {
+    const source = sourceOf(TOOL_AUTHORITY_FILE);
+    expect(source.statements.filter(ts.isImportDeclaration)).toEqual([]);
+    expect(exportedNames(source)).toEqual([
+      "claimParseToolAuthority",
+      "invalidateParseToolAuthority",
+      "ownsParseToolAuthority",
+    ]);
+
+    const tokenA = { kind: "table", revision: 1 };
+    const tokenB = { kind: "keynote", revision: 1 };
+    invalidateParseToolAuthority();
+    expect(claimParseToolAuthority(tokenA)).toBe(tokenA);
+    expect(ownsParseToolAuthority(tokenA)).toBe(true);
+    expect(ownsParseToolAuthority({ ...tokenA })).toBe(false);
+    expect(claimParseToolAuthority(tokenB)).toBe(tokenB);
+    expect(ownsParseToolAuthority(tokenA)).toBe(false);
+    expect(ownsParseToolAuthority(tokenB)).toBe(true);
+    invalidateParseToolAuthority();
+    expect(ownsParseToolAuthority(tokenB)).toBe(false);
+  });
 });
 
 describe("P2.4 A2a parse owner additive topology", () => {
@@ -747,6 +788,8 @@ describe("P2.4 A2a parse owner additive topology", () => {
       "ParseOperationRegistry",
       "ParseOperationToken",
     ]);
+    expect(importedNames(source, "@/lib/parse-tool-authority"))
+      .toEqual(["claimParseToolAuthority"]);
 
     const features = ownerInvariantFeatures(source);
     expect(features).toEqual(Object.fromEntries(
@@ -754,7 +797,7 @@ describe("P2.4 A2a parse owner additive topology", () => {
     ));
   });
 
-  it("self-calibrates the owner oracle against the five highest-risk state-machine mutations", () => {
+  it("self-calibrates the owner oracle against the capability and state-machine mutations", () => {
     const sourceText = textOf(PARSE_STORE_FILE);
     const original = ownerInvariantFeatures(sourceOf(PARSE_STORE_FILE));
     expect(Object.values(original).every(Boolean)).toBe(true);
@@ -795,6 +838,22 @@ describe("P2.4 A2a parse owner additive topology", () => {
       'set(() => ({}));\n    let result: BeginParseOperationResult<K> = { status: "busy" };',
     ));
     expect(ownerInvariantFeatures(twoWriteBegin).beginSingleWrite).toBe(false);
+
+    const unclaimedBegin = parseFixture(PARSE_STORE_FILE, mutateOnce(
+      sourceText,
+      "const token = claimParseToolAuthority({ kind, revision });",
+      "const token = { kind, revision };",
+    ));
+    expect(ownerInvariantFeatures(unclaimedBegin).beginClaimsExactReturnedToken).toBe(false);
+
+    const rejectedBeginSteals = parseFixture(PARSE_STORE_FILE, mutateOnce(
+      sourceText,
+      "const current = state.parseOperations[kind];",
+      "claimParseToolAuthority(state);\n      const current = state.parseOperations[kind];",
+    ));
+    expect(
+      ownerInvariantFeatures(rejectedBeginSteals).beginClaimsOnceAfterRejectBeforePublication,
+    ).toBe(false);
   });
 });
 
@@ -871,6 +930,16 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
       "ParseOperationRegistry",
       "ParseOperationToken",
     ]);
+    expect(importedNames(source, "@/lib/parse-tool-authority")).toEqual([
+      "invalidateParseToolAuthority",
+      "ownsParseToolAuthority",
+    ]);
+    const publishUserTool = findFunction(source, "publishUserToolState");
+    const userInvalidation = callsNamed(publishUserTool, "invalidateParseToolAuthority");
+    const userPublication = callsNamed(publishUserTool, "setState");
+    expect(userInvalidation).toHaveLength(1);
+    expect(userPublication).toHaveLength(1);
+    expect(userInvalidation[0].getStart(source)).toBeLessThan(userPublication[0].getStart(source));
     expect(compact(findFunction(source, "crossesParseOperationBoundary").body!, source)).toBe(
       '{return(currentStep==="idle")!==(nextStep==="idle");}',
     );
@@ -906,6 +975,27 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
         `state.${contract.step}`,
         contract.step,
       ]);
+    }
+
+    const prepareEntry = compact(findFunction(source, "prepareParseEntry"), source);
+    expect(prepareEntry).toContain(
+      "if(token!==undefined){if(!ownsParseToolAuthority(token))return;}" +
+      "else{invalidateParseToolAuthority();}",
+    );
+    for (const [commandName, expectedArguments] of [
+      [
+        "setTableParseStepForOperation",
+        ["before.tableParseStep", "tableParseStep", "token"],
+      ],
+      [
+        "publishTableReviewForOperation",
+        ["before.tableParseStep", '"review"', "token"],
+      ],
+    ] as const) {
+      const prepareCalls = callsNamed(findFunction(source, commandName), "prepareParseEntry");
+      expect(prepareCalls, `${commandName} one capability-gated prep`).toHaveLength(1);
+      expect(prepareCalls[0].arguments.map((argument) => compact(argument, source)))
+        .toEqual(expectedArguments);
     }
 
     for (const commandName of [

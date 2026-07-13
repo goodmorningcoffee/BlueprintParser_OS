@@ -11,6 +11,10 @@ import {
   type ParseOperationRegistry,
   type ParseOperationToken,
 } from "@/lib/parse-operation-state";
+import {
+  invalidateParseToolAuthority,
+  ownsParseToolAuthority,
+} from "@/lib/parse-tool-authority";
 import { useSessionStore } from "@/stores/sessionStore";
 import {
   useParseFlowStore,
@@ -18,7 +22,7 @@ import {
   type ParseFlowState,
   type PendingParagraph,
 } from "@/stores/parseFlowStore";
-import { useToolStore } from "@/stores/toolStore";
+import { useToolStore, type ToolStoreData } from "@/stores/toolStore";
 import { useUiStore, type SpecsNotesTab } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
@@ -261,13 +265,28 @@ const PARSE_ENTRY_TOOL_DESTINATION = {
   symbolSearchActive: false,
 } as const;
 
+/** Raw legacy tool patches still represent a user-owned destination and must revoke parse tails. */
+function publishUserToolState(patch: Partial<ToolStoreData>): void {
+  invalidateParseToolAuthority();
+  useToolStore.setState(patch);
+}
+
 /**
  * A parse entry used to be one viewerStore publication. The flat carve necessarily splits that
  * write, so competing tools publish their exact raw destination first and the parse step follows
  * synchronously. Tool-first prevents raw subscribers from seeing active parse + an active tool.
  */
-function prepareParseEntry(currentStep: string, nextStep: string): void {
+function prepareParseEntry(
+  currentStep: string,
+  nextStep: string,
+  token?: ParseOperationToken,
+): void {
   if (currentStep === "idle" && nextStep !== "idle") {
+    if (token !== undefined) {
+      if (!ownsParseToolAuthority(token)) return;
+    } else {
+      invalidateParseToolAuthority();
+    }
     useToolStore.setState(PARSE_ENTRY_TOOL_DESTINATION);
   }
 }
@@ -390,7 +409,7 @@ export function resetGuidedParseWorkspace(owner: "table" | "keynote" | "notes"):
   if (!isActiveGuidedParseOwner(owner)) return false;
   const before = useParseFlowStore.getState();
   if (before.guidedParseOwner === null || before.guidedParseOwner === owner) {
-    useToolStore.setState({ mode: "move" });
+    publishUserToolState({ mode: "move" });
   }
   let cleared = false;
   useParseFlowStore.setState((state) => {
@@ -574,7 +593,7 @@ export function invalidateKeynoteTableOperations(): void {
 export function resetKeynoteGuidedParse(): void {
   const before = useParseFlowStore.getState();
   if (before.guidedParseOwner === null || before.guidedParseOwner === "keynote") {
-    useToolStore.setState({ mode: "move" });
+    publishUserToolState({ mode: "move" });
   }
   useParseFlowStore.setState((state) => {
     const ownsGuided = state.guidedParseOwner === "keynote";
@@ -609,7 +628,7 @@ export function transitionTableParseTab(
   if (before.tableParseTab === tableParseTab) return;
   const preservesPeerGuided = before.guidedParseOwner !== null &&
     before.guidedParseOwner !== "table";
-  if (!preservesPeerGuided) useToolStore.setState({ mode: "move" });
+  if (!preservesPeerGuided) publishUserToolState({ mode: "move" });
   useParseFlowStore.setState((state) => {
     const ownsGuided = state.guidedParseOwner === "table";
     return {
@@ -651,7 +670,7 @@ export function transitionKeynoteParseTab(
   if (before.keynoteParseTab === keynoteParseTab) return;
   const preservesPeerGuided = before.guidedParseOwner !== null &&
     before.guidedParseOwner !== "keynote";
-  if (!preservesPeerGuided) useToolStore.setState({ mode: "move" });
+  if (!preservesPeerGuided) publishUserToolState({ mode: "move" });
   useParseFlowStore.setState((state) => {
     const ownsGuided = state.guidedParseOwner === "keynote";
     return {
@@ -1389,7 +1408,7 @@ export function setTableParseStepForOperation(
   const current = before.parseOperations.table;
   if (!current.busy || current.revision !== token.revision) return false;
 
-  prepareParseEntry(before.tableParseStep, tableParseStep);
+  prepareParseEntry(before.tableParseStep, tableParseStep, token);
 
   // Re-check in the functional write. Tool subscribers are synchronous; if one revokes the
   // operation during the tool-first publication, the stale parse step still cannot land.
@@ -1468,7 +1487,7 @@ export function publishTableReviewForOperation(
     return false;
   }
   const before = useParseFlowStore.getState();
-  prepareParseEntry(before.tableParseStep, "review");
+  prepareParseEntry(before.tableParseStep, "review", token);
   if (!useParseFlowStore.getState().isParseOperationCurrent(token)) return false;
 
   let committed = false;
@@ -1508,7 +1527,9 @@ export function completeTableParseOperation(
   const guidedLease = options.resetGuided && before.guidedParseOwner === "table"
     ? workspaceLease(before.parseOperations, before.guidedParseOwner)
     : null;
-  useToolStore.getState().setMode("move");
+  if (ownsParseToolAuthority(token)) {
+    useToolStore.getState().setMode("move");
+  }
   const afterTool = useParseFlowStore.getState();
   if (!afterTool.isParseOperationCurrent(token)) return false;
   if (guidedLease && !matchesGuidedLeaseRevisions(
@@ -1597,7 +1618,7 @@ export function setKeynoteParseStepWithTool(
 
 /** Canvas-drawn Table region accepted as one user boundary before any passive consumer runs. */
 export function acceptTableParseRegion(tableParseRegion: ParseRegion): void {
-  useToolStore.setState({ mode: "move" });
+  publishUserToolState({ mode: "move" });
   useParseFlowStore.setState((state) => ({
     tableParseRegion,
     tableParseStep: "idle",
@@ -1610,7 +1631,7 @@ export function acceptTableParseRegion(tableParseRegion: ParseRegion): void {
  * owner revocation must publish atomically: a subscriber cannot start B between separate writes.
  */
 export function acceptKeynoteParseRegion(keynoteParseRegion: ParseRegion): void {
-  useToolStore.setState({ mode: "move" });
+  publishUserToolState({ mode: "move" });
   useParseFlowStore.setState((state) => ({
     keynoteParseRegion,
     keynoteParseStep: "idle",
@@ -1634,7 +1655,9 @@ export function completeKeynoteParseOperation(
   const guidedLease = options?.resetGuided && before.guidedParseOwner === "keynote"
     ? workspaceLease(before.parseOperations, before.guidedParseOwner)
     : null;
-  useToolStore.getState().setMode("move");
+  if (ownsParseToolAuthority(token)) {
+    useToolStore.getState().setMode("move");
+  }
   const afterTool = useParseFlowStore.getState();
   if (!afterTool.isParseOperationCurrent(token)) return false;
   if (guidedLease && !matchesGuidedLeaseRevisions(
@@ -1761,7 +1784,7 @@ export function toggleTakeoffPanel(): void {
   if (ui.showTakeoffPanel) {
     // This is deliberately a raw write. setActiveTakeoffItemId also clears undo/redo history,
     // whereas the legacy panel close retained both stacks.
-    useToolStore.setState({ activeTakeoffItemId: null });
+    publishUserToolState({ activeTakeoffItemId: null });
     useUiStore.getState().setPanelVisibility({ showTakeoffPanel: false });
     return;
   }
@@ -1900,7 +1923,7 @@ export function toggleTableParsePanel(): void {
       before.guidedParseOwner !== "table";
     // Preserve the old raw mode transition. Calling setMode would clear additional live tools.
     // Publish it before the Parse reset: a B started by that reset owns every later tool write.
-    if (!preservesPeerGuided) useToolStore.setState({ mode: "move" });
+    if (!preservesPeerGuided) publishUserToolState({ mode: "move" });
     useParseFlowStore.setState((state) => {
       const ownsGuided = state.guidedParseOwner === "table";
       return {
@@ -1941,7 +1964,7 @@ export function toggleKeynoteParsePanel(): void {
     const preservesPeerGuided = before.guidedParseOwner !== null &&
       before.guidedParseOwner !== "keynote";
     // Tool-first prevents the terminal Parse publication from creating a late A tool tail.
-    if (!preservesPeerGuided) useToolStore.setState({ mode: "move" });
+    if (!preservesPeerGuided) publishUserToolState({ mode: "move" });
     useParseFlowStore.setState((state) => {
       const ownsGuided = state.guidedParseOwner === "keynote";
       return {

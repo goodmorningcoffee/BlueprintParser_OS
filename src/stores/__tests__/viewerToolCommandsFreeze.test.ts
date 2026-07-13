@@ -823,10 +823,10 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
       "activeTakeoffItemId!==null",
     ]);
     expect(branches.map(({ body }) => directBranchCalls(body, source))).toEqual([
-      ["tool.setSplitPreview"],
+      ["invalidateParseToolAuthority", "tool.setSplitPreview"],
       ["tool.setSplitAreaActive"],
-      ["tool.setBucketFillPendingPolygon"],
-      ["tool.setBucketFillPreview"],
+      ["invalidateParseToolAuthority", "tool.setBucketFillPendingPolygon"],
+      ["invalidateParseToolAuthority", "tool.setBucketFillPreview"],
       ["tool.setBucketFillBarrierMode", "tool.setBarrierPendingPoint"],
       ["tool.setBucketFillActive"],
       ["setTableParseStepWithTool"],
@@ -903,10 +903,10 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
     });
     expect(semanticOrder).toEqual([
       "call:setSelectedId",
-      'if:polygonDrawingMode==="drawing"=>resetPolygonDrawing,setMousePos',
-      'if:calibrationMode!=="idle"=>resetCalibration',
+      'if:polygonDrawingMode==="drawing"=>publishSettledPolygonReset,setMousePos',
+      'if:calibrationMode!=="idle"=>publishSettledCalibrationReset',
       "snapshot:tool=useToolStore.getState()",
-      "if:tool.symbolSearchActive=>tool.setSymbolSearchActive",
+      "if:tool.symbolSearchActive=>publishSettledSymbolSearchActive",
     ]);
     expect(dependencyTexts(pageEffect, source)).toEqual(["pageNumber"]);
     expect(

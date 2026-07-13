@@ -1123,7 +1123,13 @@ describe("P2.3 U2 ownership escape oracle", () => {
         .map((module) => module.text);
       expect(imports, path).toEqual(expect.arrayContaining(["zustand"]));
       const allowedLeafImports = path === PARSE_OWNER.file
-        ? ["zustand", "zustand/react/shallow", "@/types", "@/lib/parse-operation-state"]
+        ? [
+            "zustand",
+            "zustand/react/shallow",
+            "@/types",
+            "@/lib/parse-operation-state",
+            "@/lib/parse-tool-authority",
+          ]
         : ["zustand", "zustand/react/shallow", "@/types"];
       for (const moduleName of imports) {
         expect(

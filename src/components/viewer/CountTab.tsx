@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useMemo, useCallback, memo } from "react";
-import { useToolStore } from "@/stores/toolStore";
+import {
+  publishSettledActiveTakeoffItemId,
+  useToolStore,
+} from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (both hooks —
@@ -15,6 +18,7 @@ import type { TakeoffShape, ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { SHAPE_ICONS, TakeoffEditPanel } from "./TakeoffShared";
 import TakeoffGroupSection from "./TakeoffGroupSection";
 import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist";
+import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
 
 export default memo(function CountTab() {
   // [refactor jul10 P2.2⑥] Value replacement preserves the existing captured-array lost-update
@@ -66,10 +70,11 @@ export default memo(function CountTab() {
 
   async function handleCreate() {
     if (!formName.trim()) return;
+    invalidateParseToolAuthority();
     if (isDemo) {
       const item = { id: -Date.now(), name: formName.trim(), shape: formShape, color: formColor, size: 10, sortOrder: countItems.length };
       addTakeoffItem(item);
-      setActiveTakeoffItemId(item.id);
+      publishSettledActiveTakeoffItemId(item.id);
       setFormName("");
       setShowForm(false);
       setFormError(null);
@@ -89,7 +94,7 @@ export default memo(function CountTab() {
         setFormName("");
         setShowForm(false);
         setFormError(null);
-        setActiveTakeoffItemId(item.id);
+        publishSettledActiveTakeoffItemId(item.id);
       } else {
         // [refactor jun16 P1.2] read either error envelope (legacy string | {code,message}).
         const err = await res.json().catch(() => null);
@@ -104,17 +109,18 @@ export default memo(function CountTab() {
   }
 
   async function handleDelete(item: ClientTakeoffItem) {
+    invalidateParseToolAuthority();
     if (isDemo) {
       removeTakeoffItem(item.id);
       setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-      if (activeTakeoffItemId === item.id) setActiveTakeoffItemId(null);
+      if (activeTakeoffItemId === item.id) publishSettledActiveTakeoffItemId(null);
       return;
     }
     try {
       await persistFetch(`/api/takeoff-items/${item.id}`, undefined, "DELETE");
       removeTakeoffItem(item.id);
       setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-      if (activeTakeoffItemId === item.id) setActiveTakeoffItemId(null);
+      if (activeTakeoffItemId === item.id) publishSettledActiveTakeoffItemId(null);
     } catch (err) {
       console.error("Failed to delete takeoff item:", err);
       window.alert(`Failed to delete item: ${err instanceof Error ? err.message : "Unknown error"}`);

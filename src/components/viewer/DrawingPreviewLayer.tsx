@@ -9,6 +9,7 @@ import { useUiStore } from "@/stores/uiStore";
 // is CANVAS-ADJACENT: items-key observers re-render only on items CONTENT change (structural
 // sharing) — group writes never reach it (two-hook split, TAKEOFF_IMPL/SPEC.md §2.2/§7.3).
 import { useTakeoffItems } from "@/queries/useTakeoff";
+import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
 import BucketFillAssignDialog from "./BucketFillAssignDialog";
 
 interface DrawingPreviewLayerProps {
@@ -578,8 +579,11 @@ export default memo(function DrawingPreviewLayer({
           }}
         >
           <button
+            onPointerDown={() => invalidateParseToolAuthority()}
+            onKeyDown={() => invalidateParseToolAuthority()}
             onClick={(e) => {
               e.stopPropagation();
+              invalidateParseToolAuthority();
               // Dispatch accept via keyboard event handler (Enter)
               window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
             }}
@@ -597,8 +601,11 @@ export default memo(function DrawingPreviewLayer({
             Accept
           </button>
           <button
+            onPointerDown={() => invalidateParseToolAuthority()}
+            onKeyDown={() => invalidateParseToolAuthority()}
             onClick={(e) => {
               e.stopPropagation();
+              invalidateParseToolAuthority();
               useToolStore.getState().setBucketFillPreview(null);
             }}
             style={{
@@ -634,8 +641,11 @@ export default memo(function DrawingPreviewLayer({
             }}
           >
             <button
+              onPointerDown={() => invalidateParseToolAuthority()}
+              onKeyDown={() => invalidateParseToolAuthority()}
               onClick={(e) => {
                 e.stopPropagation();
+                invalidateParseToolAuthority();
                 window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
               }}
               style={{
@@ -652,8 +662,11 @@ export default memo(function DrawingPreviewLayer({
               Split
             </button>
             <button
+              onPointerDown={() => invalidateParseToolAuthority()}
+              onKeyDown={() => invalidateParseToolAuthority()}
               onClick={(e) => {
                 e.stopPropagation();
+                invalidateParseToolAuthority();
                 useToolStore.getState().setSplitPreview(null);
               }}
               style={{
@@ -758,6 +771,8 @@ export default memo(function DrawingPreviewLayer({
             {bucketFillBarriers.length > 0 ? ` (${bucketFillBarriers.length} drawn)` : ""}
           </span>
           <button
+            onPointerDown={() => invalidateParseToolAuthority()}
+            onKeyDown={() => invalidateParseToolAuthority()}
             onClick={(e) => {
               e.stopPropagation();
               useToolStore.getState().setBucketFillBarrierMode(false);
@@ -801,6 +816,8 @@ export default memo(function DrawingPreviewLayer({
         >
           <span style={{ color: "#67e8f9" }}>Click inside a room to detect</span>
           <button
+            onPointerDown={() => invalidateParseToolAuthority()}
+            onKeyDown={() => invalidateParseToolAuthority()}
             onClick={(e) => {
               e.stopPropagation();
               useToolStore.getState().setBucketFillActive(false);

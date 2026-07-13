@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useToolStore } from "@/stores/toolStore";
+import { publishSettledToolMode, useToolStore } from "@/stores/toolStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import {
   useUiStore,
@@ -24,6 +24,7 @@ import type { ClientAnnotation, YoloTag, Shape } from "@/types";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
 import { apiErrorMessage } from "@/lib/client-persist";
+import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
 import ClassGroupHeader from "./ClassGroupHeader";
 import HelpTooltip from "./HelpTooltip";
 import AnnotationListItem from "./AnnotationListItem";
@@ -860,6 +861,7 @@ export default function DetectionPanel({
                     shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                     return;
                   }
+                  invalidateParseToolAuthority();
                   setShapeSaving(true);
                   shapeParse.setError(null);
                   setShapeSaveSuccess(null);
@@ -909,7 +911,7 @@ export default function DetectionPanel({
                       // Reset the BB draw state so the user can start a new
                       // region without a manual cancel-click.
                       shapeParse.setRegion(null);
-                      setMode("move");
+                      publishSettledToolMode("move");
                       setShapeSaveSuccess(`Saved ${data.annotations.length} annotations`);
                       setTimeout(() => setShapeSaveSuccess(null), 3000);
                     }
@@ -933,6 +935,7 @@ export default function DetectionPanel({
                       shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                       return;
                     }
+                    invalidateParseToolAuthority();
                     // [refactor jul11 P2.2⑥] LOAD-BEARING capture before the request. Save-all
                     // historically retained the pre-await zustand snapshot and therefore dropped a
                     // concurrent annotation on success. Keep that frozen ANNOTATIONS-W1 behavior by
@@ -987,7 +990,7 @@ export default function DetectionPanel({
                         }
                         // Reset BB draw state so the next parse starts fresh.
                         shapeParse.setRegion(null);
-                        setMode("move");
+                        publishSettledToolMode("move");
                         setShapeSaveSuccess(`Saved ${data.annotations.length} across ${allPageNums.length} pages`);
                         setTimeout(() => setShapeSaveSuccess(null), 3000);
                       }

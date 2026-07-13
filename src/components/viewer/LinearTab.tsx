@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useMemo, useCallback, memo } from "react";
-import { useToolStore } from "@/stores/toolStore";
+import {
+  publishSettledActiveTakeoffItemId,
+  useToolStore,
+} from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -14,6 +17,7 @@ import { ColorDot, TakeoffEditPanel } from "./TakeoffShared";
 import CalibrationInput from "./CalibrationInput";
 import TakeoffGroupSection from "./TakeoffGroupSection";
 import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist";
+import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
 
 // ─── Scale status bar (reuse pattern from AreaTab) ──────────
 function ScaleStatus() {
@@ -130,10 +134,11 @@ export default memo(function LinearTab() {
 
   async function handleCreate() {
     if (!formName.trim()) return;
+    invalidateParseToolAuthority();
     if (isDemo) {
       const item = { id: -Date.now(), name: formName.trim(), shape: "linear" as const, color: formColor, size: 10, sortOrder: linearItems.length };
       addTakeoffItem(item as ClientTakeoffItem);
-      setActiveTakeoffItemId(item.id);
+      publishSettledActiveTakeoffItemId(item.id);
       setFormName(""); setShowForm(false); setFormError(null);
       return;
     }
@@ -145,7 +150,7 @@ export default memo(function LinearTab() {
       });
       if (res.ok) {
         const item = await res.json();
-        addTakeoffItem(item); setFormName(""); setShowForm(false); setFormError(null); setActiveTakeoffItemId(item.id);
+        addTakeoffItem(item); setFormName(""); setShowForm(false); setFormError(null); publishSettledActiveTakeoffItemId(item.id);
       } else {
         // [refactor jun16 P1.2] read either error envelope (legacy string | {code,message}).
         const err = await res.json().catch(() => null);
@@ -156,17 +161,18 @@ export default memo(function LinearTab() {
   }
 
   async function handleDelete(item: ClientTakeoffItem) {
+    invalidateParseToolAuthority();
     if (isDemo) {
       removeTakeoffItem(item.id);
       setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-      if (activeTakeoffItemId === item.id) setActiveTakeoffItemId(null);
+      if (activeTakeoffItemId === item.id) publishSettledActiveTakeoffItemId(null);
       return;
     }
     try {
       await persistFetch(`/api/takeoff-items/${item.id}`, undefined, "DELETE");
       removeTakeoffItem(item.id);
       setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-      if (activeTakeoffItemId === item.id) setActiveTakeoffItemId(null);
+      if (activeTakeoffItemId === item.id) publishSettledActiveTakeoffItemId(null);
     } catch (err) {
       console.error("Failed to delete linear item:", err);
       window.alert(`Failed to delete item: ${err instanceof Error ? err.message : "Unknown error"}`);

@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { canPersist, persistFetch } from "@/lib/client-persist";
+import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
 import { queryKeys } from "@/queries/queryKeys";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -121,6 +122,7 @@ function reportPersistCreateError(error: Error, label?: string): void {
 
 /** Hoisted store action: remove the last active-item annotation on the current page. */
 export function takeoffUndo(qc: QueryClient): void {
+  invalidateParseToolAuthority();
   // Identity and tool/page state had one Zustand owner before P2.3. Capture all three new owners in
   // one synchronous block so the cache key and tool/page predicate still describe one key event.
   const sessionSnapshot = useSessionStore.getState();
@@ -156,6 +158,7 @@ export function takeoffUndo(qc: QueryClient): void {
 
 /** Hoisted store action: restore the current undo-stack top at the annotation-array tail. */
 export function takeoffRedo(qc: QueryClient): void {
+  invalidateParseToolAuthority();
   const sessionSnapshot = useSessionStore.getState();
   const toolSnapshot = useToolStore.getState();
   if (toolSnapshot.takeoffUndoStack.length === 0) return;

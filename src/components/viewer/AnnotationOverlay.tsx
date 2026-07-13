@@ -22,7 +22,13 @@ import {
 } from "@/queries/useYoloTags";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useParseFlowStore, useTableParse, useKeynoteParse } from "@/stores/parseFlowStore";
-import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
+import {
+  publishSettledCalibrationReset,
+  publishSettledPolygonReset,
+  publishSettledSymbolSearchActive,
+  useSymbolSearch,
+  useToolStore,
+} from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore, useAnnotationFiltersUi } from "@/stores/uiStore";
 import {
@@ -46,6 +52,7 @@ import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 import { requestMapTagsBatch } from "@/lib/client-map-tags";
+import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
 import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
 import { splitPolygonByLine, findSplittablePolygons } from "@/lib/polygon-split";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
@@ -945,9 +952,12 @@ export default memo(function AnnotationOverlay({
       },
     });
 
-    resetPolygonDrawing();
+    // persistCreate publishes optimistically before its first await; a cache listener can admit a
+    // newer parse during that publication. This older save tail clears its own drawing without
+    // revoking the newer parse's exact global Tool capability.
+    publishSettledPolygonReset();
     setMousePos(null);
-  }, [scaleCalibrations, pageNumber, width, height, publicId, persistCreate, resetPolygonDrawing]);
+  }, [scaleCalibrations, pageNumber, width, height, publicId, persistCreate]);
 
   /** Prepare bucket fill preview for item assignment (doesn't create annotation yet) */
   const prepareBucketFillPolygon = useCallback(() => {
@@ -1198,9 +1208,10 @@ export default memo(function AnnotationOverlay({
       },
     });
 
-    resetPolygonDrawing();
+    // Same synchronous optimistic-publication boundary as savePolygon above.
+    publishSettledPolygonReset();
     setMousePos(null);
-  }, [scaleCalibrations, pageNumber, width, height, publicId, persistCreate, resetPolygonDrawing]);
+  }, [scaleCalibrations, pageNumber, width, height, publicId, persistCreate]);
 
   // Track which corner is being resized: null or "tl"|"tr"|"bl"|"br"
   const [resizeCorner, setResizeCorner] = useState<string | null>(null);
@@ -1298,6 +1309,10 @@ export default memo(function AnnotationOverlay({
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      // Any canvas gesture after a parse admission is newer global-tool intent. Revoke before
+      // reading coordinates so a late Table/Keynote completion cannot clear a vertex, marker,
+      // bucket, split, symbol, markup, selection, or other session this gesture continues.
+      invalidateParseToolAuthority();
       const pos = getPos(e);
 
       // Scale calibration mode
@@ -2391,15 +2406,18 @@ export default memo(function AnnotationOverlay({
         const parse = useParseFlowStore.getState();
         if (tool.splitPreview) {
           // Discard split preview, stay in split mode (line endpoints preserved)
+          invalidateParseToolAuthority();
           tool.setSplitPreview(null);
         } else if (tool.splitAreaActive) {
           // Exit split area mode entirely
           tool.setSplitAreaActive(false);
         } else if (tool.bucketFillPendingPolygon) {
           // Dismiss item assignment dialog
+          invalidateParseToolAuthority();
           tool.setBucketFillPendingPolygon(null);
         } else if (tool.bucketFillPreview) {
           // Cancel bucket fill preview
+          invalidateParseToolAuthority();
           tool.setBucketFillPreview(null);
         } else if (tool.bucketFillBarrierMode) {
           // Exit barrier mode back to fill mode
@@ -2426,12 +2444,15 @@ export default memo(function AnnotationOverlay({
         const store = useToolStore.getState();
         if (store.splitPreview) {
           e.preventDefault();
+          invalidateParseToolAuthority();
           acceptSplit();
         } else if (store.bucketFillPreview) {
           e.preventDefault();
+          invalidateParseToolAuthority();
           prepareBucketFillPolygon();
         } else if (polygonDrawingMode === "drawing") {
           e.preventDefault();
+          invalidateParseToolAuthority();
           const verts = store.polygonVertices;
           // [refactor jul10 P2.2④] items via the cache bridge (was store.takeoffItems). publicId
           // freshness rides this effect's savePolygon/saveLinearPolyline deps (both re-create on
@@ -2458,9 +2479,11 @@ export default memo(function AnnotationOverlay({
         const store = useToolStore.getState();
         if (store.bucketFillActive && store.bucketFillBarriers.length > 0) {
           e.preventDefault();
+          invalidateParseToolAuthority();
           store.undoLastBarrier();
         } else if (polygonDrawingMode === "drawing") {
           e.preventDefault();
+          invalidateParseToolAuthority();
           undoLastVertex();
         }
       }
@@ -2482,6 +2505,7 @@ export default memo(function AnnotationOverlay({
 
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
+        invalidateParseToolAuthority();
         if (canPersist(publicId, isDemo) && selectedId! > 0) {
           const deleteId = selectedId!;
           (async () => {
@@ -2501,6 +2525,7 @@ export default memo(function AnnotationOverlay({
 
       if (e.key === "Enter" && dragging) {
         e.preventDefault();
+        invalidateParseToolAuthority();
         setDragging(false);
         setResizeCorner(null);
         saveDragPosition();
@@ -2515,25 +2540,25 @@ export default memo(function AnnotationOverlay({
   useEffect(() => {
     setSelectedId(null);
     if (polygonDrawingMode === "drawing") {
-      resetPolygonDrawing();
+      publishSettledPolygonReset();
       setMousePos(null);
     }
     if (calibrationMode !== "idle") {
-      resetCalibration();
+      publishSettledCalibrationReset();
     }
     // The global navigation command owns page-operation invalidation before core.setPage.
     // This passive hot-canvas effect must not reset parse data: a new-page B may already have
     // started in a page-store subscriber before React runs this effect.
     const tool = useToolStore.getState();
     if (tool.symbolSearchActive) {
-      tool.setSymbolSearchActive(false);
+      publishSettledSymbolSearchActive(false);
     }
   }, [pageNumber]);
 
   // Exit polygon drawing when switching interaction modes
   useEffect(() => {
     if (polygonDrawingMode === "drawing") {
-      resetPolygonDrawing();
+      publishSettledPolygonReset();
       setMousePos(null);
     }
     if (activeTakeoffItemId !== null) {
@@ -2545,7 +2570,7 @@ export default memo(function AnnotationOverlay({
   // Reset polygon drawing if active item changes
   useEffect(() => {
     if (polygonDrawingMode === "drawing") {
-      resetPolygonDrawing();
+      publishSettledPolygonReset();
       setMousePos(null);
     }
   }, [activeTakeoffItemId]);
@@ -2553,7 +2578,7 @@ export default memo(function AnnotationOverlay({
   // Exit polygon drawing when QTO panel closes
   useEffect(() => {
     if (!showTakeoffPanel && polygonDrawingMode === "drawing") {
-      resetPolygonDrawing();
+      publishSettledPolygonReset();
       setMousePos(null);
     }
   }, [showTakeoffPanel]);

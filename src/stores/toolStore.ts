@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 
+import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
 import type { ClientAnnotation, ScaleCalibrationData, SymbolSearchResult } from "@/types";
 
 // [refactor jul11 P2.3 T2] Mechanically-flat interaction/tool owner. Production consumers read
@@ -171,9 +172,8 @@ export interface ToolStoreActions {
 
 export type ToolStoreState = ToolStoreData & ToolStoreActions;
 
-export const useToolStore = create<ToolStoreState>((set) => ({
-  mode: "move",
-  setMode: (mode) => set({
+function modeDestination(mode: ToolStoreData["mode"]): Partial<ToolStoreData> {
+  return {
     mode,
     activeTakeoffItemId: null,
     polygonDrawingMode: "idle",
@@ -190,31 +190,80 @@ export const useToolStore = create<ToolStoreState>((set) => ({
     splitError: null,
     symbolSearchActive: false,
     tempPanMode: false,
-  }),
-  tempPanMode: false,
-  setTempPanMode: (tempPanMode) => set({ tempPanMode }),
+  };
+}
 
-  activeTakeoffItemId: null,
-  setActiveTakeoffItemId: (activeTakeoffItemId) => set({
+function activeTakeoffDestination(
+  activeTakeoffItemId: number | null,
+): Partial<ToolStoreData> {
+  return {
     activeTakeoffItemId,
     takeoffUndoStack: [],
     takeoffRedoStack: [],
-  }),
+  };
+}
+
+function symbolSearchActiveDestination(
+  symbolSearchActive: boolean,
+): Partial<ToolStoreData> {
+  return symbolSearchActive
+    ? {
+        symbolSearchActive,
+        mode: "move",
+        bucketFillActive: false,
+        bucketFillPreview: null,
+        bucketFillLoading: false,
+        bucketFillBarrierMode: false,
+        splitAreaActive: false,
+        splitLineA: null,
+        splitLineB: null,
+        splitPreview: null,
+        splitError: null,
+      }
+    : { symbolSearchActive };
+}
+
+export const useToolStore = create<ToolStoreState>((set) => ({
+  mode: "move",
+  setMode: (mode) => {
+    invalidateParseToolAuthority();
+    set(modeDestination(mode));
+  },
+  tempPanMode: false,
+  setTempPanMode: (tempPanMode) => {
+    invalidateParseToolAuthority();
+    set({ tempPanMode });
+  },
+
+  activeTakeoffItemId: null,
+  setActiveTakeoffItemId: (activeTakeoffItemId) => {
+    invalidateParseToolAuthority();
+    set(activeTakeoffDestination(activeTakeoffItemId));
+  },
 
   scaleCalibrations: {},
   setScaleCalibration: (pageNum, calibration) => set((state) => ({
     scaleCalibrations: { ...state.scaleCalibrations, [pageNum]: calibration },
   })),
   calibrationMode: "idle",
-  setCalibrationMode: (calibrationMode) => set({ calibrationMode }),
+  setCalibrationMode: (calibrationMode) => {
+    invalidateParseToolAuthority();
+    set({ calibrationMode });
+  },
   calibrationPoints: {},
   setCalibrationPoint: (which, point) => set((state) => ({
     calibrationPoints: { ...state.calibrationPoints, [which]: point },
   })),
-  resetCalibration: () => set({ calibrationMode: "idle", calibrationPoints: {} }),
+  resetCalibration: () => {
+    invalidateParseToolAuthority();
+    set({ calibrationMode: "idle", calibrationPoints: {} });
+  },
 
   polygonDrawingMode: "idle",
-  setPolygonDrawingMode: (polygonDrawingMode) => set({ polygonDrawingMode }),
+  setPolygonDrawingMode: (polygonDrawingMode) => {
+    invalidateParseToolAuthority();
+    set({ polygonDrawingMode });
+  },
   polygonVertices: [],
   addPolygonVertex: (vertex) => set((state) => ({
     polygonVertices: [...state.polygonVertices, vertex],
@@ -222,29 +271,35 @@ export const useToolStore = create<ToolStoreState>((set) => ({
   undoLastVertex: () => set((state) => ({
     polygonVertices: state.polygonVertices.slice(0, -1),
   })),
-  resetPolygonDrawing: () => set({ polygonDrawingMode: "idle", polygonVertices: [] }),
+  resetPolygonDrawing: () => {
+    invalidateParseToolAuthority();
+    set({ polygonDrawingMode: "idle", polygonVertices: [] });
+  },
 
   bucketFillActive: false,
-  setBucketFillActive: (bucketFillActive) => set({
-    bucketFillActive,
-    bucketFillPreview: null,
-    bucketFillLoading: false,
-    bucketFillError: null,
-    bucketFillBarrierMode: false,
-    bucketFillPendingPolygon: null,
-    ...(bucketFillActive
-      ? {
-          mode: "move" as const,
-          splitAreaActive: false,
-          splitLineA: null,
-          splitLineB: null,
-          splitPreview: null,
-          splitError: null,
-          symbolSearchActive: false,
-          tempPanMode: false,
-        }
-      : { bucketFillBarriers: [] }),
-  }),
+  setBucketFillActive: (bucketFillActive) => {
+    invalidateParseToolAuthority();
+    set({
+      bucketFillActive,
+      bucketFillPreview: null,
+      bucketFillLoading: false,
+      bucketFillError: null,
+      bucketFillBarrierMode: false,
+      bucketFillPendingPolygon: null,
+      ...(bucketFillActive
+        ? {
+            mode: "move" as const,
+            splitAreaActive: false,
+            splitLineA: null,
+            splitLineB: null,
+            splitPreview: null,
+            splitError: null,
+            symbolSearchActive: false,
+            tempPanMode: false,
+          }
+        : { bucketFillBarriers: [] }),
+    });
+  },
   bucketFillPreview: null,
   setBucketFillPreview: (bucketFillPreview) => set({ bucketFillPreview }),
   bucketFillLoading: false,
@@ -263,26 +318,29 @@ export const useToolStore = create<ToolStoreState>((set) => ({
   }),
 
   splitAreaActive: false,
-  setSplitAreaActive: (splitAreaActive) => set({
-    splitAreaActive,
-    splitLineA: null,
-    splitLineB: null,
-    splitPreview: null,
-    splitError: null,
-    ...(splitAreaActive
-      ? {
-          mode: "move" as const,
-          bucketFillActive: false,
-          bucketFillPreview: null,
-          bucketFillLoading: false,
-          bucketFillError: null,
-          bucketFillBarrierMode: false,
-          bucketFillBarriers: [],
-          symbolSearchActive: false,
-          activeTakeoffItemId: null,
-        }
-      : {}),
-  }),
+  setSplitAreaActive: (splitAreaActive) => {
+    invalidateParseToolAuthority();
+    set({
+      splitAreaActive,
+      splitLineA: null,
+      splitLineB: null,
+      splitPreview: null,
+      splitError: null,
+      ...(splitAreaActive
+        ? {
+            mode: "move" as const,
+            bucketFillActive: false,
+            bucketFillPreview: null,
+            bucketFillLoading: false,
+            bucketFillError: null,
+            bucketFillBarrierMode: false,
+            bucketFillBarriers: [],
+            symbolSearchActive: false,
+            activeTakeoffItemId: null,
+          }
+        : {}),
+    });
+  },
   splitLineA: null,
   splitLineB: null,
   setSplitLineEndpoint: (which, point) => set(
@@ -302,40 +360,36 @@ export const useToolStore = create<ToolStoreState>((set) => ({
   })),
   clearBucketFillBarriers: () => set({ bucketFillBarriers: [] }),
   bucketFillBarrierMode: false,
-  setBucketFillBarrierMode: (bucketFillBarrierMode) => set({
-    bucketFillBarrierMode,
-    barrierPendingPoint: null,
-  }),
+  setBucketFillBarrierMode: (bucketFillBarrierMode) => {
+    invalidateParseToolAuthority();
+    set({
+      bucketFillBarrierMode,
+      barrierPendingPoint: null,
+    });
+  },
   barrierPendingPoint: null,
   setBarrierPendingPoint: (barrierPendingPoint) => set({ barrierPendingPoint }),
   takeoffUndoStack: [],
   takeoffRedoStack: [],
 
   yoloTagPickingMode: false,
-  setYoloTagPickingMode: (yoloTagPickingMode) => set({ yoloTagPickingMode }),
+  setYoloTagPickingMode: (yoloTagPickingMode) => {
+    invalidateParseToolAuthority();
+    set({ yoloTagPickingMode });
+  },
   tagScanResults: null,
   setTagScanResults: (tagScanResults) => set({ tagScanResults }),
   tagAddingMode: null,
-  setTagAddingMode: (tagAddingMode) => set({ tagAddingMode }),
+  setTagAddingMode: (tagAddingMode) => {
+    invalidateParseToolAuthority();
+    set({ tagAddingMode });
+  },
 
   symbolSearchActive: false,
-  setSymbolSearchActive: (symbolSearchActive) => set(
-    symbolSearchActive
-      ? {
-          symbolSearchActive,
-          mode: "move" as const,
-          bucketFillActive: false,
-          bucketFillPreview: null,
-          bucketFillLoading: false,
-          bucketFillBarrierMode: false,
-          splitAreaActive: false,
-          splitLineA: null,
-          splitLineB: null,
-          splitPreview: null,
-          splitError: null,
-        }
-      : { symbolSearchActive },
-  ),
+  setSymbolSearchActive: (symbolSearchActive) => {
+    invalidateParseToolAuthority();
+    set(symbolSearchActiveDestination(symbolSearchActive));
+  },
   symbolSearchLoading: false,
   setSymbolSearchLoading: (symbolSearchLoading) => set({ symbolSearchLoading }),
   symbolSearchProgress: null,
@@ -380,60 +434,94 @@ export const useToolStore = create<ToolStoreState>((set) => ({
       symbolSearchConfig: { ...state.symbolSearchConfig, ...config },
     }));
   },
-  clearSymbolSearch: () => set({
-    symbolSearchActive: false,
-    symbolSearchLoading: false,
-    symbolSearchProgress: null,
-    symbolSearchResults: null,
-    symbolSearchConfidence: 0.75,
-    dismissedSymbolMatches: new Set<string>(),
-    symbolSearchError: null,
-    symbolSearchTemplateBbox: null,
-    symbolSearchSourcePage: null,
-    symbolSearchConfig: {
-      multiScale: true,
-      useSiftFallback: true,
-      searchPages: null,
-      scaleMin: 0.8,
-      scaleMax: 1.5,
-      nmsThreshold: 0.3,
-      maxMatchesPerPage: 50,
-    },
-  }),
+  clearSymbolSearch: () => {
+    invalidateParseToolAuthority();
+    set({
+      symbolSearchActive: false,
+      symbolSearchLoading: false,
+      symbolSearchProgress: null,
+      symbolSearchResults: null,
+      symbolSearchConfidence: 0.75,
+      dismissedSymbolMatches: new Set<string>(),
+      symbolSearchError: null,
+      symbolSearchTemplateBbox: null,
+      symbolSearchSourcePage: null,
+      symbolSearchConfig: {
+        multiScale: true,
+        useSiftFallback: true,
+        searchPages: null,
+        scaleMin: 0.8,
+        scaleMax: 1.5,
+        nmsThreshold: 0.3,
+        maxMatchesPerPage: 50,
+      },
+    });
+  },
 
-  resetProjectToolState: () => set({
-    tempPanMode: false,
-    activeTakeoffItemId: null,
-    scaleCalibrations: {},
-    calibrationMode: "idle",
-    calibrationPoints: {},
-    polygonDrawingMode: "idle",
-    polygonVertices: [],
-    bucketFillResolution: 1000,
-    yoloTagPickingMode: false,
-    tagScanResults: null,
-    tagAddingMode: null,
-    symbolSearchActive: false,
-    symbolSearchLoading: false,
-    symbolSearchProgress: null,
-    symbolSearchResults: null,
-    symbolSearchConfidence: 0.75,
-    dismissedSymbolMatches: new Set<string>(),
-    symbolSearchError: null,
-    symbolSearchTemplateBbox: null,
-    symbolSearchSourcePage: null,
-    symbolSearchConfig: {
-      multiScale: true,
-      useSiftFallback: true,
-      searchPages: null,
-      scaleMin: 0.8,
-      scaleMax: 1.5,
-      nmsThreshold: 0.3,
-      maxMatchesPerPage: 50,
-    },
-    symbolSearchPreset: "lite",
-  }),
+  resetProjectToolState: () => {
+    invalidateParseToolAuthority();
+    set({
+      tempPanMode: false,
+      activeTakeoffItemId: null,
+      scaleCalibrations: {},
+      calibrationMode: "idle",
+      calibrationPoints: {},
+      polygonDrawingMode: "idle",
+      polygonVertices: [],
+      bucketFillResolution: 1000,
+      yoloTagPickingMode: false,
+      tagScanResults: null,
+      tagAddingMode: null,
+      symbolSearchActive: false,
+      symbolSearchLoading: false,
+      symbolSearchProgress: null,
+      symbolSearchResults: null,
+      symbolSearchConfidence: 0.75,
+      dismissedSymbolMatches: new Set<string>(),
+      symbolSearchError: null,
+      symbolSearchTemplateBbox: null,
+      symbolSearchSourcePage: null,
+      symbolSearchConfig: {
+        multiScale: true,
+        useSiftFallback: true,
+        searchPages: null,
+        scaleMin: 0.8,
+        scaleMax: 1.5,
+        nmsThreshold: 0.3,
+        maxMatchesPerPage: 50,
+      },
+      symbolSearchPreset: "lite",
+    });
+  },
 }));
+
+/**
+ * Legacy async tool settlements may still publish their historical destination, but they are not
+ * a new user gesture and therefore must not revoke a parse admitted after their request began.
+ * Callers must invalidate synchronously at the initiating gesture. These narrow helpers preserve
+ * that ordering without giving passive network callbacks ownership of the global parse tool tail.
+ */
+export function publishSettledToolMode(mode: ToolStoreData["mode"]): void {
+  useToolStore.setState(modeDestination(mode));
+}
+
+export function publishSettledActiveTakeoffItemId(
+  activeTakeoffItemId: number | null,
+): void {
+  useToolStore.setState(activeTakeoffDestination(activeTakeoffItemId));
+}
+
+export function publishSettledCalibrationReset(): void {
+  useToolStore.setState({ calibrationMode: "idle", calibrationPoints: {} });
+}
+
+export function publishSettledPolygonReset(): void {
+  useToolStore.setState({ polygonDrawingMode: "idle", polygonVertices: [] });
+}
+
+export function publishSettledSymbolSearchActive(symbolSearchActive: boolean): void {
+  useToolStore.setState(symbolSearchActiveDestination(symbolSearchActive));
+}
 
 /** Exact legacy 23-member grouped selector; narrowing is a later measured cleanup. */
 export const useSymbolSearch = () => useToolStore(useShallow((state) => ({
