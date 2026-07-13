@@ -6,6 +6,7 @@
  * packed/scanline implementations in the worker.
  */
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   bucketRgbaBinarize,
   bucketRgbaHistogram,
@@ -150,25 +151,44 @@ describe("bucket worker 4000px fast-path parity", () => {
     expect(bucketRgbaHistogram(opaqueNeutral, 257, false))
       .toEqual(rgbaHistogramReference(opaqueNeutral, 257, false));
 
-    const colored = new Uint8ClampedArray(opaqueNeutral);
-    colored[41] ^= 17;
-    colored[4 * 88 + 3] = 127;
-    expect(bucketRgbaHistogram(colored, 257, true))
-      .toEqual(rgbaHistogramReference(colored, 257, true));
+    const opaqueColored = new Uint8ClampedArray(opaqueNeutral);
+    opaqueColored[41] ^= 17;
+    const opaqueColoredHistogram = bucketRgbaHistogram(opaqueColored, 257, true);
+    expect(opaqueColoredHistogram)
+      .toEqual(rgbaHistogramReference(opaqueColored, 257, true));
+    expect(opaqueColoredHistogram.filterSafe).toBe(false);
 
-    const unalignedBacking = new Uint8ClampedArray(colored.length + 1);
-    unalignedBacking.set(colored, 1);
+    const neutralTranslucent = new Uint8ClampedArray(opaqueNeutral);
+    neutralTranslucent[4 * 88 + 3] = 127;
+    const neutralTranslucentHistogram = bucketRgbaHistogram(neutralTranslucent, 257, true);
+    expect(neutralTranslucentHistogram)
+      .toEqual(rgbaHistogramReference(neutralTranslucent, 257, true));
+    expect(neutralTranslucentHistogram.filterSafe).toBe(false);
+
+    const unalignedBacking = new Uint8ClampedArray(opaqueColored.length + 1);
+    unalignedBacking.set(opaqueColored, 1);
     const unaligned = new Uint8ClampedArray(
       unalignedBacking.buffer,
       unalignedBacking.byteOffset + 1,
-      colored.length,
+      opaqueColored.length,
     );
     expect(bucketRgbaHistogram(unaligned, 257, true))
       .toEqual(rgbaHistogramReference(unaligned, 257, true));
+
+    const unalignedTranslucentBacking = new Uint8ClampedArray(neutralTranslucent.length + 1);
+    unalignedTranslucentBacking.set(neutralTranslucent, 1);
+    const unalignedTranslucent = new Uint8ClampedArray(
+      unalignedTranslucentBacking.buffer,
+      unalignedTranslucentBacking.byteOffset + 1,
+      neutralTranslucent.length,
+    );
+    expect(bucketRgbaHistogram(unalignedTranslucent, 257, true))
+      .toEqual(rgbaHistogramReference(unalignedTranslucent, 257, true));
+
     for (const threshold of [0, 37, 127, 254, 255]) {
       const expected = Uint8Array.from({ length: 257 }, (_, index) =>
-        colored[index * 4] > threshold ? 255 : 0);
-      expect(bucketRgbaBinarize(colored, 257, threshold)).toEqual(expected);
+        opaqueColored[index * 4] > threshold ? 255 : 0);
+      expect(bucketRgbaBinarize(opaqueColored, 257, threshold)).toEqual(expected);
       expect(bucketRgbaBinarize(unaligned, 257, threshold)).toEqual(expected);
     }
   });
@@ -259,5 +279,23 @@ describe("bucket worker 4000px fast-path parity", () => {
       (puncturedFlood.maxY - puncturedFlood.minY + 1),
     );
     expect(findHoleBorders(puncturedFlood.filled, w, h)).toHaveLength(1);
+  });
+
+  it("keeps the solid-room shortcut behind both barrier and seed-containment guards", () => {
+    // The representative browser fixture exercises the general punctured-room path. This small
+    // source oracle closes the complementary mutation gap without exporting processFill solely for
+    // tests: a line/polygon barrier or an outside seed must always fall back to the mutated raster.
+    const source = readFileSync("src/workers/bucket-fill.worker.ts", "utf8")
+      .replace(/\s+/g, " ");
+    expect(source).toContain(
+      "const canUseSolidRoomFlood = solidRoom !== null && " +
+      "req.barriers.length === 0 && req.polygonBarriers.length === 0 && " +
+      "seedPx >= solidRoom.minX && seedPx <= solidRoom.maxX && " +
+      "seedPy >= solidRoom.minY && seedPy <= solidRoom.maxY;",
+    );
+    expect(source).toContain(
+      "const flood = canUseSolidRoomFlood ? floodSolidRoomRectangle(solidRoom!, w, h) " +
+      ": floodFill(closed, w, h, seedPx, seedPy);",
+    );
   });
 });
