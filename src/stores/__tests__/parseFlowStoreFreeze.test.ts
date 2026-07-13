@@ -5,7 +5,11 @@
 // parseFlowStore sole owner; old-owner absence is enforced by the phase topology/oracle suite.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useParseFlowStore, type ParseFlowState } from "@/stores/parseFlowStore";
+import {
+  useParseFlowStore,
+  type GuidedParseOwner,
+  type ParseFlowState,
+} from "@/stores/parseFlowStore";
 import {
   PARSE_TEST_ACTION_KEYS,
   PARSE_TEST_STATE_KEYS,
@@ -96,7 +100,8 @@ export const PARSE_ACTION_KEYS = [
 ] as const satisfies readonly (keyof ParseState)[];
 
 /** A2 is additive: keep the characterized 35/41 contract exact as a named legacy subset. */
-const PARSE_OPERATION_DATA_KEYS = [
+const PARSE_ADDITIVE_DATA_KEYS = [
+  "guidedParseOwner",
   "parseOperations",
 ] as const satisfies readonly (keyof ParseState)[];
 
@@ -253,7 +258,7 @@ function expectParseActionsStable(
 
 const PARSE_MUTABLE_DATA_KEY_SET = new Set<string>([
   ...PARSE_DATA_KEYS,
-  ...PARSE_OPERATION_DATA_KEYS,
+  ...PARSE_ADDITIVE_DATA_KEYS,
 ]);
 
 function expectNonDataSurfaceStable(
@@ -348,7 +353,13 @@ describe("P2.4 shared parse boundary and defaults", () => {
     expect(new Set(PARSE_DATA_KEYS).size).toBe(35);
     expect(PARSE_ACTION_KEYS).toHaveLength(41);
     expect(new Set(PARSE_ACTION_KEYS).size).toBe(41);
-    expect(PARSE_TEST_STATE_KEYS).toEqual(PARSE_DATA_KEYS);
+    // The mixed test seam may seed the new shared-workspace owner, but operation registry bytes
+    // remain owner-controlled and are never accepted as setup patches.
+    expect(PARSE_TEST_STATE_KEYS).toEqual([
+      ...PARSE_DATA_KEYS.slice(0, 31),
+      "guidedParseOwner",
+      ...PARSE_DATA_KEYS.slice(31),
+    ]);
     expect(PARSE_TEST_ACTION_KEYS).toEqual(PARSE_ACTION_KEYS);
     expect(PROJECT_PARSE_RETAINED_KEYS).toHaveLength(3);
     expect(RESET_ALL_PARSE_RETAINED_KEYS).toHaveLength(8);
@@ -357,7 +368,7 @@ describe("P2.4 shared parse boundary and defaults", () => {
     expect(Object.entries(state)
       .filter(([, value]) => typeof value !== "function")
       .map(([key]) => key)
-      .sort()).toEqual([...PARSE_DATA_KEYS, ...PARSE_OPERATION_DATA_KEYS].sort());
+      .sort()).toEqual([...PARSE_DATA_KEYS, ...PARSE_ADDITIVE_DATA_KEYS].sort());
     expect(Object.entries(state)
       .filter(([, value]) => typeof value === "function")
       .map(([key]) => key)
@@ -370,6 +381,8 @@ describe("P2.4 shared parse boundary and defaults", () => {
   });
 
   it("freezes every construction default", () => {
+    const guidedOwner: GuidedParseOwner = useParseFlowStore.getInitialState().guidedParseOwner;
+    expect(guidedOwner).toBeNull();
     expect(pickParseData(useParseFlowStore.getInitialState())).toEqual({
       tableParseStep: "idle",
       tableParseRegion: null,
@@ -859,7 +872,10 @@ const RESET_CASES = [
 
 describe("P2.4 shared reset matrices", () => {
   it.each(RESET_CASES)("$name reset touches only its exact matrix and allocates reset containers", ({ action, touched }) => {
-    useParseFlowStore.setState(nonDefaultParsePatch());
+    useParseFlowStore.setState({
+      ...nonDefaultParsePatch(),
+      ...(action === "resetGuidedParse" ? { guidedParseOwner: "table" as const } : {}),
+    });
     const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);
     const initial = useParseFlowStore.getInitialState();
@@ -889,6 +905,7 @@ describe("P2.4 shared reset matrices", () => {
       resetArrays.length,
     );
     expectParseActionsStable(actionsBefore, after);
+    if (action === "resetGuidedParse") expect(after.guidedParseOwner).toBeNull();
     expectNonDataSurfaceStable(before, after, {
       allowOperationChange: action !== "resetGuidedParse",
     });
@@ -916,7 +933,7 @@ describe("P2.4 shared reset matrices", () => {
   });
 
   it("resetAllTools changes exactly 27 parse fields, retains eight references, and publishes five parse resets", () => {
-    useParseFlowStore.setState(nonDefaultParsePatch());
+    useParseFlowStore.setState({ ...nonDefaultParsePatch(), guidedParseOwner: "keynote" });
     const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);
     const initial = useParseFlowStore.getInitialState();
@@ -971,13 +988,14 @@ describe("P2.4 shared reset matrices", () => {
     expect(publications[3].paragraphBatch).toEqual([]);
     expect(publications[3].paragraphBatch).not.toBe(publications[2].paragraphBatch);
     expect(publications[4].guidedParseActive).toBe(false);
+    expect(after.guidedParseOwner).toBeNull();
     expectParseActionsStable(actionsBefore, after);
     expectNonDataSurfaceStable(before, after, { allowOperationChange: true });
     unsubscribe();
   });
 
   it("project reset changes exactly 32 parse fields and retains the three current-policy references", () => {
-    useParseFlowStore.setState(nonDefaultParsePatch());
+    useParseFlowStore.setState({ ...nonDefaultParsePatch(), guidedParseOwner: "notes" });
     const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);
     const initial = useParseFlowStore.getInitialState();
@@ -1008,6 +1026,7 @@ describe("P2.4 shared reset matrices", () => {
     expect(new Set(RESET_ARRAY_KEYS.map((key) => after[key])).size).toBe(
       RESET_ARRAY_KEYS.length,
     );
+    expect(after.guidedParseOwner).toBeNull();
     expectParseActionsStable(actionsBefore, after);
     unsubscribe();
   });

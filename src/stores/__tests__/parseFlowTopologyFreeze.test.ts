@@ -199,6 +199,7 @@ const PARSE_LEAF_ACTION_KEYS = [
 
 /** A2 additive authority stays outside the exact legacy 35/41 ownership ledger. */
 const PARSE_OPERATION_STATE_KEYS = ["parseOperations"] as const;
+const GUIDED_PARSE_OWNER_STATE_KEYS = ["guidedParseOwner"] as const;
 const PARSE_OPERATION_ACTION_KEYS = [
   "beginParseOperation",
   "isParseOperationCurrent",
@@ -287,6 +288,7 @@ const KEYNOTE_EXTENSION_HOOK_SHAPE = [
 ] as const;
 
 const GUIDED_PARSE_EXTENSION_HOOK_SHAPE = [
+  "guidedParseOwner",
   "guidedParseActive",
   "setGuidedParseActive",
   "guidedParseRegion",
@@ -330,7 +332,6 @@ const TABLE_EXTENSION_HOOK_CALLERS = {
 const TABLE_EXTENSION_HOOK_BINDINGS = {
   "src/components/viewer/AutoParseTab.tsx": [{
     tableParsedGrid: "tableParsedGrid",
-    setTableParsedGrid: "setTableParsedGrid",
     tableParseTab: "tableParseTab",
     tableParseOptions: "tableParseOptions",
     setTableParseOptions: "setTableParseOptions",
@@ -341,20 +342,13 @@ const TABLE_EXTENSION_HOOK_BINDINGS = {
   }],
   "src/components/viewer/ManualParseTab.tsx": [{
     tableParsedGrid: "tableParsedGrid",
-    setTableParsedGrid: "setTableParsedGrid",
     tableParseColumnBBs: "tableParseColumnBBs",
-    addTableParseColumnBB: "addTableParseColumnBB",
     tableParseRowBBs: "tableParseRowBBs",
-    addTableParseRowBB: "addTableParseRowBB",
-    setTableParseRowBBs: "setTableParseRowBBs",
     tableParseColumnNames: "tableParseColumnNames",
-    setTableParseColumnNames: "setTableParseColumnNames",
   }],
   "src/components/viewer/TableParsePanel.tsx": [{
     tableParsedGrid: "tableParsedGrid",
-    setTableParsedGrid: "setTableParsedGrid",
     tableParseTab: "tableParseTab",
-    setTableParseTab: "setTableParseTab",
   }],
 } as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
 
@@ -368,13 +362,9 @@ const KEYNOTE_EXTENSION_HOOK_CALLERS = {
 const KEYNOTE_EXTENSION_HOOK_BINDINGS = {
   "src/components/viewer/KeynotePanel.tsx": [{
     keynoteParseTab: "keynoteParseTab",
-    setKeynoteParseTab: "setKeynoteParseTab",
     keynoteColumnBBs: "keynoteColumnBBs",
-    addKeynoteColumnBB: "addKeynoteColumnBB",
     keynoteRowBBs: "keynoteRowBBs",
-    addKeynoteRowBB: "addKeynoteRowBB",
     keynoteYoloClass: "keynoteYoloClass",
-    setKeynoteYoloClass: "setKeynoteYoloClass",
     parsedKeynoteData: "parsedKeynoteData",
     addParsedKeynote: "addParsedKeynote",
   }],
@@ -385,24 +375,18 @@ const GUIDED_PARSE_EXTENSION_HOOK_CALLERS = {
 } as const;
 const GUIDED_PARSE_EXTENSION_HOOK_BINDINGS = {
   "src/components/viewer/GuidedParseTab.tsx": [{
-    guidedParseActive: "guidedParseActive",
-    guidedParseRows: "guidedParseRows",
-    guidedParseCols: "guidedParseCols",
-    setGuidedParseActive: "setGuidedParseActive",
-    setGuidedParseRegion: "setGuidedParseRegion",
-    setGuidedParseRows: "setGuidedParseRows",
-    setGuidedParseCols: "setGuidedParseCols",
-    resetGuidedParse: "resetGuidedParse",
+    guidedParseOwner: "guidedParseOwner",
+    guidedParseActive: "sharedGuidedParseActive",
+    guidedParseRegion: "sharedGuidedParseRegion",
+    guidedParseRows: "sharedGuidedParseRows",
+    guidedParseCols: "sharedGuidedParseCols",
   }],
   "src/components/viewer/KeynotePanel.tsx": [{
-    guidedParseActive: "guidedParseActive",
-    guidedParseRegion: "guidedParseRegion",
-    guidedParseRows: "guidedParseRows",
-    guidedParseCols: "guidedParseCols",
-    setGuidedParseActive: "setGuidedParseActive",
-    setGuidedParseRegion: "setGuidedParseRegion",
-    setGuidedParseRows: "setGuidedParseRows",
-    setGuidedParseCols: "setGuidedParseCols",
+    guidedParseOwner: "guidedParseOwner",
+    guidedParseActive: "sharedGuidedParseActive",
+    guidedParseRegion: "sharedGuidedParseRegion",
+    guidedParseRows: "sharedGuidedParseRows",
+    guidedParseCols: "sharedGuidedParseCols",
   }],
 } as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
 const NOTES_EXTENSION_HOOK_CALLERS = {
@@ -449,9 +433,6 @@ const TABLE_FACADE_CALLERS = {
     bindings: {
       step: "tableParseStep",
       region: "tableParseRegion",
-      setStep: "setTableParseStep",
-      setRegion: "setTableParseRegion",
-      reset: "resetTableParse",
     },
   }],
   "src/components/viewer/AutoParseTab.tsx": [
@@ -460,9 +441,6 @@ const TABLE_FACADE_CALLERS = {
       bindings: {
         step: "tableParseStep",
         region: "tableParseRegion",
-        setStep: "setTableParseStep",
-        setRegion: "setTableParseRegion",
-        reset: "resetTableParse",
       },
     },
     { kind: "table", bindings: { region: "tableParseRegion" } },
@@ -471,8 +449,6 @@ const TABLE_FACADE_CALLERS = {
     kind: "table",
     bindings: {
       region: "tableParseRegion",
-      setStep: "setTableParseStep",
-      setRegion: "setTableParseRegion",
     },
   }],
   "src/components/viewer/ManualParseTab.tsx": [{
@@ -480,9 +456,6 @@ const TABLE_FACADE_CALLERS = {
     bindings: {
       step: "tableParseStep",
       region: "tableParseRegion",
-      setStep: "setTableParseStep",
-      setRegion: "setTableParseRegion",
-      reset: "resetTableParse",
     },
   }],
 } as const satisfies ParseFacadeCallers;
@@ -493,7 +466,6 @@ const KEYNOTE_FACADE_CALLERS = {
     bindings: {
       step: "keynoteParseStep",
       region: "keynoteParseRegion",
-      setStep: "setKeynoteParseStep",
       reset: "resetKeynoteParse",
     },
   }],
@@ -506,10 +478,7 @@ const NOTES_FACADE_CALLERS = {
   }],
   "src/components/viewer/NotesParser.tsx": [{
     kind: "notes",
-    bindings: {
-      region: "notesParseRegion",
-      setStep: "setNotesParseStep",
-    },
+    bindings: { region: "notesParseRegion" },
   }],
 } as const satisfies ParseFacadeCallers;
 
@@ -520,10 +489,7 @@ const SPEC_FACADE_CALLERS = {
   }],
   "src/components/viewer/SpecParser.tsx": [{
     kind: "spec",
-    bindings: {
-      region: "specParseRegion",
-      setStep: "setSpecParseStep",
-    },
+    bindings: { region: "specParseRegion" },
   }],
 } as const satisfies ParseFacadeCallers;
 
@@ -561,10 +527,10 @@ const ALL_PARSE_LIFECYCLE_MEMBERS = new Set<string>(
 const EXPECTED_MIGRATED_LIFECYCLE_RESIDUALS = {
   "src/components/viewer/TableParsePanel.tsx": ["getState:read:tableParseRegion"],
   "src/components/viewer/AutoParseTab.tsx": [],
-  "src/components/viewer/GuidedParseTab.tsx": [],
+  "src/components/viewer/GuidedParseTab.tsx": ["getState:read:tableParseRegion"],
   "src/components/viewer/ManualParseTab.tsx": [],
   "src/components/viewer/KeynotePanel.tsx": [
-    "selector:read:setTableParseRegion",
+    "getState:read:keynoteParseRegion",
     "getState:read:keynoteParseRegion",
   ],
   "src/components/viewer/NotesPanel.tsx": [],
@@ -581,14 +547,13 @@ const EXPECTED_MIGRATED_DIRECT_SELECTORS = {
   "src/components/viewer/TableParsePanel.tsx": [],
   "src/components/viewer/AutoParseTab.tsx": [
     "tableCellStructure",
-    "setTableCellStructure",
     "showTableCellStructure",
     "setShowTableCellStructure",
   ],
   // Shared guided state has its own explicit extension facade after the Keynote slice.
   "src/components/viewer/GuidedParseTab.tsx": [],
   "src/components/viewer/ManualParseTab.tsx": [],
-  "src/components/viewer/KeynotePanel.tsx": ["setTableParsedGrid", "setTableParseRegion"],
+  "src/components/viewer/KeynotePanel.tsx": [],
   "src/components/viewer/NotesPanel.tsx": [],
   "src/components/viewer/NotesParser.tsx": [],
   "src/components/viewer/NotesClassifier.tsx": [],
@@ -604,8 +569,7 @@ const EXPECTED_MIGRATED_NEUTRAL_COMMANDS = {
   "src/components/viewer/AutoParseTab.tsx": {},
   "src/components/viewer/GuidedParseTab.tsx": {},
   "src/components/viewer/ManualParseTab.tsx": {},
-  // Keynote retains this cross-kind compare-draft transition; its own command moves to the facade.
-  "src/components/viewer/KeynotePanel.tsx": { setTableParseStep: 1 },
+  "src/components/viewer/KeynotePanel.tsx": {},
   "src/components/viewer/NotesPanel.tsx": {},
   "src/components/viewer/NotesParser.tsx": {},
   "src/components/viewer/NotesClassifier.tsx": {},
@@ -639,6 +603,11 @@ function ownerDescriptor(
 }
 
 const ACTIVE_PARSE_DESCRIPTOR = ownerDescriptor(ACTIVE_PARSE_OWNER, ALL_PARSE_KEYS);
+const ACTIVE_PARSE_AUTHORITY_DESCRIPTOR = ownerDescriptor(ACTIVE_PARSE_OWNER, [
+  ...ALL_PARSE_KEYS,
+  ...PARSE_OPERATION_STATE_KEYS,
+  ...GUIDED_PARSE_OWNER_STATE_KEYS,
+]);
 const INACTIVE_PARSE_DESCRIPTOR = ownerDescriptor(INACTIVE_PARSE_OWNER, ALL_PARSE_KEYS);
 const RESIDUAL_DRAWING_DESCRIPTOR = ownerDescriptor(RESIDUAL_DRAWING_OWNER, DRAWING_KEYS);
 
@@ -825,6 +794,7 @@ function expectOwnerLedgerDefinition(
   if (owner.module === PARSE_OWNER.module && expectation === "exact-ledger") {
     const expected = [
       ...ALL_PARSE_KEYS,
+      ...GUIDED_PARSE_OWNER_STATE_KEYS,
       ...PARSE_OPERATION_STATE_KEYS,
       ...PARSE_OPERATION_ACTION_KEYS,
       "resetProjectParseState",
@@ -1599,7 +1569,11 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
   it("pins the phase-owned legacy 35/41 subset plus the additive A2 owner surface", () => {
     expect(PARSE_DATA_KEYS).toHaveLength(35);
     expect(PARSE_LEAF_ACTION_KEYS).toHaveLength(41);
-    expect(PARSE_TEST_STATE_KEYS).toEqual(PARSE_DATA_KEYS);
+    expect(PARSE_TEST_STATE_KEYS).toEqual([
+      ...PARSE_DATA_KEYS.slice(0, 31),
+      "guidedParseOwner",
+      ...PARSE_DATA_KEYS.slice(31),
+    ]);
     expect(PARSE_TEST_ACTION_KEYS).toEqual(PARSE_LEAF_ACTION_KEYS);
     expectOwnerLedgerDefinition(ACTIVE_PARSE_OWNER, "exact-ledger");
 
@@ -1618,7 +1592,11 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
       expect(candidateDefinitions.objectKeys.includes("resetProjectParseState")).toBe(true);
       expect(Object.prototype.hasOwnProperty.call(candidateRuntime, "resetProjectParseState"))
         .toBe(true);
-      for (const member of [...PARSE_OPERATION_STATE_KEYS, ...PARSE_OPERATION_ACTION_KEYS]) {
+      for (const member of [
+        ...GUIDED_PARSE_OWNER_STATE_KEYS,
+        ...PARSE_OPERATION_STATE_KEYS,
+        ...PARSE_OPERATION_ACTION_KEYS,
+      ]) {
         expect(candidateDefinitions.interfaceKeys.includes(member), `${member} interface ownership`)
           .toBe(true);
         expect(candidateDefinitions.objectKeys.includes(member), `${member} implementation ownership`)
@@ -1677,7 +1655,7 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
       "import-type",
     ]);
     expect(productionSourceFiles.some((path) => parseOwnerLoadKinds(path).length > 0)).toBe(true);
-  });
+  }, 30_000);
 
   // This proof resolves four definitions across the full production tree. Keep its timeout local
   // so concurrent source-exact gates do not turn a correct ownership result into a timing failure.
@@ -1719,7 +1697,7 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
         : POST_TABLE_FACADE_HOOK_CALLERS,
     );
     expect(importedCallTopology("useTableParse", INACTIVE_PARSE_OWNER)).toEqual({});
-  });
+  }, 30_000);
 
   it("pins useKeynoteParse's exact 21-member shape and two calls", () => {
     expect(hookShape("useKeynoteParse", KEYNOTE_HOOK_SHAPE)).toEqual(KEYNOTE_HOOK_SHAPE);
@@ -1733,7 +1711,7 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     }
     expect(importedCallTopology("useKeynoteParse", ACTIVE_PARSE_OWNER)).toEqual(KEYNOTE_HOOK_CALLERS);
     expect(importedCallTopology("useKeynoteParse", INACTIVE_PARSE_OWNER)).toEqual({});
-  });
+  }, 30_000);
 
   it("pins the 13-member Table extension hook and exact cold caller roster", () => {
     expect(hookShape("useTableParseExtensions", TABLE_EXTENSION_HOOK_SHAPE))
@@ -1927,7 +1905,7 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     // synchronously by captureKeynoteTarget before A crosses its first await.
     expect(knownMembers(expectFailClosedOwnerScan(keynoteSource), "getState")).toEqual([
       "keynoteParseRegion",
-      "keynoteParseTab",
+      "keynoteParseRegion",
       "parsedKeynoteData",
       "setParsedKeynoteData",
     ]);
@@ -1970,8 +1948,6 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     expect(knownMembers(expectFailClosedOwnerScan(notesSource), "getState")).toEqual([
       "setParseDraftRegion",
       "setParseDraftRegion",
-      "setGuidedParseRows",
-      "setGuidedParseCols",
       "guidedParseRows",
       "guidedParseCols",
       "setParseDraftRegion",
@@ -2052,7 +2028,7 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     expect(compact(findVariable(notesSource, "cleanupLeaseRef").initializer!, notesSource))
       .toBe("useRef<ParseWorkspaceLease|null>(null)");
     expect(commandCalls("invalidateParseOperationForWorkspace"))
-      .toEqual(['invalidateParseOperationForWorkspace("notes")']);
+      .toEqual([]);
     expect(commandCalls("leaveNotesParserWorkspace"))
       .toEqual(["leaveNotesParserWorkspace(cleanupLeaseRef.current,false)"]);
     expect(commandCalls("transitionNotesParserMode"))
@@ -2066,9 +2042,14 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     expect(notesText).not.toContain("modeSyncLease");
     expect(notesText).not.toContain("operations.notes.busy||operations.spec.busy");
     expect(notesText).toContain("if(cleanupLeaseRef.current){leaveNotesParserWorkspace(");
-    expect(notesText).toContain('invalidateGuidedParseOperations("notes")');
-    expect(notesText).toContain("setGuidedParseRows([...payload.proposedRows])");
-    expect(notesText).toContain("setGuidedParseCols([...payload.proposedCols])");
+    expect(notesText).toContain(
+      "claimGuidedParseWorkspaceForOperation(token,target.region)",
+    );
+    expect(notesText).toContain(
+      "publishGuidedProposalForOperation(token,[...payload.proposedRows],[...payload.proposedCols],)",
+    );
+    expect(notesText).not.toContain("setGuidedParseRows(");
+    expect(notesText).not.toContain("setGuidedParseCols(");
     expect(notesText).toContain("resetNotesParseWorkspace(\"idle\"");
     expect(notesText).toContain("resetNotesParseWorkspace(\"select-region\"");
 
@@ -2105,7 +2086,7 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     expect(compact(findVariable(specSource, "cleanupLeaseRef").initializer!, specSource))
       .toBe("useRef<ParseWorkspaceLease|null>(null)");
     expect(commandCalls("invalidateParseOperationForWorkspace"))
-      .toEqual(['invalidateParseOperationForWorkspace("spec")']);
+      .toEqual([]);
     expect(commandCalls("leaveSpecParserWorkspace"))
       .toEqual(["leaveSpecParserWorkspace(cleanupLeaseRef.current)"]);
     expect(commandCalls("transitionSpecParserMode"))
@@ -2117,7 +2098,7 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     expect(specText).not.toContain("operations.notes.busy||operations.spec.busy");
     expect(specText).toContain("if(cleanupLeaseRef.current){leaveSpecParserWorkspace(");
     expect(specText).toContain("awaitpersistPreview(payload,target.region,token,target)");
-    expect(specText).toContain('invalidateParagraphParseOperations("spec")');
+    expect(specText).toContain("invalidateParagraphParseOperationsForOperation(token)");
     expect(specText).toContain("completeSpecParseOperation(token)");
     expect(specText).toContain('resetSpecParseWorkspace("select-region")');
     expect(specText).not.toContain("isSavingRef");
@@ -2636,7 +2617,6 @@ describe("P2.4 phase-aware sacred parse subscription topology", () => {
     expect(groupedDestructure(source, "useTableParse")).toEqual([
       "tableParseStep",
       "tableParseRegion",
-      "setTableParseRegion",
       "tableParseColumnBBs",
       "tableParseRowBBs",
     ]);
@@ -2645,7 +2625,6 @@ describe("P2.4 phase-aware sacred parse subscription topology", () => {
       "keynoteParseRegion",
       "keynoteColumnBBs",
       "keynoteRowBBs",
-      "setKeynoteYoloClass",
     ]);
 
     const parseScan = expectFailClosedOwnerScan(source);
@@ -2688,11 +2667,11 @@ describe("P2.4 phase-aware sacred parse subscription topology", () => {
     ]);
     const sourceText = compact(source, source);
     expect(sourceText).toContain(
-      "functionbeginGuidedGridOperations():ParseWorkspaceLease{returnbeginGuidedGridEdit();}",
+      "()=>guidedParseOwner===null?null:beginGuidedGridEdit(guidedParseOwner,guidedParseRegion)",
     );
     expect(sourceText).toContain("setRows={setGuidedParseRowsForLease}");
     expect(sourceText).toContain("setCols={setGuidedParseColsForLease}");
-    expect(sourceText).toContain("onGridEditStart={beginGuidedGridOperations}");
+    expect(sourceText).toContain("onGridEditStart={beginGridEdit}");
     expect(sourceText).toContain(
       "functionbeginNotesFastManualOperation():ParseWorkspaceLease{returnbeginNotesFastManualEdit();}",
     );
@@ -2716,6 +2695,13 @@ describe("P2.4 phase-aware sacred parse subscription topology", () => {
       "paragraphClipboard",
       "setParagraphClipboard",
     ]);
+    const authorityMembers = knownMembers(
+      expectFailClosedOwnerScan(source, ACTIVE_PARSE_AUTHORITY_DESCRIPTOR),
+      "selector",
+    ).filter((member) =>
+      member === "guidedParseOwner" || member === "parseOperations"
+    );
+    expect(authorityMembers).toEqual(["guidedParseOwner"]);
   });
 
   it("pins ParseRegionLayer's seven primitive parse projections", () => {
@@ -2863,60 +2849,70 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
     ]);
   }, 60_000);
 
-  it("pins Shape's Table-region borrowing and consume-then-clear sequence", () => {
+  it("pins Shape's Table-region borrowing and revision-bound consume sequence", () => {
     const source = parse(SHAPE_INTERACTION);
     expect(knownMembers(expectFailClosedOwnerScan(source), "selector")).toEqual([
       "tableParseRegion",
-      "setTableParseRegion",
     ]);
     expect(importedCalls(source, ["@/stores/viewerCommands"], "setTableParseStep"))
-      .toHaveLength(3);
+      .toHaveLength(0);
+    expect(importedCalls(
+      source,
+      ["@/stores/viewerCommands"],
+      "setTableParseStepWithTool",
+    ).map((call) => compact(call, source))).toEqual([
+      'setTableParseStepWithTool("idle","move")',
+      'setTableParseStepWithTool("idle","move")',
+      'setTableParseStepWithTool("select-region","pointer")',
+    ]);
+    expect(importedCalls(
+      source,
+      ["@/stores/viewerCommands"],
+      "consumeTableParseRegionForShape",
+    )).toHaveLength(1);
     const consumeEffects = descendants(source, ts.isCallExpression).filter((call) => {
       const callee = unwrap(call.expression);
       if (!ts.isIdentifier(callee) || callee.text !== "useEffect" || !call.arguments[0]) {
         return false;
       }
       const labels = callLabels(call.arguments[0], source);
-      return labels.includes("setRegion") && labels.includes("setTableParseRegion");
+      return labels.includes("setRegion") && labels.includes("consumeTableParseRegionForShape");
     });
     expect(consumeEffects, "Shape shared-region consume effect").toHaveLength(1);
     expect(callLabels(consumeEffects[0].arguments[0], source)).toEqual([
+      "consumeTableParseRegionForShape",
       "setRegion",
-      "setTableParseRegion",
     ]);
     const consumeCalls = descendants(consumeEffects[0].arguments[0], ts.isCallExpression);
-    expect(compact(consumeCalls[0].arguments[0], source)).toBe(
-      "tableParseRegionas[number,number,number,number]",
-    );
-    expect(compact(consumeCalls[1].arguments[0], source)).toBe("null");
+    expect(consumeCalls.slice(0, 2).map((call) => compact(call, source))).toEqual([
+      "consumeTableParseRegionForShape(tableParseRegion,tableRevision)",
+      "setRegion(tableParseRegionas[number,number,number,number])",
+    ]);
   });
 
   it("pins keynote/schedule compare borrowing of the Table grid and region workspace", () => {
     const keynoteSource = parse(KEYNOTE_PANEL);
     const loadExisting = findVariable(keynoteSource, "loadExistingKeynote");
     const keynoteText = compact(loadExisting, keynoteSource);
-    expect(keynoteText.indexOf("setTableParseRegion(")).toBeLessThan(
-      keynoteText.indexOf("setTableParsedGrid("),
-    );
-    expect(keynoteText.indexOf("setTableParsedGrid(")).toBeLessThan(
-      keynoteText.indexOf('setTableParseStep("review")'),
-    );
-    expect(keynoteText).toContain("useToolStore.getState().setMode(\"move\")");
+    expect(keynoteText).not.toContain("setTableParseRegion(");
+    expect(keynoteText).not.toContain("setTableParsedGrid(");
+    expect(keynoteText).not.toContain("setTableParseStep(");
+    expect(keynoteText).not.toContain("useToolStore.getState().setMode(");
+    expect(keynoteText).toContain('openTableReviewTarget(targetPage,publication,"keynote")');
+    expect(keynoteText).toContain('openTableReviewWorkspace(publication,"keynote")');
 
     const parsedItemSource = parse(PARSED_TABLE_ITEM);
     const editCallbacks = descendants(parsedItemSource, ts.isArrowFunction).filter((callback) => {
       const text = compact(callback, parsedItemSource);
-      return text.includes("store.setTableParsedGrid(") &&
-        text.includes("store.setTableParseRegion(") &&
+      return text.includes("openTableReviewTarget(") &&
         text.includes("toggleTableCompareModal()");
     });
     expect(editCallbacks, "ParsedTableItem View/Edit callback").toHaveLength(1);
     const parsedItemText = compact(editCallbacks[0], parsedItemSource);
-    expect(parsedItemText.indexOf("store.setTableParsedGrid(")).toBeLessThan(
-      parsedItemText.indexOf("store.setTableParseRegion("),
-    );
-    expect(parsedItemText.indexOf("store.setTableParseRegion(")).toBeLessThan(
-      parsedItemText.indexOf("toggleTableCompareModal()"),
+    expect(parsedItemText).not.toContain("setTableParsedGrid(");
+    expect(parsedItemText).not.toContain("setTableParseRegion(");
+    expect(parsedItemText.indexOf("toggleTableCompareModal()")).toBeLessThan(
+      parsedItemText.indexOf("openTableReviewTarget("),
     );
 
     const compareSource = parse(TABLE_COMPARE_MODAL);

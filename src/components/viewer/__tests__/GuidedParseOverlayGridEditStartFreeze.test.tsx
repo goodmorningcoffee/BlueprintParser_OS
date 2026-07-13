@@ -12,6 +12,7 @@ const LEASE: ParseWorkspaceLease = {
   keynoteRevision: 12,
   notesRevision: 13,
   specRevision: 14,
+  guidedOwner: "keynote",
 };
 
 function noopContext(): CanvasRenderingContext2D {
@@ -110,5 +111,17 @@ describe("A2c GuidedParseOverlay grid edit authority", () => {
     expect(props.onGridEditStart).toHaveBeenCalledTimes(2);
     expect(props.setCols).toHaveBeenCalledWith([0.3, 0.2], LEASE);
     expect(props.setRows).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start a drag or publish stale geometry when the rendered owner loses authority", () => {
+    const { canvas, props } = renderOverlay({ onGridEditStart: vi.fn(() => null) });
+
+    fireEvent.mouseDown(canvas, { clientX: 30, clientY: 50 });
+    fireEvent.mouseMove(window, { clientX: 40, clientY: 50 });
+    fireEvent.doubleClick(canvas, { clientX: 50, clientY: 20 });
+
+    expect(props.onGridEditStart).toHaveBeenCalledTimes(2);
+    expect(props.setRows).not.toHaveBeenCalled();
+    expect(props.setCols).not.toHaveBeenCalled();
   });
 });

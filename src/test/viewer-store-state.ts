@@ -202,6 +202,7 @@ export const PARSE_TEST_STATE_KEYS = [
   "paragraphOverlayActive",
   "paragraphBatch",
   "paragraphClipboard",
+  "guidedParseOwner",
   "guidedParseActive",
   "guidedParseRegion",
   "guidedParseRows",

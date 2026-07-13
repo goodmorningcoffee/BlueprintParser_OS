@@ -15,11 +15,11 @@ import {
 import { useToolStore } from "@/stores/toolStore";
 import {
   completeSpecParseOperation,
-  invalidateParseOperationForWorkspace,
-  invalidateParagraphParseOperations,
+  invalidateParagraphParseOperationsForOperation,
   leaveSpecParserWorkspace,
   removeParagraphForUser,
   resetSpecParseWorkspace,
+  setSpecParseStepWithTool,
   setParagraphBatchForUser,
   transitionSpecParserMode,
   upsertParagraphForUser,
@@ -92,10 +92,7 @@ export default function SpecParser() {
   const isDemo = useSessionStore((s) => s.isDemo);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
 
-  const {
-    region: specParseRegion,
-    setStep: setSpecParseStep,
-  } = useParseFlow("spec");
+  const { region: specParseRegion } = useParseFlow("spec");
   const specOperation = useParseOperation("spec");
   const {
     paragraphBatch,
@@ -109,12 +106,6 @@ export default function SpecParser() {
   const saving = specOperation.busy && savingRevision === specOperation.revision;
   const cleanupLeaseRef = useRef<ParseWorkspaceLease | null>(null);
 
-  const operationPageRef = useRef(pageNumber);
-  useEffect(() => {
-    if (operationPageRef.current === pageNumber) return;
-    operationPageRef.current = pageNumber;
-    cleanupLeaseRef.current = invalidateParseOperationForWorkspace("spec");
-  }, [pageNumber]);
   useEffect(() => () => {
     if (cleanupLeaseRef.current) {
       leaveSpecParserWorkspace(cleanupLeaseRef.current);
@@ -138,10 +129,10 @@ export default function SpecParser() {
     if (started.status !== "started") return;
     const token = started.token;
     try {
-      const workspaceLease = invalidateParagraphParseOperations("spec");
-      if (!specOperation.isCurrent(token)) return;
-      cleanupLeaseRef.current = workspaceLease;
+      const workspaceLease = invalidateParagraphParseOperationsForOperation(token);
+      if (!workspaceLease) return;
       if (!commitParseOperation(token, () => {
+        cleanupLeaseRef.current = workspaceLease;
         setLoadingRevision(token.revision);
         setSavingRevision(null);
         setError(null);
@@ -210,10 +201,10 @@ export default function SpecParser() {
     if (!token) return false;
     try {
       if (ownsToken) {
-        const workspaceLease = invalidateParagraphParseOperations("spec");
-        if (!specOperation.isCurrent(token)) return false;
-        cleanupLeaseRef.current = workspaceLease;
+        const workspaceLease = invalidateParagraphParseOperationsForOperation(token);
+        if (!workspaceLease) return false;
         if (!commitParseOperation(token, () => {
+          cleanupLeaseRef.current = workspaceLease;
           setSavingRevision(token.revision);
           setLoadingRevision(null);
           setError(null);
@@ -275,10 +266,10 @@ export default function SpecParser() {
     if (started.status !== "started") return;
     const token = started.token;
     try {
-      const workspaceLease = invalidateParagraphParseOperations("spec");
-      if (!specOperation.isCurrent(token)) return;
-      cleanupLeaseRef.current = workspaceLease;
+      const workspaceLease = invalidateParagraphParseOperationsForOperation(token);
+      if (!workspaceLease) return;
       if (!commitParseOperation(token, () => {
+        cleanupLeaseRef.current = workspaceLease;
         setSavingRevision(token.revision);
         setLoadingRevision(null);
         setError(null);
@@ -392,8 +383,7 @@ export default function SpecParser() {
           {!regionReady ? (
             <button
               onClick={() => {
-                setSpecParseStep("select-region");
-                useToolStore.getState().setMode("pointer");
+                setSpecParseStepWithTool("select-region", "pointer");
               }}
               className="text-[10px] px-2 py-0.5 rounded border border-violet-500/40 text-violet-300 hover:bg-violet-500/10"
             >

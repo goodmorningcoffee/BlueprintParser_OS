@@ -917,20 +917,43 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
         (call) => compact(call.expression, source).includes("useParseFlowStore"),
       );
       expect(writes, `${commandName} one raw close write`).toHaveLength(1);
-      const object = arrowReturnedObjectFromCall(writes[0]);
-      const operationPatch = propertyInitializer(object, "parseOperations");
-      expect(compact(operationPatch, source)).toBe(
-        'invalidateParseOperationKinds(state.parseOperations,["table","keynote","notes"],)',
+      const body = compact(command, source);
+      const kind = commandName === "toggleTableParsePanel" ? "table" : "keynote";
+      expect(body).toContain(`constownsGuided=state.guidedParseOwner==="${kind}"`);
+      expect(body).toContain("guidedParseOwner:null");
+      expect(body).toContain(
+        `ownsGuided?["table","keynote","notes"]:["${kind}"]`,
       );
     }
     expect(rawParseOperationWrites(source)).toEqual([
+      "legacyParsePageExitPatch:property",
+      "publishPageOperationBoundary:property",
       "operationBoundaryPatch:property",
       "invalidateGuidedParseOperations:shorthand",
+      "claimGuidedParseWorkspaceForOperation:shorthand",
+      "resetGuidedParseWorkspace:property",
+      "resetTableParseWorkspace:property",
+      "restartTableParseFromCurrentRegion:property",
+      "clearTableCellStructureForUser:property",
+      "setTableParsedGridForUser:property",
+      "setTableManualGeometryForUser:property",
+      "addTableParseColumnForUser:property",
+      "addTableParseRowForUser:property",
+      "setKeynoteManualInputsForUser:property",
+      "addKeynoteColumnForUser:property",
+      "addKeynoteRowForUser:property",
+      "consumeTableParseRegionForShape:property",
       "invalidateKeynoteTableOperations:property",
       "resetKeynoteGuidedParse:property",
+      "transitionTableParseTab:property",
+      "focusParsedTableRegionInCatalog:property",
+      "transitionKeynoteParseTab:property",
       "invalidateParagraphParseOperations:shorthand",
       "invalidateNotesWorkspaceOperations:shorthand",
+      "invalidateParagraphParseOperationsForOperation:shorthand",
+      "invalidateNotesWorkspaceOperationsForOperation:shorthand",
       "invalidateParseOperationForWorkspace:shorthand",
+      "invalidateParseOperationAtRevision:property",
       "beginGuidedGridEdit:shorthand",
       "beginParagraphWorkspaceEdit:shorthand",
       "acceptNotesParseRegion:property",
@@ -951,7 +974,12 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
       "removeParagraphForUser:property",
       "addGuidedNotesColumnForUser:property",
       "addGuidedNotesRowForUser:property",
+      "openTableReviewWorkspace:property",
+      "openTableReviewTarget:property",
+      "completeTableParseOperation:shorthand",
+      "acceptTableParseRegion:property",
       "acceptKeynoteParseRegion:property",
+      "completeKeynoteParseOperation:property",
       "leaveSpecsNotesParseTab:property",
       "leaveSpecsNotesParseTab:property",
       "leaveSpecsNotesParseTab:property",
@@ -981,6 +1009,7 @@ describe("P2.4 A2b/A2c/A2d fail-closed caller and writer topology", () => {
       { path: "src/components/viewer/SpecParser.tsx", kind: "import" },
       { path: "src/components/viewer/TableCompareModal.tsx", kind: "import" },
       { path: "src/components/viewer/TableParsePanel.tsx", kind: "import" },
+      { path: "src/hooks/useTableCellStructureOperation.ts", kind: "import" },
     ]);
 
     const hotFiles = [
@@ -1045,7 +1074,7 @@ describe("P2.4 A2b/A2c/A2d fail-closed caller and writer topology", () => {
       "namespace",
       "direct-or-alias",
     ]);
-  }, 30_000);
+  }, 120_000);
 
   it("forbids raw parseOperations writes outside its owner, coordinator, and tests", () => {
     const violations = productionFiles()

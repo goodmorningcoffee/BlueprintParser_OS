@@ -3,9 +3,15 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useParseFlow } from "@/hooks/useParseFlow";
 import { commitParseOperation, useParseOperation } from "@/hooks/useParseOperation";
+import type { TableCellStructureOperation } from "@/hooks/useTableCellStructureOperation";
 import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
-import { useToolStore } from "@/stores/toolStore";
-import { setTableParseStepForOperation } from "@/stores/viewerCommands";
+import {
+  publishTableReviewForOperation,
+  resetTableParseWorkspace,
+  restartTableParseFromCurrentRegion,
+  setTableParsedGridForUser,
+  setTableParseStepWithTool,
+} from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useProject } from "@/stores/sessionStore";
@@ -53,6 +59,7 @@ interface AutoParseTabProps {
   loadExistingParsed: (parsed: any) => void;
   detectCsiAndPersist: DetectCsiAndPersist;
   invalidateTableOperation: () => void;
+  cellStructureOperation: TableCellStructureOperation;
   tagYoloClass: { model: string; className: string } | null;
   setTagYoloClass: (cls: { model: string; className: string } | null) => void;
   handleMapTags: () => void;
@@ -75,6 +82,7 @@ export default function AutoParseTab({
   loadExistingParsed,
   detectCsiAndPersist,
   invalidateTableOperation,
+  cellStructureOperation,
   tagYoloClass,
   setTagYoloClass,
   handleMapTags,
@@ -93,13 +101,10 @@ export default function AutoParseTab({
   const {
     step: tableParseStep,
     region: tableParseRegion,
-    setStep: setTableParseStep,
-    setRegion: setTableParseRegion,
-    reset: resetTableParse,
   } = useParseFlow("table");
   const tableOperation = useParseOperation("table");
   const {
-    tableParsedGrid, setTableParsedGrid,
+    tableParsedGrid,
     tableParseTab,
     tableParseOptions, setTableParseOptions,
   } = useTableParseExtensions();
@@ -127,11 +132,11 @@ export default function AutoParseTab({
       if (key !== lastRegionRef.current) {
         lastRegionRef.current = key;
         setProposedRegions((prev) => [...prev, tableParseRegion as ProposedRegion]);
-        // Reset store region so user can draw another
-        setTableParseRegion(null);
+        // Keep the latest region in the parse owner. Clearing it from this passive effect could
+        // erase a newer same-page B; the next draw overwrites it and the key guard prevents repeats.
       }
     }
-  }, [tableParseRegion, tableParseTab, setTableParseRegion]);
+  }, [tableParseRegion, tableParseTab]);
 
   const removeProposedRegion = (index: number) => {
     setProposedRegions((prev) => prev.filter((_, i) => i !== index));
@@ -144,21 +149,24 @@ export default function AutoParseTab({
       if (started.status === "busy") return;
       const token = started.token;
 
-      // Freeze the complete request shape once. A may continue its captured durable work, but only
-      // this token may publish review/error/tool/local completion into the current Table flow.
-      const targetRegions = proposedRegions.map((bbox) => [...bbox] as ProposedRegion);
-      const targetOptions = { ...tableParseOptions };
-      const targetProjectId = projectId;
-      const targetPageNumber = pageNumber;
-      const debugMode = isTableParseDebugMode(isDemo);
-
-      setAutoParsingRevision(token.revision);
-      setAutoParseError(null);
-      setAutoParseMethodInfo(null);
-      setAutoParseInfraErrors([]);
-      setAutoParseMethodResults(null);
-
       try {
+        // Freeze the complete request shape once. A may continue its captured durable work, but only
+        // this token may publish review/error/tool/local completion into the current Table flow.
+        const targetRegions = proposedRegions.map((bbox) => [...bbox] as ProposedRegion);
+        const targetOptions = { ...tableParseOptions };
+        const targetProjectId = projectId;
+        const targetPageNumber = pageNumber;
+        const debugMode = isTableParseDebugMode(isDemo);
+
+        const phasePublished = commitParseOperation(token, () => {
+          setAutoParsingRevision(token.revision);
+          setAutoParseError(null);
+          setAutoParseMethodInfo(null);
+          setAutoParseInfraErrors([]);
+          setAutoParseMethodResults(null);
+        });
+        if (!phasePublished) return;
+
         // Parse each region independently then merge
         let mergedHeaders: string[] = [];
         let mergedRows: Record<string, string>[] = [];
@@ -173,6 +181,9 @@ export default function AutoParseTab({
         let firstRowBoundaries: number[] | undefined;
 
         for (let i = 0; i < targetRegions.length; i++) {
+          // Each region request is a newly launched async stage. In-flight work may settle, but an
+          // invalidated A must not dispatch region N+1 behind the newer Table owner.
+          if (!tableOperation.isCurrent(token)) return;
           const bbox = targetRegions[i];
           const resp = await fetch("/api/table-parse", {
             method: "POST",
@@ -185,6 +196,7 @@ export default function AutoParseTab({
               debugMode,
             }),
           });
+          if (!tableOperation.isCurrent(token)) return;
 
           if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
@@ -231,17 +243,15 @@ export default function AutoParseTab({
           ...(targetRegions.length === 1 && firstColBoundaries ? { colBoundaries: firstColBoundaries } : {}),
           ...(targetRegions.length === 1 && firstRowBoundaries ? { rowBoundaries: firstRowBoundaries } : {}),
         };
-        let reviewCommitted = false;
-        const completionPublished = commitParseOperation(token, () => {
-          setAutoParseMethodInfo(lastMethodInfo);
-          setAutoParseMethodResults(lastMethodResults);
-          setAutoParseInfraErrors(collectedInfraErrors);
-          setTableParsedGrid(grid);
-          // Populate tableParseMeta for the Compare/Edit source picker. Only for
-          // single-region parses — multi-region merges combine rows across tables
-          // and per-method raw grids no longer align meaningfully.
-          if (targetRegions.length === 1 && lastMethodResults && lastMergerNotes?.baseMethod) {
-            useParseFlowStore.getState().setTableParseMeta({
+        const reviewRegion: ProposedRegion = [
+          Math.min(...targetRegions.map((r) => r[0])),
+          Math.min(...targetRegions.map((r) => r[1])),
+          Math.max(...targetRegions.map((r) => r[2])),
+          Math.max(...targetRegions.map((r) => r[3])),
+        ];
+        const reviewMeta = targetRegions.length === 1 &&
+            lastMethodResults && lastMergerNotes?.baseMethod
+          ? {
               methodResults: lastMethodResults,
               baseMethod: lastMergerNotes.baseMethod,
               mergedSnapshot: {
@@ -251,24 +261,21 @@ export default function AutoParseTab({
                 ...(firstColBoundaries ? { colBoundaries: firstColBoundaries } : {}),
                 ...(firstRowBoundaries ? { rowBoundaries: firstRowBoundaries } : {}),
               },
-            });
-          } else {
-            useParseFlowStore.getState().setTableParseMeta(null);
-          }
-          // Set tableParseRegion to merged bbox so TableCompareModal can crop the
-          // image AND so the auto-persist below derives a stable regionId from it.
-          setTableParseRegion([
-            Math.min(...targetRegions.map((r) => r[0])),
-            Math.min(...targetRegions.map((r) => r[1])),
-            Math.max(...targetRegions.map((r) => r[2])),
-            Math.max(...targetRegions.map((r) => r[3])),
-          ]);
-          reviewCommitted = setTableParseStepForOperation(token, "review");
-          if (!reviewCommitted) return;
-          useToolStore.getState().setMode("move");
+            }
+          : null;
+        const reviewCommitted = publishTableReviewForOperation(token, {
+          grid,
+          meta: reviewMeta,
+          region: reviewRegion,
+        });
+        if (!reviewCommitted) return;
+        const localPublished = commitParseOperation(token, () => {
+          setAutoParseMethodInfo(lastMethodInfo);
+          setAutoParseMethodResults(lastMethodResults);
+          setAutoParseInfraErrors(collectedInfraErrors);
           setProposedRegions([]);
         });
-        if (!completionPublished || !reviewCommitted) return;
+        if (!localPublished) return;
         // Auto-persist on successful parse (no separate Save click required).
         // Only when an actual table was detected — skip empty results so we
         // don't write a blank region. Re-parsing the same drawn region upserts
@@ -284,13 +291,14 @@ export default function AutoParseTab({
           }
         }
       } catch (err: any) {
+        const reviewCommitted = publishTableReviewForOperation(token, {
+          grid: { headers: [], rows: [] },
+          meta: null,
+        });
+        if (!reviewCommitted) return;
         commitParseOperation(token, () => {
           console.error("[auto-parse] Failed:", err);
           setAutoParseError(err.message || "Auto-parse failed");
-          setTableParsedGrid({ headers: [], rows: [] });
-          const reviewCommitted = setTableParseStepForOperation(token, "review");
-          if (!reviewCommitted) return;
-          useToolStore.getState().setMode("move");
         });
       } finally {
         tableOperation.finish(token);
@@ -302,12 +310,10 @@ export default function AutoParseTab({
       pageNumber,
       isDemo,
       tableParseOptions,
-      setTableParsedGrid,
-      setTableParseRegion,
-      setTableParseStep,
       detectCsiAndPersist,
       tableOperation.begin,
       tableOperation.finish,
+      tableOperation.isCurrent,
     ]
   );
 
@@ -322,16 +328,8 @@ export default function AutoParseTab({
     const token = started.token;
 
     try {
-      await detectCsiAndPersist(tableParsedGrid, {
-        onAuthorizedSuccess: () => {
-          // Preserve the legacy redundant review-tail publications inside the one authorized
-          // completion block. A rejected nested save can no longer false-succeed into this tail.
-          resetTableParse();
-          setTableParseStep("idle");
-          setTagMappingDone(false);
-          setTagYoloClass(null);
-        },
-      }, token);
+      // The shared helper already clears Table's mapping locals before its terminal atomic reset.
+      await detectCsiAndPersist(tableParsedGrid, undefined, token);
     } catch (err) {
       commitParseOperation(token, () => {
         setAutoParseError(err instanceof Error ? err.message : "Save failed");
@@ -341,10 +339,6 @@ export default function AutoParseTab({
     }
   }, [
     detectCsiAndPersist,
-    resetTableParse,
-    setTableParseStep,
-    setTagMappingDone,
-    setTagYoloClass,
     tableOperation.begin,
     tableOperation.finish,
     tableParsedGrid,
@@ -366,8 +360,7 @@ export default function AutoParseTab({
           <HelpTooltip id="table-auto-draw"><button
             onClick={() => {
               const next = tableParseStep === "select-region" ? "idle" : "select-region";
-              setTableParseStep(next);
-              useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+              setTableParseStepWithTool(next, next !== "idle" ? "pointer" : "move");
             }}
             className={`w-full text-xs px-3 py-2 rounded border ${
               tableParseStep === "select-region"
@@ -438,7 +431,6 @@ export default function AutoParseTab({
                 <button
                   key={i}
                   onClick={() => {
-                    invalidateTableOperation();
                     loadExistingParsed(p);
                   }}
                   className="w-full text-left text-[11px] px-2 py-1.5 rounded border border-green-500/30 hover:bg-green-500/5"
@@ -481,8 +473,7 @@ export default function AutoParseTab({
               type="text"
               value={tableParsedGrid.tableName || ""}
               onChange={(e) => {
-                invalidateTableOperation();
-                setTableParsedGrid({ ...tableParsedGrid, tableName: e.target.value });
+                setTableParsedGridForUser({ ...tableParsedGrid, tableName: e.target.value });
               }}
               placeholder="Name this table (e.g. Door Schedule)..."
               className="w-full text-xs px-2 py-1.5 bg-[var(--bg)] border border-[var(--border)] rounded outline-none focus:border-pink-400/50 text-[var(--fg)] placeholder:text-[var(--muted)]/40"
@@ -547,12 +538,11 @@ export default function AutoParseTab({
                   key={`${mr.method}-${i}`}
                   result={mr}
                   onUseThis={(r) => {
-                    invalidateTableOperation();
                     // FOLLOWUP-2: clear tagColumn/csiTags on override. They were detected
                     // against the merged grid's headers and may not exist in the override's
                     // headers — leaving them stale would break Map Tags downstream.
                     // The next save flow will re-detect via detectCsiAndPersist.
-                    setTableParsedGrid({
+                    setTableParsedGridForUser({
                       ...tableParsedGrid,
                       headers: r.headers,
                       rows: r.rows,
@@ -601,7 +591,7 @@ export default function AutoParseTab({
           })()}
 
           {/* TATR Cell Structure Detection */}
-          <DetectCellStructureButton />
+          <DetectCellStructureButton operation={cellStructureOperation} />
 
           <div className="flex gap-2 px-1">
             <button
@@ -612,8 +602,8 @@ export default function AutoParseTab({
             </button>
             <button
               onClick={() => {
-                invalidateTableOperation();
                 toggleTableCompareModal();
+                invalidateTableOperation();
               }}
               className="flex-1 text-xs px-3 py-1.5 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
             >
@@ -624,17 +614,15 @@ export default function AutoParseTab({
           <ParseOptionsPanel options={tableParseOptions} onChange={setTableParseOptions} />
           <button
             onClick={() => {
-              invalidateTableOperation();
               // Go back to idle with the existing region so user can reparse
               if (tableParseRegion) {
                 setProposedRegions([tableParseRegion]);
               }
-              setTableParsedGrid(null);
               setAutoParseMethodInfo(null);
               setAutoParseMethodResults(null);
               setAutoParseError(null);
               setAutoParseInfraErrors([]);
-              setTableParseStep("idle");
+              restartTableParseFromCurrentRegion();
             }}
             className="w-full text-xs px-3 py-1.5 rounded border border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
           >
@@ -649,7 +637,11 @@ export default function AutoParseTab({
               Save
             </button>
             <button
-              onClick={() => { resetTableParse(); setTableParseStep("idle"); setTagMappingDone(false); setTagYoloClass(null); }}
+              onClick={() => {
+                setTagMappingDone(false);
+                setTagYoloClass(null);
+                resetTableParseWorkspace();
+              }}
               className="flex-1 text-xs px-3 py-1.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
             >
               Cancel
@@ -751,71 +743,38 @@ function MethodDrillDown({
 }
 
 // ─── Detect Cell Structure Button (TATR) ─────────────────────
-function DetectCellStructureButton() {
+function DetectCellStructureButton({
+  operation,
+}: {
+  operation: TableCellStructureOperation;
+}) {
   const { projectId } = useProject();
   const { pageNumber } = useNavigation();
   const { region: tableParseRegion } = useParseFlow("table");
   const tableCellStructure = useParseFlowStore((s) => s.tableCellStructure);
-  const setTableCellStructure = useParseFlowStore((s) => s.setTableCellStructure);
   // TATR-OVERLAY: visibility toggle for the cell overlay on the canvas
   const showTableCellStructure = useParseFlowStore((s) => s.showTableCellStructure);
   const setShowTableCellStructure = useParseFlowStore((s) => s.setShowTableCellStructure);
-  const tableOperation = useParseOperation("table");
-  const [loadingRevision, setLoadingRevision] = useState<number | null>(null);
-  const loading = tableOperation.busy && loadingRevision === tableOperation.revision;
-  const [error, setError] = useState<string | null>(null);
+  const { detect, clear, loadingKey, busy, errorKey, error } = operation;
+  const operationKey = "auto-review";
+  const loading = loadingKey === operationKey;
 
   const hasStructure = tableCellStructure?.pageNumber === pageNumber;
 
-  async function handleDetect() {
+  function handleDetect() {
     if (!tableParseRegion || !projectId) return;
-    const started = tableOperation.begin();
-    if (started.status === "busy") return;
-    const token = started.token;
-    const target = {
+    void detect({
       projectId,
       pageNumber,
-      regionBbox: [...tableParseRegion] as [number, number, number, number],
-    };
-    setLoadingRevision(token.revision);
-    setError(null);
-    try {
-      const resp = await fetch("/api/table-structure", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(target),
-      });
-      const data = await resp.json();
-      if (!resp.ok || data.error) {
-        // [refactor jul6 S029] apiErrorMessage: non-OK now serves {error:{code,message}} —
-        // setting the raw object would crash the JSX render; the UQ-3 in-band 200 error
-        // stays a flat string and reads through unchanged.
-        commitParseOperation(token, () => {
-          setError(apiErrorMessage(data) || `HTTP ${resp.status}`);
-        });
-        return;
-      }
-      commitParseOperation(token, () => {
-        setTableCellStructure({
-          cells: (data.cells || []).map((c: any) => ({ ...c, text: c.text || "", highlighted: false })),
-          pageNumber: target.pageNumber,
-          regionBbox: target.regionBbox,
-        });
-      });
-    } catch (err: any) {
-      commitParseOperation(token, () => {
-        setError(err.message || "Failed to detect cell structure");
-      });
-    } finally {
-      tableOperation.finish(token);
-    }
+      regionBbox: tableParseRegion,
+    }, operationKey);
   }
 
   return (
     <div className="px-1 space-y-1">
       <button
-        onClick={hasStructure ? () => setTableCellStructure(null) : handleDetect}
-        disabled={tableOperation.busy || !tableParseRegion}
+        onClick={hasStructure ? clear : handleDetect}
+        disabled={busy || !tableParseRegion}
         className={`w-full text-xs px-3 py-1.5 rounded border ${
           hasStructure
             ? "border-cyan-500/40 text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20"
@@ -849,7 +808,9 @@ function DetectCellStructureButton() {
         </>
       )}
 
-      {error && <div className="text-[9px] text-red-400 mt-1 px-1">{error}</div>}
+      {errorKey === operationKey && error && (
+        <div className="text-[9px] text-red-400 mt-1 px-1">{error}</div>
+      )}
     </div>
   );
 }

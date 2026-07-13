@@ -20,7 +20,7 @@ interface NotesIndexProps {
  * Reads `summaries.notesRegions` (populated by `computeProjectSummaries`
  * from pageIntelligence.textRegions) and renders rows sorted by drawing
  * number. Row click:
- *   1. Jumps to the page via setPage
+ *   1. Jumps to the page through the coordinated Parse/core navigation command
  *   2. Writes the region bbox into notesParseRegion (NotesPanel auto-
  *      switches to Parser tab via its useEffect)
  *   3. Seeds notesType from classifier tier2

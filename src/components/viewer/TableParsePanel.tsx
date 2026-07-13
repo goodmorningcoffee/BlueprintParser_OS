@@ -4,12 +4,19 @@ import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParseFlow } from "@/hooks/useParseFlow";
 import { commitParseOperation, useParseOperation } from "@/hooks/useParseOperation";
+import { useTableCellStructureOperation } from "@/hooks/useTableCellStructureOperation";
 import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
-  invalidateGuidedParseOperations,
+  completeTableParseOperation,
+  invalidateParseOperationAtRevision,
+  navigateViewerPage,
+  openTableReviewTarget,
+  openTableReviewWorkspace,
   resetAllTools,
+  setTableParsedGridForUser,
   toggleTableParsePanel,
+  transitionTableParseTab,
 } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -57,19 +64,16 @@ export default function TableParsePanel() {
   const {
     step: tableParseStep,
     region: tableParseRegion,
-    setStep: setTableParseStep,
-    setRegion: setTableParseRegion,
-    reset: resetTableParse,
   } = useParseFlow("table");
   const tableOperation = useParseOperation("table");
+  // One shared controller for Auto review and every retained row. Keeping this above the list
+  // prevents one operation-store subscription per ParsedTableItem.
+  const cellStructureOperation = useTableCellStructureOperation();
   const {
     tableParsedGrid,
-    setTableParsedGrid,
     tableParseTab,
-    setTableParseTab,
   } = useTableParseExtensions();
   const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
-  const setPage = useViewerCoreStore((s) => s.setPage);
   const pageNames = useSessionStore((s) => s.pageNames);
   const pageDrawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
   // [refactor jul11 P2.2⑥] Server-owned annotation window now subscribes via its cache facade.
@@ -96,22 +100,26 @@ export default function TableParsePanel() {
   const [drawingNumberPrefixes, setDrawingNumberPrefixesState] = useState<string[]>([]);
   const [lastDropCounts, setLastDropCounts] = useState<Record<string, number> | null>(null);
   const mapTagsAbortRef = useRef<AbortController | null>(null);
-  const invalidateTableOperation = useCallback(() => {
-    tableOperation.invalidate();
+  const abortMapTags = useCallback(() => {
     const controller = mapTagsAbortRef.current;
     mapTagsAbortRef.current = null;
     controller?.abort();
-  }, [tableOperation.invalidate]);
+  }, []);
+  const invalidateTableOperation = useCallback(() => {
+    abortMapTags();
+    tableOperation.invalidate();
+  }, [abortMapTags, tableOperation.invalidate]);
 
-  // Page identity and the mounted panel instance are explicit Table authority boundaries even if
-  // the legacy step happens to be idle (Map Tags and modal/save work can still be pending then).
-  const operationPageRef = useRef(pageNumber);
-  useEffect(() => {
-    if (operationPageRef.current === pageNumber) return;
-    operationPageRef.current = pageNumber;
-    invalidateTableOperation();
-  }, [pageNumber, invalidateTableOperation]);
-  useEffect(() => () => invalidateTableOperation(), [invalidateTableOperation]);
+  // The request belongs to this mounted panel even when operation authority has already moved on.
+  // Keep transport cleanup independent of revision cleanup so revision changes cannot abort live work.
+  useEffect(() => abortMapTags, [abortMapTags]);
+
+  // Page navigation is coordinated before core.setPage. This cleanup is a direct-unmount fallback
+  // only: the exact rendered revision prevents an old panel from revoking a reentrant B.
+  useEffect(() => () => {
+    invalidateParseOperationAtRevision("table", tableOperation.revision);
+  }, [tableOperation.revision]);
+
   // Derive available drawing-number prefixes from loaded pages. Leading
   // non-digit chars up to the first digit, uppercased. `""` represents
   // pages without a drawingNumber (or ones starting with a digit) —
@@ -189,9 +197,10 @@ export default function TableParsePanel() {
     const started = ownsToken ? tableOperation.begin() : null;
     if (started?.status === "busy") return false;
     const token = inheritedToken ?? (started?.status === "started" ? started.token : null);
-    if (!token || token.kind !== "table" || !tableOperation.isCurrent(token)) return false;
+    if (!token) return false;
 
     try {
+      if (token.kind !== "table" || !tableOperation.isCurrent(token)) return false;
       // The best-effort CSI request is an async boundary. Freeze every persistence input before
       // crossing it: a project/page switch must not combine A's table with B's identity or region.
       // Clone nested grid values as well; Auto/Manual pass their Zustand-owned object directly.
@@ -231,6 +240,10 @@ export default function TableParsePanel() {
       }
       const commitGrid: TableGrid = { ...frozenGrid, csiTags: detectedCsiTags };
 
+      // CSI is one admitted async stage. If a newer flow owns Table now, do not launch a fresh
+      // promotion/local-adoption stage behind it; only already-started durable work may settle.
+      if (!tableOperation.isCurrent(token)) return false;
+
       if (canPersist(target.publicId, target.isDemo)) {
         // Use the drawn region bbox for a stable, re-parse-replaces regionId.
         await saveParsedRegion(
@@ -262,20 +275,26 @@ export default function TableParsePanel() {
       } else {
         // Demo / no publicId: optimistic local-only save so the region renders.
         saveParsedToIntelligence(commitGrid, target);
+        if (!tableOperation.isCurrent(token)) return false;
         refreshPageCsiSpatialMap(queryClient, target.publicId, target.pageNumber);
       }
 
       // Durable/Query work above is target-keyed and may settle for an invalidated A. Only the
       // current owner may reset the live wizard or publish caller-local completion state.
+      if (resetAfter) {
+        return completeTableParseOperation(token, {
+          resetGuided: opts?.resetGuided,
+          afterTerminal: () => {
+            setTagMappingDone(false);
+            setTagMappingCount(0);
+            setLastDropCounts(null);
+            setTagYoloClassState(null);
+            opts?.onLocalSuccess?.();
+          },
+        });
+      }
       return commitParseOperation(token, () => {
-        if (resetAfter) {
-          resetTableParse();
-          setTagMappingDone(false);
-          setTagMappingCount(0);
-          setLastDropCounts(null);
-          setTagYoloClassState(null);
-        }
-        opts?.onAuthorizedSuccess?.();
+        opts?.onLocalSuccess?.();
       });
     } finally {
       if (ownsToken) tableOperation.finish(token);
@@ -283,7 +302,6 @@ export default function TableParsePanel() {
   }, [
     pageNumber,
     queryClient,
-    resetTableParse,
     saveParsedToIntelligence,
     tableOperation.begin,
     tableOperation.finish,
@@ -357,25 +375,30 @@ export default function TableParsePanel() {
       ? "yolo-with-inner-text"
       : "text-only";
 
+    let controller: AbortController | null = null;
     const started = tableOperation.begin();
     if (started.status === "busy") return;
     const token = started.token;
 
-    // Capture every semantic input before the transport. Later reset/input changes may invalidate
-    // caller-local completion while the captured Query/cache work remains allowed to settle.
-    const target = {
-      publicId,
-      pageNumber,
-      tagYoloClass: tagYoloClass ? { ...tagYoloClass } : null,
-      mapTagsStrictness,
-      drawingNumberPrefixes: [...drawingNumberPrefixes],
-    };
-
-    mapTagsAbortRef.current?.abort();
-    const controller = new AbortController();
-    mapTagsAbortRef.current = controller;
-
     try {
+      // Capture every semantic input before the transport. Later reset/input changes may invalidate
+      // caller-local completion while the captured Query/cache work remains allowed to settle.
+      const target = {
+        publicId,
+        pageNumber,
+        tagYoloClass: tagYoloClass ? { ...tagYoloClass } : null,
+        mapTagsStrictness,
+        drawingNumberPrefixes: [...drawingNumberPrefixes],
+      };
+
+      const nextController = new AbortController();
+      const transportAdmitted = commitParseOperation(token, () => {
+        mapTagsAbortRef.current?.abort();
+        mapTagsAbortRef.current = nextController;
+      });
+      if (!transportAdmitted) return;
+      controller = nextController;
+
       const result = await requestMapTagsBatch(
         target.publicId,
         {
@@ -429,7 +452,7 @@ export default function TableParsePanel() {
       });
     } catch (e) {
       if ((e as Error).name === "AbortError") return;
-      if (mapTagsAbortRef.current !== controller) return;
+      if (controller && mapTagsAbortRef.current !== controller) return;
       commitParseOperation(token, () => console.error("[TableParsePanel] Map Tags error", e));
     } finally {
       tableOperation.finish(token);
@@ -440,22 +463,27 @@ export default function TableParsePanel() {
 
   // ─── Load existing parsed region ──────────────────────────
   const loadExistingParsed = useCallback(
-    (parsed: any) => {
+    (parsed: any, targetPage?: number) => {
       const d = parsed.data;
-      setTableParseRegion(parsed.bbox ? [parsed.bbox[0], parsed.bbox[1], parsed.bbox[2], parsed.bbox[3]] : null);
-      setTableParsedGrid({
-        headers: d.headers || [],
-        rows: d.rows || [],
-        tagColumn: d.tagColumn,
-        tableName: d.tableName,
-      });
-      // Clear source-picker meta — this grid didn't come from the auto-parse
-      // merger, so the per-method results from a prior parse are stale.
-      useParseFlowStore.getState().setTableParseMeta(null);
-      setTableParseStep("review");
-      useToolStore.getState().setMode("move");
+      const publication = {
+        region: parsed.bbox
+          ? [parsed.bbox[0], parsed.bbox[1], parsed.bbox[2], parsed.bbox[3]] as TableSaveTarget["bbox"]
+          : null,
+        grid: {
+          headers: d.headers || [],
+          rows: d.rows || [],
+          tagColumn: d.tagColumn,
+          tableName: d.tableName,
+        },
+        meta: null,
+      };
+      if (targetPage !== undefined && targetPage !== pageNumber) {
+        openTableReviewTarget(targetPage, publication);
+      } else {
+        openTableReviewWorkspace(publication);
+      }
     },
-    [setTableParseRegion, setTableParsedGrid, setTableParseStep]
+    [pageNumber],
   );
 
   const { summaries } = useSummaries();
@@ -518,36 +546,28 @@ export default function TableParsePanel() {
   // tag-authoritative data (Discrepancy Engine, find-occurrences, etc.).
   const handleTagColumnChange = useCallback((col: string) => {
     if (!tableParsedGrid) return;
-    invalidateTableOperation();
-    setTableParsedGrid({ ...tableParsedGrid, tagColumn: col });
-  }, [invalidateTableOperation, tableParsedGrid, setTableParsedGrid]);
+    abortMapTags();
+    setTableParsedGridForUser({ ...tableParsedGrid, tagColumn: col });
+  }, [abortMapTags, tableParsedGrid]);
 
   const handleTagYoloClassChange = useCallback((cls: { model: string; className: string } | null) => {
-    invalidateTableOperation();
     setTagYoloClassState(cls);
+    invalidateTableOperation();
   }, [invalidateTableOperation]);
 
   const handleMapTagsStrictnessChange = useCallback((strictness: MapTagsStrictness) => {
-    invalidateTableOperation();
     setMapTagsStrictnessState(strictness);
+    invalidateTableOperation();
   }, [invalidateTableOperation]);
 
   const handleDrawingNumberPrefixesChange = useCallback((prefixes: string[]) => {
-    invalidateTableOperation();
     setDrawingNumberPrefixesState(prefixes);
+    invalidateTableOperation();
   }, [invalidateTableOperation]);
 
   const handleTableTabChange = useCallback((tab: typeof tableParseTab) => {
-    const currentTab = useParseFlowStore.getState().tableParseTab;
-    if (currentTab !== tab) {
-      invalidateTableOperation();
-      if (currentTab === "guided" || tab === "guided") {
-        invalidateGuidedParseOperations("table");
-      }
-    }
-    setTableParseTab(tab);
-    useToolStore.getState().setMode("move");
-  }, [invalidateTableOperation, setTableParseTab]);
+    transitionTableParseTab(tab);
+  }, []);
 
   // ─── Shared Map Tags props ────────────────────────────────
   const mapTagsProps = {
@@ -648,7 +668,7 @@ export default function TableParsePanel() {
                 </div>
                 {showExportModal && (
                   <ExportCsvModal
-                    tables={allParsedTables.map((t) => ({
+                    tables={allParsedTables.filter((t) => t.region).map((t) => ({
                       name: t.name,
                       headers: t.region.data?.headers || [],
                       rows: t.region.data?.rows || [],
@@ -664,11 +684,12 @@ export default function TableParsePanel() {
                     table={t}
                     pageNames={pageNames}
                     isCurrentPage={t.pageNum === pageNumber}
-                    onNavigate={() => setPage(t.pageNum)}
+                    onNavigate={() => navigateViewerPage(t.pageNum)}
                     yoloTags={yoloTags}
                     pageNumber={pageNumber}
                     publicId={publicId}
                     focusedParsedRegionId={focusedParsedRegionId}
+                    cellStructureOperation={cellStructureOperation}
                     onDelete={() => {
                       updatePageIntelligenceForPage(
                         queryClient,
@@ -698,6 +719,7 @@ export default function TableParsePanel() {
             loadExistingParsed={loadExistingParsed}
             detectCsiAndPersist={detectCsiAndPersist}
             invalidateTableOperation={invalidateTableOperation}
+            cellStructureOperation={cellStructureOperation}
             {...mapTagsProps}
           />
         )}
@@ -726,7 +748,6 @@ export default function TableParsePanel() {
             allParsedTables={allParsedTables}
             loadExistingParsed={loadExistingParsed}
             toggleTableCompareModal={toggleTableCompareModal}
-            beforeHandoff={invalidateTableOperation}
           />
         )}
       </div>

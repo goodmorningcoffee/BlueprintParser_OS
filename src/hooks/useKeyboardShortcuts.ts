@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { navigateViewerPage } from "@/stores/viewerCommands";
 import { useToolStore } from "@/stores/toolStore";
 import { takeoffRedo, takeoffUndo } from "@/queries/useAnnotations";
 import { navigateYoloTag } from "@/queries/useYoloTags";
@@ -54,20 +55,20 @@ export function useKeyboardShortcuts() {
         case "ArrowLeft":
         case "PageUp":
           e.preventDefault();
-          core.setPage(core.pageNumber - 1);
+          navigateViewerPage(core.pageNumber - 1);
           break;
         case "ArrowRight":
         case "PageDown":
           e.preventDefault();
-          core.setPage(core.pageNumber + 1);
+          navigateViewerPage(core.pageNumber + 1);
           break;
         case "Home":
           e.preventDefault();
-          core.setPage(1);
+          navigateViewerPage(1);
           break;
         case "End":
           e.preventDefault();
-          core.setPage(core.numPages);
+          navigateViewerPage(core.numPages);
           break;
       }
 

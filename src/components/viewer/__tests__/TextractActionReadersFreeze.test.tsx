@@ -224,6 +224,7 @@ describe("I8 live action readers", () => {
       keynoteParseTab: "guided",
       keynoteParseStep: "idle",
       guidedParseActive: true,
+      guidedParseOwner: "keynote",
       guidedParseRegion: [0, 0, 1, 1],
       guidedParseRows: [0, 0.5, 1],
       guidedParseCols: [0, 0.5, 1],

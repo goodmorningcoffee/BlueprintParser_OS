@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PARSE_KINDS } from "@/lib/parse-operation-state";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
@@ -468,7 +469,55 @@ describe("P2.3 T2 resetAllTools characterization", () => {
     unsubscribeParse();
   });
 
-  it("pins reset output and the deliberately retained tool/parse omissions", () => {
+  for (const kind of PARSE_KINDS) {
+    for (const settleReplacement of [false, true]) {
+      it(`has no tool or Parse tail after synchronous ${kind} B becomes ${
+        settleReplacement ? "settled" : "busy"
+      } from the terminal reset`, () => {
+        useToolStore.setState({ mode: "markup" });
+        useParseFlowStore.setState({
+          tableParseStep: "review",
+          keynoteParseStep: "review",
+          notesParseStep: "review",
+          specParseStep: "review",
+        });
+        let armed = true;
+        let revisionB: number | null = null;
+        const unsubscribe = useParseFlowStore.subscribe((state) => {
+          if (
+            !armed || state.tableParseStep !== "idle" ||
+            state.keynoteParseStep !== "idle" || state.notesParseStep !== "idle" ||
+            state.specParseStep !== "idle"
+          ) return;
+          armed = false;
+          const started = state.beginParseOperation(kind);
+          expect(started.status).toBe("started");
+          if (started.status === "started") {
+            revisionB = started.token.revision;
+            if (settleReplacement) {
+              expect(useParseFlowStore.getState().finishParseOperation(started.token)).toBe(true);
+            }
+          }
+          useToolStore.setState({ mode: "markup" });
+        });
+
+        try {
+          resetAllTools();
+        } finally {
+          unsubscribe();
+        }
+
+        expect(revisionB).not.toBeNull();
+        expect(useParseFlowStore.getState().parseOperations[kind]).toEqual({
+          revision: revisionB,
+          busy: !settleReplacement,
+        });
+        expect(useToolStore.getState().mode).toBe("markup");
+      });
+    }
+  }
+
+  it("exhaustively matches the legacy reset output and retained tool/parse omissions", () => {
     const scaleCalibrations: ToolState["scaleCalibrations"] = {
       2: {
         type: "scale-calibration",
@@ -584,10 +633,37 @@ describe("P2.3 T2 resetAllTools characterization", () => {
       guidedParseCols: [0.75],
     });
 
+    // Derive the exhaustive expected destination from the exact legacy leaf composition. Captured
+    // state objects remain immutable after Zustand publishes replacement states, so they can be
+    // restored byte-for-byte before exercising the new two-publication command.
+    const seededTool = useToolStore.getState();
+    const seededParse = useParseFlowStore.getState();
+    seededTool.setMode("move");
+    seededParse.resetTableParse();
+    seededParse.resetKeynoteParse();
+    seededParse.resetNotesParse();
+    seededParse.resetSpecParse();
+    seededParse.resetGuidedParse();
+    seededTool.clearSymbolSearch();
+    const expectedTool = Object.fromEntries(
+      Object.entries(useToolStore.getState()).filter(([, value]) => typeof value !== "function"),
+    );
+    const expectedParse = Object.fromEntries(
+      Object.entries(useParseFlowStore.getState()).filter(([, value]) => typeof value !== "function"),
+    );
+
+    useToolStore.setState(seededTool, true);
+    useParseFlowStore.setState(seededParse, true);
     resetAllTools();
 
     const afterTool = useToolStore.getState();
     const afterParse = useParseFlowStore.getState();
+    expect(Object.fromEntries(
+      Object.entries(afterTool).filter(([, value]) => typeof value !== "function"),
+    )).toEqual(expectedTool);
+    expect(Object.fromEntries(
+      Object.entries(afterParse).filter(([, value]) => typeof value !== "function"),
+    )).toEqual(expectedParse);
     expect(afterTool).toMatchObject({
       mode: "move",
       activeTakeoffItemId: null,
@@ -686,30 +762,30 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
     };
 
     expect(branch('tableParseStep==="select-region"')).toEqual([
-      { callee: "setTableParseRegion", arguments: ["[minX,minY,maxX,maxY]"] },
-      { callee: "setTableParseStep", arguments: ['"idle"'] },
-      { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
+      {
+        callee: "acceptTableParseRegion",
+        arguments: ["[minX,minY,maxX,maxY]"],
+      },
     ]);
     expect(branch('keynoteParseStep==="select-region"')).toEqual([
       {
         callee: "acceptKeynoteParseRegion",
         arguments: ["[minX,minY,maxX,maxY]"],
       },
-      { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
     ]);
     expect(branch('notesStep==="select-region"')).toEqual([
+      { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
       {
         callee: "acceptNotesParseRegion",
         arguments: ["[minX,minY,maxX,maxY]"],
       },
-      { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
     ]);
     expect(branch('specStep==="select-region"')).toEqual([
+      { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
       {
         callee: "acceptSpecParseRegion",
         arguments: ["[minX,minY,maxX,maxY]"],
       },
-      { callee: "useToolStore.getState().setMode", arguments: ['"move"'] },
     ]);
   });
 
@@ -753,8 +829,8 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
       ["tool.setBucketFillPreview"],
       ["tool.setBucketFillBarrierMode", "tool.setBarrierPendingPoint"],
       ["tool.setBucketFillActive"],
-      ["setTableParseStep", "tool.setMode"],
-      ["setKeynoteParseStep", "tool.setMode"],
+      ["setTableParseStepWithTool"],
+      ["setKeynoteParseStepWithTool"],
       ["resetPolygonDrawing", "setMousePos"],
       ["resetCalibration"],
       ["setActiveTakeoffItemId"],
@@ -829,16 +905,13 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
       "call:setSelectedId",
       'if:polygonDrawingMode==="drawing"=>resetPolygonDrawing,setMousePos',
       'if:calibrationMode!=="idle"=>resetCalibration',
-      "snapshot:parse=useParseFlowStore.getState()",
       "snapshot:tool=useToolStore.getState()",
-      'if:parse.tableParseStep!=="idle"=>parse.resetTableParse,tool.setMode',
-      'if:parse.keynoteParseStep!=="idle"=>parse.resetKeynoteParse,parse.setKeynoteParseRegion,tool.setMode',
       "if:tool.symbolSearchActive=>tool.setSymbolSearchActive",
     ]);
     expect(dependencyTexts(pageEffect, source)).toEqual(["pageNumber"]);
     expect(
       callLabels(block, source).filter((label) => /use(?:ParseFlow|Tool)Store\.getState/.test(label)),
-    ).toEqual(["useParseFlowStore.getState", "useToolStore.getState"]);
+    ).toEqual(["useToolStore.getState"]);
 
     const conditions = block.statements
       .filter(ts.isIfStatement)
@@ -847,13 +920,9 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
       'polygonDrawingMode==="drawing"',
       'calibrationMode!=="idle"',
     ]);
-    expect(conditions.slice(2)).toEqual([
-      'parse.tableParseStep!=="idle"',
-      'parse.keynoteParseStep!=="idle"',
-      "tool.symbolSearchActive",
-    ]);
+    expect(conditions.slice(2)).toEqual(["tool.symbolSearchActive"]);
     expect(conditions.join("|")).not.toMatch(
-      /bucketFill|splitArea|notesParseStep|specParseStep|guidedParse/,
+      /bucketFill|splitArea|tableParse|keynoteParse|notesParseStep|specParseStep|guidedParse/,
     );
   });
 });

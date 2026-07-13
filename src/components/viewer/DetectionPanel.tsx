@@ -10,7 +10,7 @@ import {
   useDetectionUiActions,
   useSearchUiActions,
 } from "@/stores/uiStore";
-import { toggleDetectionPanel } from "@/stores/viewerCommands";
+import { navigateViewerPage, toggleDetectionPanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations, useAnnotations, writeAnns } from "@/queries/useAnnotations";
 import { readYoloTags, useYoloTags } from "@/queries/useYoloTags";
@@ -52,7 +52,7 @@ export default function DetectionPanel({
   lockedTab,
 }: { embedded?: boolean; lockedTab?: DetectionTab } = {}) {
   const queryClient = useQueryClient();
-  const { pageNumber, setPage } = useNavigation();
+  const { pageNumber } = useNavigation();
   const { pageNames } = useProject();
   // [refactor jul11 P2.2⑥] Annotation data now follows its publicId-keyed cache facade; the
   // remaining useDetection fields stay zustand-owned UI/filter state.
@@ -687,7 +687,7 @@ export default function DetectionPanel({
                                               .sort((a, b) => a[0] - b[0])
                                               .map(([pn, count]) => (
                                                 <button key={pn}
-                                                  onClick={() => setPage(pn)}
+                                                  onClick={() => navigateViewerPage(pn)}
                                                   className={`w-full text-left px-2 py-0.5 text-[10px] rounded hover:bg-[var(--surface-hover)] flex items-center gap-1 ${
                                                     pn === pageNumber ? "text-[var(--accent)]" : "text-[var(--muted)]"
                                                   }`}>

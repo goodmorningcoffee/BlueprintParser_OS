@@ -18,6 +18,7 @@ import {
 } from "@/queries/textractCache";
 import { queryKeys } from "@/queries/queryKeys";
 import { useUiStore } from "@/stores/uiStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore as useViewerStore } from "@/stores/viewerCoreStore";
 import type { TextractPageData } from "@/types";
 
@@ -193,7 +194,25 @@ describe("I7 PDFPage exact-page render topology", () => {
       exact: true,
     });
     expect(current?.getObserversCount()).toBe(4); // Search + text-annotation + Notes + Paragraph.
+    act(() => useParseFlowStore.setState({
+      guidedParseOwner: "table",
+      guidedParseActive: true,
+      guidedParseRegion: [0.1, 0.2, 0.8, 0.9],
+      guidedParseRows: [0.2, 0.5, 0.8],
+      guidedParseCols: [0.1, 0.4, 0.7],
+    }));
     const baseline = commits;
+
+    // With an active owner, begin/finish changes its operation revision twice. Region identity is
+    // the rendered gesture generation; PDFPage must not subscribe to the authority registry.
+    act(() => {
+      const started = useParseFlowStore.getState().beginParseOperation("table");
+      expect(started.status).toBe("started");
+      if (started.status === "started") {
+        expect(useParseFlowStore.getState().finishParseOperation(started.token)).toBe(true);
+      }
+    });
+    expect(commits).toBe(baseline);
 
     // A Guided drag publishes operation authority once at mousedown. PDFPage has no operation
     // subscription, so that exact publication must not commit this viewer-sacred subtree.

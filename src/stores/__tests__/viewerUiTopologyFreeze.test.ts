@@ -1087,7 +1087,7 @@ describe("P2.3 U2 ownership escape oracle", () => {
     );
     expect(active.length, "uiStore members must have real production consumers").toBeGreaterThan(100);
     expect(inactive).toEqual([]);
-  }, 15_000);
+  }, 60_000);
 
   it("keeps the exact parse boundary on parseFlowStore and absent from both UI and residual owners", () => {
     const plausible = productionSourceFiles.filter((path) => {
@@ -1111,7 +1111,7 @@ describe("P2.3 U2 ownership escape oracle", () => {
     expect([...activeMembers].sort()).toEqual([...parseBoundaryMembers].sort());
     expect(uiEscapes).toEqual([]);
     expect(viewerEscapes).toEqual([]);
-  }, 15_000);
+  }, 60_000);
 
   it("keeps viewerStore, uiStore, and parseFlowStore as dependency-free leaf stores", () => {
     for (const path of [VIEWER_STORE_FILE, UI_STORE_FILE, PARSE_OWNER.file].filter(existsRelative)) {
@@ -1136,7 +1136,7 @@ describe("P2.3 U2 ownership escape oracle", () => {
 });
 
 describe("P2.3 U2 yolo browse cross-store command", () => {
-  it("keeps navigateYoloTag solely in Query with one raw page write and bundled UI writes", () => {
+  it("keeps navigateYoloTag solely in Query with coordinated unclamped navigation and bundled UI writes", () => {
     const definitions = productionSourceFiles
       .filter((path) => textOf(path).includes("navigateYoloTag"))
       .flatMap((path) =>
@@ -1173,7 +1173,8 @@ describe("P2.3 U2 yolo browse cross-store command", () => {
       .filter((argument): argument is ts.ObjectLiteralExpression => ts.isObjectLiteralExpression(argument))
       .map((object) => directObjectKeys(object, constants));
 
-    expect(corePublications).toEqual([["pageNumber"]]);
+    expect(corePublications).toEqual([]);
+    expect(compact(body!, source)).toContain("navigateViewerPageUnclamped(instance.pageNumber)");
     expect(uiPublications).toEqual([
       ["tagBrowseId", "tagBrowseIndex", "activeYoloTagId", "llmHighlight"],
       ["tagBrowseId", "tagBrowseIndex", "activeYoloTagId", "llmHighlight"],

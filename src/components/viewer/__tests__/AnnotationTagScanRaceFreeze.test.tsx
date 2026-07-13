@@ -210,8 +210,7 @@ describe("AnnotationOverlay scanClass request ownership", () => {
       useToolStore.setState({ yoloTagPickingMode: false, mode: "pointer" });
     });
     const canvas = renderCanvas();
-    // AnnotationOverlay's page-change effect intentionally tears down any parse flow present at
-    // mount. Start this interaction after mount, exactly as the panel command does in production.
+    // Start this interaction after mount, exactly as the panel command does in production.
     act(() => {
       useParseFlowStore.setState({
         tableParseStep: "select-region",
@@ -251,13 +250,8 @@ describe("AnnotationOverlay scanClass request ownership", () => {
 
     expect(trace).toEqual([
       { owner: "viewer", drawing: false },
-      {
-        owner: "parse",
-        region: [0.1, 0.2, 0.7, 0.8],
-        step: "select-region",
-      },
-      { owner: "parse", region: [0.1, 0.2, 0.7, 0.8], step: "idle" },
       { owner: "tool", mode: "move" },
+      { owner: "parse", region: [0.1, 0.2, 0.7, 0.8], step: "idle" },
     ]);
     expect(useParseFlowStore.getState().tableParseRegion).toEqual([0.1, 0.2, 0.7, 0.8]);
     expect(useParseFlowStore.getState().tableParseStep).toBe("idle");

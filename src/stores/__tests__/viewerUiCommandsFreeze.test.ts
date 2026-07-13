@@ -16,6 +16,7 @@ import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 import {
+  focusParsedTableRegionInCatalog,
   resetProjectData,
   toggleDetectionPanel,
   toggleKeynoteParsePanel,
@@ -269,6 +270,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       tableParseColumnNames: ["Tag"],
       tableParseRowBBs: [[0.1, 0.2, 0.8, 0.3]],
       tableParseTab: "compare",
+      guidedParseOwner: "table",
       guidedParseActive: true,
       guidedParseRegion: [0.1, 0.2, 0.8, 0.9],
       guidedParseRows: [0.4],
@@ -301,6 +303,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     expect(changedValueKeys(before, after)).toEqual([
       "guidedParseActive",
       "guidedParseCols",
+      "guidedParseOwner",
       "guidedParseRegion",
       "guidedParseRows",
       "parseOperations",
@@ -347,7 +350,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     expect(afterTool.polygonVertices).toBe(polygonVertices);
     expect(afterTool.bucketFillPreview).toBe(bucketFillPreview);
     expect(setMode).not.toHaveBeenCalled();
-    expect(publications).toEqual(["parse", "tool", "ui"]);
+    expect(publications).toEqual(["ui", "tool", "parse"]);
     unsubscribeParse();
     unsubscribeTool();
     unsubscribeUi();
@@ -371,6 +374,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       keynoteRowBBs: [[0.1, 0.2, 0.8, 0.3]],
       keynoteYoloClass: { model: "fixture", className: "keynote" },
       keynoteParseTab: "compare",
+      guidedParseOwner: "keynote",
       guidedParseActive: true,
       guidedParseRegion: [0.1, 0.2, 0.8, 0.9],
       guidedParseRows: [0.4],
@@ -401,6 +405,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     expect(changedValueKeys(before, after)).toEqual([
       "guidedParseActive",
       "guidedParseCols",
+      "guidedParseOwner",
       "guidedParseRegion",
       "guidedParseRows",
       "keynoteColumnBBs",
@@ -439,11 +444,192 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     expect(afterTool.polygonVertices).toBe(polygonVertices);
     expect(afterTool.bucketFillPreview).toBe(bucketFillPreview);
     expect(setMode).not.toHaveBeenCalled();
-    expect(publications).toEqual(["parse", "tool", "ui"]);
+    expect(publications).toEqual(["ui", "tool", "parse"]);
     unsubscribeParse();
     unsubscribeTool();
     unsubscribeUi();
   });
+
+  const reentrantCloseScenarios = [
+    {
+      label: "table",
+      kind: "table" as const,
+      panelKey: "showTableParsePanel" as const,
+      seedPanel: () => useUiStore.setState({ showTableParsePanel: true }),
+      reopenPanel: () =>
+        useUiStore.getState().setPanelVisibility({ showTableParsePanel: true }),
+      close: toggleTableParsePanel,
+    },
+    {
+      label: "keynote",
+      kind: "keynote" as const,
+      panelKey: "showKeynoteParsePanel" as const,
+      seedPanel: () => useUiStore.setState({ showKeynoteParsePanel: true }),
+      reopenPanel: () =>
+        useUiStore.getState().setPanelVisibility({ showKeynoteParsePanel: true }),
+      close: toggleKeynoteParsePanel,
+    },
+  ] as const;
+
+  for (const scenario of reentrantCloseScenarios) {
+    for (const settleReplacement of [false, true]) {
+      it(`${scenario.label} close has no UI/tool tail after a synchronous ${
+        settleReplacement ? "settled" : "busy"
+      } replacement`, () => {
+        scenario.seedPanel();
+        useToolStore.setState({ mode: "markup" });
+
+        const publications: string[] = [];
+        let replacementStarted = false;
+        let replacementRevision: number | null = null;
+        const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
+        const unsubscribeTool = useToolStore.subscribe(() => publications.push("tool"));
+        const unsubscribeParse = useParseFlowStore.subscribe(() => {
+          publications.push("parse");
+          if (replacementStarted) return;
+
+          replacementStarted = true;
+          // B reacts synchronously to A's terminal Parse publication. Any later A presentation or
+          // tool write would now erase these replacement-owned destinations.
+          scenario.reopenPanel();
+          useToolStore.setState({ mode: "pointer" });
+          const started = useParseFlowStore.getState().beginParseOperation(scenario.kind);
+          expect(started.status).toBe("started");
+          if (started.status !== "started") return;
+          replacementRevision = started.token.revision;
+          if (settleReplacement) {
+            expect(useParseFlowStore.getState().finishParseOperation(started.token)).toBe(true);
+          }
+        });
+
+        scenario.close();
+
+        expect(replacementStarted).toBe(true);
+        expect(replacementRevision).not.toBeNull();
+        expect(publications).toEqual([
+          "ui",
+          "tool",
+          "parse",
+          "ui",
+          "tool",
+          "parse",
+          ...(settleReplacement ? ["parse"] : []),
+        ]);
+        expect(useUiStore.getState()[scenario.panelKey]).toBe(true);
+        expect(useToolStore.getState().mode).toBe("pointer");
+        expect(useParseFlowStore.getState().parseOperations[scenario.kind]).toEqual({
+          revision: replacementRevision,
+          busy: !settleReplacement,
+        });
+
+        unsubscribeUi();
+        unsubscribeTool();
+        unsubscribeParse();
+      });
+    }
+  }
+});
+
+describe("viewer UI command freeze — parsed Table catalog focus", () => {
+  it("publishes one complete UI destination before one terminal Table tab handoff", () => {
+    useUiStore.setState({
+      showTableParsePanel: false,
+      focusedParsedRegionId: "old-region",
+    });
+    useParseFlowStore.setState({ tableParseTab: "manual" });
+    useToolStore.setState({ mode: "markup" });
+    const started = useParseFlowStore.getState().beginParseOperation("table");
+    expect(started.status).toBe("started");
+    if (started.status !== "started") return;
+    const beforeOperations = useParseFlowStore.getState().parseOperations;
+    const beforeTool = useToolStore.getState();
+    const trace: string[] = [];
+    const unsubscribeUi = useUiStore.subscribe(() => trace.push("ui"));
+    const unsubscribeParse = useParseFlowStore.subscribe(() => trace.push("parse"));
+    const unsubscribeTool = useToolStore.subscribe(() => trace.push("tool"));
+
+    try {
+      focusParsedTableRegionInCatalog("target-region");
+    } finally {
+      unsubscribeTool();
+      unsubscribeParse();
+      unsubscribeUi();
+    }
+
+    expect(trace).toEqual(["ui", "parse"]);
+    expect(useUiStore.getState()).toMatchObject({
+      showTableParsePanel: true,
+      focusedParsedRegionId: "target-region",
+    });
+    expect(useParseFlowStore.getState().tableParseTab).toBe("all");
+    expect(useParseFlowStore.getState().parseOperations.table).toEqual({
+      revision: started.token.revision + 1,
+      busy: false,
+    });
+    for (const kind of ["keynote", "notes", "spec"] as const) {
+      expect(useParseFlowStore.getState().parseOperations[kind]).toBe(beforeOperations[kind]);
+    }
+    expect(useToolStore.getState()).toBe(beforeTool);
+  });
+
+  for (const settleReplacement of [false, true]) {
+    it(`has no post-Parse UI tail after synchronous Table B becomes ${
+      settleReplacement ? "settled" : "busy"
+    }`, () => {
+      useUiStore.setState({
+        showTableParsePanel: false,
+        focusedParsedRegionId: "old-region",
+      });
+      useParseFlowStore.setState({ tableParseTab: "manual" });
+      const publications: string[] = [];
+      let armed = true;
+      let revisionB: number | null = null;
+      const unsubscribeUi = useUiStore.subscribe(() => publications.push("ui"));
+      const unsubscribeParse = useParseFlowStore.subscribe((state) => {
+        publications.push("parse");
+        if (!armed) return;
+        armed = false;
+        const started = state.beginParseOperation("table");
+        expect(started.status).toBe("started");
+        if (started.status !== "started") return;
+        revisionB = started.token.revision;
+        if (settleReplacement) {
+          expect(useParseFlowStore.getState().finishParseOperation(started.token)).toBe(true);
+        }
+        useParseFlowStore.setState({ tableParseTab: "guided" });
+        useUiStore.setState({
+          showTableParsePanel: false,
+          focusedParsedRegionId: "replacement-region",
+        });
+      });
+
+      try {
+        focusParsedTableRegionInCatalog("target-region");
+      } finally {
+        unsubscribeParse();
+        unsubscribeUi();
+      }
+
+      expect(revisionB).not.toBeNull();
+      expect(publications).toEqual([
+        "ui",
+        "parse",
+        "parse",
+        ...(settleReplacement ? ["parse"] : []),
+        "parse",
+        "ui",
+      ]);
+      expect(useParseFlowStore.getState().parseOperations.table).toEqual({
+        revision: revisionB,
+        busy: !settleReplacement,
+      });
+      expect(useParseFlowStore.getState().tableParseTab).toBe("guided");
+      expect(useUiStore.getState()).toMatchObject({
+        showTableParsePanel: false,
+        focusedParsedRegionId: "replacement-region",
+      });
+    });
+  }
 });
 
 describe("viewer UI command freeze — YOLO browse navigation", () => {

@@ -4,6 +4,7 @@ import { useMemo, useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { navigateViewerPage } from "@/stores/viewerCommands";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade (items only — this
@@ -426,7 +427,7 @@ export default function TakeoffPanel() {
                                 key={inst.annId}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  useViewerCoreStore.getState().setPage(inst.pageNumber);
+                                  navigateViewerPage(inst.pageNumber);
                                   useUiStore.getState().setFocusAnnotationId(inst.annId);
                                 }}
                                 className="flex items-center gap-2 px-2 py-0.5 text-[11px] rounded cursor-pointer hover:bg-[var(--surface-hover)]"

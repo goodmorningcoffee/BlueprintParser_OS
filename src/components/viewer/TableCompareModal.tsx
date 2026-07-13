@@ -9,6 +9,10 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import {
+  invalidateParseOperationAtRevision,
+  setTableParsedGridForUser,
+} from "@/stores/viewerCommands";
+import {
   readPageIntelligence,
   setPageIntelligenceForPage,
 } from "@/queries/usePageWindow";
@@ -35,9 +39,11 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const tableParseRegion = useParseFlowStore((s) => s.tableParseRegion);
   const tableParsedGrid = useParseFlowStore((s) => s.tableParsedGrid);
-  const setTableParsedGrid = useParseFlowStore((s) => s.setTableParsedGrid);
   const tableParseMeta = useParseFlowStore((s) => s.tableParseMeta);
   const tableOperation = useParseOperation("table");
+  // Direct-unmount fallback follows only generations causally admitted by this modal. Merely
+  // rendering a reentrant Table B must never grant this old instance authority to revoke it.
+  const cleanupRevisionRef = useRef(tableOperation.revision);
   const textractData = useTextractForPage(pageNumber);
 
   // Source picker — "merged" (default) or a method name from tableParseMeta.methodResults.
@@ -61,19 +67,18 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   const savingDone = tableOperation.busy && savingRevision === tableOperation.revision;
 
   const closeModal = useCallback(() => {
-    // Manual close owns no completion token. Revoke the mounted modal instance before toggling so
-    // an abort-ignoring A can never close a later B instance through the global toggle.
-    tableOperation.invalidate();
+    // UI first, then an exact-revision CAS. A synchronous subscriber may install Table B while the
+    // modal closes; the old instance must not revoke that newer generation in its remaining tail.
+    const expectedRevision = useParseFlowStore.getState().parseOperations.table.revision;
     toggleModal();
-  }, [tableOperation.invalidate, toggleModal]);
+    invalidateParseOperationAtRevision("table", expectedRevision);
+  }, [toggleModal]);
 
-  const modalPageRef = useRef(pageNumber);
-  useEffect(() => {
-    if (modalPageRef.current === pageNumber) return;
-    modalPageRef.current = pageNumber;
-    tableOperation.invalidate();
-  }, [pageNumber, tableOperation.invalidate]);
-  useEffect(() => () => tableOperation.invalidate(), [tableOperation.invalidate]);
+  // Global page commands revoke Table before core.setPage. This is only a direct-unmount fallback,
+  // bound to the exact generation rendered by this modal so an old cleanup cannot revoke B.
+  useEffect(() => () => {
+    invalidateParseOperationAtRevision("table", cleanupRevisionRef.current);
+  }, []);
 
   // Initialize modal size on open
   useEffect(() => {
@@ -350,15 +355,13 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   // Cell edit handlers — delegated to EditableGrid which owns its own edit state
   const handleCellChange = (rowIndex: number, column: string, value: string) => {
     if (!tableParsedGrid) return;
-    tableOperation.invalidate();
     const newRows = [...tableParsedGrid.rows];
     newRows[rowIndex] = { ...newRows[rowIndex], [column]: value };
-    setTableParsedGrid({ ...tableParsedGrid, rows: newRows });
+    setTableParsedGridForUser({ ...tableParsedGrid, rows: newRows });
   };
 
   const handleHeaderRename = (colIndex: number, newName: string) => {
     if (!tableParsedGrid) return;
-    tableOperation.invalidate();
     const oldH = tableParsedGrid.headers[colIndex];
     const newHeaders = [...tableParsedGrid.headers];
     newHeaders[colIndex] = newName;
@@ -367,7 +370,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       for (const [k, v] of Object.entries(row)) r[k === oldH ? newName : k] = v;
       return r;
     });
-    setTableParsedGrid({
+    setTableParsedGridForUser({
       ...tableParsedGrid,
       headers: newHeaders,
       rows: newRows,
@@ -389,11 +392,10 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   // keep switching. Cell edits after a swap apply to the chosen source.
   const handleSourceChange = useCallback((source: string) => {
     if (!tableParsedGrid || !tableParseMeta) return;
-    tableOperation.invalidate();
     setSelectedSource(source);
     if (source === "merged") {
       const snap = tableParseMeta.mergedSnapshot;
-      setTableParsedGrid({
+      setTableParsedGridForUser({
         ...tableParsedGrid,
         headers: snap.headers,
         rows: snap.rows,
@@ -405,7 +407,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     }
     const method = tableParseMeta.methodResults.find((m) => m.method === source);
     if (!method) return;
-    setTableParsedGrid({
+    setTableParsedGridForUser({
       ...tableParsedGrid,
       headers: method.headers,
       rows: method.rows,
@@ -413,7 +415,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       colBoundaries: method.colBoundaries,
       rowBoundaries: method.rowBoundaries,
     });
-  }, [tableOperation.invalidate, tableParsedGrid, tableParseMeta, setTableParsedGrid]);
+  }, [tableParsedGrid, tableParseMeta]);
 
   // Sync the edited grid back to pageIntelligence, then persist through the
   // transactional promote upsert (same regionId → REPLACE, never the old
@@ -490,25 +492,33 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     const token = started.token;
 
     try {
+      if (!commitParseOperation(token, () => {
+        cleanupRevisionRef.current = token.revision;
+      })) return;
       // Query adoption is captured-key durable work, not a synchronous UI completion tail. Check
       // authority before publishing it, then keep it outside commitParseOperation so Query
       // subscribers cannot smuggle yielding/persistence work into the commit seam.
       if (!tableOperation.isCurrent(token)) return;
       setPageIntelligenceForPage(queryClient, publicId, pageNumber, updatedIntel);
-      commitParseOperation(token, () => {
+      // Query subscribers are synchronous. A B started by captured-key adoption owns every later
+      // local write and newly launched promotion, even though A's adoption itself remains legal.
+      if (!tableOperation.isCurrent(token)) return;
+      const keynotePublished = commitParseOperation(token, () => {
         if (updatedKeynoteData) store.setParsedKeynoteData(updatedKeynoteData);
       });
+      if (!keynotePublished || !tableOperation.isCurrent(token)) return;
 
       if (!canPersist(publicId, isDemo) || matchedId === null || matchedBbox === null) {
         // Demo / no publicId / no matching region — local-only write above.
-        commitParseOperation(token, toggleModal);
+        commitParseOperation(token, closeModal);
         return;
       }
 
-      commitParseOperation(token, () => {
+      const phasePublished = commitParseOperation(token, () => {
         setSaveError(null);
         setSavingRevision(token.revision);
       });
+      if (!phasePublished || !tableOperation.isCurrent(token)) return;
       const edited = (updatedIntel.parsedRegions as any[]).find((r) => r.id === matchedId);
       await saveParsedRegion(
         queryClient,
@@ -522,7 +532,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
           csiTags: matchedCsiTags,
         },
       );
-      commitParseOperation(token, toggleModal);
+      commitParseOperation(token, closeModal);
     } catch (err) {
       commitParseOperation(token, () => {
         setSaveError(err instanceof Error ? err.message : "Could not save edits");
@@ -537,7 +547,6 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     tableOperation.begin,
     tableOperation.finish,
     tableOperation.isCurrent,
-    toggleModal,
   ]);
 
   if (!tableParsedGrid || !tableParseRegion) return null;

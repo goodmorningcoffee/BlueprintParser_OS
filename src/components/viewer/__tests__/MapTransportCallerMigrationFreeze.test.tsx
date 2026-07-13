@@ -78,6 +78,14 @@ function renderItem(): void {
       pageNumber={PAGE}
       publicId={PUBLIC_ID}
       onDelete={vi.fn()}
+      cellStructureOperation={{
+        detect: vi.fn(async () => false),
+        clear: vi.fn(),
+        loadingKey: null,
+        busy: false,
+        errorKey: null,
+        error: null,
+      }}
     />,
     { wrapper },
   );

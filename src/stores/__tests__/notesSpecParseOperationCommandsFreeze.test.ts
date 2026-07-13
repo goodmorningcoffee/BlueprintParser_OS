@@ -145,6 +145,7 @@ describe("A2d shared Notes/Spec invalidation commands", () => {
 
   it("invalidates the full Notes workspace union except its admitted owner in one publication", () => {
     beginAllKinds();
+    useParseFlowStore.setState({ guidedParseOwner: "notes" });
     const before = useParseFlowStore.getState().parseOperations;
     const listener = vi.fn();
     const unsubscribe = useParseFlowStore.subscribe(listener);
@@ -224,6 +225,7 @@ describe("A2d atomic canvas-region acceptance", () => {
       guidedNotesCols: [REGION_B],
       notesFastManualActive: true,
       notesFastManualGrid: fastGrid,
+      guidedParseOwner: "notes",
       guidedParseActive: true,
       guidedParseRegion: REGION_A,
       guidedParseRows: guidedRows,
@@ -371,6 +373,7 @@ describe("A2d current-token completion commands", () => {
       notesParseRegion: REGION_A,
       guidedNotesRows: [REGION_A],
       guidedNotesCols: [REGION_B],
+      guidedParseOwner: "notes",
       guidedParseActive: true,
       guidedParseRegion: REGION_A,
       guidedParseRows: [0.2, 0.8],
@@ -507,6 +510,7 @@ describe("A2d Specs/Notes family handoff", () => {
       notesParseRegion: REGION_A,
       guidedNotesRows: [REGION_A],
       guidedNotesCols: [REGION_B],
+      guidedParseOwner: "notes",
       guidedParseActive: true,
       guidedParseRegion: REGION_A,
       guidedParseRows: [0.2, 0.8],
@@ -655,7 +659,7 @@ describe("A2d Index target handoff", () => {
     ["notes", "openNotesParseTarget", "notesParseRegion", "notesParseStep", null],
     ["spec", "openSpecParseTarget", "specParseRegion", "specParseStep", REGION_A],
     ["spec", "openSpecParseTarget", "specParseRegion", "specParseStep", null],
-  ] as const)("opens a %s target with one parse seed before page navigation and no stale tail", (
+  ] as const)("opens a %s target with destination page before one parse seed and no stale tail", (
     kind,
     commandName,
     regionKey,
@@ -684,7 +688,7 @@ describe("A2d Index target handoff", () => {
       if (!armed) return;
       armed = false;
       trace.push("parse-seed");
-      expect(useViewerCoreStore.getState().pageNumber).toBe(oldPage);
+      expect(useViewerCoreStore.getState().pageNumber).toBe(targetPage);
       expect(state[regionKey]).toBe(targetRegion);
       expect(state[stepKey]).toBe("idle");
       expect(state.parseDraftRegion).toBeNull();
@@ -718,7 +722,7 @@ describe("A2d Index target handoff", () => {
       unsubscribeCore();
     }
 
-    expect(trace).toEqual(["parse-seed", "page"]);
+    expect(trace).toEqual(["page", "parse-seed"]);
     // The target command owns one parse publication. The other two are B's begin + seed inside the
     // synchronous subscriber; any command-side parse tail would add a fourth and erase B.
     expect(parsePublications).toBe(3);
@@ -746,6 +750,7 @@ describe("A2d derived workspace and teardown reentrancy", () => {
       paragraphOverlayActive: true,
       notesFastManualActive: true,
       notesFastManualGrid: { headers: ["Key"], rows: [{ Key: "A" }] },
+      guidedParseOwner: "notes",
       guidedParseActive: true,
       guidedParseRegion: REGION_A,
       guidedParseRows: [0.2, 0.8],

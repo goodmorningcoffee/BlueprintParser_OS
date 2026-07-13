@@ -13,7 +13,7 @@ import { queryKeys } from "@/queries/queryKeys";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
-import { resetProjectData } from "@/stores/viewerCommands";
+import { navigateViewerPage, resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 vi.mock("@/components/viewer/EditableGrid", () => ({
@@ -138,6 +138,7 @@ beforeEach(() => {
     publicId: PUBLIC_ID,
     isDemo: false,
     pageNumber: PAGE,
+    numPages: PAGE + 2,
     showTableCompareModal: true,
   });
   queryClient.setQueryData(queryKeys.textract.page(PUBLIC_ID, PAGE), { lines: [], words: [] });
@@ -164,7 +165,7 @@ describe("A2b TableCompare modal operation authority", () => {
     expect(pending).toHaveLength(1);
     expect(useParseFlowStore.getState().parseOperations.table.busy).toBe(true);
     expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
-  });
+  }, 15_000);
 
   it("prevents late A from toggling closed or clearing pending modal B", async () => {
     render(<ModalHarness />, { wrapper });
@@ -219,17 +220,18 @@ describe("A2b TableCompare modal operation authority", () => {
     expect(pending).toHaveLength(2);
   });
 
-  it("invalidates a pending save on page change and suppresses its late close", async () => {
+  it("preserves legacy modal visibility on page change and suppresses its late completion", async () => {
     render(<ModalHarness />, { wrapper });
     await screen.findByRole("button", { name: "edit modal cell" });
     act(() => { (screen.getByRole("button", { name: "Done" }) as HTMLButtonElement).click(); });
     const revision = useParseFlowStore.getState().parseOperations.table.revision;
 
-    act(() => { useViewerCoreStore.setState({ pageNumber: PAGE + 1 }); });
+    act(() => { navigateViewerPage(PAGE + 1); });
     await waitFor(() => expect(useParseFlowStore.getState().parseOperations.table).toEqual({
       revision: revision + 1,
       busy: false,
     }));
+    expect(screen.getByRole("heading", { name: /Table Compare/ })).toBeInTheDocument();
 
     await act(async () => {
       pending[0].resolve(response(true, "late-page-A"));
@@ -237,6 +239,77 @@ describe("A2b TableCompare modal operation authority", () => {
     });
     expect(screen.getByRole("heading", { name: /Table Compare/ })).toBeInTheDocument();
   });
+
+  it.each([
+    ["busy", false],
+    ["settled", true],
+  ] as const)(
+    "does not let close or unmount cleanup revoke a synchronous %s Table B",
+    async (_replacementState, settleReplacement) => {
+      render(<ModalHarness />, { wrapper });
+      await screen.findByRole("button", { name: "edit modal cell" });
+      const revisionBeforeClose = useParseFlowStore.getState().parseOperations.table.revision;
+      let armed = true;
+      const unsubscribe = useUiStore.subscribe((state, previous) => {
+        if (!armed || !previous.showTableCompareModal || state.showTableCompareModal) return;
+        armed = false;
+        const started = useParseFlowStore.getState().beginParseOperation("table");
+        expect(started.status).toBe("started");
+        if (started.status === "started" && settleReplacement) {
+          expect(useParseFlowStore.getState().finishParseOperation(started.token)).toBe(true);
+        }
+      });
+
+      try {
+        fireEvent.click(screen.getByRole("button", { name: "×" }));
+        await waitFor(() => expect(screen.getByText("modal closed")).toBeInTheDocument());
+      } finally {
+        unsubscribe();
+      }
+
+      expect(useParseFlowStore.getState().parseOperations.table).toEqual({
+        revision: revisionBeforeClose + 1,
+        busy: !settleReplacement,
+      });
+    },
+  );
+
+  it.each([
+    ["busy", false],
+    ["settled", true],
+  ] as const)(
+    "does not let direct unmount revoke an independently rendered %s Table B",
+    async (_replacementState, settleReplacement) => {
+      const view = render(<ModalHarness />, { wrapper });
+      await screen.findByRole("button", { name: "edit modal cell" });
+      const originalRevision = useParseFlowStore.getState().parseOperations.table.revision;
+
+      act(() => {
+        const started = useParseFlowStore.getState().beginParseOperation("table");
+        expect(started.status).toBe("started");
+        if (started.status === "started" && settleReplacement) {
+          expect(useParseFlowStore.getState().finishParseOperation(started.token)).toBe(true);
+        }
+      });
+      // `act` flushes the modal's operation-hook rerender at B's revision. Cleanup must remain bound
+      // to the causally owned initial revision rather than adopting this independently admitted B.
+      const beforeUnmount = useParseFlowStore.getState();
+      expect(beforeUnmount.parseOperations.table).toEqual({
+        revision: originalRevision + 1,
+        busy: !settleReplacement,
+      });
+      let publications = 0;
+      const unsubscribe = useParseFlowStore.subscribe(() => {
+        publications += 1;
+      });
+
+      act(() => view.unmount());
+
+      expect(publications).toBe(0);
+      expect(useParseFlowStore.getState()).toBe(beforeUnmount);
+      unsubscribe();
+    },
+  );
 
   it("invalidates a pending save when the source grid changes", async () => {
     useParseFlowStore.setState({

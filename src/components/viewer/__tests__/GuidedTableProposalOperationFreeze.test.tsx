@@ -9,7 +9,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import GuidedParseTab from "@/components/viewer/GuidedParseTab";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
-import { resetProjectData } from "@/stores/viewerCommands";
+import {
+  claimGuidedParseWorkspaceForOperation,
+  resetProjectData,
+} from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void };
@@ -204,4 +207,70 @@ describe("A2b Guided Table proposal authority", () => {
     expect(screen.queryByText("Proposing grid...")).not.toBeInTheDocument();
     expect(screen.getByText(/9 rows × 10 cols/)).toBeInTheDocument();
   });
+
+  it.each([
+    ["foreign", "busy"],
+    ["foreign", "settled"],
+    ["same-family", "busy"],
+    ["same-family", "settled"],
+  ] as const)(
+    "rejects a queued tuning debounce after a %s %s B replaces its rendered generation",
+    async (family, settlement) => {
+      const view = render(
+        <GuidedParseTab
+          detectCsiAndPersist={vi.fn(async () => true)}
+          yoloInTableRegion={[]}
+          tagYoloClass={null}
+          setTagYoloClass={vi.fn()}
+          handleMapTags={vi.fn()}
+          tagMappingDone={false}
+          tagMappingCount={0}
+          setTagMappingDone={vi.fn()}
+          mapTagsStrictness="balanced"
+          setMapTagsStrictness={vi.fn()}
+          drawingNumberPrefixes={[]}
+          setDrawingNumberPrefixes={vi.fn()}
+          availablePrefixes={[]}
+          lastDropCounts={null}
+        />,
+        { wrapper },
+      );
+
+      expect(pending).toHaveLength(1);
+      await act(async () => {
+        pending[0].resolve(proposalResponse(1));
+        await flushCompletion();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /Tune Detection/ }));
+      const rowTolerance = view.container.querySelector('input[type="range"]') as HTMLInputElement;
+      fireEvent.change(rowTolerance, { target: { value: "0.010" } });
+
+      // The first change has invalidated the rendered proposal and queued its replacement, but the
+      // callback has not begun yet. Install B in that exact window, both busy and already-settled.
+      act(() => {
+        const kind = family === "foreign" ? "keynote" : "table";
+        const started = useParseFlowStore.getState().beginParseOperation(kind);
+        if (started.status !== "started") throw new Error(`${kind} B did not start`);
+        if (kind === "keynote") {
+          const claimed = claimGuidedParseWorkspaceForOperation(
+            started.token,
+            [0.1, 0.2, 0.8, 0.9],
+          );
+          if (!claimed) throw new Error("foreign B did not claim Guided");
+        }
+        if (settlement === "settled") {
+          useParseFlowStore.getState().finishParseOperation(started.token);
+        }
+      });
+      const afterB = useParseFlowStore.getState();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+
+      expect(pending).toHaveLength(1);
+      expect(useParseFlowStore.getState()).toBe(afterB);
+      expect(useParseFlowStore.getState().parseOperations[family === "foreign" ? "keynote" : "table"])
+        .toMatchObject({ busy: settlement === "busy" });
+    },
+  );
 });

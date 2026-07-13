@@ -2,8 +2,12 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import type { TableCellStructureOperation } from "@/hooks/useTableCellStructureOperation";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
-import { useViewerCoreStore } from "@/stores/viewerCoreStore";
+import {
+  navigateViewerPage,
+  openTableReviewTarget,
+} from "@/stores/viewerCommands";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations } from "@/queries/useAnnotations";
@@ -15,8 +19,7 @@ import {
   readPageIntelligence,
   setPageIntelligenceForPage,
 } from "@/queries/usePageWindow";
-// [refactor jul6 S029] apiErrorMessage: table-structure non-OK now serves the envelope
-import { canPersist, apiErrorMessage } from "@/lib/client-persist";
+import { canPersist } from "@/lib/client-persist";
 import { requestMapTagsBatch } from "@/lib/client-map-tags";
 import { saveParsedRegion } from "@/queries/parsedRegions";
 import type { YoloTag } from "@/types";
@@ -32,6 +35,7 @@ interface ParsedTableItemProps {
   publicId: string;
   onDelete: () => void;
   focusedParsedRegionId?: string | null;
+  cellStructureOperation: TableCellStructureOperation;
 }
 
 /** Expandable parsed table item with tag sub-items */
@@ -45,6 +49,7 @@ export default memo(function ParsedTableItem({
   publicId,
   onDelete,
   focusedParsedRegionId,
+  cellStructureOperation,
 }: ParsedTableItemProps) {
   // Context-only handle for optimistic page writes and the C2 shared save command (zero observer).
   const queryClient = useQueryClient();
@@ -99,49 +104,37 @@ export default memo(function ParsedTableItem({
   const isRegionHidden = table.region?.id ? hiddenParsedRegionIds.has(table.region.id) : false;
   const isFocused = focusedParsedRegionId != null && focusedParsedRegionId === table.region?.id;
   const tableCellStructure = useParseFlowStore((s) => s.tableCellStructure);
-  const [detectingCells, setDetectingCells] = useState(false);
-  const [detectCellsError, setDetectCellsError] = useState<string | null>(null);
+  const {
+    detect: detectCellStructure,
+    clear: clearCellStructure,
+    loadingKey,
+    busy: cellStructureBusy,
+    errorKey,
+    error,
+  } = cellStructureOperation;
+  const cellOperationKey = table.region?.id
+    ? `retained:${table.pageNum}:${table.region.id}`
+    : `summary:${table.pageNum}:${table.name}`;
+  const detectingCells = loadingKey === cellOperationKey;
+  const detectCellsError = errorKey === cellOperationKey ? error : null;
   const cellsDetectedHere = tableCellStructure?.pageNumber === table.pageNum;
 
-  const handleDetectCells = useCallback(async () => {
-    const store = useParseFlowStore.getState();
+  const handleDetectCells = useCallback(() => {
     // Clicking while cells are visible on this page clears them — mirrors
     // AutoParseTab's DetectCellStructureButton toggle behavior.
     if (cellsDetectedHere) {
-      store.setTableCellStructure(null);
+      clearCellStructure();
       return;
     }
     if (!publicId || !table.region?.bbox) return;
-    setDetectingCells(true);
-    setDetectCellsError(null);
-    useViewerCoreStore.getState().setPage(table.pageNum);
-    try {
-      const resp = await fetch("/api/table-structure", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: publicId,
-          pageNumber: table.pageNum,
-          regionBbox: table.region.bbox,
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok || data.error) {
-        setDetectCellsError(apiErrorMessage(data) || `HTTP ${resp.status}`);
-        return;
-      }
-      // setTableCellStructure auto-enables showTableCellStructure
-      store.setTableCellStructure({
-        cells: (data.cells || []).map((c: any) => ({ ...c, text: c.text || "", highlighted: false })),
-        pageNumber: table.pageNum,
-        regionBbox: table.region.bbox,
-      });
-    } catch (err: any) {
-      setDetectCellsError(err?.message || "Failed to detect cells");
-    } finally {
-      setDetectingCells(false);
-    }
-  }, [cellsDetectedHere, publicId, table.pageNum, table.region?.bbox]);
+    navigateViewerPage(table.pageNum);
+    void detectCellStructure({
+      projectId: publicId,
+      pageNumber: table.pageNum,
+      regionBbox: table.region.bbox,
+    }, cellOperationKey);
+  }, [cellsDetectedHere, clearCellStructure, detectCellStructure, publicId,
+    table.pageNum, table.region?.bbox, cellOperationKey]);
 
   // Auto-expand and scroll into view when focused from double-click on canvas
   useEffect(() => {
@@ -313,7 +306,7 @@ export default memo(function ParsedTableItem({
             />
           ) : (
             <span
-              onClick={() => setEditingName(true)}
+              onClick={() => table.region ? setEditingName(true) : onNavigate()}
               className="text-[11px] font-medium text-[var(--fg)] truncate block cursor-pointer hover:text-pink-300"
               title="Click to rename, double-click to navigate"
             >
@@ -363,14 +356,18 @@ export default memo(function ParsedTableItem({
             {isTagViewActive ? "T" : "t"}
           </button>
         )}
-        <button
-          onClick={() => setShowSettings(!showSettings)}
-          className={`text-[10px] shrink-0 ${showSettings ? "text-pink-300" : "text-[var(--muted)] hover:text-pink-300"}`}
-          title="Table settings"
-        >
-          &#9998;
-        </button>
-        <button onClick={onDelete} className="text-[10px] text-[var(--muted)] hover:text-red-400 shrink-0" title="Delete table">x</button>
+        {table.region && (
+          <>
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className={`text-[10px] shrink-0 ${showSettings ? "text-pink-300" : "text-[var(--muted)] hover:text-pink-300"}`}
+              title="Table settings"
+            >
+              &#9998;
+            </button>
+            <button onClick={onDelete} className="text-[10px] text-[var(--muted)] hover:text-red-400 shrink-0" title="Delete table">x</button>
+          </>
+        )}
       </div>
 
       {editError && (
@@ -380,7 +377,7 @@ export default memo(function ParsedTableItem({
       )}
 
       {/* Table settings panel (pencil toggle) */}
-      {showSettings && (
+      {showSettings && table.region && (
         <div className="mx-2 mb-1 p-2 rounded border border-[var(--border)] bg-[var(--surface)] space-y-2" onClick={(e) => e.stopPropagation()}>
           {/* Color swatches */}
           <div>
@@ -491,34 +488,36 @@ export default memo(function ParsedTableItem({
               <div className="flex gap-1 mt-1">
                 <button
                   onClick={() => {
-                    const store = useParseFlowStore.getState();
-                    // Loading a retained row into the modal creates a fresh Table review instance.
-                    // Revoke any pending parse/map/save before seeding its shared grid workspace.
-                    store.invalidateParseOperation("table");
-                    store.setTableParsedGrid({
-                      headers: table.region.data?.headers || [],
-                      rows: table.region.data?.rows || [],
-                      tagColumn: table.region.data?.tagColumn,
-                      tableName: table.name,
-                    });
-                    store.setTableParseRegion(table.region.bbox || null);
-                    useViewerCoreStore.getState().setPage(table.pageNum);
+                    if (!table.region) return;
+                    // Modal visibility publishes before the one terminal Parse/page handoff.
                     useUiStore.getState().toggleTableCompareModal();
+                    openTableReviewTarget(table.pageNum, {
+                      grid: {
+                        headers: table.region.data?.headers || [],
+                        rows: table.region.data?.rows || [],
+                        tagColumn: table.region.data?.tagColumn,
+                        tableName: table.name,
+                      },
+                      meta: null,
+                      region: table.region.bbox || null,
+                    });
                   }}
-                  className="flex-1 text-[9px] px-2 py-1 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
+                  disabled={!table.region}
+                  className="flex-1 text-[9px] px-2 py-1 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10 disabled:opacity-40"
                 >
                   View / Edit
                 </button>
                 <button
                   onClick={() => { setShowMapTags(true); setMapTagColumn(tagKey); }}
-                  className="flex-1 text-[9px] px-2 py-1 rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                  disabled={!table.region}
+                  className="flex-1 text-[9px] px-2 py-1 rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 disabled:opacity-40"
                 >
                   {yoloTags.some((t: any) => t.source === "schedule" && rowTags.some((rt: any) => rt.tag === t.tagText))
                     ? "Re-Map Tags" : "Map Tags"}
                 </button>
                 <button
                   onClick={handleDetectCells}
-                  disabled={detectingCells || !table.region?.bbox}
+                  disabled={cellStructureBusy || !table.region?.bbox}
                   className={`flex-1 text-[9px] px-2 py-1 rounded border disabled:opacity-40 ${
                     cellsDetectedHere
                       ? "border-cyan-500/60 text-cyan-300 bg-cyan-500/15 hover:bg-cyan-500/25"
@@ -542,7 +541,7 @@ export default memo(function ParsedTableItem({
               )}
             </>
           )}
-          {showMapTags && (
+          {showMapTags && table.region && (
             <div className="border border-cyan-500/30 rounded px-2 py-2 space-y-1.5 bg-cyan-500/5 mt-1">
               <div className="text-[10px] text-cyan-400 font-medium">Map Tags</div>
               <div>

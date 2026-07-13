@@ -11,7 +11,7 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useSessionStore } from "@/stores/sessionStore";
-import { resetProjectData } from "@/stores/viewerCommands";
+import { navigateViewerPage, resetProjectData } from "@/stores/viewerCommands";
 import { seedSummariesCache } from "@/queries/useSummaries";
 // [refactor jul10 P2.2④] takeoff items+groups moved zustand → TanStack cache; loader seeds both keys.
 import { seedTakeoffCache } from "@/queries/useTakeoff";
@@ -248,16 +248,16 @@ export default function DemoProjectPage() {
 
       if (e.key === "ArrowLeft" || e.key === "PageUp") {
         e.preventDefault();
-        store.setPage(store.pageNumber - 1);
+        navigateViewerPage(store.pageNumber - 1);
       } else if (e.key === "ArrowRight" || e.key === "PageDown") {
         e.preventDefault();
-        store.setPage(store.pageNumber + 1);
+        navigateViewerPage(store.pageNumber + 1);
       } else if (e.key === "Home") {
         e.preventDefault();
-        store.setPage(1);
+        navigateViewerPage(1);
       } else if (e.key === "End") {
         e.preventDefault();
-        store.setPage(store.numPages);
+        navigateViewerPage(store.numPages);
       }
     }
     window.addEventListener("keydown", handleKeyDown);

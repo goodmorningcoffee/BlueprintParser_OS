@@ -17,7 +17,7 @@ interface GuidedParseOverlayProps {
   /** Column setter — called on drag or double-click-to-add. */
   setCols: (cols: number[], lease: ParseWorkspaceLease) => void;
   /** Revoke shared parser owners once, before the first user edit in a gesture. */
-  onGridEditStart: () => ParseWorkspaceLease;
+  onGridEditStart: () => ParseWorkspaceLease | null;
   width: number;
   height: number;
   cssScale: number;
@@ -209,7 +209,9 @@ export default memo(function GuidedParseOverlay({
       if (target) {
         e.preventDefault();
         e.stopPropagation();
-        dragLeaseRef.current = onGridEditStart();
+        const lease = onGridEditStart();
+        if (!lease) return;
+        dragLeaseRef.current = lease;
         dragRef.current = target;
         setDragging(target);
       }
@@ -297,10 +299,12 @@ export default memo(function GuidedParseOverlay({
       if (distToVertEdge > distToHorzEdge) {
         // Closer to top/bottom edge -> add a row line
         const lease = onGridEditStart();
+        if (!lease) return;
         setRows([...rows, ny], lease);
       } else {
         // Closer to left/right edge -> add a column line
         const lease = onGridEditStart();
+        if (!lease) return;
         setCols([...cols, nx], lease);
       }
     },

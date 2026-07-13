@@ -35,6 +35,7 @@ import {
 import { queryKeys } from "@/queries/queryKeys";
 import { useUiStore } from "@/stores/uiStore";
 import { useParseFlowStore as useViewerStore } from "@/stores/parseFlowStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { seedAnnotations } from "@/test/seed-annotations";
 import { seedSummaries } from "@/test/seed-summaries";
 import type { ProjectSummaries } from "@/types";
@@ -222,6 +223,62 @@ describe("TableParsePanel — All Tables merges summaries with loaded intel, ded
     // lightweight summary-only row: name + page label (no region detail loaded yet)
     expect(screen.getByText("Door Schedule")).toBeInTheDocument();
     expect(screen.getByText(/p\.9/)).toBeInTheDocument();
+  });
+
+  it("keeps a summary-only row navigable while its inline detail actions fail closed", async () => {
+    setViewerStoreStateForTest({
+      pageNumber: 1,
+      numPages: 12,
+    });
+    seedSummaries(
+      qc,
+      summariesFixture({
+        parsedTables: [
+          { pageNum: 9, name: "Summary Only Doors", category: "door-schedule", rowCount: 12, colCount: 3 },
+        ],
+      }),
+    );
+    render(<TableParsePanel />, { wrapper });
+
+    // A retained catalog row has no region payload. Its name remains the safe route to the page,
+    // while clicking it must never enter the rename path (which dereferences region.data).
+    const summaryName = await screen.findByText("Summary Only Doors");
+    fireEvent.click(summaryName);
+    expect(useViewerCoreStore.getState().pageNumber).toBe(9);
+
+    // Expanding the lightweight row is safe. Region-dependent controls fail closed and the
+    // settings/delete affordances do not exist at all.
+    fireEvent.click(screen.getByRole("button", { name: "▶" }));
+    expect(screen.getByRole("button", { name: "View / Edit" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Map Tags" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Detect Cells" })).toBeDisabled();
+    expect(screen.queryByTitle("Table settings")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Delete table")).not.toBeInTheDocument();
+  });
+
+  it("excludes a summary-only row from Compare/Edit and disables its CSV export", async () => {
+    seedSummaries(
+      qc,
+      summariesFixture({
+        parsedTables: [
+          { pageNum: 9, name: "Summary Only Doors", category: "door-schedule", rowCount: 12, colCount: 3 },
+        ],
+      }),
+    );
+    render(<TableParsePanel />, { wrapper });
+    await screen.findByText("Summary Only Doors");
+
+    // Compare/Edit must not offer a row whose detail payload is absent.
+    fireEvent.click(screen.getByRole("button", { name: "Compare/Edit Cells" }));
+    expect(screen.queryByText("Summary Only Doors")).not.toBeInTheDocument();
+    expect(screen.getByText("No parsed tables yet. Use Auto Parse or Manual tabs first.")).toBeInTheDocument();
+
+    // Export may open globally, but the summary row is excluded and no CSV action is enabled.
+    fireEvent.click(screen.getByRole("button", { name: "All Tables" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+    expect(screen.queryAllByText("Summary Only Doors")).toHaveLength(1);
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Export CSV" }).at(-1)).toBeDisabled();
   });
 });
 

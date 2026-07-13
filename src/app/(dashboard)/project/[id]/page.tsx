@@ -9,7 +9,7 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useSessionStore } from "@/stores/sessionStore";
-import { resetProjectData } from "@/stores/viewerCommands";
+import { navigateViewerPage, resetProjectData } from "@/stores/viewerCommands";
 import { useSearch } from "@/hooks/useSearch";
 import { seedChatCache } from "@/queries/useChatMessages";
 // [refactor jul10 P2.2③] summaries moved zustand → TanStack cache; loader seeds the cache.
@@ -309,16 +309,16 @@ export default function ProjectPage() {
 
       if (e.key === "ArrowLeft" || e.key === "PageUp") {
         e.preventDefault();
-        store.setPage(store.pageNumber - 1);
+        navigateViewerPage(store.pageNumber - 1);
       } else if (e.key === "ArrowRight" || e.key === "PageDown") {
         e.preventDefault();
-        store.setPage(store.pageNumber + 1);
+        navigateViewerPage(store.pageNumber + 1);
       } else if (e.key === "Home") {
         e.preventDefault();
-        store.setPage(1);
+        navigateViewerPage(1);
       } else if (e.key === "End") {
         e.preventDefault();
-        store.setPage(store.numPages);
+        navigateViewerPage(store.numPages);
       } else if ((e.ctrlKey || e.metaKey) && e.key === "=") {
         e.preventDefault();
         store.zoomIn();

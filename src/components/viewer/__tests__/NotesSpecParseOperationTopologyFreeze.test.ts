@@ -215,9 +215,11 @@ describe("A2d exact Notes/Spec operation topology", () => {
     }
   });
 
-  it("uses neutral atomic completion and shared-workspace seams", () => {
+  it("pins owner-aware Guided claim, publication, completion, and tab seams", () => {
     const commands = text(COMMANDS);
     for (const name of [
+      "claimGuidedParseWorkspaceForOperation",
+      "publishGuidedProposalForOperation",
       "invalidateParagraphParseOperations",
       "invalidateNotesWorkspaceOperations",
       "acceptNotesParseRegion",
@@ -228,11 +230,90 @@ describe("A2d exact Notes/Spec operation topology", () => {
       "toggleSpecsNotesParsePanel",
     ]) expect(commands, `missing ${name}`).toContain(`function ${name}`);
 
-    expect(compact(namedRoot(NOTES, "runProposeGuided")))
-      .toContain('invalidateGuidedParseOperations("notes")');
+    const proposal = compact(namedRoot(NOTES, "runProposeGuided"));
+    expect(proposal).toContain(
+      "claimGuidedParseWorkspaceForOperation(token,target.region)",
+    );
+    expect(proposal).toContain("if(!workspaceLease)return");
+    expect(proposal).toContain("cleanupLeaseRef.current=workspaceLease");
+    expect(proposal).toContain("publishGuidedProposalForOperation(token,");
+    expect(proposal.indexOf("claimGuidedParseWorkspaceForOperation"))
+      .toBeLessThan(proposal.indexOf("await"));
+    expect(proposal.indexOf("await"))
+      .toBeLessThan(proposal.indexOf("publishGuidedProposalForOperation"));
+    expect(proposal).not.toContain("invalidateGuidedParseOperations(");
+
+    const build = compact(namedRoot(NOTES, "buildGridFromGuided"));
+    expect(build).toContain('if(store.guidedParseOwner!=="notes")returnnull');
+    expect(build.indexOf('guidedParseOwner!=="notes"'))
+      .toBeLessThan(build.indexOf("constrows=store.guidedParseRows"));
+
+    const notesSource = text(NOTES);
+    for (const rawPublication of [
+      /\bsetGuidedParseRows\(/,
+      /\bsetGuidedParseCols\(/,
+      /\bsetGuidedParseActive\(/,
+      /\bsetGuidedParseRegion\(/,
+      /\bresetGuidedParse\(/,
+    ]) expect(notesSource, `Notes has no raw shared publication ${rawPublication}`)
+      .not.toMatch(rawPublication);
+
+    const claim = compact(namedRoot(COMMANDS, "claimGuidedParseWorkspaceForOperation"));
+    expect(claim).toContain("if(!live.busy||live.revision!==token.revision)returnstate");
+    expect(claim).toContain("lease=workspaceLease(parseOperations,token.kind)");
+    expect(claim).toContain("guidedParseOwner:token.kind");
+    const publish = compact(namedRoot(COMMANDS, "publishGuidedProposalForOperation"));
+    expect(publish).toContain("state.guidedParseOwner!==token.kind");
+    expect(publish).toContain("return{guidedParseRows,guidedParseCols,guidedParseActive:true,}");
+
+    const invalidateNotes = compact(namedRoot(COMMANDS, "invalidateNotesWorkspaceOperations"));
+    expect(invalidateNotes).toContain(
+      'constmayRetainGuided=except!=="notes"||state.guidedParseOwner==="notes"',
+    );
+    expect(invalidateNotes).toContain(
+      'except==="notes"&&!mayRetainGuided?(["notes","spec"]asconst)',
+    );
+    expect(invalidateNotes).toContain(
+      "lease=workspaceLease(parseOperations,state.guidedParseOwner)",
+    );
+    expect(invalidateNotes).not.toContain('guidedParseOwner:"notes"');
+
+    const mode = compact(namedRoot(COMMANDS, "transitionNotesParserMode"));
+    expect(mode).toContain(
+      'constentersGuided=nextMode==="guided"&&notesParseRegion!==null',
+    );
+    expect(mode).toContain('constclearsGuided=state.guidedParseOwner==="notes"');
+    expect(mode).toContain(
+      'constguidedParseOwner=entersGuided?"notes":clearsGuided?null:state.guidedParseOwner',
+    );
+
+    const completion = compact(namedRoot(COMMANDS, "completeNotesParseOperation"));
+    expect(completion).toContain(
+      'if(options.guided&&state.guidedParseOwner!=="notes")returnstate',
+    );
+    expect(completion.match(/useParseFlowStore\.setState/g)).toHaveLength(1);
+    expect(completion).toContain(
+      'constkinds:ParseKind[]=options.guided?["table","keynote","notes","spec"]:["notes","spec"]',
+    );
+    expect(completion).toContain("guidedParseOwner:null");
+    expect(completion).toContain("returncompleted");
+    expect(completion).not.toMatch(/\bresetGuidedParse\(/);
+
+    const tab = compact(namedRoot(COMMANDS, "setSpecsNotesParseTab"));
+    expect(tab).toContain("leaveSpecsNotesParseTab(ui.specsNotesTab)");
+    expect(tab).toContain("useUiStore.getState().setSpecsNotesTab(specsNotesTab)");
+    expect(tab.indexOf("leaveSpecsNotesParseTab"))
+      .toBeLessThan(tab.indexOf("setSpecsNotesTab"));
+    const leaveTab = compact(namedRoot(COMMANDS, "leaveSpecsNotesParseTab"));
+    expect(leaveTab).toContain('if(tab==="notes-parse")');
+    expect(leaveTab).toContain('constownsGuided=state.guidedParseOwner==="notes"');
+    expect(leaveTab).toContain(
+      'ownsGuided?["table","keynote","notes","spec"]:["notes","spec"]',
+    );
+
     expect(compact(namedRoot(NOTES, "saveFromParagraphBatch")))
-      .toContain('invalidateParagraphParseOperations("notes")');
+      .toContain("invalidateParagraphParseOperationsForOperation(token)");
     expect(compact(namedRoot(SPEC, "saveFromBatch")))
-      .toContain('invalidateParagraphParseOperations("spec")');
+      .toContain("invalidateParagraphParseOperationsForOperation(token)");
   });
 });

@@ -14,6 +14,7 @@ import {
 import { useSessionStore } from "@/stores/sessionStore";
 import {
   useParseFlowStore,
+  type GuidedParseOwner,
   type ParseFlowState,
   type PendingParagraph,
 } from "@/stores/parseFlowStore";
@@ -42,6 +43,15 @@ type NotesParseStep = TableParseStep;
 type SpecParseStep = "idle" | "select-region" | "define-sections" | "review";
 type NotesParserMode = "auto" | "guided" | "paragraph" | "fast-manual" | "manual";
 type SpecParserMode = "auto" | "paragraph" | "manual";
+type ActiveGuidedParseOwner = Exclude<GuidedParseOwner, null>;
+
+function isParseKind(value: unknown): value is ParseKind {
+  return value === "table" || value === "keynote" || value === "notes" || value === "spec";
+}
+
+function isActiveGuidedParseOwner(value: unknown): value is ActiveGuidedParseOwner {
+  return isParseKind(value) && value !== "spec";
+}
 
 /**
  * Snapshot created by the same atomic publication that begins a shared-workspace gesture or
@@ -53,15 +63,104 @@ export type ParseWorkspaceLease = Readonly<{
   keynoteRevision: number;
   notesRevision: number;
   specRevision: number;
+  guidedOwner: GuidedParseOwner;
 }>;
 
-function workspaceLease(parseOperations: ParseOperationRegistry): ParseWorkspaceLease {
+function workspaceLease(
+  parseOperations: ParseOperationRegistry,
+  guidedOwner: GuidedParseOwner,
+): ParseWorkspaceLease {
   return {
     tableRevision: parseOperations.table.revision,
     keynoteRevision: parseOperations.keynote.revision,
     notesRevision: parseOperations.notes.revision,
     specRevision: parseOperations.spec.revision,
+    guidedOwner,
   };
+}
+
+/**
+ * Preserve the legacy canvas page-exit behavior before core page observers run: only active Table
+ * and Keynote drawing state resets. Notes, Spec, shared workspaces, settings, and retained history
+ * are not generic-navigation data. The post-page authority publication below revokes every async
+ * owner after synchronous core subscribers have finished.
+ */
+function legacyParsePageExitPatch(state: ParseFlowState): Partial<ParseFlowState> | null {
+  const clearsTable = state.tableParseStep !== "idle";
+  const clearsKeynote = state.keynoteParseStep !== "idle";
+  if (!clearsTable && !clearsKeynote) return null;
+  const kinds: ParseKind[] = [];
+  if (clearsTable) kinds.push("table");
+  if (clearsKeynote) kinds.push("keynote");
+  return {
+    ...(clearsTable
+      ? {
+          tableParseStep: "idle" as const,
+          tableParseRegion: null,
+          tableParsedGrid: null,
+          tableParseMeta: null,
+          tableCellStructure: null,
+          tableParseColumnBBs: [],
+          tableParseColumnNames: [],
+          tableParseRowBBs: [],
+        }
+      : {}),
+    ...(clearsKeynote
+      ? {
+          keynoteParseStep: "idle" as const,
+          keynoteParseRegion: null,
+          keynoteColumnBBs: [],
+          keynoteRowBBs: [],
+          keynoteYoloClass: null,
+        }
+      : {}),
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, kinds),
+  };
+}
+
+function prepareLegacyParsePageExit(prepareTool = true): boolean {
+  const before = useParseFlowStore.getState();
+  if (before.tableParseStep === "idle" && before.keynoteParseStep === "idle") return false;
+  // Tool first: the subsequent Parse publication may synchronously admit B, which must own every
+  // later tool write. This has the same final legacy destination as AnnotationOverlay's old effect.
+  if (prepareTool) useToolStore.getState().setMode("move");
+  useParseFlowStore.setState((state) => legacyParsePageExitPatch(state) ?? state);
+  return true;
+}
+
+/** Revoke old-page A and any synchronous core-page subscriber B after the new page is installed. */
+function publishPageOperationBoundary(): void {
+  useParseFlowStore.setState((state) => ({
+    parseOperations: invalidateParseOperationKinds(
+      state.parseOperations,
+      ["table", "keynote", "notes", "spec"],
+    ),
+  }));
+}
+
+/**
+ * Global page navigation boundary. Legacy Table/Keynote canvas cleanup stays conditional; after
+ * core page subscribers return, one authority-only publication invalidates every old/new-page
+ * operation. A subscriber admitted by that terminal publication necessarily captures the new page.
+ */
+export function navigateViewerPage(pageNumber: number): void {
+  const core = useViewerCoreStore.getState();
+  const targetPage = Math.max(1, Math.min(pageNumber, core.numPages || 1));
+  if (targetPage === core.pageNumber) return;
+  prepareLegacyParsePageExit();
+  useViewerCoreStore.getState().setPage(targetPage);
+  publishPageOperationBoundary();
+}
+
+/**
+ * Legacy YOLO-instance navigation accepts its stored page number verbatim instead of clamping it.
+ * Keep that destination contract while still applying the same pre-core Parse authority boundary.
+ */
+export function navigateViewerPageUnclamped(pageNumber: number): void {
+  if (pageNumber === useViewerCoreStore.getState().pageNumber) return;
+  prepareLegacyParsePageExit();
+  useViewerCoreStore.setState({ pageNumber });
+  publishPageOperationBoundary();
 }
 
 function matchesParagraphLease(
@@ -84,19 +183,23 @@ function matchesParagraphLeaseRevisions(
 function matchesGuidedLeaseRevisions(
   parseOperations: ParseOperationRegistry,
   lease: ParseWorkspaceLease,
+  guidedOwner: GuidedParseOwner,
 ): boolean {
   return parseOperations.table.revision === lease.tableRevision &&
     parseOperations.keynote.revision === lease.keynoteRevision &&
-    parseOperations.notes.revision === lease.notesRevision;
+    parseOperations.notes.revision === lease.notesRevision &&
+    guidedOwner === lease.guidedOwner;
 }
 
 function matchesGuidedLease(
   parseOperations: ParseOperationRegistry,
   lease: ParseWorkspaceLease,
+  guidedOwner: GuidedParseOwner,
 ): boolean {
   return parseOperations.table.revision === lease.tableRevision &&
     parseOperations.keynote.revision === lease.keynoteRevision &&
     parseOperations.notes.revision === lease.notesRevision &&
+    lease.guidedOwner !== null && guidedOwner === lease.guidedOwner &&
     !parseOperations.table.busy && !parseOperations.keynote.busy &&
     !parseOperations.notes.busy;
 }
@@ -146,10 +249,6 @@ function specDraftForParagraphBatch(
       tableName: `(draft — ${paragraphBatch.length} paragraph${paragraphBatch.length === 1 ? "" : "s"})`,
     },
   };
-}
-
-function sameParseRegion(a: ParseRegion | null, b: ParseRegion | null): boolean {
-  return Boolean(a && b && a.every((value, index) => value === b[index]));
 }
 
 const PARSE_ENTRY_TOOL_DESTINATION = {
@@ -203,14 +302,258 @@ export function invalidateGuidedParseOperations(
   except?: "table" | "keynote" | "notes",
 ): ParseWorkspaceLease {
   const sharedKinds = ["table", "keynote", "notes"] as const;
-  const kinds = sharedKinds.filter((kind) => kind !== except);
   let lease!: ParseWorkspaceLease;
   useParseFlowStore.setState((state) => {
+    // Proposal roots claim through claimGuidedParseWorkspaceForOperation. This retained-grid seam
+    // may only keep an already matching owner; a queued/stale handler cannot relabel peer B bytes.
+    const ownsWorkspace = except === undefined || state.guidedParseOwner === except;
+    const kinds = except === undefined
+      ? [...sharedKinds]
+      : ownsWorkspace
+        ? sharedKinds.filter((kind) => kind !== except)
+        : [except];
     const parseOperations = invalidateParseOperationKinds(state.parseOperations, kinds);
-    lease = workspaceLease(parseOperations);
+    lease = workspaceLease(parseOperations, state.guidedParseOwner);
     return { parseOperations };
   });
   return lease;
+}
+
+/**
+ * Claim a fresh Guided generation for one admitted parser root. Ownership, empty bytes, region,
+ * and peer revocation are one publication; equal bounding boxes never imply equal ownership.
+ */
+export function claimGuidedParseWorkspaceForOperation(
+  token: ParseOperationToken<"table" | "keynote" | "notes">,
+  guidedParseRegion: ParseRegion,
+): ParseWorkspaceLease | null {
+  // TypeScript prevents this for in-repo callers; the runtime gate keeps JS/forged tokens from
+  // indexing another operation lane and installing an impossible Guided owner.
+  if (!isActiveGuidedParseOwner(token.kind)) return null;
+  let lease: ParseWorkspaceLease | null = null;
+  useParseFlowStore.setState((state) => {
+    const live = state.parseOperations[token.kind];
+    if (!live.busy || live.revision !== token.revision) return state;
+    const retainsGrid = state.guidedParseOwner === token.kind &&
+      state.guidedParseRegion !== null &&
+      state.guidedParseRegion.every((value, index) => value === guidedParseRegion[index]);
+    const parseOperations = invalidateParseOperationKinds(
+      state.parseOperations,
+      (["table", "keynote", "notes"] as const).filter((kind) => kind !== token.kind),
+    );
+    lease = workspaceLease(parseOperations, token.kind);
+    return {
+      guidedParseOwner: token.kind,
+      guidedParseRegion,
+      ...(retainsGrid
+        ? {}
+        : {
+            guidedParseActive: false,
+            guidedParseRows: [],
+            guidedParseCols: [],
+          }),
+      parseOperations,
+    };
+  });
+  return lease;
+}
+
+/** Publish a proposal only into the exact owner/token generation that requested it. */
+export function publishGuidedProposalForOperation(
+  token: ParseOperationToken<"table" | "keynote" | "notes">,
+  guidedParseRows: number[],
+  guidedParseCols: number[],
+): boolean {
+  if (!isActiveGuidedParseOwner(token.kind)) return false;
+  let committed = false;
+  useParseFlowStore.setState((state) => {
+    const live = state.parseOperations[token.kind];
+    if (
+      !live.busy || live.revision !== token.revision ||
+      state.guidedParseOwner !== token.kind
+    ) return state;
+    committed = true;
+    return {
+      guidedParseRows,
+      guidedParseCols,
+      guidedParseActive: true,
+    };
+  });
+  return committed;
+}
+
+/**
+ * Clear only the departing family's Guided generation. A co-mounted peer's bytes and operation
+ * identities survive exactly, even when its region happens to be byte-equal.
+ */
+export function resetGuidedParseWorkspace(owner: "table" | "keynote" | "notes"): boolean {
+  if (!isActiveGuidedParseOwner(owner)) return false;
+  const before = useParseFlowStore.getState();
+  if (before.guidedParseOwner === null || before.guidedParseOwner === owner) {
+    useToolStore.setState({ mode: "move" });
+  }
+  let cleared = false;
+  useParseFlowStore.setState((state) => {
+    const ownsGuided = state.guidedParseOwner === owner;
+    const ownerPatch = owner === "table"
+      ? { tableParseStep: "idle" as const, tableParseRegion: null }
+      : owner === "keynote"
+        ? { keynoteParseStep: "idle" as const, keynoteParseRegion: null }
+        : { notesParseStep: "idle" as const, notesParseRegion: null };
+    cleared = ownsGuided;
+    return {
+      ...ownerPatch,
+      ...(ownsGuided
+        ? {
+            guidedParseOwner: null,
+            guidedParseActive: false,
+            guidedParseRegion: null,
+            guidedParseRows: [],
+            guidedParseCols: [],
+          }
+        : {}),
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        ownsGuided ? ["table", "keynote", "notes"] : [owner],
+      ),
+    };
+  });
+  return cleared;
+}
+
+/** Full Table user reset with tool-first ordering and owner-aware shared cleanup. */
+export function resetTableParseWorkspace(): void {
+  const before = useParseFlowStore.getState();
+  const preservesPeerGuided = before.guidedParseOwner !== null &&
+    before.guidedParseOwner !== "table";
+  if (!preservesPeerGuided) useToolStore.getState().setMode("move");
+  useParseFlowStore.setState((state) => {
+    const clearsGuided = state.guidedParseOwner === "table";
+    return {
+      tableParseStep: "idle",
+      tableParseRegion: null,
+      tableParsedGrid: null,
+      tableParseMeta: null,
+      tableCellStructure: null,
+      tableParseColumnBBs: [],
+      tableParseColumnNames: [],
+      tableParseRowBBs: [],
+      ...(clearsGuided
+        ? {
+            guidedParseOwner: null,
+            guidedParseActive: false,
+            guidedParseRegion: null,
+            guidedParseRows: [],
+            guidedParseCols: [],
+          }
+        : {}),
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        clearsGuided ? ["table", "keynote", "notes"] : ["table"],
+      ),
+    };
+  });
+}
+
+/** Return Auto review to its retained region in one user-owned terminal Parse publication. */
+export function restartTableParseFromCurrentRegion(): void {
+  useToolStore.getState().setMode("move");
+  useParseFlowStore.setState((state) => ({
+    tableParseStep: "idle",
+    tableParsedGrid: null,
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+  }));
+}
+
+/** Clear page-relative cell structure and revoke the Table owner in the same user publication. */
+export function clearTableCellStructureForUser(): void {
+  useParseFlowStore.setState((state) => ({
+    tableCellStructure: null,
+    showTableCellStructure: false,
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+  }));
+}
+
+/** Table review/input edits replace their bytes and revoke the old owner in one publication. */
+export function setTableParsedGridForUser(
+  tableParsedGrid: ParseFlowState["tableParsedGrid"],
+): void {
+  useParseFlowStore.setState((state) => ({
+    tableParsedGrid,
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+  }));
+}
+
+type TableManualGeometryPatch = Partial<Pick<
+  ParseFlowState,
+  "tableParseColumnBBs" | "tableParseColumnNames" | "tableParseRowBBs"
+>>;
+
+export function setTableManualGeometryForUser(patch: TableManualGeometryPatch): void {
+  useParseFlowStore.setState((state) => ({
+    ...patch,
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+  }));
+}
+
+export function addTableParseColumnForUser(bbox: ParseRegion): void {
+  useParseFlowStore.setState((state) => ({
+    tableParseColumnBBs: [...state.tableParseColumnBBs, bbox],
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+  }));
+}
+
+export function addTableParseRowForUser(bbox: ParseRegion): void {
+  useParseFlowStore.setState((state) => ({
+    tableParseRowBBs: [...state.tableParseRowBBs, bbox],
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+  }));
+}
+
+type KeynoteManualInputPatch = Partial<Pick<
+  ParseFlowState,
+  "keynoteColumnBBs" | "keynoteRowBBs" | "keynoteYoloClass"
+>>;
+
+export function setKeynoteManualInputsForUser(patch: KeynoteManualInputPatch): void {
+  useParseFlowStore.setState((state) => ({
+    ...patch,
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["keynote"]),
+  }));
+}
+
+export function addKeynoteColumnForUser(bbox: ParseRegion): void {
+  useParseFlowStore.setState((state) => ({
+    keynoteColumnBBs: [...state.keynoteColumnBBs, bbox],
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["keynote"]),
+  }));
+}
+
+export function addKeynoteRowForUser(bbox: ParseRegion): void {
+  useParseFlowStore.setState((state) => ({
+    keynoteRowBBs: [...state.keynoteRowBBs, bbox],
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["keynote"]),
+  }));
+}
+
+/** Consume Shape's accepted Table region only if the exact rendered generation still owns it. */
+export function consumeTableParseRegionForShape(
+  expectedRegion: ParseRegion,
+  expectedRevision: number,
+): boolean {
+  let consumed = false;
+  useParseFlowStore.setState((state) => {
+    if (
+      state.tableParseRegion !== expectedRegion ||
+      state.parseOperations.table.revision !== expectedRevision
+    ) return state;
+    consumed = true;
+    return {
+      tableParseRegion: null,
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+    };
+  });
+  return consumed;
 }
 
 /** Revoke a retained-Keynote -> Table-review handoff atomically before its first shared seed. */
@@ -229,21 +572,110 @@ export function invalidateKeynoteTableOperations(): void {
  * gap and then have B's workspace erased by A's remaining reset calls.
  */
 export function resetKeynoteGuidedParse(): void {
+  const before = useParseFlowStore.getState();
+  if (before.guidedParseOwner === null || before.guidedParseOwner === "keynote") {
+    useToolStore.setState({ mode: "move" });
+  }
+  useParseFlowStore.setState((state) => {
+    const ownsGuided = state.guidedParseOwner === "keynote";
+    return {
+      keynoteParseStep: "idle",
+      keynoteParseRegion: null,
+      keynoteColumnBBs: [],
+      keynoteRowBBs: [],
+      keynoteYoloClass: null,
+      ...(ownsGuided
+        ? {
+            guidedParseOwner: null,
+            guidedParseActive: false,
+            guidedParseRegion: null,
+            guidedParseRows: [],
+            guidedParseCols: [],
+          }
+        : {}),
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
+      ),
+    };
+  });
+}
+
+/** Stored Table submode handoff with owner-aware Guided teardown in one parse publication. */
+export function transitionTableParseTab(
+  tableParseTab: ParseFlowState["tableParseTab"],
+): void {
+  const before = useParseFlowStore.getState();
+  if (before.tableParseTab === tableParseTab) return;
+  const preservesPeerGuided = before.guidedParseOwner !== null &&
+    before.guidedParseOwner !== "table";
+  if (!preservesPeerGuided) useToolStore.setState({ mode: "move" });
+  useParseFlowStore.setState((state) => {
+    const ownsGuided = state.guidedParseOwner === "table";
+    return {
+      tableParseTab,
+      ...(ownsGuided
+        ? {
+            guidedParseOwner: null,
+            guidedParseActive: false,
+            guidedParseRegion: null,
+            guidedParseRows: [],
+            guidedParseCols: [],
+          }
+        : {}),
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        ownsGuided ? ["table", "keynote", "notes"] : ["table"],
+      ),
+    };
+  });
+}
+
+/** Canvas double-click handoff: presentation first, then one terminal Table catalog publication. */
+export function focusParsedTableRegionInCatalog(regionId: string): void {
+  useUiStore.setState({
+    showTableParsePanel: true,
+    focusedParsedRegionId: regionId,
+  });
   useParseFlowStore.setState((state) => ({
-    keynoteParseStep: "idle",
-    keynoteParseRegion: null,
-    keynoteColumnBBs: [],
-    keynoteRowBBs: [],
-    keynoteYoloClass: null,
-    guidedParseActive: false,
-    guidedParseRegion: null,
-    guidedParseRows: [],
-    guidedParseCols: [],
-    parseOperations: invalidateParseOperationKinds(
-      state.parseOperations,
-      ["table", "keynote", "notes"],
-    ),
+    tableParseTab: "all",
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
   }));
+}
+
+/** Stored Keynote submode handoff; reset and destination cannot straddle a peer B publication. */
+export function transitionKeynoteParseTab(
+  keynoteParseTab: ParseFlowState["keynoteParseTab"],
+): void {
+  const before = useParseFlowStore.getState();
+  if (before.keynoteParseTab === keynoteParseTab) return;
+  const preservesPeerGuided = before.guidedParseOwner !== null &&
+    before.guidedParseOwner !== "keynote";
+  if (!preservesPeerGuided) useToolStore.setState({ mode: "move" });
+  useParseFlowStore.setState((state) => {
+    const ownsGuided = state.guidedParseOwner === "keynote";
+    return {
+      keynoteParseTab,
+      keynoteParseStep: "idle",
+      keynoteParseRegion: null,
+      keynoteColumnBBs: [],
+      keynoteRowBBs: [],
+      keynoteYoloClass: null,
+      ...(ownsGuided
+        ? {
+            guidedParseOwner: null,
+            guidedParseActive: false,
+            guidedParseRegion: null,
+            guidedParseRows: [],
+            guidedParseCols: [],
+          }
+        : {}),
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
+      ),
+    };
+  });
 }
 
 /** Revoke the Notes/Spec owners of the shared draft + paragraph workspace in one publication. */
@@ -255,7 +687,7 @@ export function invalidateParagraphParseOperations(
   let lease!: ParseWorkspaceLease;
   useParseFlowStore.setState((state) => {
     const parseOperations = invalidateParseOperationKinds(state.parseOperations, kinds);
-    lease = workspaceLease(parseOperations);
+    lease = workspaceLease(parseOperations, state.guidedParseOwner);
     return { parseOperations };
   });
   return lease;
@@ -267,12 +699,53 @@ export function invalidateParagraphParseOperations(
  * publication, rather than two invalidations with a re-entrant gap between them.
  */
 export function invalidateNotesWorkspaceOperations(except?: ParseKind): ParseWorkspaceLease {
-  const kinds = (["table", "keynote", "notes", "spec"] as const)
-    .filter((kind) => kind !== except);
   let lease!: ParseWorkspaceLease;
   useParseFlowStore.setState((state) => {
+    const mayRetainGuided = except !== "notes" || state.guidedParseOwner === "notes";
+    const kinds = except === "notes" && !mayRetainGuided
+      ? (["notes", "spec"] as const)
+      : (["table", "keynote", "notes", "spec"] as const)
+        .filter((kind) => kind !== except);
     const parseOperations = invalidateParseOperationKinds(state.parseOperations, kinds);
-    lease = workspaceLease(parseOperations);
+    lease = workspaceLease(parseOperations, state.guidedParseOwner);
+    return { parseOperations };
+  });
+  return lease;
+}
+
+/**
+ * Async-root variant of the paragraph boundary. A begin subscriber may replace A synchronously;
+ * only the exact still-current Notes/Spec token is allowed to invalidate its peer workspace.
+ */
+export function invalidateParagraphParseOperationsForOperation(
+  token: ParseOperationToken<"notes" | "spec">,
+): ParseWorkspaceLease | null {
+  let lease: ParseWorkspaceLease | null = null;
+  useParseFlowStore.setState((state) => {
+    const live = state.parseOperations[token.kind];
+    if (!live.busy || live.revision !== token.revision) return state;
+    const kinds = (["notes", "spec"] as const).filter((kind) => kind !== token.kind);
+    const parseOperations = invalidateParseOperationKinds(state.parseOperations, kinds);
+    lease = workspaceLease(parseOperations, state.guidedParseOwner);
+    return { parseOperations };
+  });
+  return lease;
+}
+
+/** Token-authorized union boundary for a Notes root entering the Guided or paragraph workspace. */
+export function invalidateNotesWorkspaceOperationsForOperation(
+  token: ParseOperationToken<"notes">,
+): ParseWorkspaceLease | null {
+  let lease: ParseWorkspaceLease | null = null;
+  useParseFlowStore.setState((state) => {
+    const live = state.parseOperations.notes;
+    if (!live.busy || live.revision !== token.revision) return state;
+    const mayRetainGuided = state.guidedParseOwner === "notes";
+    const kinds = mayRetainGuided
+      ? (["table", "keynote", "spec"] as const)
+      : (["notes", "spec"] as const);
+    const parseOperations = invalidateParseOperationKinds(state.parseOperations, kinds);
+    lease = workspaceLease(parseOperations, state.guidedParseOwner);
     return { parseOperations };
   });
   return lease;
@@ -283,24 +756,56 @@ export function invalidateParseOperationForWorkspace(kind: ParseKind): ParseWork
   let lease!: ParseWorkspaceLease;
   useParseFlowStore.setState((state) => {
     const parseOperations = invalidateParseOperationKinds(state.parseOperations, [kind]);
-    lease = workspaceLease(parseOperations);
+    lease = workspaceLease(parseOperations, state.guidedParseOwner);
     return { parseOperations };
   });
   return lease;
 }
 
-/** Begin one shared Guided-grid gesture and return the exact generation its writes may mutate. */
-export function beginGuidedGridEdit(): ParseWorkspaceLease {
-  let lease!: ParseWorkspaceLease;
+/** Lifecycle CAS: an old render may revoke only the exact revision it observed. */
+export function invalidateParseOperationAtRevision(
+  kind: ParseKind,
+  expectedRevision: number,
+): boolean {
+  if (!isParseKind(kind)) return false;
+  let invalidated = false;
   useParseFlowStore.setState((state) => {
+    if (state.parseOperations[kind].revision !== expectedRevision) return state;
+    invalidated = true;
+    return {
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, [kind]),
+    };
+  });
+  return invalidated;
+}
+
+/** Begin one owner-bound Guided-grid gesture and return the exact generation it may mutate. */
+export function beginGuidedGridEdit(
+  owner: ActiveGuidedParseOwner,
+  expectedRegion: ParseRegion | null,
+): ParseWorkspaceLease | null {
+  if (!isActiveGuidedParseOwner(owner) || expectedRegion === null) return null;
+  let lease: ParseWorkspaceLease | null = null;
+  useParseFlowStore.setState((state) => {
+    // Region identity is the rendered shared-workspace generation. A same-family proposal claim
+    // publishes a fresh captured region even when its coordinates are equal, so an old event
+    // closure cannot edit B. This avoids subscribing the PDFPage hot slot to operation revisions.
+    if (
+      state.guidedParseOwner !== owner ||
+      state.guidedParseRegion !== expectedRegion
+    ) return state;
     const parseOperations = invalidateParseOperationKinds(
       state.parseOperations,
       ["table", "keynote", "notes"],
     );
-    lease = workspaceLease(parseOperations);
+    lease = workspaceLease(parseOperations, owner);
     return { parseOperations };
   });
-  return lease;
+  if (!lease) return null;
+  const current = useParseFlowStore.getState();
+  return matchesGuidedLease(current.parseOperations, lease, current.guidedParseOwner)
+    ? lease
+    : null;
 }
 
 export function setGuidedParseRowsForLease(
@@ -309,7 +814,7 @@ export function setGuidedParseRowsForLease(
 ): boolean {
   let committed = false;
   useParseFlowStore.setState((state) => {
-    if (!matchesGuidedLease(state.parseOperations, lease)) return state;
+    if (!matchesGuidedLease(state.parseOperations, lease, state.guidedParseOwner)) return state;
     committed = true;
     return { guidedParseRows };
   });
@@ -322,7 +827,7 @@ export function setGuidedParseColsForLease(
 ): boolean {
   let committed = false;
   useParseFlowStore.setState((state) => {
-    if (!matchesGuidedLease(state.parseOperations, lease)) return state;
+    if (!matchesGuidedLease(state.parseOperations, lease, state.guidedParseOwner)) return state;
     committed = true;
     return { guidedParseCols };
   });
@@ -337,7 +842,7 @@ export function beginParagraphWorkspaceEdit(): ParseWorkspaceLease {
       state.parseOperations,
       ["notes", "spec"],
     );
-    lease = workspaceLease(parseOperations);
+    lease = workspaceLease(parseOperations, state.guidedParseOwner);
     return { parseOperations };
   });
   return lease;
@@ -397,26 +902,34 @@ export function beginNotesFastManualEdit(): ParseWorkspaceLease {
  * owner revocations land together. The intentionally shared paragraph clipboard survives.
  */
 export function acceptNotesParseRegion(notesParseRegion: ParseRegion): void {
-  useParseFlowStore.setState((state) => ({
-    notesParseRegion,
-    notesParseStep: "idle",
-    specParseStep: "idle",
-    specParseRegion: null,
-    guidedSpecSectionBBs: [],
-    parseDraftRegion: null,
-    paragraphOverlayActive: false,
-    paragraphBatch: [],
-    notesFastManualActive: false,
-    notesFastManualGrid: null,
-    guidedParseActive: false,
-    guidedParseRegion: null,
-    guidedParseRows: [],
-    guidedParseCols: [],
-    parseOperations: invalidateParseOperationKinds(
-      state.parseOperations,
-      ["table", "keynote", "notes", "spec"],
-    ),
-  }));
+  useParseFlowStore.setState((state) => {
+    const ownsGuided = state.guidedParseOwner === "notes";
+    return {
+      notesParseRegion,
+      notesParseStep: "idle",
+      specParseStep: "idle",
+      specParseRegion: null,
+      guidedSpecSectionBBs: [],
+      parseDraftRegion: null,
+      paragraphOverlayActive: false,
+      paragraphBatch: [],
+      notesFastManualActive: false,
+      notesFastManualGrid: null,
+      ...(ownsGuided
+        ? {
+            guidedParseOwner: null,
+            guidedParseActive: false,
+            guidedParseRegion: null,
+            guidedParseRows: [],
+            guidedParseCols: [],
+          }
+        : {}),
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        ownsGuided ? ["table", "keynote", "notes", "spec"] : ["notes", "spec"],
+      ),
+    };
+  });
 }
 
 /** Accept a Spec region and revoke both owners of its shared paragraph/draft workspace atomically. */
@@ -431,14 +944,16 @@ export function acceptSpecParseRegion(specParseRegion: ParseRegion): void {
   }));
 }
 
-/**
- * Index handoffs seed/reset the parse destination once before page subscribers run. No parse write
- * follows `setPage`, so a synchronous B admitted by page navigation cannot be erased by old A.
- */
+/** Index handoff: install the destination page first, then atomically revoke/seed Parse. */
 export function openNotesParseTarget(
   pageNumber: number,
   notesParseRegion: ParseRegion | null,
 ): void {
+  const crossesPage = useViewerCoreStore.getState().pageNumber !== pageNumber;
+  if (crossesPage) {
+    prepareLegacyParsePageExit();
+    useViewerCoreStore.getState().setPage(pageNumber);
+  }
   useParseFlowStore.setState((state) => notesParseRegion
     ? {
         notesParseRegion,
@@ -451,6 +966,7 @@ export function openNotesParseTarget(
         paragraphBatch: [],
         notesFastManualActive: false,
         notesFastManualGrid: null,
+        guidedParseOwner: null,
         guidedParseActive: false,
         guidedParseRegion: null,
         guidedParseRows: [],
@@ -470,16 +986,20 @@ export function openNotesParseTarget(
         paragraphBatch: [],
         parseOperations: invalidateParseOperationKinds(
           state.parseOperations,
-          ["notes", "spec"],
+          crossesPage ? ["table", "keynote", "notes", "spec"] : ["notes", "spec"],
         ),
       });
-  useViewerCoreStore.getState().setPage(pageNumber);
 }
 
 export function openSpecParseTarget(
   pageNumber: number,
   specParseRegion: ParseRegion | null,
 ): void {
+  const crossesPage = useViewerCoreStore.getState().pageNumber !== pageNumber;
+  if (crossesPage) {
+    prepareLegacyParsePageExit();
+    useViewerCoreStore.getState().setPage(pageNumber);
+  }
   useParseFlowStore.setState((state) => ({
     specParseStep: "idle",
     specParseRegion,
@@ -487,9 +1007,11 @@ export function openSpecParseTarget(
     parseDraftRegion: null,
     paragraphOverlayActive: false,
     paragraphBatch: [],
-    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
+    parseOperations: invalidateParseOperationKinds(
+      state.parseOperations,
+      crossesPage ? ["table", "keynote", "notes", "spec"] : ["notes", "spec"],
+    ),
   }));
-  useViewerCoreStore.getState().setPage(pageNumber);
 }
 
 type NotesCompletionOptions = Readonly<{
@@ -511,6 +1033,7 @@ export function completeNotesParseOperation(
   useParseFlowStore.setState((state) => {
     const live = state.parseOperations.notes;
     if (!live.busy || live.revision !== token.revision) return state;
+    if (options.guided && state.guidedParseOwner !== "notes") return state;
     completed = true;
     const kinds: ParseKind[] = options.guided
       ? ["table", "keynote", "notes", "spec"]
@@ -523,7 +1046,7 @@ export function completeNotesParseOperation(
       parseDraftRegion: null,
       paragraphOverlayActive: false,
       paragraphBatch: [],
-      ...(options.guided ? { guidedParseActive: false } : {}),
+      ...(options.guided ? { guidedParseOwner: null, guidedParseActive: false } : {}),
       ...(options.guided
         ? { guidedParseRegion: null, guidedParseRows: [], guidedParseCols: [] }
         : {}),
@@ -562,28 +1085,31 @@ export function resetNotesParseWorkspace(
   notesParseStep: NotesParseStep = "idle",
   options: NotesCompletionOptions = {},
 ): void {
-  useParseFlowStore.setState((state) => ({
-    notesParseStep,
-    notesParseRegion: null,
-    guidedNotesRows: [],
-    guidedNotesCols: [],
-    parseDraftRegion: null,
-    paragraphOverlayActive: false,
-    paragraphBatch: [],
-    ...(options.guided ? { guidedParseActive: false } : {}),
-    ...(options.guided
-      ? { guidedParseRegion: null, guidedParseRows: [], guidedParseCols: [] }
-      : {}),
-    ...(options.fastManual
-      ? { notesFastManualActive: false, notesFastManualGrid: null }
-      : {}),
-    parseOperations: invalidateParseOperationKinds(
-      state.parseOperations,
-      options.guided
-        ? ["table", "keynote", "notes", "spec"]
-        : ["notes", "spec"],
-    ),
-  }));
+  useParseFlowStore.setState((state) => {
+    const clearsGuided = options.guided && state.guidedParseOwner === "notes";
+    return {
+      notesParseStep,
+      notesParseRegion: null,
+      guidedNotesRows: [],
+      guidedNotesCols: [],
+      parseDraftRegion: null,
+      paragraphOverlayActive: false,
+      paragraphBatch: [],
+      ...(clearsGuided ? { guidedParseOwner: null, guidedParseActive: false } : {}),
+      ...(clearsGuided
+        ? { guidedParseRegion: null, guidedParseRows: [], guidedParseCols: [] }
+        : {}),
+      ...(options.fastManual
+        ? { notesFastManualActive: false, notesFastManualGrid: null }
+        : {}),
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        clearsGuided
+          ? ["table", "keynote", "notes", "spec"]
+          : ["notes", "spec"],
+      ),
+    };
+  });
 }
 
 /** Atomic user Clear/Redraw destination for Spec. */
@@ -612,17 +1138,22 @@ export function leaveNotesParserWorkspace(
 ): boolean {
   let cleaned = false;
   useParseFlowStore.setState((state) => {
+    const clearsGuided = clearGuided && state.guidedParseOwner === "notes";
     if (
       !matchesParagraphLeaseRevisions(state.parseOperations, lease) ||
       state.parseOperations.spec.busy ||
-      (clearGuided && (
-        !matchesGuidedLeaseRevisions(state.parseOperations, lease) ||
+      (clearsGuided && (
+        !matchesGuidedLeaseRevisions(
+          state.parseOperations,
+          lease,
+          state.guidedParseOwner,
+        ) ||
         state.parseOperations.table.busy || state.parseOperations.keynote.busy
       ))
     ) return state;
     const sharedClean = state.parseDraftRegion === null && !state.paragraphOverlayActive &&
       !state.notesFastManualActive && state.notesFastManualGrid === null;
-    const guidedClean = !clearGuided || (
+    const guidedClean = !clearsGuided || (
       !state.guidedParseActive && state.guidedParseRegion === null &&
       state.guidedParseRows.length === 0 && state.guidedParseCols.length === 0
     );
@@ -633,8 +1164,9 @@ export function leaveNotesParserWorkspace(
       paragraphOverlayActive: false,
       notesFastManualActive: false,
       notesFastManualGrid: null,
-      ...(clearGuided
+      ...(clearsGuided
         ? {
+            guidedParseOwner: null,
             guidedParseActive: false,
             guidedParseRegion: null,
             guidedParseRows: [],
@@ -643,7 +1175,7 @@ export function leaveNotesParserWorkspace(
         : {}),
       parseOperations: invalidateParseOperationKinds(
         state.parseOperations,
-        clearGuided
+        clearsGuided
           ? ["table", "keynote", "notes", "spec"]
           : ["notes", "spec"],
       ),
@@ -681,21 +1213,35 @@ export function transitionNotesParserMode(
 ): ParseWorkspaceLease {
   let lease!: ParseWorkspaceLease;
   useParseFlowStore.setState((state) => {
+    const entersGuided = nextMode === "guided" && notesParseRegion !== null;
+    const clearsGuided = state.guidedParseOwner === "notes";
     const parseOperations = invalidateParseOperationKinds(
       state.parseOperations,
-      ["table", "keynote", "notes", "spec"],
+      entersGuided || clearsGuided
+        ? ["table", "keynote", "notes", "spec"]
+        : ["notes", "spec"],
     );
-    lease = workspaceLease(parseOperations);
+    const guidedParseOwner = entersGuided
+      ? "notes"
+      : clearsGuided
+        ? null
+        : state.guidedParseOwner;
+    lease = workspaceLease(parseOperations, guidedParseOwner);
     const active = notesParseRegion !== null;
     return {
       parseDraftRegion: null,
       paragraphOverlayActive: nextMode === "paragraph" && active,
       notesFastManualActive: nextMode === "fast-manual" && active,
       notesFastManualGrid: null,
-      guidedParseActive: nextMode === "guided" && active,
-      guidedParseRegion: nextMode === "guided" ? notesParseRegion : null,
-      guidedParseRows: [],
-      guidedParseCols: [],
+      ...(entersGuided || clearsGuided
+        ? {
+            guidedParseOwner,
+            guidedParseActive: entersGuided,
+            guidedParseRegion: entersGuided ? notesParseRegion : null,
+            guidedParseRows: [],
+            guidedParseCols: [],
+          }
+        : {}),
       parseOperations,
     };
   });
@@ -710,7 +1256,7 @@ export function transitionSpecParserMode(
   let lease!: ParseWorkspaceLease;
   useParseFlowStore.setState((state) => {
     const parseOperations = invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]);
-    lease = workspaceLease(parseOperations);
+    lease = workspaceLease(parseOperations, state.guidedParseOwner);
     return {
       parseDraftRegion: nextMode === "paragraph"
         ? specDraftForParagraphBatch(state.paragraphBatch)
@@ -812,6 +1358,23 @@ export function setTableParseStep(tableParseStep: TableParseStep): void {
   }));
 }
 
+/** User drawing/cancel transition: exact final tool destination first, one Parse write last. */
+export function setTableParseStepWithTool(
+  tableParseStep: TableParseStep,
+  toolMode: "move" | "pointer",
+): void {
+  useToolStore.getState().setMode(toolMode);
+  useParseFlowStore.setState((state) => ({
+    tableParseStep,
+    ...operationBoundaryPatch(
+      state.parseOperations,
+      "table",
+      state.tableParseStep,
+      tableParseStep,
+    ),
+  }));
+}
+
 /**
  * Advance a Table wizard only for the async operation that still owns the Table lane.
  *
@@ -845,6 +1408,168 @@ export function setTableParseStepForOperation(
   return committed;
 }
 
+export type TableReviewPublication = Readonly<{
+  grid: ParseFlowState["tableParsedGrid"];
+  meta: ParseFlowState["tableParseMeta"];
+  region?: ParseRegion | null;
+}>;
+
+function tableReviewPatch(publication: TableReviewPublication): Partial<ParseFlowState> {
+  return {
+    tableParsedGrid: publication.grid,
+    tableParseMeta: publication.meta,
+    ...(publication.region === undefined ? {} : { tableParseRegion: publication.region }),
+    tableParseStep: "review",
+  };
+}
+
+/** User-selected retained row on the current page: tool first, one terminal Parse seed. */
+export function openTableReviewWorkspace(
+  publication: TableReviewPublication,
+  source: "table" | "keynote" = "table",
+): void {
+  useToolStore.getState().setMode("move");
+  useParseFlowStore.setState((state) => ({
+    ...tableReviewPatch(publication),
+    parseOperations: invalidateParseOperationKinds(
+      state.parseOperations,
+      source === "keynote" ? ["table", "keynote"] : ["table"],
+    ),
+  }));
+}
+
+/** Cross-page retained-row handoff: destination core page first, then one Table review seed. */
+export function openTableReviewTarget(
+  pageNumber: number,
+  publication: TableReviewPublication,
+  source: "table" | "keynote" = "table",
+): void {
+  if (useViewerCoreStore.getState().pageNumber === pageNumber) {
+    openTableReviewWorkspace(publication, source);
+    return;
+  }
+  useToolStore.getState().setMode("move");
+  prepareLegacyParsePageExit(false);
+  useViewerCoreStore.getState().setPage(pageNumber);
+  useParseFlowStore.setState((state) => ({
+    ...tableReviewPatch(publication),
+    parseOperations: invalidateParseOperationKinds(
+      state.parseOperations,
+      ["table", "keynote", "notes", "spec"],
+    ),
+  }));
+}
+
+/**
+ * Publish one Table review snapshot under its still-current owner. Tool preparation happens first;
+ * grid/meta/region/step then land in one parse publication, so a subscriber cannot seed B between
+ * pieces of A's review state. A B started by that publication makes the command return false.
+ */
+export function publishTableReviewForOperation(
+  token: ParseOperationToken<"table">,
+  publication: TableReviewPublication,
+): boolean {
+  if (token.kind !== "table" || !useParseFlowStore.getState().isParseOperationCurrent(token)) {
+    return false;
+  }
+  const before = useParseFlowStore.getState();
+  prepareParseEntry(before.tableParseStep, "review");
+  if (!useParseFlowStore.getState().isParseOperationCurrent(token)) return false;
+
+  let committed = false;
+  useParseFlowStore.setState((state) => {
+    const live = state.parseOperations.table;
+    if (!live.busy || live.revision !== token.revision) return state;
+    committed = true;
+    return {
+      tableParsedGrid: publication.grid,
+      tableParseMeta: publication.meta,
+      ...(publication.region === undefined ? {} : { tableParseRegion: publication.region }),
+      tableParseStep: "review",
+    };
+  });
+  return committed && useParseFlowStore.getState().isParseOperationCurrent(token);
+}
+
+type TableCompletionOptions = Readonly<{
+  resetGuided?: boolean;
+  /** React-local bookkeeping only, denied if terminal subscribers publish any newer operation. */
+  afterTerminal?: () => void;
+}>;
+
+/**
+ * Terminal Table completion. No caller publication may follow the invalidating parse reset; this
+ * command prepares the tool, resets atomically, then permits local bookkeeping only when the
+ * terminal registry reference still proves that no synchronous B began (even if B settled).
+ */
+export function completeTableParseOperation(
+  token: ParseOperationToken<"table">,
+  options: TableCompletionOptions = {},
+): boolean {
+  const before = useParseFlowStore.getState();
+  if (token.kind !== "table" || !before.isParseOperationCurrent(token)) {
+    return false;
+  }
+  const guidedLease = options.resetGuided && before.guidedParseOwner === "table"
+    ? workspaceLease(before.parseOperations, before.guidedParseOwner)
+    : null;
+  useToolStore.getState().setMode("move");
+  const afterTool = useParseFlowStore.getState();
+  if (!afterTool.isParseOperationCurrent(token)) return false;
+  if (guidedLease && !matchesGuidedLeaseRevisions(
+    afterTool.parseOperations,
+    guidedLease,
+    afterTool.guidedParseOwner,
+  )) return false;
+
+  let completed = false;
+  let terminalOperations: ParseOperationRegistry | null = null;
+  useParseFlowStore.setState((state) => {
+    const live = state.parseOperations.table;
+    if (!live.busy || live.revision !== token.revision) return state;
+    const clearsGuided = options.resetGuided && state.guidedParseOwner === "table";
+    completed = true;
+    const parseOperations = invalidateParseOperationKinds(
+      state.parseOperations,
+      clearsGuided ? ["table", "keynote", "notes"] : ["table"],
+    );
+    terminalOperations = parseOperations;
+    return {
+      tableParseStep: "idle",
+      tableParseRegion: null,
+      tableParsedGrid: null,
+      tableParseMeta: null,
+      tableCellStructure: null,
+      tableParseColumnBBs: [],
+      tableParseColumnNames: [],
+      tableParseRowBBs: [],
+      ...(clearsGuided
+        ? {
+            guidedParseOwner: null,
+            guidedParseActive: false,
+            guidedParseRegion: null,
+            guidedParseRows: [],
+            guidedParseCols: [],
+          }
+        : {}),
+      parseOperations,
+    };
+  });
+  const expectedOperations = terminalOperations as ParseOperationRegistry | null;
+  const currentOperations = useParseFlowStore.getState().parseOperations;
+  if (
+    completed && expectedOperations !== null &&
+    currentOperations.table === expectedOperations.table &&
+    (!options.resetGuided || (
+      currentOperations.keynote === expectedOperations.keynote &&
+      currentOperations.notes === expectedOperations.notes
+    ))
+  ) {
+    options.afterTerminal?.();
+  }
+  return completed;
+}
+
 export function setKeynoteParseStep(keynoteParseStep: KeynoteParseStep): void {
   const currentStep = useParseFlowStore.getState().keynoteParseStep;
   prepareParseEntry(currentStep, keynoteParseStep);
@@ -859,11 +1584,38 @@ export function setKeynoteParseStep(keynoteParseStep: KeynoteParseStep): void {
   }));
 }
 
+export function setKeynoteParseStepWithTool(
+  keynoteParseStep: KeynoteParseStep,
+  toolMode: "move" | "pointer",
+): void {
+  useToolStore.getState().setMode(toolMode);
+  useParseFlowStore.setState((state) => ({
+    keynoteParseStep,
+    ...operationBoundaryPatch(
+      state.parseOperations,
+      "keynote",
+      state.keynoteParseStep,
+      keynoteParseStep,
+    ),
+  }));
+}
+
+/** Canvas-drawn Table region accepted as one user boundary before any passive consumer runs. */
+export function acceptTableParseRegion(tableParseRegion: ParseRegion): void {
+  useToolStore.setState({ mode: "move" });
+  useParseFlowStore.setState((state) => ({
+    tableParseRegion,
+    tableParseStep: "idle",
+    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+  }));
+}
+
 /**
  * Accept one canvas-drawn Keynote region as a single user boundary. Region, idle destination, and
  * owner revocation must publish atomically: a subscriber cannot start B between separate writes.
  */
 export function acceptKeynoteParseRegion(keynoteParseRegion: ParseRegion): void {
+  useToolStore.setState({ mode: "move" });
   useParseFlowStore.setState((state) => ({
     keynoteParseRegion,
     keynoteParseStep: "idle",
@@ -880,21 +1632,52 @@ export function completeKeynoteParseOperation(
   token: ParseOperationToken<"keynote">,
   options?: { resetGuided?: boolean },
 ): boolean {
-  if (token.kind !== "keynote" || !useParseFlowStore.getState().isParseOperationCurrent(token)) {
+  const before = useParseFlowStore.getState();
+  if (token.kind !== "keynote" || !before.isParseOperationCurrent(token)) {
     return false;
   }
-
+  const guidedLease = options?.resetGuided && before.guidedParseOwner === "keynote"
+    ? workspaceLease(before.parseOperations, before.guidedParseOwner)
+    : null;
   useToolStore.getState().setMode("move");
-  if (!useParseFlowStore.getState().isParseOperationCurrent(token)) return false;
+  const afterTool = useParseFlowStore.getState();
+  if (!afterTool.isParseOperationCurrent(token)) return false;
+  if (guidedLease && !matchesGuidedLeaseRevisions(
+    afterTool.parseOperations,
+    guidedLease,
+    afterTool.guidedParseOwner,
+  )) return false;
 
-  if (options?.resetGuided) {
-    useParseFlowStore.getState().resetGuidedParse();
-    if (!useParseFlowStore.getState().isParseOperationCurrent(token)) return false;
-  }
-
-  // This reset invalidates the token and is deliberately the final publication owned by A.
-  useParseFlowStore.getState().resetKeynoteParse();
-  return true;
+  // The terminal reset is one parse publication. A synchronous B may start after it, but A owns no
+  // subsequent parse/tool/local tail that could clear B. A peer-owned Guided grid is untouched.
+  let completed = false;
+  useParseFlowStore.setState((state) => {
+    const live = state.parseOperations.keynote;
+    if (!live.busy || live.revision !== token.revision) return state;
+    const clearsGuided = options?.resetGuided && state.guidedParseOwner === "keynote";
+    completed = true;
+    return {
+      keynoteParseStep: "idle",
+      keynoteParseRegion: null,
+      keynoteColumnBBs: [],
+      keynoteRowBBs: [],
+      keynoteYoloClass: null,
+      ...(clearsGuided
+        ? {
+            guidedParseOwner: null,
+            guidedParseActive: false,
+            guidedParseRegion: null,
+            guidedParseRows: [],
+            guidedParseCols: [],
+          }
+        : {}),
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        clearsGuided ? ["table", "keynote", "notes"] : ["keynote"],
+      ),
+    };
+  });
+  return completed;
 }
 
 export function setNotesParseStep(notesParseStep: NotesParseStep): void {
@@ -911,9 +1694,41 @@ export function setNotesParseStep(notesParseStep: NotesParseStep): void {
   }));
 }
 
+export function setNotesParseStepWithTool(
+  notesParseStep: NotesParseStep,
+  toolMode: "move" | "pointer",
+): void {
+  useToolStore.getState().setMode(toolMode);
+  useParseFlowStore.setState((state) => ({
+    notesParseStep,
+    ...operationBoundaryPatch(
+      state.parseOperations,
+      "notes",
+      state.notesParseStep,
+      notesParseStep,
+    ),
+  }));
+}
+
 export function setSpecParseStep(specParseStep: SpecParseStep): void {
   const currentStep = useParseFlowStore.getState().specParseStep;
   prepareParseEntry(currentStep, specParseStep);
+  useParseFlowStore.setState((state) => ({
+    specParseStep,
+    ...operationBoundaryPatch(
+      state.parseOperations,
+      "spec",
+      state.specParseStep,
+      specParseStep,
+    ),
+  }));
+}
+
+export function setSpecParseStepWithTool(
+  specParseStep: SpecParseStep,
+  toolMode: "move" | "pointer",
+): void {
+  useToolStore.getState().setMode(toolMode);
   useParseFlowStore.setState((state) => ({
     specParseStep,
     ...operationBoundaryPatch(
@@ -992,10 +1807,11 @@ export function toggleParsePanel(): void {
 function leaveSpecsNotesParseTab(tab: SpecsNotesTab): void {
   if (tab === "keynotes") {
     useParseFlowStore.setState((state) => {
-      const ownsGuided = sameParseRegion(state.keynoteParseRegion, state.guidedParseRegion);
+      const ownsGuided = state.guidedParseOwner === "keynote";
       return {
         ...(ownsGuided
           ? {
+              guidedParseOwner: null,
               guidedParseActive: false,
               guidedParseRegion: null,
               guidedParseRows: [],
@@ -1013,7 +1829,7 @@ function leaveSpecsNotesParseTab(tab: SpecsNotesTab): void {
 
   if (tab === "notes-parse") {
     useParseFlowStore.setState((state) => {
-      const ownsGuided = sameParseRegion(state.notesParseRegion, state.guidedParseRegion);
+      const ownsGuided = state.guidedParseOwner === "notes";
       return {
         notesParseStep: "idle",
         notesParseRegion: null,
@@ -1023,6 +1839,7 @@ function leaveSpecsNotesParseTab(tab: SpecsNotesTab): void {
         notesFastManualGrid: null,
         ...(ownsGuided
           ? {
+              guidedParseOwner: null,
               guidedParseActive: false,
               guidedParseRegion: null,
               guidedParseRows: [],
@@ -1081,56 +1898,81 @@ export function toggleTableParsePanel(): void {
   const closing = useUiStore.getState().showTableParsePanel;
 
   if (closing) {
+    // Presentation closes before the terminal Parse publication. A synchronous B started by that
+    // terminal write may reopen itself; old A owns no later UI/tool tail that can hide it.
+    useUiStore.getState().setPanelVisibility({ showTableParsePanel: false });
+    const before = useParseFlowStore.getState();
+    const preservesPeerGuided = before.guidedParseOwner !== null &&
+      before.guidedParseOwner !== "table";
     // Preserve the old raw mode transition. Calling setMode would clear additional live tools.
-    useParseFlowStore.setState((state) => ({
-      tableParseStep: "idle",
-      tableParseRegion: null,
-      tableParsedGrid: null,
-      tableParseMeta: null,
-      tableParseColumnBBs: [],
-      tableParseColumnNames: [],
-      tableParseRowBBs: [],
-      tableParseTab: "all",
-      guidedParseActive: false,
-      guidedParseRegion: null,
-      guidedParseRows: [],
-      guidedParseCols: [],
-      // Closing erases the Table/Keynote/Notes shared Guided workspace, so all three owners are
-      // revoked in this same raw publication. Spec remains independent.
-      parseOperations: invalidateParseOperationKinds(
-        state.parseOperations,
-        ["table", "keynote", "notes"],
-      ),
-    }));
-    // Preserve the legacy raw mode assignment: setMode would clear unrelated active tools.
-    useToolStore.setState({ mode: "move" });
+    // Publish it before the Parse reset: a B started by that reset owns every later tool write.
+    if (!preservesPeerGuided) useToolStore.setState({ mode: "move" });
+    useParseFlowStore.setState((state) => {
+      const ownsGuided = state.guidedParseOwner === "table";
+      return {
+        tableParseStep: "idle",
+        tableParseRegion: null,
+        tableParsedGrid: null,
+        tableParseMeta: null,
+        tableParseColumnBBs: [],
+        tableParseColumnNames: [],
+        tableParseRowBBs: [],
+        tableParseTab: "all",
+        ...(ownsGuided
+          ? {
+              guidedParseOwner: null,
+              guidedParseActive: false,
+              guidedParseRegion: null,
+              guidedParseRows: [],
+              guidedParseCols: [],
+            }
+          : {}),
+        parseOperations: invalidateParseOperationKinds(
+          state.parseOperations,
+          ownsGuided ? ["table", "keynote", "notes"] : ["table"],
+        ),
+      };
+    });
+    return;
   }
-  useUiStore.getState().setPanelVisibility({ showTableParsePanel: !closing });
+  useUiStore.getState().setPanelVisibility({ showTableParsePanel: true });
 }
 
 export function toggleKeynoteParsePanel(): void {
   const closing = useUiStore.getState().showKeynoteParsePanel;
 
   if (closing) {
-    useParseFlowStore.setState((state) => ({
-      keynoteParseStep: "idle",
-      keynoteParseRegion: null,
-      keynoteColumnBBs: [],
-      keynoteRowBBs: [],
-      keynoteYoloClass: null,
-      keynoteParseTab: "all",
-      guidedParseActive: false,
-      guidedParseRegion: null,
-      guidedParseRows: [],
-      guidedParseCols: [],
-      // Closing erases the Table/Keynote/Notes shared Guided workspace, so all three owners are
-      // revoked in this same raw publication. Spec remains independent.
-      parseOperations: invalidateParseOperationKinds(
-        state.parseOperations,
-        ["table", "keynote", "notes"],
-      ),
-    }));
-    useToolStore.setState({ mode: "move" });
+    useUiStore.getState().setPanelVisibility({ showKeynoteParsePanel: false });
+    const before = useParseFlowStore.getState();
+    const preservesPeerGuided = before.guidedParseOwner !== null &&
+      before.guidedParseOwner !== "keynote";
+    // Tool-first prevents the terminal Parse publication from creating a late A tool tail.
+    if (!preservesPeerGuided) useToolStore.setState({ mode: "move" });
+    useParseFlowStore.setState((state) => {
+      const ownsGuided = state.guidedParseOwner === "keynote";
+      return {
+        keynoteParseStep: "idle",
+        keynoteParseRegion: null,
+        keynoteColumnBBs: [],
+        keynoteRowBBs: [],
+        keynoteYoloClass: null,
+        keynoteParseTab: "all",
+        ...(ownsGuided
+          ? {
+              guidedParseOwner: null,
+              guidedParseActive: false,
+              guidedParseRegion: null,
+              guidedParseRows: [],
+              guidedParseCols: [],
+            }
+          : {}),
+        parseOperations: invalidateParseOperationKinds(
+          state.parseOperations,
+          ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
+        ),
+      };
+    });
+    return;
   }
-  useUiStore.getState().setPanelVisibility({ showKeynoteParsePanel: !closing });
+  useUiStore.getState().setPanelVisibility({ showKeynoteParsePanel: true });
 }

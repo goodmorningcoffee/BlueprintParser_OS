@@ -4,6 +4,7 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { navigateViewerPage } from "@/stores/viewerCommands";
 import {
   useUiStore,
   usePanelTabs,
@@ -348,7 +349,7 @@ function GraphTab({ pageNumber }: { pageNumber: number }) {
   // separate from TextPanel's current-page subscription.
   const textAnnotations = useTextAnnotationsByPage();
   const { pageNames } = useProject();
-  const { numPages, setPage } = useNavigation();
+  const { numPages } = useNavigation();
 
   // Build cross-reference data from sheet-ref annotations across all pages
   const { outgoing, incoming } = useMemo(() => {
@@ -419,7 +420,7 @@ function GraphTab({ pageNumber }: { pageNumber: number }) {
               <span className="text-purple-400">\u2192</span>
               {ref.toPage ? (
                 <button
-                  onClick={() => setPage(ref.toPage!)}
+                  onClick={() => navigateViewerPage(ref.toPage!)}
                   className="text-[var(--accent)] hover:underline"
                 >
                   {ref.toSheet} (Page {ref.toPage})
@@ -440,7 +441,7 @@ function GraphTab({ pageNumber }: { pageNumber: number }) {
             <div key={i} className="flex items-center gap-2 py-0.5">
               <span className="text-teal-400">\u2190</span>
               <button
-                onClick={() => setPage(ref.fromPage)}
+                onClick={() => navigateViewerPage(ref.fromPage)}
                 className="text-[var(--accent)] hover:underline"
               >
                 {ref.fromSheet} (Page {ref.fromPage})
@@ -473,7 +474,6 @@ function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
   const { activeAnnotationFilter } = useDetectionUi();
   const { setAnnotationFilter } = useDetectionUiActions();
   const { setSearch } = useSearchUiActions();
-  const { setPage } = useNavigation();
   const { pageNames } = useProject();
   const activeMarkupId = useUiStore((s) => s.activeMarkupId);
   const scrollRef = useRef<Record<number, HTMLDivElement | null>>({});
@@ -554,7 +554,7 @@ function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
                     {ann.name}
                   </span>
                   <button
-                    onClick={(e) => { e.stopPropagation(); setPage(ann.pageNumber); }}
+                    onClick={(e) => { e.stopPropagation(); navigateViewerPage(ann.pageNumber); }}
                     className="text-[10px] text-[var(--muted)] hover:text-[var(--accent)] shrink-0"
                   >
                     pg {ann.pageNumber}

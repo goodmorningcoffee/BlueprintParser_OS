@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { useNavigation } from "@/stores/viewerCoreStore";
+import { navigateViewerPage } from "@/stores/viewerCommands";
 import { useUiStore } from "@/stores/uiStore";
 import { useProject } from "@/stores/sessionStore";
 // [refactor jul9 P2.2①] chat message DATA now lives in the TanStack Query cache (facade hook);
@@ -147,11 +148,10 @@ export default function ChatPanel() {
                   } else if (parsed.action) {
                     // LLM action: navigate, highlight, createMarkup
                     const act = parsed.action;
-                    const store = useViewerCoreStore.getState();
                     if (act.action === "navigate" && act.pageNumber) {
-                      store.setPage(act.pageNumber);
+                      navigateViewerPage(act.pageNumber);
                     } else if (act.action === "highlight" && act.bbox) {
-                      store.setPage(act.pageNumber);
+                      navigateViewerPage(act.pageNumber);
                       useUiStore.getState().setLlmHighlight({
                         pageNumber: act.pageNumber,
                         bbox: act.bbox,

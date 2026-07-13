@@ -3,10 +3,11 @@
 import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useViewerStore } from "@/stores/viewerStore";
-import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import {
   openSpecsNotesParseTab,
+  navigateViewerPage,
   toggleTableParsePanel,
 } from "@/stores/viewerCommands";
 import { isDemoFeatureEnabled, useProject, useSessionStore } from "@/stores/sessionStore";
@@ -115,7 +116,6 @@ function computeQtoPreflight(
 export default function AutoQtoTab() {
   const queryClient = useQueryClient();
   const { publicId } = useProject();
-  const { setPage } = useNavigation();
   const { activeQtoWorkflow, setActiveQtoWorkflow, qtoWorkflows, setQtoWorkflows } = useQtoWorkflows();
   // Genuine whole-map reader: schedule detection and summary fallback span all retained pages.
   const pageIntelligence = usePageIntelligenceByPage();
@@ -317,7 +317,7 @@ export default function AutoQtoTab() {
                   {detected.map((d, i) => (
                     <button
                       key={i}
-                      onClick={() => setPage(d.pageNum)}
+                      onClick={() => navigateViewerPage(d.pageNum)}
                       className="w-full text-left text-[10px] px-2 py-1.5 rounded border border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10 flex items-center justify-between"
                     >
                       <span className="text-[var(--fg)] font-medium">{d.name}</span>
@@ -516,7 +516,7 @@ export default function AutoQtoTab() {
           <ReviewStep
             workflow={activeQtoWorkflow}
             updateWorkflowStep={updateWorkflowStep}
-            setPage={setPage}
+            navigatePage={navigateViewerPage}
           />
         )}
 
@@ -1280,10 +1280,10 @@ function MappingStep({ workflow, updateWorkflowStep, publicId }: {
 // Step 5: Review
 // ═══════════════════════════════════════════════════════════════
 
-function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
+function ReviewStep({ workflow, updateWorkflowStep, navigatePage }: {
   workflow: QtoWorkflow;
   updateWorkflowStep: (w: QtoWorkflow, u: Partial<QtoWorkflow>) => Promise<void>;
-  setPage: (n: number) => void;
+  navigatePage: (n: number) => void;
 }) {
   const queryClient = useQueryClient();
   const publicId = useSessionStore((state) => state.publicId);
@@ -1330,9 +1330,9 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
     const current = pageIdxByTag[li.tag] ?? 0;
     const next = (current + delta + li.pages.length) % li.pages.length;
     setPageIdxByTag((s) => ({ ...s, [li.tag]: next }));
-    setPage(li.pages[next]);
+    navigatePage(li.pages[next]);
     activateTag(li);
-  }, [pageIdxByTag, setPage, activateTag]);
+  }, [pageIdxByTag, navigatePage, activateTag]);
 
   const totalInstances = lineItems.reduce((s, li) => s + li.autoQuantity, 0);
   const uniquePages = new Set(lineItems.flatMap((li) => li.pages)).size;
@@ -1446,7 +1446,7 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
               key={li.tag}
               onClick={() => {
                 if (li.instances.length === 0) return;
-                setPage(li.pages[0] ?? li.instances[0].pageNumber);
+                navigatePage(li.pages[0] ?? li.instances[0].pageNumber);
                 setPageIdxByTag((s) => ({ ...s, [li.tag]: 0 }));
                 activateTag(li);
               }}
@@ -1569,7 +1569,7 @@ function ReviewStep({ workflow, updateWorkflowStep, setPage }: {
         onRowClick={(rowIdx) => {
           const li = lineItems[rowIdx];
           if (!li || li.pages.length === 0) return;
-          setPage(li.pages[0]);
+          navigatePage(li.pages[0]);
         }}
       />
     </div>

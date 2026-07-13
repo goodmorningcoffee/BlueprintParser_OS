@@ -131,6 +131,7 @@ function seedGuided(
     keynoteParseStep: "idle",
     keynoteParseRegion: bbox,
     guidedParseActive: true,
+    guidedParseOwner: "keynote",
     guidedParseRegion: bbox,
     guidedParseRows: [0, 0.5],
     guidedParseCols: [0, 0.4, 1],

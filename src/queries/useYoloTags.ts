@@ -20,7 +20,7 @@ import { persistFetch } from "@/lib/client-persist";
 import { queryKeys } from "@/queries/queryKeys";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useUiStore } from "@/stores/uiStore";
-import { useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { navigateViewerPageUnclamped } from "@/stores/viewerCommands";
 import { useToolStore } from "@/stores/toolStore";
 import type { YoloTag } from "@/types";
 
@@ -335,9 +335,9 @@ export function navigateYoloTag(
 
   const nextIndex = ((index % tag.instances.length) + tag.instances.length) % tag.instances.length;
   const instance = tag.instances[nextIndex];
-  // Preserve the legacy raw, unclamped page jump and expose that destination before the single UI
-  // bundle. Calling setPage here would clamp behavior that navigateYoloTag never clamped.
-  useViewerCoreStore.setState({ pageNumber: instance.pageNumber });
+  // Preserve the legacy raw, unclamped page jump while revoking every page-relative Parse owner
+  // before exposing the destination. The ordinary setPage path would clamp this legacy behavior.
+  navigateViewerPageUnclamped(instance.pageNumber);
   useUiStore.getState().setYoloBrowseState({
     tagBrowseId: tagId,
     tagBrowseIndex: nextIndex,

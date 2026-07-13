@@ -38,6 +38,9 @@ export interface ParagraphTemplate {
   headers: string[];
 }
 
+/** Current semantic owner of the Table/Keynote/Notes shared Guided workspace. */
+export type GuidedParseOwner = "table" | "keynote" | "notes" | null;
+
 export interface ParseFlowState {
   // ─── Table Parse ───────────────────────────────────────
   tableParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
@@ -182,6 +185,7 @@ export interface ParseFlowState {
   setParagraphClipboard: (template: ParagraphTemplate | null) => void;
 
   // ─── Shared guided grid ───────────────────────────────
+  guidedParseOwner: GuidedParseOwner;
   guidedParseActive: boolean;
   guidedParseRegion: [number, number, number, number] | null;
   guidedParseRows: number[];
@@ -363,6 +367,7 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
   paragraphClipboard: null,
   setParagraphClipboard: (paragraphClipboard) => set({ paragraphClipboard }),
 
+  guidedParseOwner: null,
   guidedParseActive: false,
   guidedParseRegion: null,
   guidedParseRows: [],
@@ -372,6 +377,7 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
   setGuidedParseRows: (guidedParseRows) => set({ guidedParseRows }),
   setGuidedParseCols: (guidedParseCols) => set({ guidedParseCols }),
   resetGuidedParse: () => set({
+    guidedParseOwner: null,
     guidedParseActive: false,
     guidedParseRegion: null,
     guidedParseRows: [],
@@ -454,6 +460,7 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
     paragraphOverlayActive: false,
     paragraphBatch: [],
     paragraphClipboard: null,
+    guidedParseOwner: null,
     guidedParseActive: false,
     guidedParseRegion: null,
     guidedParseRows: [],
@@ -552,12 +559,12 @@ export const useKeynoteParseExtensions = () =>
   })));
 
 /**
- * Shared proposed-grid workspace used by Table guided parsing and Keynote guided parsing.
- * It deliberately has no parse kind: the flat owner permits dormant cross-kind reuse, so callers
- * compose this beside a lifecycle facade instead of pretending the workspace belongs to Keynote.
+ * Shared proposed-grid workspace used by Table, Keynote, and Notes guided parsing. Its owner datum
+ * stays on this cold extension surface rather than broadening any common lifecycle or legacy hook.
  */
 export const useGuidedParseExtensions = () =>
   useParseFlowStore(useShallow((state) => ({
+    guidedParseOwner: state.guidedParseOwner,
     guidedParseActive: state.guidedParseActive,
     setGuidedParseActive: state.setGuidedParseActive,
     guidedParseRegion: state.guidedParseRegion,

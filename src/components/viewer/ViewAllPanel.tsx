@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToolStore } from "@/stores/toolStore";
-import { useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { navigateViewerPage } from "@/stores/viewerCommands";
 import {
   useUiStore,
   useSelectionUi,
@@ -37,7 +37,7 @@ const ROW_CAP_STEP = 100;
  * Unified tree panel — "view everything this project has parsed."
  *
  * Six sections collapse by default. Row interactions:
- *   - Annotation row click → setPage(n) + setFocusAnnotationId(id)
+ *   - Annotation row click → coordinated page navigation + setFocusAnnotationId(id)
  *   - Annotation checkbox → toggle in selectedAnnotationIds (GroupActionsBar lights up at ≥2)
  *   - Group row click → expand to members; pencil → MarkupDialog in edit mode
  *   - Takeoff item click → setActiveTakeoffItemId
@@ -136,7 +136,6 @@ export default function ViewAllPanel() {
   const { takeoffGroups } = useTakeoffGroups();
   const hiddenTakeoffItemIds = useUiStore((s) => s.hiddenTakeoffItemIds);
   const toggleTakeoffItemVisibility = useUiStore((s) => s.toggleTakeoffItemVisibility);
-  const setPage = useViewerCoreStore((s) => s.setPage);
   const setFocusAnnotationId = useUiStore((s) => s.setFocusAnnotationId);
   const setActiveTakeoffItemId = useToolStore((s) => s.setActiveTakeoffItemId);
   // Drawing numbers per page — join into every row so users see "p.12 · A-201"
@@ -326,7 +325,7 @@ export default function ViewAllPanel() {
   // deep-nested row clicks reliably scroll the annotation into view — same
   // mechanism used by tag-browse and LLM tool-use highlights.
   const handleNav = (pageNumber: number, focusId?: number) => {
-    setPage(pageNumber);
+    navigateViewerPage(pageNumber);
     if (focusId === undefined) return;
     setFocusAnnotationId(focusId);
     const publicId = useSessionStore.getState().publicId;
@@ -1396,7 +1395,7 @@ export default function ViewAllPanel() {
                         >
                           <button
                             onClick={() => {
-                              setPage(pnNum);
+                              navigateViewerPage(pnNum);
                               const [l, t, w, h] = r.bbox;
                               useUiStore.getState().setLlmHighlight({
                                 pageNumber: pnNum,

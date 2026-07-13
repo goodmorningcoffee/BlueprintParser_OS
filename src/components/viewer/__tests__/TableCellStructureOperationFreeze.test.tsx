@@ -4,16 +4,17 @@
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import TableParsePanel from "@/components/viewer/TableParsePanel";
+import ParsedTableItem from "@/components/viewer/ParsedTableItem";
 import { EMPTY_ACTIVE_PAGE_WINDOW } from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
 import { clearYoloTagsProject, seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
+import { navigateViewerPage, resetProjectData } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
-import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 const PUBLIC_ID = "cell-operation-project";
@@ -44,6 +45,22 @@ function structureResponse(text: string): Response {
     }),
   } as unknown as Response;
 }
+
+const SEEDED_STRUCTURE = {
+  cells: [{
+    bbox: BBOX,
+    row: 0,
+    col: 0,
+    rowSpan: 1,
+    colSpan: 1,
+    type: "body",
+    confidence: 0.9,
+    text: "D1",
+    highlighted: false,
+  }],
+  pageNumber: 1,
+  regionBbox: BBOX,
+};
 
 let queryClient: QueryClient;
 let pending: Array<{ init: RequestInit; response: Deferred<Response> }>;
@@ -99,12 +116,120 @@ afterEach(() => {
 });
 
 describe("A2b Table cell-structure operation authority", () => {
+  it("routes an off-page retained row through the shared controller with its stored target", () => {
+    const detect = vi.fn().mockResolvedValue(true);
+    const clear = vi.fn();
+    render(<ParsedTableItem
+      table={{
+        pageNum: 2,
+        region: {
+          id: "retained-region-2",
+          bbox: BBOX,
+          data: { headers: ["Tag"], rows: [{ Tag: "D2" }], tagColumn: "Tag" },
+        },
+        name: "Retained Schedule",
+        category: "schedule",
+        rowCount: 1,
+        colCount: 1,
+        csiTags: [],
+      }}
+      pageNames={{ 2: "A-202" }}
+      isCurrentPage={false}
+      onNavigate={vi.fn()}
+      yoloTags={[]}
+      pageNumber={1}
+      publicId={PUBLIC_ID}
+      onDelete={vi.fn()}
+      cellStructureOperation={{
+        detect,
+        clear,
+        loadingKey: null,
+        busy: false,
+        errorKey: null,
+        error: null,
+      }}
+    />, { wrapper });
+
+    fireEvent.click(screen.getByRole("button", { name: "▶" }));
+    fireEvent.click(screen.getByRole("button", { name: "Detect Cells" }));
+
+    expect(useViewerCoreStore.getState().pageNumber).toBe(2);
+    expect(detect).toHaveBeenCalledTimes(1);
+    expect(detect).toHaveBeenCalledWith({
+      projectId: PUBLIC_ID,
+      pageNumber: 2,
+      regionBbox: BBOX,
+    }, "retained:2:retained-region-2");
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it("clears structure, hides its overlay, and invalidates Table in one publication", async () => {
+    useParseFlowStore.setState({
+      tableParseStep: "review",
+      tableParseRegion: BBOX,
+      tableParsedGrid: {
+        headers: ["Tag"],
+        rows: [{ Tag: "D1" }],
+        tagColumn: "Tag",
+      },
+      tableCellStructure: SEEDED_STRUCTURE,
+      showTableCellStructure: true,
+    });
+    render(<TableParsePanel />, { wrapper });
+
+    const before = useParseFlowStore.getState();
+    const publications: typeof before[] = [];
+    const unsubscribe = useParseFlowStore.subscribe((state) => publications.push(state));
+    const clear = await screen.findByRole("button", { name: /Cell Structure \(1 cells\)/ });
+
+    act(() => { (clear as HTMLButtonElement).click(); });
+
+    expect(publications).toHaveLength(1);
+    expect(publications[0].tableCellStructure).toBeNull();
+    expect(publications[0].showTableCellStructure).toBe(false);
+    expect(publications[0].parseOperations.table).toEqual({
+      revision: before.parseOperations.table.revision + 1,
+      busy: false,
+    });
+    expect(publications[0].parseOperations.keynote).toBe(before.parseOperations.keynote);
+    expect(publications[0].parseOperations.notes).toBe(before.parseOperations.notes);
+    expect(publications[0].parseOperations.spec).toBe(before.parseOperations.spec);
+    unsubscribe();
+  });
+
+  it("releases current loading/busy and reports a synchronous transport throw after admission", async () => {
+    fetchMock.mockImplementationOnce(() => {
+      throw new Error("synchronous cell-structure failure");
+    });
+    render(<TableParsePanel />, { wrapper });
+
+    // The region was already captured by Auto's passive proposal effect. Enter review with that
+    // same crop; the throw happens synchronously inside fetch, after begin + local admission.
+    act(() => useParseFlowStore.setState({
+      tableParseStep: "review",
+      tableParseRegion: BBOX,
+      tableParsedGrid: {
+        headers: ["Tag"],
+        rows: [{ Tag: "D1" }],
+        tagColumn: "Tag",
+      },
+    }));
+    const detect = await screen.findByRole("button", { name: "Detect Cell Structure" });
+    act(() => { (detect as HTMLButtonElement).click(); });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByText("synchronous cell-structure failure")).toBeInTheDocument();
+      expect(useParseFlowStore.getState().parseOperations.table.busy).toBe(false);
+      expect(screen.getByRole("button", { name: "Detect Cell Structure" })).toBeEnabled();
+    });
+    expect(useParseFlowStore.getState().tableCellStructure).toBeNull();
+  }, 15_000);
+
   it("suppresses page-A completion/finally while page-B remains current", async () => {
     render(<TableParsePanel />, { wrapper });
 
-    // Prime Auto's drawn-region identity, then enter review with that same region so its legacy
-    // multi-BB capture effect retains the review crop instead of treating it as a new drawing.
-    await waitFor(() => expect(useParseFlowStore.getState().tableParseRegion).toBeNull());
+    // Auto already captured the seeded region as its proposal. Enter review with that same crop.
     act(() => useParseFlowStore.setState({
       tableParseStep: "review",
       tableParseRegion: BBOX,
@@ -119,9 +244,20 @@ describe("A2b Table cell-structure operation authority", () => {
     expect(pending).toHaveLength(1);
     expect(JSON.parse(String(pending[0].init.body))).toMatchObject({ pageNumber: 1 });
 
-    act(() => useViewerCoreStore.getState().setPage(2));
+    act(() => navigateViewerPage(2));
     await waitFor(() => expect(useParseFlowStore.getState().parseOperations.table.busy).toBe(false));
-    const detectB = screen.getByRole("button", { name: "Detect Cell Structure" });
+    // Full page navigation intentionally clears the review workspace. Seed page B's own review
+    // crop before admitting B, instead of relying on the old raw-page-write retention behavior.
+    act(() => useParseFlowStore.setState({
+      tableParseStep: "review",
+      tableParseRegion: BBOX,
+      tableParsedGrid: {
+        headers: ["Tag"],
+        rows: [{ Tag: "D2" }],
+        tagColumn: "Tag",
+      },
+    }));
+    const detectB = await screen.findByRole("button", { name: "Detect Cell Structure" });
     act(() => { (detectB as HTMLButtonElement).click(); });
     expect(pending).toHaveLength(2);
     expect(JSON.parse(String(pending[1].init.body))).toMatchObject({ pageNumber: 2 });

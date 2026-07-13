@@ -15,13 +15,21 @@ import {
 } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
+  beginGuidedGridEdit,
+  claimGuidedParseWorkspaceForOperation,
   completeKeynoteParseOperation,
   invalidateGuidedParseOperations,
-  invalidateKeynoteTableOperations,
+  invalidateParseOperationAtRevision,
+  navigateViewerPage,
+  openTableReviewTarget,
+  openTableReviewWorkspace,
+  publishGuidedProposalForOperation,
   resetAllTools,
   resetKeynoteGuidedParse,
-  setTableParseStep,
+  setKeynoteManualInputsForUser,
+  setKeynoteParseStepWithTool,
   toggleKeynoteParsePanel,
+  transitionKeynoteParseTab,
 } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -75,11 +83,18 @@ type KeynoteSaveInput = {
   target: KeynotePersistTarget;
 };
 
+const EMPTY_GUIDED_LINES: number[] = [];
+
 type KeynoteProposalOverrides = Partial<{
   rowTolerance: number;
   minColGap: number;
   minHitsRatio: number;
   expectedColumns: number | null;
+}>;
+
+type KeynoteProposalExpectation = Readonly<{
+  keynoteRevision: number;
+  region: KeynoteBbox;
 }>;
 
 /**
@@ -99,7 +114,6 @@ type KeynoteProposalOverrides = Partial<{
  */
 export default function KeynotePanel({ embedded = false }: { embedded?: boolean } = {}) {
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
-  const setPage = useViewerCoreStore((s) => s.setPage);
   const pageNames = useSessionStore((s) => s.pageNames);
   const pageIntelligence = usePageIntelligenceByPage();
   // Manual parsing intentionally captures the current page payload from this render. Guided parsing
@@ -110,19 +124,14 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const {
     step: keynoteParseStep,
     region: keynoteParseRegion,
-    setStep: setKeynoteParseStep,
     reset: resetKeynoteParse,
   } = useParseFlow("keynote");
   const keynoteOperation = useParseOperation("keynote");
   const {
     keynoteParseTab,
-    setKeynoteParseTab,
     keynoteColumnBBs,
-    addKeynoteColumnBB,
     keynoteRowBBs,
-    addKeynoteRowBB,
     keynoteYoloClass,
-    setKeynoteYoloClass,
     parsedKeynoteData,
     addParsedKeynote,
   } = useKeynoteParseExtensions();
@@ -136,8 +145,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const { addYoloTagsBulk } = useYoloTagActions();
   const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
-  const setTableParsedGrid = useParseFlowStore((s) => s.setTableParsedGrid);
-  const setTableParseRegion = useParseFlowStore((s) => s.setTableParseRegion);
   const { publicId, isDemo } = useProject();
   // Context-only handle for optimistic page writes and both C2 shared save-command paths — zero
   // subscription; summaries publication happens inside the captured-target command.
@@ -145,25 +152,23 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
   // This proposed-grid workspace is shared with Table guided parsing, not Keynote-owned state.
   const {
-    guidedParseActive,
-    guidedParseRegion,
-    guidedParseRows,
-    guidedParseCols,
-    setGuidedParseActive,
-    setGuidedParseRegion,
-    setGuidedParseRows,
-    setGuidedParseCols,
+    guidedParseOwner,
+    guidedParseActive: sharedGuidedParseActive,
+    guidedParseRegion: sharedGuidedParseRegion,
+    guidedParseRows: sharedGuidedParseRows,
+    guidedParseCols: sharedGuidedParseCols,
   } = useGuidedParseExtensions();
+  const ownsGuidedWorkspace = guidedParseOwner === "keynote";
+  const guidedParseActive = ownsGuidedWorkspace && sharedGuidedParseActive;
+  const guidedParseRegion = ownsGuidedWorkspace ? sharedGuidedParseRegion : null;
+  const guidedParseRows = ownsGuidedWorkspace ? sharedGuidedParseRows : EMPTY_GUIDED_LINES;
+  const guidedParseCols = ownsGuidedWorkspace ? sharedGuidedParseCols : EMPTY_GUIDED_LINES;
 
-  // Page identity and the mounted panel instance are authority boundaries even when the legacy step
-  // is idle: Auto, promotion, or map work can still be pending in that state.
-  const operationPageRef = useRef(pageNumber);
-  useEffect(() => {
-    if (operationPageRef.current === pageNumber) return;
-    operationPageRef.current = pageNumber;
-    keynoteOperation.invalidate();
-  }, [pageNumber, keynoteOperation.invalidate]);
-  useEffect(() => () => keynoteOperation.invalidate(), [keynoteOperation.invalidate]);
+  // Coordinated page navigation already resets Parse before core.setPage. Direct unmounts may
+  // revoke only the exact revision rendered by this instance, never a reentrant replacement B.
+  useEffect(() => () => {
+    invalidateParseOperationAtRevision("keynote", keynoteOperation.revision);
+  }, [keynoteOperation.revision]);
 
   const captureKeynoteTarget = useCallback((bbox: KeynoteBbox | null): KeynotePersistTarget => ({
     publicId,
@@ -352,18 +357,26 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   }, [pageIntelligence, pageNumber]);
 
   // ─── Load existing keynote into Compare modal ───────────
-  const loadExistingKeynote = useCallback((parsed: any) => {
+  const loadExistingKeynote = useCallback((parsed: any, targetPage?: number) => {
     const grid = keynoteDataToGrid(parsed.data || {});
-    setTableParseRegion(parsed.bbox ? [parsed.bbox[0], parsed.bbox[1], parsed.bbox[2], parsed.bbox[3]] : null);
-    setTableParsedGrid({
-      headers: grid.headers,
-      rows: grid.rows,
-      tagColumn: grid.tagColumn,
-      tableName: grid.tableName,
-    });
-    setTableParseStep("review");
-    useToolStore.getState().setMode("move");
-  }, [setTableParseRegion, setTableParsedGrid]);
+    const publication = {
+      region: parsed.bbox
+        ? [parsed.bbox[0], parsed.bbox[1], parsed.bbox[2], parsed.bbox[3]] as KeynoteBbox
+        : null,
+      grid: {
+        headers: grid.headers,
+        rows: grid.rows,
+        tagColumn: grid.tagColumn,
+        tableName: grid.tableName,
+      },
+      meta: null,
+    };
+    if (targetPage !== undefined && targetPage !== pageNumber) {
+      openTableReviewTarget(targetPage, publication, "keynote");
+    } else {
+      openTableReviewWorkspace(publication, "keynote");
+    }
+  }, [pageNumber]);
 
   // ─── YOLO annotations inside Column A (tag column) ──────
   // YOLO annotations FULLY contained within Column A (tag column)
@@ -501,12 +514,12 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       const started = keynoteOperation.begin();
       if (started.status === "busy") return;
       const token = started.token;
-      const targetKeys = keys.map((entry) => ({ ...entry }));
-      const target = captureKeynoteTarget(keynoteParseRegion as KeynoteBbox | null);
-      const targetYoloClass = keynoteYoloClass ? { ...keynoteYoloClass } : null;
-      const tableName = `Keynotes p.${target.pageNumber}`;
 
       try {
+        const targetKeys = keys.map((entry) => ({ ...entry }));
+        const target = captureKeynoteTarget(keynoteParseRegion as KeynoteBbox | null);
+        const targetYoloClass = keynoteYoloClass ? { ...keynoteYoloClass } : null;
+        const tableName = `Keynotes p.${target.pageNumber}`;
         const admitted = commitParseOperation(token, () => {
           setKeynoteSaveError(null);
           addParsedKeynote({
@@ -563,11 +576,11 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     const started = keynoteOperation.begin();
     if (started.status === "busy") return;
     const token = started.token;
-    const targetProjectId = projectId;
-    const target = captureKeynoteTarget(bbox);
-    const tableName = `Keynotes p.${target.pageNumber}`;
 
     try {
+      const targetProjectId = projectId;
+      const target = captureKeynoteTarget(bbox);
+      const tableName = `Keynotes p.${target.pageNumber}`;
       const admitted = commitParseOperation(token, () => {
         setAutoParsingRevision(token.revision);
         setKeynoteSaveError(null);
@@ -650,31 +663,43 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const [guidedColConf, setGuidedColConf] = useState(0.3);
   const [guidedExpCols, setGuidedExpCols] = useState<number | null>(2); // keynotes default 2
 
-  const proposeGrid = useCallback(async (overrides: KeynoteProposalOverrides = {}) => {
+  const proposeGrid = useCallback(async (
+    overrides: KeynoteProposalOverrides = {},
+    expectation?: KeynoteProposalExpectation,
+  ) => {
     const region = useParseFlowStore.getState().keynoteParseRegion;
     if (!region || !projectId) return;
+    if (expectation) {
+      const before = useParseFlowStore.getState();
+      if (
+        before.guidedParseOwner !== "keynote" ||
+        before.parseOperations.keynote.revision !== expectation.keynoteRevision ||
+        before.parseOperations.keynote.busy ||
+        before.keynoteParseRegion !== expectation.region
+      ) return;
+    }
     const started = keynoteOperation.begin("supersede");
     if (started.status === "busy") return;
     const token = started.token;
-    const target = {
-      projectId,
-      pageNumber,
-      regionBbox: [...region] as KeynoteBbox,
-      rowTolerance: overrides.rowTolerance ?? guidedRowTol,
-      minColGap: overrides.minColGap ?? guidedColGap,
-      minHitsRatio: overrides.minHitsRatio ?? guidedColConf,
-      expectedColumns: overrides.expectedColumns === undefined
-        ? guidedExpCols
-        : overrides.expectedColumns,
-    };
 
     try {
+      const target = {
+        projectId,
+        pageNumber,
+        regionBbox: [...region] as KeynoteBbox,
+        rowTolerance: overrides.rowTolerance ?? guidedRowTol,
+        minColGap: overrides.minColGap ?? guidedColGap,
+        minHitsRatio: overrides.minHitsRatio ?? guidedColConf,
+        expectedColumns: overrides.expectedColumns === undefined
+          ? guidedExpCols
+          : overrides.expectedColumns,
+      };
       // The proposed grid is a Table/Keynote/Notes shared workspace. Revoke peer owners before the
       // first shared seed while retaining this newly admitted Keynote token.
-      invalidateGuidedParseOperations("keynote");
+      const workspaceLease = claimGuidedParseWorkspaceForOperation(token, target.regionBbox);
+      if (!workspaceLease) return;
       const admitted = commitParseOperation(token, () => {
         setProposalRevision(token.revision);
-        setGuidedParseRegion(target.regionBbox);
         setGuidedError(null);
       });
       if (!admitted || !keynoteOperation.isCurrent(token)) return;
@@ -696,17 +721,11 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       });
       if (!resp.ok) throw new Error("Proposal failed");
       const data = await resp.json();
-      // Preserve the three legacy publications, but re-authorize between each one so a synchronous
-      // subscriber that starts B after rows cannot let A overwrite B's columns/active flag.
-      if (!commitParseOperation(token, () => {
-        setGuidedParseRows(data.proposedRows || []);
-      })) return;
-      if (!commitParseOperation(token, () => {
-        setGuidedParseCols(data.proposedCols || []);
-      })) return;
-      commitParseOperation(token, () => {
-        setGuidedParseActive(true);
-      });
+      publishGuidedProposalForOperation(
+        token,
+        data.proposedRows || [],
+        data.proposedCols || [],
+      );
     } catch (err: any) {
       commitParseOperation(token, () => {
         setGuidedError(err.message || "Failed to propose grid");
@@ -721,21 +740,32 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     guidedColGap,
     guidedColConf,
     guidedExpCols,
-    setGuidedParseRegion,
-    setGuidedParseRows,
-    setGuidedParseCols,
-    setGuidedParseActive,
     keynoteOperation.begin,
     keynoteOperation.finish,
     keynoteOperation.isCurrent,
   ]);
+
+  const retuneGuidedGrid = useCallback((
+    overrides: KeynoteProposalOverrides,
+    publishLocal: () => void,
+  ) => {
+    if (!keynoteParseRegion) return;
+    const lease = beginGuidedGridEdit("keynote", guidedParseRegion);
+    if (!lease) return;
+    publishLocal();
+    void proposeGrid(overrides, {
+      keynoteRevision: lease.keynoteRevision,
+      region: keynoteParseRegion,
+    });
+  }, [guidedParseRegion, keynoteParseRegion, proposeGrid]);
 
   // ─── Guided parse: parse from grid ─────────────────────
   const parseFromGuidedGrid = useCallback(async () => {
     // Unlike the manual path, guided parsing is a live action read: a user can leave the grid open
     // across an OCR replacement. The imperative facade touches LRU recency without an observer.
     const pageTextract = readTextractForPage(queryClient, publicId, pageNumber);
-    if (!pageTextract?.words || guidedParseRows.length < 2 || guidedParseCols.length < 2) return;
+    if (!ownsGuidedWorkspace || !pageTextract?.words ||
+        guidedParseRows.length < 2 || guidedParseCols.length < 2) return;
 
     const result = extractCellsFromGrid(pageTextract.words, guidedParseRows, guidedParseCols);
     if (result.rows.length === 0) return;
@@ -743,34 +773,38 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     const started = keynoteOperation.begin();
     if (started.status === "busy") return;
     const token = started.token;
-    const target = {
-      publicId,
-      isDemo,
-      pageNumber,
-      bbox: guidedParseRegion
-        ? [...guidedParseRegion] as KeynoteBbox
-        : [0, 0, 1, 1] as KeynoteBbox,
-      headers: [...result.headers],
-      rows: result.rows.map((row) => ({ ...row })),
-    };
-    const regionId = regionIdFor(target.pageNumber, target.bbox);
-    const data = {
-      headers: target.headers,
-      rows: target.rows,
-      tagColumn: target.headers[0],
-      tableName: "Keynotes",
-      rowCount: target.rows.length,
-      columnCount: target.headers.length,
-    };
-    const tagHeader = target.headers[0];
-    const descHeaders = target.headers.slice(1);
-    const keys: KeynoteKey[] = target.rows.map((row: any) => ({
-      key: (row[tagHeader] || "").trim(),
-      description: descHeaders.map((header) => row[header] || "").join(" ").trim(),
-    })).filter((keynote) => keynote.key || keynote.description);
 
     try {
-      invalidateGuidedParseOperations("keynote");
+      const target = {
+        publicId,
+        isDemo,
+        pageNumber,
+        bbox: guidedParseRegion
+          ? [...guidedParseRegion] as KeynoteBbox
+          : [0, 0, 1, 1] as KeynoteBbox,
+        headers: [...result.headers],
+        rows: result.rows.map((row) => ({ ...row })),
+      };
+      const regionId = regionIdFor(target.pageNumber, target.bbox);
+      const data = {
+        headers: target.headers,
+        rows: target.rows,
+        tagColumn: target.headers[0],
+        tableName: "Keynotes",
+        rowCount: target.rows.length,
+        columnCount: target.headers.length,
+      };
+      const tagHeader = target.headers[0];
+      const descHeaders = target.headers.slice(1);
+      const keys: KeynoteKey[] = target.rows.map((row: any) => ({
+        key: (row[tagHeader] || "").trim(),
+        description: descHeaders.map((header) => row[header] || "").join(" ").trim(),
+      })).filter((keynote) => keynote.key || keynote.description);
+
+      const workspaceAdmitted = commitParseOperation(token, () => {
+        invalidateGuidedParseOperations("keynote");
+      });
+      if (!workspaceAdmitted || !keynoteOperation.isCurrent(token)) return;
       const admitted = commitParseOperation(token, () => {
         setKeynoteSaveError(null);
       });
@@ -873,6 +907,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     guidedParseRows,
     guidedParseCols,
     guidedParseRegion,
+    ownsGuidedWorkspace,
     addParsedKeynote,
     mapKeynoteKeysToYoloTags,
     queryClient,
@@ -884,51 +919,47 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   // ─── Repeat row down ───────────────────────────────────
   const repeatRowDown = useCallback((rowBB: [number, number, number, number]) => {
     if (!keynoteParseRegion) return;
-    keynoteOperation.invalidate();
     const rowH = rowBB[3] - rowBB[1];
     const bottom = keynoteParseRegion[3];
     let y = rowBB[3];
+    const keynoteRowBBsNext = [...keynoteRowBBs];
     while (y + rowH * 0.5 < bottom) {
-      addKeynoteRowBB([rowBB[0], y, rowBB[2], Math.min(y + rowH, bottom)]);
+      keynoteRowBBsNext.push([rowBB[0], y, rowBB[2], Math.min(y + rowH, bottom)]);
       y += rowH;
     }
-  }, [keynoteParseRegion, addKeynoteRowBB, keynoteOperation.invalidate]);
+    if (keynoteRowBBsNext.length === keynoteRowBBs.length) return;
+    setKeynoteManualInputsForUser({ keynoteRowBBs: keynoteRowBBsNext });
+  }, [keynoteParseRegion, keynoteRowBBs]);
 
   // ─── Repeat column right ──────────────────────────────
   const repeatColumnRight = useCallback((colBB: [number, number, number, number]) => {
     if (!keynoteParseRegion) return;
-    keynoteOperation.invalidate();
     const colW = colBB[2] - colBB[0];
     const right = keynoteParseRegion[2];
     let x = colBB[2];
+    const keynoteColumnBBsNext = [...keynoteColumnBBs];
     while (x + colW * 0.5 < right) {
-      addKeynoteColumnBB([x, colBB[1], Math.min(x + colW, right), colBB[3]]);
+      keynoteColumnBBsNext.push([x, colBB[1], Math.min(x + colW, right), colBB[3]]);
       x += colW;
     }
-  }, [keynoteParseRegion, addKeynoteColumnBB, keynoteOperation.invalidate]);
+    if (keynoteColumnBBsNext.length === keynoteColumnBBs.length) return;
+    setKeynoteManualInputsForUser({ keynoteColumnBBs: keynoteColumnBBsNext });
+  }, [keynoteColumnBBs, keynoteParseRegion]);
 
   const handleKeynoteYoloClassChange = useCallback((selection: {
     model: string;
     className: string;
   }) => {
-    keynoteOperation.invalidate();
-    setKeynoteYoloClass(selection);
-  }, [keynoteOperation.invalidate, setKeynoteYoloClass]);
+    setKeynoteManualInputsForUser({ keynoteYoloClass: selection });
+  }, []);
 
   const handleNavigatePage = useCallback((nextPage: number) => {
-    keynoteOperation.invalidate();
-    setPage(nextPage);
-  }, [keynoteOperation.invalidate, setPage]);
+    navigateViewerPage(nextPage);
+  }, []);
 
   const handleKeynoteTabChange = useCallback((tab: typeof keynoteParseTab) => {
-    if (useParseFlowStore.getState().keynoteParseTab !== tab) {
-      resetKeynoteGuidedParse();
-      useToolStore.getState().setMode("move");
-    }
-    setKeynoteParseTab(tab);
-  }, [
-    setKeynoteParseTab,
-  ]);
+    transitionKeynoteParseTab(tab);
+  }, []);
 
   // ─── Render ─────────────────────────────────────────────
   return (
@@ -1119,8 +1150,10 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                       <input type="range" min={0.002} max={0.02} step={0.001} value={guidedRowTol}
                         onChange={(e) => {
                           const value = parseFloat(e.target.value);
-                          setGuidedRowTol(value);
-                          proposeGrid({ rowTolerance: value });
+                          retuneGuidedGrid(
+                            { rowTolerance: value },
+                            () => setGuidedRowTol(value),
+                          );
                         }}
                         className="w-full h-1 accent-amber-400" />
                       <div className="flex justify-between text-[8px] text-[var(--muted)]"><span>Tight</span><span>Loose</span></div>
@@ -1133,8 +1166,10 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                       <input type="range" min={0.005} max={0.05} step={0.005} value={guidedColGap}
                         onChange={(e) => {
                           const value = parseFloat(e.target.value);
-                          setGuidedColGap(value);
-                          proposeGrid({ minColGap: value });
+                          retuneGuidedGrid(
+                            { minColGap: value },
+                            () => setGuidedColGap(value),
+                          );
                         }}
                         className="w-full h-1 accent-amber-400" />
                       <div className="flex justify-between text-[8px] text-[var(--muted)]"><span>More cols</span><span>Fewer cols</span></div>
@@ -1147,8 +1182,10 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                       <input type="range" min={0.1} max={0.8} step={0.05} value={guidedColConf}
                         onChange={(e) => {
                           const value = parseFloat(e.target.value);
-                          setGuidedColConf(value);
-                          proposeGrid({ minHitsRatio: value });
+                          retuneGuidedGrid(
+                            { minHitsRatio: value },
+                            () => setGuidedColConf(value),
+                          );
                         }}
                         className="w-full h-1 accent-amber-400" />
                       <div className="flex justify-between text-[8px] text-[var(--muted)]"><span>Keep weak</span><span>Strict</span></div>
@@ -1159,8 +1196,10 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                         <select value={guidedExpCols ?? "auto"}
                           onChange={(e) => {
                             const value = e.target.value === "auto" ? null : parseInt(e.target.value);
-                            setGuidedExpCols(value);
-                            proposeGrid({ expectedColumns: value });
+                            retuneGuidedGrid(
+                              { expectedColumns: value },
+                              () => setGuidedExpCols(value),
+                            );
                           }}
                           className="text-[9px] px-1 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] text-[var(--fg)]">
                           <option value="auto">Auto</option>
@@ -1181,7 +1220,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                 <button
                   onClick={() => {
                     resetKeynoteGuidedParse();
-                    useToolStore.getState().setMode("move");
                   }}
                   className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
                 >
@@ -1206,8 +1244,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                 {guidedError && <p className="text-red-400 text-[10px] px-1">{guidedError}</p>}
                 <button
                   onClick={() => {
-                    resetKeynoteParse();
-                    useToolStore.getState().setMode("move");
+                    resetKeynoteGuidedParse();
                   }}
                   className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
                 >
@@ -1226,8 +1263,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                 <HelpTooltip id="keynote-guided-draw"><button
                   onClick={() => {
                     const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
-                    setKeynoteParseStep(next);
-                    useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                    setKeynoteParseStepWithTool(next, next !== "idle" ? "pointer" : "move");
                   }}
                   className={`w-full text-xs px-3 py-2 rounded border ${
                     keynoteParseStep === "select-region"
@@ -1279,8 +1315,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
               <button
                 onClick={() => {
                   const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
-                  setKeynoteParseStep(next);
-                  useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                  setKeynoteParseStepWithTool(next, next !== "idle" ? "pointer" : "move");
                 }}
                 className={`w-full text-xs px-3 py-1.5 rounded border ${
                   keynoteParseStep === "select-region"
@@ -1316,8 +1351,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                 <button
                   onClick={() => {
                     const next = keynoteParseStep === "define-column" ? "idle" : "define-column";
-                    setKeynoteParseStep(next);
-                    useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                    setKeynoteParseStepWithTool(next, next !== "idle" ? "pointer" : "move");
                   }}
                   className={`w-full text-xs px-3 py-1.5 rounded border ${
                     keynoteParseStep === "define-column"
@@ -1382,8 +1416,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                 <button
                   onClick={() => {
                     const next = keynoteParseStep === "define-row" ? "idle" : "define-row";
-                    setKeynoteParseStep(next);
-                    useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                    setKeynoteParseStepWithTool(next, next !== "idle" ? "pointer" : "move");
                   }}
                   className={`w-full text-xs px-3 py-1.5 rounded border ${
                     keynoteParseStep === "define-row"
@@ -1478,8 +1511,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                 <button
                   onClick={() => {
                     const next = keynoteParseStep === "select-region" ? "idle" : "select-region";
-                    setKeynoteParseStep(next);
-                    useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+                    setKeynoteParseStepWithTool(next, next !== "idle" ? "pointer" : "move");
                   }}
                   className={`w-full text-xs px-3 py-2 rounded border ${
                     keynoteParseStep === "select-region"
@@ -1524,7 +1556,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
             allParsedTables={allParsedKeynotes}
             loadExistingParsed={loadExistingKeynote}
             toggleTableCompareModal={toggleTableCompareModal}
-            beforeHandoff={invalidateKeynoteTableOperations}
           />
         )}
       </div>

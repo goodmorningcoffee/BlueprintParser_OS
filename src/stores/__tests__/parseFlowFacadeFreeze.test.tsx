@@ -18,6 +18,7 @@ import {
   useParseDraftExtensions,
   useParseFlowStore,
   useTableParseExtensions,
+  type GuidedParseOwner,
   type ParseFlowState,
 } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
@@ -108,6 +109,8 @@ describe("P2.4 A1 parse facade type and dispatch contract", () => {
       .toEqualTypeOf<BboxMinMax | null>();
     expectTypeOf<ParseFlowLifecycle<"spec">["setStep"]>()
       .parameter(0).toEqualTypeOf<ParseFlowState["specParseStep"]>();
+    expectTypeOf<ParseFlowState["guidedParseOwner"]>()
+      .toEqualTypeOf<GuidedParseOwner>();
     expectTypeOf<ParseFlowLifecycle<"table">>()
       .toEqualTypeOf<ExpectedLifecycle<"table">>();
     expectTypeOf<ParseFlowLifecycle<"keynote">>()
@@ -325,7 +328,7 @@ describe("P2.4 A1 Keynote and shared-guided extension composition", () => {
     expect(result.current.setKeynoteParseTab).toBe(first.setKeynoteParseTab);
   });
 
-  it("keeps the exact nine shared-grid fields independent from every kind lifecycle", () => {
+  it("keeps the exact ten shared-grid fields independent from every kind lifecycle", () => {
     let renders = 0;
     const { result } = renderHook(() => {
       renders += 1;
@@ -333,6 +336,7 @@ describe("P2.4 A1 Keynote and shared-guided extension composition", () => {
     });
     const state = useParseFlowStore.getState();
     expect(result.current).toEqual({
+      guidedParseOwner: state.guidedParseOwner,
       guidedParseActive: state.guidedParseActive,
       setGuidedParseActive: state.setGuidedParseActive,
       guidedParseRegion: state.guidedParseRegion,
@@ -355,8 +359,12 @@ describe("P2.4 A1 Keynote and shared-guided extension composition", () => {
     expect(renders).toBe(baseline);
     expect(result.current).toBe(first);
 
-    act(() => result.current.setGuidedParseActive(true));
+    act(() => useParseFlowStore.setState({ guidedParseOwner: "notes" }));
     expect(renders).toBe(baseline + 1);
+    expect(result.current.guidedParseOwner).toBe("notes");
+
+    act(() => result.current.setGuidedParseActive(true));
+    expect(renders).toBe(baseline + 2);
     expect(result.current.guidedParseActive).toBe(true);
     expect(result.current.setGuidedParseActive).toBe(first.setGuidedParseActive);
   });

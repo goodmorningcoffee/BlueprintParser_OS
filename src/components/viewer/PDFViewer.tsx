@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
 import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { navigateViewerPage } from "@/stores/viewerCommands";
 import {
   useUiStore,
   useLayoutUi,
@@ -52,7 +53,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const [containerWidth, setContainerWidth] = useState(1200);
 
   // Slice selectors — grouped subscriptions prevent cascading re-renders
-  const { pageNumber, numPages, setPage, setNumPages } = useNavigation();
+  const { pageNumber, numPages, setNumPages } = useNavigation();
   const mode = useToolStore((s) => s.mode);
   const setMode = useToolStore((s) => s.setMode);
   const { scale, setScale } = useViewerCoreStore(useShallow((s) => ({ scale: s.scale, setScale: s.setScale })));
@@ -238,11 +239,11 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       const clampedPage = Math.max(1, Math.min(saved.pageNumber, numPages || saved.pageNumber));
       pendingRestoreRef.current = { ...saved, pageNumber: clampedPage };
       setScale(saved.scale);
-      setPage(clampedPage);
+      navigateViewerPage(clampedPage);
     } else {
       pendingRestoreRef.current = "center";
     }
-  }, [publicId, numPages, setScale, setPage]);
+  }, [publicId, numPages, setScale]);
 
   const restorePageDimensions = useViewerCoreStore((s) => s.pageDimensions);
   useEffect(() => {

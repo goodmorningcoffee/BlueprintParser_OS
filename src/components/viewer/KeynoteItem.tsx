@@ -3,10 +3,11 @@
 import { useState, useMemo, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
-import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
-import { invalidateKeynoteTableOperations } from "@/stores/viewerCommands";
+import {
+  openTableReviewTarget,
+} from "@/stores/viewerCommands";
 import { readAnnotations } from "@/queries/useAnnotations";
 import {
   readPageIntelligence,
@@ -256,21 +257,18 @@ export default function KeynoteItem({
               {region && (
                 <button
                   onClick={() => {
-                    const store = useParseFlowStore.getState();
                     const grid = keynoteDataToGrid(region.data || {});
-                    // Cross-kind retained-row handoff starts a new Table modal instance. Revoke
-                    // both source Keynote A and destination Table A before the first shared seed;
-                    // keep this row hook-free.
-                    invalidateKeynoteTableOperations();
-                    store.setTableParsedGrid({
-                      headers: grid.headers,
-                      rows: grid.rows,
-                      tagColumn: grid.tagColumn,
-                      tableName: keynote.tableName || "Keynotes",
-                    });
-                    store.setTableParseRegion(region.bbox || null);
-                    useViewerCoreStore.getState().setPage(keynote.pageNumber);
                     useUiStore.getState().toggleTableCompareModal();
+                    openTableReviewTarget(keynote.pageNumber, {
+                      grid: {
+                        headers: grid.headers,
+                        rows: grid.rows,
+                        tagColumn: grid.tagColumn,
+                        tableName: keynote.tableName || "Keynotes",
+                      },
+                      meta: null,
+                      region: region.bbox || null,
+                    }, "keynote");
                   }}
                   className="flex-1 text-[9px] px-2 py-1 rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
                 >

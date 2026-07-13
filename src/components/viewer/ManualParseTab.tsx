@@ -4,8 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useParseFlow } from "@/hooks/useParseFlow";
 import { commitParseOperation, useParseOperation } from "@/hooks/useParseOperation";
 import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
-import { useToolStore } from "@/stores/toolStore";
-import { setTableParseStepForOperation } from "@/stores/viewerCommands";
+import {
+  publishTableReviewForOperation,
+  resetTableParseWorkspace,
+  setTableManualGeometryForUser,
+  setTableParseStepWithTool,
+} from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useTextractForPage } from "@/queries/useTextract";
 import MapTagsSection, { type MapTagsStrictness } from "./MapTagsSection";
@@ -46,16 +50,13 @@ export default function ManualParseTab({
   const {
     step: tableParseStep,
     region: tableParseRegion,
-    setStep: setTableParseStep,
-    setRegion: setTableParseRegion,
-    reset: resetTableParse,
   } = useParseFlow("table");
   const tableOperation = useParseOperation("table");
   const {
-    tableParsedGrid, setTableParsedGrid,
-    tableParseColumnBBs, addTableParseColumnBB,
-    tableParseRowBBs, addTableParseRowBB, setTableParseRowBBs,
-    tableParseColumnNames, setTableParseColumnNames,
+    tableParsedGrid,
+    tableParseColumnBBs,
+    tableParseRowBBs,
+    tableParseColumnNames,
   } = useTableParseExtensions();
 
   // Snapshot of tableParseRowBBs before a "Repeat Down" mass-add — lets the
@@ -68,9 +69,9 @@ export default function ManualParseTab({
 
   const restoreRowBBs = useCallback(() => {
     if (!rowBBsBackup) return;
-    setTableParseRowBBs(rowBBsBackup);
     setRowBBsBackup(null);
-  }, [rowBBsBackup, setTableParseRowBBs]);
+    setTableManualGeometryForUser({ tableParseRowBBs: rowBBsBackup });
+  }, [rowBBsBackup]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -95,13 +96,16 @@ export default function ManualParseTab({
       const colWidth = colBB[2] - colBB[0];
       const regionRight = tableParseRegion[2];
       let x = colBB[2];
+      const tableParseColumnBBsNext = [...tableParseColumnBBs];
       while (x + colWidth * 0.5 < regionRight) {
         const right = Math.min(x + colWidth, regionRight);
-        addTableParseColumnBB([x, colBB[1], right, colBB[3]]);
+        tableParseColumnBBsNext.push([x, colBB[1], right, colBB[3]]);
         x = right;
       }
+      if (tableParseColumnBBsNext.length === tableParseColumnBBs.length) return;
+      setTableManualGeometryForUser({ tableParseColumnBBs: tableParseColumnBBsNext });
     },
-    [tableParseRegion, addTableParseColumnBB]
+    [tableParseColumnBBs, tableParseRegion]
   );
 
   // ─── Repeat row BB downward ──────────────────────────────
@@ -114,13 +118,16 @@ export default function ManualParseTab({
       const rowHeight = rowBB[3] - rowBB[1];
       const regionBottom = tableParseRegion[3];
       let y = rowBB[3];
+      const tableParseRowBBsNext = [...tableParseRowBBs];
       while (y + rowHeight * 0.5 < regionBottom) {
         const bottom = Math.min(y + rowHeight, regionBottom);
-        addTableParseRowBB([rowBB[0], y, rowBB[2], bottom]);
+        tableParseRowBBsNext.push([rowBB[0], y, rowBB[2], bottom]);
         y = bottom;
       }
+      if (tableParseRowBBsNext.length === tableParseRowBBs.length) return;
+      setTableManualGeometryForUser({ tableParseRowBBs: tableParseRowBBsNext });
     },
-    [tableParseRegion, addTableParseRowBB, tableParseRowBBs]
+    [tableParseRegion, tableParseRowBBs]
   );
 
   // Add exactly one row below the last BB. Lets the user inspect each
@@ -134,9 +141,11 @@ export default function ManualParseTab({
       const y = rowBB[3];
       if (y + rowHeight * 0.5 >= regionBottom) return;
       const bottom = Math.min(y + rowHeight, regionBottom);
-      addTableParseRowBB([rowBB[0], y, rowBB[2], bottom]);
+      setTableManualGeometryForUser({
+        tableParseRowBBs: [...tableParseRowBBs, [rowBB[0], y, rowBB[2], bottom]],
+      });
     },
-    [tableParseRegion, addTableParseRowBB]
+    [tableParseRegion, tableParseRowBBs]
   );
 
   // ─── Parse from column × row intersections ────────────────
@@ -151,7 +160,7 @@ export default function ManualParseTab({
       const targetColumnBBs = tableParseColumnBBs.map((bbox) => [...bbox] as typeof bbox);
       const targetRowBBs = tableParseRowBBs.map((bbox) => [...bbox] as typeof bbox);
       const targetColumnNames = [...tableParseColumnNames];
-      setSaveError(null);
+      if (!commitParseOperation(token, () => setSaveError(null))) return;
 
       const headers = targetColumnBBs.map((_: any, i: number) =>
         targetColumnNames[i]?.trim() || `Column ${String.fromCharCode(65 + i)}`
@@ -200,17 +209,12 @@ export default function ManualParseTab({
       }
 
       const grid = { headers, rows, tagColumn };
-      let reviewCommitted = false;
-      const completionPublished = commitParseOperation(token, () => {
-        setTableParsedGrid(grid);
-        // Manual parse doesn't use the merger — clear source-picker meta so the
-        // Compare/Edit modal doesn't show stale per-method results from a prior auto-parse.
-        useParseFlowStore.getState().setTableParseMeta(null);
-        reviewCommitted = setTableParseStepForOperation(token, "review");
-        if (!reviewCommitted) return;
-        useToolStore.getState().setMode("move");
+      const reviewCommitted = publishTableReviewForOperation(token, {
+        grid,
+        // Manual parse doesn't use the merger; clear stale source-picker metadata atomically.
+        meta: null,
       });
-      if (!completionPublished || !reviewCommitted) return;
+      if (!reviewCommitted) return;
       // Auto-persist immediately (no separate Save click). resetAfter:false keeps
       // the parsed result + Map Tags review mounted. Await + surface failures so
       // a parsed table is never silently lost (was previously fire-and-forget).
@@ -223,7 +227,7 @@ export default function ManualParseTab({
       tableOperation.finish(token);
     }
   }, [pageTextract, tableParseColumnBBs, tableParseRowBBs, tableParseColumnNames,
-    setTableParsedGrid, detectCsiAndPersist, tableOperation.begin, tableOperation.finish]);
+    detectCsiAndPersist, tableOperation.begin, tableOperation.finish]);
 
   return (
     <div className="space-y-2">
@@ -234,8 +238,7 @@ export default function ManualParseTab({
         <button
           onClick={() => {
             const next = tableParseStep === "select-region" ? "idle" : "select-region";
-            setTableParseStep(next);
-            useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+            setTableParseStepWithTool(next, next !== "idle" ? "pointer" : "move");
           }}
           className={`w-full text-xs px-3 py-1.5 rounded border ${
             tableParseStep === "select-region"
@@ -250,10 +253,7 @@ export default function ManualParseTab({
           <span className="text-[10px] text-green-400">Region defined</span>
           <button
             onClick={() => {
-              tableOperation.invalidate();
-              setTableParseRegion(null);
-              setTableParseStep("idle");
-              useToolStore.getState().setMode("move");
+              resetTableParseWorkspace();
             }}
             className="text-[9px] text-[var(--muted)] hover:text-red-400"
           >
@@ -272,8 +272,7 @@ export default function ManualParseTab({
           <button
             onClick={() => {
               const next = tableParseStep === "define-column" ? "idle" : "define-column";
-              setTableParseStep(next);
-              useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+              setTableParseStepWithTool(next, next !== "idle" ? "pointer" : "move");
             }}
             className={`w-full text-xs px-3 py-1.5 rounded border ${
               tableParseStep === "define-column"
@@ -296,7 +295,7 @@ export default function ManualParseTab({
                       const names = [...tableParseColumnNames];
                       while (names.length <= i) names.push("");
                       names[i] = e.target.value;
-                      setTableParseColumnNames(names);
+                      setTableManualGeometryForUser({ tableParseColumnNames: names });
                     }}
                     className="flex-1 text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] bg-transparent text-[var(--fg)] placeholder:text-[var(--muted)]/40 focus:outline-none focus:border-pink-400/50"
                   />
@@ -325,8 +324,7 @@ export default function ManualParseTab({
           <button
             onClick={() => {
               const next = tableParseStep === "define-row" ? "idle" : "define-row";
-              setTableParseStep(next);
-              useToolStore.getState().setMode(next !== "idle" ? "pointer" : "move");
+              setTableParseStepWithTool(next, next !== "idle" ? "pointer" : "move");
             }}
             className={`w-full text-xs px-3 py-1.5 rounded border ${
               tableParseStep === "define-row"
@@ -388,7 +386,10 @@ export default function ManualParseTab({
 
       {/* Reset */}
       <button
-        onClick={() => { resetTableParse(); setRowBBsBackup(null); }}
+        onClick={() => {
+          setRowBBsBackup(null);
+          resetTableParseWorkspace();
+        }}
         className="w-full text-xs px-3 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--surface-hover)] mt-2"
       >
         Reset All

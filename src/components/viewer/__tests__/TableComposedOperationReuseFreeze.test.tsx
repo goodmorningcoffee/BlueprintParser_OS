@@ -12,7 +12,10 @@ import type { ParseOperationToken } from "@/lib/parse-operation-state";
 import { queryKeys } from "@/queries/queryKeys";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
-import { resetProjectData } from "@/stores/viewerCommands";
+import {
+  completeTableParseOperation,
+  resetProjectData,
+} from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 import type { DetectCsiAndPersist, TablePersistOptions } from "../table-operation-types";
 
@@ -58,6 +61,14 @@ function commonProps() {
     setDrawingNumberPrefixes: vi.fn(),
     availablePrefixes: [],
     lastDropCounts: null,
+    cellStructureOperation: {
+      detect: vi.fn(async () => false),
+      clear: vi.fn(),
+      loadingKey: null,
+      busy: false,
+      errorKey: null,
+      error: null,
+    },
   };
 }
 
@@ -69,9 +80,14 @@ function inheritedSaveHarness(wait: Deferred<void>) {
   ) => {
     if (!token) throw new Error("composed Table save did not inherit its root token");
     await wait.promise;
+    if (options?.resetAfter !== false) {
+      return completeTableParseOperation(token, {
+        resetGuided: options?.resetGuided,
+        afterTerminal: options?.onLocalSuccess,
+      });
+    }
     return commitParseOperation(token, () => {
-      if (options?.resetAfter !== false) useParseFlowStore.getState().resetTableParse();
-      options?.onAuthorizedSuccess?.();
+      options?.onLocalSuccess?.();
     });
   });
 }
@@ -260,5 +276,71 @@ describe("A2b composed Table roots reuse one outer token", () => {
     await waitFor(() => expect(useParseFlowStore.getState().parseOperations.table.busy).toBe(false));
     expect(useParseFlowStore.getState().guidedParseActive).toBe(false);
     expect(useToolStore.getState().mode).toBe("move");
+  });
+
+  it("Guided late A cannot publish parsed UI or reset the live B workspace", async () => {
+    const save = deferred<void>();
+    const detectCsiAndPersist = inheritedSaveHarness(save);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        proposedRows: [0.1, 0.4, 0.8],
+        proposedCols: [0.1, 0.4, 0.8],
+        rowCount: 2,
+        colCount: 2,
+        confidence: 0.9,
+      }),
+    } as unknown as Response);
+    useParseFlowStore.setState({
+      tableParseTab: "guided",
+      tableParseRegion: BBOX,
+      guidedParseActive: false,
+    });
+
+    render(
+      <GuidedParseTab detectCsiAndPersist={detectCsiAndPersist} {...commonProps()} />,
+      { wrapper },
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Parse Grid" }));
+    await waitFor(() => expect(detectCsiAndPersist).toHaveBeenCalledTimes(1));
+
+    let tokenB!: ParseOperationToken<"table">;
+    act(() => {
+      const operation = useParseFlowStore.getState();
+      operation.invalidateParseOperation("table");
+      const started = useParseFlowStore.getState().beginParseOperation("table");
+      if (started.status !== "started") throw new Error("B should own the Table lane");
+      tokenB = started.token;
+      useParseFlowStore.setState({
+        guidedParseActive: true,
+        guidedParseRows: [0.2, 0.5, 0.9],
+        guidedParseCols: [0.2, 0.5, 0.9],
+        tableParsedGrid: { headers: ["B"], rows: [{ B: "live" }] },
+      });
+      useToolStore.getState().setMode("pointer");
+    });
+
+    await act(async () => {
+      save.resolve();
+      await detectCsiAndPersist.mock.results[0].value;
+      await Promise.resolve();
+    });
+
+    expect(useParseFlowStore.getState().parseOperations.table).toEqual({
+      revision: tokenB.revision,
+      busy: true,
+    });
+    expect(useParseFlowStore.getState().guidedParseActive).toBe(true);
+    expect(useParseFlowStore.getState().tableParsedGrid).toEqual({
+      headers: ["B"],
+      rows: [{ B: "live" }],
+    });
+    expect(useToolStore.getState().mode).toBe("pointer");
+    expect(screen.queryByRole("button", { name: "Parse Another" })).not.toBeInTheDocument();
+
+    act(() => {
+      useParseFlowStore.getState().finishParseOperation(tokenB);
+    });
   });
 });

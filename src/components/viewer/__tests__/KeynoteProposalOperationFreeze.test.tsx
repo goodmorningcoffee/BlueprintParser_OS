@@ -12,7 +12,10 @@ import { EMPTY_ACTIVE_PAGE_WINDOW } from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
 import { clearYoloTagsProject, seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
-import { resetProjectData } from "@/stores/viewerCommands";
+import {
+  claimGuidedParseWorkspaceForOperation,
+  resetProjectData,
+} from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 const PUBLIC_ID = "keynote-proposal-project";
@@ -136,8 +139,8 @@ describe("A2c Guided Keynote proposal authority", () => {
       );
       const sharedSeed = snapshots.findIndex((state) => state.guidedParseRegion !== null);
       expect(peersRevoked).toBeGreaterThanOrEqual(0);
-      expect(sharedSeed).toBeGreaterThan(peersRevoked);
-      expect(snapshots[peersRevoked].guidedParseRegion).toBeNull();
+      expect(sharedSeed).toBe(peersRevoked);
+      expect(snapshots[sharedSeed].guidedParseOwner).toBe("keynote");
     } finally {
       unsubscribe();
     }
@@ -226,4 +229,64 @@ describe("A2c Guided Keynote proposal authority", () => {
     expect(useParseFlowStore.getState().parseOperations.keynote.busy).toBe(false);
     expect(screen.queryByText("Proposing grid...")).not.toBeInTheDocument();
   });
+
+  it.each([
+    ["foreign", "busy"],
+    ["foreign", "settled"],
+    ["same-family", "busy"],
+    ["same-family", "settled"],
+  ] as const)(
+    "rejects the rendered tuning callback when a synchronous %s %s B replaces its generation",
+    async (family, settlement) => {
+      const view = render(<KeynotePanel embedded />, { wrapper });
+      fireEvent.click(screen.getByRole("button", { name: "Propose Grid (2-col Keynote)" }));
+      expect(pending).toHaveLength(1);
+
+      await act(async () => {
+        pending[0].resolve(proposalResponse(1));
+        await flushCompletion();
+      });
+      await waitFor(() => expect(useParseFlowStore.getState().guidedParseRows)
+        .toEqual([1, 1.1, 1.2]));
+
+      fireEvent.click(screen.getByRole("button", { name: /Tune Detection/ }));
+      const rowTolerance = view.container.querySelector('input[type="range"]') as HTMLInputElement;
+      const renderedRevision = useParseFlowStore.getState().parseOperations.keynote.revision;
+      let armed = true;
+      const unsubscribe = useParseFlowStore.subscribe((state) => {
+        if (!armed || state.parseOperations.keynote.revision === renderedRevision) return;
+        armed = false;
+        const kind = family === "foreign" ? "table" : "keynote";
+        const started = useParseFlowStore.getState().beginParseOperation(kind);
+        if (started.status !== "started") throw new Error(`${kind} B did not start`);
+        if (kind === "table") {
+          const claimed = claimGuidedParseWorkspaceForOperation(
+            started.token,
+            [0.1, 0.2, 0.8, 0.9],
+          );
+          if (!claimed) throw new Error("foreign B did not claim Guided");
+        }
+        if (settlement === "settled") {
+          useParseFlowStore.getState().finishParseOperation(started.token);
+        }
+      });
+
+      try {
+        fireEvent.change(rowTolerance, { target: { value: "0.010" } });
+        const afterB = useParseFlowStore.getState();
+
+        expect(armed).toBe(false);
+        expect(pending).toHaveLength(1);
+        expect(useParseFlowStore.getState()).toBe(afterB);
+        expect(useParseFlowStore.getState().parseOperations[family === "foreign" ? "table" : "keynote"])
+          .toMatchObject({ busy: settlement === "busy" });
+        if (family === "same-family") {
+          expect(rowTolerance).toHaveValue("0.006");
+          expect(screen.getByText("0.006")).toBeInTheDocument();
+        }
+      } finally {
+        unsubscribe();
+      }
+    },
+  );
 });

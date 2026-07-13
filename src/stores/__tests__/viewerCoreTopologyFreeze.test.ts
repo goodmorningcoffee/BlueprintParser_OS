@@ -73,7 +73,6 @@ const CURRENT_NAVIGATION_SHAPE = [
 
 const CURRENT_NAVIGATION_CALL_TOPOLOGY: Record<string, number> = {
   "src/components/viewer/AutoParseTab.tsx": 2,
-  "src/components/viewer/AutoQtoTab.tsx": 1,
   "src/components/viewer/ChatPanel.tsx": 1,
   "src/components/viewer/CompareEditTab.tsx": 1,
   "src/components/viewer/CsiPanel.tsx": 1,
@@ -85,7 +84,7 @@ const CURRENT_NAVIGATION_CALL_TOPOLOGY: Record<string, number> = {
   "src/components/viewer/PageIntelligencePanel.tsx": 1,
   "src/components/viewer/PageSidebar.tsx": 1,
   "src/components/viewer/SymbolSearchPanel.tsx": 1,
-  "src/components/viewer/TextPanel.tsx": 3,
+  "src/components/viewer/TextPanel.tsx": 2,
   "src/components/viewer/ViewerToolbar.tsx": 1,
   "src/hooks/useShapeParseInteraction.ts": 1,
 };

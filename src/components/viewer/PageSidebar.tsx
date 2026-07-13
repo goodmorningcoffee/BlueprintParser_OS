@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
+import { navigateViewerPage } from "@/stores/viewerCommands";
 import { useUiStore } from "@/stores/uiStore";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import {
@@ -28,7 +29,7 @@ const VIRTUAL_BUFFER = 5; // Extra items above/below viewport
 
 export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   // Slice selectors (only re-render when relevant slice changes)
-  const { pageNumber, numPages, setPage } = useNavigation();
+  const { pageNumber, numPages } = useNavigation();
   const { pageNames, publicId } = useProject();
   const keynotes = useKeynotesByPage();
   const csiCodes = useCsiCodesByPage();
@@ -433,7 +434,7 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
       <button
         key={n}
         data-page-num={n}
-        onClick={() => { sidebarClickRef.current = true; setPage(n); }}
+        onClick={() => { sidebarClickRef.current = true; navigateViewerPage(n); }}
         className={`w-full text-left p-1.5 rounded mb-1 transition-colors ${
           isActive
             ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40"

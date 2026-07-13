@@ -38,7 +38,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(projectName);
   // Slice selectors
-  const { pageNumber, numPages, setPage } = useNavigation();
+  const { pageNumber, numPages } = useNavigation();
   const mode = useToolStore((s) => s.mode);
   const setMode = useToolStore((s) => s.setMode);
   const scale = useViewerCoreStore((s) => s.scale);

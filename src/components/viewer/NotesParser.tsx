@@ -15,14 +15,15 @@ import {
 } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
+  claimGuidedParseWorkspaceForOperation,
   completeNotesParseOperation,
-  invalidateGuidedParseOperations,
-  invalidateNotesWorkspaceOperations,
-  invalidateParseOperationForWorkspace,
-  invalidateParagraphParseOperations,
+  invalidateNotesWorkspaceOperationsForOperation,
+  invalidateParagraphParseOperationsForOperation,
   leaveNotesParserWorkspace,
+  publishGuidedProposalForOperation,
   removeParagraphForUser,
   resetNotesParseWorkspace,
+  setNotesParseStepWithTool,
   setParagraphBatchForUser,
   transitionNotesParserMode,
   upsertParagraphForUser,
@@ -118,10 +119,7 @@ export default function NotesParser() {
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const textractData = useTextractForPage(pageNumber);
 
-  const {
-    region: notesParseRegion,
-    setStep: setNotesParseStep,
-  } = useParseFlow("notes");
+  const { region: notesParseRegion } = useParseFlow("notes");
   const notesOperation = useParseOperation("notes");
   const {
     guidedNotesRows,
@@ -146,15 +144,8 @@ export default function NotesParser() {
     return notesFastManualGrid ? clonePreviewGrid(notesFastManualGrid) : null;
   }, [mode, notesFastManualGrid, preview]);
 
-  // Page identity and the mounted parser instance are authority boundaries even while its wizard
-  // step is idle. Teardown also clears the three derived overlay gates in one parse publication.
-  const operationPageRef = useRef(pageNumber);
-  useEffect(() => {
-    if (operationPageRef.current === pageNumber) return;
-    operationPageRef.current = pageNumber;
-    cleanupLeaseRef.current = invalidateParseOperationForWorkspace("notes");
-  }, [pageNumber]);
-  // Parent tab/panel commands own Guided teardown before unmount. The component cleanup therefore
+  // Coordinated navigation clears every page-relative workspace before core.setPage. Parent
+  // tab/panel commands own Guided teardown before unmount. The component cleanup therefore
   // touches only Notes/Spec draft state; a newer independent Table/Keynote Guided generation wins.
   useEffect(() => () => {
     if (cleanupLeaseRef.current) {
@@ -180,10 +171,10 @@ export default function NotesParser() {
     if (started.status !== "started") return;
     const token = started.token;
     try {
-      const workspaceLease = invalidateParagraphParseOperations("notes");
-      if (!notesOperation.isCurrent(token)) return;
-      cleanupLeaseRef.current = workspaceLease;
+      const workspaceLease = invalidateParagraphParseOperationsForOperation(token);
+      if (!workspaceLease) return;
       if (!commitParseOperation(token, () => {
+        cleanupLeaseRef.current = workspaceLease;
         setLoadingRevision(token.revision);
         setSavingRevision(null);
         setError(null);
@@ -242,10 +233,10 @@ export default function NotesParser() {
     if (started.status !== "started") return;
     const token = started.token;
     try {
-      const workspaceLease = invalidateGuidedParseOperations("notes");
-      if (!notesOperation.isCurrent(token)) return;
-      cleanupLeaseRef.current = workspaceLease;
+      const workspaceLease = claimGuidedParseWorkspaceForOperation(token, target.region);
+      if (!workspaceLease) return;
       if (!commitParseOperation(token, () => {
+        cleanupLeaseRef.current = workspaceLease;
         setLoadingRevision(token.revision);
         setSavingRevision(null);
         setError(null);
@@ -261,16 +252,11 @@ export default function NotesParser() {
       });
       if (!res.ok) throw new Error("Propose failed");
       const payload = (await res.json()) as { proposedRows: number[]; proposedCols: number[] };
-      // Populate the shared guided slice (keynote uses the same) so
-      // GuidedParseOverlay can render via PDFPage's notes slot. Each shared publication is followed
-      // by a fresh currentness check because Zustand subscribers run synchronously.
-      if (!commitParseOperation(token, () => {
-        useParseFlowStore.getState().setGuidedParseRows([...payload.proposedRows]);
-      })) return;
-      if (!notesOperation.isCurrent(token)) return;
-      commitParseOperation(token, () => {
-        useParseFlowStore.getState().setGuidedParseCols([...payload.proposedCols]);
-      });
+      publishGuidedProposalForOperation(
+        token,
+        [...payload.proposedRows],
+        [...payload.proposedCols],
+      );
     } catch (err) {
       commitParseOperation(token, () => {
         setError(err instanceof Error ? err.message : "Propose failed");
@@ -283,6 +269,7 @@ export default function NotesParser() {
   const buildGridFromGuided = (): PreviewGrid | null => {
     if (!textractData) return null;
     const store = useParseFlowStore.getState();
+    if (store.guidedParseOwner !== "notes") return null;
     const rows = store.guidedParseRows;
     const cols = store.guidedParseCols;
     if (rows.length < 2 || cols.length < 2) return null;
@@ -355,10 +342,10 @@ export default function NotesParser() {
     if (started.status !== "started") return;
     const token = started.token;
     try {
-      const workspaceLease = invalidateParagraphParseOperations("notes");
-      if (!notesOperation.isCurrent(token)) return;
-      cleanupLeaseRef.current = workspaceLease;
+      const workspaceLease = invalidateParagraphParseOperationsForOperation(token);
+      if (!workspaceLease) return;
       if (!commitParseOperation(token, () => {
+        cleanupLeaseRef.current = workspaceLease;
         setSavingRevision(token.revision);
         setLoadingRevision(null);
         setError(null);
@@ -432,11 +419,11 @@ export default function NotesParser() {
     try {
       if (ownsToken) {
         const workspaceLease = target.mode === "guided"
-          ? invalidateNotesWorkspaceOperations("notes")
-          : invalidateParagraphParseOperations("notes");
-        if (!notesOperation.isCurrent(token)) return false;
-        cleanupLeaseRef.current = workspaceLease;
+          ? invalidateNotesWorkspaceOperationsForOperation(token)
+          : invalidateParagraphParseOperationsForOperation(token);
+        if (!workspaceLease) return false;
         if (!commitParseOperation(token, () => {
+          cleanupLeaseRef.current = workspaceLease;
           setSavingRevision(token.revision);
           setLoadingRevision(null);
           setError(null);
@@ -564,8 +551,7 @@ export default function NotesParser() {
           {!regionReady ? (
             <button
               onClick={() => {
-                setNotesParseStep("select-region");
-                useToolStore.getState().setMode("pointer");
+                setNotesParseStepWithTool("select-region", "pointer");
               }}
               className="text-[10px] px-2 py-0.5 rounded border border-blue-500/40 text-blue-300 hover:bg-blue-500/10"
             >
@@ -708,8 +694,7 @@ export default function NotesParser() {
             <div className="flex gap-1">
               <button
                 onClick={() => {
-                  setNotesParseStep("define-column");
-                  useToolStore.getState().setMode("pointer");
+                  setNotesParseStepWithTool("define-column", "pointer");
                 }}
                 disabled={!regionReady}
                 className="flex-1 text-[10px] px-2 py-1 rounded border border-sky-500/40 text-sky-300 hover:bg-sky-500/10 disabled:opacity-40"
@@ -718,8 +703,7 @@ export default function NotesParser() {
               </button>
               <button
                 onClick={() => {
-                  setNotesParseStep("define-row");
-                  useToolStore.getState().setMode("pointer");
+                  setNotesParseStepWithTool("define-row", "pointer");
                 }}
                 disabled={!regionReady}
                 className="flex-1 text-[10px] px-2 py-1 rounded border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 disabled:opacity-40"

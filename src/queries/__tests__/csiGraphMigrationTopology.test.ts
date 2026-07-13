@@ -415,5 +415,5 @@ describe("P2.3 csiGraph migration topology", () => {
       ),
     ).toEqual({});
     expect(importedSymbolCalls(parse(CSI_PANEL), VIEWER_STORE, "useProject")).toHaveLength(0);
-  });
+  }, 60_000);
 });

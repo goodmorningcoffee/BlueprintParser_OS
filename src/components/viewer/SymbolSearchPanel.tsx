@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useSymbolSearch, useToolStore } from "@/stores/toolStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
+import { navigateViewerPage } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations } from "@/queries/useAnnotations";
 import { queryKeys } from "@/queries/queryKeys";
@@ -53,7 +54,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
     return "custom";
   })();
   const { pageNames } = useProject();
-  const { pageNumber, setPage } = useNavigation();
+  const { pageNumber } = useNavigation();
 
   // Template preview image
   const [templateImageUrl, setTemplateImageUrl] = useState<string | null>(null);
@@ -683,7 +684,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
             {pageGroups.map(({ pageNumber: pn, matches }) => (
               <div key={pn} className="border-b border-[var(--border)] last:border-b-0">
                 <button
-                  onClick={() => setPage(pn)}
+                  onClick={() => navigateViewerPage(pn)}
                   className={`w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--surface-hover)] ${
                     pn === pageNumber ? "bg-cyan-400/5" : ""
                   }`}

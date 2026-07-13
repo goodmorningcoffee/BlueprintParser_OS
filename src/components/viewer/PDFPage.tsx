@@ -47,12 +47,6 @@ interface CacheEntry {
 
 const MAX_CACHED_PAGES = 8;
 
-// One imperative publication per drag/add gesture; no operation hook or per-mousemove invalidation
-// belongs on the PDF hot path.
-function beginGuidedGridOperations(): ParseWorkspaceLease {
-  return beginGuidedGridEdit();
-}
-
 function beginParagraphWorkspaceOperations(): ParseWorkspaceLease {
   return beginParagraphWorkspaceEdit();
 }
@@ -74,21 +68,30 @@ const KeynoteGuidedOverlaySlot = memo(function KeynoteGuidedOverlaySlot(props: {
   height: number;
   cssScale: number;
 }) {
+  const guidedParseOwner = useParseFlowStore((selector) => selector.guidedParseOwner);
   const {
     guidedParseActive,
     guidedParseRegion,
     guidedParseRows,
     guidedParseCols,
   } = useKeynoteParse();
+  // Capture the owner rendered with these bytes. If another family claims before the gesture runs,
+  // the command refuses before invalidation instead of applying stale geometry to the new owner.
+  const beginGridEdit = useCallback(
+    () => guidedParseOwner === null
+      ? null
+      : beginGuidedGridEdit(guidedParseOwner, guidedParseRegion),
+    [guidedParseOwner, guidedParseRegion],
+  );
   return (
     <GuidedParseOverlay
-      active={guidedParseActive}
+      active={guidedParseOwner !== null && guidedParseActive}
       region={guidedParseRegion}
       rows={guidedParseRows}
       cols={guidedParseCols}
       setRows={setGuidedParseRowsForLease}
       setCols={setGuidedParseColsForLease}
-      onGridEditStart={beginGuidedGridOperations}
+      onGridEditStart={beginGridEdit}
       width={props.width}
       height={props.height}
       cssScale={props.cssScale}

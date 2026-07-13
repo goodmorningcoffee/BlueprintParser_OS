@@ -29,11 +29,17 @@ import {
   acceptKeynoteParseRegion,
   acceptNotesParseRegion,
   acceptSpecParseRegion,
+  acceptTableParseRegion,
+  addKeynoteColumnForUser,
+  addKeynoteRowForUser,
   addGuidedNotesColumnForUser,
   addGuidedNotesRowForUser,
-  setKeynoteParseStep,
-  setTableParseStep,
-  toggleTableParsePanel,
+  addTableParseColumnForUser,
+  addTableParseRowForUser,
+  focusParsedTableRegionInCatalog,
+  setKeynoteManualInputsForUser,
+  setKeynoteParseStepWithTool,
+  setTableParseStepWithTool,
 } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
@@ -156,13 +162,12 @@ export default memo(function AnnotationOverlay({
   // useQueryClient is provider-stable; it adds ZERO subscriptions to this component.
   const qc = useQueryClient();
   const {
-    tableParseStep, tableParseRegion, setTableParseRegion,
+    tableParseStep, tableParseRegion,
     tableParseColumnBBs, tableParseRowBBs,
   } = useTableParse();
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
   const {
     keynoteParseStep, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs,
-    setKeynoteYoloClass,
   } = useKeynoteParse();
   // [refactor jul11 P2.2⑨] Sacred canvas observes only the current-page instance projection.
   // Metadata for every tag is retained so the existing tag-text/active-tag semantics stay exact;
@@ -1615,8 +1620,7 @@ export default memo(function AnnotationOverlay({
           if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
             e.stopPropagation();
             const model = (ann as any).data?.modelName || "unknown";
-            useParseFlowStore.getState().invalidateParseOperation("keynote");
-            setKeynoteYoloClass({ model, className: ann.name });
+            setKeynoteManualInputsForUser({ keynoteYoloClass: { model, className: ann.name } });
             return;
           }
         }
@@ -1802,13 +1806,9 @@ export default memo(function AnnotationOverlay({
               const [rMinX, rMinY, rMaxX, rMaxY] = region.bbox;
               if (nrmX >= rMinX && nrmX <= rMaxX && nrmY >= rMinY && nrmY <= rMaxY) {
                 e.stopPropagation();
-                if (!useUiStore.getState().showTableParsePanel) toggleTableParsePanel();
-                const parse = useParseFlowStore.getState();
                 // Parsed-region navigation is a stored-tab/new-flow handoff. Keep the canvas hot
-                // path subscription-free while revoking any pending Table owner before the write.
-                parse.invalidateParseOperation("table");
-                parse.setTableParseTab("all");
-                useUiStore.getState().setFocusedParsedRegionId(region.id);
+                // path subscription-free while publishing UI first and one terminal Parse patch.
+                focusParsedTableRegionInCatalog(region.id);
                 return;
               }
             }
@@ -2260,44 +2260,37 @@ export default memo(function AnnotationOverlay({
 
     // Table parse: finalize BB as region or column
     if (tableParseStep === "select-region") {
-      setTableParseRegion([minX, minY, maxX, maxY]);
-      setTableParseStep("idle");
-      useToolStore.getState().setMode("move");
+      acceptTableParseRegion([minX, minY, maxX, maxY]);
       return;
     }
     if (tableParseStep === "define-column") {
-      useParseFlowStore.getState().addTableParseColumnBB([minX, minY, maxX, maxY]);
+      addTableParseColumnForUser([minX, minY, maxX, maxY]);
       return;
     }
     if (tableParseStep === "define-row") {
-      useParseFlowStore.getState().addTableParseRowBB([minX, minY, maxX, maxY]);
+      addTableParseRowForUser([minX, minY, maxX, maxY]);
       return;
     }
 
     // Keynote parse BBs
     if (keynoteParseStep === "select-region") {
       acceptKeynoteParseRegion([minX, minY, maxX, maxY]);
-      useToolStore.getState().setMode("move");
       return;
     }
     if (keynoteParseStep === "define-column") {
-      const parse = useParseFlowStore.getState();
-      parse.invalidateParseOperation("keynote");
-      parse.addKeynoteColumnBB([minX, minY, maxX, maxY]);
+      addKeynoteColumnForUser([minX, minY, maxX, maxY]);
       return;
     }
     if (keynoteParseStep === "define-row") {
-      const parse = useParseFlowStore.getState();
-      parse.invalidateParseOperation("keynote");
-      parse.addKeynoteRowBB([minX, minY, maxX, maxY]);
+      addKeynoteRowForUser([minX, minY, maxX, maxY]);
       return;
     }
 
     // Notes parse BBs (Stage 4)
     const notesStep = useParseFlowStore.getState().notesParseStep;
     if (notesStep === "select-region") {
-      acceptNotesParseRegion([minX, minY, maxX, maxY]);
       useToolStore.getState().setMode("move");
+      acceptNotesParseRegion([minX, minY, maxX, maxY]);
       return;
     }
     if (notesStep === "define-column") {
@@ -2312,8 +2305,8 @@ export default memo(function AnnotationOverlay({
     // Spec parse BBs (Stage 5)
     const specStep = useParseFlowStore.getState().specParseStep;
     if (specStep === "select-region") {
-      acceptSpecParseRegion([minX, minY, maxX, maxY]);
       useToolStore.getState().setMode("move");
+      acceptSpecParseRegion([minX, minY, maxX, maxY]);
       return;
     }
 
@@ -2344,7 +2337,7 @@ export default memo(function AnnotationOverlay({
     setMarkupName("");
     setMarkupNote("");
     setTimeout(() => nameInputRef.current?.focus(), 50);
-  }, [dragging, selectedId, saveDragPosition, saveVertexEdit, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setTableParseRegion, setDrawing, mode, pageAnnotations, multiSelect, qc, updateYoloTag]);
+  }, [dragging, selectedId, saveDragPosition, saveVertexEdit, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setDrawing, mode, pageAnnotations, multiSelect, qc, updateYoloTag]);
 
   const handleDoubleClick = useCallback(() => {
     // Close polygon or linear polyline on double-click
@@ -2416,11 +2409,9 @@ export default memo(function AnnotationOverlay({
           // Deactivate bucket fill entirely
           tool.setBucketFillActive(false);
         } else if (parse.tableParseStep !== "idle") {
-          setTableParseStep("idle");
-          tool.setMode("move");
+          setTableParseStepWithTool("idle", "move");
         } else if (parse.keynoteParseStep !== "idle") {
-          setKeynoteParseStep("idle");
-          tool.setMode("move");
+          setKeynoteParseStepWithTool("idle", "move");
         } else if (polygonDrawingMode === "drawing") {
           resetPolygonDrawing();
           setMousePos(null);
@@ -2530,18 +2521,10 @@ export default memo(function AnnotationOverlay({
     if (calibrationMode !== "idle") {
       resetCalibration();
     }
-    // Reset table/keynote parse drawing state on page change
-    const parse = useParseFlowStore.getState();
+    // The global navigation command owns page-operation invalidation before core.setPage.
+    // This passive hot-canvas effect must not reset parse data: a new-page B may already have
+    // started in a page-store subscriber before React runs this effect.
     const tool = useToolStore.getState();
-    if (parse.tableParseStep !== "idle") {
-      parse.resetTableParse();
-      tool.setMode("move");
-    }
-    if (parse.keynoteParseStep !== "idle") {
-      parse.resetKeynoteParse();
-      parse.setKeynoteParseRegion(null);
-      tool.setMode("move");
-    }
     if (tool.symbolSearchActive) {
       tool.setSymbolSearchActive(false);
     }

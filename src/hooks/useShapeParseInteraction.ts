@@ -5,9 +5,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useNavigation } from "@/stores/viewerCoreStore";
-import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
-import { setTableParseStep } from "@/stores/viewerCommands";
+import {
+  consumeTableParseRegionForShape,
+  setTableParseStepWithTool,
+} from "@/stores/viewerCommands";
 import {
   appendKeynotesForPage,
   mergeKeynotesByPage,
@@ -27,8 +29,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   const projectId = useSessionStore((s) => s.projectId);
   const publicId = useSessionStore((s) => s.publicId);
   const tableParseRegion = useParseFlowStore((s) => s.tableParseRegion);
-  const setTableParseRegion = useParseFlowStore((s) => s.setTableParseRegion);
-  const setMode = useToolStore((s) => s.setMode);
+  const tableRevision = useParseFlowStore((s) => s.parseOperations.table.revision);
   const showKeynotes = useUiStore((s) => s.showKeynotes);
   const toggleKeynotes = useUiStore((s) => s.toggleKeynotes);
 
@@ -64,9 +65,9 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   // user explicitly clears via startRegionDraw or the × button.
   useEffect(() => {
     if (detectionTab !== "shape" || !drawing || !tableParseRegion) return;
+    if (!consumeTableParseRegionForShape(tableParseRegion, tableRevision)) return;
     setRegion(tableParseRegion as [number, number, number, number]);
-    setTableParseRegion(null);
-  }, [detectionTab, drawing, tableParseRegion, setTableParseRegion]);
+  }, [detectionTab, drawing, tableParseRegion, tableRevision]);
 
   // When the user leaves the Shape tab with draw-mode still engaged, release
   // the shared tableParseStep so the Table Parse tab doesn't inherit a
@@ -75,10 +76,9 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
     if (detectionTab !== "shape" && drawing) {
       setDrawing(false);
       setRegion(null);
-      setTableParseStep("idle");
-      setMode("move");
+      setTableParseStepWithTool("idle", "move");
     }
-  }, [detectionTab, drawing, setMode]);
+  }, [detectionTab, drawing]);
 
   const startRegionDraw = useCallback(() => {
     // Click-to-toggle: if already engaged (drawing mode OR region already
@@ -86,14 +86,12 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
     if (drawing || region !== null) {
       setDrawing(false);
       setRegion(null);
-      setMode("move");
-      setTableParseStep("idle");
+      setTableParseStepWithTool("idle", "move");
     } else {
       setDrawing(true);
-      setTableParseStep("select-region");
-      setMode("pointer");
+      setTableParseStepWithTool("select-region", "pointer");
     }
-  }, [drawing, region, setMode]);
+  }, [drawing, region]);
 
   const runOnPage = useCallback(async () => {
     if (!projectId || !publicId || loading) return;

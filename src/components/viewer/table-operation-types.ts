@@ -6,11 +6,13 @@ export type TableGrid = NonNullable<ParseFlowState["tableParsedGrid"]>;
 export type TablePersistOptions = {
   /** Preserve the review workspace for Auto/Manual auto-persist when false. */
   resetAfter?: boolean;
+  /** Clear the Table-owned shared Guided generation in the terminal reset. */
+  resetGuided?: boolean;
   /**
-   * Runs inside the same synchronous current-token completion block as the shared Table reset.
-   * It must never await, fetch, persist, or publish Query data.
+   * React-local bookkeeping run only when the terminal reset did not synchronously admit B.
+   * It must never await or publish store, Query, tool, or durable work.
    */
-  onAuthorizedSuccess?: () => void;
+  onLocalSuccess?: () => void;
 };
 
 /**
