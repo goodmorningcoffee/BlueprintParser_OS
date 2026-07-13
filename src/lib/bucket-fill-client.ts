@@ -9,6 +9,7 @@
 import type { BucketFillResult } from "@/workers/bucket-fill.worker";
 
 let workerInstance: Worker | null = null;
+let nextRequestId = 1;
 
 function getWorker(): Worker {
   if (!workerInstance) {
@@ -56,13 +57,16 @@ export async function clientBucketFill(
   const bitmap = await createImageBitmap(pageCanvas);
 
   const worker = getWorker();
+  const requestId = nextRequestId++;
 
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
+      worker.removeEventListener("message", handler);
       reject(new Error("Bucket fill timed out (10s)"));
     }, 10000);
 
     function handler(e: MessageEvent<BucketFillResult>) {
+      if (e.data.requestId !== requestId) return;
       clearTimeout(timeout);
       worker.removeEventListener("message", handler);
       const data = e.data;
@@ -81,21 +85,29 @@ export async function clientBucketFill(
 
     worker.addEventListener("message", handler);
 
-    // Send via transferable (zero-copy)
-    worker.postMessage(
-      {
-        imageBitmap: bitmap,
-        seedX: seedPoint.x,
-        seedY: seedPoint.y,
-        tolerance: options.tolerance,
-        dilation: options.dilation,
-        barriers: options.barriers,
-        polygonBarriers: options.polygonBarriers,
-        textBboxes: options.textBboxes,
-        maxDimension: options.maxDimension ?? 1000,
-      },
-      [bitmap] // transfer ownership
-    );
+    // Send via transferable (zero-copy). A synchronous clone/worker failure must retire this
+    // request's listener immediately; otherwise a later response could keep a dead closure alive.
+    try {
+      worker.postMessage(
+        {
+          requestId,
+          imageBitmap: bitmap,
+          seedX: seedPoint.x,
+          seedY: seedPoint.y,
+          tolerance: options.tolerance,
+          dilation: options.dilation,
+          barriers: options.barriers,
+          polygonBarriers: options.polygonBarriers,
+          textBboxes: options.textBboxes,
+          maxDimension: options.maxDimension ?? 1000,
+        },
+        [bitmap] // transfer ownership
+      );
+    } catch (error) {
+      clearTimeout(timeout);
+      worker.removeEventListener("message", handler);
+      reject(error);
+    }
   });
 }
 

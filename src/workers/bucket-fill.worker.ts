@@ -17,6 +17,7 @@
  */
 
 export interface BucketFillRequest {
+  requestId: number;
   imageBitmap: ImageBitmap;
   seedX: number; // normalized 0-1
   seedY: number;
@@ -31,6 +32,7 @@ export interface BucketFillRequest {
 }
 
 export interface BucketFillResult {
+  requestId: number;
   type: "result" | "error";
   vertices?: { x: number; y: number }[];
   /** Inner hole polygons (e.g., courtyards inside a U-shaped hallway). Each is a
@@ -450,7 +452,7 @@ function eraseBboxToWhite(
   }
 }
 
-function processFill(req: BucketFillRequest): BucketFillResult {
+function processFill(req: BucketFillRequest): Omit<BucketFillResult, "requestId"> {
   const maxDim = req.maxDimension ?? 1000;
 
   // 1. Downscale + grayscale (GPU-assisted via OffscreenCanvas filter)
@@ -542,11 +544,13 @@ function processFill(req: BucketFillRequest): BucketFillResult {
 // ─── Worker message handler ──────────────────────────────────────
 
 self.addEventListener("message", (e: MessageEvent<BucketFillRequest>) => {
+  const requestId = e.data.requestId;
   try {
     const result = processFill(e.data);
-    (self as unknown as Worker).postMessage(result);
+    (self as unknown as Worker).postMessage({ requestId, ...result } satisfies BucketFillResult);
   } catch (err) {
     (self as unknown as Worker).postMessage({
+      requestId,
       type: "error",
       error: err instanceof Error ? err.message : "Worker error",
     } satisfies BucketFillResult);
