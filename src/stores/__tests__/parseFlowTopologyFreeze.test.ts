@@ -2211,7 +2211,7 @@ describe("P2.4 phase-aware grouped parse hook contract", () => {
     expect(specText).toContain("awaitpersistPreview(payload,target.region,token,target)");
     expect(specText).toContain("invalidateParagraphParseOperationsForOperation(token)");
     expect(specText).toContain("completeSpecParseOperation(token)");
-    expect(specText).toContain('resetSpecParseWorkspace("select-region")');
+    expect(specText).toContain('resetSpecParseWorkspace("select-region","pointer")');
     expect(specText).not.toContain("isSavingRef");
 
     const sectionFieldMappings = (root: ts.Node, source = specSource) => {

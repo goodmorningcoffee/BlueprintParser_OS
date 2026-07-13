@@ -260,9 +260,10 @@ export const useToolStore = create<ToolStoreState>((set) => ({
   setCalibrationMode: (calibrationMode) => {
     invalidateToolTailAuthority();
     set((state) => ({
-      ...(calibrationMode === "idle"
+      ...(calibrationMode === "idle" || calibrationMode === "point1"
         ? { calibrationPoints: {} }
-        : { mode: "move" as const }),
+        : {}),
+      ...(calibrationMode !== "idle" ? { mode: "move" as const } : {}),
       calibrationMode,
       activeTool: transitionActiveTool(state, {
         type: "setCalibrationMode",
@@ -568,6 +569,16 @@ export const useToolStore = create<ToolStoreState>((set) => ({
     }));
   },
 }));
+
+/** One complete user Stop destination; a synchronous subscriber can only publish after it. */
+export function stopTakeoffPlacement(): void {
+  invalidateToolTailAuthority();
+  useToolStore.setState({
+    ...modeDestination("move"),
+    takeoffUndoStack: [],
+    takeoffRedoStack: [],
+  });
+}
 
 /** One user-owned redraw/new-template publication; reentrant Symbol B necessarily lands after A. */
 export function renewSymbolSearchTemplate(clearError = false): void {

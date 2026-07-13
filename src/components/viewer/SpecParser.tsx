@@ -12,7 +12,6 @@ import {
   useParagraphWorkspaceExtensions,
   useParseFlowStore,
 } from "@/stores/parseFlowStore";
-import { useToolStore } from "@/stores/toolStore";
 import {
   claimParagraphWorkspaceForOperation,
   completeSpecParseOperation,
@@ -350,11 +349,10 @@ export default function SpecParser() {
   };
 
   const handleRedraw = () => {
-    useToolStore.getState().setMode("pointer");
+    if (!resetSpecParseWorkspace("select-region", "pointer")) return;
     setMode("auto");
     setPreview(null);
     setError(null);
-    resetSpecParseWorkspace("select-region");
   };
 
   const regionLabel = useMemo(() => {

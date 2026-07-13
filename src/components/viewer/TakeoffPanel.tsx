@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useToolStore } from "@/stores/toolStore";
+import { stopTakeoffPlacement, useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { navigateViewerPage } from "@/stores/viewerCommands";
 import { useUiStore } from "@/stores/uiStore";
@@ -351,11 +351,7 @@ export default function TakeoffPanel() {
             &#8631;
           </button>
           <button
-            onClick={() => {
-              useToolStore.getState().setActiveTakeoffItemId(null);
-              useToolStore.getState().resetPolygonDrawing();
-              useToolStore.getState().setMode("move");
-            }}
+            onClick={stopTakeoffPlacement}
             className="text-xs px-2 py-0.5 rounded border border-red-400/30 text-red-400/60 hover:text-red-400"
           >
             Stop

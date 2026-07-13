@@ -13,7 +13,6 @@ import {
   useParagraphWorkspaceExtensions,
   useParseFlowStore,
 } from "@/stores/parseFlowStore";
-import { useToolStore } from "@/stores/toolStore";
 import {
   claimGuidedParseWorkspaceForOperation,
   claimParagraphWorkspaceForOperation,
@@ -515,14 +514,13 @@ export default function NotesParser() {
   };
 
   const handleRedraw = () => {
-    useToolStore.getState().setMode("pointer");
+    if (!resetNotesParseWorkspace("select-region", {
+      guided: mode === "guided",
+      fastManual: mode === "fast-manual",
+    }, "pointer")) return;
     setMode("auto");
     setPreview(null);
     setError(null);
-    resetNotesParseWorkspace("select-region", {
-      guided: mode === "guided",
-      fastManual: mode === "fast-manual",
-    });
   };
 
   const regionLabel = useMemo(() => {

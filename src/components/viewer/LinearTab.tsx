@@ -60,7 +60,7 @@ function ScaleStatus() {
       <div className="px-2 py-2 border-b border-[var(--border)] flex items-center justify-between">
         <span className="text-xs text-green-400">Scale: set (pg {pageNumber}) &#10003;</span>
         <button
-          onClick={() => { resetCalibration(); setCalibrationMode("point1"); }}
+          onClick={() => setCalibrationMode("point1")}
           className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]"
         >
           Recalibrate

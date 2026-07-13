@@ -1449,9 +1449,10 @@ export function completeSpecParseOperation(token: ParseOperationToken<"spec">): 
 export function resetNotesParseWorkspace(
   notesParseStep: NotesParseStep = "idle",
   options: NotesCompletionOptions = {},
-): void {
+  toolMode: BaseInteractionMode = "move",
+): boolean {
   const currentStep = useParseFlowStore.getState().notesParseStep;
-  publishUserParseTransition("notes", currentStep, notesParseStep, () => {
+  return publishUserParseTransition("notes", currentStep, notesParseStep, () => {
     useParseFlowStore.setState((state) => {
       const clearsGuided = options.guided && state.guidedParseOwner === "notes";
       return {
@@ -1477,15 +1478,16 @@ export function resetNotesParseWorkspace(
         ),
       };
     });
-  });
+  }, toolMode);
 }
 
 /** Atomic user Clear/Redraw destination for Spec. */
 export function resetSpecParseWorkspace(
   specParseStep: SpecParseStep = "idle",
-): void {
+  toolMode: BaseInteractionMode = "move",
+): boolean {
   const currentStep = useParseFlowStore.getState().specParseStep;
-  publishUserParseTransition("spec", currentStep, specParseStep, () => {
+  return publishUserParseTransition("spec", currentStep, specParseStep, () => {
     useParseFlowStore.setState((state) => ({
       specParseStep,
       specParseRegion: null,
@@ -1494,7 +1496,7 @@ export function resetSpecParseWorkspace(
       paragraphBatch: [],
       parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
     }));
-  });
+  }, toolMode);
 }
 
 /** Exact rendered Paragraph exit; a stale family closure cannot clear a newer owner. */
