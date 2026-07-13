@@ -575,69 +575,134 @@ function douglasPeucker(points: { x: number; y: number }[], epsilon: number): { 
 /**
  * Find and trace holes in a filled binary region.
  *
- * Algorithm: flood from the image edges through unfilled pixels; anything
- * still unfilled afterward is enclosed-inside = a hole. Group connected hole
- * pixels into components and trace each one's border with the same Moore
- * neighbor routine used for the outer contour. This is the JS equivalent of
- * OpenCV's RETR_CCOMP hierarchy.
+ * Algorithm: flood from the exact filled-region bounding-box edges through
+ * unfilled pixels; anything still unfilled afterward is enclosed-inside = a
+ * hole. `bounds`, when supplied, must contain every filled pixel. Group
+ * connected hole pixels into components and trace each one's border with the
+ * same Moore neighbor routine used for the outer contour. This is the JS
+ * equivalent of OpenCV's RETR_CCOMP hierarchy.
  */
-export function findHoleBorders(filled: Uint8Array, w: number, h: number): { x: number; y: number }[][] {
-  // marks: 0 = filled, 1 = outside-reachable-from-edge, 2 = enclosed (hole candidate)
-  const marks = new Uint8Array(filled.length);
-  for (let i = 0; i < filled.length; i++) marks[i] = filled[i] ? 0 : 2;
+export function findHoleBorders(
+  filled: Uint8Array,
+  w: number,
+  h: number,
+  bounds?: SolidRoomRectangle,
+): { x: number; y: number }[][] {
+  const minX = Math.max(0, bounds?.minX ?? 0);
+  const minY = Math.max(0, bounds?.minY ?? 0);
+  const maxX = Math.min(w - 1, bounds?.maxX ?? w - 1);
+  const maxY = Math.min(h - 1, bounds?.maxY ?? h - 1);
+  if (minX > maxX || minY > maxY) return [];
 
-  // Seed the outside-flood from every image-edge unfilled pixel.
-  const stack: number[] = [];
-  for (let x = 0; x < w; x++) {
-    if (marks[x] === 2) { marks[x] = 1; stack.push(x); }
-    const bi = (h - 1) * w + x;
-    if (marks[bi] === 2) { marks[bi] = 1; stack.push(bi); }
-  }
-  for (let y = 0; y < h; y++) {
-    const li = y * w;
-    if (marks[li] === 2) { marks[li] = 1; stack.push(li); }
-    const ri = y * w + (w - 1);
-    if (marks[ri] === 2) { marks[ri] = 1; stack.push(ri); }
-  }
-
-  // 4-connected flood through unfilled pixels.
-  while (stack.length) {
-    const i = stack.pop()!;
-    const x = i % w;
-    const y = (i - x) / w;
-    if (x > 0 && marks[i - 1] === 2) { marks[i - 1] = 1; stack.push(i - 1); }
-    if (x < w - 1 && marks[i + 1] === 2) { marks[i + 1] = 1; stack.push(i + 1); }
-    if (y > 0 && marks[i - w] === 2) { marks[i - w] = 1; stack.push(i - w); }
-    if (y < h - 1 && marks[i + w] === 2) { marks[i + w] = 1; stack.push(i + w); }
+  // Pixels outside the flood's bounding box are necessarily unfilled and cannot be enclosed by
+  // it. Work in a compact local mask so a typical room examines its own footprint instead of the
+  // entire 4000px page. marks: 0=unclassified empty, 1=filled, 2=outside, 3=current hole,
+  // 4=completed hole.
+  const boxW = maxX - minX + 1;
+  const boxH = maxY - minY + 1;
+  const marks = new Uint8Array(boxW * boxH);
+  for (let localY = 0; localY < boxH; localY++) {
+    const sourceRow = (minY + localY) * w + minX;
+    const localRow = localY * boxW;
+    for (let x = 0; x < boxW; x++) {
+      if (filled[sourceRow + x]) marks[localRow + x] = 1;
+    }
   }
 
-  // Anything still at mark==2 is enclosed. Group into components and trace.
-  const holePolys: { x: number; y: number }[][] = [];
-  const visited = new Uint8Array(filled.length);
-  for (let i = 0; i < marks.length; i++) {
-    if (marks[i] !== 2 || visited[i]) continue;
-    const holeMask = new Uint8Array(filled.length);
-    const bfs: number[] = [i];
-    visited[i] = 1;
-    holeMask[i] = 1;
-    while (bfs.length) {
-      const j = bfs.pop()!;
-      const x = j % w;
-      const y = (j - x) / w;
-      if (x > 0 && marks[j - 1] === 2 && !visited[j - 1]) {
-        visited[j - 1] = 1; holeMask[j - 1] = 1; bfs.push(j - 1);
+  // A typed queue holds local indices without allocating millions of boxed JS numbers. Entries
+  // remain available after a component flood so the current hole can be retired after tracing.
+  const queue = new Uint32Array(marks.length);
+  const floodComponent = (seed: number, from: number, to: number): number => {
+    let head = 0;
+    let tail = 1;
+    queue[0] = seed;
+    marks[seed] = to;
+    while (head < tail) {
+      const index = queue[head++];
+      const x = index % boxW;
+      if (x > 0 && marks[index - 1] === from) {
+        marks[index - 1] = to;
+        queue[tail++] = index - 1;
       }
-      if (x < w - 1 && marks[j + 1] === 2 && !visited[j + 1]) {
-        visited[j + 1] = 1; holeMask[j + 1] = 1; bfs.push(j + 1);
+      if (x + 1 < boxW && marks[index + 1] === from) {
+        marks[index + 1] = to;
+        queue[tail++] = index + 1;
       }
-      if (y > 0 && marks[j - w] === 2 && !visited[j - w]) {
-        visited[j - w] = 1; holeMask[j - w] = 1; bfs.push(j - w);
+      if (index >= boxW && marks[index - boxW] === from) {
+        marks[index - boxW] = to;
+        queue[tail++] = index - boxW;
       }
-      if (y < h - 1 && marks[j + w] === 2 && !visited[j + w]) {
-        visited[j + w] = 1; holeMask[j + w] = 1; bfs.push(j + w);
+      if (index + boxW < marks.length && marks[index + boxW] === from) {
+        marks[index + boxW] = to;
+        queue[tail++] = index + boxW;
       }
     }
-    const border = traceBorder(holeMask, w, h);
+    return tail;
+  };
+
+  // Empty pixels on a flood-bbox edge are connected to page exterior. Flood each still-new edge
+  // component once; subsequent edge visits see mark 2 and cost only the branch.
+  for (let x = 0; x < boxW; x++) {
+    if (marks[x] === 0) floodComponent(x, 0, 2);
+    const bottom = (boxH - 1) * boxW + x;
+    if (marks[bottom] === 0) floodComponent(bottom, 0, 2);
+  }
+  for (let y = 0; y < boxH; y++) {
+    const left = y * boxW;
+    if (marks[left] === 0) floodComponent(left, 0, 2);
+    const right = left + boxW - 1;
+    if (marks[right] === 0) floodComponent(right, 0, 2);
+  }
+
+  const traceCurrentHole = (startIndex: number): { x: number; y: number }[] => {
+    const border: { x: number; y: number }[] = [];
+    const dx = [1, 1, 0, -1, -1, -1, 0, 1];
+    const dy = [0, 1, 1, 1, 0, -1, -1, -1];
+    const startX = startIndex % boxW;
+    const startY = (startIndex - startX) / boxW;
+    let cx = startX;
+    let cy = startY;
+    let direction = 7;
+    let iterations = 0;
+    do {
+      border.push({ x: cx + minX, y: cy + minY });
+      const startDirection = (direction + 5) % 8;
+      let found = false;
+      for (let offset = 0; offset < 8; offset++) {
+        const nextDirection = (startDirection + offset) % 8;
+        const nx = cx + dx[nextDirection];
+        const ny = cy + dy[nextDirection];
+        if (
+          nx >= 0 && nx < boxW && ny >= 0 && ny < boxH &&
+          marks[ny * boxW + nx] === 3
+        ) {
+          direction = nextDirection;
+          cx = nx;
+          cy = ny;
+          found = true;
+          break;
+        }
+      }
+      if (!found) break;
+      iterations++;
+    } while (
+      (cx !== startX || cy !== startY) &&
+      iterations < marks.length * 2
+    );
+    return border;
+  };
+
+  // Every remaining zero component is enclosed. Mark one component as the unique value 3 before
+  // tracing so diagonally adjacent (but 4-disconnected) holes cannot merge in the 8-neighbor
+  // contour walk; retire it to 4 afterward using the retained queue entries.
+  const holePolys: { x: number; y: number }[][] = [];
+  for (let index = 0; index < marks.length; index++) {
+    if (marks[index] !== 0) continue;
+    const componentLength = floodComponent(index, 0, 3);
+    const border = traceCurrentHole(index);
+    for (let queueIndex = 0; queueIndex < componentLength; queueIndex++) {
+      marks[queue[queueIndex]] = 4;
+    }
     if (border.length >= 3) holePolys.push(border);
   }
   return holePolys;
@@ -728,7 +793,7 @@ function processFill(req: BucketFillRequest): Omit<BucketFillResult, "requestId"
   // 10. Find + trace enclosed holes (e.g., courtyard in a U-shaped hallway).
   const fillsBoundingBox = area ===
     (flood.maxX - flood.minX + 1) * (flood.maxY - flood.minY + 1);
-  const holeBorders = fillsBoundingBox ? [] : findHoleBorders(filled, w, h);
+  const holeBorders = fillsBoundingBox ? [] : findHoleBorders(filled, w, h, flood);
 
   // 11. Douglas-Peucker simplify outer + holes
   const epsilon = Math.max(w, h) * 0.005;

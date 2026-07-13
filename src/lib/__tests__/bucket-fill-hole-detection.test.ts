@@ -34,7 +34,127 @@ function makeFilled(w: number, h: number, setter: (x: number, y: number) => bool
   return filled;
 }
 
+/** Deliberately simple pre-optimization oracle: whole-raster marks, boxed queues, and one mask per
+ * hole. It is too allocation-heavy for 4000px production work but useful on small randomized masks. */
+function findHoleBordersReference(
+  filled: Uint8Array,
+  w: number,
+  h: number,
+): { x: number; y: number }[][] {
+  const marks = Uint8Array.from(filled, (value) => value ? 0 : 2);
+  const outside: number[] = [];
+  for (let x = 0; x < w; x++) {
+    if (marks[x] === 2) { marks[x] = 1; outside.push(x); }
+    const bottom = (h - 1) * w + x;
+    if (marks[bottom] === 2) { marks[bottom] = 1; outside.push(bottom); }
+  }
+  for (let y = 0; y < h; y++) {
+    const left = y * w;
+    if (marks[left] === 2) { marks[left] = 1; outside.push(left); }
+    const right = left + w - 1;
+    if (marks[right] === 2) { marks[right] = 1; outside.push(right); }
+  }
+  while (outside.length) {
+    const index = outside.pop()!;
+    const x = index % w;
+    const neighbors = [
+      x > 0 ? index - 1 : -1,
+      x + 1 < w ? index + 1 : -1,
+      index >= w ? index - w : -1,
+      index + w < marks.length ? index + w : -1,
+    ];
+    for (const neighbor of neighbors) {
+      if (neighbor >= 0 && marks[neighbor] === 2) {
+        marks[neighbor] = 1;
+        outside.push(neighbor);
+      }
+    }
+  }
+
+  const visited = new Uint8Array(filled.length);
+  const result: { x: number; y: number }[][] = [];
+  for (let start = 0; start < marks.length; start++) {
+    if (marks[start] !== 2 || visited[start]) continue;
+    const componentMask = new Uint8Array(filled.length);
+    const component = [start];
+    visited[start] = 1;
+    componentMask[start] = 1;
+    while (component.length) {
+      const index = component.pop()!;
+      const x = index % w;
+      const neighbors = [
+        x > 0 ? index - 1 : -1,
+        x + 1 < w ? index + 1 : -1,
+        index >= w ? index - w : -1,
+        index + w < marks.length ? index + w : -1,
+      ];
+      for (const neighbor of neighbors) {
+        if (neighbor >= 0 && marks[neighbor] === 2 && !visited[neighbor]) {
+          visited[neighbor] = 1;
+          componentMask[neighbor] = 1;
+          component.push(neighbor);
+        }
+      }
+    }
+    const border = traceBorder(componentMask, w, h);
+    if (border.length >= 3) result.push(border);
+  }
+  return result;
+}
+
+function filledBounds(filled: Uint8Array, w: number, h: number) {
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let index = 0; index < filled.length; index++) {
+    if (!filled[index]) continue;
+    const x = index % w;
+    const y = (index - x) / w;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  return maxX < 0 ? null : { minX, minY, maxX, maxY };
+}
+
 describe("findHoleBorders", () => {
+  it("matches the whole-raster reference with and without exact fill bounds", () => {
+    let random = 0x51a7c0de;
+    const next = () => {
+      random ^= random << 13;
+      random ^= random >>> 17;
+      random ^= random << 5;
+      return random >>> 0;
+    };
+    for (const [w, h] of [[1, 1], [2, 3], [7, 9], [17, 13]] as const) {
+      for (let sample = 0; sample < 24; sample++) {
+        const filled = Uint8Array.from({ length: w * h }, () => next() % 5 < 2 ? 1 : 0);
+        const expected = findHoleBordersReference(filled, w, h);
+        expect(findHoleBorders(filled, w, h)).toEqual(expected);
+        const bounds = filledBounds(filled, w, h);
+        if (bounds) expect(findHoleBorders(filled, w, h, bounds)).toEqual(expected);
+      }
+    }
+  });
+
+  it("preserves offset bounds, edge notches, and diagonally adjacent holes", () => {
+    const w = 14, h = 13;
+    const filled = makeFilled(w, h, (x, y) => {
+      const inOuter = x >= 2 && x <= 11 && y >= 2 && y <= 10;
+      const edgeNotch = x === 3 && (y === 2 || y === 3);
+      const holeA = x >= 4 && x <= 5 && y >= 4 && y <= 5;
+      const holeB = x >= 6 && x <= 7 && y >= 6 && y <= 7;
+      return inOuter && !edgeNotch && !holeA && !holeB;
+    });
+    const expected = findHoleBordersReference(filled, w, h);
+    expect(expected).toHaveLength(2);
+    expect(findHoleBorders(filled, w, h, {
+      minX: 2,
+      minY: 2,
+      maxX: 11,
+      maxY: 10,
+    })).toEqual(expected);
+  });
+
   it("returns empty array when the fill has no holes (simple square)", () => {
     const w = 20, h = 20;
     const filled = makeFilled(w, h, (x, y) => x >= 5 && x < 15 && y >= 5 && y < 15);
