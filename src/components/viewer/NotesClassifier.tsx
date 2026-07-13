@@ -46,9 +46,10 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
   const intel = usePageIntelligenceForPage(pageNumber);
   const [rowStates, setRowStates] = useState<Record<string, RowAction>>({});
   const [errorByRow, setErrorByRow] = useState<Record<string, string>>({});
-  // React commits the disabled button state after the event. This keyed synchronous barrier closes
-  // the same-task double-click window without serializing promotions for different classifier rows.
-  const acceptingRegionKeysRef = useRef(new Set<string>());
+  // React commits disabled state after the event. One captured composite-key barrier owns Accept
+  // and Reject together, so same-task cross-action clicks and an old project's same-id completion
+  // cannot release or repaint the currently rendered row.
+  const activeRowActionKeysRef = useRef(new Set<string>());
 
   // One-shot prune of stale rejectedTextRegionIds — IDs whose textRegion no
   // longer exists after a Layer 1 reprocess. Keyed on (projectId, pageNumber)
@@ -96,13 +97,14 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
     });
   }, [intel]);
 
-  const setRowState = (id: string, s: RowAction) =>
-    setRowStates((prev) => ({ ...prev, [id]: s }));
-  const setRowError = (id: string, msg: string | null) =>
+  const rowKey = (id: string) => JSON.stringify([publicId, pageNumber, id]);
+  const setRowState = (key: string, s: RowAction) =>
+    setRowStates((prev) => ({ ...prev, [key]: s }));
+  const setRowError = (key: string, msg: string | null) =>
     setErrorByRow((prev) => {
       const next = { ...prev };
-      if (msg === null) delete next[id];
-      else next[id] = msg;
+      if (msg === null) delete next[key];
+      else next[key] = msg;
       return next;
     });
 
@@ -111,23 +113,23 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
 
     // Include the request/cache identity so an old target's completion cannot release a same-id
     // promotion admitted for a newly rendered project or page.
-    const promotionKey = JSON.stringify([publicId, pageNumber, tr.id]);
-    if (acceptingRegionKeysRef.current.has(promotionKey)) return;
-    acceptingRegionKeysRef.current.add(promotionKey);
+    const actionKey = rowKey(tr.id);
+    if (activeRowActionKeysRef.current.has(actionKey)) return;
+    activeRowActionKeysRef.current.add(actionKey);
 
     try {
-      setRowState(tr.id, "promoting");
-      setRowError(tr.id, null);
+      setRowState(actionKey, "promoting");
+      setRowError(actionKey, null);
       await saveParsedRegion(
         queryClient,
         { publicId, isDemo, pageNumber },
         { via: "classifier", type: "notes", sourceTextRegionId: tr.id },
       );
     } catch (err) {
-      setRowError(tr.id, err instanceof Error ? err.message : "Promote failed");
+      setRowError(actionKey, err instanceof Error ? err.message : "Promote failed");
     } finally {
-      acceptingRegionKeysRef.current.delete(promotionKey);
-      setRowState(tr.id, "idle");
+      activeRowActionKeysRef.current.delete(actionKey);
+      setRowState(actionKey, "idle");
     }
   };
 
@@ -140,12 +142,16 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
 
   const handleReject = async (tr: TextRegion) => {
     if (!canPersist(publicId, isDemo) || !intel) return;
-    setRowState(tr.id, "rejecting");
-    setRowError(tr.id, null);
+    const actionKey = rowKey(tr.id);
+    if (activeRowActionKeysRef.current.has(actionKey)) return;
+    activeRowActionKeysRef.current.add(actionKey);
+    setRowState(actionKey, "rejecting");
+    setRowError(actionKey, null);
 
     const existingRejected = intel.rejectedTextRegionIds ?? [];
     if (existingRejected.includes(tr.id)) {
-      setRowState(tr.id, "idle");
+      activeRowActionKeysRef.current.delete(actionKey);
+      setRowState(actionKey, "idle");
       return;
     }
     const nextRejected = [...existingRejected, tr.id];
@@ -164,9 +170,10 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
     } catch (err) {
       // Roll back the optimistic update
       setPageIntelligenceForPage(queryClient, publicId, pageNumber, intel);
-      setRowError(tr.id, err instanceof Error ? err.message : "Reject failed");
+      setRowError(actionKey, err instanceof Error ? err.message : "Reject failed");
     } finally {
-      setRowState(tr.id, "idle");
+      activeRowActionKeysRef.current.delete(actionKey);
+      setRowState(actionKey, "idle");
     }
   };
 
@@ -197,12 +204,13 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
   return (
     <div className="flex-1 overflow-y-auto px-2 py-2 space-y-2">
       {visibleRegions.map((tr) => {
-        const state = rowStates[tr.id] ?? "idle";
-        const err = errorByRow[tr.id];
+        const actionKey = rowKey(tr.id);
+        const state = rowStates[actionKey] ?? "idle";
+        const err = errorByRow[actionKey];
         const preview = (tr.containedText ?? "").slice(0, 180);
         return (
           <div
-            key={tr.id}
+            key={actionKey}
             className="rounded border border-[var(--border)] bg-[var(--surface-2)]/50 p-2"
           >
             <div className="flex items-center justify-between gap-2 mb-1">
