@@ -27,16 +27,18 @@ export function Section13ApiReference() {
       </p>
 
       <Callout variant="info" title="Auth model">
-        Unless marked <InlineCode>public</InlineCode>, every endpoint requires a
-        valid NextAuth session. Routes marked <InlineCode>admin</InlineCode>{" "}
-        additionally check <InlineCode>user.isAdmin || user.isRootAdmin</InlineCode>.
-        Routes marked <InlineCode>root</InlineCode> require{" "}
-        <InlineCode>isRootAdmin</InlineCode>. Destructive admin toggles require
-        an <em>additional</em> admin password stored in{" "}
-        <InlineCode>app_settings</InlineCode> and checked at the route level in{" "}
-        <InlineCode>/api/admin/toggles</InlineCode>. All authenticated routes
-        enforce row-level multi-tenant scoping through{" "}
-        <InlineCode>src/lib/audit.ts</InlineCode>.
+        The catalog&apos;s auth labels describe effective access. <InlineCode>session</InlineCode>{" "}
+        requires a valid NextAuth session; <InlineCode>admin</InlineCode> requires{" "}
+        <InlineCode>session.user.role === &quot;admin&quot;</InlineCode> or{" "}
+        <InlineCode>session.user.isRootAdmin</InlineCode>; and <InlineCode>root</InlineCode>{" "}
+        requires <InlineCode>isRootAdmin</InlineCode>. Project-scoped routes resolve the project
+        and tenant scope through <InlineCode>defineRoute</InlineCode> or the shared access service;
+        a few validate-before-auth routes perform the same effective check inside their service.
+        Destructive admin toggles require an <em>additional</em> password whose bcrypt hash is
+        stored with the global toggle state in <InlineCode>config/toggles.json</InlineCode> and
+        checked by the{" "}
+        <InlineCode>/api/admin/toggles</InlineCode>. <InlineCode>src/lib/audit.ts</InlineCode>{" "}
+        records audit events; it is not an authorization or row-scoping layer.
       </Callout>
 
       <SubSection title="Endpoint catalog">
