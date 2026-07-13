@@ -736,9 +736,18 @@ describe("P2.4 A2a pure operation registry topology", () => {
     const source = sourceOf(TOOL_AUTHORITY_FILE);
     expect(source.statements.filter(ts.isImportDeclaration)).toEqual([]);
     expect(exportedNames(source)).toEqual([
+      "LatestToolLane",
+      "ToolTailToken",
+      "claimLatestToolOperation",
       "claimParseToolAuthority",
+      "claimToolTailAuthority",
+      "consumeToolTailAuthority",
+      "invalidateLatestToolOperation",
       "invalidateParseToolAuthority",
+      "invalidateToolTailAuthority",
+      "ownsLatestToolOperation",
       "ownsParseToolAuthority",
+      "ownsToolTailAuthority",
     ]);
 
     const tokenA = { kind: "table", revision: 1 };
