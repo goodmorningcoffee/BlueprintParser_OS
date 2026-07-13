@@ -68,6 +68,24 @@ function isNonArrayObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function assertPromotionResponse(
+  response: unknown,
+): asserts response is PromoteParsedRegionResponse {
+  const updatedIntelligence = isNonArrayObject(response)
+    ? response.updatedIntelligence
+    : null;
+  if (
+    !isNonArrayObject(response) ||
+    response.ok !== true ||
+    !isNonArrayObject(response.parsedRegion) ||
+    !isNonArrayObject(updatedIntelligence) ||
+    !Array.isArray(updatedIntelligence.parsedRegions) ||
+    (response.summaries !== null && !isNonArrayObject(response.summaries))
+  ) {
+    throw new Error("Malformed parsed-region promotion response");
+  }
+}
+
 function assertDeletionResponse(
   response: unknown,
 ): asserts response is DeletePersistedParsedRegionResponse {
@@ -90,6 +108,30 @@ function assertDeletionResponse(
   }
 }
 
+// Row-local UI barriers cannot order two different rows. Keep one fulfilled tail per project/page
+// so locked server snapshots are also adopted in commit order inside this browser module. This is
+// intentionally delete/delete-only; save/delete ordering remains a separate server/CAS problem.
+const deletionTails = new Map<string, Promise<void>>();
+
+function serializeParsedRegionDeletion<T>(
+  publicId: string,
+  pageNumber: number,
+  task: () => Promise<T>,
+): Promise<T> {
+  const key = JSON.stringify([publicId, pageNumber]);
+  const previous = deletionTails.get(key);
+  const completion = previous ? previous.then(task) : task();
+  const fulfilledTail = completion.then(
+    () => undefined,
+    () => undefined,
+  );
+  deletionTails.set(key, fulfilledTail);
+  void fulfilledTail.then(() => {
+    if (deletionTails.get(key) === fulfilledTail) deletionTails.delete(key);
+  });
+  return completion;
+}
+
 export async function saveParsedRegion(
   queryClient: QueryClient,
   target: SaveParsedRegionTarget,
@@ -103,7 +145,7 @@ export async function saveParsedRegion(
   if (isDemo) return { status: "local", reason: "demo" };
   if (!publicId) return { status: "skipped", reason: "missing-public-id" };
 
-  const response = await promoteParsedRegion(
+  const response: unknown = await promoteParsedRegion(
     promotion.via === "parser"
       ? {
           publicId,
@@ -122,6 +164,7 @@ export async function saveParsedRegion(
           sourceTextRegionId: promotion.sourceTextRegionId,
         },
   );
+  assertPromotionResponse(response);
 
   // Exact persistent tail: Persist -> authoritative Adoption -> optional Summaries -> spatial
   // recompute. The captured publicId/page owns every write, even if the visible session changes.
@@ -160,23 +203,25 @@ export async function deleteParsedRegion(
     return { status: "local", reason: "demo" };
   }
 
-  const response: unknown = await deletePersistedParsedRegion({
-    publicId,
-    pageNumber,
-    regionId,
+  return serializeParsedRegionDeletion(publicId, pageNumber, async () => {
+    const response: unknown = await deletePersistedParsedRegion({
+      publicId,
+      pageNumber,
+      regionId,
+    });
+    assertDeletionResponse(response);
+
+    setPageIntelligenceForPage(
+      queryClient,
+      publicId,
+      pageNumber,
+      response.updatedIntelligence,
+    );
+    if (response.summaries) {
+      seedSummariesCache(queryClient, publicId, response.summaries);
+    }
+    refreshPageCsiSpatialMapForTarget(queryClient, publicId, pageNumber);
+
+    return { status: "persisted", response };
   });
-  assertDeletionResponse(response);
-
-  setPageIntelligenceForPage(
-    queryClient,
-    publicId,
-    pageNumber,
-    response.updatedIntelligence,
-  );
-  if (response.summaries) {
-    seedSummariesCache(queryClient, publicId, response.summaries);
-  }
-  refreshPageCsiSpatialMapForTarget(queryClient, publicId, pageNumber);
-
-  return { status: "persisted", response };
 }

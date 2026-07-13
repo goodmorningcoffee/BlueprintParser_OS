@@ -244,7 +244,7 @@ describe("saveParsedRegion persistent command", () => {
     expect(finalIntelligence.csiSpatialMap).toBeDefined();
   });
 
-  it("performs no A/S/X after promotion rejection or the inherited null-success result", async () => {
+  it("performs no A/S/X after promotion rejection or any malformed success", async () => {
     const initial = { rejectedTextRegionIds: ["stable"] } satisfies PageIntelligence;
     const stableSummaries = summaries("stable");
     seedWindow(queryClient, PROJECT_A, PAGE_A, initial);
@@ -274,10 +274,29 @@ describe("saveParsedRegion persistent command", () => {
     expect(readActivePageWindow(queryClient, PROJECT_A)).toBe(windowBefore);
     expect(queryClient.getQueryData(queryKeys.summaries.all(PROJECT_A))).toBe(stableSummaries);
 
-    // persistFetch historically converts a successful non-JSON body to null. The command then
-    // throws before adoption; preserve that inherited failure instead of inventing normalization.
-    promoteMock.mockResolvedValueOnce(null as unknown as PromoteParsedRegionResponse);
-    await expect(invocation()).rejects.toBeInstanceOf(TypeError);
+    const region = promotedRegion();
+    const malformedSuccesses: unknown[] = [
+      null,
+      {},
+      { ok: false, parsedRegion: region, updatedIntelligence: { parsedRegions: [] }, summaries: null },
+      { ok: true, parsedRegion: null, updatedIntelligence: { parsedRegions: [] }, summaries: null },
+      { ok: true, parsedRegion: [], updatedIntelligence: { parsedRegions: [] }, summaries: null },
+      { ok: true, parsedRegion: region, updatedIntelligence: null, summaries: null },
+      { ok: true, parsedRegion: region, updatedIntelligence: [], summaries: null },
+      { ok: true, parsedRegion: region, updatedIntelligence: {}, summaries: null },
+      {
+        ok: true,
+        parsedRegion: region,
+        updatedIntelligence: { parsedRegions: "corrupt" },
+        summaries: null,
+      },
+      { ok: true, parsedRegion: region, updatedIntelligence: { parsedRegions: [] } },
+      { ok: true, parsedRegion: region, updatedIntelligence: { parsedRegions: [] }, summaries: [] },
+    ];
+    for (const malformed of malformedSuccesses) {
+      promoteMock.mockResolvedValueOnce(malformed as PromoteParsedRegionResponse);
+      await expect(invocation()).rejects.toThrow("Malformed parsed-region promotion response");
+    }
     unsubscribe();
     expect(updatedKeys, "an invalid successful payload must fail before any cache publication")
       .toEqual([]);
@@ -389,6 +408,129 @@ describe("deleteParsedRegion persistent command", () => {
 
     expect(queryClient.getQueryData(queryKeys.summaries.all(PROJECT_A))).toBe(priorSummaries);
     expect(readPageIntelligence(queryClient, PROJECT_A, PAGE_A)?.parsedRegions).toEqual([]);
+  });
+
+  it("serializes different-row deletes per project/page before transport and cache adoption", async () => {
+    const deleteA = promotedRegion({ id: "delete-a" });
+    const deleteB = promotedRegion({ id: "delete-b" });
+    const keep = promotedRegion({ id: "keep" });
+    seedWindow(queryClient, PROJECT_A, PAGE_A, {
+      parsedRegions: [deleteA, deleteB, keep] as never[],
+    });
+
+    let resolveA!: (value: DeletePersistedParsedRegionResponse) => void;
+    let resolveB!: (value: DeletePersistedParsedRegionResponse) => void;
+    deleteMock
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+
+    const first = deleteParsedRegion(queryClient, {
+      publicId: PROJECT_A,
+      isDemo: false,
+      pageNumber: PAGE_A,
+      regionId: "delete-a",
+    });
+    const second = deleteParsedRegion(queryClient, {
+      publicId: PROJECT_A,
+      isDemo: false,
+      pageNumber: PAGE_A,
+      regionId: "delete-b",
+    });
+
+    expect(deleteMock).toHaveBeenCalledTimes(1);
+    expect(deleteMock).toHaveBeenNthCalledWith(1, {
+      publicId: PROJECT_A,
+      pageNumber: PAGE_A,
+      regionId: "delete-a",
+    });
+
+    const responseA = deletionResponse({
+      intelligence: { parsedRegions: [deleteB, keep] as never[] },
+      summaries: null,
+    });
+    resolveA(responseA);
+    await expect(first).resolves.toEqual({ status: "persisted", response: responseA });
+    await vi.waitFor(() => expect(deleteMock).toHaveBeenCalledTimes(2));
+    expect(deleteMock).toHaveBeenNthCalledWith(2, {
+      publicId: PROJECT_A,
+      pageNumber: PAGE_A,
+      regionId: "delete-b",
+    });
+
+    const responseB = deletionResponse({
+      intelligence: { parsedRegions: [keep] as never[] },
+      summaries: null,
+    });
+    resolveB(responseB);
+    await expect(second).resolves.toEqual({ status: "persisted", response: responseB });
+    expect(readPageIntelligence(queryClient, PROJECT_A, PAGE_A)?.parsedRegions).toEqual([keep]);
+  });
+
+  it("releases the project/page delete queue after a failed predecessor", async () => {
+    const keep = promotedRegion({ id: "keep" });
+    seedWindow(queryClient, PROJECT_A, PAGE_A, {
+      parsedRegions: [promotedRegion({ id: "delete-a" }), keep] as never[],
+    });
+    let rejectA!: (error: Error) => void;
+    deleteMock
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectA = reject; }))
+      .mockResolvedValueOnce(deletionResponse({
+        intelligence: { parsedRegions: [keep] as never[] },
+        summaries: null,
+      }));
+
+    const first = deleteParsedRegion(queryClient, {
+      publicId: PROJECT_A,
+      isDemo: false,
+      pageNumber: PAGE_A,
+      regionId: "delete-a",
+    });
+    const second = deleteParsedRegion(queryClient, {
+      publicId: PROJECT_A,
+      isDemo: false,
+      pageNumber: PAGE_A,
+      regionId: "delete-a",
+    });
+    expect(deleteMock).toHaveBeenCalledTimes(1);
+
+    rejectA(new Error("offline"));
+    await expect(first).rejects.toThrow("offline");
+    await expect(second).resolves.toMatchObject({ status: "persisted" });
+    expect(deleteMock).toHaveBeenCalledTimes(2);
+    expect(readPageIntelligence(queryClient, PROJECT_A, PAGE_A)?.parsedRegions).toEqual([keep]);
+  });
+
+  it("does not serialize deletes for independent project/page targets", async () => {
+    const resolvers: Array<(value: DeletePersistedParsedRegionResponse) => void> = [];
+    deleteMock.mockImplementation(() => new Promise((resolve) => {
+      resolvers.push(resolve);
+    }));
+
+    const requests = [
+      deleteParsedRegion(queryClient, {
+        publicId: PROJECT_A,
+        isDemo: false,
+        pageNumber: PAGE_A,
+        regionId: "delete-a",
+      }),
+      deleteParsedRegion(queryClient, {
+        publicId: PROJECT_A,
+        isDemo: false,
+        pageNumber: PAGE_A + 1,
+        regionId: "delete-b",
+      }),
+      deleteParsedRegion(queryClient, {
+        publicId: PROJECT_B,
+        isDemo: false,
+        pageNumber: PAGE_A,
+        regionId: "delete-c",
+      }),
+    ];
+
+    expect(deleteMock).toHaveBeenCalledTimes(3);
+    expect(resolvers).toHaveLength(3);
+    resolvers.forEach((resolve) => resolve(deletionResponse({ summaries: null })));
+    await expect(Promise.all(requests)).resolves.toHaveLength(3);
   });
 
   it("performs no A/S/X after transport rejection or malformed success", async () => {
