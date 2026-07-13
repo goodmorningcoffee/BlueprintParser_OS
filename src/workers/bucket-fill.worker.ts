@@ -573,7 +573,7 @@ function douglasPeucker(points: { x: number; y: number }[], epsilon: number): { 
 // ─── Hole detection ──────────────────────────────────────────────
 
 /**
- * Find and trace holes in a filled binary region.
+ * Find and trace holes in the 0/1 mask produced by `floodFill`.
  *
  * Algorithm: flood from the exact filled-region bounding-box edges through
  * unfilled pixels; anything still unfilled afterward is enclosed-inside = a
@@ -604,9 +604,7 @@ export function findHoleBorders(
   for (let localY = 0; localY < boxH; localY++) {
     const sourceRow = (minY + localY) * w + minX;
     const localRow = localY * boxW;
-    for (let x = 0; x < boxW; x++) {
-      if (filled[sourceRow + x]) marks[localRow + x] = 1;
-    }
+    marks.set(filled.subarray(sourceRow, sourceRow + boxW), localRow);
   }
 
   // A typed queue holds local indices without allocating millions of boxed JS numbers. Entries
