@@ -16,8 +16,8 @@ import {
   type Page,
 } from "@playwright/test";
 
-const SCHEMA_VERSION = "bp-viewer-perf-v2.0.0";
-const PROTOCOL_VERSION = "p2.3-populated-profiler-median3-reverse1";
+const SCHEMA_VERSION = "bp-viewer-perf-v2.1.0";
+const PROTOCOL_VERSION = "p2.3-representative-column-profiler-median3-reverse1";
 const RUNS = Number(process.env.PERF_RUNS || 3);
 const SMOKE = process.env.PERF_SMOKE === "1";
 const SOURCE_SHA = process.env.PERF_APP_SHA || "";
@@ -79,6 +79,25 @@ const PERF_AREA_ITEM = {
   sortOrder: 0,
   groupId: null,
 };
+
+const BUCKET_RASTER_FIXTURE = {
+  fixtureKind: "white-room-with-structural-column",
+  outerRoomBounds: [0.2, 0.2, 0.8, 0.8],
+  structuralColumnBounds: [0.62, 0.42, 0.68, 0.58],
+  seed: [0.5, 0.5],
+  dilationPx: 3,
+  roomAreaFraction: 0.3504,
+} as const;
+
+const BUCKET_PREVIEW_WITNESS = {
+  filledPoints: [
+    [0.58, 0.5],
+    [0.72, 0.5],
+    [0.65, 0.36],
+    [0.65, 0.64],
+  ],
+  holePoint: [0.65, 0.5],
+} as const;
 
 const PERF_TAKEOFF_ITEMS = [
   PERF_AREA_ITEM,
@@ -539,7 +558,7 @@ async function installBucketRaster(
   width: number,
   height: number,
 ) {
-  return pageCanvas.evaluate((node, dimensions) => {
+  return pageCanvas.evaluate((node, { dimensions, fixture }) => {
     const canvas = node as HTMLCanvasElement;
     const cssWidth = canvas.style.width;
     const cssHeight = canvas.style.height;
@@ -553,16 +572,30 @@ async function installBucketRaster(
     context.fillStyle = "#000";
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = "#fff";
-    context.fillRect(canvas.width * 0.2, canvas.height * 0.2, canvas.width * 0.6, canvas.height * 0.6);
+    const [roomMinX, roomMinY, roomMaxX, roomMaxY] = fixture.outerRoomBounds;
+    context.fillRect(
+      canvas.width * roomMinX,
+      canvas.height * roomMinY,
+      canvas.width * (roomMaxX - roomMinX),
+      canvas.height * (roomMaxY - roomMinY),
+    );
+    context.fillStyle = "#000";
+    const [columnMinX, columnMinY, columnMaxX, columnMaxY] = fixture.structuralColumnBounds;
+    context.fillRect(
+      canvas.width * columnMinX,
+      canvas.height * columnMinY,
+      canvas.width * (columnMaxX - columnMinX),
+      canvas.height * (columnMaxY - columnMinY),
+    );
     const ratio = Math.min(4000 / canvas.width, 4000 / canvas.height, 1);
     return {
       sourceWidth: canvas.width,
       sourceHeight: canvas.height,
       processedWidth: Math.round(canvas.width * ratio),
       processedHeight: Math.round(canvas.height * ratio),
-      roomAreaFraction: 0.36,
+      ...fixture,
     };
-  }, { width, height });
+  }, { dimensions: { width, height }, fixture: BUCKET_RASTER_FIXTURE });
 }
 
 async function measureBucket4000(page: Page) {
@@ -571,16 +604,22 @@ async function measureBucket4000(page: Page) {
   await openQtoArea(page, false);
   await page.getByRole("button", { name: "Bucket Fill", exact: true }).click();
   const resolution = page.locator('[title^="Max pixel dimension"] input[type="range"]');
+  const dilation = page.locator('[title^="Gap-closing radius"] input[type="range"]');
   const pageCanvas = page.locator('canvas[data-page-canvas="true"]');
   const overlay = await annotationCanvas(page);
   const box = await overlay.boundingBox();
   if (!box) throw new Error("overlay has no box for bucket fill");
+  await dilation.fill(String(BUCKET_RASTER_FIXTURE.dilationPx));
+  await expect(dilation).toHaveValue(String(BUCKET_RASTER_FIXTURE.dilationPx));
 
   // Compile/start the exact singleton worker outside the timed 4000px sample. Dev-Turbopack's
   // first worker-chunk request is build-system latency, not the warmed client algorithm target.
   await resolution.fill("1000");
   await installBucketRaster(pageCanvas, 1000, 667);
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.click(
+    box.x + box.width * BUCKET_RASTER_FIXTURE.seed[0],
+    box.y + box.height * BUCKET_RASTER_FIXTURE.seed[1],
+  );
   await expect.poll(() => overlay.evaluate((node) => getComputedStyle(node).cursor), {
     timeout: 15_000,
   }).toBe("wait");
@@ -627,7 +666,10 @@ async function measureBucket4000(page: Page) {
       requestAnimationFrame(tick);
     });
   });
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.click(
+    box.x + box.width * BUCKET_RASTER_FIXTURE.seed[0],
+    box.y + box.height * BUCKET_RASTER_FIXTURE.seed[1],
+  );
   const settlement = await page.evaluate(() => {
     const promise = (window as unknown as {
       __BP_BUCKET_V2_DONE__?: Promise<{ elapsedMs: number; sawWait: boolean }>;
@@ -638,6 +680,32 @@ async function measureBucket4000(page: Page) {
   const gaps = await stopFrameSampler(page);
   const profiler = await profilerSnapshot(page);
   expect(settlement.sawWait).toBe(true);
+  await settleFrames(page, 4);
+  const outcome = await overlay.evaluate((node, witness) => {
+    const preview = node.nextElementSibling;
+    if (!(preview instanceof HTMLCanvasElement) || getComputedStyle(preview).zIndex !== "15") {
+      throw new Error("DrawingPreviewLayer canvas topology missing");
+    }
+    const context = preview.getContext("2d");
+    if (!context) throw new Error("DrawingPreviewLayer 2d context missing");
+    const alphaAt = ([x, y]: readonly [number, number]) => context.getImageData(
+      Math.max(0, Math.min(preview.width - 1, Math.floor(x * preview.width))),
+      Math.max(0, Math.min(preview.height - 1, Math.floor(y * preview.height))),
+      1,
+      1,
+    ).data[3];
+    const filledSampleAlphas = witness.filledPoints.map((point) => alphaAt(point));
+    return {
+      previewCanvasWidth: preview.width,
+      previewCanvasHeight: preview.height,
+      previewCanvasZIndex: getComputedStyle(preview).zIndex,
+      filledSampleAlphas,
+      filledSampleCount: filledSampleAlphas.filter((alpha) => alpha > 0).length,
+      holeCenterAlpha: alphaAt(witness.holePoint),
+    };
+  }, BUCKET_PREVIEW_WITNESS);
+  expect(outcome.filledSampleCount).toBe(BUCKET_PREVIEW_WITNESS.filledPoints.length);
+  expect(outcome.holeCenterAlpha).toBe(0);
   await page.keyboard.press("Enter");
   await expect(page.getByText("Assign to Area Item", { exact: true })).toBeVisible({ timeout: 10_000 });
   return {
@@ -645,7 +713,8 @@ async function measureBucket4000(page: Page) {
     rafP95Ms: p95(gaps),
     profiler,
     raster,
-    workerWarmup: "1000px deterministic room outside timed sample",
+    outcome,
+    workerWarmup: "1000px deterministic room-with-column outside timed sample",
     previewAcceptedByEnter: true,
   };
 }
@@ -750,6 +819,7 @@ type PerfSample = {
   bucketRafP95Ms: number;
   profiler: Record<"nav20" | "zoom10" | "polygon20" | "drag60" | "bucket4000", ProfilerSnapshot>;
   bucketRaster: Awaited<ReturnType<typeof measureBucket4000>>["raster"];
+  bucketOutcome: Awaited<ReturnType<typeof measureBucket4000>>["outcome"];
   navOutcome: Awaited<ReturnType<typeof measureNav20>>["outcome"];
   zoomOutcome: Awaited<ReturnType<typeof measureZoom10>>["outcome"];
 };
@@ -785,6 +855,7 @@ async function measureOnce(
       bucket4000: bucket.profiler,
     },
     bucketRaster: bucket.raster,
+    bucketOutcome: bucket.outcome,
     navOutcome: nav.outcome,
     zoomOutcome: zoom.outcome,
   };
@@ -827,6 +898,15 @@ function validatePopulatedSamples(samples: PerfSample[]): void {
     expect(sample.navOutcome.pdfPageCommits).toBeGreaterThan(0);
     expect(sample.zoomOutcome.deltaPercent).toBeGreaterThan(0);
     expect(sample.zoomOutcome.pdfPageCommits).toBeGreaterThan(0);
+    expect(sample.bucketOutcome.previewCanvasWidth).toBeGreaterThan(0);
+    expect(sample.bucketOutcome.previewCanvasHeight).toBeGreaterThan(0);
+    expect(sample.bucketOutcome.previewCanvasZIndex).toBe("15");
+    expect(sample.bucketOutcome.filledSampleAlphas).toHaveLength(
+      BUCKET_PREVIEW_WITNESS.filledPoints.length,
+    );
+    expect(sample.bucketOutcome.filledSampleAlphas.every((alpha) => alpha > 0)).toBe(true);
+    expect(sample.bucketOutcome.filledSampleCount).toBe(BUCKET_PREVIEW_WITNESS.filledPoints.length);
+    expect(sample.bucketOutcome.holeCenterAlpha).toBe(0);
   }
 }
 
@@ -1122,7 +1202,8 @@ test("viewer perf-v2 populated source-exact protocol", async ({ browser, page })
       denseAnnotations: PERF_DENSE_ANNOTATIONS.length,
       takeoffItems: PERF_TAKEOFF_ITEMS.length,
       bucketRaster: samples[0].bucketRaster,
-      underlays: "absent (404); bucket uses deterministic 4000x2667 black-wall/white-room raster",
+      bucketPreviewWitness: BUCKET_PREVIEW_WITNESS,
+      underlays: "absent (404); bucket uses deterministic 4000x2667 black-wall/white-room-with-column raster",
     },
     harness: {
       specSha256: sha256File(specPath),
@@ -1193,6 +1274,7 @@ test("viewer perf-v2 populated source-exact protocol", async ({ browser, page })
         deltaPercent: sample.zoomOutcome.deltaPercent,
       })),
       zoomPdfPageCommits: samples.map((sample) => sample.zoomOutcome.pdfPageCommits),
+      bucketPreviewOutcomes: samples.map((sample) => sample.bucketOutcome),
     },
   };
   writeFileSync(OUTPUT_PATH, `${JSON.stringify(result, null, 2)}\n`, { flag: "wx" });

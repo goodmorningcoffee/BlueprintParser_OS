@@ -7,9 +7,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
-const ARTIFACT_SCHEMA_VERSION = "bp-viewer-perf-v2.0.0";
-const PROTOCOL_VERSION = "p2.3-populated-profiler-median3-reverse1";
-const VERDICT_SCHEMA_VERSION = "bp-viewer-perf-v2-verdict-2";
+const ARTIFACT_SCHEMA_VERSION = "bp-viewer-perf-v2.1.0";
+const PROTOCOL_VERSION = "p2.3-representative-column-profiler-median3-reverse1";
+const VERDICT_SCHEMA_VERSION = "bp-viewer-perf-v2-verdict-3";
 const INSTRUMENTATION_SCHEMA_VERSION = "bp-perf-v2-instrumentation-manifest-1";
 const BASELINE_SOURCE_SHA = "26a9de754f4422e1a6d353b2b4a3f2e6307b3f14";
 const SHA1_PATTERN = /^[0-9a-f]{40}$/;
@@ -75,9 +75,23 @@ const EXPECTED_FIXTURE = {
     sourceHeight: 2667,
     processedWidth: 4000,
     processedHeight: 2667,
-    roomAreaFraction: 0.36,
+    fixtureKind: "white-room-with-structural-column",
+    outerRoomBounds: [0.2, 0.2, 0.8, 0.8],
+    structuralColumnBounds: [0.62, 0.42, 0.68, 0.58],
+    seed: [0.5, 0.5],
+    dilationPx: 3,
+    roomAreaFraction: 0.3504,
   },
-  underlays: "absent (404); bucket uses deterministic 4000x2667 black-wall/white-room raster",
+  bucketPreviewWitness: {
+    filledPoints: [
+      [0.58, 0.5],
+      [0.72, 0.5],
+      [0.65, 0.36],
+      [0.65, 0.64],
+    ],
+    holePoint: [0.65, 0.5],
+  },
+  underlays: "absent (404); bucket uses deterministic 4000x2667 black-wall/white-room-with-column raster",
 };
 
 function parseArguments(argv) {
@@ -213,6 +227,30 @@ function validateBucketRaster(label, raster) {
     finite(`${label}.${key}`, raster[key], { integer: true, minimum: 0, exclusiveMinimum: true });
   }
   finite(`${label}.roomAreaFraction`, raster.roomAreaFraction);
+}
+
+function validateBucketOutcome(label, outcome) {
+  check(`${label} is object`, isObject(outcome), { actualType: typeof outcome });
+  if (!isObject(outcome)) return;
+  finite(`${label}.previewCanvasWidth`, outcome.previewCanvasWidth,
+    { integer: true, minimum: 0, exclusiveMinimum: true });
+  finite(`${label}.previewCanvasHeight`, outcome.previewCanvasHeight,
+    { integer: true, minimum: 0, exclusiveMinimum: true });
+  exact(`${label}.previewCanvasZIndex`, outcome.previewCanvasZIndex, "15");
+  check(`${label}.filledSampleAlphas has one entry per witness point`,
+    Array.isArray(outcome.filledSampleAlphas) &&
+      outcome.filledSampleAlphas.length === EXPECTED_FIXTURE.bucketPreviewWitness.filledPoints.length,
+    outcome.filledSampleAlphas);
+  if (Array.isArray(outcome.filledSampleAlphas)) {
+    outcome.filledSampleAlphas.forEach((alpha, index) => check(
+      `${label}.filledSampleAlphas[${index}] is painted`,
+      Number.isInteger(alpha) && alpha > 0 && alpha <= 255,
+      alpha,
+    ));
+  }
+  exact(`${label}.filledSampleCount`, outcome.filledSampleCount,
+    EXPECTED_FIXTURE.bucketPreviewWitness.filledPoints.length);
+  exact(`${label}.holeCenterAlpha`, outcome.holeCenterAlpha, 0);
 }
 
 function validatePageWindow(label, pageWindow) {
@@ -415,6 +453,7 @@ function validateArtifact(leg) {
       validateProfiler(`${sampleLabel}.profiler`, sample.profiler);
       validateBucketRaster(`${sampleLabel}.bucketRaster`, sample.bucketRaster);
       exact(`${sampleLabel}.bucketRaster protocol`, sample.bucketRaster, EXPECTED_FIXTURE.bucketRaster);
+      validateBucketOutcome(`${sampleLabel}.bucketOutcome`, sample.bucketOutcome);
       validateNavOutcome(`${sampleLabel}.navOutcome`, sample.navOutcome);
       validateZoomOutcome(`${sampleLabel}.zoomOutcome`, sample.zoomOutcome);
     });
@@ -447,7 +486,7 @@ function validateArtifact(leg) {
       "pageErrors", "requestFailures", "abortedRequestFailures", "unexpectedRequestFailures",
       "pagePngResponses", "http429", "polygonPostVertexCounts", "servedShas", "navFinalPages",
       "navFinalPageWindows", "navRasterPaintedPixelSamples", "navPdfPageCommits",
-      "zoomScaleChanges", "zoomPdfPageCommits",
+      "zoomScaleChanges", "zoomPdfPageCommits", "bucketPreviewOutcomes",
     ]) array(`${label} integrity.${field}`, integrity[field]);
     for (const field of [
       "pagePng404s", "annotationPosts", "bucketServerFallbacks", "cachedProjectResponses",
@@ -477,11 +516,12 @@ function validateArtifact(leg) {
       integrity.navPdfPageCommits,
       integrity.zoomScaleChanges,
       integrity.zoomPdfPageCommits,
+      integrity.bucketPreviewOutcomes,
     ].every((values) => Array.isArray(values) && values.length === artifact.runs), {
       runs: artifact.runs,
       lengths: Object.fromEntries([
         "navFinalPages", "navFinalPageWindows", "navRasterPaintedPixelSamples",
-        "navPdfPageCommits", "zoomScaleChanges", "zoomPdfPageCommits",
+        "navPdfPageCommits", "zoomScaleChanges", "zoomPdfPageCommits", "bucketPreviewOutcomes",
       ].map((field) => [field, Array.isArray(integrity[field]) ? integrity[field].length : null])),
     });
     if (Array.isArray(integrity.navFinalPages)) {
@@ -509,6 +549,10 @@ function validateArtifact(leg) {
           pdfPageCommits: integrity.zoomPdfPageCommits?.[index],
         }));
     }
+    if (Array.isArray(integrity.bucketPreviewOutcomes)) {
+      integrity.bucketPreviewOutcomes.forEach((outcome, index) =>
+        validateBucketOutcome(`${label} integrity.bucketPreviewOutcomes[${index}]`, outcome));
+    }
     if (Array.isArray(artifact.samples)) {
       exact(`${label} integrity.navFinalPages matches samples`, integrity.navFinalPages,
         artifact.samples.map((sample) => sample?.navOutcome?.activePage));
@@ -527,6 +571,8 @@ function validateArtifact(leg) {
         })));
       exact(`${label} integrity.zoomPdfPageCommits matches samples`, integrity.zoomPdfPageCommits,
         artifact.samples.map((sample) => sample?.zoomOutcome?.pdfPageCommits));
+      exact(`${label} integrity.bucketPreviewOutcomes matches samples`, integrity.bucketPreviewOutcomes,
+        artifact.samples.map((sample) => sample?.bucketOutcome));
     }
   }
 }
@@ -751,7 +797,7 @@ const verdict = {
   checks,
   pass,
 };
-writeFileSync(resolve(args.out), `${JSON.stringify(verdict, null, 2)}\n`);
+writeFileSync(resolve(args.out), `${JSON.stringify(verdict, null, 2)}\n`, { flag: "wx" });
 console.log(JSON.stringify({
   pass,
   retainedLegs: verdict.retainedLegs.map(({ leg, sourceSha, artifactSha256 }) => ({
