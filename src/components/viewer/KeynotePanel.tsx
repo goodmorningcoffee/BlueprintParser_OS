@@ -1086,7 +1086,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
                           if (all) {
                             store.setParsedKeynoteData(all.filter((entry) =>
                               !(entry.pageNumber === kn.pageNumber && entry.tableName === kn.tableName)
-                            ) as any);
+                            ));
                           }
                         }}
                         region={matchingRegion}

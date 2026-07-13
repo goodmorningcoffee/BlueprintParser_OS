@@ -2,7 +2,10 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useParseFlowStore } from "@/stores/parseFlowStore";
+import {
+  useParseFlowStore,
+  type ParsedKeynoteEntry,
+} from "@/stores/parseFlowStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import {
@@ -33,7 +36,7 @@ function keynoteDataToGrid(data: any): { headers: string[]; rows: Record<string,
 }
 
 interface KeynoteItemProps {
-  keynote: { pageNumber: number; keys: { key: string; description: string; csiCodes?: string[]; note?: string }[]; yoloClass?: string; tableName?: string };
+  keynote: ParsedKeynoteEntry;
   pageNames: Record<number, string>;
   isCurrentPage: boolean;
   onNavigate: () => void;
@@ -112,13 +115,13 @@ export default function KeynoteItem({
     // 1. Update parsedKeynoteData (find by identity, not index — array may be sorted differently)
     const allKeynotes = store.parsedKeynoteData;
     if (allKeynotes) {
-      const updated = allKeynotes.map((kn: any) => {
+      const updated = allKeynotes.map((kn) => {
         if (kn.pageNumber === keynote.pageNumber && kn.tableName === oldName) {
           return { ...kn, tableName: trimmed };
         }
         return kn;
       });
-      store.setParsedKeynoteData(updated as any);
+      store.setParsedKeynoteData(updated);
     }
 
     // 2. Update matching parsedRegion in pageIntelligence (optimistic local write)
@@ -548,7 +551,7 @@ export default function KeynoteItem({
                             }),
                           };
                         });
-                        store.setParsedKeynoteData(updated as any);
+                        store.setParsedKeynoteData(updated);
                       }
                       setEditingIdx(null);
                     }}

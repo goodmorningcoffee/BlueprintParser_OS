@@ -467,7 +467,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     if (knData && grid.tableName) {
       const tagCol = grid.tagColumn || grid.headers[0];
       const descCols = grid.headers.filter((h: string) => h !== tagCol);
-      updatedKeynoteData = knData.map((kn: any) => {
+      updatedKeynoteData = knData.map((kn) => {
         if (kn.pageNumber !== pageNumber) return kn;
         if (kn.tableName !== grid.tableName) return kn;
         return {
@@ -475,7 +475,7 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
           keys: grid.rows.map((row: Record<string, string>, ri: number) => {
             const newKey = row[tagCol] || "";
             const newDesc = descCols.map((h: string) => row[h] || "").join(" ").trim();
-            const existing = kn.keys?.find((k: any, ki: number) => ki === ri || k.key === newKey);
+            const existing = kn.keys?.find((k, ki) => ki === ri || k.key === newKey);
             return {
               key: newKey,
               description: newDesc,

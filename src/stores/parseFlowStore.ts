@@ -41,6 +41,22 @@ export interface ParagraphTemplate {
 /** Current semantic owner of the Table/Keynote/Notes shared Guided workspace. */
 export type GuidedParseOwner = "table" | "keynote" | "notes" | null;
 
+/** Key metadata retained by the transient All Keynotes workspace. */
+export interface ParsedKeynoteKey {
+  key: string;
+  description: string;
+  csiCodes?: string[];
+  note?: string;
+}
+
+/** One transient parsed-keynote table. This is not the persisted KeynoteData wire shape. */
+export interface ParsedKeynoteEntry {
+  pageNumber: number;
+  keys: ParsedKeynoteKey[];
+  yoloClass?: string;
+  tableName?: string;
+}
+
 export interface ParseFlowState {
   // ─── Table Parse ───────────────────────────────────────
   tableParseStep: "idle" | "select-region" | "define-column" | "define-row" | "review";
@@ -131,12 +147,7 @@ export interface ParseFlowState {
   addKeynoteRowBB: (bb: [number, number, number, number]) => void;
   keynoteYoloClass: { model: string; className: string } | null;
   setKeynoteYoloClass: (cls: { model: string; className: string } | null) => void;
-  parsedKeynoteData: Array<{
-    pageNumber: number;
-    keys: { key: string; description: string }[];
-    yoloClass?: string;
-    tableName?: string;
-  }> | null;
+  parsedKeynoteData: ParsedKeynoteEntry[] | null;
   setParsedKeynoteData: (data: ParseFlowState["parsedKeynoteData"]) => void;
   addParsedKeynote: (entry: NonNullable<ParseFlowState["parsedKeynoteData"]>[number]) => void;
   resetKeynoteParse: () => void;
