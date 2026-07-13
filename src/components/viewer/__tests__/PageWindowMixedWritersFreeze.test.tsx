@@ -91,6 +91,27 @@ function seedWindow(publicId: string, overrides: Partial<ActivePageWindow> = {})
   qc.setQueryData(queryKeys.annotations.all(publicId), []);
 }
 
+function summariesFixture(marker: string): ProjectSummaries {
+  return {
+    schedules: [],
+    parsedTables: [],
+    keynoteTablePages: [],
+    csiPageIndex: {},
+    tradePageIndex: {},
+    keynotePageIndex: {},
+    textAnnotationPageIndex: {},
+    pageClassifications: {},
+    annotationSummary: {
+      modelNames: [],
+      categoryCounts: {},
+      pageAnnotationCounts: {},
+    },
+    takeoffTotals: {},
+    allTrades: [marker],
+    allCsiCodes: [],
+  };
+}
+
 const noteRegion = {
   id: "note-region",
   type: "notes-numbered",
@@ -180,8 +201,8 @@ describe("mixed page-window writer semantics", () => {
       rejectedTextRegionIds: ["server-authoritative"],
       parsedRegions: [serverRegion as never],
     } satisfies PageIntelligence;
-    const serverSummaries = { marker: "server-A" } as unknown as ProjectSummaries;
-    const stableBSummaries = { marker: "stable-B" } as unknown as ProjectSummaries;
+    const serverSummaries = summariesFixture("server-A");
+    const stableBSummaries = summariesFixture("stable-B");
 
     setPageIntelligenceForPage(qc, projectA, 4, {
       textRegions: [noteRegion],
@@ -291,6 +312,23 @@ describe("mixed page-window writer semantics", () => {
     const delayedCsi = new Promise<Response>((resolve) => {
       resolveCsi = resolve;
     });
+    const promotedRegion = {
+      id: "pr-4-100-200-800-700",
+      type: "schedule",
+      category: "Project A Schedule",
+      bbox: regionA,
+      confidence: 1,
+      csiTags: [{ code: "08 11 13", description: "Hollow Metal Doors" }],
+      data: {
+        headers: ["Tag", "Description"],
+        rows: [{ Tag: "A-101", Description: "Project A door" }],
+        tagColumn: "Tag",
+        tableName: "Project A Schedule",
+        rowCount: 1,
+        columnCount: 2,
+      },
+      source: "user",
+    };
     fetchMock.mockImplementation((url: unknown) => {
       if (url === "/api/csi/detect") return delayedCsi;
       if (url === "/api/regions/promote") {
@@ -299,8 +337,11 @@ describe("mixed page-window writer semantics", () => {
           status: 200,
           json: async () => ({
             ok: true,
-            parsedRegion: {},
-            updatedIntelligence: { rejectedTextRegionIds: ["server-A"] },
+            parsedRegion: promotedRegion,
+            updatedIntelligence: {
+              rejectedTextRegionIds: ["server-A"],
+              parsedRegions: [promotedRegion],
+            },
             summaries: null,
           }),
         } as Response);

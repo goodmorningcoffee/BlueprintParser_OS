@@ -35,13 +35,44 @@ function deferred<T>(): Deferred<T> {
 }
 
 function successResponse(marker: string): Response {
+  const parsedRegion = {
+    id: `keynote-${marker}`,
+    type: "keynote",
+    category: `${marker} keynotes`,
+    bbox: marker.includes("B") ? BBOX_B : BBOX_A,
+    confidence: 0.98,
+    csiTags: [],
+    data: {
+      headers: ["Key", "Description"],
+      rows: [{ Key: marker, Description: `${marker} description` }],
+      tableName: `${marker} keynotes`,
+    },
+    source: "user",
+  };
   return {
     ok: true,
     status: 200,
     json: vi.fn().mockResolvedValue({
       ok: true,
-      parsedRegion: {},
-      updatedIntelligence: { rejectedTextRegionIds: [marker] },
+      parsedRegion,
+      updatedIntelligence: {
+        rejectedTextRegionIds: [marker],
+        // A distinct, differently ordered copy witnesses property-order-independent membership.
+        parsedRegions: [{
+          source: "user",
+          data: {
+            tableName: `${marker} keynotes`,
+            rows: [{ Description: `${marker} description`, Key: marker }],
+            headers: ["Key", "Description"],
+          },
+          csiTags: [],
+          confidence: 0.98,
+          bbox: marker.includes("B") ? BBOX_B : BBOX_A,
+          category: `${marker} keynotes`,
+          type: "keynote",
+          id: `keynote-${marker}`,
+        }],
+      },
       summaries: null,
     }),
   } as unknown as Response;

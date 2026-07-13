@@ -299,12 +299,28 @@ describe("TableParsePanel — All Tables merges summaries with loaded intel, ded
 describe("TableParsePanel — promote returning summaries:null keeps seeded summaries (TPP-R)", () => {
   it("save flows through the real promote path; guard retains the seeded catalog", async () => {
     // Mocked promote response: success envelope, summaries:null (the compute-reject swallow
-    // shape). updatedIntelligence has NO schedule regions so the seeded page-9 summary row stays
-    // the single All-Tables entry — "1 table(s)" discriminates cleanly.
+    // shape). The authoritative graph includes the promoted schedule exactly as the real route
+    // does; the seeded page-9 row must remain alongside that newly adopted page detail.
+    const parsedRegion = {
+      id: "pr-1-0-0-1000-1000",
+      type: "schedule",
+      category: "Fresh Save",
+      bbox: [0, 0, 1, 1],
+      confidence: 1,
+      csiTags: [{ code: "08 11 13", description: "Hollow Metal Doors" }],
+      data: {
+        headers: ["TAG", "SIZE"],
+        rows: [{ TAG: "D1", SIZE: "3070" }],
+        tableName: "Fresh Save",
+        rowCount: 1,
+        columnCount: 2,
+      },
+      source: "user",
+    };
     const promoteResponse = {
       ok: true,
-      parsedRegion: {},
-      updatedIntelligence: { parsedRegions: [] },
+      parsedRegion,
+      updatedIntelligence: { parsedRegions: [parsedRegion] },
       summaries: null,
     };
     const promoteFetch = vi.fn(async (url: unknown) => {
@@ -356,7 +372,8 @@ describe("TableParsePanel — promote returning summaries:null keeps seeded summ
     // the guard held, so the seeded catalog is still there.
     fireEvent.click(screen.getByRole("button", { name: "All Tables" }));
     await waitFor(() => expect(screen.getByText("Door Schedule")).toBeInTheDocument());
-    expect(screen.getByText("1 table(s)")).toBeInTheDocument();
+    expect(screen.getByText("Fresh Save")).toBeInTheDocument();
+    expect(screen.getByText("2 table(s)")).toBeInTheDocument();
     expect(screen.queryByText("No parsed tables found.")).not.toBeInTheDocument();
   });
 });

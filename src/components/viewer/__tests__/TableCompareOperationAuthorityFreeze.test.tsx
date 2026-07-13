@@ -43,13 +43,33 @@ function deferred<T>(): Deferred<T> {
 }
 
 function response(ok: boolean, marker: string): Response {
+  const parsedRegion = {
+    id: `promoted-${marker}`,
+    type: "schedule",
+    category: `${marker} Schedule`,
+    bbox: BBOX,
+    confidence: 1,
+    csiTags: [],
+    data: {
+      headers: ["Tag", "Description"],
+      rows: [{ Tag: marker, Description: `${marker} door` }],
+      tagColumn: "Tag",
+      tableName: `${marker} Schedule`,
+      rowCount: 1,
+      columnCount: 2,
+    },
+    source: "user",
+  };
   return {
     ok,
     status: ok ? 200 : 500,
     json: vi.fn().mockResolvedValue(ok ? {
       ok: true,
-      parsedRegion: {},
-      updatedIntelligence: { rejectedTextRegionIds: [marker] },
+      parsedRegion,
+      updatedIntelligence: {
+        rejectedTextRegionIds: [marker],
+        parsedRegions: [parsedRegion],
+      },
       summaries: null,
     } : { error: { code: "FAIL", message: marker } }),
   } as unknown as Response;

@@ -48,13 +48,30 @@ function autoResponse(marker: string): Response {
 }
 
 function promotionResponse(marker: string): Response {
+  const parsedRegion = {
+    id: `notes-${marker}`,
+    type: "notes",
+    category: `${marker} notes`,
+    bbox: BBOX_A,
+    confidence: 0.97,
+    csiTags: [],
+    data: {
+      headers: ["Key", "Note"],
+      rows: [{ Key: marker, Note: `${marker} note` }],
+      tableName: `${marker} notes`,
+    },
+    source: "user",
+  };
   return {
     ok: true,
     status: 200,
     json: vi.fn().mockResolvedValue({
       ok: true,
-      parsedRegion: {},
-      updatedIntelligence: { rejectedTextRegionIds: [marker] },
+      parsedRegion,
+      updatedIntelligence: {
+        rejectedTextRegionIds: [marker],
+        parsedRegions: [parsedRegion],
+      },
       summaries: null,
     }),
   } as unknown as Response;

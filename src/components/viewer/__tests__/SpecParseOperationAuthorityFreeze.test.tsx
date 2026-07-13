@@ -45,13 +45,29 @@ function parseSuccessResponse(label: string): Response {
 }
 
 function promotionSuccessResponse(marker: string): Response {
+  const parsedRegion = {
+    id: `spec-${marker}`,
+    type: "spec",
+    category: `${marker} spec`,
+    bbox: BBOX_A,
+    confidence: 0.96,
+    csiTags: [{ code: "03 00 00", description: "Concrete" }],
+    data: {
+      sections: [{ sectionHeader: `${marker} PART 1`, body: `${marker} scope` }],
+      tableName: `${marker} spec`,
+    },
+    source: "user",
+  };
   return {
     ok: true,
     status: 200,
     json: vi.fn().mockResolvedValue({
       ok: true,
-      parsedRegion: {},
-      updatedIntelligence: { rejectedTextRegionIds: [marker] },
+      parsedRegion,
+      updatedIntelligence: {
+        rejectedTextRegionIds: [marker],
+        parsedRegions: [parsedRegion],
+      },
       summaries: null,
     }),
   } as unknown as Response;

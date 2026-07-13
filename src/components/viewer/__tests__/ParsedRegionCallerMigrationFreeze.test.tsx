@@ -40,7 +40,26 @@ function response(data: unknown): Response {
 }
 
 function summaries(marker: string): ProjectSummaries {
-  return { marker } as unknown as ProjectSummaries;
+  return {
+    schedules: [],
+    parsedTables: [],
+    keynoteTablePages: [],
+    notesRegions: [],
+    specRegions: [],
+    csiPageIndex: {},
+    tradePageIndex: {},
+    keynotePageIndex: {},
+    textAnnotationPageIndex: {},
+    pageClassifications: {},
+    annotationSummary: {
+      modelNames: [],
+      categoryCounts: {},
+      pageAnnotationCounts: {},
+    },
+    takeoffTotals: {},
+    allTrades: [marker],
+    allCsiCodes: [],
+  };
 }
 
 let queryClient: QueryClient;
@@ -127,7 +146,21 @@ describe("C2 ParsedRegion real caller convergence", () => {
     };
     const authoritative = {
       rejectedTextRegionIds: [serverMarker],
-      parsedRegions: [serverRegion as never],
+      // A distinct, differently ordered copy witnesses property-order-independent membership.
+      parsedRegions: [{
+        source: "user",
+        data: {
+          tableName: "Keynotes p.4",
+          rows: [{ Description: "Door", Key: "D1" }],
+          headers: ["Key", "Description"],
+        },
+        csiTags: [{ description: "Hollow Metal Doors", code: "08 11 13" }],
+        confidence: 0.98,
+        bbox: BBOX,
+        category: "keynote-table",
+        type: "keynote",
+        id: "pr-4-100-200-700-800",
+      } as never],
     } satisfies PageIntelligence;
     const serverSummaries = summaries("wizard-server");
     const promotion = deferred<Response>();
@@ -287,7 +320,20 @@ describe("C2 ParsedRegion real caller convergence", () => {
     };
     const authoritative = {
       rejectedTextRegionIds: [serverMarker],
-      parsedRegions: [authoritativeRegion as never],
+      // A distinct, differently ordered copy witnesses property-order-independent membership.
+      parsedRegions: [{
+        data: {
+          tableName: "Renamed Keynotes",
+          rows: [{ Description: "Door", Key: "D1" }],
+          headers: ["Key", "Description"],
+        },
+        csiTags: [{ description: "Gypsum Board", code: "09 29 00" }],
+        confidence: 0.9,
+        bbox: BBOX,
+        category: "Renamed Keynotes",
+        type: "keynote",
+        id: "keynote-region",
+      } as never],
     } satisfies PageIntelligence;
     const serverSummaries = summaries("edit-server");
     const promotion = deferred<Response>();

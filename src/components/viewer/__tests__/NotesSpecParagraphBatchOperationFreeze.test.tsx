@@ -52,14 +52,36 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
-function promotionSuccessResponse(marker: string): Response {
+function promotionSuccessResponse(kind: ParserCase["kind"], marker: string): Response {
+  const parsedRegion = {
+    id: `${kind}-${marker}`,
+    type: kind,
+    category: `${marker} ${kind}`,
+    bbox: BBOX_A,
+    confidence: 0.95,
+    csiTags: [],
+    data: kind === "notes"
+      ? {
+          headers: ["Key", "Note"],
+          rows: [{ Key: marker, Note: `${marker} note` }],
+          tableName: `${marker} notes`,
+        }
+      : {
+          sections: [{ sectionHeader: `${marker} PART 1`, body: `${marker} scope` }],
+          tableName: `${marker} spec`,
+        },
+    source: "user",
+  };
   return {
     ok: true,
     status: 200,
     json: vi.fn().mockResolvedValue({
       ok: true,
-      parsedRegion: {},
-      updatedIntelligence: { rejectedTextRegionIds: [marker] },
+      parsedRegion,
+      updatedIntelligence: {
+        rejectedTextRegionIds: [marker],
+        parsedRegions: [parsedRegion],
+      },
       summaries: null,
     }),
   } as unknown as Response;
@@ -308,7 +330,10 @@ describe.each(CASES)("A2d $kind paragraph-batch root authority", (testCase) => {
     expect(JSON.stringify(body)).not.toContain("MUTATED");
 
     await act(async () => {
-      promotions[0].resolve(promotionSuccessResponse(`${testCase.kind}-captured`));
+      promotions[0].resolve(promotionSuccessResponse(
+        testCase.kind,
+        `${testCase.kind}-captured`,
+      ));
       await flushCompletion();
     });
     await waitFor(() => {
@@ -325,7 +350,10 @@ describe.each(CASES)("A2d $kind paragraph-batch root authority", (testCase) => {
     act(() => { tokenB = startSyntheticB(testCase); });
 
     await act(async () => {
-      promotions[0].resolve(promotionSuccessResponse(`${testCase.kind}-stale-success`));
+      promotions[0].resolve(promotionSuccessResponse(
+        testCase.kind,
+        `${testCase.kind}-stale-success`,
+      ));
       await flushCompletion();
     });
 
@@ -389,7 +417,10 @@ describe.each(CASES)("A2d $kind paragraph-batch root authority", (testCase) => {
     expect(screen.queryByText(message)).not.toBeInTheDocument();
 
     await act(async () => {
-      promotions[1].resolve(promotionSuccessResponse(`${testCase.kind}-retry-success`));
+      promotions[1].resolve(promotionSuccessResponse(
+        testCase.kind,
+        `${testCase.kind}-retry-success`,
+      ));
       await flushCompletion();
     });
     await waitFor(() => expect(currentRegion(testCase)).toBeNull());
