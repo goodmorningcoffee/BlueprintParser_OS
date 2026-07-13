@@ -74,31 +74,37 @@ function downscaleAndBinarize(
   let rgba = ctx.getImageData(0, 0, w, h).data;
   const n = w * h;
   const hist = new Int32Array(256);
-  let sum = 0;
-  let neutral = true;
+  let filterSafe = true;
   for (let i = 0; i < n; i++) {
     const offset = i * 4;
     const v = rgba[offset];
     hist[v]++;
-    sum += v;
-    if (neutral && (v !== rgba[offset + 1] || v !== rgba[offset + 2])) neutral = false;
+    if (filterSafe && (
+      v !== rgba[offset + 1] ||
+      v !== rgba[offset + 2] ||
+      rgba[offset + 3] !== 255
+    )) filterSafe = false;
   }
 
-  // A second draw is required only for colored input. Clearing first preserves
-  // the old transparent-pixel/source-over behavior exactly.
-  if (!neutral) {
+  // Filtered and unfiltered downscaling are byte-identical only for opaque
+  // neutral pixels. Colored or translucent rasters retain the legacy filtered
+  // draw; clearing first restores its original transparent backing store.
+  if (!filterSafe) {
     ctx.clearRect(0, 0, w, h);
     ctx.filter = "grayscale(1)";
     ctx.drawImage(bitmap, 0, 0, w, h);
     rgba = ctx.getImageData(0, 0, w, h).data;
     hist.fill(0);
-    sum = 0;
     for (let i = 0; i < n; i++) {
       const v = rgba[i * 4];
       hist[v]++;
-      sum += v;
     }
   }
+
+  // Deriving the sum from 256 bins is mathematically identical and avoids a
+  // second accumulator update in the 10.7M-pixel hot loop.
+  let sum = 0;
+  for (let value = 0; value < hist.length; value++) sum += value * hist[value];
 
   let sumB = 0, wB = 0;
   let maxVar = 0, threshold = 0;
