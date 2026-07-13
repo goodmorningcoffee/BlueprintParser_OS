@@ -181,8 +181,6 @@ export interface ParseFlowState {
   specParseStep: "idle" | "select-region" | "define-sections" | "review";
   specParseRegion: [number, number, number, number] | null;
   setSpecParseRegion: (bbox: [number, number, number, number] | null) => void;
-  guidedSpecSectionBBs: [number, number, number, number][];
-  addGuidedSpecSectionBB: (bb: [number, number, number, number]) => void;
   resetSpecParse: () => void;
 
   // ─── Shared paragraph workspace ───────────────────────
@@ -346,13 +344,9 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
   specParseStep: "idle",
   specParseRegion: null,
   setSpecParseRegion: (specParseRegion) => set({ specParseRegion }),
-  guidedSpecSectionBBs: [],
-  addGuidedSpecSectionBB: (bb) =>
-    set((state) => ({ guidedSpecSectionBBs: [...state.guidedSpecSectionBBs, bb] })),
   resetSpecParse: () => set((state) => ({
     specParseStep: "idle",
     specParseRegion: null,
-    guidedSpecSectionBBs: [],
     parseDraftRegion: null,
     paragraphOverlayActive: false,
     paragraphBatch: [],
@@ -441,7 +435,7 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
   })),
 
   resetProjectParseState: () => set((state) => ({
-    // Exact legacy project-reset policy: 32 touched, with three Table fields retained above.
+    // Exact post-D2 project-reset policy: 31 touched, with three Table fields retained above.
     // A2 adds only the monotonic four-kind invalidation below; no legacy survival policy changes.
     tableParseTab: "all",
     tableParseStep: "idle",
@@ -467,7 +461,6 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
     parseDraftRegion: null,
     specParseStep: "idle",
     specParseRegion: null,
-    guidedSpecSectionBBs: [],
     paragraphOverlayActive: false,
     paragraphBatch: [],
     paragraphClipboard: null,

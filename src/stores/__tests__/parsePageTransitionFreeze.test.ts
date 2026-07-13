@@ -80,7 +80,6 @@ function seedWorkspace(): SeededWorkspace {
     notesFastManualGrid: { headers: ["Key"], rows: [{ Key: "N1" }] },
     specParseStep: "review",
     specParseRegion: REGION_B,
-    guidedSpecSectionBBs: [REGION_B],
     parseDraftRegion: {
       id: "draft-A",
       type: "notes",
@@ -128,7 +127,6 @@ function expectGenericLegacyExit(after: ParseFlowState, seeded: SeededWorkspace)
     "notesFastManualGrid",
     "specParseStep",
     "specParseRegion",
-    "guidedSpecSectionBBs",
     "parseDraftRegion",
     "paragraphOverlayActive",
     "paragraphBatch",

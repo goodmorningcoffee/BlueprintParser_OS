@@ -232,7 +232,6 @@ describe("A2d atomic canvas-region acceptance", () => {
       guidedParseCols: guidedCols,
       specParseStep: "select-region",
       specParseRegion: REGION_A,
-      guidedSpecSectionBBs: [REGION_B],
       parseDraftRegion: draft(`${entry.kind}-accept-stale-draft`),
       paragraphOverlayActive: true,
       paragraphBatch: [paragraph(`${entry.kind}-accept-stale-batch`)],
@@ -262,7 +261,6 @@ describe("A2d atomic canvas-region acceptance", () => {
       // shared Guided projection, and derived Fast Manual projection in the same publication.
       expect(state.specParseStep).toBe("idle");
       expect(state.specParseRegion).toBeNull();
-      expect(state.guidedSpecSectionBBs).toEqual([]);
       expect(state.guidedParseActive).toBe(false);
       expect(state.guidedParseRegion).toBeNull();
       expect(state.guidedParseRows).toEqual([]);
@@ -382,7 +380,6 @@ describe("A2d current-token completion commands", () => {
       notesFastManualGrid: fastGrid,
       specParseStep: "review",
       specParseRegion: REGION_B,
-      guidedSpecSectionBBs: [REGION_A],
       parseDraftRegion: draft("completion-draft"),
       paragraphOverlayActive: true,
       paragraphBatch: [paragraph("completion-A")],
@@ -430,7 +427,6 @@ describe("A2d current-token completion commands", () => {
     } else {
       expect(state.specParseStep).toBe("idle");
       expect(state.specParseRegion).toBeNull();
-      expect(state.guidedSpecSectionBBs).toEqual([]);
       expect(state.notesParseRegion).toBe(REGION_A);
     }
   });
@@ -517,7 +513,6 @@ describe("A2d Specs/Notes family handoff", () => {
       guidedParseCols: [0.1, 0.9],
       specParseStep: "review",
       specParseRegion: REGION_B,
-      guidedSpecSectionBBs: [REGION_B],
       parseDraftRegion: parseDraft,
       paragraphOverlayActive: true,
       paragraphBatch: batch,
@@ -573,7 +568,6 @@ describe("A2d Specs/Notes family handoff", () => {
     if (outgoingKind === "spec") {
       expect(state.specParseStep).toBe("idle");
       expect(state.specParseRegion).toBeNull();
-      expect(state.guidedSpecSectionBBs).toEqual([]);
       expect(state.notesParseStep).toBe("review");
       expect(state.notesParseRegion).toBe(REGION_A);
     } else {

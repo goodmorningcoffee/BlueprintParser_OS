@@ -18,6 +18,14 @@ import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import {
+  acceptNotesParseRegion,
+  completeSpecParseOperation,
+  openNotesParseTarget,
+  openSpecParseTarget,
+  resetSpecParseWorkspace,
+  setSpecsNotesParseTab,
+} from "@/stores/viewerCommands";
+import {
   PARSE_TEST_ACTION_KEYS,
   PARSE_TEST_STATE_KEYS,
   partitionViewerStoreTestState,
@@ -143,7 +151,6 @@ const PARSE_DATA_KEYS = [
   "parseDraftRegion",
   "specParseStep",
   "specParseRegion",
-  "guidedSpecSectionBBs",
   "paragraphOverlayActive",
   "paragraphBatch",
   "paragraphClipboard",
@@ -183,7 +190,6 @@ const PARSE_LEAF_ACTION_KEYS = [
   "setNotesFastManualGrid",
   "setParseDraftRegion",
   "setSpecParseRegion",
-  "addGuidedSpecSectionBB",
   "resetSpecParse",
   "setParagraphOverlayActive",
   "setParagraphBatch",
@@ -197,7 +203,7 @@ const PARSE_LEAF_ACTION_KEYS = [
   "resetGuidedParse",
 ] as const;
 
-/** A2 additive authority stays outside the exact legacy 35/41 ownership ledger. */
+/** A2 additive authority stays outside the exact post-D2 live 34/40 ownership ledger. */
 const PARSE_OPERATION_STATE_KEYS = ["parseOperations"] as const;
 const GUIDED_PARSE_OWNER_STATE_KEYS = ["guidedParseOwner"] as const;
 const PARSE_OPERATION_ACTION_KEYS = [
@@ -642,7 +648,13 @@ function parse(path: string): ts.SourceFile {
     textOf(path),
     ts.ScriptTarget.Latest,
     true,
-    path.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    path.endsWith(".tsx")
+      ? ts.ScriptKind.TSX
+      : path.endsWith(".jsx")
+        ? ts.ScriptKind.JSX
+        : /\.(?:[cm]?js)$/.test(path)
+          ? ts.ScriptKind.JS
+          : ts.ScriptKind.TS,
   );
   sourceCache.set(path, source);
   return source;
@@ -843,6 +855,105 @@ function typeScriptSourceFiles(directory = "src"): string[] {
   };
   visit(directory);
   return output.sort();
+}
+
+const PROJECT_SOURCE_IGNORED_DIRECTORIES = new Set([
+  ".git",
+  ".next",
+  ".turbo",
+  "coverage",
+  "node_modules",
+  "perf",
+  "playwright-report",
+  "test-results",
+]);
+
+function supportedProjectSourceFiles(): string[] {
+  const output: string[] = [];
+  const visit = (current: string): void => {
+    for (const entry of readdirSync(join(process.cwd(), current), { withFileTypes: true })) {
+      if (entry.isDirectory() && PROJECT_SOURCE_IGNORED_DIRECTORIES.has(entry.name)) continue;
+      const child = join(current, entry.name);
+      if (entry.isDirectory()) {
+        visit(child);
+      } else if (/\.(?:[cm]?[jt]sx?)$/.test(entry.name)) {
+        output.push(child);
+      }
+    }
+  };
+  visit(".");
+  return output.sort();
+}
+
+function staticStringValue(
+  expression: ts.Expression,
+  bindings: ReadonlyMap<string, string>,
+): string | null {
+  const value = unwrap(expression);
+  if (ts.isStringLiteralLike(value)) return value.text;
+  if (ts.isIdentifier(value)) return bindings.get(value.text) ?? null;
+  if (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = staticStringValue(value.left, bindings);
+    const right = staticStringValue(value.right, bindings);
+    return left === null || right === null ? null : left + right;
+  }
+  if (ts.isTemplateExpression(value)) {
+    let output = value.head.text;
+    for (const span of value.templateSpans) {
+      const part = staticStringValue(span.expression, bindings);
+      if (part === null) return null;
+      output += part + span.literal.text;
+    }
+    return output;
+  }
+  return null;
+}
+
+function staticStringBindings(source: ts.SourceFile): ReadonlyMap<string, string> {
+  const bindings = new Map<string, string>();
+  const declarations = descendants(
+    source,
+    (node): node is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && !!node.initializer,
+  );
+  for (let pass = 0; pass < declarations.length; pass += 1) {
+    let changed = false;
+    for (const declaration of declarations) {
+      if (!ts.isIdentifier(declaration.name)) continue;
+      if (bindings.has(declaration.name.text)) continue;
+      const value = staticStringValue(declaration.initializer!, bindings);
+      if (value === null) continue;
+      bindings.set(declaration.name.text, value);
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return bindings;
+}
+
+function retiredStaticNameFindings(
+  source: ts.SourceFile,
+  retiredNames: ReadonlySet<string>,
+): string[] {
+  const bindings = staticStringBindings(source);
+  const findings = new Set<string>();
+  for (const node of descendants(source, (candidate): candidate is ts.Node => candidate !== source)) {
+    let value: string | null = null;
+    if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) {
+      value = ts.isIdentifier(node) ? (bindings.get(node.text) ?? node.text) : node.text;
+    } else if (ts.isComputedPropertyName(node)) {
+      value = staticStringValue(node.expression, bindings);
+    } else if (ts.isElementAccessExpression(node) && node.argumentExpression) {
+      value = staticStringValue(node.argumentExpression, bindings);
+    } else if (ts.isBinaryExpression(node) || ts.isTemplateExpression(node)) {
+      value = staticStringValue(node, bindings);
+    }
+    if (value !== null && retiredNames.has(value)) {
+      const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+      findings.add(`${source.fileName}:${line}:${value}`);
+    }
+  }
+  return [...findings].sort();
 }
 
 function isRealTestSource(path: string): boolean {
@@ -1566,13 +1677,13 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
   const activeInterfaceKeys = interfaceKeys(findInterface(activeSource, ACTIVE_PARSE_OWNER.interfaceName));
   const activeObjectKeys = directObjectKeys(findStoreObject(activeSource, ACTIVE_PARSE_OWNER.storeName));
 
-  it("pins the phase-owned legacy 35/41 subset plus the additive A2 owner surface", () => {
-    expect(PARSE_DATA_KEYS).toHaveLength(35);
-    expect(PARSE_LEAF_ACTION_KEYS).toHaveLength(41);
+  it("pins the phase-owned legacy 34/40 subset plus the additive A2 owner surface", () => {
+    expect(PARSE_DATA_KEYS).toHaveLength(34);
+    expect(PARSE_LEAF_ACTION_KEYS).toHaveLength(40);
     expect(PARSE_TEST_STATE_KEYS).toEqual([
-      ...PARSE_DATA_KEYS.slice(0, 31),
+      ...PARSE_DATA_KEYS.slice(0, 30),
       "guidedParseOwner",
-      ...PARSE_DATA_KEYS.slice(31),
+      ...PARSE_DATA_KEYS.slice(30),
     ]);
     expect(PARSE_TEST_ACTION_KEYS).toEqual(PARSE_LEAF_ACTION_KEYS);
     expectOwnerLedgerDefinition(ACTIVE_PARSE_OWNER, "exact-ledger");
@@ -2935,28 +3046,71 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
   });
 });
 
-describe("P2.4 phase-aware guided-Spec tombstone", () => {
-  it("keeps the dead field/action in the exact owner/reset while proving zero external production borrowers", () => {
-    const source = parse(ACTIVE_PARSE_OWNER.file);
-    const store = findStoreObject(source, ACTIVE_PARSE_OWNER.storeName);
-    const reset = directProperty(store, "resetSpecParse");
-    const resetObjects = descendants(reset, ts.isObjectLiteralExpression).filter((object) =>
-      directObjectKeys(object).includes("specParseStep"),
+describe("P2.4 post-D2 guided-Spec scaffold absence", () => {
+  const retiredNames = [
+    ["guided", "Spec", "Section", "BBs"].join(""),
+    ["add", "Guided", "Spec", "Section", "BB"].join(""),
+  ];
+
+  it("rejects decoded or computed retired names across every supported project source", () => {
+    const retiredSet = new Set(retiredNames);
+    const findings = supportedProjectSourceFiles().flatMap((path) =>
+      retiredStaticNameFindings(parse(path), retiredSet),
     );
-    expect(resetObjects).toHaveLength(1);
-    expect(directObjectKeys(resetObjects[0])).toEqual([
-      "specParseStep",
-      "specParseRegion",
-      "guidedSpecSectionBBs",
-      "parseDraftRegion",
-      "paragraphOverlayActive",
-      "paragraphBatch",
-      "parseOperations",
-    ]);
-    expect(activeOwnerBorrowerFiles([
-      "guidedSpecSectionBBs",
-      "addGuidedSpecSectionBB",
-    ])).toEqual([]);
+    expect(findings).toEqual([]);
+
+    const escapedName = "guided\\" + "u0053pecSectionBBs";
+    const calibration = ts.createSourceFile(
+      "d2-absence-calibration.ts",
+      `const decoded = { ${escapedName}: [] }; const computed = { ["add" + "GuidedSpecSectionBB"]: 1 };`,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    expect(retiredStaticNameFindings(calibration, retiredSet).map((finding) =>
+      finding.slice(finding.lastIndexOf(":") + 1)
+    )).toEqual([...retiredNames].sort());
+  }, 60_000);
+
+  it("keeps owner definitions and runtime state free of both retired names", () => {
+    const definitions = ownerDefinitionKeys(ACTIVE_PARSE_OWNER);
+    const runtimeState = RUNTIME_OWNER_STATE_READERS[ACTIVE_PARSE_OWNER.module]!();
+    for (const name of retiredNames) {
+      expect(definitions.interfaceKeys, `${name} interface absence`).not.toContain(name);
+      expect(definitions.objectKeys, `${name} implementation absence`).not.toContain(name);
+      expect(Object.prototype.hasOwnProperty.call(runtimeState, name), `${name} runtime absence`)
+        .toBe(false);
+    }
+  });
+
+  it("cannot acquire a retired own-property through any affected reset or command path", () => {
+    const region: [number, number, number, number] = [0.1, 0.2, 0.8, 0.9];
+    const exercises: Array<readonly [string, () => void]> = [
+      ["resetSpecParse", () => useParseFlowStore.getState().resetSpecParse()],
+      ["resetProjectParseState", () => useParseFlowStore.getState().resetProjectParseState()],
+      ["acceptNotesParseRegion", () => acceptNotesParseRegion(region)],
+      ["openNotesParseTarget", () => openNotesParseTarget(2, region)],
+      ["openSpecParseTarget", () => openSpecParseTarget(2, region)],
+      ["completeSpecParseOperation", () => {
+        const started = useParseFlowStore.getState().beginParseOperation("spec");
+        expect(started.status).toBe("started");
+        if (started.status === "started") completeSpecParseOperation(started.token);
+      }],
+      ["resetSpecParseWorkspace", () => resetSpecParseWorkspace()],
+      ["leaveSpecsNotesParseTab", () => {
+        useUiStore.setState({ specsNotesTab: "spec-parse" });
+        setSpecsNotesParseTab("notes-parse");
+      }],
+    ];
+
+    for (const [label, exercise] of exercises) {
+      restoreStores();
+      exercise();
+      const state = useParseFlowStore.getState() as unknown as Record<string, unknown>;
+      for (const name of retiredNames) {
+        expect(Object.prototype.hasOwnProperty.call(state, name), `${label}:${name}`).toBe(false);
+      }
+    }
   });
 });
 

@@ -45,7 +45,6 @@ export const PARSE_DATA_KEYS = [
   "parseDraftRegion",
   "specParseStep",
   "specParseRegion",
-  "guidedSpecSectionBBs",
   "paragraphOverlayActive",
   "paragraphBatch",
   "paragraphClipboard",
@@ -85,7 +84,6 @@ export const PARSE_ACTION_KEYS = [
   "setNotesFastManualGrid",
   "setParseDraftRegion",
   "setSpecParseRegion",
-  "addGuidedSpecSectionBB",
   "resetSpecParse",
   "setParagraphOverlayActive",
   "setParagraphBatch",
@@ -99,7 +97,7 @@ export const PARSE_ACTION_KEYS = [
   "resetGuidedParse",
 ] as const satisfies readonly (keyof ParseState)[];
 
-/** A2 is additive: keep the characterized 35/41 contract exact as a named legacy subset. */
+/** A2 is additive: keep the post-D2 live 34/40 contract exact as a named current subset. */
 const PARSE_ADDITIVE_DATA_KEYS = [
   "guidedParseOwner",
   "parseOperations",
@@ -137,7 +135,6 @@ const RESET_ARRAY_KEYS = [
   "keynoteRowBBs",
   "guidedNotesRows",
   "guidedNotesCols",
-  "guidedSpecSectionBBs",
   "paragraphBatch",
   "guidedParseRows",
   "guidedParseCols",
@@ -334,7 +331,6 @@ function nonDefaultParsePatch(): Pick<ParseState, ParseDataKey> {
     parseDraftRegion: DRAFT,
     specParseStep: "review",
     specParseRegion: [...BBOX_B],
-    guidedSpecSectionBBs: [[...BBOX_A]],
     paragraphOverlayActive: true,
     paragraphBatch: [PARAGRAPH],
     paragraphClipboard: CLIPBOARD,
@@ -348,17 +344,17 @@ function nonDefaultParsePatch(): Pick<ParseState, ParseDataKey> {
 beforeEach(restoreOwner);
 
 describe("P2.4 shared parse boundary and defaults", () => {
-  it("owns an independent unique 35-data / 41-leaf-action contract", () => {
-    expect(PARSE_DATA_KEYS).toHaveLength(35);
-    expect(new Set(PARSE_DATA_KEYS).size).toBe(35);
-    expect(PARSE_ACTION_KEYS).toHaveLength(41);
-    expect(new Set(PARSE_ACTION_KEYS).size).toBe(41);
+  it("owns an independent unique 34-data / 40-leaf-action contract", () => {
+    expect(PARSE_DATA_KEYS).toHaveLength(34);
+    expect(new Set(PARSE_DATA_KEYS).size).toBe(34);
+    expect(PARSE_ACTION_KEYS).toHaveLength(40);
+    expect(new Set(PARSE_ACTION_KEYS).size).toBe(40);
     // The mixed test seam may seed the new shared-workspace owner, but operation registry bytes
     // remain owner-controlled and are never accepted as setup patches.
     expect(PARSE_TEST_STATE_KEYS).toEqual([
-      ...PARSE_DATA_KEYS.slice(0, 31),
+      ...PARSE_DATA_KEYS.slice(0, 30),
       "guidedParseOwner",
-      ...PARSE_DATA_KEYS.slice(31),
+      ...PARSE_DATA_KEYS.slice(30),
     ]);
     expect(PARSE_TEST_ACTION_KEYS).toEqual(PARSE_ACTION_KEYS);
     expect(PROJECT_PARSE_RETAINED_KEYS).toHaveLength(3);
@@ -420,7 +416,6 @@ describe("P2.4 shared parse boundary and defaults", () => {
       parseDraftRegion: null,
       specParseStep: "idle",
       specParseRegion: null,
-      guidedSpecSectionBBs: [],
       paragraphOverlayActive: false,
       paragraphBatch: [],
       paragraphClipboard: null,
@@ -431,7 +426,7 @@ describe("P2.4 shared parse boundary and defaults", () => {
     });
 
     const initial = useParseFlowStore.getInitialState();
-    expect(new Set(RESET_ARRAY_KEYS.map((key) => initial[key])).size).toBe(11);
+    expect(new Set(RESET_ARRAY_KEYS.map((key) => initial[key])).size).toBe(10);
   });
 });
 
@@ -465,7 +460,6 @@ const PUBLICATION_CASES: readonly { name: ParseActionKey; invoke: () => void }[]
   { name: "setNotesFastManualGrid", invoke: () => useParseFlowStore.getState().setNotesFastManualGrid(null) },
   { name: "setParseDraftRegion", invoke: () => useParseFlowStore.getState().setParseDraftRegion(null) },
   { name: "setSpecParseRegion", invoke: () => useParseFlowStore.getState().setSpecParseRegion(null) },
-  { name: "addGuidedSpecSectionBB", invoke: () => useParseFlowStore.getState().addGuidedSpecSectionBB([...BBOX_A]) },
   { name: "resetSpecParse", invoke: () => useParseFlowStore.getState().resetSpecParse() },
   { name: "setParagraphOverlayActive", invoke: () => useParseFlowStore.getState().setParagraphOverlayActive(false) },
   { name: "setParagraphBatch", invoke: () => { const state = useParseFlowStore.getState(); state.setParagraphBatch(state.paragraphBatch); } },
@@ -525,7 +519,6 @@ const SPECIAL_ACTION_KEYS = [
   "addGuidedNotesRow",
   "addGuidedNotesCol",
   "resetNotesParse",
-  "addGuidedSpecSectionBB",
   "resetSpecParse",
   "upsertPendingParagraph",
   "removePendingParagraph",
@@ -694,7 +687,6 @@ describe("P2.4 shared compound actions and identity", () => {
       ["keynoteRowBBs", "addKeynoteRowBB"],
       ["guidedNotesRows", "addGuidedNotesRow"],
       ["guidedNotesCols", "addGuidedNotesCol"],
-      ["guidedSpecSectionBBs", "addGuidedSpecSectionBB"],
     ] as const;
 
     for (const [dataKey, actionKey] of cases) {
@@ -855,7 +847,7 @@ const RESET_CASES = [
     name: "spec",
     action: "resetSpecParse",
     touched: [
-      "specParseStep", "specParseRegion", "guidedSpecSectionBBs", "parseDraftRegion",
+      "specParseStep", "specParseRegion", "parseDraftRegion",
       "paragraphOverlayActive", "paragraphBatch",
     ],
   },
@@ -932,7 +924,7 @@ describe("P2.4 shared reset matrices", () => {
     unsubscribeDefault();
   });
 
-  it("resetAllTools changes exactly 27 parse fields, retains eight references, and publishes five parse resets", () => {
+  it("resetAllTools changes exactly 26 parse fields, retains eight references, and publishes five parse resets", () => {
     useParseFlowStore.setState({ ...nonDefaultParsePatch(), guidedParseOwner: "keynote" });
     const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);
@@ -965,7 +957,7 @@ describe("P2.4 shared reset matrices", () => {
       RESET_CASES[0].touched,
       RESET_CASES[1].touched,
       RESET_CASES[2].touched,
-      ["guidedSpecSectionBBs", "paragraphBatch", "specParseRegion", "specParseStep"],
+      ["paragraphBatch", "specParseRegion", "specParseStep"],
       RESET_CASES[4].touched,
     ];
     let previous: Pick<ParseState, ParseDataKey> = pickParseData(before);
@@ -994,7 +986,7 @@ describe("P2.4 shared reset matrices", () => {
     unsubscribe();
   });
 
-  it("project reset changes exactly 32 parse fields and retains the three current-policy references", () => {
+  it("project reset changes exactly 31 parse fields and retains the three current-policy references", () => {
     useParseFlowStore.setState({ ...nonDefaultParsePatch(), guidedParseOwner: "notes" });
     const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);

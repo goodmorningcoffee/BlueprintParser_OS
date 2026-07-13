@@ -909,7 +909,6 @@ export function acceptNotesParseRegion(notesParseRegion: ParseRegion): void {
       notesParseStep: "idle",
       specParseStep: "idle",
       specParseRegion: null,
-      guidedSpecSectionBBs: [],
       parseDraftRegion: null,
       paragraphOverlayActive: false,
       paragraphBatch: [],
@@ -960,7 +959,6 @@ export function openNotesParseTarget(
         notesParseStep: "idle",
         specParseStep: "idle",
         specParseRegion: null,
-        guidedSpecSectionBBs: [],
         parseDraftRegion: null,
         paragraphOverlayActive: false,
         paragraphBatch: [],
@@ -1003,7 +1001,6 @@ export function openSpecParseTarget(
   useParseFlowStore.setState((state) => ({
     specParseStep: "idle",
     specParseRegion,
-    guidedSpecSectionBBs: [],
     parseDraftRegion: null,
     paragraphOverlayActive: false,
     paragraphBatch: [],
@@ -1070,7 +1067,6 @@ export function completeSpecParseOperation(token: ParseOperationToken<"spec">): 
     return {
       specParseStep: "idle",
       specParseRegion: null,
-      guidedSpecSectionBBs: [],
       parseDraftRegion: null,
       paragraphOverlayActive: false,
       paragraphBatch: [],
@@ -1119,7 +1115,6 @@ export function resetSpecParseWorkspace(
   useParseFlowStore.setState((state) => ({
     specParseStep,
     specParseRegion: null,
-    guidedSpecSectionBBs: [],
     parseDraftRegion: null,
     paragraphOverlayActive: false,
     paragraphBatch: [],
@@ -1863,7 +1858,6 @@ function leaveSpecsNotesParseTab(tab: SpecsNotesTab): void {
   useParseFlowStore.setState((state) => ({
     specParseStep: "idle",
     specParseRegion: null,
-    guidedSpecSectionBBs: [],
     parseDraftRegion: null,
     paragraphOverlayActive: false,
     paragraphBatch: [],
