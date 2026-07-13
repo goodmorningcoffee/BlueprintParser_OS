@@ -6,7 +6,11 @@ import { join } from "node:path";
 import ts from "typescript";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
+import {
+  claimToolTailAuthority,
+  invalidateToolTailAuthority,
+  ownsToolTailAuthority,
+} from "@/lib/parse-tool-authority";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import {
   stopTakeoffPlacement,
@@ -218,10 +222,45 @@ describe("AT3 atomic calibration and Takeoff destinations", () => {
       polygonVertices: [{ x: 0.2, y: 0.3 }],
       takeoffUndoStack: [undoEntry],
       takeoffRedoStack: [redoEntry],
+      bucketFillPreview: {
+        vertices: [
+          { x: 0.1, y: 0.1 },
+          { x: 0.4, y: 0.1 },
+          { x: 0.4, y: 0.4 },
+        ],
+        method: "stale-bucket",
+      },
+      bucketFillLoading: true,
+      bucketFillBarriers: [{ x1: 0.1, y1: 0.2, x2: 0.3, y2: 0.4 }],
+      bucketFillBarrierMode: true,
+      splitLineA: { x: 0.1, y: 0.2 },
+      splitLineB: { x: 0.7, y: 0.8 },
+      splitPreview: {
+        targetAnnotationId: 44,
+        original: [
+          { x: 0.1, y: 0.1 },
+          { x: 0.9, y: 0.1 },
+          { x: 0.9, y: 0.9 },
+        ],
+        left: [
+          { x: 0.1, y: 0.1 },
+          { x: 0.5, y: 0.1 },
+          { x: 0.5, y: 0.9 },
+        ],
+        right: [
+          { x: 0.5, y: 0.1 },
+          { x: 0.9, y: 0.1 },
+          { x: 0.9, y: 0.9 },
+        ],
+        lineA: { x: 0.5, y: 0.1 },
+        lineB: { x: 0.5, y: 0.9 },
+      },
+      splitError: "stale split",
     });
     let armed = true;
     let publications = 0;
     let activationB: ToolState["activeTool"] = null;
+    const subscriberToken = {};
     const unsubscribe = useToolStore.subscribe((state) => {
       publications += 1;
       if (!armed) return;
@@ -235,9 +274,18 @@ describe("AT3 atomic calibration and Takeoff destinations", () => {
         polygonVertices: [],
         takeoffUndoStack: [],
         takeoffRedoStack: [],
+        bucketFillPreview: null,
+        bucketFillLoading: false,
+        bucketFillBarriers: [],
+        bucketFillBarrierMode: false,
+        splitLineA: null,
+        splitLineB: null,
+        splitPreview: null,
+        splitError: null,
       });
       state.setTagAddingMode("stop-subscriber-B");
       activationB = useToolStore.getState().activeTool;
+      claimToolTailAuthority(subscriberToken);
     });
 
     try {
@@ -248,6 +296,7 @@ describe("AT3 atomic calibration and Takeoff destinations", () => {
 
     expect(armed).toBe(false);
     expect(publications).toBe(2);
+    expect(ownsToolTailAuthority(subscriberToken)).toBe(true);
     expect(activationB).toEqual({ kind: "tagAdd", tagId: "stop-subscriber-B" });
     expect(useToolStore.getState()).toMatchObject({
       activeTool: activationB,
@@ -257,6 +306,15 @@ describe("AT3 atomic calibration and Takeoff destinations", () => {
       takeoffUndoStack: [],
       takeoffRedoStack: [],
     });
+  });
+
+  it("Stop invalidates a prior tail even when no Tool subscriber publishes", () => {
+    const priorToken = claimToolTailAuthority({});
+    expect(ownsToolTailAuthority(priorToken)).toBe(true);
+
+    stopTakeoffPlacement();
+
+    expect(ownsToolTailAuthority(priorToken)).toBe(false);
   });
 });
 
@@ -287,6 +345,13 @@ describe("AT3 atomic caller source topology", () => {
     expect(delegated, `${path} one ${command} call`).toHaveLength(1);
     expect(delegated[0].arguments).toHaveLength(argumentCount);
     expect(compact(delegated[0].arguments[argumentCount - 1], source)).toBe('"pointer"');
+    const guard = descendants(block, ts.isIfStatement).find((statement) =>
+      descendants(statement.expression, ts.isCallExpression).includes(delegated[0])
+    );
+    expect(guard, `${path} rejects the local Redraw tail when ${command} fails`).toBeDefined();
+    if (!guard) throw new Error(`Expected ${path} guarded Redraw command`);
+    expect(compact(guard.expression, source)).toBe(`!${compact(delegated[0], source)}`);
+    expect(ts.isReturnStatement(guard.thenStatement)).toBe(true);
   });
 
   it.each([
