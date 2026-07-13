@@ -16,7 +16,8 @@ import type { ClientAnnotation, ScaleCalibrationData, SymbolSearchResult } from 
 
 // [refactor jul11 P2.3 T2] Mechanically-flat interaction/tool owner. Production consumers read
 // this leaf directly after the atomic ownership flip. Parse flows, server drafts, UI, viewer
-// geometry, and the four high-frequency drawing fields deliberately remain outside this boundary.
+// geometry and parse flows remain outside this boundary. Drawing-last moves the four high-frequency
+// canvas gesture fields here so all interaction state has one leaf owner.
 
 export interface ToolTagScanResults {
   yoloClass: string;
@@ -38,6 +39,11 @@ export interface ToolStoreData {
   mode: "move" | "pointer" | "markup" | "group";
   tempPanMode: boolean;
   activeTool: ActiveTool;
+
+  _drawing: boolean;
+  _drawStart: { x: number; y: number };
+  _drawEnd: { x: number; y: number };
+  _mousePos: { x: number; y: number } | null;
 
   activeTakeoffItemId: number | null;
   scaleCalibrations: Record<number, ScaleCalibrationData>;
@@ -114,6 +120,11 @@ export interface ToolStoreActions {
   setMode: (mode: ToolStoreData["mode"]) => void;
   setTempPanMode: (value: boolean) => void;
 
+  _setDrawing: (drawing: boolean) => void;
+  _setDrawStart: (position: { x: number; y: number }) => void;
+  _setDrawEnd: (position: { x: number; y: number }) => void;
+  _setMousePos: (position: { x: number; y: number } | null) => void;
+
   setActiveTakeoffItemId: (id: number | null) => void;
   setScaleCalibration: (pageNum: number, calibration: ScaleCalibrationData) => void;
   setCalibrationMode: (mode: ToolStoreData["calibrationMode"]) => void;
@@ -172,7 +183,7 @@ export interface ToolStoreActions {
   setSymbolSearchPreset: (preset: ToolStoreData["symbolSearchPreset"]) => void;
   clearSymbolSearch: () => void;
 
-  /** Preserve the exact temporary 20-touched/16-retained project-switch policy until P2.5. */
+  /** Preserve the exact temporary 20-touched/20-retained project-switch policy until P2.5. */
   resetProjectToolState: () => void;
 }
 
@@ -245,6 +256,15 @@ export const useToolStore = create<ToolStoreState>((set) => ({
     set({ tempPanMode });
   },
   activeTool: null,
+
+  _drawing: false,
+  _drawStart: { x: 0, y: 0 },
+  _drawEnd: { x: 0, y: 0 },
+  _mousePos: null,
+  _setDrawing: (_drawing) => set({ _drawing }),
+  _setDrawStart: (_drawStart) => set({ _drawStart }),
+  _setDrawEnd: (_drawEnd) => set({ _drawEnd }),
+  _setMousePos: (_mousePos) => set({ _mousePos }),
 
   activeTakeoffItemId: null,
   setActiveTakeoffItemId: (activeTakeoffItemId) => {
@@ -569,6 +589,18 @@ export const useToolStore = create<ToolStoreState>((set) => ({
     }));
   },
 }));
+
+/** Exact legacy eight-member drawing surface; production hot consumers use primitive selectors. */
+export const useDrawingState = () => useToolStore(useShallow((state) => ({
+  _drawing: state._drawing,
+  _drawStart: state._drawStart,
+  _drawEnd: state._drawEnd,
+  _mousePos: state._mousePos,
+  _setDrawing: state._setDrawing,
+  _setDrawStart: state._setDrawStart,
+  _setDrawEnd: state._setDrawEnd,
+  _setMousePos: state._setMousePos,
+})));
 
 /** One complete user Stop destination; a synchronous subscriber can only publish after it. */
 export function stopTakeoffPlacement(): void {

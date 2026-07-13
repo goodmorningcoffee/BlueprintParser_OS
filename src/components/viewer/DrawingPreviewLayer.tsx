@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, memo } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore, type ToolStoreData } from "@/stores/toolStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade (data only). This layer
@@ -41,10 +40,10 @@ export default memo(function DrawingPreviewLayer({
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Drawing state from store — ONLY this layer subscribes
-  const drawing = useViewerStore((s) => s._drawing);
-  const drawStart = useViewerStore((s) => s._drawStart);
-  const drawEnd = useViewerStore((s) => s._drawEnd);
-  const mousePos = useViewerStore((s) => s._mousePos);
+  const drawing = useToolStore((s) => s._drawing);
+  const drawStart = useToolStore((s) => s._drawStart);
+  const drawEnd = useToolStore((s) => s._drawEnd);
+  const mousePos = useToolStore((s) => s._mousePos);
 
   // Other store reads
   // One primitive discriminator projection chooses the live preview owner. Same-kind activation

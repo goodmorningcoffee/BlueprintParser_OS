@@ -10,7 +10,7 @@ interface ViewerState {
 
   // [refactor jul11 P2.3] Project identity, demo policy, page labels, and labeling-session state
   // live in sessionStore. The residual csiGraph bootstrap value lives in useCsiGraph. Do not add
-  // project/session data back to this residual metadata/drawing store.
+  // project/session or drawing data back to this residual metadata/draft store.
 
   // [refactor jul11 P2.2⑦/⑧] Active page-window maps and per-page Textract OCR are query-owned.
   // Only project-wide bootstrap metadata from those former server-data slices remains here.
@@ -28,20 +28,8 @@ interface ViewerState {
   activeQtoWorkflow: QtoWorkflow | null;
   setActiveQtoWorkflow: (w: QtoWorkflow | null) => void;
 
-  // [refactor jul11 P2.4 S2] Parse workflow data, actions, and shared paragraph types moved
-  // atomically to parseFlowStore. Keep this residual owner limited to metadata and drawing.
-  // ─── Drawing State (used by DrawingPreviewLayer, NOT subscribed by AnnotationOverlay) ──
-  _drawing: boolean;
-  _drawStart: { x: number; y: number };
-  _drawEnd: { x: number; y: number };
-  _mousePos: { x: number; y: number } | null;
-  _setDrawing: (d: boolean) => void;
-  _setDrawStart: (pos: { x: number; y: number }) => void;
-  _setDrawEnd: (pos: { x: number; y: number }) => void;
-  _setMousePos: (pos: { x: number; y: number } | null) => void;
-
   // ─── Reset ─────────────────────────────────────────────
-  /** Remaining metadata/drawing reset. Call resetProjectData from viewerCommands. */
+  /** Remaining metadata reset. Call resetProjectData from viewerCommands. */
   resetViewerState: () => void;
 }
 
@@ -65,16 +53,6 @@ export const useViewerStore = create<ViewerState>((set) => ({
   // ─── Auto-QTO ──────────────────────────────────────────── (collection → query cache, P2.2②)
   activeQtoWorkflow: null,
   setActiveQtoWorkflow: (activeQtoWorkflow) => set({ activeQtoWorkflow }),
-
-  // [refactor jul11 P2.4 S2] 35 parse fields and 41 legacy actions moved to parseFlowStore.
-  _drawing: false,
-  _drawStart: { x: 0, y: 0 },
-  _drawEnd: { x: 0, y: 0 },
-  _mousePos: null,
-  _setDrawing: (_drawing) => set({ _drawing }),
-  _setDrawStart: (_drawStart) => set({ _drawStart }),
-  _setDrawEnd: (_drawEnd) => set({ _drawEnd }),
-  _setMousePos: (_mousePos) => set({ _mousePos }),
 
   resetViewerState: () =>
     set({
@@ -109,19 +87,6 @@ import { useShallow } from "zustand/react/shallow";
 // [refactor jul10 P2.2⑤] useAnnotationGroups selector DELETED — the facade now lives in
 // src/queries/useAnnotationGroups.ts (same name, 5-member live shape; the 4 dead members
 // dropped per SPEC §5-E7). Consumers changed only their import line.
-
-/** Drawing state (only DrawingPreviewLayer should subscribe) */
-export const useDrawingState = () =>
-  useViewerStore(useShallow((s) => ({
-    _drawing: s._drawing,
-    _drawStart: s._drawStart,
-    _drawEnd: s._drawEnd,
-    _mousePos: s._mousePos,
-    _setDrawing: s._setDrawing,
-    _setDrawStart: s._setDrawStart,
-    _setDrawEnd: s._setDrawEnd,
-    _setMousePos: s._setMousePos,
-  })));
 
 // [refactor jul11 P2.4 S2] useTableParse/useKeynoteParse now live only in parseFlowStore.
 

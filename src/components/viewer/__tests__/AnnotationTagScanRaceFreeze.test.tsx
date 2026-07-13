@@ -16,7 +16,6 @@ import type { ClientAnnotation } from "@/types";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import type { ToolTagScanResults } from "@/stores/toolStore";
 import { useToolStore } from "@/stores/toolStore";
-import { useViewerStore } from "@/stores/viewerStore";
 import { EMPTY_ACTIVE_PAGE_WINDOW } from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
 import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
@@ -224,18 +223,13 @@ describe("AnnotationOverlay scanClass request ownership", () => {
     fireEvent.mouseMove(canvas, { clientX: 70, clientY: 80 });
     expect(useParseFlowStore.getState().tableParseStep).toBe("select-region");
     const trace: Array<
-      | { owner: "viewer"; drawing: boolean }
       | {
           owner: "parse";
           region: [number, number, number, number] | null;
           step: string;
         }
-      | { owner: "tool"; mode: string }
+      | { owner: "tool"; mode: string; drawing: boolean }
     > = [];
-    const unsubscribeViewer = useViewerStore.subscribe((state) => trace.push({
-      owner: "viewer",
-      drawing: state._drawing,
-    }));
     const unsubscribeParse = useParseFlowStore.subscribe((state) => trace.push({
       owner: "parse",
       region: state.tableParseRegion,
@@ -244,19 +238,19 @@ describe("AnnotationOverlay scanClass request ownership", () => {
     const unsubscribeTool = useToolStore.subscribe((state) => trace.push({
       owner: "tool",
       mode: state.mode,
+      drawing: state._drawing,
     }));
 
     fireEvent.mouseUp(canvas);
 
     expect(trace).toEqual([
-      { owner: "viewer", drawing: false },
-      { owner: "tool", mode: "move" },
+      { owner: "tool", mode: "pointer", drawing: false },
+      { owner: "tool", mode: "move", drawing: false },
       { owner: "parse", region: [0.1, 0.2, 0.7, 0.8], step: "idle" },
     ]);
     expect(useParseFlowStore.getState().tableParseRegion).toEqual([0.1, 0.2, 0.7, 0.8]);
     expect(useParseFlowStore.getState().tableParseStep).toBe("idle");
     expect(useToolStore.getState().mode).toBe("move");
-    unsubscribeViewer();
     unsubscribeParse();
     unsubscribeTool();
   });

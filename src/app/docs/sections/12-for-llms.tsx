@@ -94,7 +94,7 @@ export function Section12ForLlms() {
             [<InlineCode key="a9">BP_TOOLS</InlineCode>, "src/lib/llm/tools-defs.ts", "20 tool definitions. Client-safe (no db/fs)."],
             [<InlineCode key="a10">executeToolCall</InlineCode>, "src/lib/llm/tools.ts", "Server-side tool executors. Full db + fs access."],
             [<InlineCode key="a11">canvasWantsEvents</InlineCode>, "src/components/viewer/AnnotationOverlay.tsx:2609", "Render-gate condition #1. Also touch L2620, L2649, L2653."],
-            [<InlineCode key="a12">domain stores</InlineCode>, "src/stores/{sessionStore,uiStore,viewerCoreStore,toolStore,parseFlowStore,viewerStore}.ts", "Use the owning leaf; parseFlowStore owns parsing and viewerStore is residual metadata/drawing."],
+            [<InlineCode key="a12">domain stores</InlineCode>, "src/stores/{sessionStore,uiStore,viewerCoreStore,toolStore,parseFlowStore,viewerStore}.ts", "Use the owning leaf; toolStore owns drawing, parseFlowStore owns parsing, and viewerStore is residual metadata/drafts."],
             [<InlineCode key="a13">resetAllTools</InlineCode>, "src/stores/viewerCommands.ts", "Neutral tool/parse reset command; leaf stores do not import siblings."],
             [<InlineCode key="a14">focusAnnotationId</InlineCode>, "src/stores/uiStore.ts", "One-shot UI signal. Read-and-clear pattern."],
             [<InlineCode key="a15">assembleContextWithConfig</InlineCode>, "src/lib/context-builder.ts", "LLM prompt assembly. Priority-sorted section packing."],

@@ -579,8 +579,9 @@ export function Section02Viewer() {
           Client state is split across <InlineCode>sessionStore</InlineCode>,{" "}
           <InlineCode>uiStore</InlineCode>, <InlineCode>viewerCoreStore</InlineCode>, and{" "}
           <InlineCode>toolStore</InlineCode>. Parse workflows live in the dedicated{" "}
-          <InlineCode>parseFlowStore</InlineCode>; the residual <InlineCode>viewerStore</InlineCode>{" "}
-          carries only project metadata/drafts and the drawing quarantine. Server collections use
+          <InlineCode>parseFlowStore</InlineCode>; drawing coordinates live with interaction state in{" "}
+          <InlineCode>toolStore</InlineCode>, while the residual <InlineCode>viewerStore</InlineCode>{" "}
+          carries only project metadata/drafts. Server collections use
           project-keyed Query facades. Primitive selectors and narrow shallow hooks keep canvas
           surfaces isolated from unrelated publications.
         </p>

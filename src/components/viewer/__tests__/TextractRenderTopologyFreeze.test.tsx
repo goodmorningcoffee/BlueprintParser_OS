@@ -285,7 +285,7 @@ describe("I7 PDFPage exact-page render topology", () => {
     expect(paragraphOverlayProbe.renders).toBe(inactiveBaseline);
   });
 
-  it("ignores non-reactive tool authority and active-tool generation publications", async () => {
+  it("ignores non-reactive tool authority, activation, and drawing-coordinate publications", async () => {
     // Symbol activation also selects pointer mode. Hold that independent TextAnnotation input
     // constant so this witness measures only the active-tool discriminator/generation boundary.
     useToolStore.setState({ mode: "pointer" });
@@ -312,6 +312,13 @@ describe("I7 PDFPage exact-page render topology", () => {
     act(() => useToolStore.getState().setSymbolSearchActive(true));
     expect(commits).toBe(baseline);
     act(() => useToolStore.getState().setSymbolSearchActive(true));
+    expect(commits).toBe(baseline);
+
+    // DrawingPreviewLayer owns the reactive drawing projection. Its mocked boundary above keeps
+    // this witness scoped to PDFPage, which must not subscribe to the moved Tool coordinate.
+    const drawEnd = { x: 73, y: 84 };
+    act(() => useToolStore.setState({ _drawEnd: drawEnd }));
+    expect(useToolStore.getState()._drawEnd).toBe(drawEnd);
     expect(commits).toBe(baseline);
   });
 

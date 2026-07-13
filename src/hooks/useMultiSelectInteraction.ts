@@ -171,7 +171,7 @@ export function useMultiSelectInteraction() {
     // Annotation interactions
     handleAnnotationClick,
     expandSelectionViaGroups,
-    // Lasso (marquee state lives in the _drawing store; this hook only
+    // Lasso (marquee state lives in toolStore's drawing fields; this hook only
     // provides the finalize computation after mouse-up)
     finalizeLasso,
     // Render helpers

@@ -120,12 +120,16 @@ export type ViewerCoreStoreTestPatch = Partial<
   Pick<ViewerCoreStoreTestState, CoreTestStateKey>
 >;
 
-// [refactor jul13 P2.3 AT2] Exact data-only tool ownership ledger. The correlated discriminator
-// replaces five legacy activation mirrors; actions stay on their real owner.
+// [refactor jul13 P2.3] Exact tool setup ledger. Data stays separate from the four drawing action
+// overrides so tests cannot smuggle unrelated Tool commands through this mixed setup seam.
 export const TOOL_TEST_STATE_KEYS = [
   "mode",
   "tempPanMode",
   "activeTool",
+  "_drawing",
+  "_drawStart",
+  "_drawEnd",
+  "_mousePos",
   "activeTakeoffItemId",
   "scaleCalibrations",
   "calibrationMode",
@@ -162,7 +166,16 @@ export const TOOL_TEST_STATE_KEYS = [
 ] as const satisfies readonly (keyof ToolStoreTestState)[];
 
 export type ToolTestStateKey = (typeof TOOL_TEST_STATE_KEYS)[number];
-export type ToolStoreTestPatch = Partial<Pick<ToolStoreTestState, ToolTestStateKey>>;
+export const TOOL_TEST_ACTION_KEYS = [
+  "_setDrawing",
+  "_setDrawStart",
+  "_setDrawEnd",
+  "_setMousePos",
+] as const satisfies readonly (keyof ToolStoreTestState)[];
+export type ToolTestActionKey = (typeof TOOL_TEST_ACTION_KEYS)[number];
+export type ToolStoreTestPatch = Partial<
+  Pick<ToolStoreTestState, ToolTestStateKey | ToolTestActionKey>
+>;
 
 // [refactor jul11 P2.4 S2] Exact parse-owner ledger. Mixed setup publishes in deterministic
 // session -> UI -> core -> tool -> parse -> residual order; call sites stay flat.
@@ -268,14 +281,6 @@ export const REMAINING_VIEWER_TEST_KEYS = [
   "setAllCsiCodes",
   "activeQtoWorkflow",
   "setActiveQtoWorkflow",
-  "_drawing",
-  "_drawStart",
-  "_drawEnd",
-  "_mousePos",
-  "_setDrawing",
-  "_setDrawStart",
-  "_setDrawEnd",
-  "_setMousePos",
   "resetViewerState",
 ] as const satisfies readonly (keyof ViewerStoreTestState)[];
 
@@ -305,7 +310,10 @@ const SESSION_TEST_STATE_KEY_SET = new Set<string>(
 );
 const UI_TEST_STATE_KEY_SET = new Set<string>(UI_TEST_STATE_KEYS);
 const CORE_TEST_STATE_KEY_SET = new Set<string>(CORE_TEST_STATE_KEYS);
-const TOOL_TEST_STATE_KEY_SET = new Set<string>(TOOL_TEST_STATE_KEYS);
+const TOOL_TEST_STATE_KEY_SET = new Set<string>([
+  ...TOOL_TEST_STATE_KEYS,
+  ...TOOL_TEST_ACTION_KEYS,
+]);
 const PARSE_TEST_KEY_SET = new Set<string>([
   ...PARSE_TEST_STATE_KEYS,
   ...PARSE_TEST_ACTION_KEYS,
@@ -376,14 +384,6 @@ export function setViewerStoreStateForTest(patch: ViewerStoreTestPatch): void {
     ...("setActiveQtoWorkflow" in viewer
       ? { setActiveQtoWorkflow: viewer.setActiveQtoWorkflow }
       : {}),
-    ...("_drawing" in viewer ? { _drawing: viewer._drawing } : {}),
-    ...("_drawStart" in viewer ? { _drawStart: viewer._drawStart } : {}),
-    ...("_drawEnd" in viewer ? { _drawEnd: viewer._drawEnd } : {}),
-    ...("_mousePos" in viewer ? { _mousePos: viewer._mousePos } : {}),
-    ...("_setDrawing" in viewer ? { _setDrawing: viewer._setDrawing } : {}),
-    ...("_setDrawStart" in viewer ? { _setDrawStart: viewer._setDrawStart } : {}),
-    ...("_setDrawEnd" in viewer ? { _setDrawEnd: viewer._setDrawEnd } : {}),
-    ...("_setMousePos" in viewer ? { _setMousePos: viewer._setMousePos } : {}),
     ...("resetViewerState" in viewer
       ? { resetViewerState: viewer.resetViewerState }
       : {}),

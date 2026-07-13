@@ -21,7 +21,6 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { useToolStore } from "@/stores/toolStore";
-import { useViewerStore } from "@/stores/viewerStore";
 import { seedAnnotations } from "@/test/seed-annotations";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 import type { YoloTag } from "@/types";
@@ -151,9 +150,9 @@ describe("panel-to-canvas specialized activation", () => {
       fireEvent.mouseDown(canvas, { clientX: 10, clientY: 20, button: 0 });
     });
 
-    expect(useViewerStore.getState()._drawing).toBe(true);
-    expect(useViewerStore.getState()._drawStart).toEqual({ x: 10, y: 20 });
-    expect(useViewerStore.getState()._drawEnd).toEqual({ x: 10, y: 20 });
+    expect(useToolStore.getState()._drawing).toBe(true);
+    expect(useToolStore.getState()._drawStart).toEqual({ x: 10, y: 20 });
+    expect(useToolStore.getState()._drawEnd).toEqual({ x: 10, y: 20 });
   });
 
   it("rejects a buffered Symbol done message after the processing Cancel intent", async () => {

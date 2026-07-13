@@ -40,6 +40,7 @@ import {
 
 const VIEWER_STORE_FILE = "src/stores/viewerStore.ts";
 const PARSE_STORE_FILE = "src/stores/parseFlowStore.ts";
+const TOOL_STORE_FILE = "src/stores/toolStore.ts";
 const VIEWER_COMMANDS_FILE = "src/stores/viewerCommands.ts";
 const VIEWER_COMMANDS_MODULE = "@/stores/viewerCommands";
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
@@ -70,6 +71,13 @@ const PARSE_OWNER = {
   exportName: "useParseFlowStore",
   interfaceName: "ParseFlowState",
   storeName: "useParseFlowStore",
+} as const;
+const TOOL_OWNER = {
+  file: TOOL_STORE_FILE,
+  module: "@/stores/toolStore",
+  exportName: "useToolStore",
+  interfaceName: "ToolStoreData",
+  storeName: "useToolStore",
 } as const;
 
 type ParseOwnershipPhase = "F0" | "S1" | "S2";
@@ -106,11 +114,10 @@ const OWNERSHIP_PHASES = {
     active: PARSE_OWNER,
     inactive: VIEWER_OWNER,
     inactiveDefinition: "ledger-absent",
-    // These suites intentionally inspect residual Viewer runtime/drawing state while proving that
-    // page transitions retire drawing without restoring any parse ownership to Viewer.
+    // These suites intentionally inspect residual Viewer runtime while proving parse stays absent.
     inactiveAccessAllowlist: [
-      "src/stores/__tests__/parseFlowTopologyFreeze.test.ts",
       "src/stores/__tests__/parsePageTransitionFreeze.test.ts",
+      "src/stores/__tests__/parseFlowTopologyFreeze.test.ts",
     ],
   },
 } as const satisfies Record<ParseOwnershipPhase, OwnershipPhaseConfig>;
@@ -122,9 +129,7 @@ function ownershipForPhase(phase: ParseOwnershipPhase): OwnershipPhaseConfig {
 const OWNERSHIP = ownershipForPhase(PARSE_OWNERSHIP_PHASE);
 const ACTIVE_PARSE_OWNER = OWNERSHIP.active;
 const INACTIVE_PARSE_OWNER = OWNERSHIP.inactive;
-// Drawing never joins parseFlowStore during P2.4. This independent owner is intentionally the same
-// physical store as ACTIVE_PARSE_OWNER in F0/S1 and becomes distinct at the S2 phase flip.
-const RESIDUAL_DRAWING_OWNER = VIEWER_OWNER;
+// Drawing never joins parseFlowStore; drawing-last gives it the dedicated Tool owner.
 
 const PARSE_DATA_KEYS = [
   "tableParseStep",
@@ -597,7 +602,7 @@ const PARSE_TYPE_NAMES = ["PendingParagraph", "ParagraphTemplate"] as const;
 const DRAWING_KEYS = ["_drawing", "_drawStart", "_drawEnd", "_mousePos"] as const;
 
 function ownerDescriptor(
-  owner: typeof VIEWER_OWNER | typeof PARSE_OWNER,
+  owner: typeof VIEWER_OWNER | typeof PARSE_OWNER | typeof TOOL_OWNER,
   members: readonly string[],
 ): StoreOwnerDescriptor {
   return {
@@ -614,7 +619,6 @@ const ACTIVE_PARSE_AUTHORITY_DESCRIPTOR = ownerDescriptor(ACTIVE_PARSE_OWNER, [
   ...GUIDED_PARSE_OWNER_STATE_KEYS,
 ]);
 const INACTIVE_PARSE_DESCRIPTOR = ownerDescriptor(INACTIVE_PARSE_OWNER, ALL_PARSE_KEYS);
-const RESIDUAL_DRAWING_DESCRIPTOR = ownerDescriptor(RESIDUAL_DRAWING_OWNER, DRAWING_KEYS);
 
 type RuntimeStateReader = () => Readonly<Record<string, unknown>>;
 const RUNTIME_OWNER_STATE_READERS: Partial<Record<string, RuntimeStateReader>> = {
@@ -622,6 +626,8 @@ const RUNTIME_OWNER_STATE_READERS: Partial<Record<string, RuntimeStateReader>> =
     useViewerStore.getState() as unknown as Readonly<Record<string, unknown>>,
   [PARSE_OWNER.module]: () =>
     useParseFlowStore.getState() as unknown as Readonly<Record<string, unknown>>,
+  [TOOL_OWNER.module]: () =>
+    useToolStore.getState() as unknown as Readonly<Record<string, unknown>>,
 };
 
 const textCache = new Map<string, string>();
@@ -2741,11 +2747,14 @@ describe("P2.4 phase-aware sacred parse subscription topology", () => {
       "showTableCellStructure",
       "toggleCellHighlight",
     ]);
-    const drawingScan = expectFailClosedOwnerScan(source, RESIDUAL_DRAWING_DESCRIPTOR);
-    expect(knownMembers(drawingScan, "selector")).toEqual([]);
+    expect(primitiveSelectorMembers(source, TOOL_OWNER).filter((member) =>
+      DRAWING_KEYS.some((drawingKey) => drawingKey === member),
+    )).toEqual([]);
+    expect([...importedLocalNames(source, [VIEWER_OWNER.module], VIEWER_OWNER.exportName)])
+      .toEqual([]);
   });
 
-  it("keeps DrawingPreviewLayer's residual drawing and four flow parse projections separate", () => {
+  it("keeps DrawingPreviewLayer's Tool drawing and four flow parse projections separate", () => {
     const source = parse(DRAWING_PREVIEW);
     const parseScan = expectFailClosedOwnerScan(source);
     expect(knownMembers(parseScan, "selector")).toEqual([
@@ -2754,13 +2763,16 @@ describe("P2.4 phase-aware sacred parse subscription topology", () => {
       "notesParseStep",
       "specParseStep",
     ]);
-    const drawingScan = expectFailClosedOwnerScan(source, RESIDUAL_DRAWING_DESCRIPTOR);
-    expect(knownMembers(drawingScan, "selector")).toEqual([
+    expect(primitiveSelectorMembers(source, TOOL_OWNER).filter((member) =>
+      DRAWING_KEYS.some((drawingKey) => drawingKey === member),
+    )).toEqual([
       "_drawing",
       "_drawStart",
       "_drawEnd",
       "_mousePos",
     ]);
+    expect([...importedLocalNames(source, [VIEWER_OWNER.module], VIEWER_OWNER.exportName)])
+      .toEqual([]);
     expect(importedCalls(source, [ACTIVE_PARSE_OWNER.module], "useTableParse"))
       .toHaveLength(0);
     expect(importedCalls(source, [ACTIVE_PARSE_OWNER.module], "useKeynoteParse"))
@@ -3154,8 +3166,8 @@ describe("P2.4 phase-aware shared owner-oracle integration", () => {
         `${finding.fileName}:${finding.line}:${finding.column} ${formatStoreOwnerFinding(finding)}`),
       ...findingLabels(result),
     ])).toEqual([]);
-    // The sole S2 exception exists only because this topology file deliberately snapshots the
-    // residual owner to prove runtime absence. It may never hide a statically known parse access.
+    // S2 exceptions exist only because these topology/runtime suites deliberately snapshot the
+    // residual owner to prove runtime absence. They may never hide a statically known parse access.
     expect(allowed.flatMap(({ result }) => result.known.map((finding) =>
       `${finding.fileName}:${finding.line}:${finding.column} ${formatStoreOwnerFinding(finding)}`,
     ))).toEqual([]);

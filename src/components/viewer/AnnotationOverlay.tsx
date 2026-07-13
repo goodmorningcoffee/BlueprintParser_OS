@@ -20,7 +20,6 @@ import {
   useYoloTagActions,
   useYoloTagsForPage,
 } from "@/queries/useYoloTags";
-import { useViewerStore } from "@/stores/viewerStore";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import {
   advanceCalibrationGesture,
@@ -250,7 +249,7 @@ export default memo(function AnnotationOverlay({
 
   // Drawing state lives in Zustand store — AnnotationOverlay does NOT subscribe.
   // Use getState() for reads AND writes in event handlers. DrawingPreviewLayer subscribes independently.
-  const { _setDrawing: setDrawing, _setDrawStart: setDrawStart, _setDrawEnd: setDrawEnd, _setMousePos: setMousePos } = useViewerStore.getState();
+  const { _setDrawing: setDrawing, _setDrawStart: setDrawStart, _setDrawEnd: setDrawEnd, _setMousePos: setMousePos } = useToolStore.getState();
   const rafRef = useRef<number>(0);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selectedPageRef = useRef(pageNumber);
@@ -933,7 +932,7 @@ export default memo(function AnnotationOverlay({
     const cancelled = lease !== null && cancelToolTailExact(lease.token);
     if (!cancelled && drawingLeaseRef.current === lease) {
       drawingLeaseRef.current = null;
-      if (useViewerStore.getState()._drawing) setDrawing(false);
+      if (useToolStore.getState()._drawing) setDrawing(false);
     }
     if (lease) consumeToolTailAuthority(lease.token, () => {});
   }, [setDrawing]);
@@ -954,7 +953,7 @@ export default memo(function AnnotationOverlay({
     registerToolTailCancellation(token, () => {
       if (drawingLeaseRef.current !== lease) return;
       drawingLeaseRef.current = null;
-      if (useViewerStore.getState()._drawing) setDrawing(false);
+      if (useToolStore.getState()._drawing) setDrawing(false);
     });
     if (clearSelection) setSelectedId(null);
 
@@ -965,7 +964,7 @@ export default memo(function AnnotationOverlay({
       if (drawingLeaseRef.current === lease) {
         drawingLeaseRef.current = null;
         releaseToolTailCancellation(token);
-        if (useViewerStore.getState()._drawing) setDrawing(false);
+        if (useToolStore.getState()._drawing) setDrawing(false);
       }
       consumeToolTailAuthority(token, () => {});
     };
@@ -2298,7 +2297,7 @@ export default memo(function AnnotationOverlay({
         rafRef.current = requestAnimationFrame(() => setMousePos(p));
       }
       // Read drawing state from store (not subscribed — avoids parent re-render)
-      if (useViewerStore.getState()._drawing) {
+      if (useToolStore.getState()._drawing) {
         setDrawEnd(getPos(e));
         return;
       }
@@ -2419,7 +2418,7 @@ export default memo(function AnnotationOverlay({
     }
 
     // Read drawing state from store (not subscribed)
-    const { _drawing, _drawStart, _drawEnd } = useViewerStore.getState();
+    const { _drawing, _drawStart, _drawEnd } = useToolStore.getState();
     const lease = drawingLeaseRef.current;
     if (!_drawing) {
       if (drawingLeaseRef.current === lease) drawingLeaseRef.current = null;

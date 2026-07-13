@@ -13,7 +13,6 @@ import {
 } from "@/lib/parse-tool-authority";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
-import { useViewerStore } from "@/stores/viewerStore";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 import type { ClientTakeoffItem } from "@/types";
@@ -203,7 +202,7 @@ describe("DrawingPreviewLayer active-tool render budget", () => {
     expect(view.queryByRole("button", { name: "Accept" })).toBeNull();
     expect(view.queryByRole("button", { name: "Split" })).toBeNull();
 
-    act(() => useViewerStore.setState({ _drawEnd: { x: 55, y: 66 } }));
+    act(() => useToolStore.setState({ _drawEnd: { x: 55, y: 66 } }));
     expect(commits).toBe(symbolBaseline + 1);
     expect(clearRect).toHaveBeenCalledTimes(dormantCanvasBaseline + 1);
   });
@@ -288,7 +287,7 @@ describe("DrawingPreviewLayer active-tool render budget", () => {
     await act(async () => Promise.resolve());
 
     act(() => {
-      useViewerStore.setState({
+      useToolStore.setState({
         _drawing: true,
         _drawStart: { x: 10, y: 20 },
         _drawEnd: { x: 70, y: 80 },

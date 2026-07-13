@@ -25,7 +25,6 @@ import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
-import { useViewerStore } from "@/stores/viewerStore";
 import {
   navigateViewerPageUnclamped,
   resetProjectData,
@@ -145,9 +144,9 @@ function renderCanvas(): HTMLCanvasElement {
 
 function beginRectangle(canvas: HTMLCanvasElement): void {
   fireEvent.mouseDown(canvas, { clientX: 10, clientY: 10, button: 0 });
-  expect(useViewerStore.getState()._drawing).toBe(true);
+  expect(useToolStore.getState()._drawing).toBe(true);
   fireEvent.mouseMove(canvas, { clientX: 80, clientY: 80, buttons: 1 });
-  expect(useViewerStore.getState()._drawEnd).toEqual({ x: 80, y: 80 });
+  expect(useToolStore.getState()._drawEnd).toEqual({ x: 80, y: 80 });
 }
 
 function activateSymbol() {
@@ -268,6 +267,46 @@ afterEach(() => {
 });
 
 describe("AnnotationOverlay exact activation gesture ownership", () => {
+  it("coalesces polygon cursor moves into one latest-frame mouse publication", () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      const id = nextFrame;
+      nextFrame += 1;
+      frames.set(id, callback);
+      return id;
+    });
+    const cancelFrame = vi.fn((id: number) => {
+      frames.delete(id);
+    });
+    vi.stubGlobal("requestAnimationFrame", requestFrame);
+    vi.stubGlobal("cancelAnimationFrame", cancelFrame);
+    const canvas = renderCanvas();
+    act(() => useToolStore.setState({ polygonDrawingMode: "drawing", _mousePos: null }));
+    expect(useToolStore.getState().polygonDrawingMode).toBe("drawing");
+    const mousePublications: Array<{ x: number; y: number } | null> = [];
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
+      if (state._mousePos !== previous._mousePos) mousePublications.push(state._mousePos);
+    });
+
+    try {
+      fireEvent.mouseMove(canvas, { clientX: 20, clientY: 30 });
+      fireEvent.mouseMove(canvas, { clientX: 70, clientY: 80 });
+      expect(requestFrame).toHaveBeenCalledTimes(2);
+      expect(cancelFrame.mock.calls.map(([id]) => id)).toEqual([0, 1]);
+      expect(frames.size).toBe(1);
+      expect(useToolStore.getState()._mousePos).toBeNull();
+      expect(mousePublications).toEqual([]);
+
+      const callback = [...frames.values()][0];
+      act(() => callback(16));
+      expect(mousePublications).toEqual([{ x: 70, y: 80 }]);
+      expect(useToolStore.getState()._mousePos).toEqual({ x: 70, y: 80 });
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("retires displaced rectangle geometry before the next paint", async () => {
     activateSymbol();
     const canvas = renderCanvas();
@@ -277,7 +316,7 @@ describe("AnnotationOverlay exact activation gesture ownership", () => {
     await flushDeferredTail();
 
     expect(useToolStore.getState().activeTool).toBe(tagB);
-    expect(useViewerStore.getState()._drawing).toBe(false);
+    expect(useToolStore.getState()._drawing).toBe(false);
     fireEvent.mouseUp(canvas);
     expect(queryClient.getQueryData<YoloTag[]>(
       queryKeys.yoloTags.all(PUBLIC_ID),
@@ -288,7 +327,7 @@ describe("AnnotationOverlay exact activation gesture ownership", () => {
     const symbolA = activateSymbol();
     const canvas = renderCanvas();
     let admittedB = false;
-    const unsubscribe = useViewerStore.subscribe((state, previous) => {
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
       if (admittedB || !state._drawing || previous._drawing) return;
       admittedB = true;
       useToolStore.getState().setSymbolSearchActive(true);
@@ -302,7 +341,7 @@ describe("AnnotationOverlay exact activation gesture ownership", () => {
     expect(admittedB).toBe(true);
     expect(symbolB?.kind).toBe("symbolTemplate");
     expect(symbolB).not.toBe(symbolA);
-    expect(useViewerStore.getState()._drawing).toBe(false);
+    expect(useToolStore.getState()._drawing).toBe(false);
   });
 
   it("preserves reentrant gesture B admitted by A mouseup settlement", () => {
@@ -310,7 +349,7 @@ describe("AnnotationOverlay exact activation gesture ownership", () => {
     const canvas = renderCanvas();
     beginRectangle(canvas);
     let admittedB = false;
-    const unsubscribe = useViewerStore.subscribe((state, previous) => {
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
       if (admittedB || state._drawing || !previous._drawing) return;
       admittedB = true;
       useToolStore.getState().setTagAddingMode(TAG_ID);
@@ -321,7 +360,7 @@ describe("AnnotationOverlay exact activation gesture ownership", () => {
     unsubscribe();
     expect(admittedB).toBe(true);
     expect(useToolStore.getState().activeTool?.kind).toBe("tagAdd");
-    expect(useViewerStore.getState()._drawing).toBe(true);
+    expect(useToolStore.getState()._drawing).toBe(true);
 
     fireEvent.mouseMove(canvas, { clientX: 70, clientY: 70, buttons: 1 });
     fireEvent.mouseUp(canvas);
@@ -335,7 +374,7 @@ describe("AnnotationOverlay exact activation gesture ownership", () => {
     const canvas = renderCanvas();
     beginRectangle(canvas);
     let admittedB = false;
-    const unsubscribe = useViewerStore.subscribe((state, previous) => {
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
       if (admittedB || state._drawing || !previous._drawing) return;
       admittedB = true;
       useToolStore.getState().setTagAddingMode(TAG_ID);
@@ -349,7 +388,7 @@ describe("AnnotationOverlay exact activation gesture ownership", () => {
     expect(useViewerCoreStore.getState().pageNumber).toBe(PAGE_B);
     expect(useToolStore.getState().activeTool?.kind).toBe("tagAdd");
     await flushDeferredTail();
-    expect(useViewerStore.getState()._drawing).toBe(false);
+    expect(useToolStore.getState()._drawing).toBe(false);
     expect(queryClient.getQueryData<YoloTag[]>(
       queryKeys.yoloTags.all(PUBLIC_ID),
     )?.[0]?.instances).toEqual([]);

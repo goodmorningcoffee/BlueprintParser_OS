@@ -11,7 +11,8 @@ import {
 import type { ClientAnnotation, ScaleCalibrationData } from "@/types";
 
 const DATA_KEYS = [
-  "mode", "tempPanMode", "activeTool", "activeTakeoffItemId", "scaleCalibrations", "calibrationMode",
+  "mode", "tempPanMode", "activeTool", "_drawing", "_drawStart", "_drawEnd", "_mousePos",
+  "activeTakeoffItemId", "scaleCalibrations", "calibrationMode",
   "calibrationPoints", "polygonDrawingMode", "polygonVertices",
   "bucketFillPreview", "bucketFillLoading", "bucketFillError", "bucketFillTolerance",
   "bucketFillDilatePx", "bucketFillResolution", "bucketFillPendingPolygon",
@@ -25,7 +26,8 @@ const DATA_KEYS = [
 ] as const satisfies readonly (keyof ToolStoreData)[];
 
 const LEGACY_ACTION_KEYS = [
-  "setMode", "setTempPanMode", "setActiveTakeoffItemId", "setScaleCalibration",
+  "setMode", "setTempPanMode", "_setDrawing", "_setDrawStart", "_setDrawEnd", "_setMousePos",
+  "setActiveTakeoffItemId", "setScaleCalibration",
   "setCalibrationMode", "setCalibrationPoint", "resetCalibration", "setPolygonDrawingMode",
   "addPolygonVertex", "undoLastVertex", "resetPolygonDrawing", "setBucketFillActive",
   "setBucketFillPreview", "setBucketFillLoading", "setBucketFillError",
@@ -50,7 +52,8 @@ const RESET_TOUCHED_KEYS = [
 ] as const satisfies readonly (keyof ToolStoreData)[];
 
 const RESET_RETAINED_KEYS = [
-  "mode", "takeoffUndoStack", "takeoffRedoStack",
+  "mode", "_drawing", "_drawStart", "_drawEnd", "_mousePos",
+  "takeoffUndoStack", "takeoffRedoStack",
   "bucketFillPreview", "bucketFillLoading", "bucketFillError", "bucketFillTolerance",
   "bucketFillDilatePx", "bucketFillPendingPolygon", "bucketFillBarriers",
   "bucketFillBarrierMode", "barrierPendingPoint", "splitLineA",
@@ -140,8 +143,8 @@ function pickActions(state: ToolStoreState): Pick<ToolStoreState, LegacyActionKe
 
 beforeEach(restore);
 
-describe("toolStore AT2 — exact isolated contract", () => {
-  it("owns exactly 36 data fields, 43 compatibility actions, and one project-reset action", () => {
+describe("toolStore drawing-last — exact isolated contract", () => {
+  it("owns exactly 40 data fields, 47 compatibility actions, and one project-reset action", () => {
     const state = useToolStore.getState();
     const data = Object.entries(state)
       .filter(([, value]) => typeof value !== "function")
@@ -152,14 +155,14 @@ describe("toolStore AT2 — exact isolated contract", () => {
       .map(([key]) => key)
       .sort();
 
-    expect(DATA_KEYS).toHaveLength(36);
-    expect(new Set(DATA_KEYS).size).toBe(36);
-    expect(LEGACY_ACTION_KEYS).toHaveLength(43);
-    expect(new Set(LEGACY_ACTION_KEYS).size).toBe(43);
+    expect(DATA_KEYS).toHaveLength(40);
+    expect(new Set(DATA_KEYS).size).toBe(40);
+    expect(LEGACY_ACTION_KEYS).toHaveLength(47);
+    expect(new Set(LEGACY_ACTION_KEYS).size).toBe(47);
     expect(data).toEqual([...DATA_KEYS].sort());
     expect(actions).toEqual([...LEGACY_ACTION_KEYS, "resetProjectToolState"].sort());
     expect(RESET_TOUCHED_KEYS).toHaveLength(20);
-    expect(RESET_RETAINED_KEYS).toHaveLength(16);
+    expect(RESET_RETAINED_KEYS).toHaveLength(20);
     expect(sorted([...RESET_TOUCHED_KEYS, ...RESET_RETAINED_KEYS])).toEqual(sorted(DATA_KEYS));
   });
 
@@ -168,6 +171,10 @@ describe("toolStore AT2 — exact isolated contract", () => {
       mode: "move",
       tempPanMode: false,
       activeTool: null,
+      _drawing: false,
+      _drawStart: { x: 0, y: 0 },
+      _drawEnd: { x: 0, y: 0 },
+      _mousePos: null,
       activeTakeoffItemId: null,
       scaleCalibrations: {},
       calibrationMode: "idle",
@@ -213,6 +220,10 @@ interface PublicationCase {
 const PUBLICATION_CASES: readonly PublicationCase[] = [
   { name: "setMode", invoke: () => useToolStore.getState().setMode("move") },
   { name: "setTempPanMode", invoke: () => useToolStore.getState().setTempPanMode(false) },
+  { name: "_setDrawing", invoke: () => useToolStore.getState()._setDrawing(false) },
+  { name: "_setDrawStart", invoke: () => useToolStore.getState()._setDrawStart({ x: 0, y: 0 }) },
+  { name: "_setDrawEnd", invoke: () => useToolStore.getState()._setDrawEnd({ x: 0, y: 0 }) },
+  { name: "_setMousePos", invoke: () => useToolStore.getState()._setMousePos(null) },
   { name: "setActiveTakeoffItemId", invoke: () => useToolStore.getState().setActiveTakeoffItemId(null) },
   { name: "setScaleCalibration", invoke: () => useToolStore.getState().setScaleCalibration(1, CALIBRATION) },
   { name: "setCalibrationMode", invoke: () => useToolStore.getState().setCalibrationMode("idle") },
@@ -267,6 +278,31 @@ describe("toolStore AT2 — all compatibility actions", () => {
     invoke();
     expect(listener).toHaveBeenCalledTimes(1);
     unsubscribe();
+  });
+});
+
+describe("toolStore drawing-last — exact writer behavior", () => {
+  it("publishes only each drawing field and preserves supplied references", () => {
+    const start = { x: 1, y: 2 };
+    const end = { x: 3, y: 4 };
+    const mouse = { x: 5, y: 6 };
+    const before = useToolStore.getState();
+
+    before._setDrawing(true);
+    const afterDrawing = useToolStore.getState();
+    expect(changedKeys(before, afterDrawing)).toEqual(["_drawing"]);
+    afterDrawing._setDrawStart(start);
+    const afterStart = useToolStore.getState();
+    expect(changedKeys(afterDrawing, afterStart)).toEqual(["_drawStart"]);
+    expect(afterStart._drawStart).toBe(start);
+    afterStart._setDrawEnd(end);
+    const afterEnd = useToolStore.getState();
+    expect(changedKeys(afterStart, afterEnd)).toEqual(["_drawEnd"]);
+    expect(afterEnd._drawEnd).toBe(end);
+    afterEnd._setMousePos(mouse);
+    const afterMouse = useToolStore.getState();
+    expect(changedKeys(afterEnd, afterMouse)).toEqual(["_mousePos"]);
+    expect(afterMouse._mousePos).toBe(mouse);
   });
 });
 
@@ -521,7 +557,7 @@ describe("toolStore AT2 — allocation and reset policy", () => {
     unsubscribe();
   });
 
-  it("resetProjectToolState publishes once dirty, touches 20, retains 16, and keeps actions", () => {
+  it("resetProjectToolState publishes once dirty, touches 20, retains 20, and keeps actions", () => {
     const scaleCalibrations = { 3: CALIBRATION };
     const calibrationPoints = { p1: { x: 0.1, y: 0.2 } };
     const vertices = [{ x: 0.1, y: 0.2 }];
@@ -530,8 +566,12 @@ describe("toolStore AT2 — allocation and reset policy", () => {
     const redo = [SECOND_ANNOTATION];
     const dismissed = new Set(["one"]);
     const config = { ...defaultConfig(), multiScale: false, searchPages: [2, 4] };
+    const drawStart = { x: 11, y: 12 };
+    const drawEnd = { x: 13, y: 14 };
+    const mousePos = { x: 15, y: 16 };
     useToolStore.setState({
       mode: "markup", tempPanMode: true,
+      _drawing: true, _drawStart: drawStart, _drawEnd: drawEnd, _mousePos: mousePos,
       activeTool: { kind: "tagAdd", tagId: "tag-91" }, activeTakeoffItemId: 91,
       scaleCalibrations, calibrationMode: "input", calibrationPoints,
       polygonDrawingMode: "drawing", polygonVertices: vertices,
@@ -582,6 +622,10 @@ describe("toolStore AT2 — allocation and reset policy", () => {
     expect(after.polygonVertices).not.toBe(vertices);
     expect(after.dismissedSymbolMatches).not.toBe(dismissed);
     expect(after.symbolSearchConfig).not.toBe(config);
+    expect(after._drawing).toBe(true);
+    expect(after._drawStart).toBe(drawStart);
+    expect(after._drawEnd).toBe(drawEnd);
+    expect(after._mousePos).toBe(mousePos);
     unsubscribe();
   });
 

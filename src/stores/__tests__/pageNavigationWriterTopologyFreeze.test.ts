@@ -365,12 +365,12 @@ describe("A2e current-page writer ownership", () => {
     });
   }, 120_000);
 
-  it("pins Viewer -> Tool -> conditional Parse -> Core -> exact Tool closer -> operation Parse", () => {
+  it("pins drawing Tool -> page Tool -> conditional Parse -> Core -> exact Tool closer -> operation Parse", () => {
     const source = sourceOf(VIEWER_COMMANDS_FILE);
     const boundary = declaredFunction(source, "publishViewerPageBoundary");
     expect(boundary.body!.statements.map((statement) => compactText(statement, source))).toEqual([
       "invalidateToolTailAuthority();",
-      "useViewerStore.setState({ _drawing: false, _mousePos: null });",
+      "useToolStore.setState({ _drawing: false, _mousePos: null });",
       "const installedPageTool = publishToolPageExit();",
       "useParseFlowStore.setState((state) => legacyParsePageExitPatch(state) ?? state);",
       "const preCoreToolState = useToolStore.getState();",

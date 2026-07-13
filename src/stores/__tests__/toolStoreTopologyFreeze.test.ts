@@ -12,7 +12,8 @@ const VIEWER_FILE = "src/stores/viewerStore.ts";
 const TOOL_MODULE = "@/stores/toolStore";
 
 const DATA_KEYS = [
-  "mode", "tempPanMode", "activeTool", "activeTakeoffItemId", "scaleCalibrations", "calibrationMode",
+  "mode", "tempPanMode", "activeTool", "_drawing", "_drawStart", "_drawEnd", "_mousePos",
+  "activeTakeoffItemId", "scaleCalibrations", "calibrationMode",
   "calibrationPoints", "polygonDrawingMode", "polygonVertices",
   "bucketFillPreview", "bucketFillLoading", "bucketFillError", "bucketFillTolerance",
   "bucketFillDilatePx", "bucketFillResolution", "bucketFillPendingPolygon",
@@ -25,7 +26,8 @@ const DATA_KEYS = [
 ] as const;
 
 const LEGACY_ACTION_KEYS = [
-  "setMode", "setTempPanMode", "setActiveTakeoffItemId", "setScaleCalibration",
+  "setMode", "setTempPanMode", "_setDrawing", "_setDrawStart", "_setDrawEnd", "_setMousePos",
+  "setActiveTakeoffItemId", "setScaleCalibration",
   "setCalibrationMode", "setCalibrationPoint", "resetCalibration", "setPolygonDrawingMode",
   "addPolygonVertex", "undoLastVertex", "resetPolygonDrawing", "setBucketFillActive",
   "setBucketFillPreview", "setBucketFillLoading", "setBucketFillError",
@@ -82,6 +84,10 @@ const TOOL_AUTHORITY_INTENT_ACTIONS = [
   "setSymbolSearchActive",
   "clearSymbolSearch",
   "resetProjectToolState",
+] as const;
+
+const DRAWING_ACTIONS = [
+  "_setDrawing", "_setDrawStart", "_setDrawEnd", "_setMousePos",
 ] as const;
 
 function textOf(path: string): string {
@@ -207,7 +213,7 @@ describe("toolStore AT2 — atomic active-tool contract", () => {
     expect(textOf(TOOL_FILE)).not.toMatch(/@\/(?:queries|components)\//);
   });
 
-  it("declares exactly 36 data fields, 43 named compatibility actions, and one reset action", () => {
+  it("declares exactly 40 data fields, 47 named compatibility actions, and one reset action", () => {
     expect(interfaceKeys(toolSource, "ToolStoreData")).toEqual(DATA_KEYS);
     expect(interfaceKeys(toolSource, "ToolStoreActions")).toEqual([
       ...LEGACY_ACTION_KEYS,
@@ -242,6 +248,19 @@ describe("toolStore AT2 — atomic active-tool contract", () => {
       expect(publications, `${action} one preserved Zustand publication`).toHaveLength(1);
       expect(invalidations[0].getStart(toolSource), `${action} invalidates before publish`)
         .toBeLessThan(publications[0].getStart(toolSource));
+    }
+  });
+
+  it("keeps the four drawing writers one-publication and authority-neutral", () => {
+    for (const action of DRAWING_ACTIONS) {
+      const initializer = directProperty(toolObject, action).initializer;
+      const calls = descendants(initializer, ts.isCallExpression);
+      expect(calls.filter((call) =>
+        ts.isIdentifier(call.expression) && call.expression.text === "set"
+      ), `${action} one publication`).toHaveLength(1);
+      expect(calls.filter((call) =>
+        ts.isIdentifier(call.expression) && call.expression.text === "invalidateToolTailAuthority"
+      ), `${action} preserves gesture authority`).toHaveLength(0);
     }
   });
 

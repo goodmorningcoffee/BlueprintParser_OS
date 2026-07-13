@@ -229,7 +229,7 @@ function publishToolPageExitExact(expectedActiveTool: ActiveTool): void {
  */
 function publishViewerPageBoundary(installCorePage: () => void): void {
   invalidateToolTailAuthority();
-  useViewerStore.setState({ _drawing: false, _mousePos: null });
+  useToolStore.setState({ _drawing: false, _mousePos: null });
   const installedPageTool = publishToolPageExit();
   useParseFlowStore.setState((state) => legacyParsePageExitPatch(state) ?? state);
   const preCoreToolState = useToolStore.getState();

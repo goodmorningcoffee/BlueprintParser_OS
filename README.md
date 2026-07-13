@@ -489,7 +489,7 @@ PDFViewer (root — scroll, zoom, keyboard shortcuts)
 
 ### Performance Architecture
 
-**Drawing state decoupling**: `_drawing`, `_drawStart`, `_drawEnd`, `_mousePos` live in Zustand store. AnnotationOverlay writes but does NOT subscribe (uses `getState()` for reads in event handlers). Only DrawingPreviewLayer subscribes → only lightweight canvas redraws during BB drawing. The main 1500-line overlay stays frozen during mouse movement.
+**Drawing state decoupling**: `_drawing`, `_drawStart`, `_drawEnd`, `_mousePos` live in the Tool Zustand store. AnnotationOverlay writes but does NOT subscribe (uses `getState()` for reads in event handlers). Only DrawingPreviewLayer subscribes → only lightweight canvas redraws during BB drawing. The main 1500-line overlay stays frozen during mouse movement.
 
 **Event handler precedence (AnnotationOverlay)**: Strict sequential dispatch with early returns. Order matters:
 1. Calibration mode → place points
@@ -505,7 +505,7 @@ PDFViewer (root — scroll, zoom, keyboard shortcuts)
 
 ### Zustand Store
 
-Viewer state is split into explicit owners: `sessionStore` owns project identity/demo/page-label/labeling-session metadata; `uiStore` owns presentation state; `viewerCoreStore` owns page navigation, zoom, and page dimensions; `toolStore` owns interaction mode, calibration, takeoff placement, bucket/split/tag/symbol sessions, and tool history; server collections use publicId-keyed Query facades. The residual `viewerStore` temporarily owns parse flows, mutable server drafts/metadata, and the quarantined drawing cursor. Prefer the domain hook or leaf store over direct cross-domain field access; cross-owner behavior belongs in `viewerCommands`.
+Viewer state is split into explicit owners: `sessionStore` owns project identity/demo/page-label/labeling-session metadata; `uiStore` owns presentation state; `viewerCoreStore` owns page navigation, zoom, and page dimensions; `toolStore` owns interaction mode, the drawing cursor, calibration, takeoff placement, bucket/split/tag/symbol sessions, and tool history; `parseFlowStore` owns parse workflows; server collections use publicId-keyed Query facades. The residual `viewerStore` temporarily owns mutable project drafts/metadata. Prefer the domain hook or leaf store over direct cross-domain field access; cross-owner behavior belongs in `viewerCommands`.
 
 ---
 

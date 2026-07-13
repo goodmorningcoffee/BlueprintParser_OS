@@ -15,7 +15,6 @@ import {
 } from "@/lib/parse-tool-authority";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
-import { useViewerStore } from "@/stores/viewerStore";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
 import { seedAnnotations } from "@/test/seed-annotations";
@@ -146,7 +145,7 @@ describe("AnnotationOverlay active-tool render budget", () => {
     }));
     expect(commits).toBe(symbolBaseline);
 
-    act(() => useViewerStore.setState({ _drawEnd: { x: 77, y: 88 } }));
+    act(() => useToolStore.setState({ _drawEnd: { x: 77, y: 88 } }));
     expect(commits).toBe(symbolBaseline);
 
     act(() => useToolStore.getState().setTagAddingMode("tag-A"));

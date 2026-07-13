@@ -1,5 +1,5 @@
-/** Viewer client-state access map. Session, presentation, viewport geometry, tools, and parsing
- *  have dedicated Zustand leaves; residual metadata/drawing remains in viewerStore while
+/** Viewer client-state access map. Session, presentation, viewport geometry, tools (including
+ *  drawing), and parsing have dedicated Zustand leaves; residual metadata/drafts remain in viewerStore while
  *  server-owned collections sit behind project-keyed Query facades. Keeping every ownership
  *  family visible here prevents future features from reaching around their domain's public API. */
 const SLICES = [
@@ -13,7 +13,7 @@ const SLICES = [
   // [refactor jul11 P2.2⑥] Flat chunk-windowed annotation data + CRUD moved to the facade;
   // focus/selection/visibility/tool history remain zustand-owned.
   { name: "useAnnotations",          line: 308,  purpose: "→ src/queries facade (P2.2⑥): annotations in query cache; UI/tool state stays zustand" },
-  { name: "useDrawingState",         line: 114,  purpose: "→ residual viewerStore: quarantined drawing cursor" },
+  { name: "useDrawingState",         line: 594,  purpose: "→ toolStore: exact legacy drawing cursor surface (production-dead compatibility hook)" },
   { name: "useSymbolSearch",         line: 439,  purpose: "→ toolStore: exact legacy symbol session surface" },
   { name: "useChatMessages",         line: 46,   purpose: "→ Query facade: messages; chatScope stays in uiStore" },
   { name: "useTableParse",           line: 395,  purpose: "→ parseFlowStore: step, region, grid, col/row BBs" },

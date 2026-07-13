@@ -13,6 +13,7 @@ import {
   CORE_TEST_STATE_KEYS,
   partitionViewerStoreTestState,
   setViewerStoreStateForTest,
+  TOOL_TEST_ACTION_KEYS,
   TOOL_TEST_STATE_KEYS,
   UI_TEST_STATE_KEYS,
 } from "@/test/viewer-store-state";
@@ -91,6 +92,10 @@ const TOOL_FIELDS = [
   "mode",
   "tempPanMode",
   "activeTool",
+  "_drawing",
+  "_drawStart",
+  "_drawEnd",
+  "_mousePos",
   "activeTakeoffItemId",
   "scaleCalibrations",
   "calibrationMode",
@@ -305,10 +310,17 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       "pageDimensions",
     ]);
     expect(TOOL_TEST_STATE_KEYS).toEqual(TOOL_FIELDS);
+    expect(TOOL_TEST_ACTION_KEYS).toEqual([
+      "_setDrawing", "_setDrawStart", "_setDrawEnd", "_setMousePos",
+    ]);
     const toolPatch = {
       mode: "markup",
       tempPanMode: true,
       activeTool: { kind: "tagAdd", tagId: "tag-fixture" },
+      _drawing: true,
+      _drawStart: { x: 11, y: 12 },
+      _drawEnd: { x: 13, y: 14 },
+      _mousePos: { x: 15, y: 16 },
       activeTakeoffItemId: 41,
       scaleCalibrations: {},
       calibrationMode: "point1",
@@ -387,6 +399,15 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       tool: toolPatch,
       parse: { tableParseStep: "review" },
       viewer: { allTrades: ["Concrete"] },
+    });
+    const drawingOverride = () => undefined;
+    expect(partitionViewerStoreTestState({ _setDrawing: drawingOverride })).toEqual({
+      session: {},
+      ui: {},
+      core: {},
+      tool: { _setDrawing: drawingOverride },
+      parse: {},
+      viewer: {},
     });
 
     const publications: string[] = [];

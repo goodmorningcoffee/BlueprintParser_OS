@@ -40,7 +40,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   const [drawing, setDrawing] = useState(false);
 
   // Tear down local hook state when the user switches projects. The neutral resetProjectData
-  // coordinator clears the shared residual fields (tableParseStep,
+  // coordinator clears the shared leaf-store fields (tableParseStep,
   // activeTool discriminator, etc.) but cannot reach React useState owned by this
   // hook, so DetectionPanel staying mounted across a project switch caused the
   // prior project's drawn BB + drawing flag to bleed into the next project.

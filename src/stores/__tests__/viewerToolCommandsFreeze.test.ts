@@ -818,7 +818,7 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
     expect(startText).toContain("drawingLeaseRef.current=lease");
     expect(startText).toContain("registerToolTailCancellation(token,()=>{");
     expect(startText).toContain(
-      "if(drawingLeaseRef.current!==lease)return;drawingLeaseRef.current=null;if(useViewerStore.getState()._drawing)setDrawing(false)",
+      "if(drawingLeaseRef.current!==lease)return;drawingLeaseRef.current=null;if(useToolStore.getState()._drawing)setDrawing(false)",
     );
     expect(startText).toContain(
       "conststillOwnsLease=()=>drawingLeaseRef.current===lease&&ownsToolTailAuthority(token)&&matchesCanvasGestureLease(lease,readCanvasGestureSnapshot())",
@@ -989,7 +989,7 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
     });
     expect(directCalls).toEqual([
       "invalidateToolTailAuthority",
-      "useViewerStore.setState",
+      "useToolStore.setState",
       "useParseFlowStore.setState",
       "invalidateToolTailAuthority",
       "installCorePage",

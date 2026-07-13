@@ -49,6 +49,10 @@ const TOOL_CONTRACT = {
       "resetProjectToolState",
     ],
   },
+  _drawing: { default: "false", actions: ["_setDrawing"] },
+  _drawStart: { default: "{x:0,y:0}", actions: ["_setDrawStart"] },
+  _drawEnd: { default: "{x:0,y:0}", actions: ["_setDrawEnd"] },
+  _mousePos: { default: "null", actions: ["_setMousePos"] },
   activeTakeoffItemId: { default: "null", actions: ["setActiveTakeoffItemId"] },
   scaleCalibrations: { default: "{}", actions: ["setScaleCalibration"] },
   calibrationMode: { default: '"idle"', actions: ["setCalibrationMode", "resetCalibration"] },
@@ -91,7 +95,8 @@ const TOOL_CONTRACT = {
 } as const satisfies Record<string, FieldContract>;
 
 const TOOL_ACTIONS = [
-  "setMode", "setTempPanMode", "setActiveTakeoffItemId", "setScaleCalibration",
+  "setMode", "setTempPanMode", "_setDrawing", "_setDrawStart", "_setDrawEnd", "_setMousePos",
+  "setActiveTakeoffItemId", "setScaleCalibration",
   "setCalibrationMode", "setCalibrationPoint", "resetCalibration", "setPolygonDrawingMode",
   "addPolygonVertex", "undoLastVertex", "resetPolygonDrawing", "setBucketFillActive",
   "setBucketFillPreview", "setBucketFillLoading", "setBucketFillError", "setBucketFillTolerance",
@@ -143,7 +148,6 @@ const BOUNDARY_EXCLUSIONS = {
     "notesFastManualActive", "notesFastManualGrid",
   ],
   neutralReset: ["resetAllTools"],
-  drawingQuarantine: [...DRAWING_DATA, ...DRAWING_ACTIONS],
 } as const;
 
 const SYMBOL_HOOK_SHAPE = [
@@ -855,10 +859,10 @@ describe("P2.3 T2 flat tool ownership", () => {
   ];
   const toolObject = findStoreObject(toolSource, "useToolStore");
 
-  it("pins exactly 36 data fields, 43 commands plus one reset, and the active sole owner", () => {
-    expect(Object.keys(TOOL_CONTRACT)).toHaveLength(36);
-    expect(TOOL_ACTIONS).toHaveLength(44);
-    expect(new Set(TOOL_ACTIONS).size).toBe(44);
+  it("pins exactly 40 data fields, 47 commands plus one reset, and the active sole owner", () => {
+    expect(Object.keys(TOOL_CONTRACT)).toHaveLength(40);
+    expect(TOOL_ACTIONS).toHaveLength(48);
+    expect(new Set(TOOL_ACTIONS).size).toBe(48);
 
     for (const [field, contract] of Object.entries(TOOL_CONTRACT)) {
       expect(toolInterfaceKeys, `${field} active interface owner`).toContain(field);
@@ -891,7 +895,6 @@ describe("P2.3 T2 flat tool ownership", () => {
     const viewerOwned = [
       ...BOUNDARY_EXCLUSIONS.serverMetadata,
       ...BOUNDARY_EXCLUSIONS.mutableServerDraft,
-      ...BOUNDARY_EXCLUSIONS.drawingQuarantine,
     ];
     for (const member of viewerOwned) {
       expect(viewerInterfaceKeys, `${member} remains residual viewer-owned`).toContain(member);
@@ -957,9 +960,9 @@ describe("P2.3 T2 grouped tool surfaces", () => {
 
   it("keeps useDrawingState production-dead", () => {
     expect(callTopology("useDrawingState")).toEqual({});
-    expect(hookShape("useDrawingState", "_drawing", VIEWER_STORE_FILE)).toEqual([
-      "_drawing", "_drawStart", "_drawEnd", "_mousePos",
-      "_setDrawing", "_setDrawStart", "_setDrawEnd", "_setMousePos",
+    expect(hookShape("useDrawingState", "_drawing", TOOL_STORE_FILE)).toEqual([
+      ...DRAWING_DATA,
+      ...DRAWING_ACTIONS,
     ]);
   });
 });
@@ -976,16 +979,19 @@ describe("P2.3 T2 sacred canvas subscription topology", () => {
     )).toBe(1);
   });
 
-  it("pins DrawingPreviewLayer's 4 drawing + 17 tool + one hot key + 4 parse split", () => {
+  it("pins DrawingPreviewLayer's 21 Tool primitives + one hot key + 4 parse split", () => {
     const source = parse(DRAWING_PREVIEW);
     const toolRaw = primitiveSelectorMembers(source, ACTIVE_TOOL_OWNER);
     const viewerRaw = primitiveSelectorMembers(source, VIEWER_OWNER);
     const parseRaw = primitiveSelectorMembers(source, PARSE_OWNER);
-    expect(toolRaw.filter((member) => TOOL_MEMBERS.has(member))).toEqual(PREVIEW_TOOL_PRIMITIVES);
+    expect(toolRaw.filter((member) => TOOL_MEMBERS.has(member))).toEqual([
+      ...DRAWING_DATA,
+      ...PREVIEW_TOOL_PRIMITIVES,
+    ]);
     expect(importedSelectorUseCount(
       source, ACTIVE_TOOL_OWNER, ACTIVE_TOOL_STATE_MODULE, "selectActiveToolKey",
     )).toBe(1);
-    expect(viewerRaw).toEqual(DRAWING_DATA);
+    expect(viewerRaw).toEqual([]);
     expect(parseRaw).toEqual(PREVIEW_PARSE_DATA);
     expect(importedCallCount(source, ["@/stores/uiStore"], "useUiStore")).toBe(0);
 

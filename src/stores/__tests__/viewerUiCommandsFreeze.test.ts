@@ -80,11 +80,18 @@ function yoloTag(id: string, instances: YoloTag["instances"] = []): YoloTag {
 
 describe("viewer UI command freeze — project reset", () => {
   it("publishes session -> UI -> core -> tool -> parse -> residual viewer synchronously", () => {
+    const drawStart = { x: 11, y: 12 };
+    const drawEnd = { x: 13, y: 14 };
+    const mousePos = { x: 15, y: 16 };
     setViewerStoreStateForTest({
       publicId: "old-project",
       searchQuery: "needle",
       pageNumber: 7,
       mode: "markup",
+      _drawing: true,
+      _drawStart: drawStart,
+      _drawEnd: drawEnd,
+      _mousePos: mousePos,
     });
     const publications: string[] = [];
     const unsubscribeSession = useSessionStore.subscribe(() => publications.push("session"));
@@ -102,6 +109,12 @@ describe("viewer UI command freeze — project reset", () => {
     expect(useViewerCoreStore.getState().pageNumber).toBe(1);
     // Project reset deliberately retains interaction mode until P2.5 decides survival policy.
     expect(useToolStore.getState().mode).toBe("markup");
+    // Drawing is the other deliberate Tool survivor: project reset does not synthesize a gesture
+    // boundary, and it preserves all coordinate identities in the raw dormant snapshot.
+    expect(useToolStore.getState()._drawing).toBe(true);
+    expect(useToolStore.getState()._drawStart).toBe(drawStart);
+    expect(useToolStore.getState()._drawEnd).toBe(drawEnd);
+    expect(useToolStore.getState()._mousePos).toBe(mousePos);
     unsubscribeSession();
     unsubscribeUi();
     unsubscribeCore();
