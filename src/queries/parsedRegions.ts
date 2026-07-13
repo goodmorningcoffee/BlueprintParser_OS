@@ -68,19 +68,168 @@ function isNonArrayObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+const PARSED_REGION_TYPES = new Set(["schedule", "keynote", "legend", "notes", "spec"]);
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNumberArray(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every(isFiniteNumber);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function isCsiTagPayload(value: unknown): boolean {
+  return isNonArrayObject(value) &&
+    typeof value.code === "string" &&
+    typeof value.description === "string";
+}
+
+function isParsedRegionPayload(value: unknown): value is Record<string, unknown> {
+  if (!isNonArrayObject(value)) return false;
+  if (
+    typeof value.id !== "string" || value.id.length === 0 ||
+    typeof value.type !== "string" || !PARSED_REGION_TYPES.has(value.type) ||
+    typeof value.category !== "string" ||
+    !Array.isArray(value.bbox) || value.bbox.length !== 4 || !value.bbox.every(isFiniteNumber) ||
+    !isFiniteNumber(value.confidence) ||
+    !isNonArrayObject(value.data) ||
+    (value.source !== undefined && value.source !== "user" && value.source !== "auto-detected") ||
+    (value.sourceTextRegionId !== undefined && typeof value.sourceTextRegionId !== "string")
+  ) {
+    return false;
+  }
+  return value.csiTags === undefined || (
+    Array.isArray(value.csiTags) && value.csiTags.every(isCsiTagPayload)
+  );
+}
+
+/** Compare JSON response values without depending on object-property insertion order. */
+function isJsonEquivalent(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((entry, index) => isJsonEquivalent(entry, right[index]));
+  }
+  if (!isNonArrayObject(left) || !isNonArrayObject(right)) return false;
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length &&
+    leftKeys.every((key, index) =>
+      key === rightKeys[index] && isJsonEquivalent(left[key], right[key]));
+}
+
+function isRecordOf(
+  value: unknown,
+  predicate: (entry: unknown) => boolean,
+): value is Record<string, unknown> {
+  return isNonArrayObject(value) && Object.values(value).every(predicate);
+}
+
+function hasValidSummaryOptionals(value: Record<string, unknown>): boolean {
+  return (
+    (value.pageName === undefined || typeof value.pageName === "string") &&
+    (value.drawingNumber === undefined || value.drawingNumber === null ||
+      typeof value.drawingNumber === "string") &&
+    (value.headerText === undefined || typeof value.headerText === "string") &&
+    (value.tier1 === undefined || typeof value.tier1 === "string") &&
+    (value.tier2 === undefined || typeof value.tier2 === "string") &&
+    (value.csiTags === undefined || (
+      Array.isArray(value.csiTags) && value.csiTags.every(isCsiTagPayload)
+    )) &&
+    (value.bbox === undefined || (
+      Array.isArray(value.bbox) && value.bbox.length === 4 && value.bbox.every(isFiniteNumber)
+    )) &&
+    (value.regionId === undefined || typeof value.regionId === "string")
+  );
+}
+
+function isNotesSummaryPayload(value: unknown): boolean {
+  return isNonArrayObject(value) &&
+    isFiniteNumber(value.pageNum) &&
+    (value.type === "notes-numbered" || value.type === "notes-key-value") &&
+    isFiniteNumber(value.confidence) &&
+    (value.trade === undefined || typeof value.trade === "string") &&
+    (value.rowCount === undefined || isFiniteNumber(value.rowCount)) &&
+    hasValidSummaryOptionals(value);
+}
+
+function isSpecSummaryPayload(value: unknown): boolean {
+  return isNonArrayObject(value) &&
+    isFiniteNumber(value.pageNum) &&
+    isFiniteNumber(value.confidence) &&
+    (value.wordCount === undefined || isFiniteNumber(value.wordCount)) &&
+    hasValidSummaryOptionals(value);
+}
+
+function isProjectSummariesPayload(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false;
+  const annotationSummary = value.annotationSummary;
+  if (!isNonArrayObject(annotationSummary)) return false;
+
+  return (
+    Array.isArray(value.schedules) && value.schedules.every((entry) =>
+      isNonArrayObject(entry) && isFiniteNumber(entry.pageNum) &&
+      typeof entry.category === "string" && typeof entry.name === "string" &&
+      isFiniteNumber(entry.confidence)) &&
+    Array.isArray(value.parsedTables) && value.parsedTables.every((entry) =>
+      isNonArrayObject(entry) && isFiniteNumber(entry.pageNum) &&
+      typeof entry.name === "string" && typeof entry.category === "string" &&
+      isFiniteNumber(entry.rowCount) && isFiniteNumber(entry.colCount)) &&
+    Array.isArray(value.keynoteTablePages) && value.keynoteTablePages.every((entry) =>
+      isNonArrayObject(entry) && isFiniteNumber(entry.pageNum) &&
+    isFiniteNumber(entry.confidence)) &&
+    (value.notesRegions === undefined || (
+      Array.isArray(value.notesRegions) && value.notesRegions.every(isNotesSummaryPayload)
+    )) &&
+    (value.specRegions === undefined || (
+      Array.isArray(value.specRegions) && value.specRegions.every(isSpecSummaryPayload)
+    )) &&
+    isRecordOf(value.csiPageIndex, isNumberArray) &&
+    isRecordOf(value.tradePageIndex, isNumberArray) &&
+    isRecordOf(value.keynotePageIndex, isNumberArray) &&
+    isRecordOf(value.textAnnotationPageIndex, isNumberArray) &&
+    isRecordOf(value.pageClassifications, (entry) =>
+      isNonArrayObject(entry) && typeof entry.discipline === "string" &&
+      typeof entry.prefix === "string") &&
+    isStringArray(annotationSummary.modelNames) &&
+    isRecordOf(annotationSummary.categoryCounts, (entry) =>
+      isNonArrayObject(entry) && isFiniteNumber(entry.count) && isNumberArray(entry.pages)) &&
+    isRecordOf(annotationSummary.pageAnnotationCounts, (entry) =>
+      isNonArrayObject(entry) && isFiniteNumber(entry.yolo) &&
+      isFiniteNumber(entry.user) && isFiniteNumber(entry.takeoff)) &&
+    isRecordOf(value.takeoffTotals, (entry) =>
+      isNonArrayObject(entry) && isFiniteNumber(entry.count) &&
+      isFiniteNumber(entry.totalArea) && isNumberArray(entry.pages)) &&
+    isStringArray(value.allTrades) &&
+    Array.isArray(value.allCsiCodes) && value.allCsiCodes.every((entry) =>
+      isNonArrayObject(entry) && typeof entry.code === "string" &&
+      typeof entry.description === "string")
+  );
+}
+
 function assertPromotionResponse(
   response: unknown,
 ): asserts response is PromoteParsedRegionResponse {
   const updatedIntelligence = isNonArrayObject(response)
     ? response.updatedIntelligence
     : null;
+  const parsedRegions = isNonArrayObject(updatedIntelligence)
+    ? updatedIntelligence.parsedRegions
+    : null;
   if (
     !isNonArrayObject(response) ||
     response.ok !== true ||
-    !isNonArrayObject(response.parsedRegion) ||
+    !isParsedRegionPayload(response.parsedRegion) ||
     !isNonArrayObject(updatedIntelligence) ||
-    !Array.isArray(updatedIntelligence.parsedRegions) ||
-    (response.summaries !== null && !isNonArrayObject(response.summaries))
+    !Array.isArray(parsedRegions) ||
+    !parsedRegions.every(isParsedRegionPayload) ||
+    !parsedRegions.some((region) => isJsonEquivalent(region, response.parsedRegion)) ||
+    (response.summaries !== null && !isProjectSummariesPayload(response.summaries))
   ) {
     throw new Error("Malformed parsed-region promotion response");
   }
@@ -102,7 +251,8 @@ function assertDeletionResponse(
     !isNonArrayObject(updatedIntelligence) ||
     (parsedRegions !== undefined && !Array.isArray(parsedRegions)) ||
     (response.deleted && !Array.isArray(parsedRegions)) ||
-    (response.summaries !== null && !isNonArrayObject(response.summaries))
+    (Array.isArray(parsedRegions) && !parsedRegions.every(isParsedRegionPayload)) ||
+    (response.summaries !== null && !isProjectSummariesPayload(response.summaries))
   ) {
     throw new Error("Malformed parsed-region deletion response");
   }

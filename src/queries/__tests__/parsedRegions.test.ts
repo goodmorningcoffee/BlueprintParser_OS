@@ -51,7 +51,24 @@ function promotedRegion(overrides: Partial<PromotedParsedRegion> = {}): Promoted
 }
 
 function summaries(label: string): ProjectSummaries {
-  return { label } as unknown as ProjectSummaries;
+  return {
+    schedules: [],
+    parsedTables: [],
+    keynoteTablePages: [],
+    csiPageIndex: {},
+    tradePageIndex: {},
+    keynotePageIndex: {},
+    textAnnotationPageIndex: {},
+    pageClassifications: {},
+    annotationSummary: {
+      modelNames: [],
+      categoryCounts: {},
+      pageAnnotationCounts: {},
+    },
+    takeoffTotals: {},
+    allTrades: [label],
+    allCsiCodes: [],
+  };
 }
 
 function promotionResponse(args: {
@@ -281,6 +298,7 @@ describe("saveParsedRegion persistent command", () => {
       { ok: false, parsedRegion: region, updatedIntelligence: { parsedRegions: [] }, summaries: null },
       { ok: true, parsedRegion: null, updatedIntelligence: { parsedRegions: [] }, summaries: null },
       { ok: true, parsedRegion: [], updatedIntelligence: { parsedRegions: [] }, summaries: null },
+      { ok: true, parsedRegion: {}, updatedIntelligence: { parsedRegions: [{}] }, summaries: null },
       { ok: true, parsedRegion: region, updatedIntelligence: null, summaries: null },
       { ok: true, parsedRegion: region, updatedIntelligence: [], summaries: null },
       { ok: true, parsedRegion: region, updatedIntelligence: {}, summaries: null },
@@ -289,6 +307,41 @@ describe("saveParsedRegion persistent command", () => {
         parsedRegion: region,
         updatedIntelligence: { parsedRegions: "corrupt" },
         summaries: null,
+      },
+      { ok: true, parsedRegion: region, updatedIntelligence: { parsedRegions: [null] }, summaries: null },
+      {
+        ok: true,
+        parsedRegion: region,
+        updatedIntelligence: { parsedRegions: [{ ...region, bbox: [0, 0, null, 1] }] },
+        summaries: null,
+      },
+      {
+        ok: true,
+        parsedRegion: region,
+        updatedIntelligence: { parsedRegions: [{ ...region, category: "mismatched-row" }] },
+        summaries: null,
+      },
+      { ok: true, parsedRegion: region, updatedIntelligence: { parsedRegions: [region] }, summaries: {} },
+      {
+        ok: true,
+        parsedRegion: region,
+        updatedIntelligence: { parsedRegions: [region] },
+        summaries: { ...summaries("bad"), allTrades: [null] },
+      },
+      {
+        ok: true,
+        parsedRegion: region,
+        updatedIntelligence: { parsedRegions: [region] },
+        summaries: { ...summaries("bad-notes"), notesRegions: [{}] },
+      },
+      {
+        ok: true,
+        parsedRegion: region,
+        updatedIntelligence: { parsedRegions: [region] },
+        summaries: {
+          ...summaries("bad-spec"),
+          specRegions: [{ pageNum: "bad", confidence: 0.8 }],
+        },
       },
       { ok: true, parsedRegion: region, updatedIntelligence: { parsedRegions: [] } },
       { ok: true, parsedRegion: region, updatedIntelligence: { parsedRegions: [] }, summaries: [] },
@@ -567,9 +620,18 @@ describe("deleteParsedRegion persistent command", () => {
       { ok: true, deleted: true, updatedIntelligence: {}, summaries: null },
       { ok: true, deleted: false, updatedIntelligence: { parsedRegions: "corrupt" }, summaries: null },
       { ok: true, deleted: true, updatedIntelligence: { parsedRegions: "corrupt" }, summaries: null },
+      { ok: true, deleted: false, updatedIntelligence: { parsedRegions: [null] }, summaries: null },
+      { ok: true, deleted: true, updatedIntelligence: { parsedRegions: [null] }, summaries: null },
       { ok: true, deleted: false, updatedIntelligence: {} },
       { ok: true, deleted: true, updatedIntelligence: {} },
       { ok: true, deleted: true, updatedIntelligence: {}, summaries: [] },
+      { ok: true, deleted: false, updatedIntelligence: {}, summaries: {} },
+      {
+        ok: true,
+        deleted: false,
+        updatedIntelligence: {},
+        summaries: { ...summaries("bad-delete"), takeoffTotals: { 1: { count: "bad" } } },
+      },
     ];
     for (const malformed of malformedSuccesses) {
       deleteMock.mockResolvedValueOnce(
