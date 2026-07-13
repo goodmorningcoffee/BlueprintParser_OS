@@ -105,9 +105,39 @@ export default async function globalSetup() {
        SELECT $1, n, 'Page ' || n FROM generate_series(1, $2::int) n`,
       [demoProjectId, E2E.pages],
     );
+    await pool.query(
+      `UPDATE pages
+       SET page_intelligence = $2::jsonb
+       WHERE project_id = $1 AND page_number = 1`,
+      [demoProjectId, JSON.stringify({
+        parsedRegions: [{
+          id: "e2e-demo-retained-schedule",
+          type: "schedule",
+          category: "door-schedule",
+          bbox: [0.1, 0.1, 0.8, 0.35],
+          confidence: 0.85,
+          source: "user",
+          csiTags: [],
+          data: {
+            headers: ["TAG", "DESCRIPTION"],
+            rows: [{ TAG: "D-201", DESCRIPTION: "Demo door" }],
+            tagColumn: "TAG",
+            tableName: "E2E Demo Door Schedule",
+            rowCount: 1,
+            columnCount: 2,
+          },
+        }],
+      })],
+    );
 
     mkdirSync("e2e/.state", { recursive: true });
-    writeFileSync("e2e/.state/world.json", JSON.stringify({ publicId, demoPublicId, ...E2E }, null, 2));
+    writeFileSync("e2e/.state/world.json", JSON.stringify({
+      publicId,
+      projectDbId: projectId,
+      demoPublicId,
+      demoProjectDbId: demoProjectId,
+      ...E2E,
+    }, null, 2));
     console.log(`[e2e-setup] world ready: project ${publicId} + demo ${demoPublicId} (${E2E.pages} pages each)`);
   } finally {
     await pool.end();
