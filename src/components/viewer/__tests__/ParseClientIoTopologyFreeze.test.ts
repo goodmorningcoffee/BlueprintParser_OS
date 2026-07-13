@@ -804,7 +804,11 @@ class SourceBindings {
     return null;
   }
 
-  staticEndpoint(expression: ts.Expression, seen = new Set<ts.Node>()): StaticEndpoint | null {
+  staticEndpoint(
+    expression: ts.Expression,
+    seen = new Set<ts.Node>(),
+    allowDynamicFragment = false,
+  ): StaticEndpoint | null {
     const current = unwrap(expression);
     if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
       return { pattern: current.text, interpolations: [] };
@@ -823,8 +827,8 @@ class SourceBindings {
       ts.isBinaryExpression(current) &&
       current.operatorToken.kind === ts.SyntaxKind.PlusToken
     ) {
-      const left = this.staticEndpoint(current.left, seen);
-      const right = this.staticEndpoint(current.right, seen);
+      const left = this.staticEndpoint(current.left, seen, true);
+      const right = this.staticEndpoint(current.right, seen, true);
       return left === null || right === null
         ? null
         : {
@@ -838,10 +842,16 @@ class SourceBindings {
         return this.staticEndpoint(
           binding.initializer,
           new Set(seen).add(binding.declaration),
+          allowDynamicFragment,
         );
       }
     }
-    return null;
+    return allowDynamicFragment
+      ? {
+          pattern: "${}",
+          interpolations: [current.getText(this.source).replace(/\s+/g, "")],
+        }
+      : null;
   }
 }
 
@@ -959,19 +969,6 @@ function provenanceLabel(provenance: Provenance | null, fallback: string): strin
   return `local:${fallback}`;
 }
 
-function candidateFile(file: string): boolean {
-  const text = textOf(file);
-  return (
-    text.includes("client-persist") ||
-    text.includes("regions/promote") ||
-    text.includes("map-tags-batch") ||
-    // Keep the future owners inside the scan when the strict phase expectations flip at C2/C3.
-    text.includes("queries/parsedRegions") ||
-    text.includes("client-map-tags") ||
-    text.includes("requestMapTagsBatch")
-  );
-}
-
 function callRecordsFromSource(file: string, source: ts.SourceFile): CallRecord[] {
   const bindings = new SourceBindings(source);
   return descendants(
@@ -987,13 +984,17 @@ function callRecordsFromSource(file: string, source: ts.SourceFile): CallRecord[
   }));
 }
 
-function callRecords(file: string): CallRecord[] {
-  return callRecordsFromSource(file, parse(file));
+function collectCallRecords(
+  files: readonly string[],
+  load: (file: string) => ts.SourceFile = parse,
+): CallRecord[] {
+  return files.flatMap((file) => callRecordsFromSource(file, load(file)));
 }
 
-const allCalls = productionFiles()
-  .filter(candidateFile)
-  .flatMap(callRecords);
+// Scan the complete production corpus. A text prefilter is unsafe here: the exact endpoint/helper
+// strings are themselves what this oracle must reject when they reappear in a previously unrelated
+// file, including split literals and URLs with runtime path fragments.
+const allCalls = collectCallRecords(productionFiles());
 
 function isImported(
   record: CallRecord,
@@ -1564,6 +1565,60 @@ describe("P2.4 C3 parse client-I/O topology", () => {
       .sort()).toEqual([
       "shadowedFetchOwner:shadowProject",
       "unrelatedLocalAliasOwner:localProject",
+    ]);
+  });
+
+  it("scans every corpus file and preserves runtime fragments in concatenated endpoints", () => {
+    const virtualSources = new Map<string, string>([
+      ["previously-unrelated-delete.ts", `
+        export function duplicateDelete() {
+          return fetch("/api/regions", { method: "DELETE" });
+        }
+      `],
+      ["split-promotion.ts", `
+        export function duplicatePromotion() {
+          return fetch("/api/regions" + "/promote", { method: "POST" });
+        }
+      `],
+      ["dynamic-map.ts", `
+        export function duplicateMap(publicId: string) {
+          return fetch("/api/projects/" + publicId + "/map-tags-batch");
+        }
+      `],
+    ]);
+    const records = collectCallRecords([...virtualSources.keys()], (file) =>
+      ts.createSourceFile(
+        file,
+        virtualSources.get(file)!,
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TS,
+      ));
+    const endpointCalls = records
+      .filter((record) => record.provenance?.kind === "global" && record.endpoint !== null)
+      .map((record) => ({
+        file: record.file,
+        pattern: record.endpoint!.pattern,
+        interpolations: record.endpoint!.interpolations,
+      }))
+      .sort((left, right) => left.file.localeCompare(right.file));
+
+    expect(endpointCalls).toEqual([
+      {
+        file: "dynamic-map.ts",
+        pattern: MAP_TAGS_ENDPOINT,
+        interpolations: ["publicId"],
+      },
+      {
+        file: "previously-unrelated-delete.ts",
+        pattern: DELETE_ENDPOINT,
+        interpolations: [],
+      },
+      {
+        file: "split-promotion.ts",
+        pattern: PROMOTE_ENDPOINT,
+        interpolations: [],
+      },
     ]);
   });
 
