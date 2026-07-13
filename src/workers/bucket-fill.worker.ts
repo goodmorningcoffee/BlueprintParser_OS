@@ -47,6 +47,60 @@ export interface BucketFillResult {
 
 // ─── Image processing primitives ─────────────────────────────────
 
+const LITTLE_ENDIAN = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
+
+/** Build the grayscale-channel histogram and, when requested, prove that an
+ * unfiltered neutral-raster draw is safe. The word path is guarded so unusual
+ * endianness or alignment retains the byte-wise behavior. */
+export function bucketRgbaHistogram(
+  rgba: Uint8ClampedArray,
+  pixelCount: number,
+  checkFilterSafety: boolean,
+): { hist: Int32Array; filterSafe: boolean } {
+  const hist = new Int32Array(256);
+  let filterSafe = true;
+  if (LITTLE_ENDIAN && (rgba.byteOffset & 3) === 0 && rgba.byteLength >= pixelCount * 4) {
+    const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, pixelCount);
+    for (let i = 0; i < pixelCount; i++) {
+      const pixel = pixels[i];
+      hist[pixel & 255]++;
+      if (checkFilterSafety && filterSafe && (
+        ((pixel ^ (pixel >>> 8)) & 0xffff) !== 0 ||
+        (pixel >>> 24) !== 255
+      )) filterSafe = false;
+    }
+    return { hist, filterSafe };
+  }
+
+  for (let i = 0, offset = 0; i < pixelCount; i++, offset += 4) {
+    const value = rgba[offset];
+    hist[value]++;
+    if (checkFilterSafety && filterSafe && (
+      value !== rgba[offset + 1] ||
+      value !== rgba[offset + 2] ||
+      rgba[offset + 3] !== 255
+    )) filterSafe = false;
+  }
+  return { hist, filterSafe };
+}
+
+export function bucketRgbaBinarize(
+  rgba: Uint8ClampedArray,
+  pixelCount: number,
+  threshold: number,
+): Uint8Array {
+  const bin = new Uint8Array(pixelCount);
+  if (LITTLE_ENDIAN && (rgba.byteOffset & 3) === 0 && rgba.byteLength >= pixelCount * 4) {
+    const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, pixelCount);
+    for (let i = 0; i < pixelCount; i++) bin[i] = (pixels[i] & 255) > threshold ? 255 : 0;
+    return bin;
+  }
+  for (let i = 0, offset = 0; i < pixelCount; i++, offset += 4) {
+    bin[i] = rgba[offset] > threshold ? 255 : 0;
+  }
+  return bin;
+}
+
 /**
  * Downscale, grayscale, compute Otsu's threshold, and binarize without an
  * intermediate N-byte grayscale copy. Neutral source pixels are already
@@ -73,18 +127,7 @@ function downscaleAndBinarize(
   ctx.drawImage(bitmap, 0, 0, w, h);
   let rgba = ctx.getImageData(0, 0, w, h).data;
   const n = w * h;
-  const hist = new Int32Array(256);
-  let filterSafe = true;
-  for (let i = 0; i < n; i++) {
-    const offset = i * 4;
-    const v = rgba[offset];
-    hist[v]++;
-    if (filterSafe && (
-      v !== rgba[offset + 1] ||
-      v !== rgba[offset + 2] ||
-      rgba[offset + 3] !== 255
-    )) filterSafe = false;
-  }
+  let { hist, filterSafe } = bucketRgbaHistogram(rgba, n, true);
 
   // Filtered and unfiltered downscaling are byte-identical only for opaque
   // neutral pixels. Colored or translucent rasters retain the legacy filtered
@@ -94,11 +137,7 @@ function downscaleAndBinarize(
     ctx.filter = "grayscale(1)";
     ctx.drawImage(bitmap, 0, 0, w, h);
     rgba = ctx.getImageData(0, 0, w, h).data;
-    hist.fill(0);
-    for (let i = 0; i < n; i++) {
-      const v = rgba[i * 4];
-      hist[v]++;
-    }
+    ({ hist } = bucketRgbaHistogram(rgba, n, false));
   }
 
   // Deriving the sum from 256 bins is mathematically identical and avoids a
@@ -122,8 +161,7 @@ function downscaleAndBinarize(
 
   const adjustedThreshold = Math.max(0, Math.min(255, threshold + (30 - tolerance)));
 
-  const bin = new Uint8Array(n);
-  for (let i = 0; i < n; i++) bin[i] = rgba[i * 4] > adjustedThreshold ? 255 : 0;
+  const bin = bucketRgbaBinarize(rgba, n, adjustedThreshold);
   return { bin, w, h };
 }
 
@@ -229,8 +267,14 @@ export function morphClose(
   for (let y = 0; y < h; y++) {
     const row = y * w;
     const packedRow = y * wordsPerRow;
-    for (let x = 0; x < w; x++) {
-      if (bin[row + x] === 0) packed[packedRow + (x >>> 5)] |= 1 << (x & 31);
+    for (let wordIndex = 0; wordIndex < wordsPerRow; wordIndex++) {
+      const firstX = wordIndex << 5;
+      const lastX = Math.min(w, firstX + 32);
+      let word = 0;
+      for (let x = firstX; x < lastX; x++) {
+        if (bin[row + x] === 0) word |= 1 << (x - firstX);
+      }
+      packed[packedRow + wordIndex] = word;
     }
   }
 
@@ -250,8 +294,13 @@ export function morphClose(
   for (let y = 0; y < h; y++) {
     const row = y * w;
     const packedRow = y * wordsPerRow;
-    for (let x = 0; x < w; x++) {
-      output[row + x] = (expanded[packedRow + (x >>> 5)] & (1 << (x & 31))) !== 0 ? 255 : 0;
+    for (let wordIndex = 0; wordIndex < wordsPerRow; wordIndex++) {
+      const firstX = wordIndex << 5;
+      const lastX = Math.min(w, firstX + 32);
+      const word = expanded[packedRow + wordIndex];
+      for (let x = firstX; x < lastX; x++) {
+        output[row + x] = (word & (1 << (x - firstX))) !== 0 ? 255 : 0;
+      }
     }
   }
   return output;
@@ -327,26 +376,30 @@ export function floodFill(
   minY: number;
   maxX: number;
   maxY: number;
+  firstIndex: number;
 } {
   const filled = new Uint8Array(w * h);
   if (bin[seedY * w + seedX] === 0) {
-    return { filled, area: 0, minX: w, minY: h, maxX: -1, maxY: -1 };
+    return { filled, area: 0, minX: w, minY: h, maxX: -1, maxY: -1, firstIndex: -1 };
   }
 
   const stack: [number, number][] = [[seedX, seedY]];
-  filled[seedY * w + seedX] = 1;
+  const seedIndex = seedY * w + seedX;
+  filled[seedIndex] = 1;
   let area = 1;
   let minX = seedX, maxX = seedX, minY = seedY, maxY = seedY;
+  let firstIndex = seedIndex;
 
   while (stack.length > 0) {
     const [x, y] = stack.pop()!;
+    const row = y * w;
     let lx = x;
-    while (lx > 0 && bin[y * w + (lx - 1)] !== 0 && !filled[y * w + (lx - 1)]) {
-      lx--; filled[y * w + lx] = 1;
+    while (lx > 0 && bin[row + lx - 1] !== 0 && !filled[row + lx - 1]) {
+      lx--; filled[row + lx] = 1;
     }
     let rx = x;
-    while (rx < w - 1 && bin[y * w + (rx + 1)] !== 0 && !filled[y * w + (rx + 1)]) {
-      rx++; filled[y * w + rx] = 1;
+    while (rx < w - 1 && bin[row + rx + 1] !== 0 && !filled[row + rx + 1]) {
+      rx++; filled[row + rx] = 1;
     }
     // The seed was counted when queued; every other pixel newly claimed by
     // this horizontal span is counted here without a second full-mask pass.
@@ -355,35 +408,49 @@ export function floodFill(
     if (rx > maxX) maxX = rx;
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
-    for (const ny of [y - 1, y + 1]) {
+    if (row + lx < firstIndex) firstIndex = row + lx;
+    for (let direction = -1; direction <= 1; direction += 2) {
+      const ny = y + direction;
       if (ny < 0 || ny >= h) continue;
+      const neighborRow = ny * w;
       let inSpan = false;
       for (let px = lx; px <= rx; px++) {
-        if (bin[ny * w + px] !== 0 && !filled[ny * w + px]) {
+        if (bin[neighborRow + px] !== 0 && !filled[neighborRow + px]) {
           if (!inSpan) {
             stack.push([px, ny]);
-            filled[ny * w + px] = 1;
+            filled[neighborRow + px] = 1;
             area++;
             if (px < minX) minX = px;
             if (px > maxX) maxX = px;
             if (ny < minY) minY = ny;
             if (ny > maxY) maxY = ny;
+            if (neighborRow + px < firstIndex) firstIndex = neighborRow + px;
             inSpan = true;
           }
         } else { inSpan = false; }
       }
     }
   }
-  return { filled, area, minX, minY, maxX, maxY };
+  return { filled, area, minX, minY, maxX, maxY, firstIndex };
 }
 
 // ─── Border tracing (Moore neighbor) ─────────────────────────────
 
-export function traceBorder(filled: Uint8Array, w: number, h: number): { x: number; y: number }[] {
+export function traceBorder(
+  filled: Uint8Array,
+  w: number,
+  h: number,
+  knownFirstIndex = -1,
+): { x: number; y: number }[] {
   let startX = -1, startY = -1;
-  outer: for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      if (filled[y * w + x]) { startX = x; startY = y; break outer; }
+  if (knownFirstIndex >= 0 && filled[knownFirstIndex]) {
+    startX = knownFirstIndex % w;
+    startY = (knownFirstIndex - startX) / w;
+  } else {
+    outer: for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (filled[y * w + x]) { startX = x; startY = y; break outer; }
+      }
     }
   }
   if (startX < 0) return [];
@@ -582,7 +649,7 @@ function processFill(req: BucketFillRequest): Omit<BucketFillResult, "requestId"
 
   // 9. Border trace (outer contour). Holes traced separately so the preview
   //    can render with fill-rule="evenodd".
-  const border = traceBorder(filled, w, h);
+  const border = traceBorder(filled, w, h, flood.firstIndex);
   if (border.length < 3) {
     return { type: "error", error: "Filled region too small to trace a polygon" };
   }

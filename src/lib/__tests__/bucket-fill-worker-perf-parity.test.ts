@@ -7,9 +7,12 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  bucketRgbaBinarize,
+  bucketRgbaHistogram,
   findHoleBorders,
   floodFill,
   morphClose,
+  traceBorder,
 } from "@/workers/bucket-fill.worker";
 
 function expandReference(
@@ -80,12 +83,13 @@ function floodReference(
 ) {
   const filled = new Uint8Array(bin.length);
   if (bin[seedY * w + seedX] === 0) {
-    return { filled, area: 0, minX: w, minY: h, maxX: -1, maxY: -1 };
+    return { filled, area: 0, minX: w, minY: h, maxX: -1, maxY: -1, firstIndex: -1 };
   }
   const queue = [seedY * w + seedX];
   filled[queue[0]] = 1;
   let area = 0;
   let minX = w, minY = h, maxX = -1, maxY = -1;
+  let firstIndex = bin.length;
   for (let head = 0; head < queue.length; head++) {
     const index = queue[head];
     const x = index % w;
@@ -95,6 +99,7 @@ function floodReference(
     minY = Math.min(minY, y);
     maxX = Math.max(maxX, x);
     maxY = Math.max(maxY, y);
+    firstIndex = Math.min(firstIndex, index);
     const neighbors = [
       x > 0 ? index - 1 : -1,
       x + 1 < w ? index + 1 : -1,
@@ -108,10 +113,64 @@ function floodReference(
       }
     }
   }
-  return { filled, area, minX, minY, maxX, maxY };
+  return { filled, area, minX, minY, maxX, maxY, firstIndex };
+}
+
+function rgbaHistogramReference(
+  rgba: Uint8ClampedArray,
+  pixelCount: number,
+  checkFilterSafety: boolean,
+) {
+  const hist = new Int32Array(256);
+  let filterSafe = true;
+  for (let i = 0; i < pixelCount; i++) {
+    const offset = i * 4;
+    const value = rgba[offset];
+    hist[value]++;
+    if (checkFilterSafety && (
+      value !== rgba[offset + 1] ||
+      value !== rgba[offset + 2] ||
+      rgba[offset + 3] !== 255
+    )) filterSafe = false;
+  }
+  return { hist, filterSafe };
 }
 
 describe("bucket worker 4000px fast-path parity", () => {
+  it("matches byte-wise RGBA histograms and opaque-neutral safety checks", () => {
+    const opaqueNeutral = new Uint8ClampedArray(257 * 4);
+    for (let i = 0; i < 257; i++) {
+      const value = (i * 73) & 255;
+      opaqueNeutral.set([value, value, value, 255], i * 4);
+    }
+    expect(bucketRgbaHistogram(opaqueNeutral, 257, true))
+      .toEqual(rgbaHistogramReference(opaqueNeutral, 257, true));
+    expect(bucketRgbaHistogram(opaqueNeutral, 257, false))
+      .toEqual(rgbaHistogramReference(opaqueNeutral, 257, false));
+
+    const colored = new Uint8ClampedArray(opaqueNeutral);
+    colored[41] ^= 17;
+    colored[4 * 88 + 3] = 127;
+    expect(bucketRgbaHistogram(colored, 257, true))
+      .toEqual(rgbaHistogramReference(colored, 257, true));
+
+    const unalignedBacking = new Uint8ClampedArray(colored.length + 1);
+    unalignedBacking.set(colored, 1);
+    const unaligned = new Uint8ClampedArray(
+      unalignedBacking.buffer,
+      unalignedBacking.byteOffset + 1,
+      colored.length,
+    );
+    expect(bucketRgbaHistogram(unaligned, 257, true))
+      .toEqual(rgbaHistogramReference(unaligned, 257, true));
+    for (const threshold of [0, 37, 127, 254, 255]) {
+      const expected = Uint8Array.from({ length: 257 }, (_, index) =>
+        colored[index * 4] > threshold ? 255 : 0);
+      expect(bucketRgbaBinarize(colored, 257, threshold)).toEqual(expected);
+      expect(bucketRgbaBinarize(unaligned, 257, threshold)).toEqual(expected);
+    }
+  });
+
   it("matches the scalar clipped close across word boundaries and radii 0-5", () => {
     for (const w of [1, 2, 3, 31, 32, 33, 63, 64, 65]) {
       for (const h of [1, 2, 3, 5]) {
@@ -134,8 +193,10 @@ describe("bucket worker 4000px fast-path parity", () => {
     for (const [w, h] of [[1, 1], [3, 4], [17, 9], [33, 5]] as const) {
       for (const bin of masks(w, h)) {
         for (const [seedX, seedY] of [[0, 0], [w - 1, h - 1], [Math.floor(w / 2), Math.floor(h / 2)]]) {
-          expect(floodFill(bin, w, h, seedX, seedY))
-            .toEqual(floodReference(bin, w, h, seedX, seedY));
+          const actual = floodFill(bin, w, h, seedX, seedY);
+          expect(actual).toEqual(floodReference(bin, w, h, seedX, seedY));
+          expect(traceBorder(actual.filled, w, h, actual.firstIndex))
+            .toEqual(traceBorder(actual.filled, w, h));
         }
       }
     }
