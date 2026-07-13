@@ -47,11 +47,21 @@ export interface BucketFillResult {
 
 // ─── Image processing primitives ─────────────────────────────────
 
-/** Downscale + grayscale in one step using GPU-assisted canvas filter. */
-function downscaleAndGrayscale(
+/**
+ * Downscale, grayscale, compute Otsu's threshold, and binarize without an
+ * intermediate N-byte grayscale copy. Neutral source pixels are already
+ * grayscale, so their values are used directly; colored rasters take the
+ * original canvas-filter path before thresholding.
+ *
+ * `tolerance` shifts Otsu's threshold. Walls are dark (0), rooms are light
+ * (255), and a pixel is passable when its grayscale value is greater than the
+ * adjusted threshold. The default tolerance of 30 preserves pure Otsu.
+ */
+function downscaleAndBinarize(
   bitmap: ImageBitmap,
-  maxDim: number
-): { gray: Uint8Array; w: number; h: number } {
+  maxDim: number,
+  tolerance: number,
+): { bin: Uint8Array; w: number; h: number } {
   const ow = bitmap.width;
   const oh = bitmap.height;
   const ratio = Math.min(maxDim / ow, maxDim / oh, 1);
@@ -59,48 +69,37 @@ function downscaleAndGrayscale(
   const h = Math.round(oh * ratio);
 
   const canvas = new OffscreenCanvas(w, h);
-  const ctx = canvas.getContext("2d")!;
-  // GPU-assisted grayscale: browser composites in hardware
-  ctx.filter = "grayscale(1)";
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   ctx.drawImage(bitmap, 0, 0, w, h);
-  const imgData = ctx.getImageData(0, 0, w, h);
-
-  // Extract R channel only (R=G=B after grayscale filter)
-  const gray = new Uint8Array(w * h);
-  const rgba = imgData.data;
-  for (let i = 0; i < w * h; i++) gray[i] = rgba[i * 4];
-  return { gray, w, h };
-}
-
-/**
- * Otsu threshold + binarize in a single pass over the image.
- *
- * `tolerance` shifts the computed Otsu threshold to give the user a tunable
- * "fills more / fills less" knob. Walls are dark (0), rooms are light (255);
- * the binarize step classifies a pixel as room when `gray[i] > threshold`.
- *
- * Lowering the threshold → more pixels classified as room → fewer walls → more
- * aggressive fill (user wants this when rooms have faint dividers).
- * Raising the threshold → stricter room classification → more walls → less
- * leakage (user wants this when fills escape the room outline).
- *
- * Slider range 5–80, default 30. `offset = 30 - tolerance`, so the default
- * preserves pure Otsu behavior; tolerance=5 adds +25 (tighter), tolerance=80
- * adds -50 (looser).
- */
-function otsuAndBinarize(gray: Uint8Array, tolerance: number): Uint8Array {
-  const n = gray.length;
-
-  // Pass 1: build histogram + compute sum
+  let rgba = ctx.getImageData(0, 0, w, h).data;
+  const n = w * h;
   const hist = new Int32Array(256);
   let sum = 0;
+  let neutral = true;
   for (let i = 0; i < n; i++) {
-    const v = gray[i];
+    const offset = i * 4;
+    const v = rgba[offset];
     hist[v]++;
     sum += v;
+    if (neutral && (v !== rgba[offset + 1] || v !== rgba[offset + 2])) neutral = false;
   }
 
-  // Find Otsu threshold
+  // A second draw is required only for colored input. Clearing first preserves
+  // the old transparent-pixel/source-over behavior exactly.
+  if (!neutral) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.filter = "grayscale(1)";
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    rgba = ctx.getImageData(0, 0, w, h).data;
+    hist.fill(0);
+    sum = 0;
+    for (let i = 0; i < n; i++) {
+      const v = rgba[i * 4];
+      hist[v]++;
+      sum += v;
+    }
+  }
+
   let sumB = 0, wB = 0;
   let maxVar = 0, threshold = 0;
   for (let t = 0; t < 256; t++) {
@@ -117,90 +116,139 @@ function otsuAndBinarize(gray: Uint8Array, tolerance: number): Uint8Array {
 
   const adjustedThreshold = Math.max(0, Math.min(255, threshold + (30 - tolerance)));
 
-  // Pass 2: binarize
   const bin = new Uint8Array(n);
-  for (let i = 0; i < n; i++) bin[i] = gray[i] > adjustedThreshold ? 255 : 0;
-  return bin;
+  for (let i = 0; i < n; i++) bin[i] = rgba[i * 4] > adjustedThreshold ? 255 : 0;
+  return { bin, w, h };
 }
 
-// ─── Separable morphological operations (O(radius) per pixel) ────
+// ─── Bit-packed morphological close ──────────────────────────────
+
+/** Scalar exact fallback for out-of-contract radii that cannot use 32-bit shifts. */
+function expandValueSeparable(
+  input: Uint8Array,
+  w: number,
+  h: number,
+  radius: number,
+  target: 0 | 255,
+): Uint8Array {
+  const horizontal = new Uint8Array(input.length);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - radius);
+      const x1 = Math.min(w - 1, x + radius);
+      horizontal[row + x] = 255 - target;
+      for (let nx = x0; nx <= x1; nx++) {
+        if (input[row + nx] === target) { horizontal[row + x] = target; break; }
+      }
+    }
+  }
+  const output = new Uint8Array(input.length);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    const y0 = Math.max(0, y - radius);
+    const y1 = Math.min(h - 1, y + radius);
+    for (let x = 0; x < w; x++) {
+      output[row + x] = 255 - target;
+      for (let ny = y0; ny <= y1; ny++) {
+        if (horizontal[ny * w + x] === target) { output[row + x] = target; break; }
+      }
+    }
+  }
+  return output;
+}
+
+function dilateBitset(
+  input: Uint32Array,
+  horizontal: Uint32Array,
+  output: Uint32Array,
+  wordsPerRow: number,
+  w: number,
+  h: number,
+  radius: number,
+): void {
+  const tailBits = w & 31;
+  const tailMask = tailBits === 0 ? 0xffffffff : (0xffffffff >>> (32 - tailBits));
+  for (let y = 0; y < h; y++) {
+    const row = y * wordsPerRow;
+    for (let wordIndex = 0; wordIndex < wordsPerRow; wordIndex++) {
+      const index = row + wordIndex;
+      const word = input[index];
+      let expanded = word;
+      for (let distance = 1; distance <= radius; distance++) {
+        expanded |= (word << distance) | (word >>> distance);
+        if (wordIndex > 0) expanded |= input[index - 1] >>> (32 - distance);
+        if (wordIndex + 1 < wordsPerRow) expanded |= input[index + 1] << (32 - distance);
+      }
+      horizontal[index] = wordIndex + 1 === wordsPerRow ? expanded & tailMask : expanded;
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    const row = y * wordsPerRow;
+    const y0 = Math.max(0, y - radius);
+    const y1 = Math.min(h - 1, y + radius);
+    for (let wordIndex = 0; wordIndex < wordsPerRow; wordIndex++) {
+      let expanded = 0;
+      for (let sourceY = y0; sourceY <= y1; sourceY++) {
+        expanded |= horizontal[sourceY * wordsPerRow + wordIndex];
+      }
+      output[row + wordIndex] = expanded;
+    }
+  }
+}
 
 /**
- * Dilate using separable kernels: horizontal pass then vertical pass.
- * For dilation with a square kernel, this is equivalent to the 2D version
- * but runs in O(w*h*radius) instead of O(w*h*radius²).
- * Wall = 0 (black), room = 255 (white). Dilation expands walls.
+ * Close dark walls with the same clipped square kernel as the legacy
+ * separable implementation. Packing 32 binary pixels per word removes the
+ * per-pixel neighborhood walk at the 4000px resolution setting.
  */
-function dilateSeparable(bin: Uint8Array, w: number, h: number, radius: number): Uint8Array {
+export function morphClose(
+  bin: Uint8Array,
+  w: number,
+  h: number,
+  radius: number,
+): Uint8Array {
   if (radius <= 0) return new Uint8Array(bin);
-  // Horizontal pass: expand walls left/right
-  const hPass = new Uint8Array(bin.length);
+  if (radius > 31) {
+    return expandValueSeparable(
+      expandValueSeparable(bin, w, h, radius, 0),
+      w, h, radius, 255,
+    );
+  }
+
+  const wordsPerRow = Math.ceil(w / 32);
+  const packed = new Uint32Array(wordsPerRow * h);
+  const horizontal = new Uint32Array(packed.length);
+  const expanded = new Uint32Array(packed.length);
   for (let y = 0; y < h; y++) {
     const row = y * w;
+    const packedRow = y * wordsPerRow;
     for (let x = 0; x < w; x++) {
-      let isWall = false;
-      const x0 = Math.max(0, x - radius);
-      const x1 = Math.min(w - 1, x + radius);
-      for (let nx = x0; nx <= x1; nx++) {
-        if (bin[row + nx] === 0) { isWall = true; break; }
-      }
-      hPass[row + x] = isWall ? 0 : 255;
+      if (bin[row + x] === 0) packed[packedRow + (x >>> 5)] |= 1 << (x & 31);
     }
   }
-  // Vertical pass: expand walls up/down
-  const out = new Uint8Array(bin.length);
-  for (let x = 0; x < w; x++) {
-    for (let y = 0; y < h; y++) {
-      let isWall = false;
-      const y0 = Math.max(0, y - radius);
-      const y1 = Math.min(h - 1, y + radius);
-      for (let ny = y0; ny <= y1; ny++) {
-        if (hPass[ny * w + x] === 0) { isWall = true; break; }
-      }
-      out[y * w + x] = isWall ? 0 : 255;
-    }
-  }
-  return out;
-}
 
-/** Erode using separable kernels. Shrinks walls. */
-function erodeSeparable(bin: Uint8Array, w: number, h: number, radius: number): Uint8Array {
-  if (radius <= 0) return new Uint8Array(bin);
-  // Horizontal pass
-  const hPass = new Uint8Array(bin.length);
+  dilateBitset(packed, horizontal, expanded, wordsPerRow, w, h, radius);
+  const tailBits = w & 31;
+  const tailMask = tailBits === 0 ? 0xffffffff : (0xffffffff >>> (32 - tailBits));
+  for (let y = 0; y < h; y++) {
+    const row = y * wordsPerRow;
+    for (let wordIndex = 0; wordIndex < wordsPerRow; wordIndex++) {
+      const mask = wordIndex + 1 === wordsPerRow ? tailMask : 0xffffffff;
+      packed[row + wordIndex] = (~expanded[row + wordIndex]) & mask;
+    }
+  }
+  dilateBitset(packed, horizontal, expanded, wordsPerRow, w, h, radius);
+
+  const output = new Uint8Array(bin.length);
   for (let y = 0; y < h; y++) {
     const row = y * w;
+    const packedRow = y * wordsPerRow;
     for (let x = 0; x < w; x++) {
-      let allWall = true;
-      const x0 = Math.max(0, x - radius);
-      const x1 = Math.min(w - 1, x + radius);
-      for (let nx = x0; nx <= x1; nx++) {
-        if (hPass[row + nx] !== 0 || bin[row + nx] !== 0) { allWall = false; break; }
-      }
-      // For erode: pixel is wall only if ALL neighbors are wall
-      // But separable erode works differently — we need to check if all horizontal neighbors are wall
-      hPass[row + x] = bin[row + x]; // Start with original
-      for (let nx = x0; nx <= x1; nx++) {
-        if (bin[row + nx] !== 0) { hPass[row + x] = 255; break; }
-      }
-      // Actually: erode = if ANY neighbor is room (255), pixel becomes room
-      // No — erode wall: if ANY neighbor in kernel is room, result is room
-      // This is: erode of walls = dilate of rooms
+      output[row + x] = (expanded[packedRow + (x >>> 5)] & (1 << (x & 31))) !== 0 ? 255 : 0;
     }
   }
-  // Simpler approach: erode(bin) = NOT dilate(NOT bin)
-  // Invert, dilate, invert
-  const inverted = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) inverted[i] = bin[i] === 0 ? 255 : 0;
-  const dilated = dilateSeparable(inverted, w, h, radius);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = dilated[i] === 0 ? 255 : 0;
-  return out;
-}
-
-/** Morphological close = dilate then erode. Seals small gaps. */
-function morphClose(bin: Uint8Array, w: number, h: number, radius: number): Uint8Array {
-  return erodeSeparable(dilateSeparable(bin, w, h, radius), w, h, radius);
+  return output;
 }
 
 // ─── Burn barriers & polygon exclusions ──────────────────────────
@@ -263,15 +311,26 @@ function fillPolygonOnBinary(
 
 // ─── Scanline flood fill ─────────────────────────────────────────
 
-function floodFill(
+export function floodFill(
   bin: Uint8Array, w: number, h: number,
   seedX: number, seedY: number
-): Uint8Array {
+): {
+  filled: Uint8Array;
+  area: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+} {
   const filled = new Uint8Array(w * h);
-  if (bin[seedY * w + seedX] === 0) return filled;
+  if (bin[seedY * w + seedX] === 0) {
+    return { filled, area: 0, minX: w, minY: h, maxX: -1, maxY: -1 };
+  }
 
   const stack: [number, number][] = [[seedX, seedY]];
   filled[seedY * w + seedX] = 1;
+  let area = 1;
+  let minX = seedX, maxX = seedX, minY = seedY, maxY = seedY;
 
   while (stack.length > 0) {
     const [x, y] = stack.pop()!;
@@ -283,17 +342,33 @@ function floodFill(
     while (rx < w - 1 && bin[y * w + (rx + 1)] !== 0 && !filled[y * w + (rx + 1)]) {
       rx++; filled[y * w + rx] = 1;
     }
+    // The seed was counted when queued; every other pixel newly claimed by
+    // this horizontal span is counted here without a second full-mask pass.
+    area += rx - lx;
+    if (lx < minX) minX = lx;
+    if (rx > maxX) maxX = rx;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
     for (const ny of [y - 1, y + 1]) {
       if (ny < 0 || ny >= h) continue;
       let inSpan = false;
       for (let px = lx; px <= rx; px++) {
         if (bin[ny * w + px] !== 0 && !filled[ny * w + px]) {
-          if (!inSpan) { stack.push([px, ny]); filled[ny * w + px] = 1; inSpan = true; }
+          if (!inSpan) {
+            stack.push([px, ny]);
+            filled[ny * w + px] = 1;
+            area++;
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (ny < minY) minY = ny;
+            if (ny > maxY) maxY = ny;
+            inSpan = true;
+          }
         } else { inSpan = false; }
       }
     }
   }
-  return filled;
+  return { filled, area, minX, minY, maxX, maxY };
 }
 
 // ─── Border tracing (Moore neighbor) ─────────────────────────────
@@ -455,12 +530,9 @@ function eraseBboxToWhite(
 function processFill(req: BucketFillRequest): Omit<BucketFillResult, "requestId"> {
   const maxDim = req.maxDimension ?? 1000;
 
-  // 1. Downscale + grayscale (GPU-assisted via OffscreenCanvas filter)
-  const { gray, w, h } = downscaleAndGrayscale(req.imageBitmap, maxDim);
+  // 1–2. Downscale + grayscale/Otsu + binarize.
+  const { bin, w, h } = downscaleAndBinarize(req.imageBitmap, maxDim, req.tolerance);
   req.imageBitmap.close();
-
-  // 2. Otsu + binarize
-  const bin = otsuAndBinarize(gray, req.tolerance);
 
   const seedPx = Math.max(0, Math.min(w - 1, Math.round(req.seedX * w)));
   const seedPy = Math.max(0, Math.min(h - 1, Math.round(req.seedY * h)));
@@ -492,12 +564,11 @@ function processFill(req: BucketFillRequest): Omit<BucketFillResult, "requestId"
   //    like any other; the flood stops at letter boundaries. Text bboxes are
   //    preserved on the request payload for a future Tier 2 pass that adds
   //    enclosed-text area back to the reported sqft.
-  const filled = floodFill(closed, w, h, seedPx, seedPy);
+  const flood = floodFill(closed, w, h, seedPx, seedPy);
+  const { filled, area } = flood;
 
-  // 8. Count filled pixels. filled[i]==1 means reached by flood; holes stay 0,
-  //    so this is already the net area.
-  let area = 0;
-  for (let i = 0; i < filled.length; i++) if (filled[i]) area++;
+  // 8. Net area was counted as pixels were first marked by the flood. Holes
+  //    stay zero, so no second full-raster pass is required.
 
   if (area < 20) {
     return { type: "error", error: "Bad click — no connected region at that pixel" };
@@ -511,7 +582,9 @@ function processFill(req: BucketFillRequest): Omit<BucketFillResult, "requestId"
   }
 
   // 10. Find + trace enclosed holes (e.g., courtyard in a U-shaped hallway).
-  const holeBorders = findHoleBorders(filled, w, h);
+  const fillsBoundingBox = area ===
+    (flood.maxX - flood.minX + 1) * (flood.maxY - flood.minY + 1);
+  const holeBorders = fillsBoundingBox ? [] : findHoleBorders(filled, w, h);
 
   // 11. Douglas-Peucker simplify outer + holes
   const epsilon = Math.max(w, h) * 0.005;
