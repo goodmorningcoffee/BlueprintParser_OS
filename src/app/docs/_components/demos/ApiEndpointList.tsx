@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { ApiEndpoint } from "../ApiEndpoint";
 
-/** All 80+ BP API routes, grouped by domain. Count verified via
- *  `find src/app/api -name route.ts | wc -l` = 84. */
+/** Curated BP API catalog, grouped by domain. The route source tree remains
+ *  authoritative because this human-readable list intentionally omits some
+ *  administrative and utility surfaces. */
 interface ApiRow {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
@@ -119,6 +120,8 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
       { method: "POST", path: "/api/table-parse", auth: "session", desc: "Run the multi-method parser (Camelot / img2table / TATR / OCR grid) and return the merged grid." },
       { method: "POST", path: "/api/table-parse/propose", auth: "session", desc: "Propose row/column boundaries for a user-drawn region (Guided Parse)." },
       { method: "POST", path: "/api/table-structure", auth: "session", desc: "Raw TATR (Table Transformer) structure inference for debugging." },
+      { method: "POST", path: "/api/regions/promote", auth: "session", desc: "Commit a parsed schedule, keynote, notes, or spec region into page intelligence and refresh derived summaries." },
+      { method: "DELETE", path: "/api/regions", auth: "session", desc: "Delete a committed parsed region from page intelligence and refresh derived summaries." },
       { method: "POST", path: "/api/shape-parse", auth: "session", desc: "Detect keynote shapes (circles, hexagons, etc.) on a page for the Shape sub-tab." },
       { method: "POST", path: "/api/symbol-search", auth: "session", desc: "Find all instances of a user-drawn symbol across all pages." },
       { method: "POST", path: "/api/bucket-fill", auth: "session", desc: "Flood-fill from a seed point; returns polygon vertices in normalized 0-1 coordinates.", params: [{ name: "projectId", type: "string", required: true, desc: "Public project id." }, { name: "pageNumber", type: "number", required: true, desc: "1-indexed page." }, { name: "seedX", type: "number", required: true, desc: "Normalized 0-1 seed point." }, { name: "seedY", type: "number", required: true, desc: "Normalized 0-1 seed point." }, { name: "barriers", type: "array", desc: "Optional line segments to seal open doorways." }] },
@@ -217,7 +220,7 @@ export function ApiEndpointList() {
     <div className="space-y-5">
       <div className="flex items-center justify-between text-[11px] text-[var(--muted)]">
         <span>
-          Listed here: <span className="text-[var(--fg)] font-mono">{total}</span> endpoints across {GROUPS.length} domains. Actual route count: <span className="text-[var(--fg)] font-mono">84</span> (some admin/util routes are omitted).
+          Curated here: <span className="text-[var(--fg)] font-mono">{total}</span> endpoints across {GROUPS.length} domains. The route files under <span className="text-[var(--fg)] font-mono">src/app/api</span> are authoritative; some administrative and utility surfaces are omitted.
         </span>
         <div className="flex items-center gap-1">
           <button

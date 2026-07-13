@@ -9,18 +9,19 @@ export function Section13ApiReference() {
     <Section id="api-reference" eyebrow="Operations" title="API Reference">
       {/* Plain-English lead */}
       <div className="max-w-3xl text-[15px] text-[var(--fg)]/80 leading-relaxed border-l-2 border-[var(--accent)]/40 pl-4 py-1 mb-4">
-        In plain English: everything the viewer does &mdash; uploading a
+        In plain English: server-backed viewer workflows &mdash; uploading a
         project, running YOLO, chatting with the LLM, exporting a takeoff
-        &mdash; goes through an HTTP endpoint here. This page lists every one,
-        grouped by domain, so you can find where in the code each button talks
+        &mdash; go through HTTP endpoints. This page provides a curated catalog,
+        grouped by domain, so you can find where in the code each workflow talks
         to the server.
       </div>
 
       <p>
-        BP exposes roughly 91 HTTP endpoints from Next.js API routes. This
-        reference groups them by domain, with a one-line description for each.
+        BP exposes its HTTP surface through Next.js API routes. This curated
+        reference groups commonly used routes by domain, with a one-line description for each.
         Click a method/path row to expand parameters and examples where provided.
-        This is not an OpenAPI spec &mdash; for machine-readable schemas,{" "}
+        The route files under <InlineCode>src/app/api</InlineCode> are the
+        authoritative inventory. This is not an OpenAPI spec &mdash; for machine-readable schemas,{" "}
         <InlineCode>src/lib/llm/tools.ts</InlineCode> has JSON Schemas for the
         LLM tool surface, which is the most formally typed set of endpoints.
       </p>

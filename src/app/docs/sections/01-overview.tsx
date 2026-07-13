@@ -76,8 +76,8 @@ export function Section01Overview() {
             four mutually-exclusive modes (pointer/move/group/markup), a stack of toggleable
             right-side panels (Text, CSI, LLM Chat, QTO, Schedules/Tables, Keynotes,
             Specs/Notes, Page Intelligence, View All), a bottom Annotation Panel, and
-            user-driven parsing tools (Table Parse, Keynote Parse, Notes Parse, Spec Parse
-            [planned], Symbol Search, Bucket Fill, Shape Parse, Split Area, Scale
+            user-driven parsing tools (Table Parse, Keynote Parse, Notes Parse, Spec Parse,
+            Symbol Search, Bucket Fill, Shape Parse, Split Area, Scale
             Calibration). Section 02 enumerates the full tree.
           </li>
           <li>

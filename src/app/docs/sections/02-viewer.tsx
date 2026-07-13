@@ -235,8 +235,21 @@ export function Section02Viewer() {
                 Specs/Notes Panel (<InlineCode>SpecsNotesPanel.tsx</InlineCode>) &mdash; D2 orchestrator
                 <ul className="list-[square] pl-5 pt-0.5 space-y-0.5">
                   <li>
-                    Spec Parse tab
-                    <div className="text-[var(--muted)]">Stage 5 scope, currently stubbed. Will target full-page vertical-column spec layouts (PART / SECTION / GENERAL NOTES dense prose).</div>
+                    Spec Parse tab (<InlineCode>SpecPanel.tsx</InlineCode>)
+                    <ul className="list-[disc] pl-5 pt-0.5 space-y-0.5">
+                      <li>
+                        Index
+                        <div className="text-[var(--muted)]">Project-wide, filterable list from <InlineCode>summaries.specRegions</InlineCode>; row click jumps to the page and opens Parser with the region pre-targeted.</div>
+                      </li>
+                      <li>
+                        Classifier
+                        <div className="text-[var(--muted)]">Per-page Accept / Edit / Reject cards for <InlineCode>spec-dense-columns</InlineCode> text regions. Accept promotes a committed spec region; Edit opens the candidate in Parser.</div>
+                      </li>
+                      <li>
+                        Parser
+                        <div className="text-[var(--muted)]">Auto parsing and Paragraph selection turn a drawn spec region into savable <InlineCode>type: &quot;spec&quot;</InlineCode> output through <InlineCode>/api/regions/promote</InlineCode>; the Manual sub-mode is still a follow-up placeholder.</div>
+                      </li>
+                    </ul>
                   </li>
                   <li>
                     Notes Parse tab (<InlineCode>NotesPanel.tsx</InlineCode>)
@@ -362,7 +375,7 @@ export function Section02Viewer() {
                 <div className="text-[var(--muted)]">Notes-numbered or notes-key-value grid from Notes Parse.</div>
               </li>
               <li>
-                <InlineCode>type: &quot;spec&quot;</InlineCode> (Stage 5 planned)
+                <InlineCode>type: &quot;spec&quot;</InlineCode>
                 <div className="text-[var(--muted)]">Section-header &rarr; body list from Spec Parse.</div>
               </li>
               <li>
