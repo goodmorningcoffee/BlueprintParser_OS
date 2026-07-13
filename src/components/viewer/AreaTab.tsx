@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useMemo, useCallback, memo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   publishSettledActiveTakeoffItemId,
+  reconcileSettledDeletedTakeoffItem,
   useToolStore,
 } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -12,6 +14,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 import { useAnnotations } from "@/queries/useAnnotations";
+import { queryKeys } from "@/queries/queryKeys";
 import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { AreaUnitSq, ClientTakeoffItem, AreaPolygonData, TakeoffGroup } from "@/types";
 import { computeRealArea } from "@/lib/areaCalc";
@@ -19,11 +22,18 @@ import { ColorDot, TakeoffEditPanel } from "./TakeoffShared";
 import CalibrationInput from "./CalibrationInput";
 import TakeoffGroupSection from "./TakeoffGroupSection";
 import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist";
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import { selectActiveToolKey } from "@/lib/active-tool-state";
+import {
+  claimToolTailAuthority,
+  consumeToolTailAuthority,
+  invalidateToolTailAuthority,
+  ownsToolTailAuthority,
+} from "@/lib/parse-tool-authority";
 
 // ─── Scale status bar (top of area tab) ─────────────────────
 function ScaleStatus() {
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
+  const calibrationActive = useToolStore((s) => selectActiveToolKey(s) === "calibration");
   const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
   const calibrationMode = useToolStore((s) => s.calibrationMode);
   const setCalibrationMode = useToolStore((s) => s.setCalibrationMode);
@@ -31,7 +41,7 @@ function ScaleStatus() {
 
   const hasScale = !!scaleCalibrations[pageNumber];
 
-  if (calibrationMode !== "idle") {
+  if (calibrationActive) {
     return (
       <div className="px-2 py-2 border-b border-[var(--border)]">
         <div className="text-xs text-amber-400">
@@ -75,6 +85,7 @@ function ScaleStatus() {
 
 // ─── Area tab main component ────────────────────────────────
 export default memo(function AreaTab() {
+  const queryClient = useQueryClient();
   // [refactor jul10 P2.2⑥] Keep value-replace semantics for the render-captured delete/rename
   // arrays below; functionalizing them here would silently change the frozen post-await behavior.
   const { annotations, setAnnotations } = useAnnotations();
@@ -82,7 +93,7 @@ export default memo(function AreaTab() {
   // reader). Handler bodies UNCHANGED — orderings frozen per TAKEOFF_IMPL/SPEC.md §3; NOTE the
   // group-create failure channel here is the inline `groupError` state, NOT alert (frozen quirk,
   // TakeoffTabsFreeze TA-3).
-  const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
+  const { takeoffItems, updateTakeoffItem } = useTakeoffItems();
   const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useToolStore((s) => s.setActiveTakeoffItemId);
   const publicId = useSessionStore((s) => s.publicId);
@@ -189,11 +200,22 @@ export default memo(function AreaTab() {
 
   async function handleCreate() {
     if (!formName.trim()) return;
-    invalidateParseToolAuthority();
-    if (isDemo) {
+    const session = useSessionStore.getState();
+    const capturedPublicId = session.publicId;
+    const capturedItemsKey = queryKeys.takeoff.items(capturedPublicId);
+    const token = claimToolTailAuthority({});
+    if (session.isDemo) {
       const item = { id: -Date.now(), name: formName.trim(), shape: "polygon" as const, color: formColor, size: 10, sortOrder: areaItems.length };
-      addTakeoffItem(item);
-      publishSettledActiveTakeoffItemId(item.id);
+      queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) => [
+        ...old,
+        item,
+      ]);
+      if (
+        useSessionStore.getState().publicId === capturedPublicId &&
+        ownsToolTailAuthority(token)
+      ) {
+        consumeToolTailAuthority(token, () => publishSettledActiveTakeoffItemId(item.id));
+      }
       setFormName(""); setShowForm(false); setFormError(null);
       return;
     }
@@ -201,11 +223,21 @@ export default memo(function AreaTab() {
     try {
       const res = await fetch("/api/takeoff-items", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: publicId, name: formName.trim(), shape: "polygon", color: formColor }),
+        body: JSON.stringify({ projectId: capturedPublicId, name: formName.trim(), shape: "polygon", color: formColor }),
       });
       if (res.ok) {
-        const item = await res.json();
-        addTakeoffItem(item); setFormName(""); setShowForm(false); setFormError(null); publishSettledActiveTakeoffItemId(item.id);
+        const item = await res.json() as ClientTakeoffItem;
+        queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) => [
+          ...old,
+          item,
+        ]);
+        setFormName(""); setShowForm(false); setFormError(null);
+        if (
+          useSessionStore.getState().publicId === capturedPublicId &&
+          ownsToolTailAuthority(token)
+        ) {
+          consumeToolTailAuthority(token, () => publishSettledActiveTakeoffItemId(item.id));
+        }
       } else {
         // [refactor jun16 P1.2] read either error envelope (legacy string | {code,message}).
         const err = await res.json().catch(() => null);
@@ -216,18 +248,31 @@ export default memo(function AreaTab() {
   }
 
   async function handleDelete(item: ClientTakeoffItem) {
-    invalidateParseToolAuthority();
-    if (isDemo) {
-      removeTakeoffItem(item.id);
-      setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-      if (activeTakeoffItemId === item.id) publishSettledActiveTakeoffItemId(null);
+    const session = useSessionStore.getState();
+    const capturedPublicId = session.publicId;
+    const capturedItemsKey = queryKeys.takeoff.items(capturedPublicId);
+    const capturedAnnotationsKey = queryKeys.annotations.all(capturedPublicId);
+    const reconciledAnnotations = annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id)));
+    invalidateToolTailAuthority();
+    if (session.isDemo) {
+      queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) =>
+        old.filter((candidate) => candidate.id !== item.id),
+      );
+      queryClient.setQueryData(capturedAnnotationsKey, reconciledAnnotations);
+      if (useSessionStore.getState().publicId === capturedPublicId) {
+        reconcileSettledDeletedTakeoffItem(item.id);
+      }
       return;
     }
     try {
       await persistFetch(`/api/takeoff-items/${item.id}`, undefined, "DELETE");
-      removeTakeoffItem(item.id);
-      setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-      if (activeTakeoffItemId === item.id) publishSettledActiveTakeoffItemId(null);
+      queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) =>
+        old.filter((candidate) => candidate.id !== item.id),
+      );
+      queryClient.setQueryData(capturedAnnotationsKey, reconciledAnnotations);
+      if (useSessionStore.getState().publicId === capturedPublicId) {
+        reconcileSettledDeletedTakeoffItem(item.id);
+      }
     } catch (err) {
       console.error("Failed to delete area item:", err);
       window.alert(`Failed to delete item: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -399,7 +444,7 @@ export default memo(function AreaTab() {
     );
   };
 
-  const bucketFillActive = useToolStore((s) => s.bucketFillActive);
+  const bucketFillActive = useToolStore((s) => selectActiveToolKey(s) === "bucketFill");
   const setBucketFillActive = useToolStore((s) => s.setBucketFillActive);
   const bucketFillBarrierMode = useToolStore((s) => s.bucketFillBarrierMode);
   const setBucketFillBarrierMode = useToolStore((s) => s.setBucketFillBarrierMode);
@@ -411,7 +456,7 @@ export default memo(function AreaTab() {
   const setBucketFillDilatePx = useToolStore((s) => s.setBucketFillDilatePx);
   const bucketFillResolution = useToolStore((s) => s.bucketFillResolution);
   const setBucketFillResolution = useToolStore((s) => s.setBucketFillResolution);
-  const splitAreaActive = useToolStore((s) => s.splitAreaActive);
+  const splitAreaActive = useToolStore((s) => selectActiveToolKey(s) === "split");
   const setSplitAreaActive = useToolStore((s) => s.setSplitAreaActive);
 
   return (
@@ -452,8 +497,8 @@ export default memo(function AreaTab() {
       <div className="px-2 py-1.5 border-b border-[var(--border)] space-y-1">
         <div className="flex items-center gap-1.5">
           <button
-            onPointerDown={() => invalidateParseToolAuthority()}
-            onKeyDown={() => invalidateParseToolAuthority()}
+            onPointerDown={() => invalidateToolTailAuthority()}
+            onKeyDown={() => invalidateToolTailAuthority()}
             onClick={() => setBucketFillActive(!bucketFillActive)}
             className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded border transition-colors ${
               bucketFillActive
@@ -471,8 +516,8 @@ export default memo(function AreaTab() {
           {bucketFillActive && (
             <>
               <button
-                onPointerDown={() => invalidateParseToolAuthority()}
-                onKeyDown={() => invalidateParseToolAuthority()}
+                onPointerDown={() => invalidateToolTailAuthority()}
+                onKeyDown={() => invalidateToolTailAuthority()}
                 onClick={() => setBucketFillBarrierMode(!bucketFillBarrierMode)}
                 className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded border transition-colors ${
                   bucketFillBarrierMode
@@ -488,10 +533,10 @@ export default memo(function AreaTab() {
               </button>
               {bucketFillBarriers.length > 0 && (
                 <button
-                  onPointerDown={() => invalidateParseToolAuthority()}
-                  onKeyDown={() => invalidateParseToolAuthority()}
+                  onPointerDown={() => invalidateToolTailAuthority()}
+                  onKeyDown={() => invalidateToolTailAuthority()}
                   onClick={() => {
-                    invalidateParseToolAuthority();
+                    invalidateToolTailAuthority();
                     clearBucketFillBarriers();
                   }}
                   className="text-[10px] text-red-400/60 hover:text-red-400"
@@ -527,10 +572,10 @@ export default memo(function AreaTab() {
                   max={4000}
                   step={1000}
                   value={bucketFillResolution}
-                  onPointerDown={() => invalidateParseToolAuthority()}
-                  onKeyDown={() => invalidateParseToolAuthority()}
+                  onPointerDown={() => invalidateToolTailAuthority()}
+                  onKeyDown={() => invalidateToolTailAuthority()}
                   onChange={(e) => {
-                    invalidateParseToolAuthority();
+                    invalidateToolTailAuthority();
                     setBucketFillResolution(
                       Number(e.target.value) as 1000 | 2000 | 3000 | 4000,
                     );
@@ -560,10 +605,10 @@ export default memo(function AreaTab() {
                 <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Tolerance</span>
                 <input type="range" min={-20} max={80} step={1}
                   value={bucketFillTolerance}
-                  onPointerDown={() => invalidateParseToolAuthority()}
-                  onKeyDown={() => invalidateParseToolAuthority()}
+                  onPointerDown={() => invalidateToolTailAuthority()}
+                  onKeyDown={() => invalidateToolTailAuthority()}
                   onChange={(e) => {
-                    invalidateParseToolAuthority();
+                    invalidateToolTailAuthority();
                     setBucketFillTolerance(Number(e.target.value));
                   }}
                   className="flex-1 h-1 accent-cyan-400" />
@@ -576,10 +621,10 @@ export default memo(function AreaTab() {
                 <span className="w-14 text-[10px] text-[var(--muted)] shrink-0">Dilation</span>
                 <input type="range" min={0} max={10} step={1}
                   value={bucketFillDilatePx}
-                  onPointerDown={() => invalidateParseToolAuthority()}
-                  onKeyDown={() => invalidateParseToolAuthority()}
+                  onPointerDown={() => invalidateToolTailAuthority()}
+                  onKeyDown={() => invalidateToolTailAuthority()}
                   onChange={(e) => {
-                    invalidateParseToolAuthority();
+                    invalidateToolTailAuthority();
                     setBucketFillDilatePx(Number(e.target.value));
                   }}
                   className="flex-1 h-1 accent-cyan-400" />
@@ -593,8 +638,8 @@ export default memo(function AreaTab() {
         <div className="px-2 py-1.5 border-b border-[var(--border)] space-y-1">
           <div className="flex items-center gap-1.5">
             <button
-              onPointerDown={() => invalidateParseToolAuthority()}
-              onKeyDown={() => invalidateParseToolAuthority()}
+              onPointerDown={() => invalidateToolTailAuthority()}
+              onKeyDown={() => invalidateToolTailAuthority()}
               onClick={() => setSplitAreaActive(!splitAreaActive)}
               className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded border transition-colors ${
                 splitAreaActive

@@ -17,6 +17,7 @@ import {
 } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import { persistFetch } from "@/lib/client-persist";
+import { selectActiveTagId, selectActiveToolKey } from "@/lib/active-tool-state";
 import { queryKeys } from "@/queries/queryKeys";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -496,11 +497,11 @@ export function useYoloTags() {
     setYoloTagFilter: state.setYoloTagFilter,
   })));
   const tool = useToolStore(useShallow((state) => ({
-    yoloTagPickingMode: state.yoloTagPickingMode,
+    yoloTagPickingMode: selectActiveToolKey(state) === "tagPick",
     setYoloTagPickingMode: state.setYoloTagPickingMode,
     tagScanResults: state.tagScanResults,
     setTagScanResults: state.setTagScanResults,
-    tagAddingMode: state.tagAddingMode,
+    tagAddingMode: selectActiveTagId(state),
     setTagAddingMode: state.setTagAddingMode,
   })));
 

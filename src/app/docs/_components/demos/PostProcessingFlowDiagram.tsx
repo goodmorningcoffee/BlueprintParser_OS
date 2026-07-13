@@ -30,7 +30,7 @@ const LANES = [
     title: "Bucket fill commit",
     accent: "#60a5fa",
     steps: [
-      { label: "Arm bucket fill", sub: "bucketFillActive=true" },
+      { label: "Arm bucket fill", sub: "activeTool.kind=bucketFill" },
       { label: "Click seed point", sub: "clientBucketFill()" },
       { label: "Worker: flood + trace", sub: "bucket-fill.worker.ts" },
       { label: "Preview overlay", sub: "evenodd with holes" },

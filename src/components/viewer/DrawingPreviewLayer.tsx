@@ -3,13 +3,13 @@
 import { useEffect, useRef, memo } from "react";
 import { useViewerStore } from "@/stores/viewerStore";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
-import { useToolStore } from "@/stores/toolStore";
-import { useUiStore } from "@/stores/uiStore";
+import { useToolStore, type ToolStoreData } from "@/stores/toolStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade (data only). This layer
 // is CANVAS-ADJACENT: items-key observers re-render only on items CONTENT change (structural
 // sharing) — group writes never reach it (two-hook split, TAKEOFF_IMPL/SPEC.md §2.2/§7.3).
 import { useTakeoffItems } from "@/queries/useTakeoff";
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import { selectActiveToolKey } from "@/lib/active-tool-state";
+import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
 import BucketFillAssignDialog from "./BucketFillAssignDialog";
 
 interface DrawingPreviewLayerProps {
@@ -17,6 +17,12 @@ interface DrawingPreviewLayerProps {
   height: number;
   cssScale: number;
 }
+
+// Stable inactive projections keep dormant tool sessions out of this canvas' render topology.
+// These are sentinels only: live session values always retain their store identity.
+const NO_CALIBRATION_POINTS: ToolStoreData["calibrationPoints"] = {};
+const NO_POLYGON_VERTICES: ToolStoreData["polygonVertices"] = [];
+const NO_BUCKET_BARRIERS: ToolStoreData["bucketFillBarriers"] = [];
 
 /**
  * Lightweight canvas layer that ONLY renders:
@@ -41,29 +47,74 @@ export default memo(function DrawingPreviewLayer({
   const mousePos = useViewerStore((s) => s._mousePos);
 
   // Other store reads
-  const symbolSearchActive = useToolStore((s) => s.symbolSearchActive);
-  const tableParseStep = useParseFlowStore((s) => s.tableParseStep);
-  const keynoteParseStep = useParseFlowStore((s) => s.keynoteParseStep);
-  const calibrationMode = useToolStore((s) => s.calibrationMode);
-  const calibrationPoints = useToolStore((s) => s.calibrationPoints);
-  const polygonDrawingMode = useToolStore((s) => s.polygonDrawingMode);
-  const polygonVertices = useToolStore((s) => s.polygonVertices);
-  const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
+  // One primitive discriminator projection chooses the live preview owner. Same-kind activation
+  // renewals therefore do not repaint this canvas, while dormant peer sessions cannot style it.
+  const activeToolKey = useToolStore(selectActiveToolKey);
+  const mode = useToolStore((s) => activeToolKey === null ? s.mode : "pointer");
+  const tableParseStep = useParseFlowStore((s) =>
+    activeToolKey === "parseRect:table" ? s.tableParseStep : "idle"
+  );
+  const keynoteParseStep = useParseFlowStore((s) =>
+    activeToolKey === "parseRect:keynote" ? s.keynoteParseStep : "idle"
+  );
+  const notesParseStep = useParseFlowStore((s) =>
+    activeToolKey === "parseRect:notes" ? s.notesParseStep : "idle"
+  );
+  const specParseStep = useParseFlowStore((s) =>
+    activeToolKey === "parseRect:spec" ? s.specParseStep : "idle"
+  );
+  const calibrationMode = useToolStore((s) =>
+    activeToolKey === "calibration" ? s.calibrationMode : "idle"
+  );
+  const calibrationPoints = useToolStore((s) =>
+    activeToolKey === "calibration" ? s.calibrationPoints : NO_CALIBRATION_POINTS
+  );
+  const hasLiveTakeoffDraft = activeToolKey === "takeoffPlacement";
+  const polygonDrawingMode = useToolStore((s) =>
+    hasLiveTakeoffDraft ? s.polygonDrawingMode : "idle"
+  );
+  const polygonVertices = useToolStore((s) =>
+    hasLiveTakeoffDraft ? s.polygonVertices : NO_POLYGON_VERTICES
+  );
+  const activeTakeoffItemId = useToolStore((s) =>
+    activeToolKey === "takeoffPlacement" || activeToolKey === "bucketFill"
+      ? s.activeTakeoffItemId
+      : null
+  );
   const { takeoffItems } = useTakeoffItems(); // [refactor jul10 P2.2④] cache-backed; draw-effect dep at the bottom keeps `takeoffItems`
-  const showParsedRegions = useUiStore((s) => s.showParsedRegions);
-  const bucketFillActive = useToolStore((s) => s.bucketFillActive);
-  const bucketFillPreview = useToolStore((s) => s.bucketFillPreview);
-  const bucketFillLoading = useToolStore((s) => s.bucketFillLoading);
-  const bucketFillError = useToolStore((s) => s.bucketFillError);
-  const bucketFillBarriers = useToolStore((s) => s.bucketFillBarriers);
-  const bucketFillBarrierMode = useToolStore((s) => s.bucketFillBarrierMode);
-  const barrierPendingPoint = useToolStore((s) => s.barrierPendingPoint);
-  const splitAreaActive = useToolStore((s) => s.splitAreaActive);
-  const splitLineA = useToolStore((s) => s.splitLineA);
-  const splitLineB = useToolStore((s) => s.splitLineB);
-  const splitPreview = useToolStore((s) => s.splitPreview);
-  const splitError = useToolStore((s) => s.splitError);
-  const bucketFillPendingPolygon = useToolStore((s) => s.bucketFillPendingPolygon);
+  const bucketFillPreview = useToolStore((s) =>
+    activeToolKey === "bucketFill" ? s.bucketFillPreview : null
+  );
+  const bucketFillLoading = useToolStore((s) =>
+    activeToolKey === "bucketFill" ? s.bucketFillLoading : false
+  );
+  const bucketFillError = useToolStore((s) =>
+    activeToolKey === "bucketFill" ? s.bucketFillError : null
+  );
+  const bucketFillBarriers = useToolStore((s) =>
+    activeToolKey === "bucketFill" ? s.bucketFillBarriers : NO_BUCKET_BARRIERS
+  );
+  const bucketFillBarrierMode = useToolStore((s) =>
+    activeToolKey === "bucketFill" ? s.bucketFillBarrierMode : false
+  );
+  const barrierPendingPoint = useToolStore((s) =>
+    activeToolKey === "bucketFill" ? s.barrierPendingPoint : null
+  );
+  const splitLineA = useToolStore((s) =>
+    activeToolKey === "split" ? s.splitLineA : null
+  );
+  const splitLineB = useToolStore((s) =>
+    activeToolKey === "split" ? s.splitLineB : null
+  );
+  const splitPreview = useToolStore((s) =>
+    activeToolKey === "split" ? s.splitPreview : null
+  );
+  const splitError = useToolStore((s) =>
+    activeToolKey === "split" ? s.splitError : null
+  );
+  const bucketFillPendingPolygon = useToolStore((s) =>
+    activeToolKey === "bucketFill" ? s.bucketFillPendingPolygon : null
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -80,22 +131,39 @@ export default memo(function DrawingPreviewLayer({
     ctx.clearRect(0, 0, width, height);
 
     // ── Drawing preview rectangle ────────────────────────────
-    if (drawing) {
-      const isSymbolSearch = symbolSearchActive;
-      const isTableParse = tableParseStep === "select-region" || tableParseStep === "define-column" || tableParseStep === "define-row";
-      const isKeynoteParse = keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row";
-      const isAnyTableDraw = isTableParse || isKeynoteParse;
-      const isColumn = tableParseStep === "define-column";
-      const isRow = tableParseStep === "define-row";
-      const isKnColumn = keynoteParseStep === "define-column";
-      const isKnRow = keynoteParseStep === "define-row";
+    const isSymbolSearch = activeToolKey === "symbolTemplate";
+    const isTableParse = activeToolKey === "parseRect:table" &&
+      (tableParseStep === "select-region" || tableParseStep === "define-column" || tableParseStep === "define-row");
+    const isKeynoteParse = activeToolKey === "parseRect:keynote" &&
+      (keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row");
+    const isNotesParse = activeToolKey === "parseRect:notes" &&
+      (notesParseStep === "select-region" || notesParseStep === "define-column" || notesParseStep === "define-row");
+    const isSpecParse = activeToolKey === "parseRect:spec" && specParseStep === "select-region";
+    const hasLiveDrawingOwner = (activeToolKey === null && (mode === "markup" || mode === "group")) ||
+      activeToolKey === "tagAdd" ||
+      isSymbolSearch || isTableParse || isKeynoteParse || isNotesParse || isSpecParse;
+    if (drawing && hasLiveDrawingOwner) {
+      const isAnyParseDraw = isTableParse || isKeynoteParse || isNotesParse || isSpecParse;
+      const activeParseStep = isTableParse
+        ? tableParseStep
+        : isKeynoteParse
+          ? keynoteParseStep
+          : isNotesParse
+            ? notesParseStep
+            : specParseStep;
+      const isColumn = activeParseStep === "define-column";
+      const isRow = activeParseStep === "define-row";
 
       ctx.strokeStyle = isSymbolSearch
         ? "#22d3ee"
         : isKeynoteParse
-          ? (isKnColumn ? "#d97706" : isKnRow ? "#c026d3" : "#f59e0b")
+          ? (isColumn ? "#d97706" : isRow ? "#c026d3" : "#f59e0b")
           : isTableParse
             ? (isColumn ? "#9f1239" : isRow ? "#c026d3" : "#e879a0")
+            : isNotesParse
+              ? (isColumn ? "#4f46e5" : isRow ? "#7c3aed" : "#818cf8")
+              : isSpecParse
+                ? "#10b981"
             : "#00ff88";
       ctx.lineWidth = 2;
       ctx.setLineDash([5, 5]);
@@ -110,26 +178,38 @@ export default memo(function DrawingPreviewLayer({
         ctx.font = "bold 11px sans-serif";
         ctx.fillStyle = "#22d3ee";
         ctx.fillText("Symbol Search Template", Math.min(drawStart.x, drawEnd.x) + 4, Math.min(drawStart.y, drawEnd.y) - 4);
-      } else if (isAnyTableDraw) {
+      } else if (isAnyParseDraw) {
         ctx.fillStyle = isKeynoteParse
-          ? (isKnColumn ? "rgba(217,119,6,0.06)" : isKnRow ? "rgba(192,38,211,0.06)" : "rgba(245,158,11,0.06)")
-          : isColumn ? "rgba(159,18,57,0.06)" : isRow ? "rgba(192,38,211,0.06)" : "rgba(232,121,160,0.06)";
+          ? (isColumn ? "rgba(217,119,6,0.06)" : isRow ? "rgba(192,38,211,0.06)" : "rgba(245,158,11,0.06)")
+          : isTableParse
+            ? (isColumn ? "rgba(159,18,57,0.06)" : isRow ? "rgba(192,38,211,0.06)" : "rgba(232,121,160,0.06)")
+            : isNotesParse
+              ? (isColumn ? "rgba(79,70,229,0.06)" : isRow ? "rgba(124,58,237,0.06)" : "rgba(129,140,248,0.06)")
+              : "rgba(16,185,129,0.06)";
         ctx.fillRect(drawStart.x, drawStart.y, dx, dy);
         ctx.setLineDash([]);
         ctx.font = "bold 11px sans-serif";
         ctx.fillStyle = isKeynoteParse
-          ? (isKnColumn ? "#d97706" : isKnRow ? "#c026d3" : "#f59e0b")
-          : isColumn ? "#9f1239" : isRow ? "#c026d3" : "#e879a0";
+          ? (isColumn ? "#d97706" : isRow ? "#c026d3" : "#f59e0b")
+          : isTableParse
+            ? (isColumn ? "#9f1239" : isRow ? "#c026d3" : "#e879a0")
+            : isNotesParse
+              ? (isColumn ? "#4f46e5" : isRow ? "#7c3aed" : "#818cf8")
+              : "#10b981";
         const label = isKeynoteParse
-          ? (isKnColumn ? "Column" : isKnRow ? "Row" : "Keynote Region")
-          : isColumn ? "Column" : isRow ? "Row" : "Table Region";
+          ? (isColumn ? "Column" : isRow ? "Row" : "Keynote Region")
+          : isTableParse
+            ? (isColumn ? "Column" : isRow ? "Row" : "Table Region")
+            : isNotesParse
+              ? (isColumn ? "Notes Column" : isRow ? "Notes Row" : "Notes Region")
+              : "Spec Region";
         ctx.fillText(label, Math.min(drawStart.x, drawEnd.x) + 4, Math.min(drawStart.y, drawEnd.y) - 4);
       }
       ctx.setLineDash([]);
     }
 
     // ── Calibration points and line ──────────────────────────
-    if (calibrationMode !== "idle" && calibrationPoints.p1) {
+    if (activeToolKey === "calibration" && calibrationMode !== "idle" && calibrationPoints.p1) {
       ctx.save();
       const p1x = calibrationPoints.p1.x * width;
       const p1y = calibrationPoints.p1.y * height;
@@ -158,7 +238,7 @@ export default memo(function DrawingPreviewLayer({
     }
 
     // ── Polygon / Linear drawing preview ──────────────────────
-    if (polygonDrawingMode === "drawing" && polygonVertices.length > 0) {
+    if (activeToolKey === "takeoffPlacement" && polygonDrawingMode === "drawing" && polygonVertices.length > 0) {
       const activeItem = takeoffItems.find((t) => t.id === activeTakeoffItemId);
       const polyColor = activeItem?.color || "#00ff88";
       const isLinear = activeItem?.shape === "linear";
@@ -280,7 +360,7 @@ export default memo(function DrawingPreviewLayer({
     }
 
     // ── Bucket fill barrier lines ────────────────────────────
-    if (bucketFillBarriers.length > 0 || barrierPendingPoint) {
+    if (activeToolKey === "bucketFill" && (bucketFillBarriers.length > 0 || barrierPendingPoint)) {
       ctx.save();
       // Draw completed barrier lines
       for (const b of bucketFillBarriers) {
@@ -322,7 +402,7 @@ export default memo(function DrawingPreviewLayer({
     }
 
     // ── Bucket fill preview polygon ──────────────────────────
-    if (bucketFillPreview) {
+    if (activeToolKey === "bucketFill" && bucketFillPreview) {
       const activeItem = takeoffItems.find((t) => t.id === activeTakeoffItemId);
       const fillColor = activeItem?.color || "#22d3ee";
       const verts = bucketFillPreview.vertices;
@@ -389,7 +469,7 @@ export default memo(function DrawingPreviewLayer({
     }
 
     // ── Split area: in-progress line ─────────────────────────
-    if (splitAreaActive && !splitPreview) {
+    if (activeToolKey === "split" && !splitPreview) {
       ctx.save();
       ctx.strokeStyle = "#e879f9"; // fuchsia
       ctx.lineWidth = 2;
@@ -438,7 +518,7 @@ export default memo(function DrawingPreviewLayer({
     }
 
     // ── Split area: preview of both halves ───────────────────
-    if (splitPreview) {
+    if (activeToolKey === "split" && splitPreview) {
       ctx.save();
 
       const drawHalf = (verts: { x: number; y: number }[], fill: string, stroke: string) => {
@@ -475,7 +555,7 @@ export default memo(function DrawingPreviewLayer({
     }
 
     // ── Bucket fill pending polygon (awaiting item assignment) ──
-    if (bucketFillPendingPolygon) {
+    if (activeToolKey === "bucketFill" && bucketFillPendingPolygon) {
       const verts = bucketFillPendingPolygon.vertices;
       const pendingHoles = bucketFillPendingPolygon.holes ?? [];
       if (verts.length >= 3) {
@@ -517,7 +597,7 @@ export default memo(function DrawingPreviewLayer({
     }
 
     // ── Bucket fill loading indicator ────────────────────────
-    if (bucketFillLoading) {
+    if (activeToolKey === "bucketFill" && bucketFillLoading) {
       ctx.save();
       ctx.font = "12px sans-serif";
       const msg = "Detecting room...";
@@ -529,15 +609,15 @@ export default memo(function DrawingPreviewLayer({
       ctx.restore();
     }
   }, [drawing, drawStart, drawEnd, mousePos, width, height,
-    symbolSearchActive, tableParseStep, keynoteParseStep,
+    activeToolKey, mode, tableParseStep, keynoteParseStep, notesParseStep, specParseStep,
     calibrationMode, calibrationPoints,
     polygonDrawingMode, polygonVertices, activeTakeoffItemId, takeoffItems,
     bucketFillPreview, bucketFillLoading, bucketFillBarriers, bucketFillBarrierMode, barrierPendingPoint,
-    splitAreaActive, splitLineA, splitLineB, splitPreview,
+    splitLineA, splitLineB, splitPreview,
     bucketFillPendingPolygon]);
 
   // Compute centroid for accept/cancel buttons
-  const previewCentroid = bucketFillPreview ? (() => {
+  const previewCentroid = activeToolKey === "bucketFill" && bucketFillPreview ? (() => {
     const verts = bucketFillPreview.vertices;
     const cx = verts.reduce((s, v) => s + v.x, 0) / verts.length * width;
     const cy = verts.reduce((s, v) => s + v.y, 0) / verts.length * height;
@@ -565,7 +645,7 @@ export default memo(function DrawingPreviewLayer({
         }}
       />
       {/* Bucket fill accept / cancel buttons */}
-      {bucketFillPreview && previewCentroid && (
+      {activeToolKey === "bucketFill" && bucketFillPreview && previewCentroid && (
         <div
           style={{
             position: "absolute",
@@ -579,11 +659,11 @@ export default memo(function DrawingPreviewLayer({
           }}
         >
           <button
-            onPointerDown={() => invalidateParseToolAuthority()}
-            onKeyDown={() => invalidateParseToolAuthority()}
+            onPointerDown={() => invalidateToolTailAuthority()}
+            onKeyDown={() => invalidateToolTailAuthority()}
             onClick={(e) => {
               e.stopPropagation();
-              invalidateParseToolAuthority();
+              invalidateToolTailAuthority();
               // Dispatch accept via keyboard event handler (Enter)
               window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
             }}
@@ -601,11 +681,11 @@ export default memo(function DrawingPreviewLayer({
             Accept
           </button>
           <button
-            onPointerDown={() => invalidateParseToolAuthority()}
-            onKeyDown={() => invalidateParseToolAuthority()}
+            onPointerDown={() => invalidateToolTailAuthority()}
+            onKeyDown={() => invalidateToolTailAuthority()}
             onClick={(e) => {
               e.stopPropagation();
-              invalidateParseToolAuthority();
+              invalidateToolTailAuthority();
               useToolStore.getState().setBucketFillPreview(null);
             }}
             style={{
@@ -624,7 +704,7 @@ export default memo(function DrawingPreviewLayer({
         </div>
       )}
       {/* Split area Accept / Cancel buttons — at line midpoint */}
-      {splitPreview && (() => {
+      {activeToolKey === "split" && splitPreview && (() => {
         const midX = ((splitPreview.lineA.x + splitPreview.lineB.x) / 2) * width;
         const midY = ((splitPreview.lineA.y + splitPreview.lineB.y) / 2) * height;
         return (
@@ -641,11 +721,11 @@ export default memo(function DrawingPreviewLayer({
             }}
           >
             <button
-              onPointerDown={() => invalidateParseToolAuthority()}
-              onKeyDown={() => invalidateParseToolAuthority()}
+              onPointerDown={() => invalidateToolTailAuthority()}
+              onKeyDown={() => invalidateToolTailAuthority()}
               onClick={(e) => {
                 e.stopPropagation();
-                invalidateParseToolAuthority();
+                invalidateToolTailAuthority();
                 window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
               }}
               style={{
@@ -662,11 +742,11 @@ export default memo(function DrawingPreviewLayer({
               Split
             </button>
             <button
-              onPointerDown={() => invalidateParseToolAuthority()}
-              onKeyDown={() => invalidateParseToolAuthority()}
+              onPointerDown={() => invalidateToolTailAuthority()}
+              onKeyDown={() => invalidateToolTailAuthority()}
               onClick={(e) => {
                 e.stopPropagation();
-                invalidateParseToolAuthority();
+                invalidateToolTailAuthority();
                 useToolStore.getState().setSplitPreview(null);
               }}
               style={{
@@ -686,7 +766,7 @@ export default memo(function DrawingPreviewLayer({
         );
       })()}
       {/* Split area error banner */}
-      {splitError && (
+      {activeToolKey === "split" && splitError && (
         <div
           style={{
             position: "absolute",
@@ -711,7 +791,7 @@ export default memo(function DrawingPreviewLayer({
         </div>
       )}
       {/* Bucket fill item assignment dialog */}
-      {bucketFillPendingPolygon && (
+      {activeToolKey === "bucketFill" && bucketFillPendingPolygon && (
         <BucketFillAssignDialog
           pendingPolygon={bucketFillPendingPolygon}
           width={width}
@@ -720,7 +800,7 @@ export default memo(function DrawingPreviewLayer({
         />
       )}
       {/* Bucket fill error banner — takes priority over HUDs */}
-      {bucketFillError && (
+      {activeToolKey === "bucketFill" && bucketFillError && (
         <div
           style={{
             position: "absolute",
@@ -745,7 +825,7 @@ export default memo(function DrawingPreviewLayer({
         </div>
       )}
       {/* Barrier drawing HUD — red, with Done button */}
-      {bucketFillActive && bucketFillBarrierMode && !bucketFillPreview && !bucketFillError && (
+      {activeToolKey === "bucketFill" && bucketFillBarrierMode && !bucketFillPreview && !bucketFillError && (
         <div
           style={{
             position: "absolute",
@@ -771,8 +851,8 @@ export default memo(function DrawingPreviewLayer({
             {bucketFillBarriers.length > 0 ? ` (${bucketFillBarriers.length} drawn)` : ""}
           </span>
           <button
-            onPointerDown={() => invalidateParseToolAuthority()}
-            onKeyDown={() => invalidateParseToolAuthority()}
+            onPointerDown={() => invalidateToolTailAuthority()}
+            onKeyDown={() => invalidateToolTailAuthority()}
             onClick={(e) => {
               e.stopPropagation();
               useToolStore.getState().setBucketFillBarrierMode(false);
@@ -793,7 +873,7 @@ export default memo(function DrawingPreviewLayer({
         </div>
       )}
       {/* Bucket fill active HUD — cyan, with Exit button */}
-      {bucketFillActive && !bucketFillBarrierMode && !bucketFillPreview && !bucketFillLoading && !bucketFillError && (
+      {activeToolKey === "bucketFill" && !bucketFillBarrierMode && !bucketFillPreview && !bucketFillLoading && !bucketFillError && (
         <div
           style={{
             position: "absolute",
@@ -816,8 +896,8 @@ export default memo(function DrawingPreviewLayer({
         >
           <span style={{ color: "#67e8f9" }}>Click inside a room to detect</span>
           <button
-            onPointerDown={() => invalidateParseToolAuthority()}
-            onKeyDown={() => invalidateParseToolAuthority()}
+            onPointerDown={() => invalidateToolTailAuthority()}
+            onKeyDown={() => invalidateToolTailAuthority()}
             onClick={(e) => {
               e.stopPropagation();
               useToolStore.getState().setBucketFillActive(false);

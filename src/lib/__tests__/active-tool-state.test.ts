@@ -1,5 +1,5 @@
 // @vitest-environment node
-// [refactor jul13 P2.3 AT1 freeze-first] Production-dead ActiveTool causal model.
+// [refactor jul13 P2.3 AT2] ActiveTool causal model and exact production adoption.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -335,8 +335,8 @@ function parseIntent(pair: CorrelatedParsePair): ActiveToolIntent {
   }
 }
 
-describe("AT1 exact ActiveTool representation", () => {
-  it("pins the dependency-free production-dead API and exact union with mutation witnesses", () => {
+describe("AT2 exact ActiveTool representation", () => {
+  it("pins the dependency-free API, exact union, and closed production borrowers", () => {
     const sourceText = readFileSync(join(process.cwd(), MODULE_FILE), "utf8");
     const source = parseSource(sourceText);
 
@@ -433,7 +433,16 @@ describe("AT1 exact ActiveTool representation", () => {
     const borrowers = productionFiles().flatMap((path) =>
       activeToolModuleLoads(path, readFileSync(join(process.cwd(), path), "utf8"))
     );
-    expect(borrowers).toEqual([]);
+    expect(borrowers.sort()).toEqual([
+      "src/components/viewer/AnnotationOverlay.tsx:import",
+      "src/components/viewer/AreaTab.tsx:import",
+      "src/components/viewer/DrawingPreviewLayer.tsx:import",
+      "src/components/viewer/LinearTab.tsx:import",
+      "src/components/viewer/TakeoffPanel.tsx:import",
+      "src/queries/useYoloTags.ts:import",
+      "src/stores/toolStore.ts:import",
+      "src/stores/viewerCommands.ts:import",
+    ]);
     const borrowerMutants = [
       `import * as model from "../lib/active-tool-state"; void model;`,
       `import model = require("@/lib/active-tool-state"); void model;`,
@@ -449,7 +458,7 @@ describe("AT1 exact ActiveTool representation", () => {
         .not.toEqual([]);
     }
     expect(readFileSync(join(process.cwd(), "src/stores/toolStore.ts"), "utf8"))
-      .not.toMatch(/\bactiveTool\b/);
+      .toMatch(/\bactiveTool:\s*ActiveTool\b/);
 
     const exactKey: ActiveToolKey = "parseRect:spec";
     const exactDrawingStep: ParseDrawingStep = "define-column";

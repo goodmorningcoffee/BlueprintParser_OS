@@ -295,15 +295,24 @@ describe("A2b exact Table operation topology", () => {
       .toContain("meta:null");
 
     const review = compact(namedRoot(COMMANDS, "publishTableReviewForOperation"));
-    expect(review).toContain('prepareParseEntry(before.tableParseStep,"review",token)');
-    expect(review).toContain("if(!useParseFlowStore.getState().isParseOperationCurrent(token))returnfalse");
+    expect(review).toContain(
+      'consttransitioned=publishParseOwnedTransition(token,"table","review",()=>{',
+    );
+    expect(review).toContain(
+      'if(token.kind!=="table"||!useParseFlowStore.getState().isParseOperationCurrent(token)){returnfalse;}',
+    );
     expect(review.match(/useParseFlowStore\.setState/g)).toHaveLength(1);
     expect(review).toContain("tableParsedGrid:publication.grid");
     expect(review).toContain("tableParseMeta:publication.meta");
     expect(review).toContain('tableParseStep:"review"');
-    expect(review).toContain("returncommitted&&useParseFlowStore.getState().isParseOperationCurrent(token)");
+    expect(review).toContain(
+      "returntransitioned&&committed&&useParseFlowStore.getState().isParseOperationCurrent(token)",
+    );
 
     const terminal = compact(namedRoot(COMMANDS, "completeTableParseOperation"));
+    expect(terminal).toContain(
+      'consttransitioned=publishParseOwnedTransition(token,"table","idle",()=>{',
+    );
     expect(terminal).toContain("options.afterTerminal?.()");
     expect(terminal).toContain("terminalOperations=parseOperations");
     expect(terminal).toContain(
@@ -316,13 +325,10 @@ describe("A2b exact Table operation topology", () => {
     expect(terminal).toContain(
       'clearsGuided?["table","keynote","notes"]:["table"]',
     );
-    expect(terminal).toContain("returncompleted");
+    expect(terminal).toContain("returntransitioned&&completed");
     expect(terminal).not.toMatch(/\bresetTableParse\(/);
     expect(terminal).not.toMatch(/\bresetGuidedParse\(/);
-    expect(terminal).toContain(
-      'if(ownsParseToolAuthority(token)){useToolStore.getState().setMode("move");}',
-    );
-    expect(terminal.indexOf('setMode("move")'))
+    expect(terminal.indexOf("publishParseOwnedTransition"))
       .toBeLessThan(terminal.indexOf("useParseFlowStore.setState"));
     expect(terminal.indexOf("useParseFlowStore.setState"))
       .toBeLessThan(terminal.indexOf("options.afterTerminal?.()"));
@@ -391,7 +397,7 @@ describe("A2b Table invalidation topology", () => {
 
     const annotation = compact(source("src/components/viewer/AnnotationOverlay.tsx"));
     expect(annotation).toContain(
-      "acceptTableParseRegion([minX,minY,maxX,maxY])",
+      "acceptTableParseRegion(bbox)",
     );
 
     const compactAuto = compact(source(AUTO));
@@ -535,8 +541,9 @@ describe("A2b Table invalidation topology", () => {
     expect(manual).not.toMatch(/\baddTableParseRow\(/);
 
     const annotation = compact(source("src/components/viewer/AnnotationOverlay.tsx"));
-    expect(annotation).toContain("addTableParseColumnForUser([minX,minY,maxX,maxY])");
-    expect(annotation).toContain("addTableParseRowForUser([minX,minY,maxX,maxY])");
+    expect(annotation).toContain("consumeToolTailAuthority(lease.token,()=>{");
+    expect(annotation).toContain("addTableParseColumnForUser(bbox)");
+    expect(annotation).toContain("addTableParseRowForUser(bbox)");
     expect(annotation).not.toMatch(/\baddTableParseColumn\(/);
     expect(annotation).not.toMatch(/\baddTableParseRow\(/);
     const closeModal = compact(namedRoot(MODAL, "closeModal"));

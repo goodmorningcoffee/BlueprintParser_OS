@@ -121,7 +121,7 @@ function installProject(publicId: string): void {
     pageNumber: PAGE,
     numPages: 1,
     mode: "pointer",
-    yoloTagPickingMode: true,
+    activeTool: { kind: "tagPick" },
     showDetections: true,
     activeModels: { [MODEL]: true },
   });
@@ -207,21 +207,21 @@ function renderCanvas(): HTMLCanvasElement {
 describe("AnnotationOverlay scanClass request ownership", () => {
   it("publishes select-region completion as drawing close -> region -> idle step -> tool move", () => {
     act(() => {
-      useToolStore.setState({ yoloTagPickingMode: false, mode: "pointer" });
+      useToolStore.setState({ activeTool: null, mode: "pointer" });
     });
     const canvas = renderCanvas();
     // Start this interaction after mount, exactly as the panel command does in production.
     act(() => {
+      useToolStore.setState({ activeTool: { kind: "parseRect", flow: "table" } });
       useParseFlowStore.setState({
         tableParseStep: "select-region",
         tableParseRegion: null,
       });
-      useViewerStore.setState({
-        _drawing: true,
-        _drawStart: { x: 10, y: 20 },
-        _drawEnd: { x: 70, y: 80 },
-      });
     });
+    // Mouseup settlement now requires the exact lease captured by the real mousedown path; a
+    // preloaded dormant `_drawing` flag is deliberately insufficient authority.
+    fireEvent.mouseDown(canvas, { clientX: 10, clientY: 20, button: 0 });
+    fireEvent.mouseMove(canvas, { clientX: 70, clientY: 80 });
     expect(useParseFlowStore.getState().tableParseStep).toBe("select-region");
     const trace: Array<
       | { owner: "viewer"; drawing: boolean }
@@ -272,7 +272,7 @@ describe("AnnotationOverlay scanClass request ownership", () => {
       yoloClass: "Door",
       yoloModel: MODEL,
     });
-    expect(useToolStore.getState().yoloTagPickingMode).toBe(false);
+    expect(useToolStore.getState().activeTool).toBeNull();
 
     const texts = scanTexts("Door", DOOR.id);
     await resolveScan(0, texts);
@@ -313,7 +313,10 @@ describe("AnnotationOverlay scanClass request ownership", () => {
     clickAt(canvas, 20, 20); // request 0: Door
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    act(() => useToolStore.setState({ yoloTagPickingMode: true, mode: "pointer" }));
+    act(() => useToolStore.setState({
+      activeTool: { kind: "tagPick" },
+      mode: "pointer",
+    }));
     clickAt(canvas, 70, 20); // request 1: Window
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(requestBody(0)).toMatchObject({ yoloClass: "Door" });

@@ -17,8 +17,13 @@ import {
   replaceTextractForPage,
 } from "@/queries/textractCache";
 import { queryKeys } from "@/queries/queryKeys";
+import {
+  claimToolTailAuthority,
+  invalidateToolTailAuthority,
+} from "@/lib/parse-tool-authority";
 import { useUiStore } from "@/stores/uiStore";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore as useViewerStore } from "@/stores/viewerCoreStore";
 import type { TextractPageData } from "@/types";
 
@@ -278,6 +283,36 @@ describe("I7 PDFPage exact-page render topology", () => {
       paragraphClipboard: { colBoundaries: [0.1, 0.5, 0.9], headers: ["Key", "Note"] },
     }));
     expect(paragraphOverlayProbe.renders).toBe(inactiveBaseline);
+  });
+
+  it("ignores non-reactive tool authority and active-tool generation publications", async () => {
+    // Symbol activation also selects pointer mode. Hold that independent TextAnnotation input
+    // constant so this witness measures only the active-tool discriminator/generation boundary.
+    useToolStore.setState({ mode: "pointer" });
+    let commits = 0;
+    render(
+      <Profiler id="pdf-page-tool-authority" onRender={() => { commits += 1; }}>
+        <PDFPage pdfDoc={null} pageNumber={1} scale={1} containerWidth={900} />
+      </Profiler>,
+      { wrapper },
+    );
+    await act(async () => Promise.resolve());
+    const baseline = commits;
+
+    // Global tail authority is deliberately non-reactive. Claiming and invalidating it must not
+    // create a PDFPage subscriber edge or commit this viewer-sacred subtree.
+    act(() => {
+      claimToolTailAuthority({});
+      invalidateToolTailAuthority();
+    });
+    expect(commits).toBe(baseline);
+
+    // Tool activation belongs to the mocked canvas children. PDFPage itself must remain outside
+    // both the discriminator and full activation-object subscription topology, including renewal.
+    act(() => useToolStore.getState().setSymbolSearchActive(true));
+    expect(commits).toBe(baseline);
+    act(() => useToolStore.getState().setSymbolSearchActive(true));
+    expect(commits).toBe(baseline);
   });
 
   it("mounts four current-page observers, ignores adjacent publication, and reacts to current data", async () => {

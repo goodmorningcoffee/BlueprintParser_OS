@@ -1,30 +1,39 @@
 "use client";
 
 import { useState, useMemo, useCallback, memo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   publishSettledActiveTakeoffItemId,
+  reconcileSettledDeletedTakeoffItem,
   useToolStore,
 } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (both hooks —
-// CountTab is a dual reader). Handler bodies below are UNCHANGED: the SPLIT write ordering
-// (server-first item ops + group create; optimistic group rename/delete, move, edit-panel save;
-// NO rollback) is frozen — see TAKEOFF_IMPL/SPEC.md §3 + TakeoffCountFreeze.test.tsx.
+// CountTab is a dual reader). The SPLIT write ordering (server-first item ops + group create;
+// optimistic group rename/delete, move, edit-panel save; NO rollback) remains frozen. AT2 only
+// adds captured cache targets and causal authority around the delayed activation tail.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 import { useAnnotations } from "@/queries/useAnnotations";
+import { queryKeys } from "@/queries/queryKeys";
 import { TAKEOFF_SHAPES, TWENTY_COLORS } from "@/types";
 import type { TakeoffShape, ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { SHAPE_ICONS, TakeoffEditPanel } from "./TakeoffShared";
 import TakeoffGroupSection from "./TakeoffGroupSection";
 import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist";
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import {
+  claimToolTailAuthority,
+  consumeToolTailAuthority,
+  invalidateToolTailAuthority,
+  ownsToolTailAuthority,
+} from "@/lib/parse-tool-authority";
 
 export default memo(function CountTab() {
   // [refactor jul10 P2.2⑥] Value replacement preserves the existing captured-array lost-update
   // profile of server-first delete/rename; this backing-store move must not repair it implicitly.
   const { annotations, setAnnotations } = useAnnotations();
-  const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
+  const queryClient = useQueryClient();
+  const { takeoffItems, updateTakeoffItem } = useTakeoffItems();
   const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useToolStore((s) => s.setActiveTakeoffItemId);
   const publicId = useSessionStore((s) => s.publicId);
@@ -70,11 +79,22 @@ export default memo(function CountTab() {
 
   async function handleCreate() {
     if (!formName.trim()) return;
-    invalidateParseToolAuthority();
-    if (isDemo) {
+    const session = useSessionStore.getState();
+    const capturedPublicId = session.publicId;
+    const capturedItemsKey = queryKeys.takeoff.items(capturedPublicId);
+    const token = claimToolTailAuthority({});
+    if (session.isDemo) {
       const item = { id: -Date.now(), name: formName.trim(), shape: formShape, color: formColor, size: 10, sortOrder: countItems.length };
-      addTakeoffItem(item);
-      publishSettledActiveTakeoffItemId(item.id);
+      queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) => [
+        ...old,
+        item,
+      ]);
+      if (
+        useSessionStore.getState().publicId === capturedPublicId &&
+        ownsToolTailAuthority(token)
+      ) {
+        consumeToolTailAuthority(token, () => publishSettledActiveTakeoffItemId(item.id));
+      }
       setFormName("");
       setShowForm(false);
       setFormError(null);
@@ -86,15 +106,23 @@ export default memo(function CountTab() {
       const res = await fetch("/api/takeoff-items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: publicId, name: formName.trim(), shape: formShape, color: formColor }),
+        body: JSON.stringify({ projectId: capturedPublicId, name: formName.trim(), shape: formShape, color: formColor }),
       });
       if (res.ok) {
-        const item = await res.json();
-        addTakeoffItem(item);
+        const item = await res.json() as ClientTakeoffItem;
+        queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) => [
+          ...old,
+          item,
+        ]);
         setFormName("");
         setShowForm(false);
         setFormError(null);
-        publishSettledActiveTakeoffItemId(item.id);
+        if (
+          useSessionStore.getState().publicId === capturedPublicId &&
+          ownsToolTailAuthority(token)
+        ) {
+          consumeToolTailAuthority(token, () => publishSettledActiveTakeoffItemId(item.id));
+        }
       } else {
         // [refactor jun16 P1.2] read either error envelope (legacy string | {code,message}).
         const err = await res.json().catch(() => null);
@@ -109,18 +137,31 @@ export default memo(function CountTab() {
   }
 
   async function handleDelete(item: ClientTakeoffItem) {
-    invalidateParseToolAuthority();
-    if (isDemo) {
-      removeTakeoffItem(item.id);
-      setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-      if (activeTakeoffItemId === item.id) publishSettledActiveTakeoffItemId(null);
+    const session = useSessionStore.getState();
+    const capturedPublicId = session.publicId;
+    const capturedItemsKey = queryKeys.takeoff.items(capturedPublicId);
+    const capturedAnnotationsKey = queryKeys.annotations.all(capturedPublicId);
+    const reconciledAnnotations = annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id)));
+    invalidateToolTailAuthority();
+    if (session.isDemo) {
+      queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) =>
+        old.filter((candidate) => candidate.id !== item.id),
+      );
+      queryClient.setQueryData(capturedAnnotationsKey, reconciledAnnotations);
+      if (useSessionStore.getState().publicId === capturedPublicId) {
+        reconcileSettledDeletedTakeoffItem(item.id);
+      }
       return;
     }
     try {
       await persistFetch(`/api/takeoff-items/${item.id}`, undefined, "DELETE");
-      removeTakeoffItem(item.id);
-      setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-      if (activeTakeoffItemId === item.id) publishSettledActiveTakeoffItemId(null);
+      queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) =>
+        old.filter((candidate) => candidate.id !== item.id),
+      );
+      queryClient.setQueryData(capturedAnnotationsKey, reconciledAnnotations);
+      if (useSessionStore.getState().publicId === capturedPublicId) {
+        reconcileSettledDeletedTakeoffItem(item.id);
+      }
     } catch (err) {
       console.error("Failed to delete takeoff item:", err);
       window.alert(`Failed to delete item: ${err instanceof Error ? err.message : "Unknown error"}`);

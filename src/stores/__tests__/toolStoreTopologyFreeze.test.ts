@@ -1,6 +1,6 @@
 // @vitest-environment node
-// [refactor jul11 P2.3 T2] Active-owner topology: the exact leaf is now the sole tool owner and the
-// legacy viewerStore declarations/implementation are deletion targets.
+// [refactor jul13 P2.3 AT2] Atomic discriminator topology: one correlated activeTool is the sole
+// activation owner. The named legacy commands/facades remain narrow compatibility surfaces only.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -12,14 +12,13 @@ const VIEWER_FILE = "src/stores/viewerStore.ts";
 const TOOL_MODULE = "@/stores/toolStore";
 
 const DATA_KEYS = [
-  "mode", "tempPanMode", "activeTakeoffItemId", "scaleCalibrations", "calibrationMode",
-  "calibrationPoints", "polygonDrawingMode", "polygonVertices", "bucketFillActive",
+  "mode", "tempPanMode", "activeTool", "activeTakeoffItemId", "scaleCalibrations", "calibrationMode",
+  "calibrationPoints", "polygonDrawingMode", "polygonVertices",
   "bucketFillPreview", "bucketFillLoading", "bucketFillError", "bucketFillTolerance",
-  "bucketFillDilatePx", "bucketFillResolution", "bucketFillPendingPolygon", "splitAreaActive",
+  "bucketFillDilatePx", "bucketFillResolution", "bucketFillPendingPolygon",
   "splitLineA", "splitLineB", "splitPreview", "splitError", "bucketFillBarriers",
   "bucketFillBarrierMode", "barrierPendingPoint", "takeoffUndoStack", "takeoffRedoStack",
-  "yoloTagPickingMode", "tagScanResults", "tagAddingMode", "symbolSearchActive",
-  "symbolSearchLoading", "symbolSearchProgress", "symbolSearchResults",
+  "tagScanResults", "symbolSearchLoading", "symbolSearchProgress", "symbolSearchResults",
   "symbolSearchConfidence", "dismissedSymbolMatches", "symbolSearchError",
   "symbolSearchTemplateBbox", "symbolSearchSourcePage", "symbolSearchConfig",
   "symbolSearchPreset",
@@ -42,10 +41,9 @@ const LEGACY_ACTION_KEYS = [
 ] as const;
 
 const RESET_KEYS = [
-  "tempPanMode", "activeTakeoffItemId", "scaleCalibrations", "calibrationMode",
+  "tempPanMode", "activeTool", "activeTakeoffItemId", "scaleCalibrations", "calibrationMode",
   "calibrationPoints", "polygonDrawingMode", "polygonVertices", "bucketFillResolution",
-  "yoloTagPickingMode", "tagScanResults", "tagAddingMode", "symbolSearchActive",
-  "symbolSearchLoading", "symbolSearchProgress", "symbolSearchResults",
+  "tagScanResults", "symbolSearchLoading", "symbolSearchProgress", "symbolSearchResults",
   "symbolSearchConfidence", "dismissedSymbolMatches", "symbolSearchError",
   "symbolSearchTemplateBbox", "symbolSearchSourcePage", "symbolSearchConfig",
   "symbolSearchPreset",
@@ -70,8 +68,15 @@ const TOOL_AUTHORITY_INTENT_ACTIONS = [
   "setPolygonDrawingMode",
   "resetPolygonDrawing",
   "setBucketFillActive",
+  "setBucketFillTolerance",
+  "setBucketFillDilatePx",
+  "setBucketFillResolution",
   "setSplitAreaActive",
+  "addBucketFillBarrier",
+  "undoLastBarrier",
+  "clearBucketFillBarriers",
   "setBucketFillBarrierMode",
+  "setBarrierPendingPoint",
   "setYoloTagPickingMode",
   "setTagAddingMode",
   "setSymbolSearchActive",
@@ -180,7 +185,7 @@ function importsFrom(source: ts.SourceFile, moduleName: string): boolean {
   );
 }
 
-describe("toolStore T2 — active source contract", () => {
+describe("toolStore AT2 — atomic active-tool contract", () => {
   const toolSource = parse(TOOL_FILE);
   const viewerSource = parse(VIEWER_FILE);
   const toolObject = storeObject(toolSource, "useToolStore");
@@ -192,6 +197,7 @@ describe("toolStore T2 — active source contract", () => {
       .map((statement) => (statement.moduleSpecifier as ts.StringLiteral).text)
       .sort();
     expect(modules).toEqual([
+      "@/lib/active-tool-state",
       "@/lib/parse-tool-authority",
       "@/types",
       "zustand",
@@ -201,7 +207,7 @@ describe("toolStore T2 — active source contract", () => {
     expect(textOf(TOOL_FILE)).not.toMatch(/@\/(?:queries|components)\//);
   });
 
-  it("declares exactly 40 data fields, 43 legacy actions, and one reset action", () => {
+  it("declares exactly 36 data fields, 43 named compatibility actions, and one reset action", () => {
     expect(interfaceKeys(toolSource, "ToolStoreData")).toEqual(DATA_KEYS);
     expect(interfaceKeys(toolSource, "ToolStoreActions")).toEqual([
       ...LEGACY_ACTION_KEYS,
@@ -214,7 +220,7 @@ describe("toolStore T2 — active source contract", () => {
     ].sort());
   });
 
-  it("keeps the reset source-owned by exactly the frozen 22-field partial ledger", () => {
+  it("keeps the reset source-owned by exactly the frozen 20-field partial ledger", () => {
     const reset = directProperty(toolObject, "resetProjectToolState");
     const objects = descendants(reset.initializer, ts.isObjectLiteralExpression)
       .filter((object) => objectKeys(object).includes("tempPanMode"));
@@ -222,12 +228,12 @@ describe("toolStore T2 — active source contract", () => {
     expect(objectKeys(objects[0])).toEqual(RESET_KEYS);
   });
 
-  it("revokes parse tool authority before every activation-ledger publication", () => {
+  it("revokes global tool-tail authority before every activation-ledger publication", () => {
     for (const action of TOOL_AUTHORITY_INTENT_ACTIONS) {
       const initializer = directProperty(toolObject, action).initializer;
       const calls = descendants(initializer, ts.isCallExpression);
       const invalidations = calls.filter((call) =>
-        ts.isIdentifier(call.expression) && call.expression.text === "invalidateParseToolAuthority"
+        ts.isIdentifier(call.expression) && call.expression.text === "invalidateToolTailAuthority"
       );
       const publications = calls.filter((call) =>
         ts.isIdentifier(call.expression) && call.expression.text === "set"
@@ -249,6 +255,12 @@ describe("toolStore T2 — active source contract", () => {
       .filter((object) => objectKeys(object).includes("symbolSearchActive"));
     expect(objects).toHaveLength(1);
     expect(objectKeys(objects[0])).toEqual(SYMBOL_HOOK_KEYS);
+  });
+
+  it("does not export or implement a generic active-tool setter", () => {
+    expect(interfaceKeys(toolSource, "ToolStoreActions")).not.toContain("setActiveTool");
+    expect(objectKeys(toolObject)).not.toContain("setActiveTool");
+    expect(textOf(TOOL_FILE)).not.toMatch(/export\s+(?:function|const)\s+setActiveTool\b/);
   });
 
   it("makes toolStore the sole owner and deletes the complete legacy viewer contract", () => {

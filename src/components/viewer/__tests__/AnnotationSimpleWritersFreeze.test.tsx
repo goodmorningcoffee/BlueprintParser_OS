@@ -260,6 +260,7 @@ describe("CalibrationInput annotation replacement freeze", () => {
     setViewerStoreStateForTest({
       isDemo: true,
       pageNumber: 3,
+      activeTool: { kind: "calibration" },
       calibrationMode: "input",
       calibrationPoints: { p1: { x: 0.2, y: 0.3 }, p2: { x: 0.7, y: 0.8 } },
     });
@@ -303,6 +304,7 @@ describe("CalibrationInput annotation replacement freeze", () => {
   it("non-demo awaits same-page DELETEs in array order, then POSTs and replaces only after success", async () => {
     setViewerStoreStateForTest({
       pageNumber: 3,
+      activeTool: { kind: "calibration" },
       calibrationMode: "input",
       calibrationPoints: { p1: { x: 0.2, y: 0.3 }, p2: { x: 0.2, y: 0.8 } },
     });
@@ -405,6 +407,7 @@ describe("CalibrationInput annotation replacement freeze", () => {
   it("surfaces the shell error message and keeps local rows plus the calibration gesture on POST failure", async () => {
     setViewerStoreStateForTest({
       pageNumber: 5,
+      activeTool: { kind: "calibration" },
       calibrationMode: "input",
       calibrationPoints: { p1: { x: 0.1, y: 0.2 }, p2: { x: 0.9, y: 0.2 } },
     });

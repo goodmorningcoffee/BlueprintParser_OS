@@ -245,7 +245,7 @@ describe("viewer UI command freeze — peer-host teardown", () => {
 });
 
 describe("viewer UI command freeze — parser-panel close shapes", () => {
-  it("table close changes only its inline reset list and assigns mode without calling setMode", () => {
+  it("table close changes only its inline reset list and preserves an unrelated exact tool", () => {
     const setMode = vi.fn();
     const tableCellStructure = {
       cells: [],
@@ -255,6 +255,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     const tableParseOptions = useParseFlowStore.getState().tableParseOptions;
     const polygonVertices = [{ x: 3, y: 4 }];
     const bucketFillPreview = { vertices: [{ x: 1, y: 2 }], method: "sentinel" };
+    const activeTool = { kind: "bucketFill" } as const;
     useToolStore.setState({ setMode });
     setViewerStoreStateForTest({
       showTableParsePanel: true,
@@ -283,9 +284,8 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       activeTakeoffItemId: 41,
       polygonDrawingMode: "drawing",
       polygonVertices,
-      bucketFillActive: true,
+      activeTool,
       bucketFillPreview,
-      symbolSearchActive: true,
       tempPanMode: true,
     });
     const before = useParseFlowStore.getState();
@@ -332,13 +332,12 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       guidedParseCols: [],
       showTableCellStructure: true,
     });
-    expect(changedValueKeys(beforeTool, afterTool)).toEqual(["mode"]);
+    expect(changedValueKeys(beforeTool, afterTool)).toEqual([]);
     expect(afterTool).toMatchObject({
-      mode: "move",
+      mode: "markup",
       activeTakeoffItemId: 41,
       polygonDrawingMode: "drawing",
-      bucketFillActive: true,
-      symbolSearchActive: true,
+      activeTool,
       tempPanMode: true,
     });
     expect(useUiStore.getState()).toMatchObject({
@@ -347,16 +346,17 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     });
     expect(after.tableCellStructure).toBe(tableCellStructure);
     expect(after.tableParseOptions).toBe(tableParseOptions);
+    expect(afterTool.activeTool).toBe(activeTool);
     expect(afterTool.polygonVertices).toBe(polygonVertices);
     expect(afterTool.bucketFillPreview).toBe(bucketFillPreview);
     expect(setMode).not.toHaveBeenCalled();
-    expect(publications).toEqual(["ui", "tool", "parse"]);
+    expect(publications).toEqual(["ui", "parse"]);
     unsubscribeParse();
     unsubscribeTool();
     unsubscribeUi();
   });
 
-  it("keynote close changes only its inline reset list and preserves saved/highlight state", () => {
+  it("keynote close preserves saved/highlight state and an unrelated exact tool", () => {
     const setMode = vi.fn();
     const parsedKeynoteData = [{
       pageNumber: 8,
@@ -365,6 +365,7 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
     const activeKeynoteHighlight = { pageNumber: 8, key: "1" };
     const polygonVertices = [{ x: 3, y: 4 }];
     const bucketFillPreview = { vertices: [{ x: 1, y: 2 }], method: "sentinel" };
+    const activeTool = { kind: "symbolTemplate" } as const;
     useToolStore.setState({ setMode });
     setViewerStoreStateForTest({
       showKeynoteParsePanel: true,
@@ -385,9 +386,8 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       activeTakeoffItemId: 41,
       polygonDrawingMode: "drawing",
       polygonVertices,
-      bucketFillActive: true,
+      activeTool,
       bucketFillPreview,
-      symbolSearchActive: true,
       tempPanMode: true,
     });
     const before = useParseFlowStore.getState();
@@ -429,22 +429,22 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
       guidedParseRows: [],
       guidedParseCols: [],
     });
-    expect(changedValueKeys(beforeTool, afterTool)).toEqual(["mode"]);
+    expect(changedValueKeys(beforeTool, afterTool)).toEqual([]);
     expect(afterTool).toMatchObject({
-      mode: "move",
+      mode: "markup",
       activeTakeoffItemId: 41,
       polygonDrawingMode: "drawing",
-      bucketFillActive: true,
-      symbolSearchActive: true,
+      activeTool,
       tempPanMode: true,
     });
     expect(useUiStore.getState().showKeynoteParsePanel).toBe(false);
     expect(after.parsedKeynoteData).toBe(parsedKeynoteData);
     expect(useUiStore.getState().activeKeynoteHighlight).toBe(activeKeynoteHighlight);
+    expect(afterTool.activeTool).toBe(activeTool);
     expect(afterTool.polygonVertices).toBe(polygonVertices);
     expect(afterTool.bucketFillPreview).toBe(bucketFillPreview);
     expect(setMode).not.toHaveBeenCalled();
-    expect(publications).toEqual(["ui", "tool", "parse"]);
+    expect(publications).toEqual(["ui", "parse"]);
     unsubscribeParse();
     unsubscribeTool();
     unsubscribeUi();
@@ -508,7 +508,6 @@ describe("viewer UI command freeze — parser-panel close shapes", () => {
         expect(replacementRevision).not.toBeNull();
         expect(publications).toEqual([
           "ui",
-          "tool",
           "parse",
           "ui",
           "tool",

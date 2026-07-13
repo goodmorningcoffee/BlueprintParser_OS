@@ -21,12 +21,11 @@ import {
   useYoloTagsForPage,
 } from "@/queries/useYoloTags";
 import { useViewerStore } from "@/stores/viewerStore";
-import { useParseFlowStore, useTableParse, useKeynoteParse } from "@/stores/parseFlowStore";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
 import {
-  publishSettledCalibrationReset,
+  advanceCalibrationGesture,
   publishSettledPolygonReset,
-  publishSettledSymbolSearchActive,
-  useSymbolSearch,
+  publishSettledSymbolSearchDeactivate,
   useToolStore,
 } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -45,6 +44,8 @@ import {
   focusParsedTableRegionInCatalog,
   setKeynoteManualInputsForUser,
   setKeynoteParseStepWithTool,
+  setNotesParseStepWithTool,
+  setSpecParseStepWithTool,
   setTableParseStepWithTool,
 } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
@@ -52,7 +53,25 @@ import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 import { requestMapTagsBatch } from "@/lib/client-map-tags";
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import {
+  captureCanvasGestureLease,
+  matchesCanvasGestureLease,
+  selectActiveToolKey,
+  type CanvasGestureLease,
+  type CanvasGestureSnapshot,
+} from "@/lib/active-tool-state";
+import {
+  cancelToolTailExact,
+  claimLatestToolOperation,
+  claimToolTailAuthority,
+  consumeToolTailAuthority,
+  invalidateLatestToolOperation,
+  invalidateToolTailAuthority,
+  ownsLatestToolOperation,
+  ownsToolTailAuthority,
+  registerToolTailCancellation,
+  releaseToolTailCancellation,
+} from "@/lib/parse-tool-authority";
 import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
 import { splitPolygonByLine, findSplittablePolygons } from "@/lib/polygon-split";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
@@ -70,6 +89,7 @@ interface AnnotationOverlayProps {
 
 /** Assign colors by unique label order — each unique label gets next color in palette */
 const labelColorMap = new Map<string, string>();
+const EMPTY_KEYNOTE_COLUMN_BBS: [number, number, number, number][] = [];
 function labelColor(name: string): string {
   if (!labelColorMap.has(name)) {
     labelColorMap.set(name, TWENTY_COLORS[labelColorMap.size % TWENTY_COLORS.length]);
@@ -147,18 +167,37 @@ function drawCountMarker(
   ctx.restore();
 }
 
+function readCanvasGestureSnapshot(): CanvasGestureSnapshot {
+  const tool = useToolStore.getState();
+  const parse = useParseFlowStore.getState();
+  return {
+    activeTool: tool.activeTool,
+    mode: tool.mode,
+    parseSteps: {
+      table: parse.tableParseStep,
+      keynote: parse.keynoteParseStep,
+      notes: parse.notesParseStep,
+      spec: parse.specParseStep,
+    },
+    publicId: useSessionStore.getState().publicId,
+    pageNumber: useViewerCoreStore.getState().pageNumber,
+  };
+}
+
 export default memo(function AnnotationOverlay({
   width,
   height,
   cssScale,
 }: AnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawingLeaseRef = useRef<CanvasGestureLease<object> | null>(null);
   // scanClass writes project-agnostic tool preview state, so controller identity is its request
   // token. A newer scan or project lifecycle invalidates the old completion without subscribing
   // this sacred canvas to any additional store field.
   const tagScanControllerRef = useRef<AbortController | null>(null);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const mode = useToolStore((s) => s.mode);
+  const activeToolKey = useToolStore(selectActiveToolKey);
   const { projectId: projectDbId, publicId, isDemo } = useProject();
   useEffect(() => () => {
     const controller = tagScanControllerRef.current;
@@ -168,14 +207,12 @@ export default memo(function AnnotationOverlay({
   // [refactor jul10 P2.2④] qc for the readTakeoffItems bridge (handler-time sync reads).
   // useQueryClient is provider-stable; it adds ZERO subscriptions to this component.
   const qc = useQueryClient();
-  const {
-    tableParseStep, tableParseRegion,
-    tableParseColumnBBs, tableParseRowBBs,
-  } = useTableParse();
-  const showParsedRegions = useUiStore((s) => s.showParsedRegions);
-  const {
-    keynoteParseStep, keynoteParseRegion, keynoteColumnBBs, keynoteRowBBs,
-  } = useKeynoteParse();
+  const keynoteParseStep = useParseFlowStore((s) =>
+    activeToolKey === "parseRect:keynote" ? s.keynoteParseStep : "idle"
+  );
+  const keynoteColumnBBs = useParseFlowStore((s) =>
+    activeToolKey === "parseRect:keynote" ? s.keynoteColumnBBs : EMPTY_KEYNOTE_COLUMN_BBS
+  );
   // [refactor jul11 P2.2⑨] Sacred canvas observes only the current-page instance projection.
   // Metadata for every tag is retained so the existing tag-text/active-tag semantics stay exact;
   // instance edits on another page no longer repaint this canvas.
@@ -185,11 +222,10 @@ export default memo(function AnnotationOverlay({
   const setActiveYoloTagId = useUiStore((s) => s.setActiveYoloTagId);
   const setYoloTagFilter = useUiStore((s) => s.setYoloTagFilter);
   const yoloTagVisibility = useUiStore((s) => s.yoloTagVisibility);
-  const yoloTagPickingMode = useToolStore((s) => s.yoloTagPickingMode);
   const setYoloTagPickingMode = useToolStore((s) => s.setYoloTagPickingMode);
-  const {
-    symbolSearchActive, symbolSearchResults, symbolSearchConfidence, dismissedSymbolMatches,
-  } = useSymbolSearch();
+  const symbolSearchResults = useToolStore((s) => s.symbolSearchResults);
+  const symbolSearchConfidence = useToolStore((s) => s.symbolSearchConfidence);
+  const dismissedSymbolMatches = useToolStore((s) => s.dismissedSymbolMatches);
 
   const activeTableTagViews = useUiStore((s) => s.activeTableTagViews);
   const llmHighlight = useUiStore((s) => s.llmHighlight);
@@ -217,6 +253,7 @@ export default memo(function AnnotationOverlay({
   const { _setDrawing: setDrawing, _setDrawStart: setDrawStart, _setDrawEnd: setDrawEnd, _setMousePos: setMousePos } = useViewerStore.getState();
   const rafRef = useRef<number>(0);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const selectedPageRef = useRef(pageNumber);
   // Multi-select layer — owns the Group-tool lasso + shift-click accumulation.
   // See useMultiSelectInteraction for the interaction contract. Backward
   // compat: single-select paths (drag-to-move, pencil-edit) keep using the
@@ -263,39 +300,32 @@ export default memo(function AnnotationOverlay({
   // one-macrotask refresh lag, sanctioned.
   const { takeoffItems } = useTakeoffItems();
   const hiddenTakeoffItemIds = useUiStore((s) => s.hiddenTakeoffItemIds);
-  const setActiveTakeoffItemId = useToolStore((s) => s.setActiveTakeoffItemId);
-  const calibrationMode = useToolStore((s) => s.calibrationMode);
-  const setCalibrationMode = useToolStore((s) => s.setCalibrationMode);
-  const setCalibrationPoint = useToolStore((s) => s.setCalibrationPoint);
-  const resetCalibration = useToolStore((s) => s.resetCalibration);
   const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
-  const polygonDrawingMode = useToolStore((s) => s.polygonDrawingMode);
+  const polygonDrawingMode = useToolStore((s) =>
+    activeToolKey === null || activeToolKey === "takeoffPlacement"
+      ? s.polygonDrawingMode
+      : "idle"
+  );
   const setPolygonDrawingMode = useToolStore((s) => s.setPolygonDrawingMode);
-  const polygonVertices = useToolStore((s) => s.polygonVertices);
   const addPolygonVertex = useToolStore((s) => s.addPolygonVertex);
-  const resetPolygonDrawing = useToolStore((s) => s.resetPolygonDrawing);
   const undoLastVertex = useToolStore((s) => s.undoLastVertex);
-  const bucketFillActive = useToolStore((s) => s.bucketFillActive);
-  const bucketFillPreview = useToolStore((s) => s.bucketFillPreview);
-  const bucketFillLoading = useToolStore((s) => s.bucketFillLoading);
+  const bucketFillLoading = useToolStore((s) =>
+    activeToolKey === "bucketFill" ? s.bucketFillLoading : false
+  );
   const setBucketFillPreview = useToolStore((s) => s.setBucketFillPreview);
-  const setBucketFillLoading = useToolStore((s) => s.setBucketFillLoading);
-  const setBucketFillError = useToolStore((s) => s.setBucketFillError);
-  const bucketFillBarrierMode = useToolStore((s) => s.bucketFillBarrierMode);
+  const bucketFillBarrierMode = useToolStore((s) =>
+    activeToolKey === "bucketFill" ? s.bucketFillBarrierMode : false
+  );
   const addBucketFillBarrier = useToolStore((s) => s.addBucketFillBarrier);
-  const setBucketFillActive = useToolStore((s) => s.setBucketFillActive);
-  const splitAreaActive = useToolStore((s) => s.splitAreaActive);
-  const setSplitAreaActive = useToolStore((s) => s.setSplitAreaActive);
-  const splitLineA = useToolStore((s) => s.splitLineA);
-  const splitLineB = useToolStore((s) => s.splitLineB);
   const setSplitLineEndpoint = useToolStore((s) => s.setSplitLineEndpoint);
-  const splitPreview = useToolStore((s) => s.splitPreview);
   const setSplitPreview = useToolStore((s) => s.setSplitPreview);
   const setSplitError = useToolStore((s) => s.setSplitError);
   const showTakeoffPanel = useUiStore((s) => s.showTakeoffPanel);
   const tempPanMode = useToolStore((s) => s.tempPanMode);
+  const splitAreaActive = activeToolKey === "split";
   // During keynote Step 2 with Column A drawn: only show YOLO fully inside Column A
-  const isKeynoteYoloPicking = keynoteParseStep === "define-column" && keynoteColumnBBs.length >= 1;
+  const isKeynoteYoloPicking = activeToolKey === "parseRect:keynote" &&
+    keynoteParseStep === "define-column" && keynoteColumnBBs.length >= 1;
   const keynoteColA = keynoteColumnBBs.length >= 1 ? keynoteColumnBBs[0] : null;
 
   const pageAnnotationsRef = useRef<ClientAnnotation[]>([]);
@@ -898,6 +928,68 @@ export default memo(function AnnotationOverlay({
     []
   );
 
+  const cancelDeferredDrawing = useCallback(() => {
+    const lease = drawingLeaseRef.current;
+    const cancelled = lease !== null && cancelToolTailExact(lease.token);
+    if (!cancelled && drawingLeaseRef.current === lease) {
+      drawingLeaseRef.current = null;
+      if (useViewerStore.getState()._drawing) setDrawing(false);
+    }
+    if (lease) consumeToolTailAuthority(lease.token, () => {});
+  }, [setDrawing]);
+
+  const startDeferredDrawing = useCallback((
+    pos: { x: number; y: number },
+    clearSelection = true,
+  ): boolean => {
+    const snapshot = readCanvasGestureSnapshot();
+    if (snapshot.publicId !== publicId || snapshot.pageNumber !== pageNumber) return false;
+
+    const token = {};
+    const lease = captureCanvasGestureLease(token, snapshot);
+    if (!lease) return false;
+
+    claimToolTailAuthority(token);
+    drawingLeaseRef.current = lease;
+    registerToolTailCancellation(token, () => {
+      if (drawingLeaseRef.current !== lease) return;
+      drawingLeaseRef.current = null;
+      if (useViewerStore.getState()._drawing) setDrawing(false);
+    });
+    if (clearSelection) setSelectedId(null);
+
+    const stillOwnsLease = () => drawingLeaseRef.current === lease &&
+      ownsToolTailAuthority(token) &&
+      matchesCanvasGestureLease(lease, readCanvasGestureSnapshot());
+    const abandonLease = () => {
+      if (drawingLeaseRef.current === lease) {
+        drawingLeaseRef.current = null;
+        releaseToolTailCancellation(token);
+        if (useViewerStore.getState()._drawing) setDrawing(false);
+      }
+      consumeToolTailAuthority(token, () => {});
+    };
+
+    setDrawing(true);
+    if (!stillOwnsLease()) {
+      abandonLease();
+      return false;
+    }
+    setDrawStart(pos);
+    if (!stillOwnsLease()) {
+      abandonLease();
+      return false;
+    }
+    setDrawEnd(pos);
+    if (!stillOwnsLease()) {
+      abandonLease();
+      return false;
+    }
+    return true;
+  }, [pageNumber, publicId, setDrawing, setDrawEnd, setDrawStart]);
+
+  useEffect(() => () => cancelDeferredDrawing(), [cancelDeferredDrawing]);
+
   /** Save the current in-progress polygon as an area-polygon annotation */
   const savePolygon = useCallback(() => {
     const verts = useToolStore.getState().polygonVertices;
@@ -1309,44 +1401,59 @@ export default memo(function AnnotationOverlay({
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      // Any canvas gesture after a parse admission is newer global-tool intent. Revoke before
-      // reading coordinates so a late Table/Keynote completion cannot clear a vertex, marker,
-      // bucket, split, symbol, markup, selection, or other session this gesture continues.
-      invalidateParseToolAuthority();
+      // Retire any earlier local rectangle. Each accepted branch below then either invalidates the
+      // old global tail or replaces it with its own exact deferred/async token.
+      cancelDeferredDrawing();
+      if (useSessionStore.getState().publicId !== publicId ||
+          useViewerCoreStore.getState().pageNumber !== pageNumber) return;
+      const toolAtDown = useToolStore.getState();
+      const activeTool = toolAtDown.activeTool;
       const pos = getPos(e);
 
       // Scale calibration mode
-      if (calibrationMode === "point1") {
-        e.stopPropagation();
-        const normX = pos.x / width;
-        const normY = pos.y / height;
-        setCalibrationPoint("p1", { x: normX, y: normY });
-        setCalibrationMode("point2");
-        return;
-      }
-      if (calibrationMode === "point2") {
-        e.stopPropagation();
-        const normX = pos.x / width;
-        const normY = pos.y / height;
-        setCalibrationPoint("p2", { x: normX, y: normY });
-        setCalibrationMode("input");
+      if (activeTool?.kind === "calibration") {
+        if (toolAtDown.calibrationMode === "point1") {
+          e.stopPropagation();
+          const normX = pos.x / width;
+          const normY = pos.y / height;
+          advanceCalibrationGesture(
+            activeTool,
+            "point1",
+            "p1",
+            { x: normX, y: normY },
+            "point2",
+          );
+        } else if (toolAtDown.calibrationMode === "point2") {
+          e.stopPropagation();
+          const normX = pos.x / width;
+          const normY = pos.y / height;
+          advanceCalibrationGesture(
+            activeTool,
+            "point2",
+            "p2",
+            { x: normX, y: normY },
+            "input",
+          );
+        }
         return;
       }
 
       // Split Area mode — 2-click auto-detect (line A, line B → auto-find polygon)
-      if (splitAreaActive) {
+      if (activeTool?.kind === "split") {
         e.stopPropagation();
         const normX = pos.x / width;
         const normY = pos.y / height;
 
-        if (splitPreview) return; // preview showing — commit via Accept/Cancel buttons
+        if (toolAtDown.splitPreview) return; // preview showing — commit via Accept/Cancel buttons
 
-        if (!splitLineA) {
+        if (!toolAtDown.splitLineA) {
+          invalidateToolTailAuthority();
           setSplitLineEndpoint("a", { x: normX, y: normY });
           return;
         }
 
         // Second click: set B and immediately auto-detect which polygon to split
+        invalidateToolTailAuthority();
         const pointB = { x: normX, y: normY };
         setSplitLineEndpoint("b", pointB);
 
@@ -1354,7 +1461,7 @@ export default memo(function AnnotationOverlay({
           (a) => a.source === "takeoff" && (a.data as AreaPolygonData)?.type === "area-polygon"
         );
         const candidates = findSplittablePolygons(
-          splitLineA,
+          toolAtDown.splitLineA,
           pointB,
           polyAnnotations.map((a) => ({ id: a.id, vertices: (a.data as AreaPolygonData).vertices }))
         );
@@ -1373,20 +1480,22 @@ export default memo(function AnnotationOverlay({
           original: (hitAnn.data as AreaPolygonData).vertices,
           left: best.left,
           right: best.right,
-          lineA: splitLineA,
+          lineA: toolAtDown.splitLineA,
           lineB: pointB,
         });
         return;
       }
 
       // Bucket fill mode — independent of item selection
-      const bfState = useToolStore.getState();
-      if (bfState.bucketFillActive) {
+      if (activeTool?.kind === "bucketFill") {
+        const bfState = toolAtDown;
         e.stopPropagation();
         const normX = pos.x / width;
         const normY = pos.y / height;
 
         if (bfState.bucketFillBarrierMode) {
+          invalidateToolTailAuthority();
+          invalidateLatestToolOperation("bucketFill");
           const pending = bfState.barrierPendingPoint;
           if (pending) {
             addBucketFillBarrier({ x1: pending.x, y1: pending.y, x2: normX, y2: normY });
@@ -1399,8 +1508,52 @@ export default memo(function AnnotationOverlay({
 
         if (bfState.bucketFillLoading) return;
         if (bfState.bucketFillPreview || bfState.bucketFillPendingPolygon) return; // preview/dialog showing
-        setBucketFillLoading(true);
-        setBucketFillPreview(null);
+
+        const bucketToken = {};
+        const bucketActivation = activeTool;
+        const bucketProjectDbId = projectDbId;
+        const bucketPublicId = publicId;
+        const bucketPageNumber = pageNumber;
+        claimToolTailAuthority(bucketToken);
+        claimLatestToolOperation("bucketFill", bucketToken);
+        // A competing global intent defeats this result tail. Its exact queued cancellation may
+        // still clear A's spinner while preserving a newer Bucket B (which rotates the lane).
+        registerToolTailCancellation(bucketToken, () => {
+          if (
+            !ownsLatestToolOperation("bucketFill", bucketToken) ||
+            useSessionStore.getState().projectId !== bucketProjectDbId ||
+            useSessionStore.getState().publicId !== bucketPublicId ||
+            useViewerCoreStore.getState().pageNumber !== bucketPageNumber
+          ) return;
+          useToolStore.setState((state) =>
+            state.activeTool === bucketActivation &&
+              (state.bucketFillLoading || state.bucketFillError !== null)
+              ? { bucketFillLoading: false, bucketFillError: null }
+              : state
+          );
+        });
+        useToolStore.setState({
+          bucketFillLoading: true,
+          bucketFillPreview: null,
+          bucketFillError: null,
+        });
+
+        const ownsBucketFill = () => {
+          const current = useToolStore.getState();
+          return ownsToolTailAuthority(bucketToken) &&
+            ownsLatestToolOperation("bucketFill", bucketToken) &&
+            current.activeTool === bucketActivation &&
+            useSessionStore.getState().projectId === bucketProjectDbId &&
+            useSessionStore.getState().publicId === bucketPublicId &&
+            useViewerCoreStore.getState().pageNumber === bucketPageNumber;
+        };
+        if (!ownsBucketFill()) return;
+
+        const consumeBucketFill = (publish: () => void): boolean => {
+          if (!ownsBucketFill()) return false;
+          releaseToolTailCancellation(bucketToken);
+          return consumeToolTailAuthority(bucketToken, publish);
+        };
 
         // [refactor jul11 P2.2⑥] Bucket-fill collision input is invocation-time state. Reading
         // the cache bridge preserves getState freshness without resubscribing this handler.
@@ -1429,22 +1582,34 @@ export default memo(function AnnotationOverlay({
           holes?: { vertices: { x: number; y: number }[] }[];
           method: string;
         }) => {
-          useToolStore.setState({
+          consumeBucketFill(() => useToolStore.setState({
             bucketFillLoading: false,
             bucketFillPreview: {
               vertices: data.vertices,
               holes: data.holes && data.holes.length > 0 ? data.holes : undefined,
               method: data.method,
             },
+          }));
+        };
+
+        const handleFillError = (message: string) => {
+          if (!ownsBucketFill()) return;
+          useToolStore.setState({
+            bucketFillLoading: false,
+            bucketFillError: message,
           });
+          setTimeout(() => {
+            consumeBucketFill(() => useToolStore.getState().setBucketFillError(null));
+          }, 4000);
         };
 
         const serverFallback = () => {
-          fetch("/api/bucket-fill", {
+          if (!ownsBucketFill()) return;
+          void fetch("/api/bucket-fill", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              projectId: projectDbId,
+              projectId: bucketProjectDbId,
               pageNumber,
               seedPoint: { x: normX, y: normY },
               tolerance: bfState.bucketFillTolerance,
@@ -1455,12 +1620,18 @@ export default memo(function AnnotationOverlay({
             }),
           })
             .then(async (res) => {
+              if (!ownsBucketFill()) return null;
               // [refactor jul6 S030] apiErrorMessage: non-OK now serves {error:{code,message}};
               // the engine's in-band {type:"error"}-at-200 protocol below is untouched.
-              if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`); }
-              return res.json();
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(apiErrorMessage(err) || `HTTP ${res.status}`);
+              }
+              const data = await res.json();
+              return ownsBucketFill() ? data : null;
             })
             .then((data) => {
+              if (!ownsBucketFill()) return;
               if (data?.type === "result" && data.vertices?.length >= 3) {
                 handleFillSuccess({
                   vertices: data.vertices,
@@ -1468,17 +1639,15 @@ export default memo(function AnnotationOverlay({
                   method: data.method || "server-raster",
                 });
               } else if (data?.type === "error") {
-                useToolStore.getState().setBucketFillLoading(false);
-                useToolStore.getState().setBucketFillError(data.error || "Bucket fill failed");
-                setTimeout(() => useToolStore.getState().setBucketFillError(null), 4000);
+                handleFillError(data.error || "Bucket fill failed");
               } else {
-                useToolStore.getState().setBucketFillLoading(false);
+                consumeBucketFill(() => {
+                  useToolStore.setState({ bucketFillLoading: false });
+                });
               }
             })
             .catch((err) => {
-              useToolStore.getState().setBucketFillLoading(false);
-              useToolStore.getState().setBucketFillError(err?.message || "Bucket fill failed");
-              setTimeout(() => useToolStore.getState().setBucketFillError(null), 4000);
+              handleFillError(err?.message || "Bucket fill failed");
             });
         };
 
@@ -1499,7 +1668,9 @@ export default memo(function AnnotationOverlay({
             maxDimension,
           })
             .then(handleFillSuccess)
-            .catch(() => serverFallback());
+            .catch(() => {
+              if (ownsBucketFill()) serverFallback();
+            });
         } else {
           serverFallback();
         }
@@ -1507,9 +1678,10 @@ export default memo(function AnnotationOverlay({
       }
 
       // Takeoff placement mode
-      if (activeTakeoffItemId !== null) {
-        const activeItem = takeoffItems.find((t) => t.id === activeTakeoffItemId);
+      if (activeTool?.kind === "takeoffPlacement") {
+        const activeItem = takeoffItems.find((t) => t.id === toolAtDown.activeTakeoffItemId);
         if (!activeItem) return;
+        invalidateToolTailAuthority();
         e.stopPropagation();
 
         // Polygon drawing mode
@@ -1517,14 +1689,14 @@ export default memo(function AnnotationOverlay({
           const normX = pos.x / width;
           const normY = pos.y / height;
 
-          if (polygonDrawingMode === "idle") {
+          if (toolAtDown.polygonDrawingMode === "idle") {
             // Start new polygon
             setPolygonDrawingMode("drawing");
             addPolygonVertex({ x: normX, y: normY });
-          } else if (polygonDrawingMode === "drawing") {
+          } else if (toolAtDown.polygonDrawingMode === "drawing") {
             // Check snap-to-first-point to close (>= 3 vertices required)
-            if (polygonVertices.length >= 3) {
-              const firstV = polygonVertices[0];
+            if (toolAtDown.polygonVertices.length >= 3) {
+              const firstV = toolAtDown.polygonVertices[0];
               const firstX = firstV.x * width;
               const firstY = firstV.y * height;
               const dist = Math.sqrt((pos.x - firstX) ** 2 + (pos.y - firstY) ** 2);
@@ -1546,14 +1718,14 @@ export default memo(function AnnotationOverlay({
           const normX = pos.x / width;
           const normY = pos.y / height;
 
-          if (polygonDrawingMode === "idle") {
+          if (toolAtDown.polygonDrawingMode === "idle") {
             // Start new polyline
             setPolygonDrawingMode("drawing");
             addPolygonVertex({ x: normX, y: normY });
-          } else if (polygonDrawingMode === "drawing") {
+          } else if (toolAtDown.polygonDrawingMode === "drawing") {
             // Finish line: click within 10px of last vertex
-            if (polygonVertices.length >= 2) {
-              const lastV = polygonVertices[polygonVertices.length - 1];
+            if (toolAtDown.polygonVertices.length >= 2) {
+              const lastV = toolAtDown.polygonVertices[toolAtDown.polygonVertices.length - 1];
               const lastX = lastV.x * width;
               const lastY = lastV.y * height;
               const dist = Math.sqrt((pos.x - lastX) ** 2 + (pos.y - lastY) ** 2);
@@ -1626,13 +1798,15 @@ export default memo(function AnnotationOverlay({
       // The pointer block always returns, so these would be unreachable after it.
 
       // Keynote YOLO picking: click a YOLO annotation to assign its class
-      if (isKeynoteYoloPicking) {
+      if (activeTool?.kind === "parseRect" && activeTool.flow === "keynote" &&
+          isKeynoteYoloPicking) {
         const clickNormX = pos.x / width;
         const clickNormY = pos.y / height;
         for (const ann of pageAnnotations) {
           if (ann.source !== "yolo") continue;
           const [aMinX, aMinY, aMaxX, aMaxY] = ann.bbox;
           if (clickNormX >= aMinX && clickNormX <= aMaxX && clickNormY >= aMinY && clickNormY <= aMaxY) {
+            invalidateToolTailAuthority();
             e.stopPropagation();
             const model = (ann as any).data?.modelName || "unknown";
             setKeynoteManualInputsForUser({ keynoteYoloClass: { model, className: ann.name } });
@@ -1643,7 +1817,7 @@ export default memo(function AnnotationOverlay({
       }
 
       // YOLO Tag picking
-      if (yoloTagPickingMode) {
+      if (activeTool?.kind === "tagPick") {
         const clickNormX = pos.x / width;
         const clickNormY = pos.y / height;
         for (const ann of pageAnnotations) {
@@ -1695,29 +1869,29 @@ export default memo(function AnnotationOverlay({
       }
 
       // Symbol search draw mode
-      if (symbolSearchActive) {
+      if (activeTool?.kind === "symbolTemplate") {
         e.stopPropagation();
-        setSelectedId(null);
-        setDrawing(true);
-        setDrawStart(pos);
-        setDrawEnd(pos);
+        startDeferredDrawing(pos);
         return;
       }
 
-      // Table or keynote or notes or spec parse drawing mode
-      const notesStep = useParseFlowStore.getState().notesParseStep;
-      const specStep = useParseFlowStore.getState().specParseStep;
-      if (tableParseStep === "select-region" || tableParseStep === "define-column" || tableParseStep === "define-row"
-          || keynoteParseStep === "select-region" || keynoteParseStep === "define-column" || keynoteParseStep === "define-row"
-          || notesStep === "select-region" || notesStep === "define-column" || notesStep === "define-row"
-          || specStep === "select-region") {
+      // Tag Add owns its exact tag payload for the complete deferred rectangle.
+      if (activeTool?.kind === "tagAdd") {
         e.stopPropagation();
-        setSelectedId(null);
-        setDrawing(true);
-        setDrawStart(pos);
-        setDrawEnd(pos);
+        startDeferredDrawing(pos);
         return;
       }
+
+      // Only the active parse flow and its current draw-capable step may lease mouseup.
+      if (activeTool?.kind === "parseRect") {
+        e.stopPropagation();
+        startDeferredDrawing(pos);
+        return;
+      }
+
+      // Every non-null specialized owner suppresses base pointer/group/markup fallthrough.
+      if (activeTool !== null) return;
+      invalidateToolTailAuthority();
 
       // Pointer mode (and Group mode, which shares most interactions but adds
       // shift-click multi-select + empty-canvas lasso): select, delete, move,
@@ -1725,7 +1899,7 @@ export default memo(function AnnotationOverlay({
       // (a) the multiSelect.handleAnnotationClick call inside the bbox-hit
       // loop below, and (b) the empty-canvas "mode === 'group'" lasso-start
       // at the bottom of this block.
-      if ((mode === "pointer" || mode === "group") && !useToolStore.getState().tagAddingMode) {
+      if (toolAtDown.mode === "pointer" || toolAtDown.mode === "group") {
         // TATR cell click: single click = search by text, double click = toggle highlight.
         // Gated on showTableCellStructure so the user can disable cell-level
         // interaction without losing the underlying data.
@@ -2041,10 +2215,8 @@ export default memo(function AnnotationOverlay({
           }
         }
         // Clicked empty space — deselect, OR start a lasso in Group mode.
-        if (mode === "group") {
-          setDrawing(true);
-          setDrawStart(pos);
-          setDrawEnd(pos);
+        if (toolAtDown.mode === "group") {
+          startDeferredDrawing(pos, false);
           // Don't clear the selection here — the lasso is additive.
           return;
         }
@@ -2056,7 +2228,7 @@ export default memo(function AnnotationOverlay({
       // (Drawing/picking mode handlers moved before the pointer block above)
 
       // Markup mode: check corners for resize or label for delete on selected
-      if (selectedId !== null && mode === "markup") {
+      if (selectedId !== null && toolAtDown.mode === "markup") {
         const selAnn = pageAnnotations.find((a) => a.id === selectedId);
         if (selAnn) {
           const [minX, minY, maxX, maxY] = selAnn.bbox;
@@ -2087,7 +2259,7 @@ export default memo(function AnnotationOverlay({
       }
 
       // Markup mode: check if clicking annotation to select
-      if (mode === "markup") {
+      if (toolAtDown.mode === "markup") {
         for (const ann of pageAnnotations) {
           const [minX, minY, maxX, maxY] = ann.bbox;
           const ax = minX * width;
@@ -2102,15 +2274,19 @@ export default memo(function AnnotationOverlay({
         }
       }
 
-      // Start drawing in markup mode or tag-adding mode
-      if (mode !== "markup" && !useToolStore.getState().tagAddingMode) return;
+      // Empty Markup canvas: capture the exact base-mode generation for mouseup.
+      if (toolAtDown.mode !== "markup") return;
       e.stopPropagation();
-      setSelectedId(null);
-      setDrawing(true);
-      setDrawStart(pos);
-      setDrawEnd(pos);
+      startDeferredDrawing(pos);
     },
-    [mode, pageAnnotations, pageKeynotes, width, height, getPos, selectedId, setKeynoteFilter, activeTakeoffItemId, takeoffItems, qc, publicId, projectDbId, pageNumber, persistCreate, updateAnnotation, calibrationMode, setCalibrationPoint, setCalibrationMode, polygonDrawingMode, setPolygonDrawingMode, addPolygonVertex, polygonVertices, savePolygon, saveLinearPolyline, isDemo, yoloTagPickingMode, yoloTags, setActiveYoloTagId, setYoloTagFilter, setYoloTagPickingMode, symbolSearchActive, tableParseStep, keynoteParseStep, setBucketFillError, splitAreaActive, splitLineA, splitPreview, setSplitLineEndpoint, setSplitPreview, setSplitError]
+    [addBucketFillBarrier, addPolygonVertex, cancelDeferredDrawing, getPos, height,
+      isKeynoteYoloPicking, multiSelect, pageAnnotations, pageKeynotes, pageNumber, persistCreate,
+      projectDbId, publicId, qc, saveLinearPolyline, savePolygon, selectedId,
+      setActiveYoloTagId, setAnnotationFilter,
+      setKeynoteFilter, setPolygonDrawingMode, setSearch, setSplitError, setSplitLineEndpoint,
+      setSplitPreview, setTakeoffFilter, setYoloTagFilter, setYoloTagPickingMode,
+      showTableCellStructure, startDeferredDrawing, tableCellStructure, takeoffItems,
+      toggleCellHighlight, width, yoloTags]
   );
 
   const handleMouseMove = useCallback(
@@ -2221,7 +2397,7 @@ export default memo(function AnnotationOverlay({
     [dragging, selectedId, dragOffset, resizeCorner, pageAnnotations, width, height, getPos, updateAnnotation, polygonDrawingMode, setDrawEnd, setMousePos, scaleCalibrations]
   );
 
-  const handleMouseUp = useCallback(async () => {
+  const handleMouseUp = useCallback(() => {
     // Vertex drag end (Bug 2). Runs before bbox-drag end — both conditions
     // could be true (dragging && selectedId) but vertex drag needs a
     // different persistence path (bbox + data) vs bbox-only.
@@ -2244,8 +2420,22 @@ export default memo(function AnnotationOverlay({
 
     // Read drawing state from store (not subscribed)
     const { _drawing, _drawStart, _drawEnd } = useViewerStore.getState();
-    if (!_drawing) return;
+    const lease = drawingLeaseRef.current;
+    if (!_drawing) {
+      if (drawingLeaseRef.current === lease) drawingLeaseRef.current = null;
+      if (lease) releaseToolTailCancellation(lease.token);
+      return;
+    }
+    // Retire A's local lease before the publication. A subscriber may install B while drawing
+    // settles; the exact conditional clear means A cannot erase B on return.
+    if (drawingLeaseRef.current === lease) drawingLeaseRef.current = null;
+    if (lease) releaseToolTailCancellation(lease.token);
     setDrawing(false);
+
+    // `_drawing` settlement is itself a synchronous publication. A subscriber may admit B there;
+    // only the still-current exact gesture token and semantic owner may commit the rectangle.
+    if (!lease || !ownsToolTailAuthority(lease.token) ||
+        !matchesCanvasGestureLease(lease, readCanvasGestureSnapshot())) return;
 
     const minX = Math.min(_drawStart.x, _drawEnd.x) / width;
     const minY = Math.min(_drawStart.y, _drawEnd.y) / height;
@@ -2253,111 +2443,86 @@ export default memo(function AnnotationOverlay({
     const maxY = Math.max(_drawStart.y, _drawEnd.y) / height;
 
     // Minimum size check
-    if (Math.abs(maxX - minX) < 0.01 || Math.abs(maxY - minY) < 0.01) return;
-
-    // Group tool: lasso-finalize. Computes intersecting annotations on
-    // the current page and adds them to selectedAnnotationIds. Additive
-    // — previously-selected stay selected so users can accumulate across
-    // multiple drags. No mode exit — Group tool stays active.
-    if (mode === "group") {
-      multiSelect.finalizeLasso(pageAnnotations, [minX, minY, maxX, maxY]);
+    const bbox = [minX, minY, maxX, maxY] as [number, number, number, number];
+    if (Math.abs(maxX - minX) < 0.01 || Math.abs(maxY - minY) < 0.01) {
+      consumeToolTailAuthority(lease.token, () => {});
       return;
     }
 
-    // Symbol search: capture template BB — don't auto-fire, let panel show config first
-    if (symbolSearchActive) {
-      const store = useToolStore.getState();
-      store.setSymbolSearchActive(false);
-      store.setSymbolSearchTemplateBbox([minX, minY, maxX, maxY]);
-      store.setSymbolSearchSourcePage(pageNumber);
-      return;
-    }
-
-    // Table parse: finalize BB as region or column
-    if (tableParseStep === "select-region") {
-      acceptTableParseRegion([minX, minY, maxX, maxY]);
-      return;
-    }
-    if (tableParseStep === "define-column") {
-      addTableParseColumnForUser([minX, minY, maxX, maxY]);
-      return;
-    }
-    if (tableParseStep === "define-row") {
-      addTableParseRowForUser([minX, minY, maxX, maxY]);
-      return;
-    }
-
-    // Keynote parse BBs
-    if (keynoteParseStep === "select-region") {
-      acceptKeynoteParseRegion([minX, minY, maxX, maxY]);
-      return;
-    }
-    if (keynoteParseStep === "define-column") {
-      addKeynoteColumnForUser([minX, minY, maxX, maxY]);
-      return;
-    }
-    if (keynoteParseStep === "define-row") {
-      addKeynoteRowForUser([minX, minY, maxX, maxY]);
-      return;
-    }
-
-    // Notes parse BBs (Stage 4)
-    const notesStep = useParseFlowStore.getState().notesParseStep;
-    if (notesStep === "select-region") {
-      useToolStore.getState().setMode("move");
-      acceptNotesParseRegion([minX, minY, maxX, maxY]);
-      return;
-    }
-    if (notesStep === "define-column") {
-      addGuidedNotesColumnForUser([minX, minY, maxX, maxY]);
-      return;
-    }
-    if (notesStep === "define-row") {
-      addGuidedNotesRowForUser([minX, minY, maxX, maxY]);
-      return;
-    }
-
-    // Spec parse BBs (Stage 5)
-    const specStep = useParseFlowStore.getState().specParseStep;
-    if (specStep === "select-region") {
-      useToolStore.getState().setMode("move");
-      acceptSpecParseRegion([minX, minY, maxX, maxY]);
-      return;
-    }
-
-    // Tag adding mode: drawn BB becomes a new instance of the active tag
-    const tagAddingId = useToolStore.getState().tagAddingMode;
-    if (tagAddingId) {
-      const store = useToolStore.getState();
-      // This is an event-time read-modify-write. Read the exact live project cache rather than the
-      // render-captured page projection so a same-tick producer cannot have its instances erased.
-      const tag = readYoloTags(qc, publicId).find((t) => t.id === tagAddingId);
-      if (tag) {
-        const newInstance = {
-          pageNumber,
-          annotationId: -1, // user-drawn, not a real YOLO annotation
-          bbox: [minX, minY, maxX, maxY] as [number, number, number, number],
-          confidence: 1.0,
-        };
-        updateYoloTag(tagAddingId, {
-          instances: [...tag.instances, newInstance],
-        });
+    consumeToolTailAuthority(lease.token, () => {
+      const owner = lease.owner;
+      if (owner.kind === "baseRect") {
+        if (owner.mode === "group") {
+          multiSelect.finalizeLasso(pageAnnotations, bbox);
+        } else {
+          setPendingMarkup(bbox);
+          setMarkupName("");
+          setMarkupNote("");
+          setTimeout(() => nameInputRef.current?.focus(), 50);
+        }
+        return;
       }
-      store.setTagAddingMode(null);
-      return;
-    }
 
-    // Show markup dialog instead of prompt()
-    setPendingMarkup([minX, minY, maxX, maxY]);
-    setMarkupName("");
-    setMarkupNote("");
-    setTimeout(() => nameInputRef.current?.focus(), 50);
-  }, [dragging, selectedId, saveDragPosition, saveVertexEdit, width, height, publicId, pageNumber, addAnnotation, updateAnnotation, isDemo, tableParseStep, keynoteParseStep, symbolSearchActive, setDrawing, mode, pageAnnotations, multiSelect, qc, updateYoloTag]);
+      if (owner.kind === "symbolTemplate") {
+        invalidateLatestToolOperation("symbolSession");
+        useToolStore.setState((state) => state.activeTool === owner.activation
+          ? { symbolSearchTemplateBbox: bbox, symbolSearchSourcePage: lease.pageNumber }
+          : state);
+        publishSettledSymbolSearchDeactivate(owner.activation);
+        return;
+      }
+
+      if (owner.kind === "tagAdd") {
+        const store = useToolStore.getState();
+        if (store.activeTool !== owner.activation) return;
+        // Release A before the cache publication so a synchronous cache subscriber's B survives.
+        store.setTagAddingMode(null);
+        const tag = readYoloTags(qc, lease.publicId).find((item) => item.id === owner.activation.tagId);
+        if (tag) {
+          updateYoloTag(owner.activation.tagId, {
+            instances: [...tag.instances, {
+              pageNumber: lease.pageNumber,
+              annotationId: -1,
+              bbox,
+              confidence: 1.0,
+            }],
+          });
+        }
+        return;
+      }
+
+      switch (owner.activation.flow) {
+        case "table":
+          if (owner.step === "select-region") acceptTableParseRegion(bbox);
+          else if (owner.step === "define-column") addTableParseColumnForUser(bbox);
+          else addTableParseRowForUser(bbox);
+          return;
+        case "keynote":
+          if (owner.step === "select-region") acceptKeynoteParseRegion(bbox);
+          else if (owner.step === "define-column") addKeynoteColumnForUser(bbox);
+          else addKeynoteRowForUser(bbox);
+          return;
+        case "notes":
+          if (owner.step === "select-region") acceptNotesParseRegion(bbox);
+          else if (owner.step === "define-column") addGuidedNotesColumnForUser(bbox);
+          else addGuidedNotesRowForUser(bbox);
+          return;
+        case "spec":
+          acceptSpecParseRegion(bbox);
+          return;
+      }
+    });
+  }, [dragging, selectedId, saveDragPosition, saveVertexEdit, width, height, setDrawing, pageAnnotations, multiSelect, qc, updateYoloTag]);
 
   const handleDoubleClick = useCallback(() => {
+    if (useSessionStore.getState().publicId !== publicId ||
+        useViewerCoreStore.getState().pageNumber !== pageNumber) return;
+    const initialTool = useToolStore.getState();
     // Close polygon or linear polyline on double-click
-    if (polygonDrawingMode === "drawing") {
-      const verts = useToolStore.getState().polygonVertices;
+    if (initialTool.activeTool?.kind === "takeoffPlacement") {
+      if (initialTool.polygonDrawingMode !== "drawing") return;
+      invalidateToolTailAuthority();
+      const verts = initialTool.polygonVertices;
       // Remove duplicate vertex from the first mousedown of the double-click
       if (verts.length >= 2) {
         const last = verts[verts.length - 1];
@@ -2390,69 +2555,87 @@ export default memo(function AnnotationOverlay({
       return;
     }
 
+    if (initialTool.activeTool !== null) return;
+
     // Existing: finalize dragged annotation
     if (dragging && selectedId !== null) {
+      invalidateToolTailAuthority();
       setDragging(false);
       setResizeCorner(null);
       saveDragPosition();
     }
-  }, [polygonDrawingMode, savePolygon, saveLinearPolyline, undoLastVertex, dragging, selectedId, saveDragPosition]);
+  }, [dragging, pageNumber, publicId, qc, saveDragPosition, saveLinearPolyline, savePolygon,
+    selectedId, undoLastVertex]);
 
-  // Escape key: cancel polygon/calibration/deactivate takeoff
+  // Escape and tool-local keyboard commands always route through the exact live discriminator.
   useEffect(() => {
     function handleEscape(e: KeyboardEvent) {
       if (e.key === "Escape") {
+        const expectedActiveTool = useToolStore.getState().activeTool;
+        cancelDeferredDrawing();
         const tool = useToolStore.getState();
-        const parse = useParseFlowStore.getState();
-        if (tool.splitPreview) {
-          // Discard split preview, stay in split mode (line endpoints preserved)
-          invalidateParseToolAuthority();
-          tool.setSplitPreview(null);
-        } else if (tool.splitAreaActive) {
-          // Exit split area mode entirely
-          tool.setSplitAreaActive(false);
-        } else if (tool.bucketFillPendingPolygon) {
-          // Dismiss item assignment dialog
-          invalidateParseToolAuthority();
-          tool.setBucketFillPendingPolygon(null);
-        } else if (tool.bucketFillPreview) {
-          // Cancel bucket fill preview
-          invalidateParseToolAuthority();
-          tool.setBucketFillPreview(null);
-        } else if (tool.bucketFillBarrierMode) {
-          // Exit barrier mode back to fill mode
-          tool.setBucketFillBarrierMode(false);
-          tool.setBarrierPendingPoint(null);
-        } else if (tool.bucketFillActive) {
-          // Deactivate bucket fill entirely
-          tool.setBucketFillActive(false);
-        } else if (parse.tableParseStep !== "idle") {
-          setTableParseStepWithTool("idle", "move");
-        } else if (parse.keynoteParseStep !== "idle") {
-          setKeynoteParseStepWithTool("idle", "move");
-        } else if (polygonDrawingMode === "drawing") {
-          resetPolygonDrawing();
-          setMousePos(null);
-        } else if (calibrationMode !== "idle") {
-          resetCalibration();
-        } else if (activeTakeoffItemId !== null) {
-          setActiveTakeoffItemId(null);
+        if (tool.activeTool !== expectedActiveTool) return;
+        const activeTool = expectedActiveTool;
+        if (activeTool?.kind === "split") {
+          if (tool.splitPreview) {
+            invalidateToolTailAuthority();
+            tool.setSplitPreview(null);
+          } else {
+            tool.setSplitAreaActive(false);
+          }
+        } else if (activeTool?.kind === "bucketFill") {
+          if (tool.bucketFillPendingPolygon) {
+            invalidateToolTailAuthority();
+            invalidateLatestToolOperation("bucketFill");
+            tool.setBucketFillPendingPolygon(null);
+          } else if (tool.bucketFillPreview) {
+            invalidateToolTailAuthority();
+            invalidateLatestToolOperation("bucketFill");
+            tool.setBucketFillPreview(null);
+          } else if (tool.bucketFillBarrierMode) {
+            invalidateLatestToolOperation("bucketFill");
+            tool.setBucketFillBarrierMode(false);
+          } else {
+            tool.setBucketFillActive(false);
+          }
+        } else if (activeTool?.kind === "parseRect") {
+          if (activeTool.flow === "table") setTableParseStepWithTool("idle", "move");
+          else if (activeTool.flow === "keynote") setKeynoteParseStepWithTool("idle", "move");
+          else if (activeTool.flow === "notes") setNotesParseStepWithTool("idle", "move");
+          else setSpecParseStepWithTool("idle", "move");
+        } else if (activeTool?.kind === "takeoffPlacement") {
+          if (tool.polygonDrawingMode === "drawing") {
+            tool.resetPolygonDrawing();
+            setMousePos(null);
+          } else {
+            tool.setActiveTakeoffItemId(null);
+          }
+        } else if (activeTool?.kind === "calibration") {
+          tool.resetCalibration();
+        } else if (activeTool?.kind === "symbolTemplate") {
+          tool.setSymbolSearchActive(false);
+        } else if (activeTool?.kind === "tagPick") {
+          tool.setYoloTagPickingMode(false);
+        } else if (activeTool?.kind === "tagAdd") {
+          tool.setTagAddingMode(null);
         }
       }
       // Enter: accept bucket fill preview OR split preview OR close polygon/finish polyline
       if (e.key === "Enter") {
         const store = useToolStore.getState();
-        if (store.splitPreview) {
+        if (store.activeTool?.kind === "split" && store.splitPreview) {
           e.preventDefault();
-          invalidateParseToolAuthority();
+          invalidateToolTailAuthority();
           acceptSplit();
-        } else if (store.bucketFillPreview) {
+        } else if (store.activeTool?.kind === "bucketFill" && store.bucketFillPreview) {
           e.preventDefault();
-          invalidateParseToolAuthority();
+          invalidateToolTailAuthority();
+          invalidateLatestToolOperation("bucketFill");
           prepareBucketFillPolygon();
-        } else if (polygonDrawingMode === "drawing") {
+        } else if (store.activeTool?.kind === "takeoffPlacement" &&
+                   store.polygonDrawingMode === "drawing") {
           e.preventDefault();
-          invalidateParseToolAuthority();
+          invalidateToolTailAuthority();
           const verts = store.polygonVertices;
           // [refactor jul10 P2.2④] items via the cache bridge (was store.takeoffItems). publicId
           // freshness rides this effect's savePolygon/saveLinearPolyline deps (both re-create on
@@ -2469,28 +2652,31 @@ export default memo(function AnnotationOverlay({
       if (e.key === "b" || e.key === "B") {
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
         const store = useToolStore.getState();
-        if (store.bucketFillActive && !store.bucketFillPreview) {
+        if (store.activeTool?.kind === "bucketFill" && !store.bucketFillPreview) {
           e.preventDefault();
+          invalidateLatestToolOperation("bucketFill");
           store.setBucketFillBarrierMode(!store.bucketFillBarrierMode);
         }
       }
       // Ctrl+Z: undo last barrier (in barrier mode) or last polygon vertex
       if ((e.ctrlKey || e.metaKey) && e.key === "z") {
         const store = useToolStore.getState();
-        if (store.bucketFillActive && store.bucketFillBarriers.length > 0) {
+        if (store.activeTool?.kind === "bucketFill" && store.bucketFillBarriers.length > 0) {
           e.preventDefault();
-          invalidateParseToolAuthority();
+          invalidateToolTailAuthority();
+          invalidateLatestToolOperation("bucketFill");
           store.undoLastBarrier();
-        } else if (polygonDrawingMode === "drawing") {
+        } else if (store.activeTool?.kind === "takeoffPlacement" &&
+                   store.polygonDrawingMode === "drawing") {
           e.preventDefault();
-          invalidateParseToolAuthority();
-          undoLastVertex();
+          invalidateToolTailAuthority();
+          store.undoLastVertex();
         }
       }
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [activeTakeoffItemId, setActiveTakeoffItemId, polygonDrawingMode, resetPolygonDrawing, calibrationMode, resetCalibration, undoLastVertex, savePolygon, saveLinearPolyline, prepareBucketFillPolygon, acceptSplit]);
+  }, [acceptSplit, cancelDeferredDrawing, prepareBucketFillPolygon, publicId, qc, saveLinearPolyline, savePolygon, setMousePos]);
 
   // Keyboard: Delete/Backspace to delete, Enter to place dragged annotation
   useEffect(() => {
@@ -2505,7 +2691,7 @@ export default memo(function AnnotationOverlay({
 
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        invalidateParseToolAuthority();
+        invalidateToolTailAuthority();
         if (canPersist(publicId, isDemo) && selectedId! > 0) {
           const deleteId = selectedId!;
           (async () => {
@@ -2525,7 +2711,7 @@ export default memo(function AnnotationOverlay({
 
       if (e.key === "Enter" && dragging) {
         e.preventDefault();
-        invalidateParseToolAuthority();
+        invalidateToolTailAuthority();
         setDragging(false);
         setResizeCorner(null);
         saveDragPosition();
@@ -2536,28 +2722,22 @@ export default memo(function AnnotationOverlay({
     return () => window.removeEventListener("keydown", handleKey);
   }, [selectedId, dragging, removeAnnotation, saveDragPosition, isDemo, publicId]);
 
-  // Cancel in-progress drawing modes on page change, deselect
+  // The synchronous viewer page command owns every Tool/Parse/drawing boundary. This residual
+  // component effect is intentionally local-only and cannot erase destination-page work.
   useEffect(() => {
+    if (selectedPageRef.current === pageNumber) return;
+    selectedPageRef.current = pageNumber;
     setSelectedId(null);
-    if (polygonDrawingMode === "drawing") {
-      publishSettledPolygonReset();
-      setMousePos(null);
-    }
-    if (calibrationMode !== "idle") {
-      publishSettledCalibrationReset();
-    }
-    // The global navigation command owns page-operation invalidation before core.setPage.
-    // This passive hot-canvas effect must not reset parse data: a new-page B may already have
-    // started in a page-store subscriber before React runs this effect.
-    const tool = useToolStore.getState();
-    if (tool.symbolSearchActive) {
-      publishSettledSymbolSearchActive(false);
-    }
   }, [pageNumber]);
 
   // Exit polygon drawing when switching interaction modes
   useEffect(() => {
-    if (polygonDrawingMode === "drawing") {
+    // Atomic specialized entries may deliberately retain a dormant takeoff draft while changing
+    // the base mode. Only a true base-mode destination owns this legacy passive cleanup.
+    if (
+      useToolStore.getState().activeTool === null &&
+      useToolStore.getState().polygonDrawingMode === "drawing"
+    ) {
       publishSettledPolygonReset();
       setMousePos(null);
     }
@@ -2569,7 +2749,7 @@ export default memo(function AnnotationOverlay({
 
   // Reset polygon drawing if active item changes
   useEffect(() => {
-    if (polygonDrawingMode === "drawing") {
+    if (useToolStore.getState().polygonDrawingMode === "drawing") {
       publishSettledPolygonReset();
       setMousePos(null);
     }
@@ -2577,7 +2757,7 @@ export default memo(function AnnotationOverlay({
 
   // Exit polygon drawing when QTO panel closes
   useEffect(() => {
-    if (!showTakeoffPanel && polygonDrawingMode === "drawing") {
+    if (!showTakeoffPanel && useToolStore.getState().polygonDrawingMode === "drawing") {
       publishSettledPolygonReset();
       setMousePos(null);
     }
@@ -2649,17 +2829,8 @@ export default memo(function AnnotationOverlay({
 
   // Canvas gates — single source of truth so render-null and pointer-events can't drift.
   // Drift here has caused lasso + markup disappear bugs before (see group-tool fix 2026-04-19).
-  const canvasWantsEvents = (
-    activeTakeoffItemId !== null ||
-    bucketFillActive ||
-    calibrationMode !== "idle" ||
-    polygonDrawingMode === "drawing" ||
-    mode === "markup" || mode === "pointer" || mode === "group" ||
-    tableParseStep !== "idle" ||
-    keynoteParseStep !== "idle" ||
-    symbolSearchActive ||
-    splitAreaActive
-  );
+  const canvasWantsEvents = activeToolKey !== null ||
+    (activeToolKey === null && (mode === "markup" || mode === "pointer" || mode === "group"));
   const canvasShouldRender = (
     pageAnnotations.length > 0 ||
     polygonDrawingMode !== "idle" ||
@@ -2667,6 +2838,24 @@ export default memo(function AnnotationOverlay({
     canvasWantsEvents
   );
   if (!canvasShouldRender) return null;
+
+  let canvasCursor = "default";
+  if (activeToolKey === "split" || activeToolKey === "symbolTemplate" ||
+      activeToolKey === "calibration" || activeToolKey === "takeoffPlacement" ||
+      activeToolKey === "tagAdd") {
+    canvasCursor = "crosshair";
+  } else if (activeToolKey === "bucketFill") {
+    canvasCursor = bucketFillLoading
+      ? "wait"
+      : bucketFillBarrierMode
+        ? "crosshair"
+        : "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24'><path d='M6 6 L18 6 L16 20 L8 20 Z' fill='%2322d3ee' stroke='%23ffffff' stroke-width='1.5' stroke-linejoin='round'/><path d='M6 6 Q12 1 18 6' fill='none' stroke='%2322d3ee' stroke-width='2' stroke-linecap='round'/><circle cx='12' cy='22' r='1' fill='%23ffffff'/></svg>\") 14 24, crosshair";
+  } else if (activeToolKey === "tagPick" || isKeynoteYoloPicking) {
+    canvasCursor = "pointer";
+  } else if (activeToolKey?.startsWith("parseRect:") ||
+             (activeToolKey === null && (mode === "markup" || mode === "group"))) {
+    canvasCursor = "crosshair";
+  }
 
   return (
     <>
@@ -2681,7 +2870,7 @@ export default memo(function AnnotationOverlay({
             setDragging(false);
             setResizeCorner(null);
           }
-          if (useViewerStore.getState()._drawing) setDrawing(false);
+          cancelDeferredDrawing();
         }}
         style={{
           position: "absolute",
@@ -2693,7 +2882,7 @@ export default memo(function AnnotationOverlay({
           transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
           transformOrigin: "top left",
           willChange: "transform",
-          cursor: splitAreaActive ? "crosshair" : bucketFillActive && bucketFillLoading ? "wait" : bucketFillActive && bucketFillBarrierMode ? "crosshair" : bucketFillActive ? "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 24 24'><path d='M6 6 L18 6 L16 20 L8 20 Z' fill='%2322d3ee' stroke='%23ffffff' stroke-width='1.5' stroke-linejoin='round'/><path d='M6 6 Q12 1 18 6' fill='none' stroke='%2322d3ee' stroke-width='2' stroke-linecap='round'/><circle cx='12' cy='22' r='1' fill='%23ffffff'/></svg>\") 14 24, crosshair" : symbolSearchActive ? "crosshair" : calibrationMode !== "idle" ? "crosshair" : polygonDrawingMode === "drawing" ? "crosshair" : activeTakeoffItemId !== null ? "crosshair" : mode === "markup" ? "crosshair" : mode === "group" ? "crosshair" : isKeynoteYoloPicking ? "pointer" : yoloTagPickingMode ? "pointer" : (tableParseStep !== "idle" || keynoteParseStep !== "idle") ? "crosshair" : mode === "pointer" ? "default" : "default",
+          cursor: canvasCursor,
         }}
       />
 

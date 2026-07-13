@@ -321,9 +321,11 @@ describe("A2c Keynote invalidation and shared-workspace topology", () => {
       "setKeynoteManualInputsForUser({keynoteYoloClass:{model,className:ann.name}})",
     );
     const mouseUp = compact(namedRoot(ANNOTATION_OVERLAY, "handleMouseUp"));
-    expect(mouseUp).toContain("acceptKeynoteParseRegion([minX,minY,maxX,maxY])");
-    expect(mouseUp).toContain("addKeynoteColumnForUser([minX,minY,maxX,maxY])");
-    expect(mouseUp).toContain("addKeynoteRowForUser([minX,minY,maxX,maxY])");
+    expect(mouseUp).toContain("consumeToolTailAuthority(lease.token,()=>{");
+    expect(mouseUp).toContain("switch(owner.activation.flow)");
+    expect(mouseUp).toContain("acceptKeynoteParseRegion(bbox)");
+    expect(mouseUp).toContain("addKeynoteColumnForUser(bbox)");
+    expect(mouseUp).toContain("addKeynoteRowForUser(bbox)");
     expect(mouseUp).not.toContain('invalidateParseOperation("keynote")');
   });
 
@@ -489,9 +491,8 @@ describe("A2c Keynote invalidation and shared-workspace topology", () => {
     }
 
     const completion = compact(namedRoot(COMMANDS, "completeKeynoteParseOperation"));
-    expect(completion).toContain("setMode(\"move\")");
     expect(completion).toContain(
-      'if(ownsParseToolAuthority(token)){useToolStore.getState().setMode("move");}',
+      'consttransitioned=publishParseOwnedTransition(token,"keynote","idle",()=>{',
     );
     expect(completion).toContain("isParseOperationCurrent(token)");
     expect(completion.match(/useParseFlowStore\.setState/g)).toHaveLength(1);
@@ -502,10 +503,10 @@ describe("A2c Keynote invalidation and shared-workspace topology", () => {
     expect(completion).toContain(
       'clearsGuided?["table","keynote","notes"]:["keynote"]',
     );
-    expect(completion).toContain("returncompleted");
+    expect(completion).toContain("returntransitioned&&completed");
     expect(completion).not.toMatch(/\bresetGuidedParse\(/);
     expect(completion).not.toMatch(/\bresetKeynoteParse\(/);
-    expect(completion.indexOf('setMode("move")'))
+    expect(completion.indexOf("publishParseOwnedTransition"))
       .toBeLessThan(completion.indexOf("useParseFlowStore.setState"));
     expect(completion.lastIndexOf("isParseOperationCurrent(token)"))
       .toBeLessThan(completion.indexOf("useParseFlowStore.setState"));

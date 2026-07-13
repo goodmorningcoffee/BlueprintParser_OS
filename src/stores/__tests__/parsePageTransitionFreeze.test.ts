@@ -1,5 +1,5 @@
 // @vitest-environment node
-// [refactor jul12 P2.4 A2e] Page authority without widening legacy Parse reset semantics.
+// [refactor jul13 P2.3 AT2] Page authority with one active Tool discriminator.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,6 +10,11 @@ import {
   type ParseKind,
   type ParseOperationToken,
 } from "@/lib/parse-operation-state";
+import type { ActiveTool } from "@/lib/active-tool-state";
+import {
+  invalidateToolTailAuthority,
+  ownsParseToolAuthority,
+} from "@/lib/parse-tool-authority";
 import { useParseFlowStore, type ParseFlowState } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -23,8 +28,10 @@ import {
   type TableReviewPublication,
 } from "@/stores/viewerCommands";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
+import { useViewerStore } from "@/stores/viewerStore";
 
 type ParseRegion = [number, number, number, number];
+type ActiveToolObject = Exclude<ActiveTool, null>;
 type SeededWorkspace = Readonly<{
   before: ParseFlowState;
   tokens: Readonly<Record<ParseKind, ParseOperationToken>>;
@@ -35,11 +42,78 @@ const PAGE_B = 7;
 const REGION_A: ParseRegion = [0.1, 0.2, 0.7, 0.8];
 const REGION_B: ParseRegion = [0.2, 0.3, 0.8, 0.9];
 
+const PAGE_TOOL_CASES: ReadonlyArray<Readonly<{
+  label: string;
+  activeTool: ActiveTool;
+  activeTakeoffItemId: number | null;
+  expected: "same" | "takeoff-fallback" | "null";
+}>> = [
+  { label: "base mode", activeTool: null, activeTakeoffItemId: null, expected: "null" },
+  {
+    label: "calibration resumes selected takeoff",
+    activeTool: { kind: "calibration" },
+    activeTakeoffItemId: 41,
+    expected: "takeoff-fallback",
+  },
+  {
+    label: "takeoff selection survives",
+    activeTool: { kind: "takeoffPlacement" },
+    activeTakeoffItemId: 41,
+    expected: "same",
+  },
+  {
+    label: "bucket resumes selected takeoff",
+    activeTool: { kind: "bucketFill" },
+    activeTakeoffItemId: 41,
+    expected: "takeoff-fallback",
+  },
+  { label: "split exits", activeTool: { kind: "split" }, activeTakeoffItemId: null, expected: "null" },
+  {
+    label: "symbol resumes selected takeoff",
+    activeTool: { kind: "symbolTemplate" },
+    activeTakeoffItemId: 41,
+    expected: "takeoff-fallback",
+  },
+  { label: "tag pick survives", activeTool: { kind: "tagPick" }, activeTakeoffItemId: null, expected: "same" },
+  {
+    label: "tag add survives with payload",
+    activeTool: { kind: "tagAdd", tagId: "T-1" },
+    activeTakeoffItemId: null,
+    expected: "same",
+  },
+  {
+    label: "Table rectangle exits",
+    activeTool: { kind: "parseRect", flow: "table" },
+    activeTakeoffItemId: null,
+    expected: "null",
+  },
+  {
+    label: "Keynote rectangle exits",
+    activeTool: { kind: "parseRect", flow: "keynote" },
+    activeTakeoffItemId: null,
+    expected: "null",
+  },
+  {
+    label: "Notes rectangle survives",
+    activeTool: { kind: "parseRect", flow: "notes" },
+    activeTakeoffItemId: null,
+    expected: "same",
+  },
+  {
+    label: "Spec rectangle survives",
+    activeTool: { kind: "parseRect", flow: "spec" },
+    activeTakeoffItemId: null,
+    expected: "same",
+  },
+];
+
 function restoreStores(): void {
+  invalidateToolTailAuthority();
   useParseFlowStore.setState(useParseFlowStore.getInitialState(), true);
   useToolStore.setState(useToolStore.getInitialState(), true);
   useUiStore.setState(useUiStore.getInitialState(), true);
   useViewerCoreStore.setState(useViewerCoreStore.getInitialState(), true);
+  useViewerStore.setState(useViewerStore.getInitialState(), true);
   useViewerCoreStore.setState({ pageNumber: PAGE_A, numPages: 12 });
 }
 
@@ -163,10 +237,36 @@ function review(label: string): TableReviewPublication {
 beforeEach(restoreStores);
 
 describe("A2e generic page authority", () => {
-  it("preserves legacy data policy and publishes tool -> conditional Parse -> core -> authority", () => {
+  it("publishes Viewer -> Tool -> conditional Parse -> Core -> operation authority", () => {
     const seeded = seedWorkspace();
+    const bucketActivation = { kind: "bucketFill" } as const;
+    useViewerStore.setState({ _drawing: true, _mousePos: { x: 12, y: 34 } });
+    useToolStore.setState({
+      activeTool: bucketActivation,
+      activeTakeoffItemId: 41,
+      calibrationMode: "input",
+      calibrationPoints: { p1: { x: 0.1, y: 0.2 } },
+      polygonDrawingMode: "drawing",
+      polygonVertices: [{ x: 0.2, y: 0.3 }],
+      bucketFillLoading: true,
+      bucketFillError: "old page",
+      bucketFillTolerance: 17,
+      bucketFillDilatePx: 3,
+      bucketFillResolution: 3000,
+      bucketFillBarriers: [{ x1: 0.1, y1: 0.2, x2: 0.3, y2: 0.4 }],
+      bucketFillBarrierMode: true,
+      barrierPendingPoint: { x: 0.4, y: 0.5 },
+      splitLineA: { x: 0.1, y: 0.2 },
+      splitLineB: { x: 0.3, y: 0.4 },
+      splitError: "old split",
+    });
     const trace: string[] = [];
     const pagesSeenByParse: number[] = [];
+    let oldOwnerAtViewer: boolean | null = null;
+    const unsubscribeViewer = useViewerStore.subscribe(() => {
+      trace.push("viewer");
+      oldOwnerAtViewer = ownsParseToolAuthority(seeded.tokens.spec);
+    });
     const unsubscribeTool = useToolStore.subscribe(() => trace.push("tool"));
     const unsubscribeParse = useParseFlowStore.subscribe(() => {
       trace.push("parse");
@@ -179,12 +279,62 @@ describe("A2e generic page authority", () => {
     unsubscribeCore();
     unsubscribeParse();
     unsubscribeTool();
-    expect(trace).toEqual(["tool", "parse", "core", "parse"]);
+    unsubscribeViewer();
+    expect(trace).toEqual(["viewer", "tool", "parse", "core", "parse"]);
     expect(pagesSeenByParse).toEqual([PAGE_A, PAGE_B]);
+    expect(oldOwnerAtViewer).toBe(false);
     expect(useViewerCoreStore.getState().pageNumber).toBe(PAGE_B);
-    expect(useToolStore.getState().mode).toBe("move");
+    expect(useViewerStore.getState()).toMatchObject({ _drawing: false, _mousePos: null });
+    expect(useToolStore.getState()).toMatchObject({
+      mode: "markup",
+      activeTool: { kind: "takeoffPlacement" },
+      activeTakeoffItemId: 41,
+      calibrationMode: "idle",
+      calibrationPoints: {},
+      polygonDrawingMode: "idle",
+      polygonVertices: [],
+      bucketFillLoading: false,
+      bucketFillError: null,
+      bucketFillTolerance: 17,
+      bucketFillDilatePx: 3,
+      bucketFillResolution: 3000,
+      bucketFillBarriers: [],
+      bucketFillBarrierMode: false,
+      barrierPendingPoint: null,
+      splitLineA: null,
+      splitLineB: null,
+      splitError: null,
+    });
+    expect(useToolStore.getState().activeTool).not.toBe(bucketActivation);
     expect(useUiStore.getState().showTableCompareModal).toBe(true);
     expectGenericLegacyExit(useParseFlowStore.getState(), seeded);
+  });
+
+  it.each(PAGE_TOOL_CASES)("applies the exact page policy: $label", ({
+    activeTool,
+    activeTakeoffItemId,
+    expected,
+  }) => {
+    const capturedActivation: ActiveToolObject | null = activeTool;
+    useToolStore.setState({
+      mode: "group",
+      activeTool: capturedActivation,
+      activeTakeoffItemId,
+    });
+
+    navigateViewerPage(PAGE_B);
+
+    const state = useToolStore.getState();
+    expect(state.mode).toBe("group");
+    expect(state.activeTakeoffItemId).toBe(activeTakeoffItemId);
+    if (expected === "same") {
+      expect(state.activeTool).toBe(capturedActivation);
+    } else if (expected === "takeoff-fallback") {
+      expect(state.activeTool).toEqual({ kind: "takeoffPlacement" });
+      expect(state.activeTool).not.toBe(capturedActivation);
+    } else {
+      expect(state.activeTool).toBeNull();
+    }
   });
 
   it("keeps YOLO browse unclamped behind the same terminal authority publication", () => {
@@ -197,11 +347,17 @@ describe("A2e generic page authority", () => {
   it.each([navigateViewerPage, navigateViewerPageUnclamped])(
     "is a no-op for an unchanged destination",
     (command) => {
+      const token = startOperation("notes");
       const parseBefore = useParseFlowStore.getState();
       const coreBefore = useViewerCoreStore.getState();
+      const toolBefore = useToolStore.getState();
+      const viewerBefore = useViewerStore.getState();
       command(PAGE_A);
       expect(useParseFlowStore.getState()).toBe(parseBefore);
       expect(useViewerCoreStore.getState()).toBe(coreBefore);
+      expect(useToolStore.getState()).toBe(toolBefore);
+      expect(useViewerStore.getState()).toBe(viewerBefore);
+      expect(ownsParseToolAuthority(token)).toBe(true);
     },
   );
 
@@ -247,21 +403,70 @@ describe("A2e generic page authority", () => {
       let armed = true;
       let tokenB: ParseOperationToken<typeof kind> | null = null;
       let pageCapturedByB: number | null = null;
-      const unsubscribe = useParseFlowStore.subscribe(() => {
+      let ownedWhenAdmitted: boolean | null = null;
+      let ownedAtCore: boolean | null = null;
+      const unsubscribeParse = useParseFlowStore.subscribe(() => {
         if (!armed || useViewerCoreStore.getState().pageNumber !== PAGE_A) return;
         armed = false;
         tokenB = startOperation(kind);
         pageCapturedByB = useViewerCoreStore.getState().pageNumber;
+        ownedWhenAdmitted = ownsParseToolAuthority(tokenB);
+      });
+      const unsubscribeCore = useViewerCoreStore.subscribe(() => {
+        ownedAtCore = tokenB === null ? null : ownsParseToolAuthority(tokenB);
       });
       navigateViewerPage(PAGE_B);
-      unsubscribe();
+      unsubscribeCore();
+      unsubscribeParse();
       expect(pageCapturedByB).toBe(PAGE_A);
       expect(tokenB).not.toBeNull();
+      expect(ownedWhenAdmitted).toBe(true);
+      expect(ownedAtCore).toBe(false);
       expect(useParseFlowStore.getState().isParseOperationCurrent(tokenB!)).toBe(false);
       expect(useParseFlowStore.getState().parseOperations[kind].revision)
         .toBe(tokenB!.revision + 1);
     },
   );
+
+  it("retires a pre-Core Bucket B and preserves destination-page subscriber C", () => {
+    let phase: "await-exit" | "bucket-b" | "destination-c" = "await-exit";
+    let bucketB: ActiveToolObject | null = null;
+    let destinationC: ActiveToolObject | null = null;
+    const unsubscribe = useToolStore.subscribe((state) => {
+      if (phase === "await-exit" && useViewerCoreStore.getState().pageNumber === PAGE_A) {
+        phase = "bucket-b";
+        state.setBucketFillActive(true);
+        bucketB = useToolStore.getState().activeTool as ActiveToolObject;
+        useToolStore.setState({
+          bucketFillLoading: true,
+          bucketFillError: "old-page B",
+        });
+        return;
+      }
+      if (
+        phase === "bucket-b" &&
+        useViewerCoreStore.getState().pageNumber === PAGE_B &&
+        state.activeTool !== bucketB
+      ) {
+        phase = "destination-c";
+        state.setTagAddingMode("destination-C");
+        destinationC = useToolStore.getState().activeTool as ActiveToolObject;
+      }
+    });
+
+    navigateViewerPageUnclamped(PAGE_B);
+    unsubscribe();
+
+    expect(phase).toBe("destination-c");
+    expect(bucketB).toEqual({ kind: "bucketFill" });
+    expect(destinationC).toEqual({ kind: "tagAdd", tagId: "destination-C" });
+    expect(useViewerCoreStore.getState().pageNumber).toBe(PAGE_B);
+    expect(useToolStore.getState()).toMatchObject({
+      activeTool: { kind: "tagAdd", tagId: "destination-C" },
+      bucketFillLoading: false,
+      bucketFillError: null,
+    });
+  });
 
   it.each(PARSE_KINDS.flatMap((kind) => ([
     [kind, "busy"],
@@ -286,6 +491,7 @@ describe("A2e generic page authority", () => {
       unsubscribe();
       expect(pageCapturedByC).toBe(PAGE_B);
       expect(tokenC).not.toBeNull();
+      expect(ownsParseToolAuthority(tokenC!)).toBe(true);
       expect(useParseFlowStore.getState().parseOperations[kind]).toEqual({
         revision: tokenC!.revision,
         busy: status === "busy",
@@ -295,11 +501,12 @@ describe("A2e generic page authority", () => {
 });
 
 describe("A2e retained Table review targets", () => {
-  it("publishes destination core -> tool -> one Table review seed", () => {
+  it("publishes the page boundary, then Tool -> one Table review seed", () => {
     seedWorkspace();
     const publication = review("page-B");
     const trace: string[] = [];
     const pagesSeenByParse: number[] = [];
+    const unsubscribeViewer = useViewerStore.subscribe(() => trace.push("viewer"));
     const unsubscribeCore = useViewerCoreStore.subscribe(() => trace.push("core"));
     const unsubscribeTool = useToolStore.subscribe(() => trace.push("tool"));
     const unsubscribeParse = useParseFlowStore.subscribe(() => {
@@ -310,8 +517,10 @@ describe("A2e retained Table review targets", () => {
     unsubscribeParse();
     unsubscribeTool();
     unsubscribeCore();
-    expect(trace).toEqual(["tool", "parse", "core", "parse"]);
-    expect(pagesSeenByParse).toEqual([PAGE_A, PAGE_B]);
+    unsubscribeViewer();
+    expect(trace).toEqual(["viewer", "tool", "parse", "core", "parse", "tool", "parse"]);
+    expect(pagesSeenByParse).toEqual([PAGE_A, PAGE_B, PAGE_B]);
+    expect(useToolStore.getState()).toMatchObject({ mode: "move", activeTool: null });
     expect(useParseFlowStore.getState()).toMatchObject({
       tableParseStep: "review",
       tableParsedGrid: publication.grid,
@@ -374,7 +583,10 @@ describe("A2e indexed Notes/Spec targets", () => {
     { kind: "spec", command: openSpecParseTarget },
   ] as const;
 
-  it.each(cases)("$kind publishes core before its one target seed", ({ kind, command }) => {
+  it.each(cases)("$kind publishes cleanup -> Core -> operation invalidation -> target seed", ({
+    kind,
+    command,
+  }) => {
     seedWorkspace();
     const trace: string[] = [];
     const pagesSeenByParse: number[] = [];
@@ -386,10 +598,39 @@ describe("A2e indexed Notes/Spec targets", () => {
     command(PAGE_B, REGION_B);
     unsubscribeParse();
     unsubscribeCore();
-    expect(trace).toEqual(["parse", "core", "parse"]);
-    expect(pagesSeenByParse).toEqual([PAGE_A, PAGE_B]);
+    expect(trace).toEqual(["parse", "core", "parse", "parse"]);
+    expect(pagesSeenByParse).toEqual([PAGE_A, PAGE_B, PAGE_B]);
     expect(useParseFlowStore.getState()[kind === "notes" ? "notesParseRegion" : "specParseRegion"])
       .toBe(REGION_B);
+  });
+
+  it.each(cases)("$kind preserves its exact rectangle through page cleanup, then releases it", ({
+    kind,
+    command,
+  }) => {
+    seedWorkspace();
+    const activation = { kind: "parseRect", flow: kind } as const;
+    useToolStore.setState({ activeTool: activation });
+    const trace: string[] = [];
+    const toolOwners: ActiveTool[] = [];
+    const unsubscribeViewer = useViewerStore.subscribe(() => trace.push("viewer"));
+    const unsubscribeTool = useToolStore.subscribe((state) => {
+      trace.push("tool");
+      toolOwners.push(state.activeTool);
+    });
+    const unsubscribeCore = useViewerCoreStore.subscribe(() => trace.push("core"));
+    const unsubscribeParse = useParseFlowStore.subscribe(() => trace.push("parse"));
+
+    command(PAGE_B, REGION_B);
+
+    unsubscribeParse();
+    unsubscribeCore();
+    unsubscribeTool();
+    unsubscribeViewer();
+    expect(trace).toEqual(["viewer", "tool", "parse", "core", "parse", "tool", "parse"]);
+    expect(toolOwners).toEqual([activation, null]);
+    expect(toolOwners[0]).toBe(activation);
+    expect(useToolStore.getState()).toMatchObject({ mode: "move", activeTool: null });
   });
 
   it.each(cases)("$kind kills the old core-subscriber owner and admits target subscriber C", ({
@@ -406,7 +647,8 @@ describe("A2e indexed Notes/Spec targets", () => {
     const unsubscribeParse = useParseFlowStore.subscribe(() => {
       if (
         !armed || useViewerCoreStore.getState().pageNumber !== PAGE_B ||
-        useParseFlowStore.getState()[kind === "notes" ? "notesParseRegion" : "specParseRegion"] !== REGION_B
+        useParseFlowStore.getState()[kind === "notes" ? "notesParseRegion" : "specParseRegion"] !== REGION_B ||
+        useParseFlowStore.getState()[kind === "notes" ? "notesParseStep" : "specParseStep"] !== "idle"
       ) return;
       armed = false;
       tokenC = startOperation(kind);
@@ -417,6 +659,7 @@ describe("A2e indexed Notes/Spec targets", () => {
     expect(coreAdmission).toEqual({ status: "busy" });
     expect(tokenC).not.toBeNull();
     expect(useParseFlowStore.getState().isParseOperationCurrent(tokenC!)).toBe(true);
+    expect(ownsParseToolAuthority(tokenC!)).toBe(true);
     expect(useViewerCoreStore.getState().pageNumber).toBe(PAGE_B);
   });
 
@@ -494,6 +737,7 @@ describe("A2e cross-page target commands revoke every page-bound owner", () => {
     }
     expect(pageCapturedByC).toBe(PAGE_B);
     expect(tokenC).not.toBeNull();
+    expect(ownsParseToolAuthority(tokenC!)).toBe(true);
     expect(useParseFlowStore.getState().parseOperations[kind]).toEqual({
       revision: tokenC!.revision,
       busy: status === "busy",

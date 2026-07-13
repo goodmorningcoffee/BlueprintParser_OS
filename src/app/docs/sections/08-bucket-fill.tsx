@@ -36,9 +36,10 @@ export function Section08BucketFill() {
           Bucket Fill is the top strip of the <strong>Area</strong> tab inside
           the QTO panel (<InlineCode>src/components/viewer/AreaTab.tsx</InlineCode>).
           It appears as a tri-state button: disabled (no active area item), idle,
-          active, or barrier mode. The state is controlled by two Zustand flags:{" "}
-          <InlineCode>bucketFillActive</InlineCode> and{" "}
-          <InlineCode>bucketFillBarrierMode</InlineCode>. A third store field,{" "}
+          active, or barrier mode. Activation is the{" "}
+          <InlineCode>activeTool.kind === &quot;bucketFill&quot;</InlineCode> discriminator;
+          the dormant-session <InlineCode>bucketFillBarrierMode</InlineCode> field decorates that
+          active tool. A third store field,{" "}
           <InlineCode>bucketFillResolution</InlineCode>, drives the dominant
           tuning knob (see below).
         </p>

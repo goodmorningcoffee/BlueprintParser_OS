@@ -296,7 +296,10 @@ describe("A2d exact Notes/Spec operation topology", () => {
       'constkinds:ParseKind[]=options.guided?["table","keynote","notes","spec"]:["notes","spec"]',
     );
     expect(completion).toContain("guidedParseOwner:null");
-    expect(completion).toContain("returncompleted");
+    expect(completion).toContain(
+      'consttransitioned=publishParseOwnedTransition(token,"notes","idle",()=>{',
+    );
+    expect(completion).toContain("returntransitioned&&completed");
     expect(completion).not.toMatch(/\bresetGuidedParse\(/);
 
     const tab = compact(namedRoot(COMMANDS, "setSpecsNotesParseTab"));

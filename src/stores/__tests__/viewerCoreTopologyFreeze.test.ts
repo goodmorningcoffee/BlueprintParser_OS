@@ -694,7 +694,7 @@ describe("P2.3 V2 split useNavigation topology", () => {
     expect(topology).toEqual(CURRENT_NAVIGATION_CALL_TOPOLOGY);
   });
 
-  it("keeps AnnotationOverlay on primitive page and tool-mode selectors", () => {
+  it("keeps AnnotationOverlay on primitive page/tool-mode selectors plus exact event snapshots", () => {
     const path = "src/components/viewer/AnnotationOverlay.tsx";
     const source = parse(path);
     expect(
@@ -709,13 +709,29 @@ describe("P2.3 V2 split useNavigation topology", () => {
       CORE_OWNER,
       new Set(["pageNumber"]),
     );
-    expect(coreAccesses).toEqual([{ kind: "selector", member: "pageNumber" }]);
+    expect(coreAccesses).toEqual([
+      { kind: "getState-direct", member: "pageNumber" },
+      { kind: "selector", member: "pageNumber" },
+      { kind: "getState-direct", member: "pageNumber" },
+      { kind: "getState-direct", member: "pageNumber" },
+      { kind: "getState-direct", member: "pageNumber" },
+      { kind: "getState-direct", member: "pageNumber" },
+    ]);
     const modeAccesses = storeMemberAccesses(
       source,
       TOOL_OWNER,
       new Set(["mode"]),
     );
-    expect(modeAccesses).toEqual([{ kind: "selector", member: "mode" }]);
+    expect(modeAccesses).toEqual([
+      { kind: "selector", member: "mode" },
+      { kind: "getState-alias", member: "mode" },
+      { kind: "getState-alias", member: "mode" },
+      { kind: "getState-alias", member: "mode" },
+      { kind: "getState-alias", member: "mode" },
+      { kind: "getState-alias", member: "mode" },
+      { kind: "getState-alias", member: "mode" },
+      { kind: "getState-alias", member: "mode" },
+    ]);
   });
 });
 

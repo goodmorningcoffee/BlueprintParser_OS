@@ -14,7 +14,8 @@ import { takeoffRedo, takeoffUndo, useAnnotations } from "@/queries/useAnnotatio
 import { AREA_UNIT_MAP } from "@/types";
 import type { AreaPolygonData, AreaUnitSq, TakeoffTab } from "@/types";
 import { computeRealArea } from "@/lib/areaCalc";
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import { selectActiveToolKey } from "@/lib/active-tool-state";
+import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
 import CountTab from "./CountTab";
 import AreaTab from "./AreaTab";
 import LinearTab from "./LinearTab";
@@ -45,10 +46,14 @@ export default function TakeoffPanel() {
   const pageDimensions = useViewerCoreStore((s) => s.pageDimensions);
   const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
   const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
+  const takeoffPlacementActive = useToolStore(
+    (s) => selectActiveToolKey(s) === "takeoffPlacement",
+  );
   const takeoffUndoStack = useToolStore((s) => s.takeoffUndoStack);
   const takeoffRedoStack = useToolStore((s) => s.takeoffRedoStack);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const calibrationMode = useToolStore((s) => s.calibrationMode);
+  const calibrationActive = useToolStore((s) => selectActiveToolKey(s) === "calibration");
   const setCalibrationMode = useToolStore((s) => s.setCalibrationMode);
   const resetCalibration = useToolStore((s) => s.resetCalibration);
   const isDemo = useSessionStore((s) => s.isDemo);
@@ -288,13 +293,13 @@ export default function TakeoffPanel() {
         <div className="flex items-center gap-1">
           <button
             onClick={() => {
-              if (calibrationMode !== "idle") { resetCalibration(); }
+              if (calibrationActive) { resetCalibration(); }
               else { setCalibrationMode("point1"); }
             }}
             className={`text-xs px-1.5 py-0.5 rounded border ${hasScale ? "border-green-500/30 text-green-400" : "border-amber-500/30 text-amber-400"} hover:border-[var(--accent)]`}
             title={hasScale ? `Scale set for page ${pageNumber}. Click to recalibrate.` : "Set scale for this page (required for Area and Linear)"}
           >
-            {calibrationMode !== "idle" ? "..." : hasScale ? "\u2713" : "\u{1F4CF}"}
+            {calibrationActive ? "..." : hasScale ? "\u2713" : "\u{1F4CF}"}
           </button>
           <button onClick={() => setCsvModalOpen(true)} className="text-xs px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]" title="View as editable CSV">View</button>
           <button onClick={exportCSV} className="text-xs px-2 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]" title="Export CSV">CSV</button>
@@ -312,7 +317,8 @@ export default function TakeoffPanel() {
       />
 
       {/* Calibration input (shows when in calibration mode from header button) */}
-      {calibrationMode === "input" && takeoffTab !== "area" && takeoffTab !== "linear" && (
+      {calibrationActive && calibrationMode === "input" &&
+       takeoffTab !== "area" && takeoffTab !== "linear" && (
         <div className="px-2 py-2 border-b border-[var(--border)]">
           <div className="text-xs text-amber-400 mb-1">Enter the real-world distance:</div>
           <CalibrationInput />
@@ -325,20 +331,20 @@ export default function TakeoffPanel() {
           <ColorDot color={activeItem.color} />
           <span className="text-xs font-medium flex-1 truncate">{activeItem.name}</span>
           <button
-            onPointerDown={() => invalidateParseToolAuthority()}
-            onKeyDown={() => invalidateParseToolAuthority()}
+            onPointerDown={() => invalidateToolTailAuthority()}
+            onKeyDown={() => invalidateToolTailAuthority()}
             onClick={() => takeoffUndo(qc)}
-            disabled={takeoffUndoStack.length === 0}
+            disabled={!takeoffPlacementActive || takeoffUndoStack.length === 0}
             className="text-xs px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-30"
             title="Undo last placement (Z)"
           >
             &#8630;
           </button>
           <button
-            onPointerDown={() => invalidateParseToolAuthority()}
-            onKeyDown={() => invalidateParseToolAuthority()}
+            onPointerDown={() => invalidateToolTailAuthority()}
+            onKeyDown={() => invalidateToolTailAuthority()}
             onClick={() => takeoffRedo(qc)}
-            disabled={takeoffRedoStack.length === 0}
+            disabled={!takeoffPlacementActive || takeoffRedoStack.length === 0}
             className="text-xs px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-30"
             title="Redo (W)"
           >

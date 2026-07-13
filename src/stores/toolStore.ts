@@ -1,7 +1,17 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import {
+  activeToolAfterProjectReset,
+  releaseActiveToolExact,
+  transitionActiveTool,
+  type ActiveTool,
+  type ActiveToolObject,
+} from "@/lib/active-tool-state";
+import {
+  invalidateLatestToolOperation,
+  invalidateToolTailAuthority,
+} from "@/lib/parse-tool-authority";
 import type { ClientAnnotation, ScaleCalibrationData, SymbolSearchResult } from "@/types";
 
 // [refactor jul11 P2.3 T2] Mechanically-flat interaction/tool owner. Production consumers read
@@ -27,6 +37,7 @@ export interface ToolTagScanResults {
 export interface ToolStoreData {
   mode: "move" | "pointer" | "markup" | "group";
   tempPanMode: boolean;
+  activeTool: ActiveTool;
 
   activeTakeoffItemId: number | null;
   scaleCalibrations: Record<number, ScaleCalibrationData>;
@@ -35,7 +46,6 @@ export interface ToolStoreData {
   polygonDrawingMode: "idle" | "drawing";
   polygonVertices: { x: number; y: number }[];
 
-  bucketFillActive: boolean;
   bucketFillPreview: {
     vertices: { x: number; y: number }[];
     holes?: { vertices: { x: number; y: number }[] }[];
@@ -55,7 +65,6 @@ export interface ToolStoreData {
     unit: string;
   } | null;
 
-  splitAreaActive: boolean;
   splitLineA: { x: number; y: number } | null;
   splitLineB: { x: number; y: number } | null;
   splitPreview: {
@@ -74,11 +83,8 @@ export interface ToolStoreData {
   takeoffUndoStack: ClientAnnotation[];
   takeoffRedoStack: ClientAnnotation[];
 
-  yoloTagPickingMode: boolean;
   tagScanResults: ToolTagScanResults | null;
-  tagAddingMode: string | null;
 
-  symbolSearchActive: boolean;
   symbolSearchLoading: boolean;
   symbolSearchProgress: {
     page: number;
@@ -166,7 +172,7 @@ export interface ToolStoreActions {
   setSymbolSearchPreset: (preset: ToolStoreData["symbolSearchPreset"]) => void;
   clearSymbolSearch: () => void;
 
-  /** Preserve the legacy 22-touched/18-retained project-switch policy until P2.5. */
+  /** Preserve the exact temporary 20-touched/16-retained project-switch policy until P2.5. */
   resetProjectToolState: () => void;
 }
 
@@ -175,70 +181,75 @@ export type ToolStoreState = ToolStoreData & ToolStoreActions;
 function modeDestination(mode: ToolStoreData["mode"]): Partial<ToolStoreData> {
   return {
     mode,
+    activeTool: null,
     activeTakeoffItemId: null,
     polygonDrawingMode: "idle",
     polygonVertices: [],
-    bucketFillActive: false,
     bucketFillPreview: null,
     bucketFillLoading: false,
     bucketFillBarriers: [],
     bucketFillBarrierMode: false,
-    splitAreaActive: false,
     splitLineA: null,
     splitLineB: null,
     splitPreview: null,
     splitError: null,
-    symbolSearchActive: false,
     tempPanMode: false,
   };
 }
 
 function activeTakeoffDestination(
+  state: Pick<ToolStoreData, "activeTool" | "activeTakeoffItemId">,
   activeTakeoffItemId: number | null,
 ): Partial<ToolStoreData> {
   return {
     activeTakeoffItemId,
+    activeTool: transitionActiveTool(state, {
+      type: "selectTakeoff",
+      itemId: activeTakeoffItemId,
+    }),
     takeoffUndoStack: [],
     takeoffRedoStack: [],
   };
 }
 
 function symbolSearchActiveDestination(
-  symbolSearchActive: boolean,
+  state: Pick<ToolStoreData, "activeTool" | "activeTakeoffItemId">,
+  active: boolean,
 ): Partial<ToolStoreData> {
-  return symbolSearchActive
+  const activeTool = transitionActiveTool(state, { type: "setSymbolTemplate", active });
+  return active
     ? {
-        symbolSearchActive,
-        mode: "move",
-        bucketFillActive: false,
+        activeTool,
+        mode: "pointer",
+        tempPanMode: false,
         bucketFillPreview: null,
         bucketFillLoading: false,
         bucketFillBarrierMode: false,
-        splitAreaActive: false,
         splitLineA: null,
         splitLineB: null,
         splitPreview: null,
         splitError: null,
       }
-    : { symbolSearchActive };
+    : { activeTool };
 }
 
 export const useToolStore = create<ToolStoreState>((set) => ({
   mode: "move",
   setMode: (mode) => {
-    invalidateParseToolAuthority();
+    invalidateToolTailAuthority();
     set(modeDestination(mode));
   },
   tempPanMode: false,
   setTempPanMode: (tempPanMode) => {
-    invalidateParseToolAuthority();
+    invalidateToolTailAuthority();
     set({ tempPanMode });
   },
+  activeTool: null,
 
   activeTakeoffItemId: null,
   setActiveTakeoffItemId: (activeTakeoffItemId) => {
-    invalidateParseToolAuthority();
-    set(activeTakeoffDestination(activeTakeoffItemId));
+    invalidateToolTailAuthority();
+    set((state) => activeTakeoffDestination(state, activeTakeoffItemId));
   },
 
   scaleCalibrations: {},
@@ -247,21 +258,37 @@ export const useToolStore = create<ToolStoreState>((set) => ({
   })),
   calibrationMode: "idle",
   setCalibrationMode: (calibrationMode) => {
-    invalidateParseToolAuthority();
-    set({ calibrationMode });
+    invalidateToolTailAuthority();
+    set((state) => ({
+      ...(calibrationMode === "idle"
+        ? { calibrationPoints: {} }
+        : { mode: "move" as const }),
+      calibrationMode,
+      activeTool: transitionActiveTool(state, {
+        type: "setCalibrationMode",
+        mode: calibrationMode,
+      }),
+    }));
   },
   calibrationPoints: {},
   setCalibrationPoint: (which, point) => set((state) => ({
     calibrationPoints: { ...state.calibrationPoints, [which]: point },
   })),
   resetCalibration: () => {
-    invalidateParseToolAuthority();
-    set({ calibrationMode: "idle", calibrationPoints: {} });
+    invalidateToolTailAuthority();
+    set((state) => ({
+      calibrationMode: "idle",
+      calibrationPoints: {},
+      activeTool: transitionActiveTool(state, {
+        type: "setCalibrationMode",
+        mode: "idle",
+      }),
+    }));
   },
 
   polygonDrawingMode: "idle",
   setPolygonDrawingMode: (polygonDrawingMode) => {
-    invalidateParseToolAuthority();
+    invalidateToolTailAuthority();
     set({ polygonDrawingMode });
   },
   polygonVertices: [],
@@ -272,33 +299,31 @@ export const useToolStore = create<ToolStoreState>((set) => ({
     polygonVertices: state.polygonVertices.slice(0, -1),
   })),
   resetPolygonDrawing: () => {
-    invalidateParseToolAuthority();
+    invalidateToolTailAuthority();
     set({ polygonDrawingMode: "idle", polygonVertices: [] });
   },
 
-  bucketFillActive: false,
-  setBucketFillActive: (bucketFillActive) => {
-    invalidateParseToolAuthority();
-    set({
-      bucketFillActive,
+  setBucketFillActive: (active) => {
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("bucketFill");
+    set((state) => ({
+      activeTool: transitionActiveTool(state, { type: "setBucketFill", active }),
       bucketFillPreview: null,
       bucketFillLoading: false,
       bucketFillError: null,
       bucketFillBarrierMode: false,
       bucketFillPendingPolygon: null,
-      ...(bucketFillActive
+      ...(active
         ? {
             mode: "move" as const,
-            splitAreaActive: false,
             splitLineA: null,
             splitLineB: null,
             splitPreview: null,
             splitError: null,
-            symbolSearchActive: false,
             tempPanMode: false,
           }
         : { bucketFillBarriers: [] }),
-    });
+    }));
   },
   bucketFillPreview: null,
   setBucketFillPreview: (bucketFillPreview) => set({ bucketFillPreview }),
@@ -307,39 +332,48 @@ export const useToolStore = create<ToolStoreState>((set) => ({
   bucketFillError: null,
   setBucketFillError: (bucketFillError) => set({ bucketFillError }),
   bucketFillTolerance: 30,
-  setBucketFillTolerance: (bucketFillTolerance) => set({ bucketFillTolerance }),
+  setBucketFillTolerance: (bucketFillTolerance) => {
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("bucketFill");
+    set({ bucketFillTolerance, bucketFillLoading: false, bucketFillError: null });
+  },
   bucketFillDilatePx: 3,
-  setBucketFillDilatePx: (bucketFillDilatePx) => set({ bucketFillDilatePx }),
+  setBucketFillDilatePx: (bucketFillDilatePx) => {
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("bucketFill");
+    set({ bucketFillDilatePx, bucketFillLoading: false, bucketFillError: null });
+  },
   bucketFillResolution: 1000,
-  setBucketFillResolution: (bucketFillResolution) => set({ bucketFillResolution }),
+  setBucketFillResolution: (bucketFillResolution) => {
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("bucketFill");
+    set({ bucketFillResolution, bucketFillLoading: false, bucketFillError: null });
+  },
   bucketFillPendingPolygon: null,
   setBucketFillPendingPolygon: (bucketFillPendingPolygon) => set({
     bucketFillPendingPolygon,
   }),
 
-  splitAreaActive: false,
-  setSplitAreaActive: (splitAreaActive) => {
-    invalidateParseToolAuthority();
-    set({
-      splitAreaActive,
+  setSplitAreaActive: (active) => {
+    invalidateToolTailAuthority();
+    set((state) => ({
+      activeTool: transitionActiveTool(state, { type: "setSplit", active }),
       splitLineA: null,
       splitLineB: null,
       splitPreview: null,
       splitError: null,
-      ...(splitAreaActive
+      ...(active
         ? {
             mode: "move" as const,
-            bucketFillActive: false,
             bucketFillPreview: null,
             bucketFillLoading: false,
             bucketFillError: null,
             bucketFillBarrierMode: false,
             bucketFillBarriers: [],
-            symbolSearchActive: false,
             activeTakeoffItemId: null,
           }
         : {}),
-    });
+    }));
   },
   splitLineA: null,
   splitLineB: null,
@@ -352,43 +386,82 @@ export const useToolStore = create<ToolStoreState>((set) => ({
   setSplitError: (splitError) => set({ splitError }),
 
   bucketFillBarriers: [],
-  addBucketFillBarrier: (line) => set((state) => ({
-    bucketFillBarriers: [...state.bucketFillBarriers, line],
-  })),
-  undoLastBarrier: () => set((state) => ({
-    bucketFillBarriers: state.bucketFillBarriers.slice(0, -1),
-  })),
-  clearBucketFillBarriers: () => set({ bucketFillBarriers: [] }),
+  addBucketFillBarrier: (line) => {
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("bucketFill");
+    set((state) => ({
+      bucketFillBarriers: [...state.bucketFillBarriers, line],
+      bucketFillLoading: false,
+      bucketFillError: null,
+    }));
+  },
+  undoLastBarrier: () => {
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("bucketFill");
+    set((state) => ({
+      bucketFillBarriers: state.bucketFillBarriers.slice(0, -1),
+      bucketFillLoading: false,
+      bucketFillError: null,
+    }));
+  },
+  clearBucketFillBarriers: () => {
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("bucketFill");
+    set({ bucketFillBarriers: [], bucketFillLoading: false, bucketFillError: null });
+  },
   bucketFillBarrierMode: false,
   setBucketFillBarrierMode: (bucketFillBarrierMode) => {
-    invalidateParseToolAuthority();
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("bucketFill");
     set({
       bucketFillBarrierMode,
       barrierPendingPoint: null,
+      bucketFillLoading: false,
+      bucketFillError: null,
     });
   },
   barrierPendingPoint: null,
-  setBarrierPendingPoint: (barrierPendingPoint) => set({ barrierPendingPoint }),
+  setBarrierPendingPoint: (barrierPendingPoint) => {
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("bucketFill");
+    set({
+      barrierPendingPoint,
+      bucketFillLoading: false,
+      bucketFillError: null,
+    });
+  },
   takeoffUndoStack: [],
   takeoffRedoStack: [],
 
-  yoloTagPickingMode: false,
-  setYoloTagPickingMode: (yoloTagPickingMode) => {
-    invalidateParseToolAuthority();
-    set({ yoloTagPickingMode });
+  setYoloTagPickingMode: (active) => {
+    invalidateToolTailAuthority();
+    set((state) => active
+      ? {
+          ...modeDestination("pointer"),
+          activeTool: transitionActiveTool(state, { type: "setTagPick", active: true }),
+        }
+      : {
+          activeTool: transitionActiveTool(state, { type: "setTagPick", active: false }),
+        });
   },
   tagScanResults: null,
   setTagScanResults: (tagScanResults) => set({ tagScanResults }),
-  tagAddingMode: null,
-  setTagAddingMode: (tagAddingMode) => {
-    invalidateParseToolAuthority();
-    set({ tagAddingMode });
+  setTagAddingMode: (tagId) => {
+    invalidateToolTailAuthority();
+    set((state) => tagId !== null
+      ? {
+          ...modeDestination("pointer"),
+          activeTool: transitionActiveTool(state, { type: "setTagAdd", tagId }),
+        }
+      : {
+          activeTool: transitionActiveTool(state, { type: "setTagAdd", tagId: null }),
+        });
   },
 
-  symbolSearchActive: false,
-  setSymbolSearchActive: (symbolSearchActive) => {
-    invalidateParseToolAuthority();
-    set(symbolSearchActiveDestination(symbolSearchActive));
+  setSymbolSearchActive: (active) => {
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("symbolSession");
+    set((state) => symbolSearchActiveDestination(state, active));
   },
   symbolSearchLoading: false,
   setSymbolSearchLoading: (symbolSearchLoading) => set({ symbolSearchLoading }),
@@ -435,9 +508,10 @@ export const useToolStore = create<ToolStoreState>((set) => ({
     }));
   },
   clearSymbolSearch: () => {
-    invalidateParseToolAuthority();
-    set({
-      symbolSearchActive: false,
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("symbolSession");
+    set((state) => ({
+      activeTool: transitionActiveTool(state, { type: "setSymbolTemplate", active: false }),
       symbolSearchLoading: false,
       symbolSearchProgress: null,
       symbolSearchResults: null,
@@ -455,13 +529,16 @@ export const useToolStore = create<ToolStoreState>((set) => ({
         nmsThreshold: 0.3,
         maxMatchesPerPage: 50,
       },
-    });
+    }));
   },
 
   resetProjectToolState: () => {
-    invalidateParseToolAuthority();
-    set({
+    invalidateToolTailAuthority();
+    invalidateLatestToolOperation("bucketFill");
+    invalidateLatestToolOperation("symbolSession");
+    set((state) => ({
       tempPanMode: false,
+      activeTool: activeToolAfterProjectReset(state.activeTool),
       activeTakeoffItemId: null,
       scaleCalibrations: {},
       calibrationMode: "idle",
@@ -469,10 +546,7 @@ export const useToolStore = create<ToolStoreState>((set) => ({
       polygonDrawingMode: "idle",
       polygonVertices: [],
       bucketFillResolution: 1000,
-      yoloTagPickingMode: false,
       tagScanResults: null,
-      tagAddingMode: null,
-      symbolSearchActive: false,
       symbolSearchLoading: false,
       symbolSearchProgress: null,
       symbolSearchResults: null,
@@ -491,9 +565,23 @@ export const useToolStore = create<ToolStoreState>((set) => ({
         maxMatchesPerPage: 50,
       },
       symbolSearchPreset: "lite",
-    });
+    }));
   },
 }));
+
+/** One user-owned redraw/new-template publication; reentrant Symbol B necessarily lands after A. */
+export function renewSymbolSearchTemplate(clearError = false): void {
+  invalidateToolTailAuthority();
+  invalidateLatestToolOperation("symbolSession");
+  useToolStore.setState((state) => ({
+    ...symbolSearchActiveDestination(state, true),
+    symbolSearchLoading: false,
+    symbolSearchProgress: null,
+    symbolSearchResults: null,
+    symbolSearchTemplateBbox: null,
+    ...(clearError ? { symbolSearchError: null } : {}),
+  }));
+}
 
 /**
  * Legacy async tool settlements may still publish their historical destination, but they are not
@@ -508,24 +596,122 @@ export function publishSettledToolMode(mode: ToolStoreData["mode"]): void {
 export function publishSettledActiveTakeoffItemId(
   activeTakeoffItemId: number | null,
 ): void {
-  useToolStore.setState(activeTakeoffDestination(activeTakeoffItemId));
+  useToolStore.setState((state) => activeTakeoffDestination(state, activeTakeoffItemId));
 }
 
-export function publishSettledCalibrationReset(): void {
-  useToolStore.setState({ calibrationMode: "idle", calibrationPoints: {} });
+export function reconcileSettledDeletedTakeoffItem(deletedItemId: number): boolean {
+  let reconciled = false;
+  useToolStore.setState((state) => {
+    if (state.activeTakeoffItemId !== deletedItemId) return state;
+    reconciled = true;
+    return activeTakeoffDestination(state, null);
+  });
+  return reconciled;
+}
+
+export type CalibrationActivation = Extract<ActiveToolObject, { kind: "calibration" }>;
+
+/**
+ * One calibration click advances its exact activation, point, and phase atomically. A synchronous
+ * Tool B admitted by this publication therefore lands after A and cannot be reactivated by a
+ * second stale phase write.
+ */
+export function advanceCalibrationGesture(
+  expectedActivation: CalibrationActivation,
+  expectedMode: "point1" | "point2",
+  which: "p1" | "p2",
+  point: { x: number; y: number },
+  nextMode: "point2" | "input",
+): boolean {
+  invalidateToolTailAuthority();
+  let advanced = false;
+  useToolStore.setState((state) => {
+    if (
+      state.activeTool !== expectedActivation ||
+      state.calibrationMode !== expectedMode
+    ) return state;
+    advanced = true;
+    return {
+      mode: "move",
+      calibrationMode: nextMode,
+      calibrationPoints: { ...state.calibrationPoints, [which]: point },
+      activeTool: transitionActiveTool(state, {
+        type: "setCalibrationMode",
+        mode: nextMode,
+      }),
+    };
+  });
+  return advanced;
+}
+
+export function publishSettledCalibrationReset(
+  expectedActivation: CalibrationActivation,
+): boolean {
+  let reset = false;
+  useToolStore.setState((state) => {
+    if (state.activeTool !== expectedActivation) return state;
+    reset = true;
+    return {
+      calibrationMode: "idle",
+      calibrationPoints: {},
+      activeTool: releaseActiveToolExact(
+        state.activeTool,
+        expectedActivation,
+        state.activeTakeoffItemId,
+      ),
+    };
+  });
+  return reset;
 }
 
 export function publishSettledPolygonReset(): void {
   useToolStore.setState({ polygonDrawingMode: "idle", polygonVertices: [] });
 }
 
-export function publishSettledSymbolSearchActive(symbolSearchActive: boolean): void {
-  useToolStore.setState(symbolSearchActiveDestination(symbolSearchActive));
+export type SymbolTemplateActivation = Extract<ActiveToolObject, { kind: "symbolTemplate" }>;
+
+export function publishSettledSymbolSearchDeactivate(
+  expectedActivation: SymbolTemplateActivation,
+): boolean {
+  let deactivated = false;
+  useToolStore.setState((state) => {
+    if (state.activeTool !== expectedActivation) return state;
+    deactivated = true;
+    return {
+      activeTool: releaseActiveToolExact(
+        state.activeTool,
+        expectedActivation,
+        state.activeTakeoffItemId,
+      ),
+    };
+  });
+  return deactivated;
+}
+
+export function publishSettledSymbolSearchCleanup(
+  expectedActivation: SymbolTemplateActivation | null,
+): boolean {
+  let deactivated = false;
+  useToolStore.setState((state) => {
+    deactivated = expectedActivation !== null && state.activeTool === expectedActivation;
+    return {
+      activeTool: expectedActivation === null
+        ? state.activeTool
+        : releaseActiveToolExact(
+            state.activeTool,
+            expectedActivation,
+            state.activeTakeoffItemId,
+          ),
+      symbolSearchResults: null,
+      symbolSearchTemplateBbox: null,
+    };
+  });
+  return deactivated;
 }
 
 /** Exact legacy 23-member grouped selector; narrowing is a later measured cleanup. */
 export const useSymbolSearch = () => useToolStore(useShallow((state) => ({
-  symbolSearchActive: state.symbolSearchActive,
+  symbolSearchActive: state.activeTool?.kind === "symbolTemplate",
   setSymbolSearchActive: state.setSymbolSearchActive,
   symbolSearchLoading: state.symbolSearchLoading,
   setSymbolSearchLoading: state.setSymbolSearchLoading,

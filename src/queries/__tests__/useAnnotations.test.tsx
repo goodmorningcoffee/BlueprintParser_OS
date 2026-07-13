@@ -155,6 +155,7 @@ beforeEach(() => {
     publicId: "A",
     isDemo: false,
     pageNumber: 1,
+    activeTool: null,
     activeTakeoffItemId: null,
     bucketFillPendingPolygon: null,
     bucketFillError: null,
@@ -827,6 +828,7 @@ describe("direct takeoff undo/redo bridges", () => {
     const priorUndo = [takeoffAnn(90)];
     const priorRedo = [takeoffAnn(91)];
     setViewerStoreStateForTest({
+      activeTool: null,
       activeTakeoffItemId: null,
       pageNumber: 1,
       takeoffUndoStack: priorUndo,
@@ -839,7 +841,11 @@ describe("direct takeoff undo/redo bridges", () => {
     expect(useToolStore.getState().takeoffUndoStack).toBe(priorUndo);
     expect(useToolStore.getState().takeoffRedoStack).toBe(priorRedo);
 
-    setViewerStoreStateForTest({ activeTakeoffItemId: 7, pageNumber: 2 });
+    setViewerStoreStateForTest({
+      activeTool: { kind: "takeoffPlacement" },
+      activeTakeoffItemId: 7,
+      pageNumber: 2,
+    });
     const undoBeforeNoMatch = useToolStore.getState().takeoffUndoStack;
     const redoBeforeNoMatch = useToolStore.getState().takeoffRedoStack;
     takeoffUndo(client);
@@ -867,6 +873,7 @@ describe("direct takeoff undo/redo bridges", () => {
     client.setQueryData(queryKeys.annotations.all("B"), bRows);
     setViewerStoreStateForTest({
       publicId: "B",
+      activeTool: { kind: "takeoffPlacement" },
       activeTakeoffItemId: 7,
       pageNumber: 1,
       takeoffUndoStack: [priorUndo],
@@ -895,7 +902,11 @@ describe("direct takeoff undo/redo bridges", () => {
     const client = freshClient();
     client.setQueryData(queryKeys.annotations.all("A"), [ann(1)]);
     const priorRedo = [takeoffAnn(91)];
-    useToolStore.setState({ takeoffUndoStack: [], takeoffRedoStack: priorRedo });
+    useToolStore.setState({
+      activeTool: { kind: "takeoffPlacement" },
+      takeoffUndoStack: [],
+      takeoffRedoStack: priorRedo,
+    });
     const rowsBefore = readAnnotations(client, "A");
     const undoBefore = useToolStore.getState().takeoffUndoStack;
 
@@ -913,6 +924,7 @@ describe("direct takeoff undo/redo bridges", () => {
     const priorRedo = takeoffAnn(91);
     client.setQueryData(queryKeys.annotations.all("A"), [existing]);
     useToolStore.setState({
+      activeTool: { kind: "takeoffPlacement" },
       activeTakeoffItemId: null,
       takeoffUndoStack: [restored],
       takeoffRedoStack: [priorRedo],

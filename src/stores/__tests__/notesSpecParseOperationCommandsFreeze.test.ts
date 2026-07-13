@@ -715,21 +715,36 @@ describe("A2d Index target handoff", () => {
       paragraphBatch: [paragraph(`${kind}-outgoing`)],
     });
     const beforeRevision = useParseFlowStore.getState().parseOperations[kind].revision;
+    const outgoingState = useParseFlowStore.getState();
+    const outgoingRegion = outgoingState[regionKey];
+    const outgoingDraft = outgoingState.parseDraftRegion;
+    const outgoingBatch = outgoingState.paragraphBatch;
     const trace: string[] = [];
     let parsePublications = 0;
-    let armed = true;
     let tokenB: ParseOperationToken<typeof kind> | undefined;
     const unsubscribeParse = useParseFlowStore.subscribe((state) => {
       parsePublications += 1;
-      if (!armed) return;
-      armed = false;
+      if (parsePublications === 1) {
+        trace.push("post-core-authority");
+        expect(useViewerCoreStore.getState().pageNumber).toBe(targetPage);
+        expect(state[regionKey]).toBe(outgoingRegion);
+        expect(state[stepKey]).toBe("review");
+        expect(state.parseDraftRegion).toBe(outgoingDraft);
+        expect(state.paragraphBatch).toBe(outgoingBatch);
+        expect(state.parseOperations[kind]).toEqual({
+          revision: beforeRevision + 1,
+          busy: false,
+        });
+        return;
+      }
+      if (parsePublications !== 2) return;
       trace.push("parse-seed");
       expect(useViewerCoreStore.getState().pageNumber).toBe(targetPage);
       expect(state[regionKey]).toBe(targetRegion);
       expect(state[stepKey]).toBe("idle");
       expect(state.parseDraftRegion).toBeNull();
       expect(state.parseOperations[kind]).toEqual({
-        revision: beforeRevision + 1,
+        revision: beforeRevision + 2,
         busy: false,
       });
 
@@ -758,10 +773,11 @@ describe("A2d Index target handoff", () => {
       unsubscribeCore();
     }
 
-    expect(trace).toEqual(["page", "parse-seed"]);
-    // The target command owns one parse publication. The other two are B's begin + seed inside the
-    // synchronous subscriber; any command-side parse tail would add a fourth and erase B.
-    expect(parsePublications).toBe(3);
+    expect(trace).toEqual(["page", "post-core-authority", "parse-seed"]);
+    // A cross-page target owns the operation-only post-Core authority boundary and one target seed.
+    // The other two publications are B's begin + seed inside the synchronous target subscriber;
+    // any command-side tail after that subscriber would add a fifth publication and erase B.
+    expect(parsePublications).toBe(4);
     expect(useViewerCoreStore.getState().pageNumber).toBe(targetPage);
     expect(tokenB).toBeDefined();
     const state = useParseFlowStore.getState();

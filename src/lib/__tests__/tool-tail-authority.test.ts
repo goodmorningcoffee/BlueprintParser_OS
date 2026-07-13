@@ -1,5 +1,5 @@
 // @vitest-environment node
-// [refactor jul13 P2.3 AT1 freeze-first] Shared non-reactive late-tool authority.
+// [refactor jul13 P2.3 AT2] Shared non-reactive late-tool authority and closed borrower set.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -7,6 +7,7 @@ import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  cancelToolTailExact,
   claimLatestToolOperation,
   claimParseToolAuthority,
   claimToolTailAuthority,
@@ -17,10 +18,15 @@ import {
   ownsLatestToolOperation,
   ownsParseToolAuthority,
   ownsToolTailAuthority,
+  registerToolTailCancellation,
+  releaseToolTailCancellation,
 } from "@/lib/parse-tool-authority";
 
 const MODULE_FILE = "src/lib/parse-tool-authority.ts";
 const NEW_RUNTIME_APIS = new Set([
+  "registerToolTailCancellation",
+  "releaseToolTailCancellation",
+  "cancelToolTailExact",
   "claimToolTailAuthority",
   "invalidateToolTailAuthority",
   "ownsToolTailAuthority",
@@ -245,13 +251,14 @@ function newAuthorityBorrowers(path: string, sourceText: string): string[] {
   return [...hits].sort().map((name) => `${path}:${name}`);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   invalidateToolTailAuthority();
+  await Promise.resolve();
   invalidateLatestToolOperation("bucketFill");
   invalidateLatestToolOperation("symbolSession");
 });
 
-describe("AT1 one exact global tool-tail authority", () => {
+describe("AT2 one exact global tool-tail authority", () => {
   it("pins the zero-dependency additive API with no reactive or numeric authority", () => {
     const sourceText = readFileSync(join(process.cwd(), MODULE_FILE), "utf8");
     const source = parseSource(sourceText);
@@ -260,6 +267,9 @@ describe("AT1 one exact global tool-tail authority", () => {
     expect(exportedNames(source)).toEqual([
       "ToolTailToken",
       "LatestToolLane",
+      "registerToolTailCancellation",
+      "releaseToolTailCancellation",
+      "cancelToolTailExact",
       "claimToolTailAuthority",
       "invalidateToolTailAuthority",
       "ownsToolTailAuthority",
@@ -276,6 +286,12 @@ describe("AT1 one exact global tool-tail authority", () => {
     expect(laneMembers(sourceText)).toEqual(['"bucketFill"', '"symbolSession"']);
     expect(functionSignature(sourceText, "claimToolTailAuthority"))
       .toBe("<Textendsobject>(token:T):T");
+    expect(functionSignature(sourceText, "registerToolTailCancellation"))
+      .toBe("(token:ToolTailToken,cancel:()=>void):void");
+    expect(functionSignature(sourceText, "releaseToolTailCancellation"))
+      .toBe("(token:ToolTailToken):boolean");
+    expect(functionSignature(sourceText, "cancelToolTailExact"))
+      .toBe("(token:ToolTailToken):boolean");
     expect(functionSignature(sourceText, "invalidateToolTailAuthority")).toBe("():void");
     expect(functionSignature(sourceText, "ownsToolTailAuthority"))
       .toBe("(token:ToolTailToken):boolean");
@@ -315,6 +331,12 @@ describe("AT1 one exact global tool-tail authority", () => {
         initializer: "null",
       },
       {
+        binding: "let",
+        name: "currentToolTailCancellation",
+        type: "ToolTailCancellation|null",
+        initializer: "null",
+      },
+      {
         binding: "const",
         name: "latestToolOperations",
         type: "Record<LatestToolLane,ToolTailToken|null>",
@@ -331,7 +353,7 @@ describe("AT1 one exact global tool-tail authority", () => {
     expect(splitSlotMutant).not.toBe(sourceText);
     expect(parseSource(splitSlotMutant).statements.filter(ts.isVariableStatement).flatMap(
       (statement) => statement.declarationList.declarations,
-    )).toHaveLength(3);
+    )).toHaveLength(4);
 
     const laneMutant = sourceText.replace(
       '"bucketFill" | "symbolSession"',
@@ -349,11 +371,57 @@ describe("AT1 one exact global tool-tail authority", () => {
       .not.toBe("{returnclaimToolTailAuthority(token);}");
   });
 
-  it("keeps every new generic/lane runtime API production-dead until the AT2 flip", () => {
+  it("pins every generic/lane runtime borrower after the atomic AT2 flip", () => {
     const borrowers = productionFiles().flatMap((path) =>
       newAuthorityBorrowers(path, readFileSync(join(process.cwd(), path), "utf8"))
     );
-    expect(borrowers).toEqual([]);
+    expect(borrowers.sort()).toEqual([
+      "src/components/viewer/AnnotationOverlay.tsx:cancelToolTailExact",
+      "src/components/viewer/AnnotationOverlay.tsx:claimLatestToolOperation",
+      "src/components/viewer/AnnotationOverlay.tsx:claimToolTailAuthority",
+      "src/components/viewer/AnnotationOverlay.tsx:consumeToolTailAuthority",
+      "src/components/viewer/AnnotationOverlay.tsx:invalidateLatestToolOperation",
+      "src/components/viewer/AnnotationOverlay.tsx:invalidateToolTailAuthority",
+      "src/components/viewer/AnnotationOverlay.tsx:ownsLatestToolOperation",
+      "src/components/viewer/AnnotationOverlay.tsx:ownsToolTailAuthority",
+      "src/components/viewer/AnnotationOverlay.tsx:registerToolTailCancellation",
+      "src/components/viewer/AnnotationOverlay.tsx:releaseToolTailCancellation",
+      "src/components/viewer/AreaTab.tsx:claimToolTailAuthority",
+      "src/components/viewer/AreaTab.tsx:consumeToolTailAuthority",
+      "src/components/viewer/AreaTab.tsx:invalidateToolTailAuthority",
+      "src/components/viewer/AreaTab.tsx:ownsToolTailAuthority",
+      "src/components/viewer/BucketFillAssignDialog.tsx:invalidateToolTailAuthority",
+      "src/components/viewer/CalibrationInput.tsx:claimToolTailAuthority",
+      "src/components/viewer/CalibrationInput.tsx:consumeToolTailAuthority",
+      "src/components/viewer/CalibrationInput.tsx:ownsToolTailAuthority",
+      "src/components/viewer/CountTab.tsx:claimToolTailAuthority",
+      "src/components/viewer/CountTab.tsx:consumeToolTailAuthority",
+      "src/components/viewer/CountTab.tsx:invalidateToolTailAuthority",
+      "src/components/viewer/CountTab.tsx:ownsToolTailAuthority",
+      "src/components/viewer/DetectionPanel.tsx:claimToolTailAuthority",
+      "src/components/viewer/DetectionPanel.tsx:consumeToolTailAuthority",
+      "src/components/viewer/DetectionPanel.tsx:ownsToolTailAuthority",
+      "src/components/viewer/DrawingPreviewLayer.tsx:invalidateToolTailAuthority",
+      "src/components/viewer/LinearTab.tsx:claimToolTailAuthority",
+      "src/components/viewer/LinearTab.tsx:consumeToolTailAuthority",
+      "src/components/viewer/LinearTab.tsx:invalidateToolTailAuthority",
+      "src/components/viewer/LinearTab.tsx:ownsToolTailAuthority",
+      "src/components/viewer/SymbolSearchPanel.tsx:claimLatestToolOperation",
+      "src/components/viewer/SymbolSearchPanel.tsx:invalidateLatestToolOperation",
+      "src/components/viewer/SymbolSearchPanel.tsx:invalidateToolTailAuthority",
+      "src/components/viewer/SymbolSearchPanel.tsx:ownsLatestToolOperation",
+      "src/components/viewer/TakeoffPanel.tsx:invalidateToolTailAuthority",
+      "src/queries/useAnnotations.ts:invalidateToolTailAuthority",
+      "src/stores/toolStore.ts:invalidateLatestToolOperation",
+      "src/stores/toolStore.ts:invalidateToolTailAuthority",
+      "src/stores/viewerCommands.ts:claimLatestToolOperation",
+      "src/stores/viewerCommands.ts:claimToolTailAuthority",
+      "src/stores/viewerCommands.ts:consumeToolTailAuthority",
+      "src/stores/viewerCommands.ts:invalidateLatestToolOperation",
+      "src/stores/viewerCommands.ts:invalidateToolTailAuthority",
+      "src/stores/viewerCommands.ts:ownsLatestToolOperation",
+      "src/stores/viewerCommands.ts:ownsToolTailAuthority",
+    ]);
 
     expect(newAuthorityBorrowers("src/lib/borrower-mutant.ts", `
       import {
@@ -400,6 +468,46 @@ describe("AT1 one exact global tool-tail authority", () => {
     invalidateToolTailAuthority();
     expect(ownsToolTailAuthority(tokenA)).toBe(false);
     expect(ownsToolTailAuthority(tokenB)).toBe(false);
+  });
+
+  it("retires only the exact displaced local tail before paint", async () => {
+    const tokenA = {};
+    const tokenB = {};
+    const cancelA = vi.fn();
+    const cancelB = vi.fn();
+
+    claimToolTailAuthority(tokenA);
+    registerToolTailCancellation(tokenA, cancelA);
+    claimToolTailAuthority(tokenB);
+    await Promise.resolve();
+    expect(cancelA).toHaveBeenCalledTimes(1);
+    expect(ownsToolTailAuthority(tokenB)).toBe(true);
+
+    registerToolTailCancellation(tokenB, cancelB);
+    expect(cancelToolTailExact(tokenA)).toBe(false);
+    expect(cancelB).not.toHaveBeenCalled();
+    expect(releaseToolTailCancellation(tokenB)).toBe(true);
+    invalidateToolTailAuthority();
+    await Promise.resolve();
+    expect(cancelB).not.toHaveBeenCalled();
+  });
+
+  it("lets a replacement registration survive queued A cancellation", async () => {
+    const tokenA = {};
+    const tokenB = {};
+    const cancelA = vi.fn();
+    const cancelB = vi.fn();
+    claimToolTailAuthority(tokenA);
+    registerToolTailCancellation(tokenA, cancelA);
+    claimToolTailAuthority(tokenB);
+    registerToolTailCancellation(tokenB, cancelB);
+
+    await Promise.resolve();
+    expect(cancelA).not.toHaveBeenCalled();
+    expect(cancelB).not.toHaveBeenCalled();
+    expect(cancelToolTailExact(tokenB)).toBe(true);
+    expect(cancelB).toHaveBeenCalledTimes(1);
+    expect(ownsToolTailAuthority(tokenB)).toBe(true);
   });
 
   it("consumes before synchronous publication and never erases reentrant B", () => {

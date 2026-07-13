@@ -17,6 +17,7 @@ import {
   within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { useToolStore } from "@/stores/toolStore";
@@ -113,7 +114,7 @@ describe("panel-to-canvas specialized activation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start — Draw Template" }));
 
     await waitFor(() => {
-      expect(useToolStore.getState().symbolSearchActive).toBe(true);
+      expect(useToolStore.getState().activeTool).toEqual({ kind: "symbolTemplate" });
       expect(screen.getByText(/Crosshair active/)).toBeInTheDocument();
     });
   });
@@ -134,7 +135,7 @@ describe("panel-to-canvas specialized activation", () => {
 
     expect(useToolStore.getState()).toMatchObject({
       mode: "pointer",
-      tagAddingMode: TAG_ID,
+      activeTool: { kind: "tagAdd", tagId: TAG_ID },
     });
 
     const canvas = await waitFor(() => {
@@ -153,5 +154,68 @@ describe("panel-to-canvas specialized activation", () => {
     expect(useViewerStore.getState()._drawing).toBe(true);
     expect(useViewerStore.getState()._drawStart).toEqual({ x: 10, y: 20 });
     expect(useViewerStore.getState()._drawEnd).toEqual({ x: 10, y: 20 });
+  });
+
+  it("rejects a buffered Symbol done message after the processing Cancel intent", async () => {
+    let settleFirstRead: ((value: { done: boolean; value?: Uint8Array }) => void) | undefined;
+    const firstRead = new Promise<{ done: boolean; value?: Uint8Array }>((resolve) => {
+      settleFirstRead = resolve;
+    });
+    const reader = {
+      read: vi.fn()
+        .mockReturnValueOnce(firstRead)
+        .mockResolvedValueOnce({ done: true, value: undefined }),
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      body: { getReader: () => reader },
+    } as unknown as Response);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL")
+      .mockReturnValue("data:image/png;base64,fixture");
+    const pdfDoc = {
+      getPage: async () => ({
+        getViewport: () => ({ width: 100, height: 100 }),
+        render: () => ({ promise: Promise.resolve() }),
+      }),
+    } as unknown as PDFDocumentProxy;
+    useToolStore.setState({
+      symbolSearchTemplateBbox: [0.1, 0.2, 0.3, 0.4],
+      symbolSearchSourcePage: 1,
+    });
+    render(<SymbolSearchPanel pdfDoc={pdfDoc} />, { wrapper });
+
+    await screen.findByAltText("Search template");
+    fireEvent.click(screen.getByRole("button", { name: "Run Search" }));
+    await waitFor(() => expect(useToolStore.getState().symbolSearchLoading).toBe(true));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(useToolStore.getState()).toMatchObject({
+      symbolSearchLoading: false,
+      symbolSearchProgress: null,
+      symbolSearchResults: null,
+    });
+
+    await act(async () => {
+      settleFirstRead?.({
+        done: false,
+        value: new TextEncoder().encode(`${JSON.stringify({
+          type: "done",
+          templateBbox: [0.1, 0.2, 0.3, 0.4],
+          sourcePageNumber: 1,
+          totalMatches: 1,
+          pagesWithMatches: [1],
+          matches: [{ id: "stale" }],
+          searchedAt: "after-cancel",
+        })}\n`),
+      });
+      await firstRead;
+      await Promise.resolve();
+    });
+
+    expect(useToolStore.getState()).toMatchObject({
+      symbolSearchLoading: false,
+      symbolSearchProgress: null,
+      symbolSearchResults: null,
+      symbolSearchError: null,
+    });
   });
 });

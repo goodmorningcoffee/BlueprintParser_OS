@@ -1,5 +1,5 @@
 // @vitest-environment node
-// [refactor jul12 P2.4 A2e] Fail-closed ownership for the viewer's current-page destination.
+// [refactor jul13 P2.3 AT2] Fail-closed page and Tool authority for the current destination.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
@@ -105,6 +105,17 @@ function enclosingFunctionName(node: ts.Node): string {
     current = current.parent;
   }
   return "module";
+}
+
+function declaredFunction(source: ts.SourceFile, name: string): ts.FunctionDeclaration {
+  const declaration = descendants(source, ts.isFunctionDeclaration)
+    .find((candidate) => candidate.name?.text === name);
+  if (!declaration?.body) throw new Error(`Missing function body: ${name}`);
+  return declaration;
+}
+
+function compactText(node: ts.Node, source: ts.SourceFile): string {
+  return node.getText(source).replace(/\s+/g, " ");
 }
 
 function productionFiles(directory = "src"): string[] {
@@ -353,6 +364,44 @@ describe("A2e current-page writer ownership", () => {
       ],
     });
   }, 120_000);
+
+  it("pins Viewer -> Tool -> conditional Parse -> Core -> exact Tool closer -> operation Parse", () => {
+    const source = sourceOf(VIEWER_COMMANDS_FILE);
+    const boundary = declaredFunction(source, "publishViewerPageBoundary");
+    expect(boundary.body!.statements.map((statement) => compactText(statement, source))).toEqual([
+      "invalidateToolTailAuthority();",
+      "useViewerStore.setState({ _drawing: false, _mousePos: null });",
+      "const installedPageTool = publishToolPageExit();",
+      "useParseFlowStore.setState((state) => legacyParsePageExitPatch(state) ?? state);",
+      "const preCoreToolState = useToolStore.getState();",
+      "const cleanupSubscriberTool = preCoreToolState.activeTool;",
+      "const cleanupSubscriberChangedTool = cleanupSubscriberTool !== installedPageTool || hasUnsettledPageLocalToolState(preCoreToolState);",
+      "invalidateToolTailAuthority();",
+      "installCorePage();",
+      "if (cleanupSubscriberChangedTool) publishToolPageExitExact(cleanupSubscriberTool);",
+      "publishPageOperationBoundary();",
+    ]);
+
+    const toolExit = compactText(declaredFunction(source, "publishToolPageExit"), source);
+    expect(toolExit).toContain("installedActiveTool = activeToolAfterPageChange(state)");
+    expect(toolExit).toContain("return toolPageExitPatch(installedActiveTool)");
+    expect(toolExit).not.toMatch(/\bmode\s*:/);
+    const exactToolExit = compactText(declaredFunction(source, "publishToolPageExitExact"), source);
+    expect(exactToolExit).toContain("state.activeTool === expectedActiveTool");
+    expect(exactToolExit).toContain("toolPageExitPatch(activeToolAfterPageChange(state))");
+
+    for (const [name, terminalMarker] of [
+      ["openNotesParseTarget", "publishUserParseTransition"],
+      ["openSpecParseTarget", "publishUserParseTransition"],
+      ["openTableReviewTarget", "openTableReviewWorkspace"],
+    ] as const) {
+      const target = compactText(declaredFunction(source, name), source);
+      const boundaryOffset = target.indexOf("publishViewerPageBoundary");
+      const terminalOffset = target.lastIndexOf(terminalMarker);
+      expect(boundaryOffset, `${name} page boundary`).toBeGreaterThan(-1);
+      expect(terminalOffset, `${name} target transition`).toBeGreaterThan(boundaryOffset);
+    }
+  });
 
   it("self-calibrates against direct/computed/aliased setters, raw patches, assignments, and hook borrows", () => {
     const fixture = sourceOf("page-writer-mutation-fixture.ts", `

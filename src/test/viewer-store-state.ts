@@ -120,18 +120,18 @@ export type ViewerCoreStoreTestPatch = Partial<
   Pick<ViewerCoreStoreTestState, CoreTestStateKey>
 >;
 
-// [refactor jul11 P2.3 T2] Exact data-only tool ownership ledger. Actions stay on their real
-// owner and are intentionally excluded from the mixed setup patch's routing contract.
+// [refactor jul13 P2.3 AT2] Exact data-only tool ownership ledger. The correlated discriminator
+// replaces five legacy activation mirrors; actions stay on their real owner.
 export const TOOL_TEST_STATE_KEYS = [
   "mode",
   "tempPanMode",
+  "activeTool",
   "activeTakeoffItemId",
   "scaleCalibrations",
   "calibrationMode",
   "calibrationPoints",
   "polygonDrawingMode",
   "polygonVertices",
-  "bucketFillActive",
   "bucketFillPreview",
   "bucketFillLoading",
   "bucketFillError",
@@ -139,7 +139,6 @@ export const TOOL_TEST_STATE_KEYS = [
   "bucketFillDilatePx",
   "bucketFillResolution",
   "bucketFillPendingPolygon",
-  "splitAreaActive",
   "splitLineA",
   "splitLineB",
   "splitPreview",
@@ -149,10 +148,7 @@ export const TOOL_TEST_STATE_KEYS = [
   "barrierPendingPoint",
   "takeoffUndoStack",
   "takeoffRedoStack",
-  "yoloTagPickingMode",
   "tagScanResults",
-  "tagAddingMode",
-  "symbolSearchActive",
   "symbolSearchLoading",
   "symbolSearchProgress",
   "symbolSearchResults",

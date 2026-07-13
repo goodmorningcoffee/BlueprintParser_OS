@@ -12,7 +12,22 @@ import {
   type ParseOperationToken,
 } from "@/lib/parse-operation-state";
 import {
-  invalidateParseToolAuthority,
+  activeToolAfterPageChange,
+  isDrawCapableParseStep,
+  type ActiveTool,
+  type ActiveToolObject,
+  type BaseInteractionMode,
+  type ParseRectFlow,
+  type ParseStepByFlow,
+} from "@/lib/active-tool-state";
+import {
+  claimLatestToolOperation,
+  claimToolTailAuthority,
+  consumeToolTailAuthority,
+  invalidateLatestToolOperation,
+  invalidateToolTailAuthority,
+  ownsLatestToolOperation,
+  ownsToolTailAuthority,
   ownsParseToolAuthority,
 } from "@/lib/parse-tool-authority";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -24,13 +39,18 @@ import {
   type ParseFlowState,
   type PendingParagraph,
 } from "@/stores/parseFlowStore";
-import { useToolStore, type ToolStoreData } from "@/stores/toolStore";
+import { useToolStore } from "@/stores/toolStore";
 import { useUiStore, type SpecsNotesTab } from "@/stores/uiStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { ParsedRegion } from "@/types";
 
 export function resetProjectData(): void {
+  // Capabilities belong to the old project even before the session identity publication re-keys
+  // Query observers. Invalidate all three non-reactive lanes first.
+  invalidateToolTailAuthority();
+  invalidateLatestToolOperation("bucketFill");
+  invalidateLatestToolOperation("symbolSession");
   // Session first: every Query observer immediately re-keys away from the old project before the
   // remaining UI/core/tool/viewer reset publishes. All writes are synchronous; there is no
   // await/paint gap.
@@ -133,16 +153,6 @@ function legacyParsePageExitPatch(state: ParseFlowState): Partial<ParseFlowState
   };
 }
 
-function prepareLegacyParsePageExit(prepareTool = true): boolean {
-  const before = useParseFlowStore.getState();
-  if (before.tableParseStep === "idle" && before.keynoteParseStep === "idle") return false;
-  // Tool first: the subsequent Parse publication may synchronously admit B, which must own every
-  // later tool write. This has the same final legacy destination as AnnotationOverlay's old effect.
-  if (prepareTool) useToolStore.getState().setMode("move");
-  useParseFlowStore.setState((state) => legacyParsePageExitPatch(state) ?? state);
-  return true;
-}
-
 /** Revoke old-page A and any synchronous core-page subscriber B after the new page is installed. */
 function publishPageOperationBoundary(): void {
   useParseFlowStore.setState((state) => ({
@@ -151,6 +161,85 @@ function publishPageOperationBoundary(): void {
       ["table", "keynote", "notes", "spec"],
     ),
   }));
+}
+
+function toolPageExitPatch(
+  activeTool: ActiveTool,
+): Partial<ReturnType<typeof useToolStore.getState>> {
+  return {
+    activeTool,
+    calibrationMode: "idle",
+    calibrationPoints: {},
+    polygonDrawingMode: "idle",
+    polygonVertices: [],
+    bucketFillPreview: null,
+    bucketFillLoading: false,
+    bucketFillError: null,
+    bucketFillPendingPolygon: null,
+    bucketFillBarriers: [],
+    bucketFillBarrierMode: false,
+    barrierPendingPoint: null,
+    splitLineA: null,
+    splitLineB: null,
+    splitPreview: null,
+    splitError: null,
+  };
+}
+
+function publishToolPageExit(): ActiveTool {
+  let installedActiveTool: ActiveTool = null;
+  useToolStore.setState((state) => {
+    installedActiveTool = activeToolAfterPageChange(state);
+    return toolPageExitPatch(installedActiveTool);
+  });
+  return installedActiveTool;
+}
+
+function hasUnsettledPageLocalToolState(
+  state: ReturnType<typeof useToolStore.getState>,
+): boolean {
+  return state.calibrationMode !== "idle" ||
+    state.calibrationPoints.p1 !== undefined ||
+    state.calibrationPoints.p2 !== undefined ||
+    state.polygonDrawingMode !== "idle" ||
+    state.polygonVertices.length > 0 ||
+    state.bucketFillPreview !== null ||
+    state.bucketFillLoading ||
+    state.bucketFillError !== null ||
+    state.bucketFillPendingPolygon !== null ||
+    state.bucketFillBarriers.length > 0 ||
+    state.bucketFillBarrierMode ||
+    state.barrierPendingPoint !== null ||
+    state.splitLineA !== null ||
+    state.splitLineB !== null ||
+    state.splitPreview !== null ||
+    state.splitError !== null;
+}
+
+/** Retire only the exact pre-Core cleanup-subscriber owner; a new-page subscriber C survives. */
+function publishToolPageExitExact(expectedActiveTool: ActiveTool): void {
+  useToolStore.setState((state) => state.activeTool === expectedActiveTool
+    ? toolPageExitPatch(activeToolAfterPageChange(state))
+    : state);
+}
+
+/**
+ * Install one real page destination behind the complete pre-/post-core authority boundary.
+ * Cleanup subscribers may admit B, so the second invalidation is deliberately adjacent to Core.
+ */
+function publishViewerPageBoundary(installCorePage: () => void): void {
+  invalidateToolTailAuthority();
+  useViewerStore.setState({ _drawing: false, _mousePos: null });
+  const installedPageTool = publishToolPageExit();
+  useParseFlowStore.setState((state) => legacyParsePageExitPatch(state) ?? state);
+  const preCoreToolState = useToolStore.getState();
+  const cleanupSubscriberTool = preCoreToolState.activeTool;
+  const cleanupSubscriberChangedTool = cleanupSubscriberTool !== installedPageTool ||
+    hasUnsettledPageLocalToolState(preCoreToolState);
+  invalidateToolTailAuthority();
+  installCorePage();
+  if (cleanupSubscriberChangedTool) publishToolPageExitExact(cleanupSubscriberTool);
+  publishPageOperationBoundary();
 }
 
 /**
@@ -162,9 +251,7 @@ export function navigateViewerPage(pageNumber: number): void {
   const core = useViewerCoreStore.getState();
   const targetPage = Math.max(1, Math.min(pageNumber, core.numPages || 1));
   if (targetPage === core.pageNumber) return;
-  prepareLegacyParsePageExit();
-  useViewerCoreStore.getState().setPage(targetPage);
-  publishPageOperationBoundary();
+  publishViewerPageBoundary(() => useViewerCoreStore.getState().setPage(targetPage));
 }
 
 /**
@@ -173,9 +260,7 @@ export function navigateViewerPage(pageNumber: number): void {
  */
 export function navigateViewerPageUnclamped(pageNumber: number): void {
   if (pageNumber === useViewerCoreStore.getState().pageNumber) return;
-  prepareLegacyParsePageExit();
-  useViewerCoreStore.setState({ pageNumber });
-  publishPageOperationBoundary();
+  publishViewerPageBoundary(() => useViewerCoreStore.setState({ pageNumber }));
 }
 
 function matchesParagraphLease(
@@ -292,40 +377,166 @@ function specDraftForParagraphBatch(
   };
 }
 
-const PARSE_ENTRY_TOOL_DESTINATION = {
-  mode: "move",
-  bucketFillActive: false,
-  bucketFillPreview: null,
-  bucketFillLoading: false,
-  bucketFillBarrierMode: false,
-  splitAreaActive: false,
-  symbolSearchActive: false,
-} as const;
+function isMatchingParseActivation(
+  activeTool: ActiveTool,
+  flow: ParseRectFlow,
+): activeTool is Extract<ActiveToolObject, { kind: "parseRect" }> {
+  return activeTool?.kind === "parseRect" && activeTool.flow === flow;
+}
 
-/** Raw legacy tool patches still represent a user-owned destination and must revoke parse tails. */
-function publishUserToolState(patch: Partial<ToolStoreData>): void {
-  invalidateParseToolAuthority();
-  useToolStore.setState(patch);
+function commonParseEntryPatch<F extends ParseRectFlow>(
+  flow: F,
+  mode: BaseInteractionMode,
+): Pick<
+  ReturnType<typeof useToolStore.getState>,
+  "mode" | "activeTool" | "activeTakeoffItemId" | "polygonDrawingMode" | "polygonVertices"
+> {
+  return {
+    mode,
+    activeTool: { kind: "parseRect", flow },
+    activeTakeoffItemId: null,
+    polygonDrawingMode: "idle",
+    polygonVertices: [],
+  };
 }
 
 /**
- * A parse entry used to be one viewerStore publication. The flat carve necessarily splits that
- * write, so competing tools publish their exact raw destination first and the parse step follows
- * synchronously. Tool-first prevents raw subscribers from seeing active parse + an active tool.
+ * Correlate one user-owned rectangle transition across Tool then Parse. Same-kind entries allocate
+ * a fresh object; matching releases (including semantic null) retain an opaque token through the
+ * Tool subscriber interval so an old Parse step cannot land after reentrant B.
  */
-function prepareParseEntry(
-  currentStep: string,
-  nextStep: string,
-  token?: ParseOperationToken,
-): void {
-  if (currentStep === "idle" && nextStep !== "idle") {
-    if (token !== undefined) {
-      if (!ownsParseToolAuthority(token)) return;
-    } else {
-      invalidateParseToolAuthority();
-    }
-    useToolStore.setState(PARSE_ENTRY_TOOL_DESTINATION);
+function publishUserParseTransition<F extends ParseRectFlow>(
+  flow: F,
+  previousStep: ParseStepByFlow[F],
+  nextStep: ParseStepByFlow[F],
+  publishParse: () => void,
+  mode: BaseInteractionMode = "move",
+): boolean {
+  const before = useToolStore.getState();
+  const capturedActiveTool = before.activeTool;
+  const entersDrawing = isDrawCapableParseStep(flow, nextStep);
+  const leavesDrawing = isDrawCapableParseStep(flow, previousStep) && !entersDrawing;
+  const matchingActivation = isMatchingParseActivation(capturedActiveTool, flow);
+
+  // A dormant peer cleanup is Parse-only. It must not steal another live tool's global claim.
+  const needsToolPublication = entersDrawing || matchingActivation ||
+    (leavesDrawing && capturedActiveTool === null);
+  if (!needsToolPublication) {
+    publishParse();
+    return true;
   }
+
+  const intentToken = {};
+  claimToolTailAuthority(intentToken);
+  let admitted = false;
+  let expectedActiveTool: ActiveTool = capturedActiveTool;
+  useToolStore.setState((state) => {
+    if (state.activeTool !== capturedActiveTool) return state;
+    admitted = true;
+    if (entersDrawing) {
+      const patch = commonParseEntryPatch(flow, mode);
+      expectedActiveTool = patch.activeTool;
+      return patch;
+    }
+    expectedActiveTool = matchingActivation ? null : capturedActiveTool;
+    return {
+      mode,
+      activeTool: expectedActiveTool,
+    };
+  });
+  if (
+    !admitted || !ownsToolTailAuthority(intentToken) ||
+    useToolStore.getState().activeTool !== expectedActiveTool
+  ) return false;
+  return consumeToolTailAuthority(intentToken, publishParse);
+}
+
+/**
+ * A parse root already owns the shared global token. Its passive Tool destination consumes that
+ * exact claim before publication, conditionally releases only its own rectangle, then publishes
+ * the terminal Parse mutation after synchronous Tool subscribers return.
+ */
+function publishParseOwnedTransition<F extends ParseRectFlow>(
+  token: ParseOperationToken<F>,
+  flow: F,
+  nextStep: ParseStepByFlow[F],
+  publishParse: () => void,
+): boolean {
+  // Parse registry authority and global Tool-tail authority are deliberately independent. A
+  // still-current parser that lost the global slot may settle Parse bytes, but it may not touch
+  // the newer canvas/tool destination.
+  if (!ownsParseToolAuthority(token)) {
+    if (isDrawCapableParseStep(flow, nextStep)) return false;
+    publishParse();
+    return true;
+  }
+  const capturedActiveTool = useToolStore.getState().activeTool;
+  const entersDrawing = isDrawCapableParseStep(flow, nextStep);
+  let expectedActiveTool: ActiveTool = capturedActiveTool;
+  let admitted = false;
+  useToolStore.setState((state) => {
+    if (state.activeTool !== capturedActiveTool) return state;
+    admitted = true;
+    if (entersDrawing) {
+      const patch = commonParseEntryPatch(flow, "move");
+      expectedActiveTool = patch.activeTool;
+      return patch;
+    }
+    expectedActiveTool = isMatchingParseActivation(capturedActiveTool, flow)
+      ? null
+      : capturedActiveTool;
+    return {
+      mode: "move",
+      activeTool: expectedActiveTool,
+    };
+  });
+  if (
+    !admitted || !ownsToolTailAuthority(token) ||
+    useToolStore.getState().activeTool !== expectedActiveTool
+  ) {
+    // A reentrant Tool B defeats A's Tool tail. Non-drawing Parse settlement remains authorized
+    // by the caller's exact parse-operation check; draw entry must remain correlated and fails.
+    if (entersDrawing) return false;
+    publishParse();
+    return true;
+  }
+  return consumeToolTailAuthority(token, publishParse);
+}
+
+/** Release one matching parse rectangle before an arbitrary user-owned Parse cleanup. */
+function publishParseCleanupForUser<F extends ParseRectFlow>(
+  flow: F,
+  previousStep: ParseStepByFlow[F],
+  publishParse: () => void,
+): boolean {
+  return publishUserParseTransition(flow, previousStep, "idle", publishParse);
+}
+
+/** One explicit base-mode decision correlated with the Parse/UI publication it precedes. */
+function publishUserBaseModeTransition(
+  mode: BaseInteractionMode,
+  publishAfterTool: () => void,
+): boolean {
+  const token = {};
+  claimToolTailAuthority(token);
+  useToolStore.setState({
+    mode,
+    activeTool: null,
+    activeTakeoffItemId: null,
+    polygonDrawingMode: "idle",
+    polygonVertices: [],
+    bucketFillPreview: null,
+    bucketFillLoading: false,
+    bucketFillBarriers: [],
+    bucketFillBarrierMode: false,
+    splitLineA: null,
+    splitLineB: null,
+    splitPreview: null,
+    splitError: null,
+    tempPanMode: false,
+  });
+  if (!ownsToolTailAuthority(token) || useToolStore.getState().activeTool !== null) return false;
+  return consumeToolTailAuthority(token, publishAfterTool);
 }
 
 /**
@@ -445,80 +656,84 @@ export function publishGuidedProposalForOperation(
 export function resetGuidedParseWorkspace(owner: "table" | "keynote" | "notes"): boolean {
   if (!isActiveGuidedParseOwner(owner)) return false;
   const before = useParseFlowStore.getState();
-  if (before.guidedParseOwner === null || before.guidedParseOwner === owner) {
-    publishUserToolState({ mode: "move" });
-  }
   let cleared = false;
-  useParseFlowStore.setState((state) => {
-    const ownsGuided = state.guidedParseOwner === owner;
-    const ownerPatch = owner === "table"
-      ? { tableParseStep: "idle" as const, tableParseRegion: null }
-      : owner === "keynote"
-        ? { keynoteParseStep: "idle" as const, keynoteParseRegion: null }
-        : { notesParseStep: "idle" as const, notesParseRegion: null };
-    cleared = ownsGuided;
-    return {
-      ...ownerPatch,
-      ...(ownsGuided
-        ? {
-            guidedParseOwner: null,
-            guidedParseActive: false,
-            guidedParseRegion: null,
-            guidedParseRows: [],
-            guidedParseCols: [],
-          }
-        : {}),
-      parseOperations: invalidateParseOperationKinds(
-        state.parseOperations,
-        ownsGuided ? ["table", "keynote", "notes"] : [owner],
-      ),
-    };
-  });
+  const publish = () => {
+    useParseFlowStore.setState((state) => {
+      const ownsGuided = state.guidedParseOwner === owner;
+      const ownerPatch = owner === "table"
+        ? { tableParseStep: "idle" as const, tableParseRegion: null }
+        : owner === "keynote"
+          ? { keynoteParseStep: "idle" as const, keynoteParseRegion: null }
+          : { notesParseStep: "idle" as const, notesParseRegion: null };
+      cleared = ownsGuided;
+      return {
+        ...ownerPatch,
+        ...(ownsGuided
+          ? {
+              guidedParseOwner: null,
+              guidedParseActive: false,
+              guidedParseRegion: null,
+              guidedParseRows: [],
+              guidedParseCols: [],
+            }
+          : {}),
+        parseOperations: invalidateParseOperationKinds(
+          state.parseOperations,
+          ownsGuided ? ["table", "keynote", "notes"] : [owner],
+        ),
+      };
+    });
+  };
+  if (owner === "table") publishParseCleanupForUser("table", before.tableParseStep, publish);
+  else if (owner === "keynote") {
+    publishParseCleanupForUser("keynote", before.keynoteParseStep, publish);
+  } else publishParseCleanupForUser("notes", before.notesParseStep, publish);
   return cleared;
 }
 
 /** Full Table user reset with tool-first ordering and owner-aware shared cleanup. */
 export function resetTableParseWorkspace(): void {
   const before = useParseFlowStore.getState();
-  const preservesPeerGuided = before.guidedParseOwner !== null &&
-    before.guidedParseOwner !== "table";
-  if (!preservesPeerGuided) useToolStore.getState().setMode("move");
-  useParseFlowStore.setState((state) => {
-    const clearsGuided = state.guidedParseOwner === "table";
-    return {
-      tableParseStep: "idle",
-      tableParseRegion: null,
-      tableParsedGrid: null,
-      tableParseMeta: null,
-      tableCellStructure: null,
-      tableParseColumnBBs: [],
-      tableParseColumnNames: [],
-      tableParseRowBBs: [],
-      ...(clearsGuided
-        ? {
-            guidedParseOwner: null,
-            guidedParseActive: false,
-            guidedParseRegion: null,
-            guidedParseRows: [],
-            guidedParseCols: [],
-          }
-        : {}),
-      parseOperations: invalidateParseOperationKinds(
-        state.parseOperations,
-        clearsGuided ? ["table", "keynote", "notes"] : ["table"],
-      ),
-    };
+  publishParseCleanupForUser("table", before.tableParseStep, () => {
+    useParseFlowStore.setState((state) => {
+      const clearsGuided = state.guidedParseOwner === "table";
+      return {
+        tableParseStep: "idle",
+        tableParseRegion: null,
+        tableParsedGrid: null,
+        tableParseMeta: null,
+        tableCellStructure: null,
+        tableParseColumnBBs: [],
+        tableParseColumnNames: [],
+        tableParseRowBBs: [],
+        ...(clearsGuided
+          ? {
+              guidedParseOwner: null,
+              guidedParseActive: false,
+              guidedParseRegion: null,
+              guidedParseRows: [],
+              guidedParseCols: [],
+            }
+          : {}),
+        parseOperations: invalidateParseOperationKinds(
+          state.parseOperations,
+          clearsGuided ? ["table", "keynote", "notes"] : ["table"],
+        ),
+      };
+    });
   });
 }
 
 /** Return Auto review to its retained region in one user-owned terminal Parse publication. */
 export function restartTableParseFromCurrentRegion(): void {
-  useToolStore.getState().setMode("move");
-  useParseFlowStore.setState((state) => ({
-    tableParseStep: "idle",
-    tableParsedGrid: null,
-    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
-  }));
+  const before = useParseFlowStore.getState();
+  publishParseCleanupForUser("table", before.tableParseStep, () => {
+    useParseFlowStore.setState((state) => ({
+      tableParseStep: "idle",
+      tableParsedGrid: null,
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+    }));
+  });
 }
 
 /** Clear page-relative cell structure and revoke the Table owner in the same user publication. */
@@ -629,31 +844,45 @@ export function invalidateKeynoteTableOperations(): void {
  */
 export function resetKeynoteGuidedParse(): void {
   const before = useParseFlowStore.getState();
-  if (before.guidedParseOwner === null || before.guidedParseOwner === "keynote") {
-    publishUserToolState({ mode: "move" });
-  }
-  useParseFlowStore.setState((state) => {
-    const ownsGuided = state.guidedParseOwner === "keynote";
-    return {
+  publishParseCleanupForUser("keynote", before.keynoteParseStep, () => {
+    useParseFlowStore.setState((state) => {
+      const ownsGuided = state.guidedParseOwner === "keynote";
+      return {
+        keynoteParseStep: "idle",
+        keynoteParseRegion: null,
+        keynoteColumnBBs: [],
+        keynoteRowBBs: [],
+        keynoteYoloClass: null,
+        ...(ownsGuided
+          ? {
+              guidedParseOwner: null,
+              guidedParseActive: false,
+              guidedParseRegion: null,
+              guidedParseRows: [],
+              guidedParseCols: [],
+            }
+          : {}),
+        parseOperations: invalidateParseOperationKinds(
+          state.parseOperations,
+          ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
+        ),
+      };
+    });
+  });
+}
+
+/** Exact legacy Keynote reset routed through the correlated active-flow release seam. */
+export function resetKeynoteParseWorkspace(): void {
+  const before = useParseFlowStore.getState();
+  publishParseCleanupForUser("keynote", before.keynoteParseStep, () => {
+    useParseFlowStore.setState((state) => ({
       keynoteParseStep: "idle",
       keynoteParseRegion: null,
       keynoteColumnBBs: [],
       keynoteRowBBs: [],
       keynoteYoloClass: null,
-      ...(ownsGuided
-        ? {
-            guidedParseOwner: null,
-            guidedParseActive: false,
-            guidedParseRegion: null,
-            guidedParseRows: [],
-            guidedParseCols: [],
-          }
-        : {}),
-      parseOperations: invalidateParseOperationKinds(
-        state.parseOperations,
-        ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
-      ),
-    };
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["keynote"]),
+    }));
   });
 }
 
@@ -663,27 +892,26 @@ export function transitionTableParseTab(
 ): void {
   const before = useParseFlowStore.getState();
   if (before.tableParseTab === tableParseTab) return;
-  const preservesPeerGuided = before.guidedParseOwner !== null &&
-    before.guidedParseOwner !== "table";
-  if (!preservesPeerGuided) publishUserToolState({ mode: "move" });
-  useParseFlowStore.setState((state) => {
-    const ownsGuided = state.guidedParseOwner === "table";
-    return {
-      tableParseTab,
-      ...(ownsGuided
-        ? {
-            guidedParseOwner: null,
-            guidedParseActive: false,
-            guidedParseRegion: null,
-            guidedParseRows: [],
-            guidedParseCols: [],
-          }
-        : {}),
-      parseOperations: invalidateParseOperationKinds(
-        state.parseOperations,
-        ownsGuided ? ["table", "keynote", "notes"] : ["table"],
-      ),
-    };
+  publishParseCleanupForUser("table", before.tableParseStep, () => {
+    useParseFlowStore.setState((state) => {
+      const ownsGuided = state.guidedParseOwner === "table";
+      return {
+        tableParseTab,
+        ...(ownsGuided
+          ? {
+              guidedParseOwner: null,
+              guidedParseActive: false,
+              guidedParseRegion: null,
+              guidedParseRows: [],
+              guidedParseCols: [],
+            }
+          : {}),
+        parseOperations: invalidateParseOperationKinds(
+          state.parseOperations,
+          ownsGuided ? ["table", "keynote", "notes"] : ["table"],
+        ),
+      };
+    });
   });
 }
 
@@ -705,32 +933,31 @@ export function transitionKeynoteParseTab(
 ): void {
   const before = useParseFlowStore.getState();
   if (before.keynoteParseTab === keynoteParseTab) return;
-  const preservesPeerGuided = before.guidedParseOwner !== null &&
-    before.guidedParseOwner !== "keynote";
-  if (!preservesPeerGuided) publishUserToolState({ mode: "move" });
-  useParseFlowStore.setState((state) => {
-    const ownsGuided = state.guidedParseOwner === "keynote";
-    return {
-      keynoteParseTab,
-      keynoteParseStep: "idle",
-      keynoteParseRegion: null,
-      keynoteColumnBBs: [],
-      keynoteRowBBs: [],
-      keynoteYoloClass: null,
-      ...(ownsGuided
-        ? {
-            guidedParseOwner: null,
-            guidedParseActive: false,
-            guidedParseRegion: null,
-            guidedParseRows: [],
-            guidedParseCols: [],
-          }
-        : {}),
-      parseOperations: invalidateParseOperationKinds(
-        state.parseOperations,
-        ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
-      ),
-    };
+  publishParseCleanupForUser("keynote", before.keynoteParseStep, () => {
+    useParseFlowStore.setState((state) => {
+      const ownsGuided = state.guidedParseOwner === "keynote";
+      return {
+        keynoteParseTab,
+        keynoteParseStep: "idle",
+        keynoteParseRegion: null,
+        keynoteColumnBBs: [],
+        keynoteRowBBs: [],
+        keynoteYoloClass: null,
+        ...(ownsGuided
+          ? {
+              guidedParseOwner: null,
+              guidedParseActive: false,
+              guidedParseRegion: null,
+              guidedParseRows: [],
+              guidedParseCols: [],
+            }
+          : {}),
+        parseOperations: invalidateParseOperationKinds(
+          state.parseOperations,
+          ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
+        ),
+      };
+    });
   });
 }
 
@@ -1030,59 +1257,11 @@ export function beginNotesFastManualEdit(): ParseWorkspaceLease {
  * owner revocations land together. The intentionally shared paragraph clipboard survives.
  */
 export function acceptNotesParseRegion(notesParseRegion: ParseRegion): void {
-  useParseFlowStore.setState((state) => {
-    const ownsGuided = state.guidedParseOwner === "notes";
-    return {
-      notesParseRegion,
-      notesParseStep: "idle",
-      specParseStep: "idle",
-      specParseRegion: null,
-      parseDraftRegion: null,
-      paragraphWorkspaceOwner: null,
-      paragraphBatch: [],
-      notesFastManualActive: false,
-      notesFastManualGrid: null,
-      ...(ownsGuided
-        ? {
-            guidedParseOwner: null,
-            guidedParseActive: false,
-            guidedParseRegion: null,
-            guidedParseRows: [],
-            guidedParseCols: [],
-          }
-        : {}),
-      parseOperations: invalidateParseOperationKinds(
-        state.parseOperations,
-        ownsGuided ? ["table", "keynote", "notes", "spec"] : ["notes", "spec"],
-      ),
-    };
-  });
-}
-
-/** Accept a Spec region and revoke both owners of its shared paragraph/draft workspace atomically. */
-export function acceptSpecParseRegion(specParseRegion: ParseRegion): void {
-  useParseFlowStore.setState((state) => ({
-    specParseRegion,
-    specParseStep: "idle",
-    parseDraftRegion: null,
-    paragraphWorkspaceOwner: null,
-    paragraphBatch: [],
-    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
-  }));
-}
-
-/** Index handoff: install the destination page first, then atomically revoke/seed Parse. */
-export function openNotesParseTarget(
-  pageNumber: number,
-  notesParseRegion: ParseRegion | null,
-): void {
-  const crossesPage = useViewerCoreStore.getState().pageNumber !== pageNumber;
-  if (crossesPage) {
-    prepareLegacyParsePageExit();
-    useViewerCoreStore.getState().setPage(pageNumber);
-  }
-  useParseFlowStore.setState((state) => notesParseRegion
-    ? {
+  const currentStep = useParseFlowStore.getState().notesParseStep;
+  publishUserParseTransition("notes", currentStep, "idle", () => {
+    useParseFlowStore.setState((state) => {
+      const ownsGuided = state.guidedParseOwner === "notes";
+      return {
         notesParseRegion,
         notesParseStep: "idle",
         specParseStep: "idle",
@@ -1092,29 +1271,85 @@ export function openNotesParseTarget(
         paragraphBatch: [],
         notesFastManualActive: false,
         notesFastManualGrid: null,
-        guidedParseOwner: null,
-        guidedParseActive: false,
-        guidedParseRegion: null,
-        guidedParseRows: [],
-        guidedParseCols: [],
+        ...(ownsGuided
+          ? {
+              guidedParseOwner: null,
+              guidedParseActive: false,
+              guidedParseRegion: null,
+              guidedParseRows: [],
+              guidedParseCols: [],
+            }
+          : {}),
         parseOperations: invalidateParseOperationKinds(
           state.parseOperations,
-          ["table", "keynote", "notes", "spec"],
+          ownsGuided ? ["table", "keynote", "notes", "spec"] : ["notes", "spec"],
         ),
-      }
-    : {
-        notesParseStep: "idle",
-        notesParseRegion: null,
-        guidedNotesRows: [],
-        guidedNotesCols: [],
-        parseDraftRegion: null,
-        paragraphWorkspaceOwner: null,
-        paragraphBatch: [],
-        parseOperations: invalidateParseOperationKinds(
-          state.parseOperations,
-          crossesPage ? ["table", "keynote", "notes", "spec"] : ["notes", "spec"],
-        ),
-      });
+      };
+    });
+  });
+}
+
+/** Accept a Spec region and revoke both owners of its shared paragraph/draft workspace atomically. */
+export function acceptSpecParseRegion(specParseRegion: ParseRegion): void {
+  const currentStep = useParseFlowStore.getState().specParseStep;
+  publishUserParseTransition("spec", currentStep, "idle", () => {
+    useParseFlowStore.setState((state) => ({
+      specParseRegion,
+      specParseStep: "idle",
+      parseDraftRegion: null,
+      paragraphWorkspaceOwner: null,
+      paragraphBatch: [],
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
+    }));
+  });
+}
+
+/** Index handoff: install the destination page first, then atomically revoke/seed Parse. */
+export function openNotesParseTarget(
+  pageNumber: number,
+  notesParseRegion: ParseRegion | null,
+): void {
+  const crossesPage = useViewerCoreStore.getState().pageNumber !== pageNumber;
+  if (crossesPage) {
+    publishViewerPageBoundary(() => useViewerCoreStore.getState().setPage(pageNumber));
+  }
+  const currentStep = useParseFlowStore.getState().notesParseStep;
+  publishUserParseTransition("notes", currentStep, "idle", () => {
+    useParseFlowStore.setState((state) => notesParseRegion
+      ? {
+          notesParseRegion,
+          notesParseStep: "idle",
+          specParseStep: "idle",
+          specParseRegion: null,
+          parseDraftRegion: null,
+          paragraphWorkspaceOwner: null,
+          paragraphBatch: [],
+          notesFastManualActive: false,
+          notesFastManualGrid: null,
+          guidedParseOwner: null,
+          guidedParseActive: false,
+          guidedParseRegion: null,
+          guidedParseRows: [],
+          guidedParseCols: [],
+          parseOperations: invalidateParseOperationKinds(
+            state.parseOperations,
+            ["table", "keynote", "notes", "spec"],
+          ),
+        }
+      : {
+          notesParseStep: "idle",
+          notesParseRegion: null,
+          guidedNotesRows: [],
+          guidedNotesCols: [],
+          parseDraftRegion: null,
+          paragraphWorkspaceOwner: null,
+          paragraphBatch: [],
+          parseOperations: invalidateParseOperationKinds(
+            state.parseOperations,
+            crossesPage ? ["table", "keynote", "notes", "spec"] : ["notes", "spec"],
+          ),
+        });
+  });
 }
 
 export function openSpecParseTarget(
@@ -1123,20 +1358,22 @@ export function openSpecParseTarget(
 ): void {
   const crossesPage = useViewerCoreStore.getState().pageNumber !== pageNumber;
   if (crossesPage) {
-    prepareLegacyParsePageExit();
-    useViewerCoreStore.getState().setPage(pageNumber);
+    publishViewerPageBoundary(() => useViewerCoreStore.getState().setPage(pageNumber));
   }
-  useParseFlowStore.setState((state) => ({
-    specParseStep: "idle",
-    specParseRegion,
-    parseDraftRegion: null,
-    paragraphWorkspaceOwner: null,
-    paragraphBatch: [],
-    parseOperations: invalidateParseOperationKinds(
-      state.parseOperations,
-      crossesPage ? ["table", "keynote", "notes", "spec"] : ["notes", "spec"],
-    ),
-  }));
+  const currentStep = useParseFlowStore.getState().specParseStep;
+  publishUserParseTransition("spec", currentStep, "idle", () => {
+    useParseFlowStore.setState((state) => ({
+      specParseStep: "idle",
+      specParseRegion,
+      parseDraftRegion: null,
+      paragraphWorkspaceOwner: null,
+      paragraphBatch: [],
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        crossesPage ? ["table", "keynote", "notes", "spec"] : ["notes", "spec"],
+      ),
+    }));
+  });
 }
 
 type NotesCompletionOptions = Readonly<{
@@ -1155,53 +1392,57 @@ export function completeNotesParseOperation(
 ): boolean {
   if (token.kind !== "notes") return false;
   let completed = false;
-  useParseFlowStore.setState((state) => {
-    const live = state.parseOperations.notes;
-    if (!live.busy || live.revision !== token.revision) return state;
-    if (options.guided && state.guidedParseOwner !== "notes") return state;
-    completed = true;
-    const kinds: ParseKind[] = options.guided
-      ? ["table", "keynote", "notes", "spec"]
-      : ["notes", "spec"];
-    return {
-      notesParseStep: "idle",
-      notesParseRegion: null,
-      guidedNotesRows: [],
-      guidedNotesCols: [],
-      parseDraftRegion: null,
-      paragraphWorkspaceOwner: null,
-      paragraphBatch: [],
-      ...(options.guided ? { guidedParseOwner: null, guidedParseActive: false } : {}),
-      ...(options.guided
-        ? { guidedParseRegion: null, guidedParseRows: [], guidedParseCols: [] }
-        : {}),
-      ...(options.fastManual
-        ? { notesFastManualActive: false, notesFastManualGrid: null }
-        : {}),
-      parseOperations: invalidateParseOperationKinds(state.parseOperations, kinds),
-    };
+  const transitioned = publishParseOwnedTransition(token, "notes", "idle", () => {
+    useParseFlowStore.setState((state) => {
+      const live = state.parseOperations.notes;
+      if (!live.busy || live.revision !== token.revision) return state;
+      if (options.guided && state.guidedParseOwner !== "notes") return state;
+      completed = true;
+      const kinds: ParseKind[] = options.guided
+        ? ["table", "keynote", "notes", "spec"]
+        : ["notes", "spec"];
+      return {
+        notesParseStep: "idle",
+        notesParseRegion: null,
+        guidedNotesRows: [],
+        guidedNotesCols: [],
+        parseDraftRegion: null,
+        paragraphWorkspaceOwner: null,
+        paragraphBatch: [],
+        ...(options.guided ? { guidedParseOwner: null, guidedParseActive: false } : {}),
+        ...(options.guided
+          ? { guidedParseRegion: null, guidedParseRows: [], guidedParseCols: [] }
+          : {}),
+        ...(options.fastManual
+          ? { notesFastManualActive: false, notesFastManualGrid: null }
+          : {}),
+        parseOperations: invalidateParseOperationKinds(state.parseOperations, kinds),
+      };
+    });
   });
-  return completed;
+  return transitioned && completed;
 }
 
 /** Commit the exact Spec/shared reset only for the current Spec root. */
 export function completeSpecParseOperation(token: ParseOperationToken<"spec">): boolean {
   if (token.kind !== "spec") return false;
   let completed = false;
-  useParseFlowStore.setState((state) => {
-    const live = state.parseOperations.spec;
-    if (!live.busy || live.revision !== token.revision) return state;
-    completed = true;
-    return {
-      specParseStep: "idle",
-      specParseRegion: null,
-      parseDraftRegion: null,
-      paragraphWorkspaceOwner: null,
-      paragraphBatch: [],
-      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
-    };
+  const transitioned = publishParseOwnedTransition(token, "spec", "idle", () => {
+    useParseFlowStore.setState((state) => {
+      const live = state.parseOperations.spec;
+      if (!live.busy || live.revision !== token.revision) return state;
+      completed = true;
+      return {
+        specParseStep: "idle",
+        specParseRegion: null,
+        parseDraftRegion: null,
+        paragraphWorkspaceOwner: null,
+        paragraphBatch: [],
+        parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
+      };
+    });
   });
-  return completed;
+  return transitioned && completed;
 }
 
 /** Atomic user Clear/Redraw destination for Notes. */
@@ -1209,30 +1450,33 @@ export function resetNotesParseWorkspace(
   notesParseStep: NotesParseStep = "idle",
   options: NotesCompletionOptions = {},
 ): void {
-  useParseFlowStore.setState((state) => {
-    const clearsGuided = options.guided && state.guidedParseOwner === "notes";
-    return {
-      notesParseStep,
-      notesParseRegion: null,
-      guidedNotesRows: [],
-      guidedNotesCols: [],
-      parseDraftRegion: null,
-      paragraphWorkspaceOwner: null,
-      paragraphBatch: [],
-      ...(clearsGuided ? { guidedParseOwner: null, guidedParseActive: false } : {}),
-      ...(clearsGuided
-        ? { guidedParseRegion: null, guidedParseRows: [], guidedParseCols: [] }
-        : {}),
-      ...(options.fastManual
-        ? { notesFastManualActive: false, notesFastManualGrid: null }
-        : {}),
-      parseOperations: invalidateParseOperationKinds(
-        state.parseOperations,
-        clearsGuided
-          ? ["table", "keynote", "notes", "spec"]
-          : ["notes", "spec"],
-      ),
-    };
+  const currentStep = useParseFlowStore.getState().notesParseStep;
+  publishUserParseTransition("notes", currentStep, notesParseStep, () => {
+    useParseFlowStore.setState((state) => {
+      const clearsGuided = options.guided && state.guidedParseOwner === "notes";
+      return {
+        notesParseStep,
+        notesParseRegion: null,
+        guidedNotesRows: [],
+        guidedNotesCols: [],
+        parseDraftRegion: null,
+        paragraphWorkspaceOwner: null,
+        paragraphBatch: [],
+        ...(clearsGuided ? { guidedParseOwner: null, guidedParseActive: false } : {}),
+        ...(clearsGuided
+          ? { guidedParseRegion: null, guidedParseRows: [], guidedParseCols: [] }
+          : {}),
+        ...(options.fastManual
+          ? { notesFastManualActive: false, notesFastManualGrid: null }
+          : {}),
+        parseOperations: invalidateParseOperationKinds(
+          state.parseOperations,
+          clearsGuided
+            ? ["table", "keynote", "notes", "spec"]
+            : ["notes", "spec"],
+        ),
+      };
+    });
   });
 }
 
@@ -1240,14 +1484,17 @@ export function resetNotesParseWorkspace(
 export function resetSpecParseWorkspace(
   specParseStep: SpecParseStep = "idle",
 ): void {
-  useParseFlowStore.setState((state) => ({
-    specParseStep,
-    specParseRegion: null,
-    parseDraftRegion: null,
-    paragraphWorkspaceOwner: null,
-    paragraphBatch: [],
-    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
-  }));
+  const currentStep = useParseFlowStore.getState().specParseStep;
+  publishUserParseTransition("spec", currentStep, specParseStep, () => {
+    useParseFlowStore.setState((state) => ({
+      specParseStep,
+      specParseRegion: null,
+      parseDraftRegion: null,
+      paragraphWorkspaceOwner: null,
+      paragraphBatch: [],
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
+    }));
+  });
 }
 
 /** Exact rendered Paragraph exit; a stale family closure cannot clear a newer owner. */
@@ -1255,16 +1502,31 @@ export function exitParagraphWorkspace(
   expectedOwner: ActiveParagraphWorkspaceOwner,
   expectedRegion: ParseRegion,
 ): boolean {
+  const before = useParseFlowStore.getState();
+  if (!matchesParagraphOwner(before, expectedOwner, expectedRegion)) return false;
   let exited = false;
-  useParseFlowStore.setState((state) => {
-    if (!matchesParagraphOwner(state, expectedOwner, expectedRegion)) return state;
-    exited = true;
-    if (expectedOwner === "notes") {
+  const publish = () => {
+    useParseFlowStore.setState((state) => {
+      if (!matchesParagraphOwner(state, expectedOwner, expectedRegion)) return state;
+      exited = true;
+      if (expectedOwner === "notes") {
+        return {
+          notesParseStep: "idle" as const,
+          notesParseRegion: null,
+          guidedNotesRows: [],
+          guidedNotesCols: [],
+          parseDraftRegion: null,
+          paragraphWorkspaceOwner: null,
+          paragraphBatch: [],
+          parseOperations: invalidateParseOperationKinds(
+            state.parseOperations,
+            ["notes", "spec"],
+          ),
+        };
+      }
       return {
-        notesParseStep: "idle" as const,
-        notesParseRegion: null,
-        guidedNotesRows: [],
-        guidedNotesCols: [],
+        specParseStep: "idle" as const,
+        specParseRegion: null,
         parseDraftRegion: null,
         paragraphWorkspaceOwner: null,
         paragraphBatch: [],
@@ -1273,19 +1535,13 @@ export function exitParagraphWorkspace(
           ["notes", "spec"],
         ),
       };
-    }
-    return {
-      specParseStep: "idle" as const,
-      specParseRegion: null,
-      parseDraftRegion: null,
-      paragraphWorkspaceOwner: null,
-      paragraphBatch: [],
-      parseOperations: invalidateParseOperationKinds(
-        state.parseOperations,
-        ["notes", "spec"],
-      ),
-    };
-  });
+    });
+  };
+  if (expectedOwner === "notes") {
+    publishParseCleanupForUser("notes", before.notesParseStep, publish);
+  } else {
+    publishParseCleanupForUser("spec", before.specParseStep, publish);
+  }
   return exited;
 }
 
@@ -1573,16 +1829,17 @@ export function setNotesFastManualGridFromOverlay(
 
 export function setTableParseStep(tableParseStep: TableParseStep): void {
   const currentStep = useParseFlowStore.getState().tableParseStep;
-  prepareParseEntry(currentStep, tableParseStep);
-  useParseFlowStore.setState((state) => ({
-    tableParseStep,
-    ...operationBoundaryPatch(
-      state.parseOperations,
-      "table",
-      state.tableParseStep,
+  publishUserParseTransition("table", currentStep, tableParseStep, () => {
+    useParseFlowStore.setState((state) => ({
       tableParseStep,
-    ),
-  }));
+      ...operationBoundaryPatch(
+        state.parseOperations,
+        "table",
+        state.tableParseStep,
+        tableParseStep,
+      ),
+    }));
+  });
 }
 
 /** User drawing/cancel transition: exact final tool destination first, one Parse write last. */
@@ -1590,16 +1847,18 @@ export function setTableParseStepWithTool(
   tableParseStep: TableParseStep,
   toolMode: "move" | "pointer",
 ): void {
-  useToolStore.getState().setMode(toolMode);
-  useParseFlowStore.setState((state) => ({
-    tableParseStep,
-    ...operationBoundaryPatch(
-      state.parseOperations,
-      "table",
-      state.tableParseStep,
+  const currentStep = useParseFlowStore.getState().tableParseStep;
+  publishUserParseTransition("table", currentStep, tableParseStep, () => {
+    useParseFlowStore.setState((state) => ({
       tableParseStep,
-    ),
-  }));
+      ...operationBoundaryPatch(
+        state.parseOperations,
+        "table",
+        state.tableParseStep,
+        tableParseStep,
+      ),
+    }));
+  }, toolMode);
 }
 
 /**
@@ -1621,18 +1880,16 @@ export function setTableParseStepForOperation(
   const current = before.parseOperations.table;
   if (!current.busy || current.revision !== token.revision) return false;
 
-  prepareParseEntry(before.tableParseStep, tableParseStep, token);
-
-  // Re-check in the functional write. Tool subscribers are synchronous; if one revokes the
-  // operation during the tool-first publication, the stale parse step still cannot land.
   let committed = false;
-  useParseFlowStore.setState((state) => {
-    const live = state.parseOperations.table;
-    if (token.kind !== "table" || !live.busy || live.revision !== token.revision) return state;
-    committed = true;
-    return { tableParseStep };
+  const transitioned = publishParseOwnedTransition(token, "table", tableParseStep, () => {
+    useParseFlowStore.setState((state) => {
+      const live = state.parseOperations.table;
+      if (token.kind !== "table" || !live.busy || live.revision !== token.revision) return state;
+      committed = true;
+      return { tableParseStep };
+    });
   });
-  return committed;
+  return transitioned && committed;
 }
 
 export type TableReviewPublication = Readonly<{
@@ -1655,14 +1912,15 @@ export function openTableReviewWorkspace(
   publication: TableReviewPublication,
   source: "table" | "keynote" = "table",
 ): void {
-  useToolStore.getState().setMode("move");
-  useParseFlowStore.setState((state) => ({
-    ...tableReviewPatch(publication),
-    parseOperations: invalidateParseOperationKinds(
-      state.parseOperations,
-      source === "keynote" ? ["table", "keynote"] : ["table"],
-    ),
-  }));
+  publishUserBaseModeTransition("move", () => {
+    useParseFlowStore.setState((state) => ({
+      ...tableReviewPatch(publication),
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        source === "keynote" ? ["table", "keynote"] : ["table"],
+      ),
+    }));
+  });
 }
 
 /** Cross-page retained-row handoff: destination core page first, then one Table review seed. */
@@ -1675,16 +1933,8 @@ export function openTableReviewTarget(
     openTableReviewWorkspace(publication, source);
     return;
   }
-  useToolStore.getState().setMode("move");
-  prepareLegacyParsePageExit(false);
-  useViewerCoreStore.getState().setPage(pageNumber);
-  useParseFlowStore.setState((state) => ({
-    ...tableReviewPatch(publication),
-    parseOperations: invalidateParseOperationKinds(
-      state.parseOperations,
-      ["table", "keynote", "notes", "spec"],
-    ),
-  }));
+  publishViewerPageBoundary(() => useViewerCoreStore.getState().setPage(pageNumber));
+  openTableReviewWorkspace(publication, source);
 }
 
 /**
@@ -1699,23 +1949,21 @@ export function publishTableReviewForOperation(
   if (token.kind !== "table" || !useParseFlowStore.getState().isParseOperationCurrent(token)) {
     return false;
   }
-  const before = useParseFlowStore.getState();
-  prepareParseEntry(before.tableParseStep, "review", token);
-  if (!useParseFlowStore.getState().isParseOperationCurrent(token)) return false;
-
   let committed = false;
-  useParseFlowStore.setState((state) => {
-    const live = state.parseOperations.table;
-    if (!live.busy || live.revision !== token.revision) return state;
-    committed = true;
-    return {
-      tableParsedGrid: publication.grid,
-      tableParseMeta: publication.meta,
-      ...(publication.region === undefined ? {} : { tableParseRegion: publication.region }),
-      tableParseStep: "review",
-    };
+  const transitioned = publishParseOwnedTransition(token, "table", "review", () => {
+    useParseFlowStore.setState((state) => {
+      const live = state.parseOperations.table;
+      if (!live.busy || live.revision !== token.revision) return state;
+      committed = true;
+      return {
+        tableParsedGrid: publication.grid,
+        tableParseMeta: publication.meta,
+        ...(publication.region === undefined ? {} : { tableParseRegion: publication.region }),
+        tableParseStep: "review",
+      };
+    });
   });
-  return committed && useParseFlowStore.getState().isParseOperationCurrent(token);
+  return transitioned && committed && useParseFlowStore.getState().isParseOperationCurrent(token);
 }
 
 type TableCompletionOptions = Readonly<{
@@ -1740,49 +1988,46 @@ export function completeTableParseOperation(
   const guidedLease = options.resetGuided && before.guidedParseOwner === "table"
     ? workspaceLease(before.parseOperations, before.guidedParseOwner)
     : null;
-  if (ownsParseToolAuthority(token)) {
-    useToolStore.getState().setMode("move");
-  }
-  const afterTool = useParseFlowStore.getState();
-  if (!afterTool.isParseOperationCurrent(token)) return false;
-  if (guidedLease && !matchesGuidedLeaseRevisions(
-    afterTool.parseOperations,
-    guidedLease,
-    afterTool.guidedParseOwner,
-  )) return false;
 
   let completed = false;
   let terminalOperations: ParseOperationRegistry | null = null;
-  useParseFlowStore.setState((state) => {
-    const live = state.parseOperations.table;
-    if (!live.busy || live.revision !== token.revision) return state;
-    const clearsGuided = options.resetGuided && state.guidedParseOwner === "table";
-    completed = true;
-    const parseOperations = invalidateParseOperationKinds(
-      state.parseOperations,
-      clearsGuided ? ["table", "keynote", "notes"] : ["table"],
-    );
-    terminalOperations = parseOperations;
-    return {
-      tableParseStep: "idle",
-      tableParseRegion: null,
-      tableParsedGrid: null,
-      tableParseMeta: null,
-      tableCellStructure: null,
-      tableParseColumnBBs: [],
-      tableParseColumnNames: [],
-      tableParseRowBBs: [],
-      ...(clearsGuided
-        ? {
-            guidedParseOwner: null,
-            guidedParseActive: false,
-            guidedParseRegion: null,
-            guidedParseRows: [],
-            guidedParseCols: [],
-          }
-        : {}),
-      parseOperations,
-    };
+  const transitioned = publishParseOwnedTransition(token, "table", "idle", () => {
+    useParseFlowStore.setState((state) => {
+      const live = state.parseOperations.table;
+      if (!live.busy || live.revision !== token.revision) return state;
+      if (guidedLease && !matchesGuidedLeaseRevisions(
+        state.parseOperations,
+        guidedLease,
+        state.guidedParseOwner,
+      )) return state;
+      const clearsGuided = options.resetGuided && state.guidedParseOwner === "table";
+      completed = true;
+      const parseOperations = invalidateParseOperationKinds(
+        state.parseOperations,
+        clearsGuided ? ["table", "keynote", "notes"] : ["table"],
+      );
+      terminalOperations = parseOperations;
+      return {
+        tableParseStep: "idle",
+        tableParseRegion: null,
+        tableParsedGrid: null,
+        tableParseMeta: null,
+        tableCellStructure: null,
+        tableParseColumnBBs: [],
+        tableParseColumnNames: [],
+        tableParseRowBBs: [],
+        ...(clearsGuided
+          ? {
+              guidedParseOwner: null,
+              guidedParseActive: false,
+              guidedParseRegion: null,
+              guidedParseRows: [],
+              guidedParseCols: [],
+            }
+          : {}),
+        parseOperations,
+      };
+    });
   });
   const expectedOperations = terminalOperations as ParseOperationRegistry | null;
   const currentOperations = useParseFlowStore.getState().parseOperations;
@@ -1796,47 +2041,52 @@ export function completeTableParseOperation(
   ) {
     options.afterTerminal?.();
   }
-  return completed;
+  return transitioned && completed;
 }
 
 export function setKeynoteParseStep(keynoteParseStep: KeynoteParseStep): void {
   const currentStep = useParseFlowStore.getState().keynoteParseStep;
-  prepareParseEntry(currentStep, keynoteParseStep);
-  useParseFlowStore.setState((state) => ({
-    keynoteParseStep,
-    ...operationBoundaryPatch(
-      state.parseOperations,
-      "keynote",
-      state.keynoteParseStep,
+  publishUserParseTransition("keynote", currentStep, keynoteParseStep, () => {
+    useParseFlowStore.setState((state) => ({
       keynoteParseStep,
-    ),
-  }));
+      ...operationBoundaryPatch(
+        state.parseOperations,
+        "keynote",
+        state.keynoteParseStep,
+        keynoteParseStep,
+      ),
+    }));
+  });
 }
 
 export function setKeynoteParseStepWithTool(
   keynoteParseStep: KeynoteParseStep,
   toolMode: "move" | "pointer",
 ): void {
-  useToolStore.getState().setMode(toolMode);
-  useParseFlowStore.setState((state) => ({
-    keynoteParseStep,
-    ...operationBoundaryPatch(
-      state.parseOperations,
-      "keynote",
-      state.keynoteParseStep,
+  const currentStep = useParseFlowStore.getState().keynoteParseStep;
+  publishUserParseTransition("keynote", currentStep, keynoteParseStep, () => {
+    useParseFlowStore.setState((state) => ({
       keynoteParseStep,
-    ),
-  }));
+      ...operationBoundaryPatch(
+        state.parseOperations,
+        "keynote",
+        state.keynoteParseStep,
+        keynoteParseStep,
+      ),
+    }));
+  }, toolMode);
 }
 
 /** Canvas-drawn Table region accepted as one user boundary before any passive consumer runs. */
 export function acceptTableParseRegion(tableParseRegion: ParseRegion): void {
-  publishUserToolState({ mode: "move" });
-  useParseFlowStore.setState((state) => ({
-    tableParseRegion,
-    tableParseStep: "idle",
-    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
-  }));
+  const currentStep = useParseFlowStore.getState().tableParseStep;
+  publishUserParseTransition("table", currentStep, "idle", () => {
+    useParseFlowStore.setState((state) => ({
+      tableParseRegion,
+      tableParseStep: "idle",
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["table"]),
+    }));
+  });
 }
 
 /**
@@ -1844,12 +2094,14 @@ export function acceptTableParseRegion(tableParseRegion: ParseRegion): void {
  * owner revocation must publish atomically: a subscriber cannot start B between separate writes.
  */
 export function acceptKeynoteParseRegion(keynoteParseRegion: ParseRegion): void {
-  publishUserToolState({ mode: "move" });
-  useParseFlowStore.setState((state) => ({
-    keynoteParseRegion,
-    keynoteParseStep: "idle",
-    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["keynote"]),
-  }));
+  const currentStep = useParseFlowStore.getState().keynoteParseStep;
+  publishUserParseTransition("keynote", currentStep, "idle", () => {
+    useParseFlowStore.setState((state) => ({
+      keynoteParseRegion,
+      keynoteParseStep: "idle",
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["keynote"]),
+    }));
+  });
 }
 
 /**
@@ -1868,107 +2120,110 @@ export function completeKeynoteParseOperation(
   const guidedLease = options?.resetGuided && before.guidedParseOwner === "keynote"
     ? workspaceLease(before.parseOperations, before.guidedParseOwner)
     : null;
-  if (ownsParseToolAuthority(token)) {
-    useToolStore.getState().setMode("move");
-  }
-  const afterTool = useParseFlowStore.getState();
-  if (!afterTool.isParseOperationCurrent(token)) return false;
-  if (guidedLease && !matchesGuidedLeaseRevisions(
-    afterTool.parseOperations,
-    guidedLease,
-    afterTool.guidedParseOwner,
-  )) return false;
 
   // The terminal reset is one parse publication. A synchronous B may start after it, but A owns no
   // subsequent parse/tool/local tail that could clear B. A peer-owned Guided grid is untouched.
   let completed = false;
-  useParseFlowStore.setState((state) => {
-    const live = state.parseOperations.keynote;
-    if (!live.busy || live.revision !== token.revision) return state;
-    const clearsGuided = options?.resetGuided && state.guidedParseOwner === "keynote";
-    completed = true;
-    return {
-      keynoteParseStep: "idle",
-      keynoteParseRegion: null,
-      keynoteColumnBBs: [],
-      keynoteRowBBs: [],
-      keynoteYoloClass: null,
-      ...(clearsGuided
-        ? {
-            guidedParseOwner: null,
-            guidedParseActive: false,
-            guidedParseRegion: null,
-            guidedParseRows: [],
-            guidedParseCols: [],
-          }
-        : {}),
-      parseOperations: invalidateParseOperationKinds(
+  const transitioned = publishParseOwnedTransition(token, "keynote", "idle", () => {
+    useParseFlowStore.setState((state) => {
+      const live = state.parseOperations.keynote;
+      if (!live.busy || live.revision !== token.revision) return state;
+      if (guidedLease && !matchesGuidedLeaseRevisions(
         state.parseOperations,
-        clearsGuided ? ["table", "keynote", "notes"] : ["keynote"],
-      ),
-    };
+        guidedLease,
+        state.guidedParseOwner,
+      )) return state;
+      const clearsGuided = options?.resetGuided && state.guidedParseOwner === "keynote";
+      completed = true;
+      return {
+        keynoteParseStep: "idle",
+        keynoteParseRegion: null,
+        keynoteColumnBBs: [],
+        keynoteRowBBs: [],
+        keynoteYoloClass: null,
+        ...(clearsGuided
+          ? {
+              guidedParseOwner: null,
+              guidedParseActive: false,
+              guidedParseRegion: null,
+              guidedParseRows: [],
+              guidedParseCols: [],
+            }
+          : {}),
+        parseOperations: invalidateParseOperationKinds(
+          state.parseOperations,
+          clearsGuided ? ["table", "keynote", "notes"] : ["keynote"],
+        ),
+      };
+    });
   });
-  return completed;
+  return transitioned && completed;
 }
 
 export function setNotesParseStep(notesParseStep: NotesParseStep): void {
   const currentStep = useParseFlowStore.getState().notesParseStep;
-  prepareParseEntry(currentStep, notesParseStep);
-  useParseFlowStore.setState((state) => ({
-    notesParseStep,
-    ...operationBoundaryPatch(
-      state.parseOperations,
-      "notes",
-      state.notesParseStep,
+  publishUserParseTransition("notes", currentStep, notesParseStep, () => {
+    useParseFlowStore.setState((state) => ({
       notesParseStep,
-    ),
-  }));
+      ...operationBoundaryPatch(
+        state.parseOperations,
+        "notes",
+        state.notesParseStep,
+        notesParseStep,
+      ),
+    }));
+  });
 }
 
 export function setNotesParseStepWithTool(
   notesParseStep: NotesParseStep,
   toolMode: "move" | "pointer",
 ): void {
-  useToolStore.getState().setMode(toolMode);
-  useParseFlowStore.setState((state) => ({
-    notesParseStep,
-    ...operationBoundaryPatch(
-      state.parseOperations,
-      "notes",
-      state.notesParseStep,
+  const currentStep = useParseFlowStore.getState().notesParseStep;
+  publishUserParseTransition("notes", currentStep, notesParseStep, () => {
+    useParseFlowStore.setState((state) => ({
       notesParseStep,
-    ),
-  }));
+      ...operationBoundaryPatch(
+        state.parseOperations,
+        "notes",
+        state.notesParseStep,
+        notesParseStep,
+      ),
+    }));
+  }, toolMode);
 }
 
 export function setSpecParseStep(specParseStep: SpecParseStep): void {
   const currentStep = useParseFlowStore.getState().specParseStep;
-  prepareParseEntry(currentStep, specParseStep);
-  useParseFlowStore.setState((state) => ({
-    specParseStep,
-    ...operationBoundaryPatch(
-      state.parseOperations,
-      "spec",
-      state.specParseStep,
+  publishUserParseTransition("spec", currentStep, specParseStep, () => {
+    useParseFlowStore.setState((state) => ({
       specParseStep,
-    ),
-  }));
+      ...operationBoundaryPatch(
+        state.parseOperations,
+        "spec",
+        state.specParseStep,
+        specParseStep,
+      ),
+    }));
+  });
 }
 
 export function setSpecParseStepWithTool(
   specParseStep: SpecParseStep,
   toolMode: "move" | "pointer",
 ): void {
-  useToolStore.getState().setMode(toolMode);
-  useParseFlowStore.setState((state) => ({
-    specParseStep,
-    ...operationBoundaryPatch(
-      state.parseOperations,
-      "spec",
-      state.specParseStep,
+  const currentStep = useParseFlowStore.getState().specParseStep;
+  publishUserParseTransition("spec", currentStep, specParseStep, () => {
+    useParseFlowStore.setState((state) => ({
       specParseStep,
-    ),
-  }));
+      ...operationBoundaryPatch(
+        state.parseOperations,
+        "spec",
+        state.specParseStep,
+        specParseStep,
+      ),
+    }));
+  }, toolMode);
 }
 
 /** Seven-publication universal tool/parse teardown preserved across the S2 ownership split. */
@@ -1977,13 +2232,37 @@ export function resetAllTools(): void {
   // microtask, matching the legacy get().resetAllTools() timing rather than the close-call time.
   const tool = useToolStore.getState();
   const parse = useParseFlowStore.getState();
+  const symbolResetToken = {};
+  claimLatestToolOperation("symbolSession", symbolResetToken);
   tool.setMode("move");
   parse.resetTableParse();
   parse.resetKeynoteParse();
   parse.resetNotesParse();
   parse.resetSpecParse();
   parse.resetGuidedParse();
-  tool.clearSymbolSearch();
+  // Preserve the seventh publication without letting an intermediate Parse subscriber's new
+  // Symbol generation be erased by this older queued reset.
+  if (ownsLatestToolOperation("symbolSession", symbolResetToken)) {
+    useToolStore.setState({
+      symbolSearchLoading: false,
+      symbolSearchProgress: null,
+      symbolSearchResults: null,
+      symbolSearchConfidence: 0.75,
+      dismissedSymbolMatches: new Set<string>(),
+      symbolSearchError: null,
+      symbolSearchTemplateBbox: null,
+      symbolSearchSourcePage: null,
+      symbolSearchConfig: {
+        multiScale: true,
+        useSiftFallback: true,
+        searchPages: null,
+        scaleMin: 0.8,
+        scaleMax: 1.5,
+        nmsThreshold: 0.3,
+        maxMatchesPerPage: 50,
+      },
+    });
+  }
 }
 
 /**
@@ -1995,9 +2274,12 @@ export function toggleTakeoffPanel(): void {
   const ui = useUiStore.getState();
 
   if (ui.showTakeoffPanel) {
-    // This is deliberately a raw write. setActiveTakeoffItemId also clears undo/redo history,
-    // whereas the legacy panel close retained both stacks.
-    publishUserToolState({ activeTakeoffItemId: null });
+    // Panel close retains undo/redo while releasing only the live takeoff dispatcher.
+    invalidateToolTailAuthority();
+    useToolStore.setState((state) => ({
+      activeTakeoffItemId: null,
+      activeTool: state.activeTool?.kind === "takeoffPlacement" ? null : state.activeTool,
+    }));
     useUiStore.getState().setPanelVisibility({ showTakeoffPanel: false });
     return;
   }
@@ -2036,69 +2318,76 @@ export function toggleParsePanel(): void {
  * opened Notes paragraph flow to an old Spec bbox. Clipboard identity is deliberately untouched.
  */
 function leaveSpecsNotesParseTab(tab: SpecsNotesTab): void {
+  const before = useParseFlowStore.getState();
   if (tab === "keynotes") {
-    useParseFlowStore.setState((state) => {
-      const ownsGuided = state.guidedParseOwner === "keynote";
-      return {
-        ...(ownsGuided
-          ? {
-              guidedParseOwner: null,
-              guidedParseActive: false,
-              guidedParseRegion: null,
-              guidedParseRows: [],
-              guidedParseCols: [],
-            }
-          : {}),
-        parseOperations: invalidateParseOperationKinds(
-          state.parseOperations,
-          ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
-        ),
-      };
+    publishParseCleanupForUser("keynote", before.keynoteParseStep, () => {
+      useParseFlowStore.setState((state) => {
+        const ownsGuided = state.guidedParseOwner === "keynote";
+        return {
+          ...(ownsGuided
+            ? {
+                guidedParseOwner: null,
+                guidedParseActive: false,
+                guidedParseRegion: null,
+                guidedParseRows: [],
+                guidedParseCols: [],
+              }
+            : {}),
+          parseOperations: invalidateParseOperationKinds(
+            state.parseOperations,
+            ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
+          ),
+        };
+      });
     });
     return;
   }
 
   if (tab === "notes-parse") {
-    useParseFlowStore.setState((state) => {
-      const ownsGuided = state.guidedParseOwner === "notes";
-      return {
-        notesParseStep: "idle",
-        notesParseRegion: null,
-        guidedNotesRows: [],
-        guidedNotesCols: [],
-        notesFastManualActive: false,
-        notesFastManualGrid: null,
-        ...(ownsGuided
-          ? {
-              guidedParseOwner: null,
-              guidedParseActive: false,
-              guidedParseRegion: null,
-              guidedParseRows: [],
-              guidedParseCols: [],
-            }
-          : {}),
-        parseDraftRegion: null,
-        paragraphWorkspaceOwner: null,
-        paragraphBatch: [],
-        parseOperations: invalidateParseOperationKinds(
-          state.parseOperations,
-          ownsGuided
-            ? ["table", "keynote", "notes", "spec"]
-            : ["notes", "spec"],
-        ),
-      };
+    publishParseCleanupForUser("notes", before.notesParseStep, () => {
+      useParseFlowStore.setState((state) => {
+        const ownsGuided = state.guidedParseOwner === "notes";
+        return {
+          notesParseStep: "idle",
+          notesParseRegion: null,
+          guidedNotesRows: [],
+          guidedNotesCols: [],
+          notesFastManualActive: false,
+          notesFastManualGrid: null,
+          ...(ownsGuided
+            ? {
+                guidedParseOwner: null,
+                guidedParseActive: false,
+                guidedParseRegion: null,
+                guidedParseRows: [],
+                guidedParseCols: [],
+              }
+            : {}),
+          parseDraftRegion: null,
+          paragraphWorkspaceOwner: null,
+          paragraphBatch: [],
+          parseOperations: invalidateParseOperationKinds(
+            state.parseOperations,
+            ownsGuided
+              ? ["table", "keynote", "notes", "spec"]
+              : ["notes", "spec"],
+          ),
+        };
+      });
     });
     return;
   }
 
-  useParseFlowStore.setState((state) => ({
-    specParseStep: "idle",
-    specParseRegion: null,
-    parseDraftRegion: null,
-    paragraphWorkspaceOwner: null,
-    paragraphBatch: [],
-    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
-  }));
+  publishParseCleanupForUser("spec", before.specParseStep, () => {
+    useParseFlowStore.setState((state) => ({
+      specParseStep: "idle",
+      specParseRegion: null,
+      parseDraftRegion: null,
+      paragraphWorkspaceOwner: null,
+      paragraphBatch: [],
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
+    }));
+  });
 }
 
 /** Specs/Notes shell tab handoff: parse cleanup publishes before the UI destination. */
@@ -2132,36 +2421,33 @@ export function toggleTableParsePanel(): void {
     // terminal write may reopen itself; old A owns no later UI/tool tail that can hide it.
     useUiStore.getState().setPanelVisibility({ showTableParsePanel: false });
     const before = useParseFlowStore.getState();
-    const preservesPeerGuided = before.guidedParseOwner !== null &&
-      before.guidedParseOwner !== "table";
-    // Preserve the old raw mode transition. Calling setMode would clear additional live tools.
-    // Publish it before the Parse reset: a B started by that reset owns every later tool write.
-    if (!preservesPeerGuided) publishUserToolState({ mode: "move" });
-    useParseFlowStore.setState((state) => {
-      const ownsGuided = state.guidedParseOwner === "table";
-      return {
-        tableParseStep: "idle",
-        tableParseRegion: null,
-        tableParsedGrid: null,
-        tableParseMeta: null,
-        tableParseColumnBBs: [],
-        tableParseColumnNames: [],
-        tableParseRowBBs: [],
-        tableParseTab: "all",
-        ...(ownsGuided
-          ? {
-              guidedParseOwner: null,
-              guidedParseActive: false,
-              guidedParseRegion: null,
-              guidedParseRows: [],
-              guidedParseCols: [],
-            }
-          : {}),
-        parseOperations: invalidateParseOperationKinds(
-          state.parseOperations,
-          ownsGuided ? ["table", "keynote", "notes"] : ["table"],
-        ),
-      };
+    publishParseCleanupForUser("table", before.tableParseStep, () => {
+      useParseFlowStore.setState((state) => {
+        const ownsGuided = state.guidedParseOwner === "table";
+        return {
+          tableParseStep: "idle",
+          tableParseRegion: null,
+          tableParsedGrid: null,
+          tableParseMeta: null,
+          tableParseColumnBBs: [],
+          tableParseColumnNames: [],
+          tableParseRowBBs: [],
+          tableParseTab: "all",
+          ...(ownsGuided
+            ? {
+                guidedParseOwner: null,
+                guidedParseActive: false,
+                guidedParseRegion: null,
+                guidedParseRows: [],
+                guidedParseCols: [],
+              }
+            : {}),
+          parseOperations: invalidateParseOperationKinds(
+            state.parseOperations,
+            ownsGuided ? ["table", "keynote", "notes"] : ["table"],
+          ),
+        };
+      });
     });
     return;
   }
@@ -2174,33 +2460,31 @@ export function toggleKeynoteParsePanel(): void {
   if (closing) {
     useUiStore.getState().setPanelVisibility({ showKeynoteParsePanel: false });
     const before = useParseFlowStore.getState();
-    const preservesPeerGuided = before.guidedParseOwner !== null &&
-      before.guidedParseOwner !== "keynote";
-    // Tool-first prevents the terminal Parse publication from creating a late A tool tail.
-    if (!preservesPeerGuided) publishUserToolState({ mode: "move" });
-    useParseFlowStore.setState((state) => {
-      const ownsGuided = state.guidedParseOwner === "keynote";
-      return {
-        keynoteParseStep: "idle",
-        keynoteParseRegion: null,
-        keynoteColumnBBs: [],
-        keynoteRowBBs: [],
-        keynoteYoloClass: null,
-        keynoteParseTab: "all",
-        ...(ownsGuided
-          ? {
-              guidedParseOwner: null,
-              guidedParseActive: false,
-              guidedParseRegion: null,
-              guidedParseRows: [],
-              guidedParseCols: [],
-            }
-          : {}),
-        parseOperations: invalidateParseOperationKinds(
-          state.parseOperations,
-          ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
-        ),
-      };
+    publishParseCleanupForUser("keynote", before.keynoteParseStep, () => {
+      useParseFlowStore.setState((state) => {
+        const ownsGuided = state.guidedParseOwner === "keynote";
+        return {
+          keynoteParseStep: "idle",
+          keynoteParseRegion: null,
+          keynoteColumnBBs: [],
+          keynoteRowBBs: [],
+          keynoteYoloClass: null,
+          keynoteParseTab: "all",
+          ...(ownsGuided
+            ? {
+                guidedParseOwner: null,
+                guidedParseActive: false,
+                guidedParseRegion: null,
+                guidedParseRows: [],
+                guidedParseCols: [],
+              }
+            : {}),
+          parseOperations: invalidateParseOperationKinds(
+            state.parseOperations,
+            ownsGuided ? ["table", "keynote", "notes"] : ["keynote"],
+          ),
+        };
+      });
     });
     return;
   }

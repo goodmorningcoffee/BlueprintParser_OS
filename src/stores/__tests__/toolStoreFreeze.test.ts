@@ -1,10 +1,9 @@
 // @vitest-environment node
-// [refactor jul11 P2.3 T2] The characterized flat tool candidate now lives in its dedicated owner.
-// Keeping this suite owner-local proves the atomic move retained the frozen behavior contract.
+// [refactor jul13 P2.3 AT2] The characterized flat tool owner now has one atomic discriminator.
+// This owner-local suite freezes dormant-session behavior independently of cross-store commands.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resetProjectData } from "@/stores/viewerCommands";
 import { useToolStore } from "@/stores/toolStore";
 import type { ClientAnnotation, ScaleCalibrationData } from "@/types";
 
@@ -14,13 +13,13 @@ type ToolState = ReturnType<typeof useToolStore.getState>;
 export const TOOL_DATA_KEYS = [
   "mode",
   "tempPanMode",
+  "activeTool",
   "activeTakeoffItemId",
   "scaleCalibrations",
   "calibrationMode",
   "calibrationPoints",
   "polygonDrawingMode",
   "polygonVertices",
-  "bucketFillActive",
   "bucketFillPreview",
   "bucketFillLoading",
   "bucketFillError",
@@ -28,7 +27,6 @@ export const TOOL_DATA_KEYS = [
   "bucketFillDilatePx",
   "bucketFillResolution",
   "bucketFillPendingPolygon",
-  "splitAreaActive",
   "splitLineA",
   "splitLineB",
   "splitPreview",
@@ -38,10 +36,7 @@ export const TOOL_DATA_KEYS = [
   "barrierPendingPoint",
   "takeoffUndoStack",
   "takeoffRedoStack",
-  "yoloTagPickingMode",
   "tagScanResults",
-  "tagAddingMode",
-  "symbolSearchActive",
   "symbolSearchLoading",
   "symbolSearchProgress",
   "symbolSearchResults",
@@ -54,7 +49,7 @@ export const TOOL_DATA_KEYS = [
   "symbolSearchPreset",
 ] as const satisfies readonly (keyof ToolState)[];
 
-/** Existing leaf actions that move byte-for-behavior. New resetProjectToolState is not legacy. */
+/** Existing named compatibility actions; resetProjectToolState remains the additional boundary. */
 export const TOOL_ACTION_KEYS = [
   "setMode",
   "setTempPanMode",
@@ -104,6 +99,7 @@ export const TOOL_ACTION_KEYS = [
 /** Exact project-reset subset; survival-policy changes belong to P2.5, not this carve. */
 export const TOOL_PROJECT_RESET_TOUCHED_KEYS = [
   "tempPanMode",
+  "activeTool",
   "activeTakeoffItemId",
   "scaleCalibrations",
   "calibrationMode",
@@ -111,10 +107,7 @@ export const TOOL_PROJECT_RESET_TOUCHED_KEYS = [
   "polygonDrawingMode",
   "polygonVertices",
   "bucketFillResolution",
-  "yoloTagPickingMode",
   "tagScanResults",
-  "tagAddingMode",
-  "symbolSearchActive",
   "symbolSearchLoading",
   "symbolSearchProgress",
   "symbolSearchResults",
@@ -130,14 +123,12 @@ export const TOOL_PROJECT_RESET_TOUCHED_KEYS = [
 /** Exact project-reset omissions, including live tools/history that currently leak by policy. */
 export const TOOL_PROJECT_RESET_RETAINED_KEYS = [
   "mode",
-  "bucketFillActive",
   "bucketFillPreview",
   "bucketFillLoading",
   "bucketFillError",
   "bucketFillTolerance",
   "bucketFillDilatePx",
   "bucketFillPendingPolygon",
-  "splitAreaActive",
   "splitLineA",
   "splitLineB",
   "splitPreview",
@@ -267,16 +258,16 @@ beforeEach(() => {
   restoreToolOwner();
 });
 
-describe("flat toolStore V0 — exact boundary and defaults", () => {
-  it("exports a unique 40-data / 43-action / 22-touched / 18-retained ledger", () => {
-    expect(TOOL_DATA_KEYS).toHaveLength(40);
-    expect(new Set(TOOL_DATA_KEYS).size).toBe(40);
+describe("flat toolStore AT2 — exact boundary and defaults", () => {
+  it("exports a unique 36-data / 43-action / 20-touched / 16-retained ledger", () => {
+    expect(TOOL_DATA_KEYS).toHaveLength(36);
+    expect(new Set(TOOL_DATA_KEYS).size).toBe(36);
     expect(TOOL_ACTION_KEYS).toHaveLength(43);
     expect(new Set(TOOL_ACTION_KEYS).size).toBe(43);
-    expect(TOOL_PROJECT_RESET_TOUCHED_KEYS).toHaveLength(22);
-    expect(new Set(TOOL_PROJECT_RESET_TOUCHED_KEYS).size).toBe(22);
-    expect(TOOL_PROJECT_RESET_RETAINED_KEYS).toHaveLength(18);
-    expect(new Set(TOOL_PROJECT_RESET_RETAINED_KEYS).size).toBe(18);
+    expect(TOOL_PROJECT_RESET_TOUCHED_KEYS).toHaveLength(20);
+    expect(new Set(TOOL_PROJECT_RESET_TOUCHED_KEYS).size).toBe(20);
+    expect(TOOL_PROJECT_RESET_RETAINED_KEYS).toHaveLength(16);
+    expect(new Set(TOOL_PROJECT_RESET_RETAINED_KEYS).size).toBe(16);
     expect(sorted([
       ...TOOL_PROJECT_RESET_TOUCHED_KEYS,
       ...TOOL_PROJECT_RESET_RETAINED_KEYS,
@@ -286,17 +277,17 @@ describe("flat toolStore V0 — exact boundary and defaults", () => {
     for (const action of TOOL_ACTION_KEYS) expect(state[action]).toBeTypeOf("function");
   });
 
-  it("freezes all 40 construction defaults", () => {
+  it("freezes all 36 construction defaults", () => {
     expect(pickToolData(useToolStore.getInitialState())).toEqual({
       mode: "move",
       tempPanMode: false,
+      activeTool: null,
       activeTakeoffItemId: null,
       scaleCalibrations: {},
       calibrationMode: "idle",
       calibrationPoints: {},
       polygonDrawingMode: "idle",
       polygonVertices: [],
-      bucketFillActive: false,
       bucketFillPreview: null,
       bucketFillLoading: false,
       bucketFillError: null,
@@ -304,7 +295,6 @@ describe("flat toolStore V0 — exact boundary and defaults", () => {
       bucketFillDilatePx: 3,
       bucketFillResolution: 1000,
       bucketFillPendingPolygon: null,
-      splitAreaActive: false,
       splitLineA: null,
       splitLineB: null,
       splitPreview: null,
@@ -314,10 +304,7 @@ describe("flat toolStore V0 — exact boundary and defaults", () => {
       barrierPendingPoint: null,
       takeoffUndoStack: [],
       takeoffRedoStack: [],
-      yoloTagPickingMode: false,
       tagScanResults: null,
-      tagAddingMode: null,
-      symbolSearchActive: false,
       symbolSearchLoading: false,
       symbolSearchProgress: null,
       symbolSearchResults: null,
@@ -383,8 +370,8 @@ const PUBLICATION_CASES: readonly PublicationCase[] = [
   { name: "clearSymbolSearch", invoke: () => useToolStore.getState().clearSymbolSearch() },
 ];
 
-describe("flat toolStore V0 — legacy action publications", () => {
-  it("covers every legacy action once and in ledger order", () => {
+describe("flat toolStore AT2 — compatibility action publications", () => {
+  it("covers every compatibility action once and in ledger order", () => {
     expect(PUBLICATION_CASES.map(({ name }) => name)).toEqual(TOOL_ACTION_KEYS);
   });
 
@@ -397,8 +384,8 @@ describe("flat toolStore V0 — legacy action publications", () => {
   });
 });
 
-describe("flat toolStore V0 — compound destinations and exclusions", () => {
-  it("setMode writes exactly its 16-field tear-down and allocates both empty arrays", () => {
+describe("flat toolStore AT2 — compound destinations and exclusions", () => {
+  it("setMode writes exactly its 14-field teardown and allocates both empty arrays", () => {
     const polygonVertices = [{ x: 0.2, y: 0.3 }];
     const barriers = [BARRIER];
     const pending = PENDING_POLYGON;
@@ -407,11 +394,11 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     useToolStore.setState({
       mode: "markup",
       tempPanMode: true,
+      activeTool: { kind: "symbolTemplate" },
       activeTakeoffItemId: 91,
       calibrationMode: "input",
       polygonDrawingMode: "drawing",
       polygonVertices,
-      bucketFillActive: true,
       bucketFillPreview: BUCKET_PREVIEW,
       bucketFillLoading: true,
       bucketFillError: "retain",
@@ -419,12 +406,10 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
       bucketFillBarriers: barriers,
       bucketFillBarrierMode: true,
       barrierPendingPoint: { x: 0.4, y: 0.5 },
-      splitAreaActive: true,
       splitLineA: { x: 0.1, y: 0.2 },
       splitLineB: { x: 0.7, y: 0.8 },
       splitPreview: SPLIT_PREVIEW,
       splitError: "split",
-      symbolSearchActive: true,
       takeoffUndoStack: undo,
       takeoffRedoStack: redo,
     });
@@ -436,36 +421,32 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     expect(changedToolKeys(before, after)).toEqual(sorted([
       "mode",
       "tempPanMode",
+      "activeTool",
       "activeTakeoffItemId",
       "polygonDrawingMode",
       "polygonVertices",
-      "bucketFillActive",
       "bucketFillPreview",
       "bucketFillLoading",
       "bucketFillBarriers",
       "bucketFillBarrierMode",
-      "splitAreaActive",
       "splitLineA",
       "splitLineB",
       "splitPreview",
       "splitError",
-      "symbolSearchActive",
     ]));
     expect(after).toMatchObject({
       mode: "pointer",
       tempPanMode: false,
+      activeTool: null,
       activeTakeoffItemId: null,
       polygonDrawingMode: "idle",
-      bucketFillActive: false,
       bucketFillPreview: null,
       bucketFillLoading: false,
       bucketFillBarrierMode: false,
-      splitAreaActive: false,
       splitLineA: null,
       splitLineB: null,
       splitPreview: null,
       splitError: null,
-      symbolSearchActive: false,
     });
     expect(after.polygonVertices).toEqual([]);
     expect(after.polygonVertices).not.toBe(polygonVertices);
@@ -484,20 +465,18 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     useToolStore.setState({
       mode: "markup",
       tempPanMode: true,
+      activeTool: { kind: "symbolTemplate" },
       activeTakeoffItemId: 91,
-      bucketFillActive: false,
       bucketFillPreview: BUCKET_PREVIEW,
       bucketFillLoading: true,
       bucketFillError: "bucket",
       bucketFillPendingPolygon: PENDING_POLYGON,
       bucketFillBarriers: barriers,
       bucketFillBarrierMode: true,
-      splitAreaActive: true,
       splitLineA: { x: 0.1, y: 0.2 },
       splitLineB: { x: 0.7, y: 0.8 },
       splitPreview: SPLIT_PREVIEW,
       splitError: "split",
-      symbolSearchActive: true,
       takeoffUndoStack: undo,
     });
     const beforeTrue = useToolStore.getState();
@@ -507,19 +486,18 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     expect(changedToolKeys(beforeTrue, afterTrue)).toEqual(sorted([
       "mode",
       "tempPanMode",
-      "bucketFillActive",
+      "activeTool",
       "bucketFillPreview",
       "bucketFillLoading",
       "bucketFillError",
       "bucketFillBarrierMode",
       "bucketFillPendingPolygon",
-      "splitAreaActive",
       "splitLineA",
       "splitLineB",
       "splitPreview",
       "splitError",
-      "symbolSearchActive",
     ]));
+    expect(afterTrue.activeTool).toEqual({ kind: "bucketFill" });
     expect(afterTrue.bucketFillBarriers).toBe(barriers);
     expect(afterTrue.activeTakeoffItemId).toBe(91);
     expect(afterTrue.takeoffUndoStack).toBe(undo);
@@ -527,22 +505,21 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     restoreToolOwner();
     useToolStore.setState({
       mode: "markup",
-      bucketFillActive: true,
+      activeTool: { kind: "bucketFill" },
+      activeTakeoffItemId: 91,
       bucketFillPreview: BUCKET_PREVIEW,
       bucketFillLoading: true,
       bucketFillError: "bucket",
       bucketFillPendingPolygon: PENDING_POLYGON,
       bucketFillBarriers: barriers,
       bucketFillBarrierMode: true,
-      splitAreaActive: true,
-      symbolSearchActive: true,
     });
     const beforeFalse = useToolStore.getState();
     beforeFalse.setBucketFillActive(false);
     const afterFalse = useToolStore.getState();
 
     expect(changedToolKeys(beforeFalse, afterFalse)).toEqual(sorted([
-      "bucketFillActive",
+      "activeTool",
       "bucketFillPreview",
       "bucketFillLoading",
       "bucketFillError",
@@ -551,10 +528,14 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
       "bucketFillBarrierMode",
     ]));
     expect(afterFalse.mode).toBe("markup");
-    expect(afterFalse.splitAreaActive).toBe(true);
-    expect(afterFalse.symbolSearchActive).toBe(true);
+    expect(afterFalse.activeTool).toEqual({ kind: "takeoffPlacement" });
     expect(afterFalse.bucketFillBarriers).toEqual([]);
     expect(afterFalse.bucketFillBarriers).not.toBe(barriers);
+
+    const unrelated = { kind: "tagPick" } as const;
+    useToolStore.setState({ activeTool: unrelated });
+    useToolStore.getState().setBucketFillActive(false);
+    expect(useToolStore.getState().activeTool).toBe(unrelated);
   });
 
   it("setSplitAreaActive preserves its asymmetric true/false write sets", () => {
@@ -563,20 +544,18 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     useToolStore.setState({
       mode: "markup",
       tempPanMode: true,
+      activeTool: { kind: "bucketFill" },
       activeTakeoffItemId: 91,
-      bucketFillActive: true,
       bucketFillPreview: BUCKET_PREVIEW,
       bucketFillLoading: true,
       bucketFillError: "bucket",
       bucketFillPendingPolygon: pending,
       bucketFillBarriers: [BARRIER],
       bucketFillBarrierMode: true,
-      splitAreaActive: false,
       splitLineA: { x: 0.1, y: 0.2 },
       splitLineB: { x: 0.7, y: 0.8 },
       splitPreview: SPLIT_PREVIEW,
       splitError: "split",
-      symbolSearchActive: true,
       takeoffUndoStack: undo,
     });
     const beforeTrue = useToolStore.getState();
@@ -585,40 +564,37 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
 
     expect(changedToolKeys(beforeTrue, afterTrue)).toEqual(sorted([
       "mode",
+      "activeTool",
       "activeTakeoffItemId",
-      "bucketFillActive",
       "bucketFillPreview",
       "bucketFillLoading",
       "bucketFillError",
-      "splitAreaActive",
       "splitLineA",
       "splitLineB",
       "splitPreview",
       "splitError",
       "bucketFillBarriers",
       "bucketFillBarrierMode",
-      "symbolSearchActive",
     ]));
+    expect(afterTrue.activeTool).toEqual({ kind: "split" });
     expect(afterTrue.tempPanMode).toBe(true);
     expect(afterTrue.bucketFillPendingPolygon).toBe(pending);
     expect(afterTrue.takeoffUndoStack).toBe(undo);
 
     restoreToolOwner();
     useToolStore.setState({
-      splitAreaActive: true,
+      activeTool: { kind: "split" },
       splitLineA: { x: 0.1, y: 0.2 },
       splitLineB: { x: 0.7, y: 0.8 },
       splitPreview: SPLIT_PREVIEW,
       splitError: "split",
       mode: "markup",
-      bucketFillActive: true,
-      symbolSearchActive: true,
     });
     const beforeFalse = useToolStore.getState();
     beforeFalse.setSplitAreaActive(false);
     const afterFalse = useToolStore.getState();
     expect(changedToolKeys(beforeFalse, afterFalse)).toEqual(sorted([
-      "splitAreaActive",
+      "activeTool",
       "splitLineA",
       "splitLineB",
       "splitPreview",
@@ -626,32 +602,34 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     ]));
     expect(afterFalse).toMatchObject({
       mode: "markup",
-      bucketFillActive: true,
-      symbolSearchActive: true,
+      activeTool: null,
     });
+
+    const unrelated = { kind: "tagAdd", tagId: "fixture" } as const;
+    useToolStore.setState({ activeTool: unrelated });
+    useToolStore.getState().setSplitAreaActive(false);
+    expect(useToolStore.getState().activeTool).toBe(unrelated);
   });
 
-  it("setSymbolSearchActive(true) clears exactly ten competing fields; false preserves the session", () => {
+  it("setSymbolSearchActive(true) writes pointer plus one owner; false preserves the session", () => {
     const barriers = [BARRIER];
     const pending = PENDING_POLYGON;
     const results = SYMBOL_RESULTS;
     useToolStore.setState({
       mode: "markup",
       tempPanMode: true,
+      activeTool: { kind: "bucketFill" },
       activeTakeoffItemId: 91,
-      bucketFillActive: true,
       bucketFillPreview: BUCKET_PREVIEW,
       bucketFillLoading: true,
       bucketFillError: "bucket",
       bucketFillPendingPolygon: pending,
       bucketFillBarriers: barriers,
       bucketFillBarrierMode: true,
-      splitAreaActive: true,
       splitLineA: { x: 0.1, y: 0.2 },
       splitLineB: { x: 0.7, y: 0.8 },
       splitPreview: SPLIT_PREVIEW,
       splitError: "split",
-      symbolSearchActive: false,
       symbolSearchLoading: true,
       symbolSearchResults: results,
       symbolSearchError: "symbol",
@@ -662,19 +640,20 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
 
     expect(changedToolKeys(beforeTrue, afterTrue)).toEqual(sorted([
       "mode",
-      "bucketFillActive",
+      "tempPanMode",
+      "activeTool",
       "bucketFillPreview",
       "bucketFillLoading",
       "bucketFillBarrierMode",
-      "splitAreaActive",
       "splitLineA",
       "splitLineB",
       "splitPreview",
       "splitError",
-      "symbolSearchActive",
     ]));
     expect(afterTrue).toMatchObject({
-      tempPanMode: true,
+      mode: "pointer",
+      activeTool: { kind: "symbolTemplate" },
+      tempPanMode: false,
       activeTakeoffItemId: 91,
       bucketFillError: "bucket",
       symbolSearchLoading: true,
@@ -687,7 +666,8 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     const beforeFalse = afterTrue;
     beforeFalse.setSymbolSearchActive(false);
     const afterFalse = useToolStore.getState();
-    expect(changedToolKeys(beforeFalse, afterFalse)).toEqual(["symbolSearchActive"]);
+    expect(changedToolKeys(beforeFalse, afterFalse)).toEqual(["activeTool"]);
+    expect(afterFalse.activeTool).toEqual({ kind: "takeoffPlacement" });
     expect(afterFalse.symbolSearchResults).toBe(results);
     expect(afterFalse.symbolSearchLoading).toBe(true);
     expect(afterFalse.symbolSearchError).toBe("symbol");
@@ -703,6 +683,7 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     before.setActiveTakeoffItemId(92);
     let after = useToolStore.getState();
     expect(changedToolKeys(before, after)).toEqual(sorted([
+      "activeTool",
       "activeTakeoffItemId",
       "takeoffUndoStack",
       "takeoffRedoStack",
@@ -711,11 +692,19 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     expect(after.takeoffRedoStack).toEqual([]);
 
     restoreToolOwner();
-    useToolStore.setState({ calibrationMode: "input", calibrationPoints: { p1: { x: 0.1, y: 0.2 } } });
+    useToolStore.setState({
+      activeTool: { kind: "calibration" },
+      activeTakeoffItemId: 91,
+      calibrationMode: "input",
+      calibrationPoints: { p1: { x: 0.1, y: 0.2 } },
+    });
     before = useToolStore.getState();
     before.resetCalibration();
     after = useToolStore.getState();
-    expect(changedToolKeys(before, after)).toEqual(sorted(["calibrationMode", "calibrationPoints"]));
+    expect(changedToolKeys(before, after)).toEqual(sorted([
+      "activeTool", "calibrationMode", "calibrationPoints",
+    ]));
+    expect(after.activeTool).toEqual({ kind: "takeoffPlacement" });
 
     restoreToolOwner();
     useToolStore.setState({ polygonDrawingMode: "drawing", polygonVertices: [{ x: 0.1, y: 0.2 }] });
@@ -731,9 +720,42 @@ describe("flat toolStore V0 — compound destinations and exclusions", () => {
     after = useToolStore.getState();
     expect(changedToolKeys(before, after)).toEqual(sorted(["bucketFillBarrierMode", "barrierPendingPoint"]));
   });
+
+  it("renews same-kind identities and makes tag entry a destructive pointer publication", () => {
+    useToolStore.getState().setActiveTakeoffItemId(91);
+    const takeoffA = useToolStore.getState().activeTool;
+    useToolStore.getState().setActiveTakeoffItemId(91);
+    expect(useToolStore.getState().activeTool).not.toBe(takeoffA);
+
+    useToolStore.getState().setCalibrationMode("input");
+    const calibrationA = useToolStore.getState().activeTool;
+    useToolStore.getState().setCalibrationMode("input");
+    expect(useToolStore.getState().activeTool).not.toBe(calibrationA);
+
+    useToolStore.setState({
+      mode: "markup",
+      tempPanMode: true,
+      activeTakeoffItemId: 91,
+      polygonDrawingMode: "drawing",
+      polygonVertices: [{ x: 0.1, y: 0.2 }],
+      bucketFillPreview: BUCKET_PREVIEW,
+      bucketFillLoading: true,
+    });
+    useToolStore.getState().setTagAddingMode("tag-91");
+    expect(useToolStore.getState()).toMatchObject({
+      mode: "pointer",
+      activeTool: { kind: "tagAdd", tagId: "tag-91" },
+      tempPanMode: false,
+      activeTakeoffItemId: null,
+      polygonDrawingMode: "idle",
+      polygonVertices: [],
+      bucketFillPreview: null,
+      bucketFillLoading: false,
+    });
+  });
 });
 
-describe("flat toolStore V0 — container and argument identity", () => {
+describe("flat toolStore AT2 — container and argument identity", () => {
   it("copies calibration maps but retains untouched entries and caller values", () => {
     const firstPoint = { x: 0.1, y: 0.2 };
     const secondPoint = { x: 0.7, y: 0.8 };
@@ -859,7 +881,7 @@ describe("flat toolStore V0 — container and argument identity", () => {
     const dismissed = new Set(["one"]);
     const config = { ...defaultSymbolConfig(), scaleMin: 0.5, maxMatchesPerPage: 17 };
     useToolStore.setState({
-      symbolSearchActive: true,
+      activeTool: { kind: "symbolTemplate" },
       symbolSearchLoading: true,
       symbolSearchProgress: { page: 3, pageIndex: 1, totalPages: 4, matches: 2 },
       symbolSearchResults: SYMBOL_RESULTS,
@@ -876,7 +898,7 @@ describe("flat toolStore V0 — container and argument identity", () => {
     const after = useToolStore.getState();
 
     expect(changedToolKeys(before, after)).toEqual(sorted([
-      "symbolSearchActive",
+      "activeTool",
       "symbolSearchLoading",
       "symbolSearchProgress",
       "symbolSearchResults",
@@ -888,7 +910,7 @@ describe("flat toolStore V0 — container and argument identity", () => {
       "symbolSearchConfig",
     ]));
     expect(after).toMatchObject({
-      symbolSearchActive: false,
+      activeTool: null,
       symbolSearchLoading: false,
       symbolSearchProgress: null,
       symbolSearchResults: null,
@@ -905,8 +927,8 @@ describe("flat toolStore V0 — container and argument identity", () => {
   });
 });
 
-describe("flat toolStore V0 — project reset policy", () => {
-  it("touches exactly 22 fields, retains exactly 18, allocates five containers, and keeps actions", () => {
+describe("flat toolStore AT2 — project reset policy", () => {
+  it("touches exactly 20 fields, retains exactly 16, allocates five containers, and keeps actions", () => {
     const scaleCalibrations = { 3: CALIBRATION };
     const calibrationPoints = { p1: { x: 0.1, y: 0.2 }, p2: { x: 0.7, y: 0.8 } };
     const polygonVertices = [{ x: 0.1, y: 0.2 }];
@@ -934,13 +956,13 @@ describe("flat toolStore V0 — project reset policy", () => {
     useToolStore.setState({
       mode: "markup",
       tempPanMode: true,
+      activeTool: { kind: "tagAdd", tagId: "tag-91" },
       activeTakeoffItemId: 91,
       scaleCalibrations,
       calibrationMode: "input",
       calibrationPoints,
       polygonDrawingMode: "drawing",
       polygonVertices,
-      bucketFillActive: true,
       bucketFillPreview: bucketPreview,
       bucketFillLoading: true,
       bucketFillError: "bucket",
@@ -948,7 +970,6 @@ describe("flat toolStore V0 — project reset policy", () => {
       bucketFillDilatePx: 7,
       bucketFillResolution: 4000,
       bucketFillPendingPolygon: pendingPolygon,
-      splitAreaActive: true,
       splitLineA,
       splitLineB,
       splitPreview,
@@ -958,10 +979,7 @@ describe("flat toolStore V0 — project reset policy", () => {
       barrierPendingPoint,
       takeoffUndoStack: undo,
       takeoffRedoStack: redo,
-      yoloTagPickingMode: true,
       tagScanResults: TAG_SCAN_RESULTS,
-      tagAddingMode: "tag-91",
-      symbolSearchActive: true,
       symbolSearchLoading: true,
       symbolSearchProgress: { page: 3, pageIndex: 1, totalPages: 4, matches: 2 },
       symbolSearchResults: SYMBOL_RESULTS,
@@ -976,7 +994,7 @@ describe("flat toolStore V0 — project reset policy", () => {
     const before = useToolStore.getState();
     const actionsBefore = pickToolActions(before);
 
-    resetProjectData();
+    before.resetProjectToolState();
 
     const after = useToolStore.getState();
     expect(changedToolKeys(before, after)).toEqual(sorted(TOOL_PROJECT_RESET_TOUCHED_KEYS));
@@ -989,6 +1007,7 @@ describe("flat toolStore V0 — project reset policy", () => {
 
     expect(after).toMatchObject({
       tempPanMode: false,
+      activeTool: null,
       activeTakeoffItemId: null,
       scaleCalibrations: {},
       calibrationMode: "idle",
@@ -996,10 +1015,7 @@ describe("flat toolStore V0 — project reset policy", () => {
       polygonDrawingMode: "idle",
       polygonVertices: [],
       bucketFillResolution: 1000,
-      yoloTagPickingMode: false,
       tagScanResults: null,
-      tagAddingMode: null,
-      symbolSearchActive: false,
       symbolSearchLoading: false,
       symbolSearchProgress: null,
       symbolSearchResults: null,
@@ -1028,5 +1044,21 @@ describe("flat toolStore V0 — project reset policy", () => {
     expect(after.barrierPendingPoint).toBe(barrierPendingPoint);
     expect(after.takeoffUndoStack).toBe(undo);
     expect(after.takeoffRedoStack).toBe(redo);
+  });
+
+  it("preserves exact bucket/split owner identity while clearing every other owner", () => {
+    const bucket = { kind: "bucketFill" } as const;
+    useToolStore.setState({ activeTool: bucket });
+    useToolStore.getState().resetProjectToolState();
+    expect(useToolStore.getState().activeTool).toBe(bucket);
+
+    const split = { kind: "split" } as const;
+    useToolStore.setState({ activeTool: split });
+    useToolStore.getState().resetProjectToolState();
+    expect(useToolStore.getState().activeTool).toBe(split);
+
+    useToolStore.setState({ activeTool: { kind: "calibration" } });
+    useToolStore.getState().resetProjectToolState();
+    expect(useToolStore.getState().activeTool).toBeNull();
   });
 });

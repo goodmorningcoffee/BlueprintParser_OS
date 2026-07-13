@@ -738,6 +738,7 @@ describe("P2.4 A2a pure operation registry topology", () => {
     expect(exportedNames(source)).toEqual([
       "LatestToolLane",
       "ToolTailToken",
+      "cancelToolTailExact",
       "claimLatestToolOperation",
       "claimParseToolAuthority",
       "claimToolTailAuthority",
@@ -748,6 +749,8 @@ describe("P2.4 A2a pure operation registry topology", () => {
       "ownsLatestToolOperation",
       "ownsParseToolAuthority",
       "ownsToolTailAuthority",
+      "registerToolTailCancellation",
+      "releaseToolTailCancellation",
     ]);
 
     const tokenA = { kind: "table", revision: 1 };
@@ -931,7 +934,7 @@ describe("P2.4 A2a operation hook and A1 lifecycle topology", () => {
 });
 
 describe("P2.4 A2a viewer command ownership boundaries", () => {
-  it("pins four neutral boundaries and both raw panel closes to the pure invalidation helper", () => {
+  it("pins four neutral boundaries and both raw panel closes to the exact AT2 transition helper", () => {
     const source = sourceOf(VIEWER_COMMANDS_FILE);
     expect(importedNames(source, "@/lib/parse-operation-state")).toEqual([
       "invalidateParseOperationKinds",
@@ -940,15 +943,32 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
       "ParseOperationToken",
     ]);
     expect(importedNames(source, "@/lib/parse-tool-authority")).toEqual([
-      "invalidateParseToolAuthority",
+      "claimLatestToolOperation",
+      "claimToolTailAuthority",
+      "consumeToolTailAuthority",
+      "invalidateLatestToolOperation",
+      "invalidateToolTailAuthority",
+      "ownsLatestToolOperation",
+      "ownsToolTailAuthority",
       "ownsParseToolAuthority",
     ]);
-    const publishUserTool = findFunction(source, "publishUserToolState");
-    const userInvalidation = callsNamed(publishUserTool, "invalidateParseToolAuthority");
-    const userPublication = callsNamed(publishUserTool, "setState");
-    expect(userInvalidation).toHaveLength(1);
-    expect(userPublication).toHaveLength(1);
-    expect(userInvalidation[0].getStart(source)).toBeLessThan(userPublication[0].getStart(source));
+    const publishUserTransition = findFunction(source, "publishUserParseTransition");
+    const userClaim = callsNamed(publishUserTransition, "claimToolTailAuthority");
+    const toolPublication = callsNamed(publishUserTransition, "setState").filter(
+      (call) => compact(call.expression, source).includes("useToolStore"),
+    );
+    const userConsume = callsNamed(publishUserTransition, "consumeToolTailAuthority");
+    expect(userClaim).toHaveLength(1);
+    expect(toolPublication).toHaveLength(1);
+    expect(userConsume).toHaveLength(1);
+    expect(userClaim[0].getStart(source)).toBeLessThan(toolPublication[0].getStart(source));
+    expect(toolPublication[0].getStart(source)).toBeLessThan(userConsume[0].getStart(source));
+    expect(compact(publishUserTransition, source)).toContain(
+      "!admitted||!ownsToolTailAuthority(intentToken)||" +
+      "useToolStore.getState().activeTool!==expectedActiveTool",
+    );
+    expect(userConsume[0].arguments.map((argument) => compact(argument, source)))
+      .toEqual(["intentToken", "publishParse"]);
     expect(compact(findFunction(source, "crossesParseOperationBoundary").body!, source)).toBe(
       '{return(currentStep==="idle")!==(nextStep==="idle");}',
     );
@@ -961,13 +981,14 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
 
     for (const [commandName, contract] of Object.entries(STEP_COMMANDS)) {
       const command = findFunction(source, commandName);
-      const prepare = callsNamed(command, "prepareParseEntry");
+      const transition = callsNamed(command, "publishUserParseTransition");
       const writes = callsNamed(command, "setState").filter(
         (call) => compact(call.expression, source).includes("useParseFlowStore"),
       );
-      expect(prepare, `${commandName} prepares tools`).toHaveLength(1);
+      expect(transition, `${commandName} correlates Tool then Parse`).toHaveLength(1);
       expect(writes, `${commandName} one parse write`).toHaveLength(1);
-      expect(prepare[0].getStart(source)).toBeLessThan(writes[0].getStart(source));
+      expect(transition[0].arguments.slice(0, 3).map((argument) => compact(argument, source)))
+        .toEqual([`"${contract.kind}"`, "currentStep", contract.step]);
       const object = arrowReturnedObjectFromCall(writes[0]);
       expect(directObjectKeys(object)).toEqual([contract.step]);
       const spreads = object.properties.filter(ts.isSpreadAssignment);
@@ -986,24 +1007,31 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
       ]);
     }
 
-    const prepareEntry = compact(findFunction(source, "prepareParseEntry"), source);
-    expect(prepareEntry).toContain(
-      "if(token!==undefined){if(!ownsParseToolAuthority(token))return;}" +
-      "else{invalidateParseToolAuthority();}",
+    const parseOwnedTransition = compact(
+      findFunction(source, "publishParseOwnedTransition"),
+      source,
     );
+    expect(parseOwnedTransition).toContain("if(!ownsParseToolAuthority(token)){");
+    expect(parseOwnedTransition).toContain(
+      "if(isDrawCapableParseStep(flow,nextStep))returnfalse;publishParse();returntrue",
+    );
+    expect(parseOwnedTransition).toContain("returnconsumeToolTailAuthority(token,publishParse)");
     for (const [commandName, expectedArguments] of [
       [
         "setTableParseStepForOperation",
-        ["before.tableParseStep", "tableParseStep", "token"],
+        ["token", '"table"', "tableParseStep"],
       ],
       [
         "publishTableReviewForOperation",
-        ["before.tableParseStep", '"review"', "token"],
+        ["token", '"table"', '"review"'],
       ],
     ] as const) {
-      const prepareCalls = callsNamed(findFunction(source, commandName), "prepareParseEntry");
-      expect(prepareCalls, `${commandName} one capability-gated prep`).toHaveLength(1);
-      expect(prepareCalls[0].arguments.map((argument) => compact(argument, source)))
+      const transitionCalls = callsNamed(
+        findFunction(source, commandName),
+        "publishParseOwnedTransition",
+      );
+      expect(transitionCalls, `${commandName} one capability-gated transition`).toHaveLength(1);
+      expect(transitionCalls[0].arguments.slice(0, 3).map((argument) => compact(argument, source)))
         .toEqual(expectedArguments);
     }
 
@@ -1044,6 +1072,7 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
       "consumeTableParseRegionForShape:property",
       "invalidateKeynoteTableOperations:property",
       "resetKeynoteGuidedParse:property",
+      "resetKeynoteParseWorkspace:property",
       "transitionTableParseTab:property",
       "focusParsedTableRegionInCatalog:property",
       "transitionKeynoteParseTab:property",
@@ -1078,7 +1107,6 @@ describe("P2.4 A2a viewer command ownership boundaries", () => {
       "addGuidedNotesColumnForUser:property",
       "addGuidedNotesRowForUser:property",
       "openTableReviewWorkspace:property",
-      "openTableReviewTarget:property",
       "completeTableParseOperation:shorthand",
       "acceptTableParseRegion:property",
       "acceptKeynoteParseRegion:property",

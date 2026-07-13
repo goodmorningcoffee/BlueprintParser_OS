@@ -106,9 +106,12 @@ const OWNERSHIP_PHASES = {
     active: PARSE_OWNER,
     inactive: VIEWER_OWNER,
     inactiveDefinition: "ledger-absent",
-    // This suite intentionally retains the residual Viewer runtime/drawing witness needed to prove
-    // old-owner absence. No production file, other real test, or shared helper is exempt.
-    inactiveAccessAllowlist: ["src/stores/__tests__/parseFlowTopologyFreeze.test.ts"],
+    // These suites intentionally inspect residual Viewer runtime/drawing state while proving that
+    // page transitions retire drawing without restoring any parse ownership to Viewer.
+    inactiveAccessAllowlist: [
+      "src/stores/__tests__/parseFlowTopologyFreeze.test.ts",
+      "src/stores/__tests__/parsePageTransitionFreeze.test.ts",
+    ],
   },
 } as const satisfies Record<ParseOwnershipPhase, OwnershipPhaseConfig>;
 
@@ -325,7 +328,6 @@ const TABLE_HOOK_CALLERS = {
   "src/components/viewer/ManualParseTab.tsx": 1,
 } as const;
 const POST_TABLE_FACADE_HOOK_CALLERS = {
-  "src/components/viewer/AnnotationOverlay.tsx": 1,
 } as const;
 const TABLE_EXTENSION_HOOK_CALLERS = {
   "src/components/viewer/AutoParseTab.tsx": 1,
@@ -357,7 +359,6 @@ const TABLE_EXTENSION_HOOK_BINDINGS = {
 } as const satisfies Readonly<Record<string, readonly Readonly<Record<string, string>>[]>>;
 
 const KEYNOTE_HOOK_CALLERS = {
-  "src/components/viewer/AnnotationOverlay.tsx": 1,
   "src/components/viewer/PDFPage.tsx": 1,
 } as const;
 const KEYNOTE_EXTENSION_HOOK_CALLERS = {
@@ -1782,7 +1783,7 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
       const source = parse(VIEWER_COMMANDS_FILE);
       expect(callLabels(definitions[0].node, source)).toEqual([
         "useParseFlowStore.getState",
-        "prepareParseEntry",
+        "publishUserParseTransition",
         "useParseFlowStore.setState",
         "operationBoundaryPatch",
       ]);
@@ -2282,7 +2283,7 @@ describe("P2.4 A1 semantic parse facade topology", () => {
         region: "state.tableParseRegion",
         setStep: "setTableParseStep",
         setRegion: "state.setTableParseRegion",
-        reset: "state.resetTableParse",
+        reset: "resetTableParseWorkspace",
       },
       keynote: {
         kind: '"keynote"',
@@ -2290,7 +2291,7 @@ describe("P2.4 A1 semantic parse facade topology", () => {
         region: "state.keynoteParseRegion",
         setStep: "setKeynoteParseStep",
         setRegion: "state.setKeynoteParseRegion",
-        reset: "state.resetKeynoteParse",
+        reset: "resetKeynoteParseWorkspace",
       },
       notes: {
         kind: '"notes"',
@@ -2298,7 +2299,7 @@ describe("P2.4 A1 semantic parse facade topology", () => {
         region: "state.notesParseRegion",
         setStep: "setNotesParseStep",
         setRegion: "state.setNotesParseRegion",
-        reset: "state.resetNotesParse",
+        reset: "resetNotesParseWorkspace",
       },
       spec: {
         kind: '"spec"',
@@ -2306,15 +2307,15 @@ describe("P2.4 A1 semantic parse facade topology", () => {
         region: "state.specParseRegion",
         setStep: "setSpecParseStep",
         setRegion: "state.setSpecParseRegion",
-        reset: "state.resetSpecParse",
+        reset: "resetSpecParseWorkspace",
       },
     });
 
     expect(knownMembers(expectFailClosedOwnerScan(source), "selector")).toEqual([
-      "tableParseStep", "tableParseRegion", "setTableParseRegion", "resetTableParse",
-      "keynoteParseStep", "keynoteParseRegion", "setKeynoteParseRegion", "resetKeynoteParse",
-      "notesParseStep", "notesParseRegion", "setNotesParseRegion", "resetNotesParse",
-      "specParseStep", "specParseRegion", "setSpecParseRegion", "resetSpecParse",
+      "tableParseStep", "tableParseRegion", "setTableParseRegion",
+      "keynoteParseStep", "keynoteParseRegion", "setKeynoteParseRegion",
+      "notesParseStep", "notesParseRegion", "setNotesParseRegion",
+      "specParseStep", "specParseRegion", "setSpecParseRegion",
     ]);
   });
 
@@ -2716,29 +2717,26 @@ describe("P2.4 A1 semantic parse facade topology", () => {
 });
 
 describe("P2.4 phase-aware sacred parse subscription topology", () => {
-  it("keeps AnnotationOverlay on both grouped hooks plus exactly three direct parse primitives and zero drawing subscriptions", () => {
+  it("keeps AnnotationOverlay on five primitive parse projections and zero grouped/drawing subscriptions", () => {
     const source = parse(ANNOTATION_OVERLAY);
     expect(importedCalls(source, [ACTIVE_PARSE_OWNER.module], "useTableParse"))
-      .toHaveLength(1);
+      .toHaveLength(0);
     expect(importedCalls(source, [ACTIVE_PARSE_OWNER.module], "useKeynoteParse"))
-      .toHaveLength(1);
+      .toHaveLength(0);
     expect(importedCalls(source, [INACTIVE_PARSE_OWNER.module], "useTableParse")).toHaveLength(0);
     expect(importedCalls(source, [INACTIVE_PARSE_OWNER.module], "useKeynoteParse")).toHaveLength(0);
-    expect(groupedDestructure(source, "useTableParse")).toEqual([
-      "tableParseStep",
-      "tableParseRegion",
-      "tableParseColumnBBs",
-      "tableParseRowBBs",
-    ]);
-    expect(groupedDestructure(source, "useKeynoteParse")).toEqual([
+    expect(primitiveSelectorMembers(source, ACTIVE_PARSE_OWNER)).toEqual([
       "keynoteParseStep",
-      "keynoteParseRegion",
       "keynoteColumnBBs",
-      "keynoteRowBBs",
+      "tableCellStructure",
+      "showTableCellStructure",
+      "toggleCellHighlight",
     ]);
 
     const parseScan = expectFailClosedOwnerScan(source);
     expect(knownMembers(parseScan, "selector")).toEqual([
+      "keynoteParseStep",
+      "keynoteColumnBBs",
       "tableCellStructure",
       "showTableCellStructure",
       "toggleCellHighlight",
@@ -2747,12 +2745,14 @@ describe("P2.4 phase-aware sacred parse subscription topology", () => {
     expect(knownMembers(drawingScan, "selector")).toEqual([]);
   });
 
-  it("keeps DrawingPreviewLayer's residual drawing and table-then-keynote parse projections separate", () => {
+  it("keeps DrawingPreviewLayer's residual drawing and four flow parse projections separate", () => {
     const source = parse(DRAWING_PREVIEW);
     const parseScan = expectFailClosedOwnerScan(source);
     expect(knownMembers(parseScan, "selector")).toEqual([
       "tableParseStep",
       "keynoteParseStep",
+      "notesParseStep",
+      "specParseStep",
     ]);
     const drawingScan = expectFailClosedOwnerScan(source, RESIDUAL_DRAWING_DESCRIPTOR);
     expect(knownMembers(drawingScan, "selector")).toEqual([

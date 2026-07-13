@@ -73,7 +73,7 @@ export function useKeyboardShortcuts() {
       }
 
       // Takeoff undo/redo (Z/W keys, only when placing)
-      if (tool.activeTakeoffItemId !== null && !e.ctrlKey && !e.metaKey) {
+      if (tool.activeTool?.kind === "takeoffPlacement" && !e.ctrlKey && !e.metaKey) {
         if (e.key === "z" || e.key === "Z") {
           e.preventDefault();
           takeoffUndo(qc);

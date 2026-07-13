@@ -7,6 +7,10 @@ import {
   type ParseFlowState,
 } from "@/stores/parseFlowStore";
 import {
+  resetKeynoteParseWorkspace,
+  resetNotesParseWorkspace,
+  resetSpecParseWorkspace,
+  resetTableParseWorkspace,
   setKeynoteParseStep,
   setNotesParseStep,
   setSpecParseStep,
@@ -59,7 +63,7 @@ const PARSE_FLOW_ADAPTERS: ParseFlowAdapterMap = {
     region: state.tableParseRegion,
     setStep: setTableParseStep,
     setRegion: state.setTableParseRegion,
-    reset: state.resetTableParse,
+    reset: resetTableParseWorkspace,
   }),
   keynote: (state) => ({
     kind: "keynote",
@@ -67,7 +71,7 @@ const PARSE_FLOW_ADAPTERS: ParseFlowAdapterMap = {
     region: state.keynoteParseRegion,
     setStep: setKeynoteParseStep,
     setRegion: state.setKeynoteParseRegion,
-    reset: state.resetKeynoteParse,
+    reset: resetKeynoteParseWorkspace,
   }),
   notes: (state) => ({
     kind: "notes",
@@ -75,7 +79,7 @@ const PARSE_FLOW_ADAPTERS: ParseFlowAdapterMap = {
     region: state.notesParseRegion,
     setStep: setNotesParseStep,
     setRegion: state.setNotesParseRegion,
-    reset: state.resetNotesParse,
+    reset: resetNotesParseWorkspace,
   }),
   spec: (state) => ({
     kind: "spec",
@@ -83,7 +87,7 @@ const PARSE_FLOW_ADAPTERS: ParseFlowAdapterMap = {
     region: state.specParseRegion,
     setStep: setSpecParseStep,
     setRegion: state.setSpecParseRegion,
-    reset: state.resetSpecParse,
+    reset: resetSpecParseWorkspace,
   }),
 };
 

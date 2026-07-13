@@ -1,5 +1,5 @@
-// [refactor jul13 P2.3 AT1] Dependency-free causal model. AT1 has no production borrowers;
-// toolStore and canvas consumers adopt this exact representation together in the AT2 flip.
+// [refactor jul13 P2.3 AT2] Dependency-free causal model adopted atomically by toolStore,
+// cross-store commands, and canvas consumers after its production-dead AT1 proof.
 
 export type TableLikeParseStep =
   | "idle"

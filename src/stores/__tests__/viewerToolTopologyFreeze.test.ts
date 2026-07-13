@@ -14,6 +14,7 @@ const TOOL_STORE_FILE = "src/stores/toolStore.ts";
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
 const DRAWING_PREVIEW = "src/components/viewer/DrawingPreviewLayer.tsx";
 const YOLO_FACADE = "src/queries/useYoloTags.ts";
+const ACTIVE_TOOL_STATE_MODULE = "@/lib/active-tool-state";
 
 const VIEWER_OWNER = {
   file: VIEWER_STORE_FILE,
@@ -39,13 +40,24 @@ type FieldContract = { readonly default: string; readonly actions: readonly stri
 const TOOL_CONTRACT = {
   mode: { default: '"move"', actions: ["setMode"] },
   tempPanMode: { default: "false", actions: ["setTempPanMode"] },
+  activeTool: {
+    default: "null",
+    actions: [
+      "setMode", "setActiveTakeoffItemId", "setCalibrationMode", "resetCalibration",
+      "setBucketFillActive", "setSplitAreaActive", "setYoloTagPickingMode",
+      "setTagAddingMode", "setSymbolSearchActive", "clearSymbolSearch",
+      "resetProjectToolState",
+    ],
+  },
   activeTakeoffItemId: { default: "null", actions: ["setActiveTakeoffItemId"] },
   scaleCalibrations: { default: "{}", actions: ["setScaleCalibration"] },
   calibrationMode: { default: '"idle"', actions: ["setCalibrationMode", "resetCalibration"] },
-  calibrationPoints: { default: "{}", actions: ["setCalibrationPoint", "resetCalibration"] },
+  calibrationPoints: {
+    default: "{}",
+    actions: ["setCalibrationMode", "setCalibrationPoint", "resetCalibration"],
+  },
   polygonDrawingMode: { default: '"idle"', actions: ["setPolygonDrawingMode", "resetPolygonDrawing"] },
   polygonVertices: { default: "[]", actions: ["addPolygonVertex", "undoLastVertex", "resetPolygonDrawing"] },
-  bucketFillActive: { default: "false", actions: ["setBucketFillActive"] },
   bucketFillPreview: { default: "null", actions: ["setBucketFillPreview"] },
   bucketFillLoading: { default: "false", actions: ["setBucketFillLoading"] },
   bucketFillError: { default: "null", actions: ["setBucketFillError"] },
@@ -53,7 +65,6 @@ const TOOL_CONTRACT = {
   bucketFillDilatePx: { default: "3", actions: ["setBucketFillDilatePx"] },
   bucketFillResolution: { default: "1000", actions: ["setBucketFillResolution"] },
   bucketFillPendingPolygon: { default: "null", actions: ["setBucketFillPendingPolygon"] },
-  splitAreaActive: { default: "false", actions: ["setSplitAreaActive"] },
   splitLineA: { default: "null", actions: ["setSplitLineEndpoint"] },
   splitLineB: { default: "null", actions: ["setSplitLineEndpoint"] },
   splitPreview: { default: "null", actions: ["setSplitPreview"] },
@@ -63,10 +74,7 @@ const TOOL_CONTRACT = {
   barrierPendingPoint: { default: "null", actions: ["setBarrierPendingPoint"] },
   takeoffUndoStack: { default: "[]", actions: [] },
   takeoffRedoStack: { default: "[]", actions: [] },
-  yoloTagPickingMode: { default: "false", actions: ["setYoloTagPickingMode"] },
   tagScanResults: { default: "null", actions: ["setTagScanResults"] },
-  tagAddingMode: { default: "null", actions: ["setTagAddingMode"] },
-  symbolSearchActive: { default: "false", actions: ["setSymbolSearchActive"] },
   symbolSearchLoading: { default: "false", actions: ["setSymbolSearchLoading"] },
   symbolSearchProgress: { default: "null", actions: ["setSymbolSearchProgress"] },
   symbolSearchResults: { default: "null", actions: ["setSymbolSearchResults"] },
@@ -95,7 +103,12 @@ const TOOL_ACTIONS = [
   "setSymbolSearchProgress", "setSymbolSearchResults", "setSymbolSearchConfidence",
   "dismissSymbolMatch", "setSymbolSearchError", "setSymbolSearchTemplateBbox",
   "setSymbolSearchSourcePage", "setSymbolSearchConfig", "setSymbolSearchPreset",
-  "clearSymbolSearch",
+  "clearSymbolSearch", "resetProjectToolState",
+] as const;
+
+const LEGACY_ACTIVATION_FIELDS = [
+  "bucketFillActive", "splitAreaActive", "yoloTagPickingMode", "tagAddingMode",
+  "symbolSearchActive",
 ] as const;
 
 const TOOL_MEMBERS = new Set<string>([...Object.keys(TOOL_CONTRACT), ...TOOL_ACTIONS]);
@@ -116,7 +129,9 @@ const GROUPED_OR_UNUSED_TOOL_MEMBERS = new Set([
 ]);
 const DRAWING_DATA = ["_drawing", "_drawStart", "_drawEnd", "_mousePos"] as const;
 const DRAWING_ACTIONS = ["_setDrawing", "_setDrawStart", "_setDrawEnd", "_setMousePos"] as const;
-const PREVIEW_PARSE_DATA = ["tableParseStep", "keynoteParseStep"] as const;
+const PREVIEW_PARSE_DATA = [
+  "tableParseStep", "keynoteParseStep", "notesParseStep", "specParseStep",
+] as const;
 
 const BOUNDARY_EXCLUSIONS = {
   serverMetadata: ["allTrades", "setAllTrades", "allCsiCodes", "setAllCsiCodes"],
@@ -141,7 +156,6 @@ const SYMBOL_HOOK_SHAPE = [
 ] as const;
 
 const SYMBOL_HOOK_CALLERS = {
-  "src/components/viewer/AnnotationOverlay.tsx": 1,
   "src/components/viewer/PDFViewer.tsx": 1,
   "src/components/viewer/PageSidebar.tsx": 1,
   "src/components/viewer/SymbolSearchPanel.tsx": 1,
@@ -152,26 +166,23 @@ const YOLO_TOOL_PROJECTION = [
   "tagAddingMode", "setTagAddingMode",
 ] as const;
 
-const ANNOTATION_TOOL_PRIMITIVES = [
-  "mode", "yoloTagPickingMode", "setYoloTagPickingMode", "activeTakeoffItemId",
-  "setActiveTakeoffItemId", "calibrationMode", "setCalibrationMode", "setCalibrationPoint",
-  "resetCalibration", "scaleCalibrations", "polygonDrawingMode", "setPolygonDrawingMode",
-  "polygonVertices", "addPolygonVertex", "resetPolygonDrawing", "undoLastVertex",
-  "bucketFillActive", "bucketFillPreview", "bucketFillLoading", "setBucketFillPreview",
-  "setBucketFillLoading", "setBucketFillError", "bucketFillBarrierMode", "addBucketFillBarrier",
-  "setBucketFillActive", "splitAreaActive", "setSplitAreaActive", "splitLineA", "splitLineB",
-  "setSplitLineEndpoint", "splitPreview", "setSplitPreview", "setSplitError", "tempPanMode",
+const YOLO_DIRECT_TOOL_PROJECTION = [
+  "setYoloTagPickingMode", "tagScanResults", "setTagScanResults", "setTagAddingMode",
 ] as const;
 
-const ANNOTATION_SYMBOL_DESTRUCTURE = [
-  "symbolSearchActive", "symbolSearchResults", "symbolSearchConfidence", "dismissedSymbolMatches",
+const ANNOTATION_TOOL_PRIMITIVES = [
+  "mode", "setYoloTagPickingMode", "symbolSearchResults", "symbolSearchConfidence",
+  "dismissedSymbolMatches", "activeTakeoffItemId", "scaleCalibrations", "polygonDrawingMode",
+  "setPolygonDrawingMode", "addPolygonVertex", "undoLastVertex", "bucketFillLoading",
+  "setBucketFillPreview", "bucketFillBarrierMode", "addBucketFillBarrier",
+  "setSplitLineEndpoint", "setSplitPreview", "setSplitError", "tempPanMode",
 ] as const;
 
 const PREVIEW_TOOL_PRIMITIVES = [
-  "symbolSearchActive", "calibrationMode", "calibrationPoints", "polygonDrawingMode",
-  "polygonVertices", "activeTakeoffItemId", "bucketFillActive", "bucketFillPreview",
+  "mode", "calibrationMode", "calibrationPoints", "polygonDrawingMode",
+  "polygonVertices", "activeTakeoffItemId", "bucketFillPreview",
   "bucketFillLoading", "bucketFillError", "bucketFillBarriers", "bucketFillBarrierMode",
-  "barrierPendingPoint", "splitAreaActive", "splitLineA", "splitLineB", "splitPreview",
+  "barrierPendingPoint", "splitLineA", "splitLineB", "splitPreview",
   "splitError", "bucketFillPendingPolygon",
 ] as const;
 
@@ -425,13 +436,32 @@ function isMethodCall(
   return isStore(receiver) && expressionMember(expression, constants) === method;
 }
 
-function selectorFunction(expression: ts.Expression | undefined): ts.ArrowFunction | ts.FunctionExpression | null {
+type SelectorFunction = ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration;
+
+function selectorFunction(
+  source: ts.SourceFile,
+  expression: ts.Expression | undefined,
+  seen = new Set<string>(),
+): SelectorFunction | null {
   if (!expression) return null;
   const current = unwrap(expression);
   if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) return current;
+  if (ts.isIdentifier(current) && !seen.has(current.text)) {
+    seen.add(current.text);
+    const declarations = descendants(source, (node): node is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === current.text
+    );
+    if (declarations.length === 1) {
+      return selectorFunction(source, declarations[0].initializer, seen);
+    }
+    const functions = descendants(source, (node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === current.text
+    );
+    if (functions.length === 1) return functions[0];
+  }
   if (ts.isCallExpression(current)) {
     for (const argument of current.arguments) {
-      const nested = selectorFunction(argument);
+      const nested = selectorFunction(source, argument, seen);
       if (nested) return nested;
     }
   }
@@ -704,6 +734,22 @@ function importedCallCount(source: ts.SourceFile, modules: readonly string[], im
   }).length;
 }
 
+function importedSelectorUseCount(
+  source: ts.SourceFile,
+  owner: { readonly module: string; readonly exportName: string },
+  selectorModule: string,
+  selectorName: string,
+): number {
+  const hooks = aliases(source, importedLocalNames(source, owner.module, owner.exportName));
+  const selectors = aliases(source, importedLocalNames(source, selectorModule, selectorName));
+  return descendants(source, ts.isCallExpression).filter((call) => {
+    const callee = unwrap(call.expression);
+    const selector = call.arguments[0] && unwrap(call.arguments[0]);
+    return ts.isIdentifier(callee) && hooks.has(callee.text) &&
+      !!selector && ts.isIdentifier(selector) && selectors.has(selector.text);
+  }).length;
+}
+
 function callTopology(importedName: string): Record<string, number> {
   const modules = [VIEWER_OWNER.module, TOOL_OWNER.module];
   return Object.fromEntries(productionSourceFiles
@@ -729,27 +775,60 @@ function primitiveSelectorMembers(
   owner: { readonly module: string; readonly exportName: string },
 ): string[] {
   const hooks = aliases(source, importedLocalNames(source, owner.module, owner.exportName));
+  const approvedImportedSelectors = aliases(
+    source,
+    importedLocalNames(source, ACTIVE_TOOL_STATE_MODULE, "selectActiveToolKey"),
+  );
   const constants = staticStrings(source);
   const output: string[] = [];
   for (const call of descendants(source, ts.isCallExpression)) {
     const callee = unwrap(call.expression);
     if (!ts.isIdentifier(callee) || !hooks.has(callee.text)) continue;
-    const selector = selectorFunction(call.arguments[0]);
-    if (!selector || selector.parameters.length !== 1 || !ts.isIdentifier(selector.parameters[0].name)) continue;
-    const stateAliases = aliases(selector.body, [selector.parameters[0].name.text]);
+    const selectorArg = call.arguments[0] && unwrap(call.arguments[0]);
+    if (
+      selectorArg && ts.isIdentifier(selectorArg) &&
+      approvedImportedSelectors.has(selectorArg.text)
+    ) continue;
+    expect(call.arguments, `one selector at ${call.getStart(source)}`).toHaveLength(1);
+    const selector = selectorFunction(source, call.arguments[0]);
+    expect(selector, `resolvable selector at ${call.getStart(source)}`).not.toBeNull();
+    if (!selector) continue;
+    expect(selector.parameters, `one selector parameter at ${call.getStart(source)}`).toHaveLength(1);
+    expect(ts.isIdentifier(selector.parameters[0].name)).toBe(true);
+    if (selector.parameters.length !== 1 || !ts.isIdentifier(selector.parameters[0].name)) continue;
+    if (!selector.body) throw new Error(`Selector at ${call.getStart(source)} has no body`);
+    const selectorBody = selector.body;
+    const stateAliases = aliases(selectorBody, [selector.parameters[0].name.text]);
     const selected = [
-      ...descendants(selector.body, ts.isPropertyAccessExpression)
+      ...descendants(selectorBody, ts.isPropertyAccessExpression)
         .filter((access) => {
           const receiver = unwrap(access.expression);
           return ts.isIdentifier(receiver) && stateAliases.has(receiver.text);
         }).map((access) => access.name.text),
-      ...descendants(selector.body, ts.isElementAccessExpression)
+      ...descendants(selectorBody, ts.isElementAccessExpression)
         .filter((access) => {
           const receiver = unwrap(access.expression);
           return ts.isIdentifier(receiver) && stateAliases.has(receiver.text);
         }).map((access) => elementName(access, constants)).filter((name): name is string => name !== null),
     ];
     expect(selected, `primitive selector at ${call.getStart(source)}`).toHaveLength(1);
+    expect(selected[0], `whole activeTool selector at ${call.getStart(source)}`).not.toBe("activeTool");
+    const returned = ts.isBlock(selectorBody)
+      ? descendants(selectorBody, ts.isReturnStatement).map((statement) => statement.expression)
+          .filter((value): value is ts.Expression => value !== undefined)
+      : [selectorBody];
+    expect(returned, `selector return at ${call.getStart(source)}`).not.toHaveLength(0);
+    for (const expression of returned) {
+      const value = unwrap(expression);
+      expect(
+        ts.isObjectLiteralExpression(value) || ts.isArrayLiteralExpression(value),
+        `non-primitive selector return at ${call.getStart(source)}`,
+      ).toBe(false);
+      expect(
+        ts.isIdentifier(value) && stateAliases.has(value.text),
+        `whole-state selector return at ${call.getStart(source)}`,
+      ).toBe(false);
+    }
     output.push(selected[0]);
   }
   return output;
@@ -776,10 +855,10 @@ describe("P2.3 T2 flat tool ownership", () => {
   ];
   const toolObject = findStoreObject(toolSource, "useToolStore");
 
-  it("pins exactly 40 data fields, 43 actions, defaults, and the active sole owner", () => {
-    expect(Object.keys(TOOL_CONTRACT)).toHaveLength(40);
-    expect(TOOL_ACTIONS).toHaveLength(43);
-    expect(new Set(TOOL_ACTIONS).size).toBe(43);
+  it("pins exactly 36 data fields, 43 commands plus one reset, and the active sole owner", () => {
+    expect(Object.keys(TOOL_CONTRACT)).toHaveLength(36);
+    expect(TOOL_ACTIONS).toHaveLength(44);
+    expect(new Set(TOOL_ACTIONS).size).toBe(44);
 
     for (const [field, contract] of Object.entries(TOOL_CONTRACT)) {
       expect(toolInterfaceKeys, `${field} active interface owner`).toContain(field);
@@ -793,6 +872,12 @@ describe("P2.3 T2 flat tool ownership", () => {
       expect(viewerInterfaceKeys, `${action} deleted viewer interface owner`).not.toContain(action);
       expect(() => directProperty(toolObject, action)).not.toThrow();
       expect(() => directProperty(viewerObject, action)).toThrow();
+    }
+
+    for (const field of LEGACY_ACTIVATION_FIELDS) {
+      expect(toolInterfaceKeys, `${field} deleted stored field`).not.toContain(field);
+      expect(() => directProperty(toolObject, field)).toThrow();
+      expect(TOOL_CONTRACT).not.toHaveProperty(field);
     }
   });
 
@@ -838,10 +923,18 @@ describe("P2.3 T2 flat tool ownership", () => {
 });
 
 describe("P2.3 T2 grouped tool surfaces", () => {
-  it("pins the exact 23-member useSymbolSearch hook and its four callers", () => {
+  it("pins the exact 23-member derived useSymbolSearch hook and its three callers", () => {
     expect(hookShape("useSymbolSearch", "symbolSearchActive", ACTIVE_TOOL_OWNER.file))
       .toEqual(SYMBOL_HOOK_SHAPE);
     expect(callTopology("useSymbolSearch")).toEqual(SYMBOL_HOOK_CALLERS);
+
+    const source = parse(ACTIVE_TOOL_OWNER.file);
+    const declaration = findVariable(source, "useSymbolSearch");
+    const selectorObjects = descendants(declaration, ts.isObjectLiteralExpression)
+      .filter((object) => directObjectKeys(object).includes("symbolSearchActive"));
+    expect(selectorObjects).toHaveLength(1);
+    expect(compact(propertyInitializer(selectorObjects[0], "symbolSearchActive"), source))
+      .toBe('state.activeTool?.kind==="symbolTemplate"');
   });
 
   it("pins useYoloTags' exact six-member tool projection on the active owner", () => {
@@ -851,9 +944,15 @@ describe("P2.3 T2 grouped tool surfaces", () => {
       .filter((object) => directObjectKeys(object).includes("yoloTagPickingMode"));
     expect(objects).toHaveLength(1);
     expect(directObjectKeys(objects[0])).toEqual(YOLO_TOOL_PROJECTION);
+    expect(compact(propertyInitializer(objects[0], "yoloTagPickingMode"), source))
+      .toBe('selectActiveToolKey(state)==="tagPick"');
+    expect(compact(propertyInitializer(objects[0], "tagAddingMode"), source))
+      .toBe("selectActiveTagId(state)");
     expect(storeMemberAccesses(source, ACTIVE_TOOL_OWNER, new Set(YOLO_TOOL_PROJECTION))
       .filter((access) => access.kind.startsWith("selector"))
-      .map((access) => access.member)).toEqual(YOLO_TOOL_PROJECTION);
+      .map((access) => access.member)).toEqual(YOLO_DIRECT_TOOL_PROJECTION);
+    expect(importedCallCount(source, [ACTIVE_TOOL_STATE_MODULE], "selectActiveToolKey")).toBe(1);
+    expect(importedCallCount(source, [ACTIVE_TOOL_STATE_MODULE], "selectActiveTagId")).toBe(1);
   });
 
   it("keeps useDrawingState production-dead", () => {
@@ -866,33 +965,29 @@ describe("P2.3 T2 grouped tool surfaces", () => {
 });
 
 describe("P2.3 T2 sacred canvas subscription topology", () => {
-  it("pins AnnotationOverlay's 34 primitive tool selectors and deliberate broad symbol hook", () => {
+  it("pins AnnotationOverlay's 19 direct primitives plus one derived hot discriminator", () => {
     const source = parse(ANNOTATION_OVERLAY);
     const raw = primitiveSelectorMembers(source, ACTIVE_TOOL_OWNER)
       .filter((member) => TOOL_MEMBERS.has(member));
     expect(raw).toEqual(ANNOTATION_TOOL_PRIMITIVES);
-    expect(importedCallCount(source, [VIEWER_OWNER.module, TOOL_OWNER.module], "useSymbolSearch")).toBe(1);
-
-    const declarations = descendants(source, ts.isVariableDeclaration).filter((declaration) => {
-      if (!declaration.initializer || !ts.isCallExpression(unwrap(declaration.initializer))) return false;
-      const call = unwrap(declaration.initializer) as ts.CallExpression;
-      const callee = unwrap(call.expression);
-      return ts.isIdentifier(callee) && callee.text === "useSymbolSearch";
-    });
-    expect(declarations).toHaveLength(1);
-    expect(bindingMembers(declarations[0].name, new Map(), new Set(SYMBOL_HOOK_SHAPE)))
-      .toEqual(ANNOTATION_SYMBOL_DESTRUCTURE);
-    expect(ANNOTATION_SYMBOL_DESTRUCTURE.length).toBeLessThan(SYMBOL_HOOK_SHAPE.length);
+    expect(importedCallCount(source, [VIEWER_OWNER.module, TOOL_OWNER.module], "useSymbolSearch")).toBe(0);
+    expect(importedSelectorUseCount(
+      source, ACTIVE_TOOL_OWNER, ACTIVE_TOOL_STATE_MODULE, "selectActiveToolKey",
+    )).toBe(1);
   });
 
-  it("pins DrawingPreviewLayer's 4 drawing + 19 tool + 2 parse primitive split and four imperative tool reads", () => {
+  it("pins DrawingPreviewLayer's 4 drawing + 17 tool + one hot key + 4 parse split", () => {
     const source = parse(DRAWING_PREVIEW);
     const toolRaw = primitiveSelectorMembers(source, ACTIVE_TOOL_OWNER);
     const viewerRaw = primitiveSelectorMembers(source, VIEWER_OWNER);
     const parseRaw = primitiveSelectorMembers(source, PARSE_OWNER);
     expect(toolRaw.filter((member) => TOOL_MEMBERS.has(member))).toEqual(PREVIEW_TOOL_PRIMITIVES);
+    expect(importedSelectorUseCount(
+      source, ACTIVE_TOOL_OWNER, ACTIVE_TOOL_STATE_MODULE, "selectActiveToolKey",
+    )).toBe(1);
     expect(viewerRaw).toEqual(DRAWING_DATA);
     expect(parseRaw).toEqual(PREVIEW_PARSE_DATA);
+    expect(importedCallCount(source, ["@/stores/uiStore"], "useUiStore")).toBe(0);
 
     const imperative = storeMemberAccesses(source, ACTIVE_TOOL_OWNER, TOOL_MEMBERS)
       .filter((access) => access.kind.startsWith("getState"))
@@ -922,7 +1017,7 @@ describe("P2.3 T2 owner access oracle", () => {
         const getter = storeAlias["getState"];
         const { setMode } = getter() as any;
         const snapshot = getter() as any;
-        snapshot["bucketFillActive"];
+        snapshot["activeTool"];
         const setter = importedStore.setState;
         setter({ [computed]: {} });
         (storeAlias() as any).clearSymbolSearch;
@@ -942,7 +1037,7 @@ describe("P2.3 T2 owner access oracle", () => {
     expect(accesses).toEqual(expect.arrayContaining([
       "selector-parameter:mode", "selector-element:symbolSearchConfig",
       "selector:symbolSearchPreset", "selector:bucketFillLoading",
-      "getState-destructure:setMode", "getState-alias-element:bucketFillActive",
+      "getState-destructure:setMode", "getState-alias-element:activeTool",
       "setState:symbolSearchConfig", "hook-direct:clearSymbolSearch",
       "hook-alias:bucketFillError", "hook-alias-destructure:symbolSearchSourcePage",
       "getState-direct:tempPanMode",

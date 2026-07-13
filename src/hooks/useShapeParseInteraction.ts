@@ -41,7 +41,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
 
   // Tear down local hook state when the user switches projects. The neutral resetProjectData
   // coordinator clears the shared residual fields (tableParseStep,
-  // symbolSearchActive, etc.) but cannot reach React useState owned by this
+  // activeTool discriminator, etc.) but cannot reach React useState owned by this
   // hook, so DetectionPanel staying mounted across a project switch caused the
   // prior project's drawn BB + drawing flag to bleed into the next project.
   // Comparing the previous projectId via a ref scopes the effect strictly to

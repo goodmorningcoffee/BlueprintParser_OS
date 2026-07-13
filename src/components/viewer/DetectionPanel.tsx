@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { publishSettledToolMode, useToolStore } from "@/stores/toolStore";
-import { useNavigation } from "@/stores/viewerCoreStore";
+import { publishSettledToolMode } from "@/stores/toolStore";
+import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
 import {
   useUiStore,
   useDetectionUi,
@@ -13,6 +13,7 @@ import {
 import { navigateViewerPage, toggleDetectionPanel } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations, useAnnotations, writeAnns } from "@/queries/useAnnotations";
+import { queryKeys } from "@/queries/queryKeys";
 import { readYoloTags, useYoloTags } from "@/queries/useYoloTags";
 import {
   setKeynotesForPage,
@@ -24,7 +25,11 @@ import type { ClientAnnotation, YoloTag, Shape } from "@/types";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
 import { apiErrorMessage } from "@/lib/client-persist";
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import {
+  claimToolTailAuthority,
+  consumeToolTailAuthority,
+  ownsToolTailAuthority,
+} from "@/lib/parse-tool-authority";
 import ClassGroupHeader from "./ClassGroupHeader";
 import HelpTooltip from "./HelpTooltip";
 import AnnotationListItem from "./AnnotationListItem";
@@ -89,7 +94,6 @@ export default function DetectionPanel({
   // Whole-map subscription is intentional: Save All and the multi-page totals traverse every
   // retained pending-shape page. Cache actions below remain explicit and project-keyed.
   const keynotes = useKeynotesByPage();
-  const setMode = useToolStore((s) => s.setMode);
   const showKeynotes = useUiStore((s) => s.showKeynotes);
   const toggleKeynotes = useUiStore((s) => s.toggleKeynotes);
   const showDetections = useUiStore((s) => s.showDetections);
@@ -471,7 +475,6 @@ export default function DetectionPanel({
               onClick={() => {
                 const next = !yoloTagPickingMode;
                 setYoloTagPickingMode(next);
-                if (next) useToolStore.getState().setMode("pointer");
               }}
               className={`w-full px-2 py-1.5 text-[11px] rounded border ${
                 yoloTagPickingMode
@@ -705,7 +708,6 @@ export default function DetectionPanel({
                                               } else {
                                                 setTagAddingMode(tag.id);
                                                 setActiveYoloTagId(tag.id);
-                                                useToolStore.getState().setMode("pointer");
                                               }
                                             }}
                                             className={`w-full text-left px-2 py-1 text-[9px] rounded border mt-1 ${
@@ -856,12 +858,16 @@ export default function DetectionPanel({
               <button
                 disabled={shapeSaving}
                 onClick={async () => {
-                  const { publicId, isDemo } = useSessionStore.getState();
-                  if (!publicId || isDemo) {
+                  const { publicId: capturedPublicId, isDemo } = useSessionStore.getState();
+                  const capturedPageNumber = useViewerCoreStore.getState().pageNumber;
+                  if (!capturedPublicId || isDemo) {
                     shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                     return;
                   }
-                  invalidateParseToolAuthority();
+                  const token = claimToolTailAuthority({});
+                  const ownsVisibleTarget = () => ownsToolTailAuthority(token) &&
+                    useSessionStore.getState().publicId === capturedPublicId &&
+                    useViewerCoreStore.getState().pageNumber === capturedPageNumber;
                   setShapeSaving(true);
                   shapeParse.setError(null);
                   setShapeSaveSuccess(null);
@@ -887,7 +893,7 @@ export default function DetectionPanel({
                       // so multiple BB parses on the same page accumulate in
                       // the DB instead of wiping prior saves.
                       body: JSON.stringify({
-                        projectId: publicId,
+                        projectId: capturedPublicId,
                         annotations: annInputs,
                       }),
                     });
@@ -901,24 +907,34 @@ export default function DetectionPanel({
                       // stay untouched (server no longer deletes them). This handler historically
                       // re-read live state AFTER its await, so keep that freshness with a functional
                       // cache write rather than closing over the render-time annotations array.
-                      writeAnns(queryClient, publicId, (current) => [
+                      writeAnns(queryClient, capturedPublicId, (current) => [
                         ...current,
                         ...data.annotations,
                       ]);
                       // Clear the pending-shapes panel — they've moved from
                       // "pending" to "saved" (now visible via annotations overlay).
-                      setKeynotesForPage(queryClient, publicId, pageNumber, []);
+                      setKeynotesForPage(
+                        queryClient,
+                        capturedPublicId,
+                        capturedPageNumber,
+                        [],
+                      );
                       // Reset the BB draw state so the user can start a new
                       // region without a manual cancel-click.
-                      shapeParse.setRegion(null);
-                      publishSettledToolMode("move");
-                      setShapeSaveSuccess(`Saved ${data.annotations.length} annotations`);
-                      setTimeout(() => setShapeSaveSuccess(null), 3000);
+                      if (ownsVisibleTarget()) {
+                        consumeToolTailAuthority(token, () => {
+                          shapeParse.setRegion(null);
+                          publishSettledToolMode("move");
+                        });
+                        setShapeSaveSuccess(`Saved ${data.annotations.length} annotations`);
+                        setTimeout(() => setShapeSaveSuccess(null), 3000);
+                      }
                     }
                   } catch (err) {
                     console.error("[SHAPE_PARSE] Save failed:", err);
                     shapeParse.setError(err instanceof Error ? err.message : "Save failed");
                   } finally {
+                    consumeToolTailAuthority(token, () => {});
                     setShapeSaving(false);
                   }
                 }}
@@ -930,17 +946,19 @@ export default function DetectionPanel({
                 <button
                   disabled={shapeSaving}
                   onClick={async () => {
-                    const { publicId, isDemo } = useSessionStore.getState();
-                    if (!publicId || isDemo) {
+                    const { publicId: capturedPublicId, isDemo } = useSessionStore.getState();
+                    if (!capturedPublicId || isDemo) {
                       shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
                       return;
                     }
-                    invalidateParseToolAuthority();
+                    const token = claimToolTailAuthority({});
+                    const ownsVisibleTarget = () => ownsToolTailAuthority(token) &&
+                      useSessionStore.getState().publicId === capturedPublicId;
                     // [refactor jul11 P2.2⑥] LOAD-BEARING capture before the request. Save-all
                     // historically retained the pre-await zustand snapshot and therefore dropped a
                     // concurrent annotation on success. Keep that frozen ANNOTATIONS-W1 behavior by
                     // making the eventual cache write a value replacement, not a functional update.
-                    const capturedAnnotations = readAnnotations(queryClient, publicId);
+                    const capturedAnnotations = readAnnotations(queryClient, capturedPublicId);
                     setShapeSaving(true);
                     shapeParse.setError(null);
                     setShapeSaveSuccess(null);
@@ -973,7 +991,7 @@ export default function DetectionPanel({
                         headers: { "Content-Type": "application/json" },
                         // Append-only — see single-page save comment above.
                         body: JSON.stringify({
-                          projectId: publicId,
+                          projectId: capturedPublicId,
                           annotations: allAnnotations,
                         }),
                       });
@@ -983,21 +1001,29 @@ export default function DetectionPanel({
                       }
                       const data = await res.json();
                       if (data.annotations) {
-                        setAnnotations([...capturedAnnotations, ...data.annotations]);
+                        queryClient.setQueryData(
+                          queryKeys.annotations.all(capturedPublicId),
+                          [...capturedAnnotations, ...data.annotations],
+                        );
                         // Clear the pending-shapes panel for every page we saved.
                         for (const pn of allPageNums) {
-                          setKeynotesForPage(queryClient, publicId, pn, []);
+                          setKeynotesForPage(queryClient, capturedPublicId, pn, []);
                         }
                         // Reset BB draw state so the next parse starts fresh.
-                        shapeParse.setRegion(null);
-                        publishSettledToolMode("move");
-                        setShapeSaveSuccess(`Saved ${data.annotations.length} across ${allPageNums.length} pages`);
-                        setTimeout(() => setShapeSaveSuccess(null), 3000);
+                        if (ownsVisibleTarget()) {
+                          consumeToolTailAuthority(token, () => {
+                            shapeParse.setRegion(null);
+                            publishSettledToolMode("move");
+                          });
+                          setShapeSaveSuccess(`Saved ${data.annotations.length} across ${allPageNums.length} pages`);
+                          setTimeout(() => setShapeSaveSuccess(null), 3000);
+                        }
                       }
                     } catch (err) {
                       console.error("[SHAPE_PARSE] Save all failed:", err);
                       shapeParse.setError(err instanceof Error ? err.message : "Save failed");
                     } finally {
+                      consumeToolTailAuthority(token, () => {});
                       setShapeSaving(false);
                     }
                   }}

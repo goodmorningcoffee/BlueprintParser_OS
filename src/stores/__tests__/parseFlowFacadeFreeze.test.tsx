@@ -23,6 +23,10 @@ import {
 } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
+  resetKeynoteParseWorkspace,
+  resetNotesParseWorkspace,
+  resetSpecParseWorkspace,
+  resetTableParseWorkspace,
   setKeynoteParseStep,
   setNotesParseStep,
   setSpecParseStep,
@@ -129,7 +133,7 @@ describe("P2.4 A1 parse facade type and dispatch contract", () => {
       readStep: (state) => state.tableParseStep,
       readRegion: (state) => state.tableParseRegion,
       setRegionAction: (state) => state.setTableParseRegion,
-      resetAction: (state) => state.resetTableParse,
+      resetAction: () => resetTableParseWorkspace,
     });
   });
 
@@ -141,7 +145,7 @@ describe("P2.4 A1 parse facade type and dispatch contract", () => {
       readStep: (state) => state.keynoteParseStep,
       readRegion: (state) => state.keynoteParseRegion,
       setRegionAction: (state) => state.setKeynoteParseRegion,
-      resetAction: (state) => state.resetKeynoteParse,
+      resetAction: () => resetKeynoteParseWorkspace,
     });
   });
 
@@ -153,7 +157,7 @@ describe("P2.4 A1 parse facade type and dispatch contract", () => {
       readStep: (state) => state.notesParseStep,
       readRegion: (state) => state.notesParseRegion,
       setRegionAction: (state) => state.setNotesParseRegion,
-      resetAction: (state) => state.resetNotesParse,
+      resetAction: () => resetNotesParseWorkspace,
     });
   });
 
@@ -165,18 +169,16 @@ describe("P2.4 A1 parse facade type and dispatch contract", () => {
       readStep: (state) => state.specParseStep,
       readRegion: (state) => state.specParseRegion,
       setRegionAction: (state) => state.setSpecParseRegion,
-      resetAction: (state) => state.resetSpecParse,
+      resetAction: () => resetSpecParseWorkspace,
     });
   });
 });
 
 describe("P2.4 A1 parse facade publication and subscription contract", () => {
-  it("routes idle entry tool-first, then same-step publishes Parse only without a hook rerender", () => {
+  it("routes every draw-step entry tool-first with fresh ownership and no same-step hook rerender", () => {
     useToolStore.setState({
       mode: "markup",
-      bucketFillActive: true,
-      splitAreaActive: true,
-      symbolSearchActive: true,
+      activeTool: { kind: "bucketFill" },
     });
     const trace: string[] = [];
     const unsubscribeTool = useToolStore.subscribe(() => trace.push("tool"));
@@ -192,16 +194,17 @@ describe("P2.4 A1 parse facade publication and subscription contract", () => {
     expect(trace).toEqual(["tool", "parse"]);
     expect(useToolStore.getState()).toMatchObject({
       mode: "move",
-      bucketFillActive: false,
-      splitAreaActive: false,
-      symbolSearchActive: false,
+      activeTool: { kind: "parseRect", flow: "table" },
     });
+    const firstActivation = useToolStore.getState().activeTool;
     expect(renders).toBe(initialRenders + 1);
 
     trace.length = 0;
     const rendersBeforeSameStep = renders;
     act(() => result.current.setStep("select-region"));
-    expect(trace).toEqual(["parse"]);
+    expect(trace).toEqual(["tool", "parse"]);
+    expect(useToolStore.getState().activeTool).toEqual({ kind: "parseRect", flow: "table" });
+    expect(useToolStore.getState().activeTool).not.toBe(firstActivation);
     expect(renders).toBe(rendersBeforeSameStep);
     unsubscribeParse();
     unsubscribeTool();

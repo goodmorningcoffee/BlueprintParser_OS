@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useMemo, useCallback, memo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   publishSettledActiveTakeoffItemId,
+  reconcileSettledDeletedTakeoffItem,
   useToolStore,
 } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -11,17 +13,25 @@ import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items+groups: zustand → TanStack cache facade.
 import { useTakeoffItems, useTakeoffGroups } from "@/queries/useTakeoff";
 import { useAnnotations } from "@/queries/useAnnotations";
+import { queryKeys } from "@/queries/queryKeys";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { ColorDot, TakeoffEditPanel } from "./TakeoffShared";
 import CalibrationInput from "./CalibrationInput";
 import TakeoffGroupSection from "./TakeoffGroupSection";
 import { persistFetch, canPersist, apiErrorMessage } from "@/lib/client-persist";
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import { selectActiveToolKey } from "@/lib/active-tool-state";
+import {
+  claimToolTailAuthority,
+  consumeToolTailAuthority,
+  invalidateToolTailAuthority,
+  ownsToolTailAuthority,
+} from "@/lib/parse-tool-authority";
 
 // ─── Scale status bar (reuse pattern from AreaTab) ──────────
 function ScaleStatus() {
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
+  const calibrationActive = useToolStore((s) => selectActiveToolKey(s) === "calibration");
   const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
   const calibrationMode = useToolStore((s) => s.calibrationMode);
   const setCalibrationMode = useToolStore((s) => s.setCalibrationMode);
@@ -29,7 +39,7 @@ function ScaleStatus() {
 
   const hasScale = !!scaleCalibrations[pageNumber];
 
-  if (calibrationMode !== "idle") {
+  if (calibrationActive) {
     return (
       <div className="px-2 py-2 border-b border-[var(--border)]">
         <div className="text-xs text-amber-400">
@@ -77,8 +87,10 @@ export default memo(function LinearTab() {
   // load-bearing: delete/rename intentionally replace this render-captured array after awaits.
   const { annotations, setAnnotations } = useAnnotations();
   // [refactor jul10 P2.2④] takeoff items+groups read from the TanStack cache facade (dual
-  // reader). Handler bodies UNCHANGED — orderings frozen per TAKEOFF_IMPL/SPEC.md §3.
-  const { takeoffItems, addTakeoffItem, removeTakeoffItem, updateTakeoffItem } = useTakeoffItems();
+  // reader). Server/cache ordering remains frozen; AT2 adds only captured targets and authority
+  // around delayed activation/reconciliation tails.
+  const queryClient = useQueryClient();
+  const { takeoffItems, updateTakeoffItem } = useTakeoffItems();
   const activeTakeoffItemId = useToolStore((s) => s.activeTakeoffItemId);
   const setActiveTakeoffItemId = useToolStore((s) => s.setActiveTakeoffItemId);
   const publicId = useSessionStore((s) => s.publicId);
@@ -134,11 +146,22 @@ export default memo(function LinearTab() {
 
   async function handleCreate() {
     if (!formName.trim()) return;
-    invalidateParseToolAuthority();
-    if (isDemo) {
+    const session = useSessionStore.getState();
+    const capturedPublicId = session.publicId;
+    const capturedItemsKey = queryKeys.takeoff.items(capturedPublicId);
+    const token = claimToolTailAuthority({});
+    if (session.isDemo) {
       const item = { id: -Date.now(), name: formName.trim(), shape: "linear" as const, color: formColor, size: 10, sortOrder: linearItems.length };
-      addTakeoffItem(item as ClientTakeoffItem);
-      publishSettledActiveTakeoffItemId(item.id);
+      queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) => [
+        ...old,
+        item,
+      ]);
+      if (
+        useSessionStore.getState().publicId === capturedPublicId &&
+        ownsToolTailAuthority(token)
+      ) {
+        consumeToolTailAuthority(token, () => publishSettledActiveTakeoffItemId(item.id));
+      }
       setFormName(""); setShowForm(false); setFormError(null);
       return;
     }
@@ -146,11 +169,21 @@ export default memo(function LinearTab() {
     try {
       const res = await fetch("/api/takeoff-items", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: publicId, name: formName.trim(), shape: "linear", color: formColor }),
+        body: JSON.stringify({ projectId: capturedPublicId, name: formName.trim(), shape: "linear", color: formColor }),
       });
       if (res.ok) {
-        const item = await res.json();
-        addTakeoffItem(item); setFormName(""); setShowForm(false); setFormError(null); publishSettledActiveTakeoffItemId(item.id);
+        const item = await res.json() as ClientTakeoffItem;
+        queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) => [
+          ...old,
+          item,
+        ]);
+        setFormName(""); setShowForm(false); setFormError(null);
+        if (
+          useSessionStore.getState().publicId === capturedPublicId &&
+          ownsToolTailAuthority(token)
+        ) {
+          consumeToolTailAuthority(token, () => publishSettledActiveTakeoffItemId(item.id));
+        }
       } else {
         // [refactor jun16 P1.2] read either error envelope (legacy string | {code,message}).
         const err = await res.json().catch(() => null);
@@ -161,18 +194,31 @@ export default memo(function LinearTab() {
   }
 
   async function handleDelete(item: ClientTakeoffItem) {
-    invalidateParseToolAuthority();
-    if (isDemo) {
-      removeTakeoffItem(item.id);
-      setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-      if (activeTakeoffItemId === item.id) publishSettledActiveTakeoffItemId(null);
+    const session = useSessionStore.getState();
+    const capturedPublicId = session.publicId;
+    const capturedItemsKey = queryKeys.takeoff.items(capturedPublicId);
+    const capturedAnnotationsKey = queryKeys.annotations.all(capturedPublicId);
+    const reconciledAnnotations = annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id)));
+    invalidateToolTailAuthority();
+    if (session.isDemo) {
+      queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) =>
+        old.filter((candidate) => candidate.id !== item.id),
+      );
+      queryClient.setQueryData(capturedAnnotationsKey, reconciledAnnotations);
+      if (useSessionStore.getState().publicId === capturedPublicId) {
+        reconcileSettledDeletedTakeoffItem(item.id);
+      }
       return;
     }
     try {
       await persistFetch(`/api/takeoff-items/${item.id}`, undefined, "DELETE");
-      removeTakeoffItem(item.id);
-      setAnnotations(annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id))));
-      if (activeTakeoffItemId === item.id) publishSettledActiveTakeoffItemId(null);
+      queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) =>
+        old.filter((candidate) => candidate.id !== item.id),
+      );
+      queryClient.setQueryData(capturedAnnotationsKey, reconciledAnnotations);
+      if (useSessionStore.getState().publicId === capturedPublicId) {
+        reconcileSettledDeletedTakeoffItem(item.id);
+      }
     } catch (err) {
       console.error("Failed to delete linear item:", err);
       window.alert(`Failed to delete item: ${err instanceof Error ? err.message : "Unknown error"}`);

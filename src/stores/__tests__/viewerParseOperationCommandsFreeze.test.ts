@@ -281,7 +281,8 @@ describe("A2c shared Guided operation boundary", () => {
 
 describe("A2c token-authorized Keynote completion boundary", () => {
   it("moves the tool first and leaves the terminal Keynote reset as A's final publication", () => {
-    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    const bucketActivation = { kind: "bucketFill" } as const;
+    useToolStore.setState({ mode: "markup", activeTool: bucketActivation });
     useParseFlowStore.setState({
       keynoteParseStep: "review",
       keynoteParseRegion: [0.1, 0.2, 0.8, 0.9],
@@ -303,13 +304,14 @@ describe("A2c token-authorized Keynote completion boundary", () => {
         keynote: { revision: token.revision + 1, busy: false },
       },
     });
-    expect(useToolStore.getState()).toMatchObject({ mode: "move", bucketFillActive: false });
+    expect(useToolStore.getState()).toMatchObject({ mode: "move" });
+    expect(useToolStore.getState().activeTool).toBe(bucketActivation);
     unsubscribeParse();
     unsubscribeTool();
   });
 
   it("stops before reset when a synchronous tool subscriber revokes A", () => {
-    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    useToolStore.setState({ mode: "markup", activeTool: { kind: "bucketFill" } });
     useParseFlowStore.setState({ keynoteParseRegion: [0.1, 0.2, 0.8, 0.9] });
     const token = startOperation("keynote");
     const unsubscribeTool = useToolStore.subscribe(() => {
@@ -390,7 +392,7 @@ describe("A2e token command runtime discrimination", () => {
     for (const wrongKind of PARSE_KINDS.filter((kind) => kind !== fixture.target)) {
       it(`${fixture.name}: denies a cast ${wrongKind} token with a matching revision and zero publications`, () => {
         const targetToken = startOperation(fixture.target);
-        useToolStore.setState({ mode: "markup", bucketFillActive: true });
+        useToolStore.setState({ mode: "markup", activeTool: { kind: "bucketFill" } });
         const wrongToken = {
           kind: wrongKind,
           revision: targetToken.revision,
@@ -449,7 +451,7 @@ describe("A2e completion tool-first same-family admission", () => {
     for (const settles of [false, true]) {
       it(`${fixture.kind}: tool subscriber admits ${settles ? "settled" : "busy"} B and A stops before its reset`, () => {
         fixture.seed();
-        useToolStore.setState({ mode: "markup", bucketFillActive: true });
+        useToolStore.setState({ mode: "markup", activeTool: { kind: "bucketFill" } });
         const token = startOperation(fixture.kind);
         let armed = true;
         const unsubscribeTool = useToolStore.subscribe(() => {
@@ -482,15 +484,13 @@ describe("A2e completion tool-first same-family admission", () => {
 
 describe("A2a neutral parse-step operation boundaries", () => {
   for (const fixture of STEP_CASES) {
-    it(`${fixture.kind}: idle -> any active step stays tool-first and invalidates in one parse publication`, () => {
+    it(`${fixture.kind}: idle -> non-drawing review is Parse-only and preserves unrelated Tool ownership`, () => {
       useToolStore.setState({
         mode: "markup",
-        bucketFillActive: true,
+        activeTool: { kind: "bucketFill" },
         bucketFillPreview: { vertices: [{ x: 0.1, y: 0.2 }], method: "fixture" },
         bucketFillLoading: true,
         bucketFillBarrierMode: true,
-        splitAreaActive: true,
-        symbolSearchActive: true,
       });
       const token = startOperation(fixture.kind);
       const beforeOperations = useParseFlowStore.getState().parseOperations;
@@ -506,7 +506,7 @@ describe("A2a neutral parse-step operation boundaries", () => {
       // as user entry. A2b must use a token-authorized seam for async-owned idle -> review.
       invokeStep(fixture.command as (step: never) => void, fixture.activeStep);
 
-      expect(trace).toEqual(["tool", "parse"]);
+      expect(trace).toEqual(["parse"]);
       expect(parseSnapshots).toHaveLength(1);
       const after = useParseFlowStore.getState();
       expect(after[fixture.stepKey]).toBe(fixture.activeStep);
@@ -516,22 +516,22 @@ describe("A2a neutral parse-step operation boundaries", () => {
       });
       expectOtherStatusIdentities(fixture.kind, beforeOperations, after.parseOperations);
       expect(useToolStore.getState()).toMatchObject({
-        mode: "move",
-        bucketFillActive: false,
-        bucketFillPreview: null,
-        bucketFillLoading: false,
-        bucketFillBarrierMode: false,
-        splitAreaActive: false,
-        symbolSearchActive: false,
+        mode: "markup",
+        activeTool: { kind: "bucketFill" },
+        bucketFillPreview: { vertices: [{ x: 0.1, y: 0.2 }], method: "fixture" },
+        bucketFillLoading: true,
+        bucketFillBarrierMode: true,
       });
       unsubscribeParse();
       unsubscribeTool();
     });
 
-    it(`${fixture.kind}: active -> idle cancel invalidates once without a tool publication`, () => {
+    it(`${fixture.kind}: dormant active -> idle cleanup preserves an unrelated owner Parse-only`, () => {
       useParseFlowStore.setState({
         [fixture.stepKey]: fixture.activeStep,
       } as Partial<ParseState>);
+      const unrelated = { kind: "tagPick" } as const;
+      useToolStore.setState({ activeTool: unrelated });
       const token = startOperation(fixture.kind);
       const beforeOperations = useParseFlowStore.getState().parseOperations;
       const parseListener = vi.fn();
@@ -544,6 +544,7 @@ describe("A2a neutral parse-step operation boundaries", () => {
       const after = useParseFlowStore.getState();
       expect(parseListener).toHaveBeenCalledTimes(1);
       expect(toolListener).not.toHaveBeenCalled();
+      expect(useToolStore.getState().activeTool).toBe(unrelated);
       expect(after[fixture.stepKey]).toBe("idle");
       expect(after.parseOperations[fixture.kind]).toEqual({
         revision: token.revision + 1,
@@ -554,7 +555,31 @@ describe("A2a neutral parse-step operation boundaries", () => {
       unsubscribeTool();
     });
 
-    it(`${fixture.kind}: active -> active stays in the same operation lane`, () => {
+    it(`${fixture.kind}: idle releases only its exact matching rectangle Tool-first`, () => {
+      useParseFlowStore.setState({
+        [fixture.stepKey]: "select-region",
+      } as Partial<ParseState>);
+      const activation = { kind: "parseRect", flow: fixture.kind } as const;
+      useToolStore.setState({ mode: "pointer", activeTool: activation });
+      const token = startOperation(fixture.kind);
+      const trace: string[] = [];
+      const unsubscribeTool = useToolStore.subscribe(() => trace.push("tool"));
+      const unsubscribeParse = useParseFlowStore.subscribe(() => trace.push("parse"));
+
+      invokeStep(fixture.command as (step: never) => void, "idle");
+
+      expect(trace).toEqual(["tool", "parse"]);
+      expect(useToolStore.getState()).toMatchObject({ mode: "move", activeTool: null });
+      expect(useParseFlowStore.getState()[fixture.stepKey]).toBe("idle");
+      expect(useParseFlowStore.getState().parseOperations[fixture.kind]).toEqual({
+        revision: token.revision + 1,
+        busy: false,
+      });
+      unsubscribeParse();
+      unsubscribeTool();
+    });
+
+    it(`${fixture.kind}: drawing -> review crosses a null Tool boundary inside the same operation lane`, () => {
       useParseFlowStore.setState({
         [fixture.stepKey]: "select-region",
       } as Partial<ParseState>);
@@ -569,7 +594,8 @@ describe("A2a neutral parse-step operation boundaries", () => {
 
       const after = useParseFlowStore.getState();
       expect(parseListener).toHaveBeenCalledTimes(1);
-      expect(toolListener).not.toHaveBeenCalled();
+      expect(toolListener).toHaveBeenCalledTimes(1);
+      expect(useToolStore.getState().activeTool).toBeNull();
       expect(after[fixture.stepKey]).toBe(fixture.activeStep);
       expect(after.parseOperations).toBe(beforeOperations);
       expect(after.parseOperations[fixture.kind]).toEqual({
@@ -580,12 +606,39 @@ describe("A2a neutral parse-step operation boundaries", () => {
       unsubscribeTool();
     });
   }
+
+  it("denies a stale drawing-to-review Parse tail across null -> bucket -> null ABA", () => {
+    useParseFlowStore.setState({ tableParseStep: "select-region" });
+    const token = startOperation("table");
+    const parseListener = vi.fn();
+    let armed = true;
+    let toolPublications = 0;
+    const unsubscribeParse = useParseFlowStore.subscribe(parseListener);
+    const unsubscribeTool = useToolStore.subscribe((state) => {
+      toolPublications += 1;
+      if (!armed) return;
+      armed = false;
+      state.setBucketFillActive(true);
+      useToolStore.getState().setBucketFillActive(false);
+    });
+
+    setTableParseStep("review");
+
+    expect(armed).toBe(false);
+    expect(toolPublications).toBe(3);
+    expect(parseListener).not.toHaveBeenCalled();
+    expect(useParseFlowStore.getState().tableParseStep).toBe("select-region");
+    expect(useParseFlowStore.getState().isParseOperationCurrent(token)).toBe(true);
+    expect(useToolStore.getState().activeTool).toBeNull();
+    unsubscribeTool();
+    unsubscribeParse();
+  });
 });
 
 describe("A2e explicit tool-and-step user boundaries", () => {
   for (const fixture of STEP_WITH_TOOL_CASES) {
     it(`${fixture.kind}: publishes the exact Tool destination before one terminal Parse transition`, () => {
-      useToolStore.setState({ mode: "markup", bucketFillActive: true });
+      useToolStore.setState({ mode: "markup", activeTool: { kind: "bucketFill" } });
       const token = startOperation(fixture.kind);
       const beforeOperations = useParseFlowStore.getState().parseOperations;
       const trace: string[] = [];
@@ -612,6 +665,26 @@ describe("A2e explicit tool-and-step user boundaries", () => {
       });
       expectOtherStatusIdentities(fixture.kind, beforeOperations, after.parseOperations);
       expect(useToolStore.getState().mode).toBe("pointer");
+      const firstActivation = useToolStore.getState().activeTool;
+      expect(firstActivation).toEqual({
+        kind: "parseRect",
+        flow: fixture.kind,
+      });
+
+      trace.length = 0;
+      snapshots.length = 0;
+      invokeStepWithTool(
+        fixture.command as (step: never, toolMode: never) => void,
+        fixture.activeStep,
+        "pointer",
+      );
+      expect(trace).toEqual(["tool", "parse"]);
+      expect(snapshots).toHaveLength(1);
+      expect(useToolStore.getState().activeTool).toEqual({
+        kind: "parseRect",
+        flow: fixture.kind,
+      });
+      expect(useToolStore.getState().activeTool).not.toBe(firstActivation);
       unsubscribeParse();
       unsubscribeTool();
     });
@@ -857,9 +930,7 @@ describe("A2b token-authorized Table completion boundary", () => {
   it("advances an idle current owner to review tool-first without invalidating its token", () => {
     useToolStore.setState({
       mode: "markup",
-      bucketFillActive: true,
-      splitAreaActive: true,
-      symbolSearchActive: true,
+      activeTool: { kind: "bucketFill" },
     });
     const token = startOperation("table");
     const beforeOperations = useParseFlowStore.getState().parseOperations;
@@ -877,16 +948,14 @@ describe("A2b token-authorized Table completion boundary", () => {
     expect(after.isParseOperationCurrent(token)).toBe(true);
     expect(useToolStore.getState()).toMatchObject({
       mode: "move",
-      bucketFillActive: false,
-      splitAreaActive: false,
-      symbolSearchActive: false,
+      activeTool: { kind: "bucketFill" },
     });
     unsubscribeParse();
     unsubscribeTool();
   });
 
   it("fails closed when a synchronous tool subscriber revokes the token before the parse write", () => {
-    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    useToolStore.setState({ mode: "markup", activeTool: { kind: "bucketFill" } });
     const token = startOperation("table");
     const unsubscribeTool = useToolStore.subscribe(() => {
       useParseFlowStore.getState().invalidateParseOperation("table");
@@ -899,14 +968,17 @@ describe("A2b token-authorized Table completion boundary", () => {
       revision: token.revision + 1,
       busy: false,
     });
-    expect(useToolStore.getState()).toMatchObject({ mode: "move", bucketFillActive: false });
+    expect(useToolStore.getState()).toMatchObject({
+      mode: "move",
+      activeTool: { kind: "bucketFill" },
+    });
     unsubscribeTool();
   });
 
   it("denies a stale completion with no parse or tool publication", () => {
     const token = startOperation("table");
     useParseFlowStore.getState().invalidateParseOperation("table");
-    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    useToolStore.setState({ mode: "markup", activeTool: { kind: "bucketFill" } });
     const beforeParse = useParseFlowStore.getState();
     const beforeTool = useToolStore.getState();
     const parseListener = vi.fn();
@@ -927,7 +999,7 @@ describe("A2b token-authorized Table completion boundary", () => {
   it("denies a cast wrong-kind token even when its revision matches Table", () => {
     const token = startOperation("table");
     const wrongKind = { kind: "keynote", revision: token.revision } as unknown as typeof token;
-    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    useToolStore.setState({ mode: "markup", activeTool: { kind: "bucketFill" } });
     const beforeParse = useParseFlowStore.getState();
     const beforeTool = useToolStore.getState();
     const parseListener = vi.fn();
@@ -947,7 +1019,8 @@ describe("A2b token-authorized Table completion boundary", () => {
 
   it("keeps active-to-active completion inside the current lane without touching tools", () => {
     useParseFlowStore.setState({ tableParseStep: "select-region" });
-    useToolStore.setState({ mode: "markup", bucketFillActive: true });
+    const bucketActivation = { kind: "bucketFill" } as const;
+    useToolStore.setState({ mode: "markup", activeTool: bucketActivation });
     const token = startOperation("table");
     const beforeOperations = useParseFlowStore.getState().parseOperations;
     const parseListener = vi.fn();
@@ -958,7 +1031,8 @@ describe("A2b token-authorized Table completion boundary", () => {
     expect(setTableParseStepForOperation(token, "review")).toBe(true);
 
     expect(parseListener).toHaveBeenCalledTimes(1);
-    expect(toolListener).not.toHaveBeenCalled();
+    expect(toolListener).toHaveBeenCalledTimes(1);
+    expect(useToolStore.getState().activeTool).toBe(bucketActivation);
     expect(useParseFlowStore.getState().tableParseStep).toBe("review");
     expect(useParseFlowStore.getState().parseOperations).toBe(beforeOperations);
     expect(useParseFlowStore.getState().isParseOperationCurrent(token)).toBe(true);
@@ -974,7 +1048,7 @@ describe("A2e Table workspace terminal commands", () => {
   ] as const;
 
   for (const fixture of fixtures) {
-    it(`${fixture.name}: emits Tool then exactly one Parse publication and invalidates Table once`, () => {
+    it(`${fixture.name}: dormant review cleanup emits one Parse publication and invalidates Table once`, () => {
       const region = [0.1, 0.2, 0.8, 0.9] as const;
       useToolStore.setState({ mode: "markup" });
       useParseFlowStore.setState({
@@ -991,7 +1065,7 @@ describe("A2e Table workspace terminal commands", () => {
       fixture.command();
 
       const after = useParseFlowStore.getState();
-      expect(trace).toEqual(["tool", "parse"]);
+      expect(trace).toEqual(["parse"]);
       expect(after.tableParseStep).toBe("idle");
       expect(after.tableParsedGrid).toBeNull();
       expect(after.tableParseRegion).toEqual(fixture.retainsRegion ? region : null);
@@ -1000,7 +1074,7 @@ describe("A2e Table workspace terminal commands", () => {
         busy: false,
       });
       expectOtherStatusIdentities("table", beforeOperations, after.parseOperations);
-      expect(useToolStore.getState().mode).toBe("move");
+      expect(useToolStore.getState().mode).toBe("markup");
       unsubscribeParse();
       unsubscribeTool();
     });
@@ -1074,7 +1148,7 @@ describe("A2c raw parse-panel close boundaries", () => {
 
     toggleTableParsePanel();
 
-    expect(trace).toEqual(["ui", "tool", "parse"]);
+    expect(trace).toEqual(["ui", "parse"]);
     const after = useParseFlowStore.getState();
     expect(after).toMatchObject({
       tableParseStep: "idle",
@@ -1093,7 +1167,7 @@ describe("A2c raw parse-panel close boundaries", () => {
       });
     }
     expect(after.parseOperations.spec).toBe(beforeOperations.spec);
-    expect(useToolStore.getState().mode).toBe("move");
+    expect(useToolStore.getState().mode).toBe("markup");
     expect(useUiStore.getState().showTableParsePanel).toBe(false);
     unsubscribeUi();
     unsubscribeTool();
@@ -1128,7 +1202,7 @@ describe("A2c raw parse-panel close boundaries", () => {
 
     toggleKeynoteParsePanel();
 
-    expect(trace).toEqual(["ui", "tool", "parse"]);
+    expect(trace).toEqual(["ui", "parse"]);
     const after = useParseFlowStore.getState();
     expect(after).toMatchObject({
       keynoteParseStep: "idle",
@@ -1148,7 +1222,7 @@ describe("A2c raw parse-panel close boundaries", () => {
       });
     }
     expect(after.parseOperations.spec).toBe(beforeOperations.spec);
-    expect(useToolStore.getState().mode).toBe("move");
+    expect(useToolStore.getState().mode).toBe("markup");
     expect(useUiStore.getState().showKeynoteParsePanel).toBe(false);
     unsubscribeUi();
     unsubscribeTool();
@@ -1186,7 +1260,7 @@ describe("A2c raw parse-panel close boundaries", () => {
 
 describe("A2a universal reset operation trace", () => {
   it("preserves the seven-publication tool -> four kind -> Guided -> tool trace", () => {
-    useToolStore.setState({ mode: "markup", symbolSearchActive: true });
+    useToolStore.setState({ mode: "markup", activeTool: { kind: "symbolTemplate" } });
     useParseFlowStore.setState({
       tableParseStep: "review",
       keynoteParseStep: "review",
@@ -1224,7 +1298,7 @@ describe("A2a universal reset operation trace", () => {
     });
     expect(useToolStore.getState()).toMatchObject({
       mode: "move",
-      symbolSearchActive: false,
+      activeTool: null,
     });
     unsubscribeParse();
     unsubscribeTool();

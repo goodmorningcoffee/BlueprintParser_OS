@@ -129,8 +129,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       else if (e.key === "v") {
         if (e.repeat) return;
         const s = useToolStore.getState();
-        const toolActive = s.activeTakeoffItemId !== null || s.bucketFillActive || s.splitAreaActive
-          || s.polygonDrawingMode === "drawing" || s.calibrationMode !== "idle";
+        const toolActive = s.activeTool !== null;
         if (toolActive) {
           s.setTempPanMode(true);
         } else {
@@ -435,7 +434,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      const shouldPan = mode === "move" || useToolStore.getState().tempPanMode;
+      const tool = useToolStore.getState();
+      const shouldPan = tool.tempPanMode || (tool.activeTool === null && tool.mode === "move");
       if (!shouldPan) return;
       if (e.button !== 0) return;
 
@@ -452,7 +452,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       };
       container.style.cursor = "grabbing";
     },
-    [mode]
+    []
   );
 
   const handleMouseMove = useCallback(
@@ -474,14 +474,16 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     setIsPanning(false);
     isPanningRef.current = false;
     const container = containerRef.current;
-    const tempPan = useToolStore.getState().tempPanMode;
-    if (container) container.style.cursor = (mode === "move" || tempPan) ? "grab" : "default";
+    const tool = useToolStore.getState();
+    const tempPan = tool.tempPanMode;
+    const basePan = tool.activeTool === null && tool.mode === "move";
+    if (container) container.style.cursor = (basePan || tempPan) ? "grab" : "default";
     if (vReleasedDuringPanRef.current) {
       vReleasedDuringPanRef.current = false;
       useToolStore.getState().setTempPanMode(false);
       if (container) container.style.cursor = "default";
     }
-  }, [mode]);
+  }, []);
 
   // Hooks must be before early returns (Rules of Hooks)
   const { isDemo } = useProject();

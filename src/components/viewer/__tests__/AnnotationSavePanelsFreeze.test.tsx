@@ -142,7 +142,7 @@ function seedPendingShape() {
 
 function seedPendingSymbolSearch() {
   useToolStore.setState({
-    symbolSearchActive: true,
+    activeTool: { kind: "symbolTemplate" },
     symbolSearchLoading: false,
     symbolSearchResults: symbolResults,
     symbolSearchError: null,

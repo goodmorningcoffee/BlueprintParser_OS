@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   publishSettledCalibrationReset,
   useToolStore,
@@ -8,25 +9,28 @@ import {
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useAnnotations } from "@/queries/useAnnotations";
+import { queryKeys } from "@/queries/queryKeys";
 import type { AreaUnit, ClientAnnotation, ScaleCalibrationData } from "@/types";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
 import { apiErrorMessage } from "@/lib/client-persist";
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import {
+  claimToolTailAuthority,
+  consumeToolTailAuthority,
+  ownsToolTailAuthority,
+} from "@/lib/parse-tool-authority";
 
 const AREA_UNITS: AreaUnit[] = ["ft", "in", "m", "cm"];
 
 /** Scale calibration distance input — used by AreaTab, reusable by future tools. */
 export default function CalibrationInput() {
-  const pageNumber = useViewerCoreStore((s) => s.pageNumber);
+  const queryClient = useQueryClient();
   const calibrationPoints = useToolStore((s) => s.calibrationPoints);
   const setScaleCalibration = useToolStore((s) => s.setScaleCalibration);
   const resetCalibration = useToolStore((s) => s.resetCalibration);
   // [refactor jul10 P2.2⑥] Both demo and persisted calibration branches retain their original
   // render-captured value replacement, including the post-await concurrent-write hazard.
-  const { annotations, setAnnotations } = useAnnotations();
-  const publicId = useSessionStore((s) => s.publicId);
-  const isDemo = useSessionStore((s) => s.isDemo);
+  const { annotations } = useAnnotations();
 
   const [distance, setDistance] = useState("");
   const [unit, setUnit] = useState<AreaUnit>("ft");
@@ -35,13 +39,23 @@ export default function CalibrationInput() {
 
   async function handleOk() {
     const dist = parseFloat(distance);
-    if (!dist || dist <= 0 || !calibrationPoints.p1 || !calibrationPoints.p2) return;
-    invalidateParseToolAuthority();
+    const tool = useToolStore.getState();
+    const activation = tool.activeTool;
+    const points = tool.calibrationPoints;
+    if (
+      !dist || dist <= 0 || !points.p1 || !points.p2 ||
+      activation?.kind !== "calibration"
+    ) return;
+    const session = useSessionStore.getState();
+    const capturedPublicId = session.publicId;
+    const capturedPageNumber = useViewerCoreStore.getState().pageNumber;
+    const capturedAnnotationsKey = queryKeys.annotations.all(capturedPublicId);
+    const token = claimToolTailAuthority({});
 
     setSaving(true);
     setError(null);
-    const p1 = calibrationPoints.p1!;
-    const p2 = calibrationPoints.p2!;
+    const p1 = points.p1;
+    const p2 = points.p2;
     const cal: ScaleCalibrationData = {
       type: "scale-calibration",
       point1: p1,
@@ -63,24 +77,33 @@ export default function CalibrationInput() {
       bMaxY - bMinY < EPS ? bMinY + EPS : bMaxY,
     ];
 
-    if (isDemo) {
-      setScaleCalibration(pageNumber, cal);
+    if (session.isDemo) {
+      if (useSessionStore.getState().publicId === capturedPublicId) {
+        setScaleCalibration(capturedPageNumber, cal);
+      }
       const tempAnn: ClientAnnotation = {
         id: -Date.now(),
-        pageNumber,
-        name: `Scale (pg ${pageNumber})`,
+        pageNumber: capturedPageNumber,
+        name: `Scale (pg ${capturedPageNumber})`,
         bbox: [0, 0, 0, 0],
         note: null,
         source: "takeoff-scale",
         data: cal as unknown as Record<string, unknown>,
       };
-      setAnnotations([
+      queryClient.setQueryData(capturedAnnotationsKey, [
         ...annotations.filter(
-          (a) => !(a.source === "takeoff-scale" && a.pageNumber === pageNumber)
+          (a) => !(a.source === "takeoff-scale" && a.pageNumber === capturedPageNumber)
         ),
         tempAnn,
       ]);
-      publishSettledCalibrationReset();
+      if (
+        ownsToolTailAuthority(token) &&
+        useSessionStore.getState().publicId === capturedPublicId &&
+        useViewerCoreStore.getState().pageNumber === capturedPageNumber &&
+        useToolStore.getState().activeTool === activation
+      ) {
+        consumeToolTailAuthority(token, () => publishSettledCalibrationReset(activation));
+      }
       setDistance("");
       setSaving(false);
       return;
@@ -88,7 +111,7 @@ export default function CalibrationInput() {
 
     try {
       const existingScaleAnns = annotations.filter(
-        (a) => a.source === "takeoff-scale" && a.pageNumber === pageNumber
+        (a) => a.source === "takeoff-scale" && a.pageNumber === capturedPageNumber
       );
       for (const ann of existingScaleAnns) {
         await fetch(`/api/annotations/${ann.id}`, { method: "DELETE" });
@@ -97,9 +120,9 @@ export default function CalibrationInput() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          projectId: publicId,
-          pageNumber,
-          name: `Scale (pg ${pageNumber})`,
+          projectId: capturedPublicId,
+          pageNumber: capturedPageNumber,
+          name: `Scale (pg ${capturedPageNumber})`,
           bbox: calBbox,
           note: null,
           source: "takeoff-scale",
@@ -108,14 +131,23 @@ export default function CalibrationInput() {
       });
       if (res.ok) {
         const saved = await res.json();
-        setAnnotations([
+        queryClient.setQueryData(capturedAnnotationsKey, [
           ...annotations.filter(
-            (a) => !(a.source === "takeoff-scale" && a.pageNumber === pageNumber)
+            (a) => !(a.source === "takeoff-scale" && a.pageNumber === capturedPageNumber)
           ),
           saved,
         ]);
-        setScaleCalibration(pageNumber, cal);
-        publishSettledCalibrationReset();
+        if (useSessionStore.getState().publicId === capturedPublicId) {
+          setScaleCalibration(capturedPageNumber, cal);
+        }
+        if (
+          ownsToolTailAuthority(token) &&
+          useSessionStore.getState().publicId === capturedPublicId &&
+          useViewerCoreStore.getState().pageNumber === capturedPageNumber &&
+          useToolStore.getState().activeTool === activation
+        ) {
+          consumeToolTailAuthority(token, () => publishSettledCalibrationReset(activation));
+        }
         setDistance("");
       } else {
         const errData = await res.json().catch(() => null);

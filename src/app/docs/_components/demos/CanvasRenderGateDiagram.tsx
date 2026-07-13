@@ -31,13 +31,13 @@ export function CanvasRenderGateDiagram() {
           <rect x="30" y="70" width="440" height="180" rx="6" fill="none" stroke="#f59e0b" strokeWidth="1.8" />
           <text x="50" y="90" fontSize="12" fontWeight="bold" fill="#f59e0b">1. canvasWantsEvents  (L2609–2619)</text>
           <text x="50" y="106" fontSize="10" opacity="0.7" fontFamily="monospace">Boolean. True if any mode needs pointer events.</text>
-          <text x="50" y="130" fontSize="11" fontFamily="monospace" opacity="0.85">activeTakeoffItemId !== null ||</text>
-          <text x="50" y="146" fontSize="11" fontFamily="monospace" opacity="0.85">bucketFillActive ||</text>
-          <text x="50" y="162" fontSize="11" fontFamily="monospace" opacity="0.85">calibrationMode !== &quot;idle&quot; ||</text>
-          <text x="50" y="178" fontSize="11" fontFamily="monospace" opacity="0.85">polygonDrawingMode === &quot;drawing&quot; ||</text>
-          <text x="50" y="194" fontSize="11" fontFamily="monospace" opacity="0.85">mode === &quot;markup&quot; | &quot;pointer&quot; | &quot;group&quot; ||</text>
-          <text x="50" y="210" fontSize="11" fontFamily="monospace" opacity="0.85">tableParseStep / keynoteParseStep !== &quot;idle&quot; ||</text>
-          <text x="50" y="226" fontSize="11" fontFamily="monospace" opacity="0.85">symbolSearchActive || splitAreaActive</text>
+          <text x="50" y="130" fontSize="11" fontFamily="monospace" opacity="0.85">activeToolKey !== null ||</text>
+          <text x="50" y="146" fontSize="11" fontFamily="monospace" opacity="0.85">(activeToolKey === null &amp;&amp; (</text>
+          <text x="50" y="162" fontSize="11" fontFamily="monospace" opacity="0.85">  mode === &quot;markup&quot; || mode === &quot;pointer&quot; ||</text>
+          <text x="50" y="178" fontSize="11" fontFamily="monospace" opacity="0.85">  mode === &quot;group&quot;))</text>
+          <text x="50" y="194" fontSize="11" fontFamily="monospace" opacity="0.85">activeToolKey encodes specialized owner + parse flow</text>
+          <text x="50" y="210" fontSize="11" fontFamily="monospace" opacity="0.85">dormant session fields never open pointer events</text>
+          <text x="50" y="226" fontSize="11" fontFamily="monospace" opacity="0.85">tempPan disables pointerEvents separately</text>
         </g>
 
         {/* Box 2 — canvasShouldRender */}
@@ -73,10 +73,10 @@ export function CanvasRenderGateDiagram() {
           <rect x="490" y="280" width="440" height="120" rx="6" fill="none" stroke="#60a5fa" strokeWidth="1.8" />
           <text x="510" y="300" fontSize="12" fontWeight="bold" fill="#60a5fa">4. cursor  (L2653)</text>
           <text x="510" y="316" fontSize="10" opacity="0.7" fontFamily="monospace">Inline style chain. One ternary arm per mode.</text>
-          <text x="510" y="340" fontSize="11" fontFamily="monospace" opacity="0.85">splitAreaActive ? &quot;crosshair&quot;</text>
-          <text x="510" y="356" fontSize="11" fontFamily="monospace" opacity="0.85">: bucketFillActive ? (custom SVG cursor)</text>
-          <text x="510" y="372" fontSize="11" fontFamily="monospace" opacity="0.85">: calibrationMode ? &quot;crosshair&quot;</text>
-          <text x="510" y="388" fontSize="11" fontFamily="monospace" opacity="0.85">: polygonDrawingMode ? &quot;crosshair&quot; : ...</text>
+          <text x="510" y="340" fontSize="11" fontFamily="monospace" opacity="0.85">split | symbol | calibration | takeoff | tagAdd → crosshair</text>
+          <text x="510" y="356" fontSize="11" fontFamily="monospace" opacity="0.85">bucketFill → wait | barrier | custom SVG cursor</text>
+          <text x="510" y="372" fontSize="11" fontFamily="monospace" opacity="0.85">tagPick | keynote YOLO pick → pointer</text>
+          <text x="510" y="388" fontSize="11" fontFamily="monospace" opacity="0.85">parseRect | base markup/group → crosshair</text>
         </g>
 
         {/* Bottom box — the trap */}

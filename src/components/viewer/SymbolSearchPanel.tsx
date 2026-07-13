@@ -4,7 +4,8 @@ import { useMemo, useEffect, useState, useRef, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
-  publishSettledSymbolSearchActive,
+  publishSettledSymbolSearchCleanup,
+  renewSymbolSearchTemplate,
   useSymbolSearch,
   useToolStore,
 } from "@/stores/toolStore";
@@ -13,7 +14,12 @@ import { navigateViewerPage } from "@/stores/viewerCommands";
 import { useProject, useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations } from "@/queries/useAnnotations";
 import { queryKeys } from "@/queries/queryKeys";
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import {
+  claimLatestToolOperation,
+  invalidateLatestToolOperation,
+  invalidateToolTailAuthority,
+  ownsLatestToolOperation,
+} from "@/lib/parse-tool-authority";
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
 import { apiErrorMessage } from "@/lib/client-persist";
@@ -23,6 +29,13 @@ interface SymbolSearchPanelProps {
   /** When true, skip the outer panel chrome (border, shadow, fixed width, header
    *  bar). Use when mounting inside a parent orchestrator (e.g. ParsePanel). */
   embedded?: boolean;
+}
+
+function ownsSymbolSession(token: object, capturedPublicId: string): boolean {
+  return (
+    ownsLatestToolOperation("symbolSession", token) &&
+    useSessionStore.getState().publicId === capturedPublicId
+  );
 }
 
 export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSearchPanelProps) {
@@ -43,7 +56,6 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
     setSymbolSearchActive,
     symbolSearchConfig,
     setSymbolSearchConfig,
-    symbolSearchPreset,
     setSymbolSearchPreset,
   } = useSymbolSearch();
 
@@ -127,26 +139,53 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
 
   // Run search — fires the API with current config
   const abortRef = useRef<AbortController | null>(null);
+  const cancelSearchRun = useCallback(() => {
+    // Abort is advisory: a buffered/custom stream may still resolve read(). Rotate the exact
+    // dormant-result lane first so no progress/done/error/finally tail from A can publish.
+    invalidateLatestToolOperation("symbolSession");
+    const abort = abortRef.current;
+    abortRef.current = null;
+    abort?.abort();
+    useToolStore.setState({
+      symbolSearchLoading: false,
+      symbolSearchProgress: null,
+    });
+  }, []);
   const runSearch = useCallback(async () => {
     const store = useToolStore.getState();
     const session = useSessionStore.getState();
     if (!store.symbolSearchTemplateBbox || !store.symbolSearchSourcePage) return;
+
+    const capturedPublicId = session.publicId;
+    const capturedProjectId = session.projectId;
+    const capturedSourcePage = store.symbolSearchSourcePage;
+    const capturedBbox = store.symbolSearchTemplateBbox;
+    const capturedConfidence = store.symbolSearchConfidence;
+    const capturedConfig = store.symbolSearchConfig;
+    const token = claimLatestToolOperation("symbolSession", {});
 
     // Abort any in-flight search
     abortRef.current?.abort();
     const abort = new AbortController();
     abortRef.current = abort;
 
+    // One publication makes the claim-before-publication/post-publication check exact even if a
+    // synchronous subscriber starts or clears Symbol session B.
+    useToolStore.setState({
+      symbolSearchLoading: true,
+      symbolSearchError: null,
+      symbolSearchResults: null,
+      symbolSearchProgress: null,
+    });
+    if (!ownsSymbolSession(token, capturedPublicId)) {
+      if (abortRef.current === abort) abortRef.current = null;
+      return;
+    }
+
     // Auto-timeout after 10 min — full-project Lambda scans can legitimately
     // take minutes; 120s was firing before Lambda workers finished.
     let timedOut = false;
     const timeout = setTimeout(() => { timedOut = true; abort.abort(); }, 600000);
-
-    const bbox = store.symbolSearchTemplateBbox;
-    store.setSymbolSearchLoading(true);
-    store.setSymbolSearchError(null);
-    store.setSymbolSearchResults(null);
-    store.setSymbolSearchProgress(null);
 
     try {
       const resp = await fetch("/api/symbol-search", {
@@ -154,19 +193,29 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
         headers: { "Content-Type": "application/json" },
         signal: abort.signal,
         body: JSON.stringify({
-          projectId: session.projectId,
-          sourcePageNumber: store.symbolSearchSourcePage,
-          templateBbox: { x: bbox[0], y: bbox[1], w: bbox[2] - bbox[0], h: bbox[3] - bbox[1] },
-          confidenceThreshold: store.symbolSearchConfidence,
-          multiScale: store.symbolSearchConfig.multiScale,
-          useSiftFallback: store.symbolSearchConfig.useSiftFallback,
-          searchPages: store.symbolSearchConfig.searchPages,
-          scaleMin: store.symbolSearchConfig.scaleMin,
-          scaleMax: store.symbolSearchConfig.scaleMax,
-          nmsThreshold: store.symbolSearchConfig.nmsThreshold,
-          maxMatchesPerPage: store.symbolSearchConfig.maxMatchesPerPage,
+          projectId: capturedProjectId,
+          sourcePageNumber: capturedSourcePage,
+          templateBbox: {
+            x: capturedBbox[0],
+            y: capturedBbox[1],
+            w: capturedBbox[2] - capturedBbox[0],
+            h: capturedBbox[3] - capturedBbox[1],
+          },
+          confidenceThreshold: capturedConfidence,
+          multiScale: capturedConfig.multiScale,
+          useSiftFallback: capturedConfig.useSiftFallback,
+          searchPages: capturedConfig.searchPages,
+          scaleMin: capturedConfig.scaleMin,
+          scaleMax: capturedConfig.scaleMax,
+          nmsThreshold: capturedConfig.nmsThreshold,
+          maxMatchesPerPage: capturedConfig.maxMatchesPerPage,
         }),
       });
+
+      if (!ownsSymbolSession(token, capturedPublicId)) {
+        abort.abort();
+        return;
+      }
 
       if (!resp.ok || !resp.body) {
         // [refactor jul4 S024] parse the error envelope instead of throwing the raw body string
@@ -198,6 +247,10 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
             continue; // skip malformed JSON lines
           }
           if (msg.type === "progress") {
+            if (!ownsSymbolSession(token, capturedPublicId)) {
+              abort.abort();
+              return;
+            }
             useToolStore.getState().setSymbolSearchProgress({
               page: msg.page as number,
               pageIndex: msg.pageIndex as number,
@@ -205,6 +258,10 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
               matches: msg.matches as number,
             });
           } else if (msg.type === "done") {
+            if (!ownsSymbolSession(token, capturedPublicId)) {
+              abort.abort();
+              return;
+            }
             useToolStore.getState().setSymbolSearchResults({
               templateBbox: msg.templateBbox as [number, number, number, number],
               sourcePageNumber: msg.sourcePageNumber as number,
@@ -214,12 +271,17 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
               searchedAt: msg.searchedAt as string,
             });
           } else if (msg.type === "error") {
+            if (!ownsSymbolSession(token, capturedPublicId)) {
+              abort.abort();
+              return;
+            }
             throw new Error((msg.message as string) || "Engine error");
           }
         }
       }
     } catch (err) {
       clearTimeout(timeout);
+      if (!ownsSymbolSession(token, capturedPublicId)) return;
       if ((err as Error).name === "AbortError") {
         if (timedOut) {
           useToolStore.getState().setSymbolSearchError("Search timed out — try searching fewer pages");
@@ -232,9 +294,19 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
       );
     } finally {
       clearTimeout(timeout);
-      useToolStore.getState().setSymbolSearchLoading(false);
-      useToolStore.getState().setSymbolSearchProgress(null);
+      if (abortRef.current === abort) abortRef.current = null;
+      if (ownsSymbolSession(token, capturedPublicId)) {
+        useToolStore.setState({
+          symbolSearchLoading: false,
+          symbolSearchProgress: null,
+        });
+      }
     }
+  }, []);
+
+  const renewSymbolTemplate = useCallback((clearError = false) => {
+    abortRef.current?.abort();
+    renewSymbolSearchTemplate(clearError);
   }, []);
 
   // Determine UI state
@@ -249,8 +321,8 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
   return (
     <div
       className={embedded ? "flex flex-col h-full overflow-hidden" : "flex flex-col w-72 max-h-[60vh] bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden"}
-      onPointerDownCapture={() => invalidateParseToolAuthority()}
-      onKeyDownCapture={() => invalidateParseToolAuthority()}
+      onPointerDownCapture={() => invalidateToolTailAuthority()}
+      onKeyDownCapture={() => invalidateToolTailAuthority()}
     >
       {/* Header — hidden in embedded mode; parent orchestrator provides its own. */}
       {!embedded && (
@@ -305,7 +377,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                     : "Loading pages..."}
                 </div>
                 <button
-                  onClick={() => abortRef.current?.abort()}
+                  onClick={cancelSearchRun}
                   className="text-[9px] text-[var(--muted)] hover:text-red-400"
                 >
                   Cancel
@@ -354,11 +426,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
           ) : (
             <button
               type="button"
-              onClick={() => {
-                const s = useToolStore.getState();
-                s.setMode("pointer");
-                s.setSymbolSearchActive(true);
-              }}
+              onClick={() => setSymbolSearchActive(true)}
               className="w-full text-xs font-medium px-3 py-1.5 rounded bg-cyan-600 text-white hover:bg-cyan-500"
             >
               Start &mdash; Draw Template
@@ -599,11 +667,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
 
           {/* Redraw button */}
           <button
-            onClick={() => {
-              useToolStore.getState().setSymbolSearchResults(null);
-              useToolStore.getState().setSymbolSearchTemplateBbox(null);
-              useToolStore.getState().setSymbolSearchActive(true);
-            }}
+            onClick={() => renewSymbolTemplate()}
             className="w-full text-[9px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/40"
           >
             Redraw Template
@@ -654,11 +718,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
               Back to Config
             </button>
             <button
-              onClick={() => {
-                useToolStore.getState().setSymbolSearchError(null);
-                useToolStore.getState().setSymbolSearchTemplateBbox(null);
-                useToolStore.getState().setSymbolSearchActive(true);
-              }}
+              onClick={() => renewSymbolTemplate(true)}
               className="flex-1 text-[9px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
             >
               Redraw
@@ -739,15 +799,23 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                 disabled={symbolSaving}
                 onClick={async () => {
                   const store = useToolStore.getState();
-                  const { publicId, isDemo } = useSessionStore.getState();
-                  if (!publicId || isDemo) {
-                    store.setSymbolSearchError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
+                  const session = useSessionStore.getState();
+                  const capturedPublicId = session.publicId;
+                  const capturedActivation = store.activeTool?.kind === "symbolTemplate"
+                    ? store.activeTool
+                    : null;
+                  const token = claimLatestToolOperation("symbolSession", {});
+                  if (!capturedPublicId || session.isDemo) {
+                    store.setSymbolSearchError(
+                      session.isDemo ? "Cannot save in demo mode" : "Project not loaded",
+                    );
                     return;
                   }
+                  const capturedAnnotationsKey = queryKeys.annotations.all(capturedPublicId);
                   // [refactor jul11 P2.2⑥] LOAD-BEARING pre-await snapshot. Symbol save has a
                   // characterized lost-update quirk: a concurrent annotation is discarded when the
                   // response replaces this captured array. Do not turn the write below functional.
-                  const capturedAnnotations = readAnnotations(queryClient, publicId);
+                  const capturedAnnotations = readAnnotations(queryClient, capturedPublicId);
                   setSymbolSaving(true);
                   setSymbolSaveMsg(null);
                   try {
@@ -770,7 +838,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
-                        projectId: publicId,
+                        projectId: capturedPublicId,
                         annotations: annInputs,
                         deleteSource: "symbol-search",
                         deletePageNumbers: pageNums,
@@ -784,24 +852,31 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                     if (data.annotations) {
                       const cleaned = capturedAnnotations.filter((a) => !(a.source === "symbol-search" && pageNums.includes(a.pageNumber)));
                       queryClient.setQueryData(
-                        queryKeys.annotations.all(publicId),
+                        capturedAnnotationsKey,
                         [...cleaned, ...data.annotations],
                       );
-                      setSymbolSaveMsg(`Saved ${data.annotations.length} annotations`);
-                      setTimeout(() => setSymbolSaveMsg(null), 3000);
-                      // Clear the search UI — matches vanish from the panel
-                      // and the Save button goes with them. Mirrors Shape
-                      // Parse's post-save `setMode("move")` lifecycle so
-                      // users see "done" instead of "still showing results."
-                      store.setSymbolSearchResults(null);
-                      store.setSymbolSearchTemplateBbox(null);
-                      publishSettledSymbolSearchActive(false);
+                      // Durable rows always land their captured project key. Session cleanup is a
+                      // separate exact-lane/project tail and exact-CASes only the activation seen at
+                      // admission, so a reentrant Symbol B or unrelated canvas tool survives.
+                      if (ownsSymbolSession(token, capturedPublicId)) {
+                        publishSettledSymbolSearchCleanup(capturedActivation);
+                        if (ownsSymbolSession(token, capturedPublicId)) {
+                          setSymbolSaveMsg(`Saved ${data.annotations.length} annotations`);
+                          setTimeout(() => {
+                            if (ownsSymbolSession(token, capturedPublicId)) {
+                              setSymbolSaveMsg(null);
+                            }
+                          }, 3000);
+                        }
+                      }
                     }
                   } catch (err) {
-                    console.error("[SYMBOL_SEARCH] Save failed:", err);
-                    store.setSymbolSearchError(
-                      err instanceof Error ? err.message : "Save failed"
-                    );
+                    if (ownsSymbolSession(token, capturedPublicId)) {
+                      console.error("[SYMBOL_SEARCH] Save failed:", err);
+                      store.setSymbolSearchError(
+                        err instanceof Error ? err.message : "Save failed"
+                      );
+                    }
                   } finally {
                     setSymbolSaving(false);
                   }
@@ -818,11 +893,7 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
               Re-run with Current Settings
             </button>
             <button
-              onClick={() => {
-                useToolStore.getState().setSymbolSearchResults(null);
-                useToolStore.getState().setSymbolSearchTemplateBbox(null);
-                useToolStore.getState().setSymbolSearchActive(true);
-              }}
+              onClick={() => renewSymbolTemplate()}
               className="w-full text-[9px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]"
             >
               Search New Symbol

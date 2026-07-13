@@ -11,7 +11,7 @@ import { useAnnotations } from "@/queries/useAnnotations";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientTakeoffItem } from "@/types";
 import { apiErrorMessage } from "@/lib/client-persist";
-import { invalidateParseToolAuthority } from "@/lib/parse-tool-authority";
+import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
 
 interface BucketFillAssignDialogProps {
   pendingPolygon: NonNullable<ReturnType<typeof useToolStore.getState>["bucketFillPendingPolygon"]>;
@@ -122,8 +122,8 @@ export default function BucketFillAssignDialog({
         transform: cssScale !== 1 ? `scale(${cssScale})` : undefined,
         transformOrigin: "top left",
       }}
-      onPointerDownCapture={() => invalidateParseToolAuthority()}
-      onKeyDownCapture={() => invalidateParseToolAuthority()}
+      onPointerDownCapture={() => invalidateToolTailAuthority()}
+      onKeyDownCapture={() => invalidateToolTailAuthority()}
       onClick={(e) => e.stopPropagation()}
     >
       <div style={{ fontSize: 11, fontWeight: 600, color: "var(--fg, #e0e0e0)", marginBottom: 8 }}>

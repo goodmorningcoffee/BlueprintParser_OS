@@ -131,6 +131,7 @@ beforeEach(() => {
   setViewerStoreStateForTest({
     publicId: "pid",
     isDemo: false,
+    activeTool: null,
     takeoffUndoStack: [],
     takeoffRedoStack: [],
   });
@@ -169,6 +170,7 @@ describe("TakeoffPanel takeoff undo/redo buttons", () => {
     // [refactor jul11 P2.2⑥] Current button enablement is history-length based. Seed one prior
     // undo row so the REAL button can invoke the action; the action must append, not replace, it.
     setViewerStoreStateForTest({
+      activeTool: { kind: "takeoffPlacement" },
       activeTakeoffItemId: 7,
       pageNumber: 1,
       takeoffUndoStack: [priorUndo],
@@ -200,6 +202,7 @@ describe("TakeoffPanel takeoff undo/redo buttons", () => {
     // restores from undoStack. Seed both independently so the click exercises the production action
     // and freezes its actual append/move semantics without reaching around the disabled button.
     setViewerStoreStateForTest({
+      activeTool: { kind: "takeoffPlacement" },
       activeTakeoffItemId: 7,
       pageNumber: 1,
       takeoffUndoStack: [restored],
@@ -233,6 +236,7 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
       userAnnotation(5), // survives undo and precedes the restored row after W
     ]);
     setViewerStoreStateForTest({
+      activeTool: { kind: "takeoffPlacement" },
       activeTakeoffItemId: 7,
       pageNumber: 1,
       takeoffUndoStack: [],
@@ -268,6 +272,7 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
     const rowsBefore = readCurrentAnnotations();
     expect(rowsBefore).toEqual(rows);
     setViewerStoreStateForTest({
+      activeTool: null,
       activeTakeoffItemId: null,
       pageNumber: 1,
       takeoffUndoStack: priorUndo,
@@ -289,7 +294,11 @@ describe("useKeyboardShortcuts takeoff Z/W", () => {
 
     // The effect deliberately has [] deps, so changing these fields after mount also proves that the
     // handler reads live store state. Item 7 exists, but only on page 1; page 2 is the no-match guard.
-    setViewerStoreStateForTest({ activeTakeoffItemId: 7, pageNumber: 2 });
+    setViewerStoreStateForTest({
+      activeTool: { kind: "takeoffPlacement" },
+      activeTakeoffItemId: 7,
+      pageNumber: 2,
+    });
     const noMatchEvent = pressKey("z");
     await waitFor(() => {
       expect(noMatchEvent.defaultPrevented).toBe(true); // key recognized; operation itself no-ops
