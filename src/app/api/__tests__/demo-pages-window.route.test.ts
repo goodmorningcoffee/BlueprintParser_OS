@@ -14,7 +14,7 @@
 //   • annotation visibility = isNull(creatorId) OR source ∈ {yolo, shape-parse, symbol-search} —
 //     a demo visitor sees project-scoped + ALL machine annotations but NEVER a user's hand-drawn
 //     (creatorId set + source "user"). Differs from the authed twin (own + machine).
-//   • NO Cache-Control header (the authed twin's private,max-age=300 is absent here — pinned).
+//   • NO Cache-Control header (the authed twin's private,no-cache is absent here — pinned).
 //   • non-uuid id: legacy had no catch → pg uuid-cast THREW (S003 class). Now a clean 400
 //     "Invalid project id" AFTER the range gate (sanctioned diff C).
 // Assertions tagged [P1.5 fold] were flipped in the fold commit from the legacy {error:string}

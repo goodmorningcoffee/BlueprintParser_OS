@@ -244,8 +244,10 @@ export async function getPageTextract(req: Request) {
  *
  *  Like getPageTextract this returns a RAW NextResponse so the Cache-Control header survives the
  *  shell's `result instanceof Response` passthrough (defineRoute.ts:248, before the kind check) — a
- *  plain object would be json-enveloped and DROP the header (the viewer would lose its 5-min cache;
- *  PERF-SACRED — do NOT "simplify" to a plain return). Frozen quirks (verbatim from legacy
+ *  plain object would be json-enveloped and DROP the header. The mutable composite must revalidate:
+ *  a fresh max-age replayed pre-write annotations/page intelligence after reload or range revisit.
+ *  `private, no-cache` retains private storage/conditional-revalidation semantics without allowing
+ *  that stale overwrite. Frozen quirks (verbatim from legacy
  *  projects/[id]/pages/route.ts): range validated BEFORE access (validate-before-auth → the route
  *  shell MUST stay auth:"none", and NO zod query schema [it would coerce from/to + change the 400
  *  message]); the two queries run in PARALLEL; the annotation visibility OR() (own + the 3
@@ -255,8 +257,9 @@ export async function getPageTextract(req: Request) {
  *  raw passthrough on note. Sanctioned diffs: A (error-envelope flip), B (leak-drop — legacy had ZERO
  *  try/catch, so an unexpected DB error escaped as a raw leaky 500; now the shell's generic INTERNAL
  *  500), C (non-uuid id → clean 400 via resolveByPublicId's zPublicId, was a pg-uuid-cast 500), and
- *  later PW-D9 (four server/legacy-only PI keys omitted from the response). Every other 200 field and
- *  the Cache-Control contract remain frozen. */
+ *  later PW-D9 (four server/legacy-only PI keys omitted from the response), and P2.4 cache
+ *  correctness (`private, no-cache` replaces the stale five-minute replay policy). Every other 200
+ *  field remains frozen. */
 export async function getPageWindow(req: Request, idParam: string): Promise<Response> {
   const url = new URL(req.url);
   const from = parseInt(url.searchParams.get("from") || "1", 10);
@@ -341,7 +344,7 @@ export async function getPageWindow(req: Request, idParam: string): Promise<Resp
       data: a.data ?? null,
     })),
   });
-  response.headers.set("Cache-Control", "private, max-age=300, stale-while-revalidate=600");
+  response.headers.set("Cache-Control", "private, no-cache");
   return response;
 }
 

@@ -171,15 +171,16 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
   // the original P0.3 happy-path test did not cover. They assert CURRENT legacy behavior (run
   // GREEN vs the legacy route in the freeze commit); the assertions tagged `[P1.5 fold]` flip to
   // the {code,message} envelope (or 400) in the fold commit. The status codes + Cache-Control +
-  // 200 payload shape are STABLE across the fold (only sanctioned diffs A/B/C apply).
+  // 200 payload shape are STABLE across the fold (only sanctioned diffs A/B/C apply). P2.4 later
+  // changed only the mutable window's cache policy: every reuse must revalidate after writes.
 
-  it("sets Cache-Control on the 200 — perf-relevant; must survive the shell via the raw-NextResponse passthrough", async () => {
+  it("requires private revalidation on the mutable window and preserves the raw-Response header", async () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1);
     asUser(user);
     const res = await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId }));
     expect(res.status).toBe(200);
-    expect(res.headers.get("Cache-Control")).toBe("private, max-age=300, stale-while-revalidate=600");
+    expect(res.headers.get("Cache-Control")).toBe("private, no-cache");
   });
 
   it("signed-out → 401 (this authed route passes NO allowDemo)", async () => {
@@ -303,7 +304,7 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
     asUser(user);
 
     const res = await GET(windowReq(project.publicId, 1, 4), params({ id: project.publicId }));
-    expect(res.headers.get("Cache-Control")).toBe("private, max-age=300, stale-while-revalidate=600");
+    expect(res.headers.get("Cache-Control")).toBe("private, no-cache");
     const { status, body } = await readJson(res);
     expect(status).toBe(200);
     const byPage = Object.fromEntries(
