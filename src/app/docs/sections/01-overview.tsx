@@ -82,7 +82,7 @@ export function Section01Overview() {
           </li>
           <li>
             <strong>Graph / Output Layer</strong> (downstream consumers): every
-            user-committed ParsedRegion promotes via <InlineCode>/api/regions/promote</InlineCode>{" "}
+            user-committed ParsedRegion promotes via <InlineCode>POST /api/regions/promote</InlineCode>{" "}
             into <InlineCode>pageIntelligence.parsedRegions</InlineCode>; CSI tags merge
             into <InlineCode>pages.csiCodes</InlineCode> via idempotent{" "}
             <InlineCode>mergeCsiCodes</InlineCode>;{" "}
@@ -108,8 +108,9 @@ export function Section01Overview() {
           augments those blobs on admin trigger. The Viewer reads server collections through
           project-keyed Query facades and keeps client state in explicit Zustand owners: session,
           UI, viewer core, tools, parsing, and a residual metadata/drawing store. User parsing tools write back
-          to the same blobs via the generic <InlineCode>/api/regions/promote</InlineCode>{" "}
-          commit route. The Graph/Output layer re-derives summaries on every commit and serves them
+          to the same blobs via the transactional <InlineCode>POST /api/regions/promote</InlineCode>{" "}
+          commit and <InlineCode>DELETE /api/regions</InlineCode> deletion routes. The Graph/Output
+          layer re-derives summaries after each mutation and serves them
           to Chat and the Admin dashboard. The whole stack is one database shape with one write path
           per mutation, which is why every number in the UI traces back to a pixel on a page.
         </p>

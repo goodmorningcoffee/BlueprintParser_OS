@@ -8,7 +8,7 @@
  * blob-overwrite clobbering sibling regions. The rule now:
  *   - gate on `publicId` (string, resolvable by every route + root-admin-safe)
  *   - never silently swallow — `persistFetch` throws a useful Error on !ok
- *   - parsed regions go through the transactional /api/regions/promote (upsert)
+ *   - parsed regions go through transactional /api/regions/promote (upsert) or /api/regions (delete)
  */
 
 import type {
@@ -64,6 +64,19 @@ export type PromoteParsedRegionRequest =
 export interface PromoteParsedRegionResponse {
   ok: true;
   parsedRegion: PromotedParsedRegion;
+  updatedIntelligence: PageIntelligence;
+  summaries: ProjectSummaries | null;
+}
+
+export interface DeletePersistedParsedRegionRequest {
+  publicId: string;
+  pageNumber: number;
+  regionId: string;
+}
+
+export interface DeletePersistedParsedRegionResponse {
+  ok: true;
+  deleted: boolean;
   updatedIntelligence: PageIntelligence;
   summaries: ProjectSummaries | null;
 }
@@ -159,6 +172,21 @@ export async function promoteParsedRegion(
         },
       };
   return persistFetch("/api/regions/promote", request) as Promise<PromoteParsedRegionResponse>;
+}
+
+/**
+ * Delete one persisted ParsedRegion through the transactional region endpoint. The Query-aware
+ * command is the sole production caller and owns authoritative cache adoption; this helper owns
+ * only the exact low-level wire contract.
+ */
+export async function deletePersistedParsedRegion(
+  args: DeletePersistedParsedRegionRequest,
+): Promise<DeletePersistedParsedRegionResponse> {
+  return persistFetch("/api/regions", {
+    publicId: args.publicId,
+    pageNumber: args.pageNumber,
+    regionId: args.regionId,
+  }, "DELETE") as Promise<DeletePersistedParsedRegionResponse>;
 }
 
 /** Deterministic, stable region id from page + normalized bbox, so re-parsing

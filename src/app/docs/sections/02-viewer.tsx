@@ -370,7 +370,7 @@ export function Section02Viewer() {
                 <div className="text-[var(--muted)]">Symbol legend variant; shares NotesData shape.</div>
               </li>
             </ul>
-            <div className="text-[var(--muted)] pt-1">All types commit through the generic <InlineCode>POST /api/regions/promote</InlineCode> route. Server merges CSI tags into <InlineCode>pages.csiCodes</InlineCode> via <InlineCode>mergeCsiCodes</InlineCode> and refreshes <InlineCode>projectIntelligence.summaries</InlineCode> after the transaction commits.</div>
+            <div className="text-[var(--muted)] pt-1">All types commit through the generic <InlineCode>POST /api/regions/promote</InlineCode> route. Detailed schedule rows delete through <InlineCode>DELETE /api/regions</InlineCode>. Both mutations lock the page row and refresh <InlineCode>projectIntelligence.summaries</InlineCode> after commit; promotion also merges CSI tags into <InlineCode>pages.csiCodes</InlineCode>.</div>
           </li>
         </ul>
       </SubSection>

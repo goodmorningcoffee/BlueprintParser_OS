@@ -77,7 +77,7 @@ function renderItem(): void {
       yoloTags={[existingTag()]}
       pageNumber={PAGE}
       publicId={PUBLIC_ID}
-      onDelete={vi.fn()}
+      isDemo={false}
       cellStructureOperation={{
         detect: vi.fn(async () => false),
         clear: vi.fn(),

@@ -139,7 +139,7 @@ describe("A2b Table cell-structure operation authority", () => {
       yoloTags={[]}
       pageNumber={1}
       publicId={PUBLIC_ID}
-      onDelete={vi.fn()}
+      isDemo={false}
       cellStructureOperation={{
         detect,
         clear,

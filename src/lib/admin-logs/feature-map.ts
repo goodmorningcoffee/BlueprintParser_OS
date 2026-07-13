@@ -32,6 +32,7 @@ const EXACT_MAP: Record<RouteKey, string> = {
 
   // Parser commit / saves
   "POST /api/regions/promote": "Save Parsed Region",
+  "DELETE /api/regions": "Delete Parsed Region",
   "POST /api/annotations": "Create Annotation",
   "POST /api/markup": "Create Markup",
   "POST /api/takeoff-items": "Save Takeoff Item",

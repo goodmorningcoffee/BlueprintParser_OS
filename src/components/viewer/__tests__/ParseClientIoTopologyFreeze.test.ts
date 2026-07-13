@@ -20,6 +20,7 @@ const MAP_TRANSPORT_MODULE = "@/lib/client-map-tags";
 const MAP_TRANSPORT_FILE = "src/lib/client-map-tags.ts";
 const SPATIAL_TARGET_FILE = "src/lib/csi-spatial-refresh-target.ts";
 const PROMOTE_ENDPOINT = "/api/regions/promote";
+const DELETE_ENDPOINT = "/api/regions";
 const MAP_TAGS_ENDPOINT = "/api/projects/${}/map-tags-batch";
 
 type ClientIoPhase = "F1" | "C1" | "C2" | "C3";
@@ -1119,6 +1120,86 @@ describe("P2.4 C3 parse client-I/O topology", () => {
       owner: "promoteParsedRegion",
       callee: "persistFetch",
     }]);
+  });
+
+  it("pins W1 to one awaited row command, one Query helper call, and one low-level DELETE endpoint", () => {
+    const commandBorrowers = allCalls.filter((record) =>
+      isImported(record, PARSED_REGIONS_MODULE, "deleteParsedRegion"),
+    );
+    expect(sortedSites(commandBorrowers)).toEqual([{
+      file: "src/components/viewer/ParsedTableItem.tsx",
+      owner: "handleDelete",
+      transport: "@/queries/parsedRegions.deleteParsedRegion",
+    }]);
+    expect(commandBorrowers.every((record) => ts.isAwaitExpression(record.node.parent))).toBe(true);
+    expect(commandBorrowers.map((record) => ({
+      queryClient: compactExpression(record.node.arguments[0]!),
+      target: objectArgumentContract(record.node.arguments[1]),
+    }))).toEqual([{
+      queryClient: "queryClient",
+      target: {
+        publicId: "publicId",
+        isDemo: "isDemo",
+        pageNumber: "table.pageNum",
+        regionId: "regionId",
+      },
+    }]);
+
+    const helperCalls = allCalls.filter((record) =>
+      isImported(record, CLIENT_PERSIST_MODULE, "deletePersistedParsedRegion"),
+    );
+    expect(sortedSites(helperCalls)).toEqual([{
+      file: PARSED_REGIONS_FILE,
+      owner: "deleteParsedRegion",
+      transport: "@/lib/client-persist.deletePersistedParsedRegion",
+    }]);
+    expect(helperCalls.every((record) => ts.isAwaitExpression(record.node.parent))).toBe(true);
+
+    const endpointCalls = allCalls.filter((record) => record.endpoint?.pattern === DELETE_ENDPOINT);
+    expect(endpointCalls.map((record) => ({
+      file: record.file,
+      owner: record.owner,
+      callee: record.calleeText,
+    }))).toEqual([{
+      file: CLIENT_PERSIST_FILE,
+      owner: "deletePersistedParsedRegion",
+      callee: "persistFetch",
+    }]);
+
+    const forbiddenRowAuthority = allCalls.filter((record) =>
+      record.file === "src/components/viewer/ParsedTableItem.tsx" &&
+      record.owner === "handleDelete" &&
+      (
+        record.provenance?.kind === "global" ||
+        record.endpoint !== null ||
+        isImported(record, CLIENT_PERSIST_MODULE, "deletePersistedParsedRegion") ||
+        isImported(record, CLIENT_PERSIST_MODULE, "persistFetch") ||
+        isImported(record, "@/queries/usePageWindow", "setPageIntelligenceForPage") ||
+        isImported(record, "@/queries/usePageWindow", "updatePageIntelligenceForPage") ||
+        isImported(record, "@/queries/useSummaries", "seedSummariesCache") ||
+        isImported(record, "@/lib/csi-spatial-refresh-target", "refreshPageCsiSpatialMapForTarget")
+      ),
+    );
+    expect(sortedSites(forbiddenRowAuthority)).toEqual([]);
+
+    const panel = parse("src/components/viewer/TableParsePanel.tsx");
+    expect(descendants(panel, (node): node is ts.CallExpression =>
+      ts.isCallExpression(node) && node.expression.getText(panel) === "useMemo"
+    )).toHaveLength(5);
+    const itemElements = descendants(
+      panel,
+      (node): node is ts.JsxSelfClosingElement =>
+        ts.isJsxSelfClosingElement(node) && node.tagName.getText(panel) === "ParsedTableItem",
+    );
+    expect(itemElements).toHaveLength(1);
+    const attributes = itemElements[0].attributes.properties.filter(ts.isJsxAttribute);
+    expect(attributes.map((attribute) => attribute.name.getText(panel))).not.toContain("onDelete");
+    const key = attributes.find((attribute) => attribute.name.getText(panel) === "key");
+    expect(key?.initializer?.getText(panel).replace(/\s+/g, "")).toBe("{t.reactKey}");
+    const keyBuilder = textOf("src/components/viewer/TableParsePanel.tsx").replace(/\s+/g, "");
+    expect(keyBuilder).toContain("`${publicId}:${table.pageNum}:${table.region.id}`");
+    expect(keyBuilder).toContain("`summary:${publicId}:${table.pageNum}:${table.name}`");
+    expect(keyBuilder).toContain("reactKey:`${base}:${occurrence}`");
   });
 
   it("pins six typed map callers, zero raw component fetches, and one low-level fetch", () => {

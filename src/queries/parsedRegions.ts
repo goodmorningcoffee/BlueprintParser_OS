@@ -1,13 +1,18 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 import {
+  deletePersistedParsedRegion,
   promoteParsedRegion,
+  type DeletePersistedParsedRegionResponse,
   type ParsedRegionKind,
   type ParsedRegionPromotionCsiTag,
   type PromoteParsedRegionResponse,
 } from "@/lib/client-persist";
 import { refreshPageCsiSpatialMapForTarget } from "@/lib/csi-spatial-refresh-target";
-import { setPageIntelligenceForPage } from "@/queries/usePageWindow";
+import {
+  setPageIntelligenceForPage,
+  updatePageIntelligenceForPage,
+} from "@/queries/usePageWindow";
 import { seedSummariesCache } from "@/queries/useSummaries";
 import type { BboxMinMax } from "@/types";
 
@@ -47,6 +52,44 @@ export type SaveParsedRegionResult =
   | { status: "local"; reason: "demo" }
   | { status: "skipped"; reason: "missing-public-id" };
 
+export interface DeleteParsedRegionTarget {
+  readonly publicId: string | null;
+  readonly isDemo: boolean;
+  readonly pageNumber: number;
+  readonly regionId: string | null;
+}
+
+export type DeleteParsedRegionResult =
+  | { status: "persisted"; response: DeletePersistedParsedRegionResponse }
+  | { status: "local"; reason: "demo" }
+  | { status: "skipped"; reason: "missing-public-id" | "missing-region-id" };
+
+function isNonArrayObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertDeletionResponse(
+  response: unknown,
+): asserts response is DeletePersistedParsedRegionResponse {
+  const updatedIntelligence = isNonArrayObject(response)
+    ? response.updatedIntelligence
+    : null;
+  const parsedRegions = isNonArrayObject(updatedIntelligence)
+    ? updatedIntelligence.parsedRegions
+    : undefined;
+  if (
+    !isNonArrayObject(response) ||
+    response.ok !== true ||
+    typeof response.deleted !== "boolean" ||
+    !isNonArrayObject(updatedIntelligence) ||
+    (parsedRegions !== undefined && !Array.isArray(parsedRegions)) ||
+    (response.deleted && !Array.isArray(parsedRegions)) ||
+    (response.summaries !== null && !isNonArrayObject(response.summaries))
+  ) {
+    throw new Error("Malformed parsed-region deletion response");
+  }
+}
+
 export async function saveParsedRegion(
   queryClient: QueryClient,
   target: SaveParsedRegionTarget,
@@ -82,6 +125,48 @@ export async function saveParsedRegion(
 
   // Exact persistent tail: Persist -> authoritative Adoption -> optional Summaries -> spatial
   // recompute. The captured publicId/page owns every write, even if the visible session changes.
+  setPageIntelligenceForPage(
+    queryClient,
+    publicId,
+    pageNumber,
+    response.updatedIntelligence,
+  );
+  if (response.summaries) {
+    seedSummariesCache(queryClient, publicId, response.summaries);
+  }
+  refreshPageCsiSpatialMapForTarget(queryClient, publicId, pageNumber);
+
+  return { status: "persisted", response };
+}
+
+/**
+ * Transactional ParsedRegion deletion with one synchronously captured project/page/region target.
+ * Real projects stay server-first; demos apply the same all-duplicates filter locally.
+ */
+export async function deleteParsedRegion(
+  queryClient: QueryClient,
+  target: DeleteParsedRegionTarget,
+): Promise<DeleteParsedRegionResult> {
+  const { publicId, isDemo, pageNumber, regionId } = target;
+  if (!publicId) return { status: "skipped", reason: "missing-public-id" };
+  if (!regionId) return { status: "skipped", reason: "missing-region-id" };
+
+  if (isDemo) {
+    updatePageIntelligenceForPage(queryClient, publicId, pageNumber, (current) => ({
+      ...(current ?? {}),
+      parsedRegions: (current?.parsedRegions ?? []).filter((region) => region.id !== regionId),
+    }));
+    refreshPageCsiSpatialMapForTarget(queryClient, publicId, pageNumber);
+    return { status: "local", reason: "demo" };
+  }
+
+  const response: unknown = await deletePersistedParsedRegion({
+    publicId,
+    pageNumber,
+    regionId,
+  });
+  assertDeletionResponse(response);
+
   setPageIntelligenceForPage(
     queryClient,
     publicId,

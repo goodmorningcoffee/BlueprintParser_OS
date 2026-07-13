@@ -1,7 +1,8 @@
 // [refactor jun17 P1.3] Regions service — P1.3 core family 7/7 (the LAST core family).
 //
-// The single regions route file (`regions/promote` — the "Stage 4 generic commit" route) is now a
-// thin `defineRoute` shell; ALL behavior lives here in `promoteRegion`. Behavior is preserved EXACTLY
+// The then-single regions route file (`regions/promote` — the "Stage 4 generic commit" route) became
+// a thin `defineRoute` shell; all of that route's behavior lives here in `promoteRegion`. Behavior
+// is preserved EXACTLY
 // against the NEW characterization test added with this migration (regions-promote.route.test.ts —
 // no P0.3 char file existed for this family, so it IS the freeze). Structurally this route is a
 // near-twin of pages/intelligence (services/pages.ts `updatePageIntelligence`): validate-before-auth,
@@ -53,6 +54,9 @@
 // resolveDual trio that lived here (and in pages.ts) was hoisted byte-identical to
 // server/api/access.ts; this file now imports resolveDual. Behavior identical (opts were already
 // explicit at the one call site).
+//
+// [refactor jul13 P2.4 W1] The family now also owns DELETE /api/regions. Its strict declarative
+// access shell delegates the already-authorized numeric project id to deleteParsedRegion below.
 
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
@@ -336,6 +340,72 @@ export async function promoteRegion(body: Record<string, unknown>) {
   return {
     ok: true,
     parsedRegion: result.parsedRegion,
+    updatedIntelligence: result.updatedIntelligence,
+    summaries,
+  };
+}
+
+// ── DELETE /api/regions ─────────────────────────────────────────────────────
+
+/**
+ * Delete a persisted ParsedRegion from one already-authorized project page.
+ *
+ * The page row is locked before reading its mixed-ownership JSONB so concurrent deletes cannot
+ * overwrite one another. Every matching id is removed (old rows can contain duplicates), while
+ * sibling order and unrelated PageIntelligence fields are preserved. Page-level CSI codes are
+ * deliberately untouched: that merged list has no source ownership information.
+ */
+export async function deleteParsedRegion(
+  projectId: number,
+  pageNumber: number,
+  regionId: string,
+) {
+  const result = await db.transaction(async (tx) => {
+    const [pageRow] = await tx
+      .select({
+        id: pages.id,
+        pageIntelligence: pages.pageIntelligence,
+      })
+      .from(pages)
+      .where(and(eq(pages.projectId, projectId), eq(pages.pageNumber, pageNumber)))
+      .for("update")
+      .limit(1);
+
+    if (!pageRow) {
+      throw new ApiError("NOT_FOUND", "Page not found");
+    }
+
+    const currentIntelligence = (pageRow.pageIntelligence ?? {}) as PageIntelligence;
+    const currentRegions = currentIntelligence.parsedRegions ?? [];
+    const nextRegions = currentRegions.filter((region) => region.id !== regionId);
+    const deleted = nextRegions.length !== currentRegions.length;
+
+    if (!deleted) {
+      return { deleted: false, updatedIntelligence: currentIntelligence };
+    }
+
+    const updatedIntelligence: PageIntelligence = {
+      ...currentIntelligence,
+      parsedRegions: nextRegions,
+    };
+    await tx
+      .update(pages)
+      .set({ pageIntelligence: updatedIntelligence })
+      .where(eq(pages.id, pageRow.id));
+
+    return { deleted: true, updatedIntelligence };
+  });
+
+  let summaries = null;
+  try {
+    summaries = await computeProjectSummaries(projectId);
+  } catch (err) {
+    logger.warn("[regions/delete] Summary recompute failed (non-fatal):", err);
+  }
+
+  return {
+    ok: true,
+    deleted: result.deleted,
     updatedIntelligence: result.updatedIntelligence,
     summaries,
   };

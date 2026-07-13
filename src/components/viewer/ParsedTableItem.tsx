@@ -21,7 +21,7 @@ import {
 } from "@/queries/usePageWindow";
 import { canPersist } from "@/lib/client-persist";
 import { requestMapTagsBatch } from "@/lib/client-map-tags";
-import { saveParsedRegion } from "@/queries/parsedRegions";
+import { deleteParsedRegion, saveParsedRegion } from "@/queries/parsedRegions";
 import type { YoloTag } from "@/types";
 import type { MapTagsStrictness } from "./MapTagsSection";
 
@@ -33,7 +33,7 @@ interface ParsedTableItemProps {
   yoloTags: YoloTag[];
   pageNumber: number;
   publicId: string;
-  onDelete: () => void;
+  isDemo: boolean;
   focusedParsedRegionId?: string | null;
   cellStructureOperation: TableCellStructureOperation;
 }
@@ -47,7 +47,7 @@ export default memo(function ParsedTableItem({
   yoloTags,
   pageNumber,
   publicId,
-  onDelete,
+  isDemo,
   focusedParsedRegionId,
   cellStructureOperation,
 }: ParsedTableItemProps) {
@@ -76,6 +76,10 @@ export default memo(function ParsedTableItem({
   const [mapYoloClass, setMapYoloClass] = useState<{ model: string; className: string } | null>(null);
   const [mapping, setMapping] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  // W1 deletion authority is row-local and synchronous. React state drives presentation, while
+  // this ref rejects a second click in the same turn before React can publish `deleting`.
+  const deletePendingRef = useRef(false);
+  const [deleting, setDeleting] = useState(false);
   // Phase 4 — inline strictness + drawing-number-prefix scope for the
   // per-table Map Tags panel. Mirror the TableParsePanel selector UX,
   // but condensed (stacked chip rows inside the existing panel).
@@ -183,6 +187,32 @@ export default memo(function ParsedTableItem({
   };
 
   const [editError, setEditError] = useState<string | null>(null);
+
+  const handleDelete = useCallback(async () => {
+    if (deletePendingRef.current) return;
+    const regionId = table.region?.id as string | undefined;
+    if (!regionId) return;
+
+    deletePendingRef.current = true;
+    setDeleting(true);
+    setEditError(null);
+    try {
+      const result = await deleteParsedRegion(queryClient, {
+        publicId,
+        isDemo,
+        pageNumber: table.pageNum,
+        regionId,
+      });
+      if (result.status === "skipped") {
+        throw new Error("Could not delete table: missing project or region identity");
+      }
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Could not delete table");
+    } finally {
+      deletePendingRef.current = false;
+      setDeleting(false);
+    }
+  }, [isDemo, publicId, queryClient, table.pageNum, table.region?.id]);
 
   // Persist an edited region through the transactional promote upsert (same
   // regionId → REPLACE, never duplicate) instead of the old pages/intelligence
@@ -365,7 +395,14 @@ export default memo(function ParsedTableItem({
             >
               &#9998;
             </button>
-            <button onClick={onDelete} className="text-[10px] text-[var(--muted)] hover:text-red-400 shrink-0" title="Delete table">x</button>
+            <button
+              onClick={() => { void handleDelete(); }}
+              disabled={deleting}
+              className="text-[10px] text-[var(--muted)] hover:text-red-400 disabled:opacity-50 shrink-0"
+              title="Delete table"
+            >
+              {deleting ? "…" : "x"}
+            </button>
           </>
         )}
       </div>

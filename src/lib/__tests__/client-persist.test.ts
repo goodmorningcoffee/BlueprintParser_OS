@@ -1,12 +1,12 @@
 // @vitest-environment node
-// [refactor jul11 P2.4 F1] Low-level client persistence freeze. The future Query-aware
-// ParsedRegion command may replace orchestration above this module; these wire/error semantics stay
-// explicit and must not be silently normalized during C1/C2.
+// [refactor jul13 P2.4 W1] Low-level client persistence freeze. Query-aware ParsedRegion commands
+// own orchestration above this module; these exact wire/error semantics stay explicit.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   apiErrorMessage,
   canPersist,
+  deletePersistedParsedRegion,
   persistFetch,
   promoteParsedRegion,
   regionIdFor,
@@ -239,6 +239,59 @@ describe("promoteParsedRegion current parser request", () => {
       type: "spec",
       sourceTextRegionId: "text-region-4",
     });
+  });
+});
+
+describe("deletePersistedParsedRegion wire contract", () => {
+  it("sends the sole exact DELETE request and returns the successful JSON object", async () => {
+    const serverObject = {
+      ok: true,
+      deleted: true,
+      updatedIntelligence: { parsedRegions: [] },
+      summaries: { schedules: [] },
+    };
+    fetchMock.mockResolvedValue(response({
+      ok: true,
+      json: vi.fn().mockResolvedValue(serverObject),
+    }));
+
+    const requestWithRuntimeResidue = {
+      publicId: "project-public-id",
+      pageNumber: 7,
+      regionId: "region-7",
+      ignoredByStrictWire: true,
+    };
+    const result = await deletePersistedParsedRegion(requestWithRuntimeResidue);
+
+    expect(result).toBe(serverObject);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/regions");
+    expect(fetchMock.mock.calls[0][1]).toEqual({
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        publicId: "project-public-id",
+        pageNumber: 7,
+        regionId: "region-7",
+      }),
+      signal: undefined,
+    });
+  });
+
+  it("propagates the useful persistFetch error without normalization", async () => {
+    fetchMock.mockResolvedValue(response({
+      ok: false,
+      status: 404,
+      json: vi.fn().mockResolvedValue({
+        error: { code: "NOT_FOUND", message: "Page not found" },
+      }),
+    }));
+
+    await expectExactError(deletePersistedParsedRegion({
+      publicId: "P",
+      pageNumber: 99,
+      regionId: "R",
+    }), "Page not found");
   });
 });
 

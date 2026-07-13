@@ -87,7 +87,7 @@ export default function TableParsePanel() {
   const parsedRegionColorMode = useUiStore((s) => s.parsedRegionColorMode);
   const setParsedRegionColorMode = useUiStore((s) => s.setParsedRegionColorMode);
   const focusedParsedRegionId = useUiStore((s) => s.focusedParsedRegionId);
-  const { publicId } = useProject();
+  const { publicId, isDemo } = useProject();
 
   const [showExportModal, setShowExportModal] = useState(false);
 
@@ -532,12 +532,24 @@ export default function TableParsePanel() {
       }
     }
 
-    return tables.sort((a, b) => {
+    const sortedTables = tables.sort((a, b) => {
       if (a.pageNum === pageNumber && b.pageNum !== pageNumber) return -1;
       if (b.pageNum === pageNumber && a.pageNum !== pageNumber) return 1;
       return a.pageNum - b.pageNum;
     });
-  }, [summaries, pageIntelligence, pageNumber]);
+
+    // Region ids are stable but legacy JSON may contain duplicates. Assign a linear occurrence
+    // suffix inside this existing projection so identity is duplicate-safe with no extra hook.
+    const occurrences = new Map<string, number>();
+    return sortedTables.map((table) => {
+      const base = table.region?.id
+        ? `${publicId}:${table.pageNum}:${table.region.id}`
+        : `summary:${publicId}:${table.pageNum}:${table.name}`;
+      const occurrence = occurrences.get(base) ?? 0;
+      occurrences.set(base, occurrence + 1);
+      return { ...table, reactKey: `${base}:${occurrence}` };
+    });
+  }, [summaries, pageIntelligence, pageNumber, publicId]);
 
   // Update the active parsed grid's tagColumn. Used by MapTagsSection's new
   // tag-column picker — auto-detection is a heuristic that misses when the
@@ -678,9 +690,9 @@ export default function TableParsePanel() {
                     filenamePrefix="schedules"
                   />
                 )}
-                {allParsedTables.map((t, i) => (
+                {allParsedTables.map((t) => (
                   <ParsedTableItem
-                    key={i}
+                    key={t.reactKey}
                     table={t}
                     pageNames={pageNames}
                     isCurrentPage={t.pageNum === pageNumber}
@@ -688,21 +700,9 @@ export default function TableParsePanel() {
                     yoloTags={yoloTags}
                     pageNumber={pageNumber}
                     publicId={publicId}
+                    isDemo={isDemo}
                     focusedParsedRegionId={focusedParsedRegionId}
                     cellStructureOperation={cellStructureOperation}
-                    onDelete={() => {
-                      updatePageIntelligenceForPage(
-                        queryClient,
-                        publicId,
-                        t.pageNum,
-                        (current) => ({
-                          ...(current ?? {}),
-                          parsedRegions: (current?.parsedRegions ?? []).filter(
-                            (region) => region.id !== t.region.id,
-                          ),
-                        }),
-                      );
-                    }}
                   />
                 ))}
               </>
