@@ -69,11 +69,17 @@ type GestureLease = Readonly<{ gesture: string }>;
 
 type PlannedParagraphProps = Omit<
   ComponentProps<typeof ParagraphOverlay>,
-  "onParagraphUpsert" | "onParagraphRemove" | "onWorkspaceEditStart"
+  | "onParagraphUpsert"
+  | "onParagraphRemove"
+  | "onClipboardCapture"
+  | "onWorkspaceEditStart"
+  | "onExit"
 > & {
-  onParagraphUpsert: (paragraph: PendingParagraph, lease: GestureLease) => void;
-  onParagraphRemove: (paragraphId: string, lease: GestureLease) => void;
-  onWorkspaceEditStart: () => GestureLease;
+  onParagraphUpsert: (paragraph: PendingParagraph, lease: GestureLease) => boolean;
+  onParagraphRemove: (paragraphId: string, lease: GestureLease) => boolean;
+  onClipboardCapture: (template: ParagraphTemplate, lease: GestureLease) => boolean;
+  onWorkspaceEditStart: () => GestureLease | null;
+  onExit: () => boolean;
 };
 
 function renderParagraph(
@@ -93,11 +99,12 @@ function renderParagraph(
     regionKind: "notes-numbered",
     paragraphBatch: [],
     paragraphClipboard: null,
-    onParagraphUpsert: vi.fn(),
-    onParagraphRemove: vi.fn(),
-    onClipboardCapture: vi.fn(),
+    onParagraphUpsert: vi.fn(() => true),
+    onParagraphRemove: vi.fn(() => true),
+    onClipboardCapture: vi.fn(() => true),
     onWorkspaceEditStart: vi.fn(() => defaultLease),
-    onExit: vi.fn(),
+    onExit: vi.fn(() => true),
+    workspaceIdentity: "1:notes",
     width: 100,
     height: 100,
     cssScale: 1,
@@ -105,6 +112,7 @@ function renderParagraph(
   };
   const view = render(
     <ParagraphOverlay
+      key={props.workspaceIdentity}
       {...(props as unknown as ComponentProps<typeof ParagraphOverlay>)}
     />,
   );
@@ -115,9 +123,11 @@ function renderParagraph(
     canvas,
     props,
     rerender: (next) => {
+      const merged = { ...props, ...next };
       view.rerender(
         <ParagraphOverlay
-          {...({ ...props, ...next } as unknown as ComponentProps<typeof ParagraphOverlay>)}
+          key={merged.workspaceIdentity}
+          {...(merged as unknown as ComponentProps<typeof ParagraphOverlay>)}
         />,
       );
     },
@@ -232,11 +242,41 @@ describe("A2d ParagraphOverlay operation boundaries", () => {
     );
   });
 
-  it("does not lease copy, then forwards distinct valid paste and delete leases", () => {
+  it("fails closed without local focus when exact paragraph edit admission is rejected", () => {
+    const { canvas, props } = renderParagraph({
+      onWorkspaceEditStart: vi.fn(() => null),
+    });
+
+    fireEvent.doubleClick(canvas, { clientX: 30, clientY: 53 });
+    expect(props.onWorkspaceEditStart).toHaveBeenCalledTimes(1);
+    expect(props.onParagraphUpsert).not.toHaveBeenCalled();
+
+    // A rejected add must not leave local focus behind; Delete is therefore inert and does not
+    // try to acquire a second lease against whatever owner replaced the stale render.
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(props.onWorkspaceEditStart).toHaveBeenCalledTimes(1);
+    expect(props.onParagraphRemove).not.toHaveBeenCalled();
+  });
+
+  it("retires local focus when owner/page lifecycle identity changes with the same bbox", () => {
     const item = pendingParagraph();
+    const { canvas, props, rerender } = renderParagraph({ paragraphBatch: [item] });
+
+    fireEvent.mouseDown(canvas, { clientX: 40, clientY: 30 });
+    expect(props.onWorkspaceEditStart).not.toHaveBeenCalled();
+
+    rerender({ workspaceIdentity: "2:notes" });
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(props.onWorkspaceEditStart).not.toHaveBeenCalled();
+    expect(props.onParagraphRemove).not.toHaveBeenCalled();
+  });
+
+  it("forwards distinct exact leases for copy, paste, and delete", () => {
+    const item = pendingParagraph();
+    const copyLease: GestureLease = { gesture: "paragraph-copy" };
     const pasteLease: GestureLease = { gesture: "paragraph-paste" };
     const deleteLease: GestureLease = { gesture: "paragraph-delete" };
-    const leases = [pasteLease, deleteLease];
+    const leases = [copyLease, pasteLease, deleteLease];
     const clipboard: ParagraphTemplate = {
       colBoundaries: [0.2, 0.35, 0.6],
       headers: ["Key", "Note"],
@@ -257,11 +297,12 @@ describe("A2d ParagraphOverlay operation boundaries", () => {
 
     fireEvent.keyDown(window, { key: "c", metaKey: true });
     expect(props.onClipboardCapture).toHaveBeenCalledTimes(1);
-    expect(props.onWorkspaceEditStart).not.toHaveBeenCalled();
+    expect(props.onClipboardCapture).toHaveBeenCalledWith(clipboard, copyLease);
+    expect(props.onWorkspaceEditStart).toHaveBeenCalledTimes(1);
 
     fireEvent.keyDown(window, { key: "v", metaKey: true });
     expect(props.onParagraphUpsert).toHaveBeenCalledTimes(1);
-    expect(props.onWorkspaceEditStart).toHaveBeenCalledTimes(1);
+    expect(props.onWorkspaceEditStart).toHaveBeenCalledTimes(2);
     expect.soft(props.onParagraphUpsert).toHaveBeenCalledWith(
       expect.objectContaining({ id: item.id }),
       pasteLease,
@@ -269,12 +310,12 @@ describe("A2d ParagraphOverlay operation boundaries", () => {
 
     fireEvent.keyDown(window, { key: "Delete" });
     expect.soft(props.onParagraphRemove).toHaveBeenCalledWith(item.id, deleteLease);
-    expect(props.onWorkspaceEditStart).toHaveBeenCalledTimes(2);
+    expect(props.onWorkspaceEditStart).toHaveBeenCalledTimes(3);
 
     // Focus was cleared by Delete, so another Delete is a miss and publishes no boundary.
     fireEvent.keyDown(window, { key: "Delete" });
     expect(props.onParagraphRemove).toHaveBeenCalledTimes(1);
-    expect(props.onWorkspaceEditStart).toHaveBeenCalledTimes(2);
+    expect(props.onWorkspaceEditStart).toHaveBeenCalledTimes(3);
   });
 });
 

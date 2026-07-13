@@ -390,7 +390,7 @@ describe("P2.4 A1 Notes and shared-workspace extension composition", () => {
       notesParseStep: "select-region",
       notesParseRegion: BBOX,
       guidedParseActive: true,
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: "notes",
     }));
     expect(renders).toBe(baseline);
     expect(result.current).toBe(first);
@@ -424,7 +424,7 @@ describe("P2.4 A1 Notes and shared-workspace extension composition", () => {
     expect(result.current).toBe(first);
   });
 
-  it("pins the five paragraph fields while excluding hot visibility and clipboard values", () => {
+  it("pins the four paragraph batch fields while excluding hot ownership and clipboard values", () => {
     let renders = 0;
     const { result } = renderHook(() => {
       renders += 1;
@@ -436,7 +436,6 @@ describe("P2.4 A1 Notes and shared-workspace extension composition", () => {
       setParagraphBatch: state.setParagraphBatch,
       removePendingParagraph: state.removePendingParagraph,
       upsertPendingParagraph: state.upsertPendingParagraph,
-      setParagraphOverlayActive: state.setParagraphOverlayActive,
     });
     const first = result.current;
     const baseline = renders;
@@ -444,7 +443,7 @@ describe("P2.4 A1 Notes and shared-workspace extension composition", () => {
     act(() => useParseFlowStore.setState({
       notesParseStep: "select-region",
       parseDraftRegion: null,
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: "notes",
       paragraphClipboard: { colBoundaries: [0, 1], headers: ["Key", "Note"] },
     }));
     expect(renders).toBe(baseline);

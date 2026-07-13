@@ -42,6 +42,9 @@ export interface ParagraphTemplate {
 /** Current semantic owner of the Table/Keynote/Notes shared Guided workspace. */
 export type GuidedParseOwner = "table" | "keynote" | "notes" | null;
 
+/** Current semantic owner of the shared Notes/Spec Paragraph workspace. */
+export type ParagraphWorkspaceOwner = "notes" | "spec" | null;
+
 /** Key metadata retained by the transient All Keynotes workspace. */
 export interface ParsedKeynoteKey {
   key: string;
@@ -185,8 +188,7 @@ export interface ParseFlowState {
   resetSpecParse: () => void;
 
   // ─── Shared paragraph workspace ───────────────────────
-  paragraphOverlayActive: boolean;
-  setParagraphOverlayActive: (active: boolean) => void;
+  paragraphWorkspaceOwner: ParagraphWorkspaceOwner;
   paragraphBatch: PendingParagraph[];
   setParagraphBatch: (batch: PendingParagraph[]) => void;
   upsertPendingParagraph: (paragraph: PendingParagraph) => void;
@@ -329,7 +331,7 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
     guidedNotesRows: [],
     guidedNotesCols: [],
     parseDraftRegion: null,
-    paragraphOverlayActive: false,
+    paragraphWorkspaceOwner: null,
     paragraphBatch: [],
     // Fast-manual state, clipboard, and the shared guided grid intentionally survive.
     parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes"]),
@@ -349,14 +351,13 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
     specParseStep: "idle",
     specParseRegion: null,
     parseDraftRegion: null,
-    paragraphOverlayActive: false,
+    paragraphWorkspaceOwner: null,
     paragraphBatch: [],
     // Clipboard intentionally survives. Notes and Spec each publish their own fresh batch reset.
     parseOperations: invalidateParseOperationKinds(state.parseOperations, ["spec"]),
   })),
 
-  paragraphOverlayActive: false,
-  setParagraphOverlayActive: (paragraphOverlayActive) => set({ paragraphOverlayActive }),
+  paragraphWorkspaceOwner: null,
   paragraphBatch: [],
   setParagraphBatch: (paragraphBatch) => set({ paragraphBatch }),
   upsertPendingParagraph: (paragraph) => set((state) => {
@@ -463,7 +464,7 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
     parseDraftRegion: null,
     specParseStep: "idle",
     specParseRegion: null,
-    paragraphOverlayActive: false,
+    paragraphWorkspaceOwner: null,
     paragraphBatch: [],
     paragraphClipboard: null,
     guidedParseOwner: null,
@@ -609,5 +610,4 @@ export const useParagraphWorkspaceExtensions = () =>
     setParagraphBatch: state.setParagraphBatch,
     removePendingParagraph: state.removePendingParagraph,
     upsertPendingParagraph: state.upsertPendingParagraph,
-    setParagraphOverlayActive: state.setParagraphOverlayActive,
   })));

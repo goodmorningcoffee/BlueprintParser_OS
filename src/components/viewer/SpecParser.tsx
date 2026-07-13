@@ -14,6 +14,7 @@ import {
 } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import {
+  claimParagraphWorkspaceForOperation,
   completeSpecParseOperation,
   invalidateParagraphParseOperationsForOperation,
   leaveSpecParserWorkspace,
@@ -79,7 +80,7 @@ function specDraftFor(preview: PreviewSpec, region: SpecBbox): ParsedRegion {
  * SpecParser — Stage 5 commit tool for spec-family regions.
  * Sub-modes:
  *   - Auto: POST /api/spec-parse → preview → Save
- *   - Paragraph: ParagraphOverlay gated via paragraphOverlayActive; user
+ *   - Paragraph: ParagraphOverlay gated by the exact Notes/Spec workspace owner; user
  *     double-clicks paragraphs, batch accumulates, Save promotes as one
  *     ParsedRegion{type:"spec"}.
  *   - Manual: user edits section headers + bodies directly (placeholder UI
@@ -266,7 +267,11 @@ export default function SpecParser() {
     if (started.status !== "started") return;
     const token = started.token;
     try {
-      const workspaceLease = invalidateParagraphParseOperationsForOperation(token);
+      const workspaceLease = claimParagraphWorkspaceForOperation(
+        token,
+        "spec",
+        specParseRegion,
+      );
       if (!workspaceLease) return;
       if (!commitParseOperation(token, () => {
         cleanupLeaseRef.current = workspaceLease;
@@ -309,12 +314,12 @@ export default function SpecParser() {
   };
 
   const handleRepeatPlusOne = () => {
-    if (paragraphBatch.length === 0) return;
+    if (!specParseRegion || paragraphBatch.length === 0) return;
     const last = paragraphBatch[paragraphBatch.length - 1];
     const [x0, y0, x1, y1] = last.bbox;
     const h = y1 - y0;
     const newBbox: [number, number, number, number] = [x0, y1, x1, y1 + h];
-    upsertParagraphForUser({
+    upsertParagraphForUser("spec", specParseRegion, {
       id: `para-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       bbox: newBbox,
       lines: [],
@@ -336,7 +341,9 @@ export default function SpecParser() {
 
   const handleModeChange = (nextMode: SpecSubMode) => {
     if (nextMode === mode) return;
-    cleanupLeaseRef.current = transitionSpecParserMode(nextMode, specParseRegion);
+    const lease = transitionSpecParserMode(nextMode, specParseRegion);
+    if (!lease) return;
+    cleanupLeaseRef.current = lease;
     setMode(nextMode);
     setPreview(null);
     setError(null);
@@ -435,7 +442,9 @@ export default function SpecParser() {
               </button>
               <button
                 onClick={() => {
-                  setParagraphBatchForUser([]);
+                  if (specParseRegion) {
+                    setParagraphBatchForUser("spec", specParseRegion, []);
+                  }
                 }}
                 disabled={paragraphBatch.length === 0}
                 className="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-red-400 disabled:opacity-40"
@@ -457,7 +466,9 @@ export default function SpecParser() {
                     </span>
                     <button
                       onClick={() => {
-                        removeParagraphForUser(p.id);
+                        if (specParseRegion) {
+                          removeParagraphForUser("spec", specParseRegion, p.id);
+                        }
                       }}
                       className="text-red-400/70 hover:text-red-400 shrink-0"
                       title="Remove"

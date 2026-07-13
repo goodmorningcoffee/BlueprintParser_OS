@@ -19,6 +19,8 @@ import { useSessionStore } from "@/stores/sessionStore";
 import {
   useParseFlowStore,
   type GuidedParseOwner,
+  type ParagraphWorkspaceOwner,
+  type ParagraphTemplate,
   type ParseFlowState,
   type PendingParagraph,
 } from "@/stores/parseFlowStore";
@@ -48,6 +50,7 @@ type SpecParseStep = "idle" | "select-region" | "define-sections" | "review";
 type NotesParserMode = "auto" | "guided" | "paragraph" | "fast-manual" | "manual";
 type SpecParserMode = "auto" | "paragraph" | "manual";
 type ActiveGuidedParseOwner = Exclude<GuidedParseOwner, null>;
+type ActiveParagraphWorkspaceOwner = Exclude<ParagraphWorkspaceOwner, null>;
 
 function isParseKind(value: unknown): value is ParseKind {
   return value === "table" || value === "keynote" || value === "notes" || value === "spec";
@@ -68,6 +71,14 @@ export type ParseWorkspaceLease = Readonly<{
   notesRevision: number;
   specRevision: number;
   guidedOwner: GuidedParseOwner;
+}>;
+
+/** Exact generation captured once at a successful Paragraph gesture boundary. */
+export type ParagraphEditLease = Readonly<{
+  owner: ActiveParagraphWorkspaceOwner;
+  region: ParseRegion;
+  notesRevision: number;
+  specRevision: number;
 }>;
 
 function workspaceLease(
@@ -174,6 +185,32 @@ function matchesParagraphLease(
   return parseOperations.notes.revision === lease.notesRevision &&
     parseOperations.spec.revision === lease.specRevision &&
     !parseOperations.notes.busy && !parseOperations.spec.busy;
+}
+
+function paragraphRegionForOwner(
+  state: ParseFlowState,
+  owner: ActiveParagraphWorkspaceOwner,
+): ParseRegion | null {
+  return owner === "notes" ? state.notesParseRegion : state.specParseRegion;
+}
+
+function matchesParagraphOwner(
+  state: ParseFlowState,
+  owner: ActiveParagraphWorkspaceOwner,
+  region: ParseRegion,
+): boolean {
+  return state.paragraphWorkspaceOwner === owner &&
+    paragraphRegionForOwner(state, owner) === region;
+}
+
+function matchesParagraphEditLease(
+  state: ParseFlowState,
+  lease: ParagraphEditLease,
+): boolean {
+  return matchesParagraphOwner(state, lease.owner, lease.region) &&
+    state.parseOperations.notes.revision === lease.notesRevision &&
+    state.parseOperations.spec.revision === lease.specRevision &&
+    !state.parseOperations.notes.busy && !state.parseOperations.spec.busy;
 }
 
 function matchesParagraphLeaseRevisions(
@@ -751,6 +788,46 @@ export function invalidateParagraphParseOperationsForOperation(
   return lease;
 }
 
+/**
+ * Paragraph Save admission: the operation token may revoke its peer only while the exact rendered
+ * owner/region still owns the shared workspace. Auto/Fast-Manual roots use the owner-neutral helper
+ * above; paragraph Save callers must use this exact seam before network work.
+ */
+export function claimParagraphWorkspaceForOperation(
+  token: ParseOperationToken<"notes" | "spec">,
+  expectedOwner: ActiveParagraphWorkspaceOwner,
+  expectedRegion: ParseRegion,
+): ParseWorkspaceLease | null {
+  if (token.kind !== expectedOwner) return null;
+  let lease: ParseWorkspaceLease | null = null;
+  useParseFlowStore.setState((state) => {
+    const live = state.parseOperations[token.kind];
+    if (
+      !live.busy ||
+      live.revision !== token.revision ||
+      !matchesParagraphOwner(state, expectedOwner, expectedRegion)
+    ) return state;
+    const peer = expectedOwner === "notes" ? "spec" : "notes";
+    const parseOperations = invalidateParseOperationKinds(state.parseOperations, [peer]);
+    lease = workspaceLease(parseOperations, state.guidedParseOwner);
+    return { parseOperations };
+  });
+  if (!lease) return null;
+  const current = useParseFlowStore.getState();
+  const live = current.parseOperations[token.kind];
+  // The invalidation publication may synchronously admit peer B. Do not let A carry a stale
+  // cross-lane lease into persistence merely because its own token and workspace still match.
+  const peer = expectedOwner === "notes"
+    ? current.parseOperations.spec
+    : current.parseOperations.notes;
+  return live.busy && live.revision === token.revision &&
+    !peer.busy &&
+    matchesParagraphOwner(current, expectedOwner, expectedRegion) &&
+    matchesParagraphLeaseRevisions(current.parseOperations, lease)
+    ? lease
+    : null;
+}
+
 /** Token-authorized union boundary for a Notes root entering the Guided or paragraph workspace. */
 export function invalidateNotesWorkspaceOperationsForOperation(
   token: ParseOperationToken<"notes">,
@@ -853,8 +930,88 @@ export function setGuidedParseColsForLease(
   return committed;
 }
 
-/** Begin one paragraph gesture; drag moves reuse this lease without repeated invalidation. */
-export function beginParagraphWorkspaceEdit(): ParseWorkspaceLease {
+/** Begin one exact-owner paragraph gesture; drag moves reuse its lease without re-invalidation. */
+export function beginParagraphWorkspaceEdit(
+  expectedOwner: ActiveParagraphWorkspaceOwner,
+  expectedRegion: ParseRegion,
+): ParagraphEditLease | null {
+  let lease: ParagraphEditLease | null = null;
+  useParseFlowStore.setState((state) => {
+    if (!matchesParagraphOwner(state, expectedOwner, expectedRegion)) return state;
+    const parseOperations = invalidateParseOperationKinds(
+      state.parseOperations,
+      ["notes", "spec"],
+    );
+    lease = {
+      owner: expectedOwner,
+      region: expectedRegion,
+      notesRevision: parseOperations.notes.revision,
+      specRevision: parseOperations.spec.revision,
+    };
+    return { parseOperations };
+  });
+  if (!lease) return null;
+  return matchesParagraphEditLease(useParseFlowStore.getState(), lease) ? lease : null;
+}
+
+export function upsertParagraphForLease(
+  paragraph: PendingParagraph,
+  lease: ParagraphEditLease,
+): boolean {
+  let committed = false;
+  useParseFlowStore.setState((state) => {
+    if (!matchesParagraphEditLease(state, lease)) return state;
+    const index = state.paragraphBatch.findIndex((current) => current.id === paragraph.id);
+    const paragraphBatch = index === -1
+      ? [...state.paragraphBatch, paragraph]
+      : state.paragraphBatch.map((current, currentIndex) =>
+        currentIndex === index ? paragraph : current
+      );
+    committed = true;
+    return {
+      paragraphBatch,
+      ...(lease.owner === "spec"
+        ? { parseDraftRegion: specDraftForParagraphBatch(paragraphBatch) }
+        : {}),
+    };
+  });
+  return committed;
+}
+
+export function removeParagraphForLease(
+  id: string,
+  lease: ParagraphEditLease,
+): boolean {
+  let committed = false;
+  useParseFlowStore.setState((state) => {
+    if (!matchesParagraphEditLease(state, lease)) return state;
+    const paragraphBatch = state.paragraphBatch.filter((paragraph) => paragraph.id !== id);
+    committed = true;
+    return {
+      paragraphBatch,
+      ...(lease.owner === "spec"
+        ? { parseDraftRegion: specDraftForParagraphBatch(paragraphBatch) }
+        : {}),
+    };
+  });
+  return committed;
+}
+
+export function captureParagraphClipboardForLease(
+  paragraphClipboard: ParagraphTemplate,
+  lease: ParagraphEditLease,
+): boolean {
+  let committed = false;
+  useParseFlowStore.setState((state) => {
+    if (!matchesParagraphEditLease(state, lease)) return state;
+    committed = true;
+    return { paragraphClipboard };
+  });
+  return committed;
+}
+
+/** Fast Manual owns Notes data but feeds the Notes/Spec shared draft, so both lanes are leased. */
+export function beginNotesFastManualEdit(): ParseWorkspaceLease {
   let lease!: ParseWorkspaceLease;
   useParseFlowStore.setState((state) => {
     const parseOperations = invalidateParseOperationKinds(
@@ -865,54 +1022,6 @@ export function beginParagraphWorkspaceEdit(): ParseWorkspaceLease {
     return { parseOperations };
   });
   return lease;
-}
-
-export function upsertParagraphForLease(
-  paragraph: PendingParagraph,
-  lease: ParseWorkspaceLease,
-): boolean {
-  let committed = false;
-  useParseFlowStore.setState((state) => {
-    if (!matchesParagraphLease(state.parseOperations, lease)) return state;
-    const index = state.paragraphBatch.findIndex((current) => current.id === paragraph.id);
-    const paragraphBatch = index === -1
-      ? [...state.paragraphBatch, paragraph]
-      : state.paragraphBatch.map((current, currentIndex) =>
-        currentIndex === index ? paragraph : current
-      );
-    committed = true;
-    return {
-      paragraphBatch,
-      ...(state.specParseRegion
-        ? { parseDraftRegion: specDraftForParagraphBatch(paragraphBatch) }
-        : {}),
-    };
-  });
-  return committed;
-}
-
-export function removeParagraphForLease(
-  id: string,
-  lease: ParseWorkspaceLease,
-): boolean {
-  let committed = false;
-  useParseFlowStore.setState((state) => {
-    if (!matchesParagraphLease(state.parseOperations, lease)) return state;
-    const paragraphBatch = state.paragraphBatch.filter((paragraph) => paragraph.id !== id);
-    committed = true;
-    return {
-      paragraphBatch,
-      ...(state.specParseRegion
-        ? { parseDraftRegion: specDraftForParagraphBatch(paragraphBatch) }
-        : {}),
-    };
-  });
-  return committed;
-}
-
-/** Fast Manual owns Notes data but feeds the Notes/Spec shared draft, so both lanes are leased. */
-export function beginNotesFastManualEdit(): ParseWorkspaceLease {
-  return beginParagraphWorkspaceEdit();
 }
 
 /**
@@ -929,7 +1038,7 @@ export function acceptNotesParseRegion(notesParseRegion: ParseRegion): void {
       specParseStep: "idle",
       specParseRegion: null,
       parseDraftRegion: null,
-      paragraphOverlayActive: false,
+      paragraphWorkspaceOwner: null,
       paragraphBatch: [],
       notesFastManualActive: false,
       notesFastManualGrid: null,
@@ -956,7 +1065,7 @@ export function acceptSpecParseRegion(specParseRegion: ParseRegion): void {
     specParseRegion,
     specParseStep: "idle",
     parseDraftRegion: null,
-    paragraphOverlayActive: false,
+    paragraphWorkspaceOwner: null,
     paragraphBatch: [],
     parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
   }));
@@ -979,7 +1088,7 @@ export function openNotesParseTarget(
         specParseStep: "idle",
         specParseRegion: null,
         parseDraftRegion: null,
-        paragraphOverlayActive: false,
+        paragraphWorkspaceOwner: null,
         paragraphBatch: [],
         notesFastManualActive: false,
         notesFastManualGrid: null,
@@ -999,7 +1108,7 @@ export function openNotesParseTarget(
         guidedNotesRows: [],
         guidedNotesCols: [],
         parseDraftRegion: null,
-        paragraphOverlayActive: false,
+        paragraphWorkspaceOwner: null,
         paragraphBatch: [],
         parseOperations: invalidateParseOperationKinds(
           state.parseOperations,
@@ -1021,7 +1130,7 @@ export function openSpecParseTarget(
     specParseStep: "idle",
     specParseRegion,
     parseDraftRegion: null,
-    paragraphOverlayActive: false,
+    paragraphWorkspaceOwner: null,
     paragraphBatch: [],
     parseOperations: invalidateParseOperationKinds(
       state.parseOperations,
@@ -1060,7 +1169,7 @@ export function completeNotesParseOperation(
       guidedNotesRows: [],
       guidedNotesCols: [],
       parseDraftRegion: null,
-      paragraphOverlayActive: false,
+      paragraphWorkspaceOwner: null,
       paragraphBatch: [],
       ...(options.guided ? { guidedParseOwner: null, guidedParseActive: false } : {}),
       ...(options.guided
@@ -1087,7 +1196,7 @@ export function completeSpecParseOperation(token: ParseOperationToken<"spec">): 
       specParseStep: "idle",
       specParseRegion: null,
       parseDraftRegion: null,
-      paragraphOverlayActive: false,
+      paragraphWorkspaceOwner: null,
       paragraphBatch: [],
       parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
     };
@@ -1108,7 +1217,7 @@ export function resetNotesParseWorkspace(
       guidedNotesRows: [],
       guidedNotesCols: [],
       parseDraftRegion: null,
-      paragraphOverlayActive: false,
+      paragraphWorkspaceOwner: null,
       paragraphBatch: [],
       ...(clearsGuided ? { guidedParseOwner: null, guidedParseActive: false } : {}),
       ...(clearsGuided
@@ -1135,10 +1244,49 @@ export function resetSpecParseWorkspace(
     specParseStep,
     specParseRegion: null,
     parseDraftRegion: null,
-    paragraphOverlayActive: false,
+    paragraphWorkspaceOwner: null,
     paragraphBatch: [],
     parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
   }));
+}
+
+/** Exact rendered Paragraph exit; a stale family closure cannot clear a newer owner. */
+export function exitParagraphWorkspace(
+  expectedOwner: ActiveParagraphWorkspaceOwner,
+  expectedRegion: ParseRegion,
+): boolean {
+  let exited = false;
+  useParseFlowStore.setState((state) => {
+    if (!matchesParagraphOwner(state, expectedOwner, expectedRegion)) return state;
+    exited = true;
+    if (expectedOwner === "notes") {
+      return {
+        notesParseStep: "idle" as const,
+        notesParseRegion: null,
+        guidedNotesRows: [],
+        guidedNotesCols: [],
+        parseDraftRegion: null,
+        paragraphWorkspaceOwner: null,
+        paragraphBatch: [],
+        parseOperations: invalidateParseOperationKinds(
+          state.parseOperations,
+          ["notes", "spec"],
+        ),
+      };
+    }
+    return {
+      specParseStep: "idle" as const,
+      specParseRegion: null,
+      parseDraftRegion: null,
+      paragraphWorkspaceOwner: null,
+      paragraphBatch: [],
+      parseOperations: invalidateParseOperationKinds(
+        state.parseOperations,
+        ["notes", "spec"],
+      ),
+    };
+  });
+  return exited;
 }
 
 /**
@@ -1153,6 +1301,7 @@ export function leaveNotesParserWorkspace(
   let cleaned = false;
   useParseFlowStore.setState((state) => {
     const clearsGuided = clearGuided && state.guidedParseOwner === "notes";
+    const paragraphOwnedByPeer = state.paragraphWorkspaceOwner === "spec";
     if (
       !matchesParagraphLeaseRevisions(state.parseOperations, lease) ||
       state.parseOperations.spec.busy ||
@@ -1165,7 +1314,9 @@ export function leaveNotesParserWorkspace(
         state.parseOperations.table.busy || state.parseOperations.keynote.busy
       ))
     ) return state;
-    const sharedClean = state.parseDraftRegion === null && !state.paragraphOverlayActive &&
+    const sharedClean = (paragraphOwnedByPeer || (
+      state.parseDraftRegion === null && state.paragraphWorkspaceOwner !== "notes"
+    )) &&
       !state.notesFastManualActive && state.notesFastManualGrid === null;
     const guidedClean = !clearsGuided || (
       !state.guidedParseActive && state.guidedParseRegion === null &&
@@ -1174,8 +1325,9 @@ export function leaveNotesParserWorkspace(
     if (sharedClean && guidedClean && !state.parseOperations.notes.busy) return state;
     cleaned = true;
     return {
-      parseDraftRegion: null,
-      paragraphOverlayActive: false,
+      ...(!paragraphOwnedByPeer
+        ? { parseDraftRegion: null, paragraphWorkspaceOwner: null }
+        : {}),
       notesFastManualActive: false,
       notesFastManualGrid: null,
       ...(clearsGuided
@@ -1206,14 +1358,15 @@ export function leaveSpecParserWorkspace(lease: ParseWorkspaceLease): boolean {
       !matchesParagraphLeaseRevisions(state.parseOperations, lease) ||
       state.parseOperations.notes.busy
     ) return state;
-    if (
-      state.parseDraftRegion === null && !state.paragraphOverlayActive &&
-      !state.parseOperations.spec.busy
-    ) return state;
+    const paragraphOwnedByPeer = state.paragraphWorkspaceOwner === "notes";
+    if ((paragraphOwnedByPeer || (
+      state.parseDraftRegion === null && state.paragraphWorkspaceOwner !== "spec"
+    )) && !state.parseOperations.spec.busy) return state;
     cleaned = true;
     return {
-      parseDraftRegion: null,
-      paragraphOverlayActive: false,
+      ...(!paragraphOwnedByPeer
+        ? { parseDraftRegion: null, paragraphWorkspaceOwner: null }
+        : {}),
       parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
     };
   });
@@ -1224,9 +1377,13 @@ export function leaveSpecParserWorkspace(lease: ParseWorkspaceLease): boolean {
 export function transitionNotesParserMode(
   nextMode?: NotesParserMode,
   notesParseRegion: ParseRegion | null = null,
-): ParseWorkspaceLease {
-  let lease!: ParseWorkspaceLease;
+): ParseWorkspaceLease | null {
+  let lease: ParseWorkspaceLease | null = null;
   useParseFlowStore.setState((state) => {
+    const entersParagraph = nextMode === "paragraph";
+    if (entersParagraph && (
+      notesParseRegion === null || state.notesParseRegion !== notesParseRegion
+    )) return state;
     const entersGuided = nextMode === "guided" && notesParseRegion !== null;
     const clearsGuided = state.guidedParseOwner === "notes";
     const parseOperations = invalidateParseOperationKinds(
@@ -1242,9 +1399,14 @@ export function transitionNotesParserMode(
         : state.guidedParseOwner;
     lease = workspaceLease(parseOperations, guidedParseOwner);
     const active = notesParseRegion !== null;
+    const paragraphWorkspaceOwner = entersParagraph
+      ? "notes"
+      : state.paragraphWorkspaceOwner === "notes"
+        ? null
+        : state.paragraphWorkspaceOwner;
     return {
-      parseDraftRegion: null,
-      paragraphOverlayActive: nextMode === "paragraph" && active,
+      parseDraftRegion: paragraphWorkspaceOwner === "spec" ? state.parseDraftRegion : null,
+      paragraphWorkspaceOwner,
       notesFastManualActive: nextMode === "fast-manual" && active,
       notesFastManualGrid: null,
       ...(entersGuided || clearsGuided
@@ -1259,69 +1421,120 @@ export function transitionNotesParserMode(
       parseOperations,
     };
   });
-  return lease;
+  if (!lease) return null;
+  if (nextMode !== "paragraph") return lease;
+  const current = useParseFlowStore.getState();
+  return notesParseRegion !== null &&
+    matchesParagraphOwner(current, "notes", notesParseRegion) &&
+    matchesParagraphLeaseRevisions(current.parseOperations, lease)
+    ? lease
+    : null;
 }
 
 /** Local Spec submode boundary with its paragraph gate and revocation kept atomic. */
 export function transitionSpecParserMode(
   nextMode?: SpecParserMode,
   specParseRegion: ParseRegion | null = null,
-): ParseWorkspaceLease {
-  let lease!: ParseWorkspaceLease;
+): ParseWorkspaceLease | null {
+  let lease: ParseWorkspaceLease | null = null;
   useParseFlowStore.setState((state) => {
+    const entersParagraph = nextMode === "paragraph";
+    if (entersParagraph && (
+      specParseRegion === null || state.specParseRegion !== specParseRegion
+    )) return state;
     const parseOperations = invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]);
     lease = workspaceLease(parseOperations, state.guidedParseOwner);
+    const paragraphWorkspaceOwner = entersParagraph
+      ? "spec"
+      : state.paragraphWorkspaceOwner === "spec"
+        ? null
+        : state.paragraphWorkspaceOwner;
     return {
-      parseDraftRegion: nextMode === "paragraph"
+      parseDraftRegion: entersParagraph
         ? specDraftForParagraphBatch(state.paragraphBatch)
-        : null,
-      paragraphOverlayActive: nextMode === "paragraph" && specParseRegion !== null,
+        : paragraphWorkspaceOwner === "notes"
+          ? state.parseDraftRegion
+          : null,
+      paragraphWorkspaceOwner,
       parseOperations,
     };
   });
-  return lease;
+  if (!lease) return null;
+  if (nextMode !== "paragraph") return lease;
+  const current = useParseFlowStore.getState();
+  return specParseRegion !== null &&
+    matchesParagraphOwner(current, "spec", specParseRegion) &&
+    matchesParagraphLeaseRevisions(current.parseOperations, lease)
+    ? lease
+    : null;
 }
 
 /** Single-action paragraph mutations use atomic user-owned workspace generations. */
-export function setParagraphBatchForUser(paragraphBatch: PendingParagraph[]): void {
-  useParseFlowStore.setState((state) => ({
-    paragraphBatch,
-    ...(state.specParseRegion
-      ? { parseDraftRegion: specDraftForParagraphBatch(paragraphBatch) }
-      : {}),
-    parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
-  }));
+export function setParagraphBatchForUser(
+  expectedOwner: ActiveParagraphWorkspaceOwner,
+  expectedRegion: ParseRegion,
+  paragraphBatch: PendingParagraph[],
+): boolean {
+  let committed = false;
+  useParseFlowStore.setState((state) => {
+    if (!matchesParagraphOwner(state, expectedOwner, expectedRegion)) return state;
+    committed = true;
+    return {
+      paragraphBatch,
+      ...(expectedOwner === "spec"
+        ? { parseDraftRegion: specDraftForParagraphBatch(paragraphBatch) }
+        : {}),
+      parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
+    };
+  });
+  return committed;
 }
 
-export function upsertParagraphForUser(paragraph: PendingParagraph): void {
+export function upsertParagraphForUser(
+  expectedOwner: ActiveParagraphWorkspaceOwner,
+  expectedRegion: ParseRegion,
+  paragraph: PendingParagraph,
+): boolean {
+  let committed = false;
   useParseFlowStore.setState((state) => {
+    if (!matchesParagraphOwner(state, expectedOwner, expectedRegion)) return state;
     const index = state.paragraphBatch.findIndex((current) => current.id === paragraph.id);
     const paragraphBatch = index === -1
       ? [...state.paragraphBatch, paragraph]
       : state.paragraphBatch.map((current, currentIndex) =>
         currentIndex === index ? paragraph : current
       );
+    committed = true;
     return {
       paragraphBatch,
-      ...(state.specParseRegion
+      ...(expectedOwner === "spec"
         ? { parseDraftRegion: specDraftForParagraphBatch(paragraphBatch) }
         : {}),
       parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
     };
   });
+  return committed;
 }
 
-export function removeParagraphForUser(id: string): void {
+export function removeParagraphForUser(
+  expectedOwner: ActiveParagraphWorkspaceOwner,
+  expectedRegion: ParseRegion,
+  id: string,
+): boolean {
+  let committed = false;
   useParseFlowStore.setState((state) => {
+    if (!matchesParagraphOwner(state, expectedOwner, expectedRegion)) return state;
     const paragraphBatch = state.paragraphBatch.filter((paragraph) => paragraph.id !== id);
+    committed = true;
     return {
       paragraphBatch,
-      ...(state.specParseRegion
+      ...(expectedOwner === "spec"
         ? { parseDraftRegion: specDraftForParagraphBatch(paragraphBatch) }
         : {}),
       parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
     };
   });
+  return committed;
 }
 
 export function addGuidedNotesColumnForUser(bbox: ParseRegion): void {
@@ -1865,7 +2078,7 @@ function leaveSpecsNotesParseTab(tab: SpecsNotesTab): void {
             }
           : {}),
         parseDraftRegion: null,
-        paragraphOverlayActive: false,
+        paragraphWorkspaceOwner: null,
         paragraphBatch: [],
         parseOperations: invalidateParseOperationKinds(
           state.parseOperations,
@@ -1882,7 +2095,7 @@ function leaveSpecsNotesParseTab(tab: SpecsNotesTab): void {
     specParseStep: "idle",
     specParseRegion: null,
     parseDraftRegion: null,
-    paragraphOverlayActive: false,
+    paragraphWorkspaceOwner: null,
     paragraphBatch: [],
     parseOperations: invalidateParseOperationKinds(state.parseOperations, ["notes", "spec"]),
   }));

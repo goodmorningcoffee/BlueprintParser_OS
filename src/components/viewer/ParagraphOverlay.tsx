@@ -3,7 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TextractLine, TextRegion } from "@/types";
 import type { PendingParagraph, ParagraphTemplate } from "@/stores/parseFlowStore";
-import type { ParseWorkspaceLease } from "@/stores/viewerCommands";
+import type { ParagraphEditLease } from "@/stores/viewerCommands";
 import { clusterLinesByYGap } from "@/lib/specnote-parser/cluster-lines";
 import {
   linesInside,
@@ -32,12 +32,13 @@ interface ParagraphOverlayProps {
   regionKind: ParagraphRegionKind;
   paragraphBatch: PendingParagraph[];
   paragraphClipboard: ParagraphTemplate | null;
-  onParagraphUpsert: (p: PendingParagraph, lease: ParseWorkspaceLease) => void;
-  onParagraphRemove: (paragraphId: string, lease: ParseWorkspaceLease) => void;
-  onClipboardCapture: (template: ParagraphTemplate) => void;
+  onParagraphUpsert: (p: PendingParagraph, lease: ParagraphEditLease) => boolean;
+  onParagraphRemove: (paragraphId: string, lease: ParagraphEditLease) => boolean;
+  onClipboardCapture: (template: ParagraphTemplate, lease: ParagraphEditLease) => boolean;
   /** Called once at a successful user mutation boundary, never for drag mousemoves. */
-  onWorkspaceEditStart: () => ParseWorkspaceLease;
-  onExit: () => void;
+  onWorkspaceEditStart: () => ParagraphEditLease | null;
+  onExit: () => boolean;
+  workspaceIdentity: string;
   width: number;
   height: number;
   cssScale: number;
@@ -113,7 +114,7 @@ export default memo(function ParagraphOverlay({
   const [clicksOutside, setClicksOutside] = useState(0);
   const [drag, setDrag] = useState<DragTarget | null>(null);
   const dragRef = useRef<DragTarget | null>(null);
-  const dragLeaseRef = useRef<ParseWorkspaceLease | null>(null);
+  const dragLeaseRef = useRef<ParagraphEditLease | null>(null);
 
   // Cluster cache: per-region clusters + one "__fallback__" for uncategorized lines.
   // Rebuilds only when inputs change (Stage 1 output, page lines, tolerance, outer region).
@@ -131,18 +132,6 @@ export default memo(function ParagraphOverlay({
     cache.set("__fallback__", clusterLinesByYGap(linesInside(outerLTWH, allLines), yGapTolerance));
     return cache;
   }, [textRegions, allLines, yGapTolerance, outerBbox]);
-
-  // Reset hover/focus/counter on outer-region or active change
-  useEffect(() => {
-    setHoverClusterIdx(null);
-    hoverRef.current = null;
-    setFocusedParagraphId(null);
-    setClicksOutside(0);
-    if (!active) {
-      dragRef.current = null;
-      dragLeaseRef.current = null;
-    }
-  }, [outerBbox, active]);
 
   // ── Drawing ────────────────────────────────────────────
   const draw = useCallback(() => {
@@ -360,9 +349,11 @@ export default memo(function ParagraphOverlay({
       const cy = (e.clientY - rect.top) * (height / rect.height);
       const handle = hitTestHandle(cx, cy);
       if (handle) {
+        const lease = onWorkspaceEditStart();
+        if (!lease) return;
         e.preventDefault();
         e.stopPropagation();
-        dragLeaseRef.current = onWorkspaceEditStart();
+        dragLeaseRef.current = lease;
         dragRef.current = handle;
         setDrag(handle);
         setFocusedParagraphId(handle.paragraphId);
@@ -383,8 +374,7 @@ export default memo(function ParagraphOverlay({
         setClicksOutside((c) => {
           const next = c + 1;
           if (next >= CLICK_OUTSIDE_EXIT_THRESHOLD) {
-            onExit();
-            return 0;
+            return onExit() ? 0 : c;
           }
           return next;
         });
@@ -416,7 +406,7 @@ export default memo(function ParagraphOverlay({
         rowText: rowTextFor(regionKind, cluster),
       };
       const lease = onWorkspaceEditStart();
-      onParagraphUpsert(p, lease);
+      if (!lease || !onParagraphUpsert(p, lease)) return;
       setFocusedParagraphId(p.id);
       setClicksOutside(0);
     },
@@ -490,8 +480,10 @@ export default memo(function ParagraphOverlay({
       colBoundaries: p.colBoundaries ?? [],
       headers,
     };
-    onClipboardCapture(template);
-  }, [focusedParagraphId, paragraphBatch, regionKind, onClipboardCapture]);
+    const lease = onWorkspaceEditStart();
+    if (!lease) return;
+    onClipboardCapture(template, lease);
+  }, [focusedParagraphId, paragraphBatch, regionKind, onClipboardCapture, onWorkspaceEditStart]);
 
   const handlePaste = useCallback(() => {
     if (!paragraphClipboard || !focusedParagraphId) return;
@@ -512,6 +504,7 @@ export default memo(function ParagraphOverlay({
       [p.bbox[0], 0, p.bbox[2], 0],
     );
     const lease = onWorkspaceEditStart();
+    if (!lease) return;
     onParagraphUpsert({ ...p, colBoundaries: nextCols }, lease);
   }, [paragraphClipboard, focusedParagraphId, paragraphBatch, onWorkspaceEditStart, onParagraphUpsert]);
 
@@ -531,7 +524,7 @@ export default memo(function ParagraphOverlay({
         if (target?.isContentEditable) return;
         e.preventDefault();
         const lease = onWorkspaceEditStart();
-        onParagraphRemove(focusedParagraphId, lease);
+        if (!lease || !onParagraphRemove(focusedParagraphId, lease)) return;
         setFocusedParagraphId(null);
       }
     };

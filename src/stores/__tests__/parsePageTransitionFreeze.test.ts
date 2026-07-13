@@ -89,7 +89,7 @@ function seedWorkspace(): SeededWorkspace {
       source: "user",
       data: { headers: ["Key"], rows: [{ Key: "N1" }] },
     },
-    paragraphOverlayActive: true,
+    paragraphWorkspaceOwner: "notes",
     paragraphBatch: [{ id: "p-A", bbox: REGION_A, lines: [], rowText: { Key: "N1" } }],
     guidedParseOwner: "notes",
     guidedParseActive: true,
@@ -128,7 +128,7 @@ function expectGenericLegacyExit(after: ParseFlowState, seeded: SeededWorkspace)
     "specParseStep",
     "specParseRegion",
     "parseDraftRegion",
-    "paragraphOverlayActive",
+    "paragraphWorkspaceOwner",
     "paragraphBatch",
     "guidedParseOwner",
     "guidedParseActive",
@@ -202,6 +202,41 @@ describe("A2e generic page authority", () => {
       command(PAGE_A);
       expect(useParseFlowStore.getState()).toBe(parseBefore);
       expect(useViewerCoreStore.getState()).toBe(coreBefore);
+    },
+  );
+
+  it.each(["notes", "spec"] as const)(
+    "preserves the exact %s Paragraph owner and dormant peer bytes across generic navigation",
+    (owner) => {
+      const notesRegion: ParseRegion = [...REGION_A];
+      const specRegion: ParseRegion = [...REGION_B];
+      const batch = [{ id: "paragraph-page", bbox: REGION_A, lines: [], rowText: { Key: "A" } }];
+      const draft = {
+        id: "paragraph-page-draft",
+        type: owner,
+        category: "preview",
+        bbox: REGION_A,
+        confidence: 1,
+        source: "user" as const,
+        data: {},
+      } as ParseFlowState["parseDraftRegion"];
+      useViewerCoreStore.setState({ pageNumber: PAGE_A, numPages: PAGE_B });
+      useParseFlowStore.setState({
+        notesParseRegion: notesRegion,
+        specParseRegion: specRegion,
+        paragraphWorkspaceOwner: owner,
+        paragraphBatch: batch,
+        parseDraftRegion: draft,
+      });
+
+      navigateViewerPage(PAGE_B);
+
+      const state = useParseFlowStore.getState();
+      expect(state.paragraphWorkspaceOwner).toBe(owner);
+      expect(state.notesParseRegion).toBe(notesRegion);
+      expect(state.specParseRegion).toBe(specRegion);
+      expect(state.paragraphBatch).toBe(batch);
+      expect(state.parseDraftRegion).toBe(draft);
     },
   );
 

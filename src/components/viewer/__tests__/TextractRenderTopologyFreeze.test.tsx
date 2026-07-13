@@ -22,6 +22,11 @@ import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore as useViewerStore } from "@/stores/viewerCoreStore";
 import type { TextractPageData } from "@/types";
 
+const paragraphOverlayProbe = vi.hoisted(() => ({
+  props: null as Record<string, unknown> | null,
+  renders: 0,
+}));
+
 // Keep the two OCR-reading overlays real. The other PDFPage children are unrelated canvas/tool
 // domains; replacing them with inert leaves the exact internal Notes/Paragraph slots mounted while
 // making this topology test deterministic in jsdom.
@@ -30,7 +35,13 @@ vi.mock("../DrawingPreviewLayer", () => ({ default: () => null }));
 vi.mock("../FastManualParseOverlay", () => ({ default: () => null }));
 vi.mock("../GuidedParseOverlay", () => ({ default: () => null }));
 vi.mock("../KeynoteOverlay", () => ({ default: () => null }));
-vi.mock("../ParagraphOverlay", () => ({ default: () => null }));
+vi.mock("../ParagraphOverlay", () => ({
+  default: (props: Record<string, unknown>) => {
+    paragraphOverlayProbe.props = props;
+    paragraphOverlayProbe.renders += 1;
+    return null;
+  },
+}));
 vi.mock("../ParseRegionLayer", () => ({ default: () => null }));
 vi.mock("../ParsedTableCellOverlay", () => ({ default: () => null }));
 
@@ -39,7 +50,10 @@ import PageSidebar from "../PageSidebar";
 import {
   invalidateGuidedParseOperations,
   invalidateParagraphParseOperations,
+  navigateViewerPage,
   resetProjectData,
+  transitionNotesParserMode,
+  transitionSpecParserMode,
 } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
@@ -95,6 +109,8 @@ class TestResizeObserver {
 }
 
 beforeEach(() => {
+  paragraphOverlayProbe.props = null;
+  paragraphOverlayProbe.renders = 0;
   qc = new QueryClient();
   resetProjectData();
   setViewerStoreStateForTest({
@@ -177,6 +193,93 @@ describe("I6 PageSidebar bounded legacy CSI fallback", () => {
 });
 
 describe("I7 PDFPage exact-page render topology", () => {
+  it("denies stale Paragraph callbacks after core navigation precedes passive listener cleanup", async () => {
+    const notesRegion: [number, number, number, number] = [0.1, 0.2, 0.6, 0.7];
+    useViewerStore.setState({ numPages: 2 });
+    useParseFlowStore.setState({ notesParseRegion: notesRegion });
+    expect(transitionNotesParserMode("paragraph", notesRegion)).not.toBeNull();
+
+    render(<PDFPage pdfDoc={null} pageNumber={1} scale={1} containerWidth={900} />, { wrapper });
+    await act(async () => Promise.resolve());
+    const staleBegin = paragraphOverlayProbe.props?.onWorkspaceEditStart as () => unknown;
+    const staleExit = paragraphOverlayProbe.props?.onExit as () => boolean;
+
+    act(() => navigateViewerPage(2));
+    expect(useViewerStore.getState().pageNumber).toBe(2);
+    const before = useParseFlowStore.getState();
+    const listener = vi.fn();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+    try {
+      act(() => expect(staleBegin()).toBeNull());
+      act(() => expect(staleExit()).toBe(false));
+    } finally {
+      unsubscribe();
+    }
+
+    expect(listener).not.toHaveBeenCalled();
+    expect(useParseFlowStore.getState()).toBe(before);
+    expect(before.paragraphWorkspaceOwner).toBe("notes");
+    expect(before.notesParseRegion).toBe(notesRegion);
+  });
+
+  it("renders only the exact Paragraph owner and rejects stale peer exits without dormant commits", async () => {
+    const notesRegion: [number, number, number, number] = [0.1, 0.2, 0.6, 0.7];
+    const specRegion: [number, number, number, number] = [0.2, 0.3, 0.9, 0.95];
+    useParseFlowStore.setState({ notesParseRegion: notesRegion, specParseRegion: specRegion });
+
+    transitionSpecParserMode("paragraph", specRegion);
+    transitionNotesParserMode("paragraph", notesRegion);
+
+    render(<PDFPage pdfDoc={null} pageNumber={1} scale={1} containerWidth={900} />, { wrapper });
+    await act(async () => Promise.resolve());
+
+    expect(paragraphOverlayProbe.props).toMatchObject({
+      active: true,
+      outerBbox: notesRegion,
+      regionKind: "notes-numbered",
+    });
+    const staleNotesExit = paragraphOverlayProbe.props?.onExit as () => boolean;
+    const ownerBaseline = paragraphOverlayProbe.renders;
+
+    const replacementSpecRegion: [number, number, number, number] = [0.25, 0.35, 0.85, 0.9];
+    act(() => useParseFlowStore.setState({ specParseRegion: replacementSpecRegion }));
+    expect(paragraphOverlayProbe.renders).toBe(ownerBaseline);
+
+    act(() => {
+      const started = useParseFlowStore.getState().beginParseOperation("notes");
+      expect(started.status).toBe("started");
+      if (started.status === "started") {
+        expect(useParseFlowStore.getState().finishParseOperation(started.token)).toBe(true);
+      }
+    });
+    expect(paragraphOverlayProbe.renders).toBe(ownerBaseline);
+
+    act(() => {
+      expect(transitionSpecParserMode("paragraph", replacementSpecRegion)).not.toBeNull();
+    });
+    expect(paragraphOverlayProbe.props).toMatchObject({
+      active: true,
+      outerBbox: replacementSpecRegion,
+      regionKind: "spec-dense-columns",
+    });
+    act(() => expect(staleNotesExit()).toBe(false));
+    expect(useParseFlowStore.getState().paragraphWorkspaceOwner).toBe("spec");
+
+    const currentSpecExit = paragraphOverlayProbe.props?.onExit as () => boolean;
+    act(() => expect(currentSpecExit()).toBe(true));
+    expect(useParseFlowStore.getState()).toMatchObject({
+      paragraphWorkspaceOwner: null,
+      specParseRegion: null,
+      notesParseRegion: notesRegion,
+    });
+    const inactiveBaseline = paragraphOverlayProbe.renders;
+    act(() => useParseFlowStore.setState({
+      paragraphBatch: [{ id: "dormant", bbox: notesRegion, lines: [], rowText: {} }],
+      paragraphClipboard: { colBoundaries: [0.1, 0.5, 0.9], headers: ["Key", "Note"] },
+    }));
+    expect(paragraphOverlayProbe.renders).toBe(inactiveBaseline);
+  });
+
   it("mounts four current-page observers, ignores adjacent publication, and reacts to current data", async () => {
     useViewerStore.setState({ pageNumber: 7, numPages: 20 });
     let commits = 0;

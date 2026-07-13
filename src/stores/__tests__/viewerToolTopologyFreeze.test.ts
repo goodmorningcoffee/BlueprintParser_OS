@@ -123,7 +123,7 @@ const BOUNDARY_EXCLUSIONS = {
   mutableServerDraft: ["activeQtoWorkflow", "setActiveQtoWorkflow"],
   parseFlow: [
     "tableParseStep", "keynoteParseStep", "notesParseStep", "specParseStep",
-    "guidedParseActive", "paragraphOverlayActive", "paragraphClipboard",
+    "guidedParseActive", "paragraphWorkspaceOwner", "paragraphClipboard",
     "tableCellStructure", "showTableCellStructure", "parseDraftRegion",
     "notesFastManualActive", "notesFastManualGrid",
   ],

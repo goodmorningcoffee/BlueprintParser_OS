@@ -150,10 +150,8 @@ describe("panel-to-canvas specialized activation", () => {
       fireEvent.mouseDown(canvas, { clientX: 10, clientY: 20, button: 0 });
     });
 
-    expect(useViewerStore.getState()).toMatchObject({
-      _drawing: true,
-      _drawStart: { x: 10, y: 20 },
-      _drawEnd: { x: 10, y: 20 },
-    });
+    expect(useViewerStore.getState()._drawing).toBe(true);
+    expect(useViewerStore.getState()._drawStart).toEqual({ x: 10, y: 20 });
+    expect(useViewerStore.getState()._drawEnd).toEqual({ x: 10, y: 20 });
   });
 });

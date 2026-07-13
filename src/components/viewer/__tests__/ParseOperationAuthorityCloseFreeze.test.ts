@@ -888,6 +888,7 @@ const DURABLE_LIVE_TAIL_EXCEPTIONS = new Set([
 ]);
 const GUARDED_COMPLETION_COMMANDS = new Set([
   "claimGuidedParseWorkspaceForOperation",
+  "claimParagraphWorkspaceForOperation",
   "completeTableParseOperation",
   "completeKeynoteParseOperation",
   "completeNotesParseOperation",
@@ -1670,6 +1671,17 @@ describe("P2.4 A2e exact cross-family operation authority close", () => {
     )]]);
     expect(preAwaitSynchronousTailAnalysis(guidedWithoutCommit)).toContain(
       `table:${guidedPath}:handleParse:invalidateGuidedParseOperations:unguarded-pre-await-call`,
+    );
+
+    const notesPath = "src/components/viewer/NotesParser.tsx";
+    const notes = PRODUCTION_SOURCES.get(notesPath)!;
+    const notesWithoutParagraphClaim = new Map([[notesPath, replaceOnce(
+      notes,
+      "      const workspaceLease = claimParagraphWorkspaceForOperation(\n        token,\n        \"notes\",\n        notesParseRegion,\n      );",
+      "      useParseFlowStore.setState({ paragraphWorkspaceOwner: \"notes\" });\n      const workspaceLease = null;",
+    )]]);
+    expect(preAwaitSynchronousTailAnalysis(notesWithoutParagraphClaim)).toContain(
+      `notes:${notesPath}:saveFromParagraphBatch:setState:unguarded-pre-await-call`,
     );
   });
 

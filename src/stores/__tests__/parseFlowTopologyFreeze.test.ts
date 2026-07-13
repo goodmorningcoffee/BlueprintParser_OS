@@ -151,7 +151,7 @@ const PARSE_DATA_KEYS = [
   "parseDraftRegion",
   "specParseStep",
   "specParseRegion",
-  "paragraphOverlayActive",
+  "paragraphWorkspaceOwner",
   "paragraphBatch",
   "paragraphClipboard",
   "guidedParseActive",
@@ -191,7 +191,6 @@ const PARSE_LEAF_ACTION_KEYS = [
   "setParseDraftRegion",
   "setSpecParseRegion",
   "resetSpecParse",
-  "setParagraphOverlayActive",
   "setParagraphBatch",
   "upsertPendingParagraph",
   "removePendingParagraph",
@@ -203,7 +202,7 @@ const PARSE_LEAF_ACTION_KEYS = [
   "resetGuidedParse",
 ] as const;
 
-/** A2 additive authority stays outside the exact post-D2 live 34/40 ownership ledger. */
+/** A2 authority stays additive; ATP deletes one zero-borrower action from the 34-leaf data owner. */
 const PARSE_OPERATION_STATE_KEYS = ["parseOperations"] as const;
 const GUIDED_PARSE_OWNER_STATE_KEYS = ["guidedParseOwner"] as const;
 const PARSE_OPERATION_ACTION_KEYS = [
@@ -317,7 +316,6 @@ const PARAGRAPH_WORKSPACE_EXTENSION_HOOK_SHAPE = [
   "setParagraphBatch",
   "removePendingParagraph",
   "upsertPendingParagraph",
-  "setParagraphOverlayActive",
 ] as const;
 
 const TABLE_HOOK_CALLERS = {
@@ -1677,9 +1675,9 @@ describe("P2.4 phase-aware parse owner and compatibility surfaces", () => {
   const activeInterfaceKeys = interfaceKeys(findInterface(activeSource, ACTIVE_PARSE_OWNER.interfaceName));
   const activeObjectKeys = directObjectKeys(findStoreObject(activeSource, ACTIVE_PARSE_OWNER.storeName));
 
-  it("pins the phase-owned legacy 34/40 subset plus the additive A2 owner surface", () => {
+  it("pins the phase-owned 34/39 subset plus the additive A2 owner surface", () => {
     expect(PARSE_DATA_KEYS).toHaveLength(34);
-    expect(PARSE_LEAF_ACTION_KEYS).toHaveLength(40);
+    expect(PARSE_LEAF_ACTION_KEYS).toHaveLength(39);
     expect(PARSE_TEST_STATE_KEYS).toEqual([
       ...PARSE_DATA_KEYS.slice(0, 30),
       "guidedParseOwner",
@@ -2789,23 +2787,26 @@ describe("P2.4 phase-aware sacred parse subscription topology", () => {
     );
     expect(sourceText).toContain("onGridChange={setNotesFastManualGridFromOverlay}");
     expect(sourceText).toContain("onGridEditStart={beginNotesFastManualOperation}");
-    expect(sourceText).toContain(
-      "functionbeginParagraphWorkspaceOperations():ParseWorkspaceLease{returnbeginParagraphWorkspaceEdit();}",
-    );
     expect(sourceText).toContain("onParagraphUpsert={upsertParagraphForLease}");
     expect(sourceText).toContain("onParagraphRemove={removeParagraphForLease}");
-    expect(sourceText).toContain("onWorkspaceEditStart={beginParagraphWorkspaceOperations}");
+    expect(sourceText).toContain("onClipboardCapture={captureParagraphClipboardForLease}");
+    expect(sourceText).toContain("beginParagraphWorkspaceEdit(owner,outerBbox)");
+    expect(sourceText).toContain("exitParagraphWorkspace(owner,outerBbox)");
+    expect(sourceText).toContain("onWorkspaceEditStart={onWorkspaceEditStart}");
     expect(importedCalls(source, [ACTIVE_PARSE_OWNER.module], "useTableParse"))
       .toHaveLength(0);
     expect(knownMembers(expectFailClosedOwnerScan(source), "selector")).toEqual([
       "notesFastManualActive",
       "notesParseRegion",
-      "paragraphOverlayActive",
-      "specParseRegion",
+      "paragraphWorkspaceOwner",
+      "paragraphWorkspaceOwner",
       "notesParseRegion",
+      "paragraphWorkspaceOwner",
+      "specParseRegion",
+      "paragraphWorkspaceOwner",
       "paragraphBatch",
+      "paragraphWorkspaceOwner",
       "paragraphClipboard",
-      "setParagraphClipboard",
     ]);
     const authorityMembers = knownMembers(
       expectFailClosedOwnerScan(source, ACTIVE_PARSE_AUTHORITY_DESCRIPTOR),
@@ -2943,8 +2944,7 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
     expect(activeOwnerBorrowerFiles(["parseDraftRegion", "setParseDraftRegion"]))
       .toEqual([NOTES_PARSER, PARSE_REGION_LAYER, SPEC_PARSER]);
     expect(activeOwnerBorrowerFiles([
-      "paragraphOverlayActive",
-      "setParagraphOverlayActive",
+      "paragraphWorkspaceOwner",
       "paragraphBatch",
       "setParagraphBatch",
       "upsertPendingParagraph",
@@ -3035,15 +3035,16 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
     expect(compareText).toContain("store.setParsedKeynoteData(updatedKeynoteData)");
   });
 
-  it("pins PDF paragraph precedence and kind-specific exit", () => {
+  it("pins PDF paragraph owner selection and exact captured exit", () => {
     const source = parse(PDF_PAGE);
     const outerBbox = findVariable(source, "outerBbox");
     const isSpec = findVariable(source, "isSpec");
     const onExit = findVariable(source, "onExit");
-    expect(compact(outerBbox.initializer!, source)).toBe("specParseRegion??notesParseRegion");
-    expect(compact(isSpec.initializer!, source)).toBe("!!specParseRegion");
-    expect(compact(onExit, source))
-      .toBe("onExit=isSpec?exitSpecParagraphWorkspace:exitNotesParagraphWorkspace");
+    expect(compact(outerBbox.initializer!, source)).toBe(
+      "useParseFlowStore((s)=>s.paragraphWorkspaceOwner===\"notes\"?s.notesParseRegion:s.paragraphWorkspaceOwner===\"spec\"?s.specParseRegion:null)",
+    );
+    expect(compact(isSpec.initializer!, source)).toBe("owner===\"spec\"");
+    expect(compact(onExit, source)).toContain("exitParagraphWorkspace(owner,outerBbox)");
   });
 });
 

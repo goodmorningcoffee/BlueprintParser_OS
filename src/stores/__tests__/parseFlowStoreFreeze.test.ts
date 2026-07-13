@@ -45,7 +45,7 @@ export const PARSE_DATA_KEYS = [
   "parseDraftRegion",
   "specParseStep",
   "specParseRegion",
-  "paragraphOverlayActive",
+  "paragraphWorkspaceOwner",
   "paragraphBatch",
   "paragraphClipboard",
   "guidedParseActive",
@@ -85,7 +85,6 @@ export const PARSE_ACTION_KEYS = [
   "setParseDraftRegion",
   "setSpecParseRegion",
   "resetSpecParse",
-  "setParagraphOverlayActive",
   "setParagraphBatch",
   "upsertPendingParagraph",
   "removePendingParagraph",
@@ -97,7 +96,7 @@ export const PARSE_ACTION_KEYS = [
   "resetGuidedParse",
 ] as const satisfies readonly (keyof ParseState)[];
 
-/** A2 is additive: keep the post-D2 live 34/40 contract exact as a named current subset. */
+/** A2 is additive; ATP keeps 34 data leaves while deleting the zero-borrower owner setter. */
 const PARSE_ADDITIVE_DATA_KEYS = [
   "guidedParseOwner",
   "parseOperations",
@@ -331,7 +330,7 @@ function nonDefaultParsePatch(): Pick<ParseState, ParseDataKey> {
     parseDraftRegion: DRAFT,
     specParseStep: "review",
     specParseRegion: [...BBOX_B],
-    paragraphOverlayActive: true,
+    paragraphWorkspaceOwner: "notes",
     paragraphBatch: [PARAGRAPH],
     paragraphClipboard: CLIPBOARD,
     guidedParseActive: true,
@@ -344,11 +343,11 @@ function nonDefaultParsePatch(): Pick<ParseState, ParseDataKey> {
 beforeEach(restoreOwner);
 
 describe("P2.4 shared parse boundary and defaults", () => {
-  it("owns an independent unique 34-data / 40-leaf-action contract", () => {
+  it("owns an independent unique 34-data / 39-leaf-action contract", () => {
     expect(PARSE_DATA_KEYS).toHaveLength(34);
     expect(new Set(PARSE_DATA_KEYS).size).toBe(34);
-    expect(PARSE_ACTION_KEYS).toHaveLength(40);
-    expect(new Set(PARSE_ACTION_KEYS).size).toBe(40);
+    expect(PARSE_ACTION_KEYS).toHaveLength(39);
+    expect(new Set(PARSE_ACTION_KEYS).size).toBe(39);
     // The mixed test seam may seed the new shared-workspace owner, but operation registry bytes
     // remain owner-controlled and are never accepted as setup patches.
     expect(PARSE_TEST_STATE_KEYS).toEqual([
@@ -416,7 +415,7 @@ describe("P2.4 shared parse boundary and defaults", () => {
       parseDraftRegion: null,
       specParseStep: "idle",
       specParseRegion: null,
-      paragraphOverlayActive: false,
+      paragraphWorkspaceOwner: null,
       paragraphBatch: [],
       paragraphClipboard: null,
       guidedParseActive: false,
@@ -461,7 +460,6 @@ const PUBLICATION_CASES: readonly { name: ParseActionKey; invoke: () => void }[]
   { name: "setParseDraftRegion", invoke: () => useParseFlowStore.getState().setParseDraftRegion(null) },
   { name: "setSpecParseRegion", invoke: () => useParseFlowStore.getState().setSpecParseRegion(null) },
   { name: "resetSpecParse", invoke: () => useParseFlowStore.getState().resetSpecParse() },
-  { name: "setParagraphOverlayActive", invoke: () => useParseFlowStore.getState().setParagraphOverlayActive(false) },
   { name: "setParagraphBatch", invoke: () => { const state = useParseFlowStore.getState(); state.setParagraphBatch(state.paragraphBatch); } },
   { name: "upsertPendingParagraph", invoke: () => useParseFlowStore.getState().upsertPendingParagraph(PARAGRAPH) },
   { name: "removePendingParagraph", invoke: () => useParseFlowStore.getState().removePendingParagraph("absent") },
@@ -497,7 +495,6 @@ const SIMPLE_DESTINATION_CASES: readonly {
   { name: "setNotesFastManualGrid", key: "notesFastManualGrid", invoke: () => { const value = nonDefaultParsePatch().notesFastManualGrid; useParseFlowStore.getState().setNotesFastManualGrid(value); }, expected: nonDefaultParsePatch().notesFastManualGrid },
   { name: "setParseDraftRegion", key: "parseDraftRegion", invoke: () => useParseFlowStore.getState().setParseDraftRegion(DRAFT), expected: DRAFT, identity: DRAFT },
   { name: "setSpecParseRegion", key: "specParseRegion", invoke: () => useParseFlowStore.getState().setSpecParseRegion([...BBOX_B]), expected: BBOX_B },
-  { name: "setParagraphOverlayActive", key: "paragraphOverlayActive", invoke: () => useParseFlowStore.getState().setParagraphOverlayActive(true), expected: true },
   { name: "setParagraphBatch", key: "paragraphBatch", invoke: () => { const value = [PARAGRAPH]; useParseFlowStore.getState().setParagraphBatch(value); }, expected: [PARAGRAPH] },
   { name: "setParagraphClipboard", key: "paragraphClipboard", invoke: () => useParseFlowStore.getState().setParagraphClipboard(CLIPBOARD), expected: CLIPBOARD, identity: CLIPBOARD },
   { name: "setGuidedParseActive", key: "guidedParseActive", invoke: () => useParseFlowStore.getState().setGuidedParseActive(true), expected: true },
@@ -840,7 +837,7 @@ const RESET_CASES = [
     action: "resetNotesParse",
     touched: [
       "notesParseStep", "notesParseRegion", "guidedNotesRows", "guidedNotesCols",
-      "parseDraftRegion", "paragraphOverlayActive", "paragraphBatch",
+      "parseDraftRegion", "paragraphWorkspaceOwner", "paragraphBatch",
     ],
   },
   {
@@ -848,7 +845,7 @@ const RESET_CASES = [
     action: "resetSpecParse",
     touched: [
       "specParseStep", "specParseRegion", "parseDraftRegion",
-      "paragraphOverlayActive", "paragraphBatch",
+      "paragraphWorkspaceOwner", "paragraphBatch",
     ],
   },
   {

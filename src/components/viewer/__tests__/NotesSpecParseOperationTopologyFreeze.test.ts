@@ -312,8 +312,8 @@ describe("A2d exact Notes/Spec operation topology", () => {
     );
 
     expect(compact(namedRoot(NOTES, "saveFromParagraphBatch")))
-      .toContain("invalidateParagraphParseOperationsForOperation(token)");
+      .toContain('claimParagraphWorkspaceForOperation(token,"notes",notesParseRegion,)');
     expect(compact(namedRoot(SPEC, "saveFromBatch")))
-      .toContain("invalidateParagraphParseOperationsForOperation(token)");
+      .toContain('claimParagraphWorkspaceForOperation(token,"spec",specParseRegion,)');
   });
 });

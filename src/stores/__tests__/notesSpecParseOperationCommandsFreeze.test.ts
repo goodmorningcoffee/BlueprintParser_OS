@@ -25,9 +25,33 @@ type ParserWorkspaceLease = Readonly<{
   notesRevision: number;
   specRevision: number;
 }>;
+type ParagraphEditLeaseFixture = Readonly<{
+  owner: "notes" | "spec";
+  region: ParseRegion;
+  notesRevision: number;
+  specRevision: number;
+}>;
 
 type PlannedCommands = {
   invalidateParagraphParseOperations: (except?: "notes" | "spec") => void;
+  beginParagraphWorkspaceEdit: (
+    owner: "notes" | "spec",
+    region: ParseRegion,
+  ) => ParagraphEditLeaseFixture | null;
+  upsertParagraphForLease: (
+    paragraph: PendingParagraph,
+    lease: ParagraphEditLeaseFixture,
+  ) => boolean;
+  captureParagraphClipboardForLease: (
+    clipboard: ParagraphTemplate,
+    lease: ParagraphEditLeaseFixture,
+  ) => boolean;
+  exitParagraphWorkspace: (owner: "notes" | "spec", region: ParseRegion) => boolean;
+  claimParagraphWorkspaceForOperation: (
+    token: ParseOperationToken<"notes" | "spec">,
+    owner: "notes" | "spec",
+    region: ParseRegion,
+  ) => ParserWorkspaceLease | null;
   invalidateNotesWorkspaceOperations: (except?: ParseKind) => void;
   acceptNotesParseRegion: (region: ParseRegion) => void;
   acceptSpecParseRegion: (region: ParseRegion) => void;
@@ -41,11 +65,29 @@ type PlannedCommands = {
   leaveSpecParserWorkspace: (lease: ParserWorkspaceLease) => boolean;
   openNotesParseTarget: (pageNumber: number, region: ParseRegion | null) => void;
   openSpecParseTarget: (pageNumber: number, region: ParseRegion | null) => void;
-  transitionNotesParserMode: () => ParserWorkspaceLease;
-  transitionSpecParserMode: () => ParserWorkspaceLease;
-  setParagraphBatchForUser: (batch: PendingParagraph[]) => void;
-  upsertParagraphForUser: (paragraph: PendingParagraph) => void;
-  removeParagraphForUser: (id: string) => void;
+  transitionNotesParserMode: (
+    mode?: "auto" | "guided" | "paragraph" | "fast-manual" | "manual",
+    region?: ParseRegion | null,
+  ) => ParserWorkspaceLease | null;
+  transitionSpecParserMode: (
+    mode?: "auto" | "paragraph" | "manual",
+    region?: ParseRegion | null,
+  ) => ParserWorkspaceLease | null;
+  setParagraphBatchForUser: (
+    owner: "notes" | "spec",
+    region: ParseRegion,
+    batch: PendingParagraph[],
+  ) => boolean;
+  upsertParagraphForUser: (
+    owner: "notes" | "spec",
+    region: ParseRegion,
+    paragraph: PendingParagraph,
+  ) => boolean;
+  removeParagraphForUser: (
+    owner: "notes" | "spec",
+    region: ParseRegion,
+    id: string,
+  ) => boolean;
 };
 
 function plannedCommand<K extends keyof PlannedCommands>(name: K): PlannedCommands[K] {
@@ -233,7 +275,7 @@ describe("A2d atomic canvas-region acceptance", () => {
       specParseStep: "select-region",
       specParseRegion: REGION_A,
       parseDraftRegion: draft(`${entry.kind}-accept-stale-draft`),
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: entry.kind,
       paragraphBatch: [paragraph(`${entry.kind}-accept-stale-batch`)],
       paragraphClipboard: clipboard,
     });
@@ -252,7 +294,7 @@ describe("A2d atomic canvas-region acceptance", () => {
     expect(state[entry.regionKey]).toBe(REGION_B);
     expect(state[entry.stepKey]).toBe("idle");
     expect(state.parseDraftRegion).toBeNull();
-    expect(state.paragraphOverlayActive).toBe(false);
+    expect(state.paragraphWorkspaceOwner).toBeNull();
     expect(state.paragraphBatch).toEqual([]);
     expect(state.paragraphClipboard).toBe(clipboard);
 
@@ -381,7 +423,7 @@ describe("A2d current-token completion commands", () => {
       specParseStep: "review",
       specParseRegion: REGION_B,
       parseDraftRegion: draft("completion-draft"),
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: kind,
       paragraphBatch: [paragraph("completion-A")],
       paragraphClipboard: clipboard,
     });
@@ -402,7 +444,7 @@ describe("A2d current-token completion commands", () => {
     expect(completed!).toBe(true);
     expect(listener).toHaveBeenCalledTimes(1);
     expect(state.parseDraftRegion).toBeNull();
-    expect(state.paragraphOverlayActive).toBe(false);
+    expect(state.paragraphWorkspaceOwner).toBeNull();
     expect(state.paragraphBatch).toEqual([]);
     expect(state.paragraphClipboard).toBe(clipboard);
     expect(state.parseOperations.notes).toEqual({
@@ -514,7 +556,7 @@ describe("A2d Specs/Notes family handoff", () => {
       specParseStep: "review",
       specParseRegion: REGION_B,
       parseDraftRegion: parseDraft,
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: outgoingKind,
       paragraphBatch: batch,
       paragraphClipboard: clipboard,
     });
@@ -541,7 +583,7 @@ describe("A2d Specs/Notes family handoff", () => {
     expect(parsePublications).toBe(1);
     expect(useUiStore.getState().specsNotesTab).toBe(nextTab);
     expect(state.parseDraftRegion).toBeNull();
-    expect(state.paragraphOverlayActive).toBe(false);
+    expect(state.paragraphWorkspaceOwner).toBeNull();
     expect(state.paragraphBatch).toEqual([]);
     expect(state.paragraphClipboard).toBe(clipboard);
     if (outgoingKind === "notes") {
@@ -602,7 +644,7 @@ describe("A2d Specs/Notes family handoff", () => {
       specParseStep: "review",
       specParseRegion: REGION_B,
       parseDraftRegion: draft("departing-notes-draft"),
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: "notes",
       paragraphBatch: [paragraph("departing-notes-batch")],
       paragraphClipboard: clipboard,
     });
@@ -624,7 +666,7 @@ describe("A2d Specs/Notes family handoff", () => {
     expect(state.specParseStep).toBe("review");
     expect(state.specParseRegion).toBe(REGION_B);
     expect(state.parseDraftRegion).toBeNull();
-    expect(state.paragraphOverlayActive).toBe(false);
+    expect(state.paragraphWorkspaceOwner).toBeNull();
     expect(state.paragraphBatch).toEqual([]);
     expect(state.paragraphClipboard).toBe(clipboard);
 
@@ -669,7 +711,7 @@ describe("A2d Index target handoff", () => {
       specParseStep: "review",
       specParseRegion: REGION_B,
       parseDraftRegion: draft(`${kind}-outgoing`),
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: kind,
       paragraphBatch: [paragraph(`${kind}-outgoing`)],
     });
     const beforeRevision = useParseFlowStore.getState().parseOperations[kind].revision;
@@ -697,7 +739,7 @@ describe("A2d Index target handoff", () => {
       useParseFlowStore.setState({
         [regionKey]: REGION_B,
         parseDraftRegion: draft(`${kind}-subscriber-B`),
-        paragraphOverlayActive: true,
+        paragraphWorkspaceOwner: kind,
         paragraphBatch: [paragraph(`${kind}-subscriber-B`)],
       });
     });
@@ -733,6 +775,239 @@ describe("A2d Index target handoff", () => {
   });
 });
 
+describe("ATP exact Notes/Spec Paragraph ownership", () => {
+  it("makes the last exact owner authoritative while preserving dormant peer regions", () => {
+    useParseFlowStore.setState({
+      notesParseRegion: REGION_A,
+      specParseRegion: REGION_B,
+      paragraphBatch: [paragraph("seed")],
+      parseDraftRegion: null,
+    });
+
+    expect(plannedCommand("transitionSpecParserMode")("paragraph", REGION_B)).not.toBeNull();
+    expect(useParseFlowStore.getState().paragraphWorkspaceOwner).toBe("spec");
+    expect(useParseFlowStore.getState().parseDraftRegion?.type).toBe("spec");
+    const staleSpecLease = plannedCommand("beginParagraphWorkspaceEdit")("spec", REGION_B);
+    if (!staleSpecLease) throw new Error("could not begin exact Spec paragraph edit");
+
+    expect(plannedCommand("transitionNotesParserMode")("paragraph", REGION_A)).not.toBeNull();
+    let state = useParseFlowStore.getState();
+    expect(state.paragraphWorkspaceOwner).toBe("notes");
+    expect(state.notesParseRegion).toBe(REGION_A);
+    expect(state.specParseRegion).toBe(REGION_B);
+    expect(state.parseDraftRegion).toBeNull();
+    expect(plannedCommand("upsertParagraphForLease")(
+      paragraph("stale-spec"),
+      staleSpecLease,
+    )).toBe(false);
+
+    const notesLease = plannedCommand("beginParagraphWorkspaceEdit")("notes", REGION_A);
+    if (!notesLease) throw new Error("could not begin exact Notes paragraph edit");
+    expect(plannedCommand("upsertParagraphForLease")(
+      paragraph("notes-live"),
+      notesLease,
+    )).toBe(true);
+    expect(useParseFlowStore.getState().parseDraftRegion).toBeNull();
+
+    const equalButNewRegion: ParseRegion = [...REGION_A];
+    useParseFlowStore.setState({ notesParseRegion: equalButNewRegion });
+    state = useParseFlowStore.getState();
+    expect(plannedCommand("upsertParagraphForLease")(
+      paragraph("old-reference"),
+      notesLease,
+    )).toBe(false);
+    expect(useParseFlowStore.getState()).toBe(state);
+
+    expect(plannedCommand("transitionSpecParserMode")("paragraph", REGION_B)).not.toBeNull();
+    expect(useParseFlowStore.getState().paragraphWorkspaceOwner).toBe("spec");
+  });
+
+  it("keeps one-shot panel mutations owner-scoped and rotates both lanes atomically", () => {
+    useParseFlowStore.setState({
+      notesParseRegion: REGION_A,
+      specParseRegion: REGION_B,
+      paragraphBatch: [paragraph("A")],
+    });
+    expect(plannedCommand("transitionNotesParserMode")("paragraph", REGION_A)).not.toBeNull();
+    beginAllKinds();
+    const snapshots: ReturnType<typeof useParseFlowStore.getState>[] = [];
+    const unsubscribe = useParseFlowStore.subscribe((state) => snapshots.push(state));
+    try {
+      expect(plannedCommand("upsertParagraphForUser")(
+        "notes",
+        REGION_A,
+        paragraph("B"),
+      )).toBe(true);
+    } finally {
+      unsubscribe();
+    }
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0].paragraphWorkspaceOwner).toBe("notes");
+    expect(snapshots[0].parseDraftRegion).toBeNull();
+    expect(snapshots[0].parseOperations.notes.busy).toBe(false);
+    expect(snapshots[0].parseOperations.spec.busy).toBe(false);
+
+    const beforeStale = useParseFlowStore.getState();
+    expect(plannedCommand("removeParagraphForUser")(
+      "spec",
+      REGION_B,
+      "A",
+    )).toBe(false);
+    expect(useParseFlowStore.getState()).toBe(beforeStale);
+
+    expect(plannedCommand("transitionSpecParserMode")("paragraph", REGION_B)).not.toBeNull();
+    expect(plannedCommand("setParagraphBatchForUser")(
+      "spec",
+      REGION_B,
+      [paragraph("spec-live")],
+    )).toBe(true);
+    expect(useParseFlowStore.getState().parseDraftRegion).toMatchObject({ type: "spec" });
+  });
+
+  it("rejects equal-coordinate stale mode entry without a publication", () => {
+    const liveRegion: ParseRegion = [...REGION_A];
+    const staleEqualRegion: ParseRegion = [...REGION_A];
+    useParseFlowStore.setState({ notesParseRegion: liveRegion });
+    const before = useParseFlowStore.getState();
+    const listener = vi.fn();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+    let lease: ParserWorkspaceLease | null;
+    try {
+      lease = plannedCommand("transitionNotesParserMode")(
+        "paragraph",
+        staleEqualRegion,
+      );
+    } finally {
+      unsubscribe();
+    }
+    expect(lease!).toBeNull();
+    expect(listener).not.toHaveBeenCalled();
+    expect(useParseFlowStore.getState()).toBe(before);
+  });
+
+  it("denies stale clipboard and exit closures after a cross-owner handoff", () => {
+    const clipboardA: ParagraphTemplate = {
+      colBoundaries: [0.1, 0.5, 0.9],
+      headers: ["Key", "Note"],
+    };
+    const clipboardB: ParagraphTemplate = {
+      colBoundaries: [0.2, 0.6, 0.8],
+      headers: ["sectionHeader", "body"],
+    };
+    useParseFlowStore.setState({
+      notesParseRegion: REGION_A,
+      specParseRegion: REGION_B,
+    });
+    expect(plannedCommand("transitionNotesParserMode")("paragraph", REGION_A)).not.toBeNull();
+    const notesLease = plannedCommand("beginParagraphWorkspaceEdit")("notes", REGION_A);
+    if (!notesLease) throw new Error("could not begin Notes clipboard edit");
+    expect(plannedCommand("captureParagraphClipboardForLease")(
+      clipboardA,
+      notesLease,
+    )).toBe(true);
+
+    expect(plannedCommand("transitionSpecParserMode")("paragraph", REGION_B)).not.toBeNull();
+    expect(plannedCommand("captureParagraphClipboardForLease")(
+      clipboardB,
+      notesLease,
+    )).toBe(false);
+    expect(useParseFlowStore.getState().paragraphClipboard).toBe(clipboardA);
+    expect(plannedCommand("exitParagraphWorkspace")("notes", REGION_A)).toBe(false);
+    expect(useParseFlowStore.getState().paragraphWorkspaceOwner).toBe("spec");
+    expect(plannedCommand("exitParagraphWorkspace")("spec", REGION_B)).toBe(true);
+    const state = useParseFlowStore.getState();
+    expect(state.paragraphWorkspaceOwner).toBeNull();
+    expect(state.specParseRegion).toBeNull();
+    expect(state.notesParseRegion).toBe(REGION_A);
+  });
+
+  it("rejects a stale Paragraph Save admitted after the peer took ownership", () => {
+    useParseFlowStore.setState({
+      notesParseRegion: REGION_A,
+      specParseRegion: REGION_B,
+    });
+    expect(plannedCommand("transitionSpecParserMode")("paragraph", REGION_B)).not.toBeNull();
+    const specStarted = useParseFlowStore.getState().beginParseOperation("spec");
+    const notesStarted = useParseFlowStore.getState().beginParseOperation("notes");
+    if (specStarted.status !== "started" || notesStarted.status !== "started") {
+      throw new Error("could not admit peer and stale Paragraph Save roots");
+    }
+    const specBefore = useParseFlowStore.getState().parseOperations.spec;
+    const listener = vi.fn();
+    const unsubscribe = useParseFlowStore.subscribe(listener);
+    let lease: ParserWorkspaceLease | null;
+    try {
+      lease = plannedCommand("claimParagraphWorkspaceForOperation")(
+        notesStarted.token,
+        "notes",
+        REGION_A,
+      );
+    } finally {
+      unsubscribe();
+    }
+    expect(lease!).toBeNull();
+    expect(listener).not.toHaveBeenCalled();
+    expect(useParseFlowStore.getState().paragraphWorkspaceOwner).toBe("spec");
+    expect(useParseFlowStore.getState().parseOperations.spec).toBe(specBefore);
+  });
+
+  it.each([
+    ["notes", "spec", "transitionNotesParserMode", REGION_A],
+    ["spec", "notes", "transitionSpecParserMode", REGION_B],
+  ] as const)(
+    "rejects a %s Paragraph Save claim when its invalidation subscriber admits newer %s B",
+    (owner, peer, transitionCommand, ownerRegion) => {
+      useParseFlowStore.setState({
+        notesParseRegion: REGION_A,
+        specParseRegion: REGION_B,
+      });
+      expect(plannedCommand(transitionCommand)("paragraph", ownerRegion)).not.toBeNull();
+      const ownerStarted = useParseFlowStore.getState().beginParseOperation(owner);
+      if (ownerStarted.status !== "started") {
+        throw new Error(`could not admit ${owner} Paragraph Save A`);
+      }
+
+      let armed = true;
+      let peerB: ParseOperationToken<typeof peer> | undefined;
+      const unsubscribe = useParseFlowStore.subscribe(() => {
+        if (!armed) return;
+        armed = false;
+        const replacement = useParseFlowStore.getState().beginParseOperation(peer);
+        if (replacement.status !== "started") {
+          throw new Error(`claim subscriber could not admit newer ${peer} B`);
+        }
+        peerB = replacement.token;
+      });
+
+      let lease: ParserWorkspaceLease | null;
+      try {
+        lease = plannedCommand("claimParagraphWorkspaceForOperation")(
+          ownerStarted.token,
+          owner,
+          ownerRegion,
+        );
+      } finally {
+        unsubscribe();
+      }
+
+      expect(lease!).toBeNull();
+      expect(peerB).toBeDefined();
+      const state = useParseFlowStore.getState();
+      expect(state.paragraphWorkspaceOwner).toBe(owner);
+      expect(state[owner === "notes" ? "notesParseRegion" : "specParseRegion"])
+        .toBe(ownerRegion);
+      expect(state.parseOperations[owner]).toEqual({
+        revision: ownerStarted.token.revision,
+        busy: true,
+      });
+      expect(state.parseOperations[peer]).toEqual({
+        revision: peerB!.revision,
+        busy: true,
+      });
+    },
+  );
+});
+
 describe("A2d derived workspace and teardown reentrancy", () => {
   it.each([
     ["notes", "transitionNotesParserMode"],
@@ -740,8 +1015,9 @@ describe("A2d derived workspace and teardown reentrancy", () => {
   ] as const)("moves a %s mode destination and revocation in one publication", (kind, command) => {
     beginAllKinds();
     useParseFlowStore.setState({
+      [kind === "notes" ? "notesParseRegion" : "specParseRegion"]: REGION_A,
       parseDraftRegion: draft(`${kind}-mode`),
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: kind,
       notesFastManualActive: true,
       notesFastManualGrid: { headers: ["Key"], rows: [{ Key: "A" }] },
       guidedParseOwner: "notes",
@@ -761,7 +1037,7 @@ describe("A2d derived workspace and teardown reentrancy", () => {
 
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0].parseDraftRegion).toBeNull();
-    expect(snapshots[0].paragraphOverlayActive).toBe(false);
+    expect(snapshots[0].paragraphWorkspaceOwner).toBeNull();
     expect(snapshots[0].parseOperations.notes.busy).toBe(false);
     expect(snapshots[0].parseOperations.spec.busy).toBe(false);
     if (kind === "notes") {
@@ -773,12 +1049,16 @@ describe("A2d derived workspace and teardown reentrancy", () => {
   });
 
   it("combines each one-shot paragraph mutation with Notes/Spec revocation", () => {
-    useParseFlowStore.setState({ paragraphBatch: [paragraph("A")] });
+    useParseFlowStore.setState({
+      notesParseRegion: REGION_A,
+      paragraphWorkspaceOwner: "notes",
+      paragraphBatch: [paragraph("A")],
+    });
 
     for (const invoke of [
-      () => plannedCommand("upsertParagraphForUser")(paragraph("B")),
-      () => plannedCommand("removeParagraphForUser")("A"),
-      () => plannedCommand("setParagraphBatchForUser")([paragraph("C")]),
+      () => plannedCommand("upsertParagraphForUser")("notes", REGION_A, paragraph("B")),
+      () => plannedCommand("removeParagraphForUser")("notes", REGION_A, "A"),
+      () => plannedCommand("setParagraphBatchForUser")("notes", REGION_A, [paragraph("C")]),
     ]) {
       const notes = useParseFlowStore.getState().beginParseOperation("notes");
       const spec = useParseFlowStore.getState().beginParseOperation("spec");
@@ -822,7 +1102,7 @@ describe("A2d derived workspace and teardown reentrancy", () => {
       guidedParseActive: true,
       guidedParseRegion: REGION_A,
       notesFastManualActive: false,
-      paragraphOverlayActive: false,
+      paragraphWorkspaceOwner: null,
     });
   });
 
@@ -844,7 +1124,7 @@ describe("A2d derived workspace and teardown reentrancy", () => {
     useParseFlowStore.setState({
       [kind === "notes" ? "notesParseRegion" : "specParseRegion"]: REGION_B,
       parseDraftRegion: draft(`${kind}-retry-B`),
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: kind,
       paragraphBatch: [paragraph(`${kind}-retry-B`)],
       ...(kind === "notes"
         ? {
@@ -893,7 +1173,7 @@ describe("A2d derived workspace and teardown reentrancy", () => {
     useParseFlowStore.setState({
       [kind === "notes" ? "notesParseRegion" : "specParseRegion"]: REGION_A,
       parseDraftRegion: draft(`${kind}-owned-A`),
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: kind,
       paragraphBatch: [paragraph(`${kind}-owned-A`)],
       ...(kind === "notes"
         ? {
@@ -923,7 +1203,7 @@ describe("A2d derived workspace and teardown reentrancy", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     const state = useParseFlowStore.getState();
     expect(state.parseDraftRegion).toBeNull();
-    expect(state.paragraphOverlayActive).toBe(false);
+    expect(state.paragraphWorkspaceOwner).toBeNull();
     expect(state.paragraphBatch[0].id).toBe(`${kind}-owned-A`);
     expect(state.parseOperations[kind]).toEqual({
       revision: started.token.revision + 1,
@@ -950,7 +1230,7 @@ describe("A2d derived workspace and teardown reentrancy", () => {
       specParseRegion: REGION_B,
       guidedParseRegion: currentTab === "notes-parse" ? REGION_A : null,
       parseDraftRegion: draft("outgoing"),
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: currentTab === "notes-parse" ? "notes" : "spec",
       paragraphBatch: [paragraph("outgoing")],
     });
     const lease = currentWorkspaceLease();
@@ -958,7 +1238,7 @@ describe("A2d derived workspace and teardown reentrancy", () => {
 
     useParseFlowStore.setState({
       parseDraftRegion: draft("destination-B"),
-      paragraphOverlayActive: true,
+      paragraphWorkspaceOwner: destinationKind,
       paragraphBatch: [paragraph("destination-B")],
     });
     const started = useParseFlowStore.getState().beginParseOperation(destinationKind);

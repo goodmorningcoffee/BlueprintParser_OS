@@ -16,6 +16,7 @@ import {
 import { useToolStore } from "@/stores/toolStore";
 import {
   claimGuidedParseWorkspaceForOperation,
+  claimParagraphWorkspaceForOperation,
   completeNotesParseOperation,
   invalidateNotesWorkspaceOperationsForOperation,
   invalidateParagraphParseOperationsForOperation,
@@ -316,11 +317,11 @@ export default function NotesParser() {
   };
 
   const handleRepeatPlusOne = () => {
-    if (paragraphBatch.length === 0) return;
+    if (!notesParseRegion || paragraphBatch.length === 0) return;
     const last = paragraphBatch[paragraphBatch.length - 1];
     const [x0, y0, x1, y1] = last.bbox;
     const h = y1 - y0;
-    upsertParagraphForUser({
+    upsertParagraphForUser("notes", notesParseRegion, {
       id: `para-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       bbox: [x0, y1, x1, y1 + h],
       lines: [],
@@ -342,7 +343,11 @@ export default function NotesParser() {
     if (started.status !== "started") return;
     const token = started.token;
     try {
-      const workspaceLease = invalidateParagraphParseOperationsForOperation(token);
+      const workspaceLease = claimParagraphWorkspaceForOperation(
+        token,
+        "notes",
+        notesParseRegion,
+      );
       if (!workspaceLease) return;
       if (!commitParseOperation(token, () => {
         cleanupLeaseRef.current = workspaceLease;
@@ -501,7 +506,9 @@ export default function NotesParser() {
 
   const handleModeChange = (nextMode: NotesSubMode) => {
     if (nextMode === mode) return;
-    cleanupLeaseRef.current = transitionNotesParserMode(nextMode, notesParseRegion);
+    const lease = transitionNotesParserMode(nextMode, notesParseRegion);
+    if (!lease) return;
+    cleanupLeaseRef.current = lease;
     setMode(nextMode);
     setPreview(null);
     setError(null);
@@ -635,7 +642,9 @@ export default function NotesParser() {
               </button>
               <button
                 onClick={() => {
-                  setParagraphBatchForUser([]);
+                  if (notesParseRegion) {
+                    setParagraphBatchForUser("notes", notesParseRegion, []);
+                  }
                 }}
                 disabled={paragraphBatch.length === 0}
                 className="text-[10px] px-2 py-1 rounded border border-[var(--border)] text-[var(--muted)] hover:text-red-400 disabled:opacity-40"
@@ -658,7 +667,9 @@ export default function NotesParser() {
                     </span>
                     <button
                       onClick={() => {
-                        removeParagraphForUser(p.id);
+                        if (notesParseRegion) {
+                          removeParagraphForUser("notes", notesParseRegion, p.id);
+                        }
                       }}
                       className="text-red-400/70 hover:text-red-400 shrink-0"
                       title="Remove"

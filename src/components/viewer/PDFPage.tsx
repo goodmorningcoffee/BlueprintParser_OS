@@ -5,6 +5,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   useParseFlowStore,
   useKeynoteParse,
+  type PendingParagraph,
 } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -13,13 +14,14 @@ import {
   beginGuidedGridEdit,
   beginNotesFastManualEdit,
   beginParagraphWorkspaceEdit,
+  captureParagraphClipboardForLease,
+  exitParagraphWorkspace,
   removeParagraphForLease,
-  resetNotesParseWorkspace,
-  resetSpecParseWorkspace,
   setGuidedParseColsForLease,
   setGuidedParseRowsForLease,
   setNotesFastManualGridFromOverlay,
   upsertParagraphForLease,
+  type ParagraphEditLease,
   type ParseWorkspaceLease,
 } from "@/stores/viewerCommands";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";
@@ -46,21 +48,27 @@ interface CacheEntry {
 }
 
 const MAX_CACHED_PAGES = 8;
+const EMPTY_PARAGRAPH_BATCH = Object.freeze([]) as unknown as PendingParagraph[];
+const paragraphRegionIdentities = new WeakMap<readonly number[], number>();
+let nextParagraphRegionIdentity = 1;
 
-function beginParagraphWorkspaceOperations(): ParseWorkspaceLease {
-  return beginParagraphWorkspaceEdit();
+function paragraphWorkspaceIdentity(
+  pageNumber: number,
+  owner: "notes" | "spec" | null,
+  region: readonly number[] | null,
+): string {
+  if (region === null) return `${pageNumber}:${owner ?? "none"}:none`;
+  let identity = paragraphRegionIdentities.get(region);
+  if (identity === undefined) {
+    identity = nextParagraphRegionIdentity;
+    nextParagraphRegionIdentity += 1;
+    paragraphRegionIdentities.set(region, identity);
+  }
+  return `${pageNumber}:${owner ?? "none"}:${identity}`;
 }
 
 function beginNotesFastManualOperation(): ParseWorkspaceLease {
   return beginNotesFastManualEdit();
-}
-
-function exitNotesParagraphWorkspace(): void {
-  resetNotesParseWorkspace();
-}
-
-function exitSpecParagraphWorkspace(): void {
-  resetSpecParseWorkspace();
 }
 
 const KeynoteGuidedOverlaySlot = memo(function KeynoteGuidedOverlaySlot(props: {
@@ -130,20 +138,25 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
   height: number;
   cssScale: number;
 }) {
-  const active = useParseFlowStore((s) => s.paragraphOverlayActive);
-  const specParseRegion = useParseFlowStore((s) => s.specParseRegion);
-  const notesParseRegion = useParseFlowStore((s) => s.notesParseRegion);
+  const owner = useParseFlowStore((s) => s.paragraphWorkspaceOwner);
+  const outerBbox = useParseFlowStore((s) =>
+    s.paragraphWorkspaceOwner === "notes"
+      ? s.notesParseRegion
+      : s.paragraphWorkspaceOwner === "spec"
+        ? s.specParseRegion
+        : null
+  );
   // This slot owns a separate exact-page observer because its render inputs/lifetime are independent.
   const textractData = useTextractForPage(props.pageNumber);
   const pageIntel = usePageIntelligenceForPage(props.pageNumber);
-  const paragraphBatch = useParseFlowStore((s) => s.paragraphBatch);
-  const paragraphClipboard = useParseFlowStore((s) => s.paragraphClipboard);
-  const setParagraphClipboard = useParseFlowStore((s) => s.setParagraphClipboard);
+  const paragraphBatch = useParseFlowStore((s) =>
+    s.paragraphWorkspaceOwner === null ? EMPTY_PARAGRAPH_BATCH : s.paragraphBatch
+  );
+  const paragraphClipboard = useParseFlowStore((s) =>
+    s.paragraphWorkspaceOwner === null ? null : s.paragraphClipboard
+  );
 
-  // Phase 2.5 temporary: prefer spec region when present, else notes region.
-  // Phase 2.6 will unify into a single `parseRegion` slot.
-  const outerBbox = specParseRegion ?? notesParseRegion;
-  const isSpec = !!specParseRegion;
+  const isSpec = owner === "spec";
   // Notes default to the numbered binder since it's the most common shape on
   // arch drawings. Per-paragraph rowText is still editable in ParagraphOverlay,
   // and Step 5 (parallel MethodResult refactor) will re-introduce an
@@ -157,11 +170,36 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
   // Matches the classifier's line-height-factor default scaled for each family.
   const yGapTolerance = isSpec ? CLUSTER_Y_TOLERANCE_FACTOR * 0.035 * 8 : CLUSTER_Y_TOLERANCE_FACTOR * 0.025 * 4;
 
-  const onExit = isSpec ? exitSpecParagraphWorkspace : exitNotesParagraphWorkspace;
+  const onWorkspaceEditStart = useCallback(
+    (): ParagraphEditLease | null => {
+      if (
+        useViewerCoreStore.getState().pageNumber !== props.pageNumber ||
+        owner === null || outerBbox === null
+      ) return null;
+      return beginParagraphWorkspaceEdit(owner, outerBbox);
+    },
+    [owner, outerBbox, props.pageNumber],
+  );
+  const onExit = useCallback(
+    (): boolean => {
+      if (
+        useViewerCoreStore.getState().pageNumber !== props.pageNumber ||
+        owner === null || outerBbox === null
+      ) return false;
+      return exitParagraphWorkspace(owner, outerBbox);
+    },
+    [owner, outerBbox, props.pageNumber],
+  );
+  const workspaceIdentity = paragraphWorkspaceIdentity(
+    props.pageNumber,
+    owner,
+    outerBbox,
+  );
 
   return (
     <ParagraphOverlay
-      active={active}
+      key={workspaceIdentity}
+      active={owner !== null && outerBbox !== null}
       outerBbox={outerBbox}
       textRegions={textRegions}
       allLines={allLines}
@@ -171,9 +209,10 @@ const ParagraphOverlaySlot = memo(function ParagraphOverlaySlot(props: {
       paragraphClipboard={paragraphClipboard}
       onParagraphUpsert={upsertParagraphForLease}
       onParagraphRemove={removeParagraphForLease}
-      onClipboardCapture={setParagraphClipboard}
-      onWorkspaceEditStart={beginParagraphWorkspaceOperations}
+      onClipboardCapture={captureParagraphClipboardForLease}
+      onWorkspaceEditStart={onWorkspaceEditStart}
       onExit={onExit}
+      workspaceIdentity={workspaceIdentity}
       width={props.width}
       height={props.height}
       cssScale={props.cssScale}
