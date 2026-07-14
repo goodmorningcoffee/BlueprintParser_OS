@@ -19,12 +19,16 @@ import {
   consumeToolTailAuthority,
   ownsToolTailAuthority,
 } from "@/lib/parse-tool-authority";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 const AREA_UNITS: AreaUnit[] = ["ft", "in", "m", "cm"];
 
 /** Scale calibration distance input — used by AreaTab, reusable by future tools. */
 export default function CalibrationInput() {
   const queryClient = useQueryClient();
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const calibrationPoints = useToolStore((s) => s.calibrationPoints);
   const setScaleCalibration = useToolStore((s) => s.setScaleCalibration);
   const resetCalibration = useToolStore((s) => s.resetCalibration);
@@ -38,6 +42,7 @@ export default function CalibrationInput() {
   const [error, setError] = useState<string | null>(null);
 
   async function handleOk() {
+    if (!isRenderedLifecycleCurrent()) return;
     const dist = parseFloat(distance);
     const tool = useToolStore.getState();
     const activation = tool.activeTool;
@@ -50,6 +55,7 @@ export default function CalibrationInput() {
     const capturedPublicId = session.publicId;
     const capturedPageNumber = useViewerCoreStore.getState().pageNumber;
     const capturedAnnotationsKey = queryKeys.annotations.all(capturedPublicId);
+    const canAdoptLifecycle = isRenderedLifecycleCurrent;
     const token = claimToolTailAuthority({});
 
     setSaving(true);
@@ -78,7 +84,7 @@ export default function CalibrationInput() {
     ];
 
     if (session.isDemo) {
-      if (useSessionStore.getState().publicId === capturedPublicId) {
+      if (canAdoptLifecycle()) {
         setScaleCalibration(capturedPageNumber, cal);
       }
       const tempAnn: ClientAnnotation = {
@@ -90,13 +96,16 @@ export default function CalibrationInput() {
         source: "takeoff-scale",
         data: cal as unknown as Record<string, unknown>,
       };
-      queryClient.setQueryData(capturedAnnotationsKey, [
-        ...annotations.filter(
-          (a) => !(a.source === "takeoff-scale" && a.pageNumber === capturedPageNumber)
-        ),
-        tempAnn,
-      ]);
+      if (canAdoptLifecycle()) {
+        queryClient.setQueryData(capturedAnnotationsKey, [
+          ...annotations.filter(
+            (a) => !(a.source === "takeoff-scale" && a.pageNumber === capturedPageNumber)
+          ),
+          tempAnn,
+        ]);
+      }
       if (
+        canAdoptLifecycle() &&
         ownsToolTailAuthority(token) &&
         useSessionStore.getState().publicId === capturedPublicId &&
         useViewerCoreStore.getState().pageNumber === capturedPageNumber &&
@@ -104,8 +113,10 @@ export default function CalibrationInput() {
       ) {
         consumeToolTailAuthority(token, () => publishSettledCalibrationReset(activation));
       }
-      setDistance("");
-      setSaving(false);
+      if (canAdoptLifecycle()) {
+        setDistance("");
+        setSaving(false);
+      }
       return;
     }
 
@@ -131,16 +142,19 @@ export default function CalibrationInput() {
       });
       if (res.ok) {
         const saved = await res.json();
+        if (!canAdoptLifecycle()) return;
         queryClient.setQueryData(capturedAnnotationsKey, [
           ...annotations.filter(
             (a) => !(a.source === "takeoff-scale" && a.pageNumber === capturedPageNumber)
           ),
           saved,
         ]);
+        if (!canAdoptLifecycle()) return;
         if (useSessionStore.getState().publicId === capturedPublicId) {
           setScaleCalibration(capturedPageNumber, cal);
         }
         if (
+          canAdoptLifecycle() &&
           ownsToolTailAuthority(token) &&
           useSessionStore.getState().publicId === capturedPublicId &&
           useViewerCoreStore.getState().pageNumber === capturedPageNumber &&
@@ -148,15 +162,17 @@ export default function CalibrationInput() {
         ) {
           consumeToolTailAuthority(token, () => publishSettledCalibrationReset(activation));
         }
-        setDistance("");
+        if (canAdoptLifecycle()) setDistance("");
       } else {
         const errData = await res.json().catch(() => null);
-        setError(apiErrorMessage(errData) || `Failed (${res.status})`);
+        if (canAdoptLifecycle()) {
+          setError(apiErrorMessage(errData) || `Failed (${res.status})`);
+        }
       }
     } catch (err) {
-      setError("Network error — could not save calibration");
+      if (canAdoptLifecycle()) setError("Network error — could not save calibration");
     } finally {
-      setSaving(false);
+      if (canAdoptLifecycle()) setSaving(false);
     }
   }
 

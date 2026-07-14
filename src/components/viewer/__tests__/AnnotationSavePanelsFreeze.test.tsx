@@ -27,9 +27,16 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import {
+  captureProjectLifecycle,
+  isCurrentProjectLifecycle,
+  openProject,
+  type OpenProjectHandle,
+  type ProjectResponse,
+} from "@/lib/project-lifecycle";
 import { useToolStore } from "@/stores/toolStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
-import { setKeynotesForPage } from "@/queries/usePageWindow";
+import { readKeynotesForPage, setKeynotesForPage } from "@/queries/usePageWindow";
 import type {
   ClientAnnotation,
   KeynoteShapeData,
@@ -55,6 +62,45 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function lifecycleJsonResponse(body: unknown): Response {
+  return { ok: true, status: 200, json: async () => body } as Response;
+}
+
+function lifecycleProjectResponse(): ProjectResponse {
+  return {
+    id: "pid",
+    dbId: 41,
+    name: "Lifecycle project",
+    dataUrl: "s3://private/project.json",
+    pdfUrl: "s3://private/project.pdf",
+    numPages: 2,
+    status: "ready",
+    summaries: null,
+    projectIntelligence: null,
+    pages: [{ pageNumber: 1, name: "A-101", drawingNumber: null }],
+  };
+}
+
+async function activateLifecycle(): Promise<OpenProjectHandle> {
+  const lifecycleFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/projects/pid") return lifecycleJsonResponse(lifecycleProjectResponse());
+    if (url === "/api/projects/pid/pages?from=1&to=15") {
+      return lifecycleJsonResponse({ from: 1, to: 2, pages: [], annotations: [] });
+    }
+    if (url === "/api/annotation-groups?projectId=pid") {
+      return lifecycleJsonResponse({ groups: [], memberships: [] });
+    }
+    throw new Error(`unexpected lifecycle request: ${url}`);
+  });
+  vi.stubGlobal("fetch", lifecycleFetch);
+  const handle = openProject(qc, "pid", { demo: false });
+  expect((await handle.result).status).toBe("opened");
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  return handle;
 }
 
 function annotation(
@@ -311,6 +357,142 @@ describe("DetectionPanel shape-save — guard, raw-fetch failure, and append+cle
     expect(screen.queryByRole("button", { name: /Save page 1/ })).not.toBeInTheDocument();
   });
 
+  it("does not append or clear shape state after a same-ID successor lifecycle opens", async () => {
+    const lifecycleA = await activateLifecycle();
+    const snapshotA = captureProjectLifecycle(qc);
+    setViewerStoreStateForTest({
+      publicId: "pid",
+      projectId: 41,
+      isDemo: false,
+      pageNumber: 1,
+      pageNames: { 1: "A-101" },
+      mode: "move",
+      showKeynotes: false,
+      hiddenClasses: {},
+    });
+    seedAnnotations(qc, [survivor()]);
+    seedPendingShape();
+    const response = deferred<unknown>();
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockImplementation((url: unknown, init?: RequestInit) => {
+      if (url === "/api/annotations" && init?.method === "POST") return response.promise;
+      return successorPending;
+    });
+    renderDetectionSaveSurface();
+    fireEvent.click(screen.getByRole("button", { name: "Save page 1 (1 shapes)" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/annotations",
+      expect.any(Object),
+    ));
+
+    const successorRows = [annotation({
+      id: 142,
+      name: "successor-row",
+      source: "yolo",
+      data: { modelName: "successor-model", confidence: 1 },
+    })];
+    const successorShapes = [{
+      shape: "square",
+      text: "successor-shape",
+      bbox: [0.6, 0.6, 0.7, 0.7],
+    }] satisfies KeynoteShapeData[];
+    const obsoleteSaved = annotation({
+      id: 42,
+      name: "obsolete-A-shape",
+      source: "shape-parse",
+      data: { modelName: "shape-parse", confidence: 0.9 },
+    });
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: false });
+      setViewerStoreStateForTest({
+        publicId: "pid",
+        projectId: 41,
+        isDemo: false,
+        pageNumber: 1,
+        pageNames: { 1: "B-101" },
+        mode: "move",
+        showKeynotes: false,
+        hiddenClasses: {},
+      });
+      seedAnnotations(qc, successorRows);
+      setKeynotesForPage(qc, "pid", 1, successorShapes);
+      response.resolve({ ok: true, json: async () => ({ annotations: [obsoleteSaved] }) });
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+
+    expect.soft(isCurrentProjectLifecycle(qc, snapshotA)).toBe(false);
+    expect.soft(readSeededAnnotations(qc)).toEqual(successorRows);
+    expect.soft(readKeynotesForPage(qc, "pid", 1)).toEqual(successorShapes);
+    const successorSave = screen.getByRole("button", {
+      name: /^(Saving\.\.\.|Save page 1 \(1 shapes\))$/,
+    });
+    expect.soft(successorSave).toHaveTextContent("Save page 1 (1 shapes)");
+    expect.soft(successorSave).toBeEnabled();
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("does not carry lifecycle A's shape-save success banner into successor B", async () => {
+    const lifecycleA = await activateLifecycle();
+    setViewerStoreStateForTest({
+      publicId: "pid",
+      projectId: 41,
+      isDemo: false,
+      pageNumber: 1,
+      pageNames: { 1: "A-101" },
+      mode: "move",
+      showKeynotes: false,
+      hiddenClasses: {},
+    });
+    seedPendingShape();
+    const saved = annotation({
+      id: 143,
+      name: "circle",
+      source: "shape-parse",
+      data: { modelName: "shape-parse", confidence: 0.9 },
+    });
+    routeAnnotationPost(Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ annotations: [saved] }),
+    }));
+    renderDetectionSaveSurface();
+    fireEvent.click(screen.getByRole("button", { name: "Save page 1 (1 shapes)" }));
+    await waitFor(() => expect(readKeynotesForPage(qc, "pid", 1)).toEqual([]));
+
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockReturnValue(successorPending);
+    const successorShapes = [{
+      shape: "square",
+      text: "successor-shape",
+      bbox: [0.6, 0.6, 0.7, 0.7],
+    }] satisfies KeynoteShapeData[];
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: false });
+      setViewerStoreStateForTest({
+        publicId: "pid",
+        projectId: 41,
+        isDemo: false,
+        pageNumber: 1,
+        pageNames: { 1: "B-101" },
+        mode: "move",
+        showKeynotes: false,
+        hiddenClasses: {},
+      });
+      setKeynotesForPage(qc, "pid", 1, successorShapes);
+    });
+
+    const successorSave = screen.getByRole("button", {
+      name: /^(Saved 1 annotations|Save page 1 \(1 shapes\))$/,
+    });
+    expect.soft(successorSave).toHaveTextContent("Save page 1 (1 shapes)");
+    expect.soft(successorSave).toBeEnabled();
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
   it("save-all preserves its pre-await snapshot semantics and drops a concurrent annotation write", async () => {
     // [refactor jul11 P2.2⑥] Unlike the single-page sibling, save-all captures the whole zustand
     // snapshot at click time (`store`) and reads `store.annotations` after await. This lost-update
@@ -483,5 +665,157 @@ describe("SymbolSearchPanel annotation-save — guard, raw-fetch failure, and ap
     expect(screen.queryByText("concurrent-model")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Start/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Save 1 matches/ })).not.toBeInTheDocument();
+  });
+
+  it("does not replace annotations or clear symbol state across a same-ID auth-to-demo lifecycle", async () => {
+    const lifecycleA = await activateLifecycle();
+    const snapshotA = captureProjectLifecycle(qc);
+    setViewerStoreStateForTest({
+      publicId: "pid",
+      projectId: 41,
+      isDemo: false,
+      pageNumber: 1,
+      pageNames: { 1: "A-101" },
+      mode: "move",
+      hiddenClasses: {},
+    });
+    seedAnnotations(qc, [survivor()]);
+    seedPendingSymbolSearch();
+    const response = deferred<unknown>();
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockImplementation((url: unknown, init?: RequestInit) => {
+      if (url === "/api/annotations" && init?.method === "POST") return response.promise;
+      return successorPending;
+    });
+    renderSymbolSaveSurface();
+    fireEvent.click(screen.getByRole("button", { name: "Save 1 matches as annotations" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/annotations",
+      expect.any(Object),
+    ));
+
+    const successorRows = [annotation({
+      id: 184,
+      name: "successor-symbol-row",
+      source: "yolo",
+      data: { modelName: "successor-symbol-model", confidence: 1 },
+    })];
+    const successorResults = {
+      ...symbolResults,
+      matches: [{
+        ...symbolResults.matches[0],
+        id: "successor-match",
+        confidence: 0.99,
+      }],
+      searchedAt: "2026-07-14T00:00:00.000Z",
+    } satisfies SymbolSearchResult;
+    const obsoleteSaved = annotation({
+      id: 84,
+      name: "obsolete-A-symbol",
+      source: "symbol-search",
+      data: { modelName: "symbol-search", confidence: 0.91 },
+    });
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: true });
+      // The successor demo token is already authoritative; keep the stale render's selectors
+      // value-equal until settlement so it cannot pass by capturing B after the click.
+      setViewerStoreStateForTest({
+        publicId: "pid",
+        projectId: 41,
+        isDemo: false,
+        pageNumber: 1,
+        pageNames: { 1: "B-101" },
+        mode: "move",
+        hiddenClasses: {},
+      });
+      seedAnnotations(qc, successorRows);
+      useToolStore.setState({
+        activeTool: { kind: "symbolTemplate" },
+        symbolSearchLoading: false,
+        symbolSearchResults: successorResults,
+        symbolSearchError: null,
+        symbolSearchTemplateBbox: [0.4, 0.4, 0.5, 0.5],
+        symbolSearchSourcePage: 1,
+        dismissedSymbolMatches: new Set<string>(),
+      });
+      response.resolve({ ok: true, json: async () => ({ annotations: [obsoleteSaved] }) });
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+
+    expect.soft(isCurrentProjectLifecycle(qc, snapshotA)).toBe(false);
+    expect.soft(readSeededAnnotations(qc)).toEqual(successorRows);
+    expect.soft(useToolStore.getState().symbolSearchResults).toBe(successorResults);
+    expect.soft(useToolStore.getState().activeTool).toEqual({ kind: "symbolTemplate" });
+    const successorSave = screen.getByRole("button", {
+      name: /^(Saving\.\.\.|Save 1 matches as annotations)$/,
+    });
+    expect.soft(successorSave).toHaveTextContent("Save 1 matches as annotations");
+    expect.soft(successorSave).toBeEnabled();
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("does not carry lifecycle A's symbol-save success banner into successor B", async () => {
+    const lifecycleA = await activateLifecycle();
+    setViewerStoreStateForTest({
+      publicId: "pid",
+      projectId: 41,
+      isDemo: false,
+      pageNumber: 1,
+      pageNames: { 1: "A-101" },
+      mode: "move",
+      hiddenClasses: {},
+    });
+    seedPendingSymbolSearch();
+    const saved = annotation({
+      id: 185,
+      name: "symbol-match",
+      source: "symbol-search",
+      data: { modelName: "symbol-search", confidence: 0.91 },
+    });
+    routeAnnotationPost(Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ annotations: [saved] }),
+    }));
+    renderSymbolSaveSurface();
+    fireEvent.click(screen.getByRole("button", { name: "Save 1 matches as annotations" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Start/ })).toBeInTheDocument());
+
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockReturnValue(successorPending);
+    const successorResults = {
+      ...symbolResults,
+      searchedAt: "2026-07-14T12:00:00.000Z",
+    } satisfies SymbolSearchResult;
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: false });
+      setViewerStoreStateForTest({
+        publicId: "pid",
+        projectId: 41,
+        isDemo: false,
+        pageNumber: 1,
+        pageNames: { 1: "B-101" },
+        mode: "move",
+        hiddenClasses: {},
+        activeTool: { kind: "symbolTemplate" },
+        symbolSearchLoading: false,
+        symbolSearchResults: successorResults,
+        symbolSearchError: null,
+        symbolSearchTemplateBbox: [0.4, 0.4, 0.5, 0.5],
+        symbolSearchSourcePage: 1,
+        dismissedSymbolMatches: new Set<string>(),
+      });
+    });
+
+    const successorSave = screen.getByRole("button", {
+      name: /^(Saved 1 annotations|Save 1 matches as annotations)$/,
+    });
+    expect.soft(successorSave).toHaveTextContent("Save 1 matches as annotations");
+    expect.soft(successorSave).toBeEnabled();
+    lifecycleB.dispose();
+    lifecycleA.dispose();
   });
 });

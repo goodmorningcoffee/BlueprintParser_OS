@@ -29,6 +29,8 @@ export interface SaveParsedRegionTarget {
   readonly publicId: string | null;
   readonly isDemo: boolean;
   readonly pageNumber: number;
+  /** Caller-owned render/operation authority; persistence still settles when adoption is retired. */
+  readonly canAdopt: () => boolean;
 }
 
 export type ParsedRegionPromotion =
@@ -57,6 +59,8 @@ export interface DeleteParsedRegionTarget {
   readonly isDemo: boolean;
   readonly pageNumber: number;
   readonly regionId: string | null;
+  /** Caller-owned render/operation authority; persistence still settles when adoption is retired. */
+  readonly canAdopt: () => boolean;
 }
 
 export type DeleteParsedRegionResult =
@@ -289,7 +293,10 @@ export async function saveParsedRegion(
 ): Promise<SaveParsedRegionResult> {
   // Capture identity before the first await. Callers normally pass a fresh object, but accepting a
   // mutable alias must never let P target A while A/S/X target a later B.
-  const { publicId, isDemo, pageNumber } = target;
+  const { publicId, isDemo, pageNumber, canAdopt } = target;
+  // Keep the runtime boundary fail closed too. TypeScript callers must provide authority, while
+  // untyped/legacy callers that omit it may still finish durable work but own no publication.
+  const mayAdopt = () => canAdopt?.() === true;
   // Demo is an intentional local-write product mode. Callers perform that local write before
   // entering this command; even a malformed/missing demo id must never become a persistence path.
   if (isDemo) return { status: "local", reason: "demo" };
@@ -317,15 +324,18 @@ export async function saveParsedRegion(
   assertPromotionResponse(response);
 
   // Exact persistent tail: Persist -> authoritative Adoption -> optional Summaries -> spatial
-  // recompute. The captured publicId/page owns every write, even if the visible session changes.
+  // recompute. Persistence is durable, but a retired render generation owns no client publication.
+  if (!mayAdopt()) return { status: "persisted", response };
   setPageIntelligenceForPage(
     queryClient,
     publicId,
     pageNumber,
     response.updatedIntelligence,
   );
+  if (!mayAdopt()) return { status: "persisted", response };
   if (response.summaries) {
     seedSummariesCache(queryClient, publicId, response.summaries);
+    if (!mayAdopt()) return { status: "persisted", response };
   }
   refreshPageCsiSpatialMapForTarget(queryClient, publicId, pageNumber);
 
@@ -340,15 +350,18 @@ export async function deleteParsedRegion(
   queryClient: QueryClient,
   target: DeleteParsedRegionTarget,
 ): Promise<DeleteParsedRegionResult> {
-  const { publicId, isDemo, pageNumber, regionId } = target;
+  const { publicId, isDemo, pageNumber, regionId, canAdopt } = target;
+  const mayAdopt = () => canAdopt?.() === true;
   if (!publicId) return { status: "skipped", reason: "missing-public-id" };
   if (!regionId) return { status: "skipped", reason: "missing-region-id" };
 
   if (isDemo) {
+    if (!mayAdopt()) return { status: "local", reason: "demo" };
     updatePageIntelligenceForPage(queryClient, publicId, pageNumber, (current) => ({
       ...(current ?? {}),
       parsedRegions: (current?.parsedRegions ?? []).filter((region) => region.id !== regionId),
     }));
+    if (!mayAdopt()) return { status: "local", reason: "demo" };
     refreshPageCsiSpatialMapForTarget(queryClient, publicId, pageNumber);
     return { status: "local", reason: "demo" };
   }
@@ -361,14 +374,17 @@ export async function deleteParsedRegion(
     });
     assertDeletionResponse(response);
 
+    if (!mayAdopt()) return { status: "persisted", response };
     setPageIntelligenceForPage(
       queryClient,
       publicId,
       pageNumber,
       response.updatedIntelligence,
     );
+    if (!mayAdopt()) return { status: "persisted", response };
     if (response.summaries) {
       seedSummariesCache(queryClient, publicId, response.summaries);
+      if (!mayAdopt()) return { status: "persisted", response };
     }
     refreshPageCsiSpatialMapForTarget(queryClient, publicId, pageNumber);
 

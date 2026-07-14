@@ -12,14 +12,21 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import "@testing-library/jest-dom";
-import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import ChatPanel from "../ChatPanel";
+import {
+  openProject as beginProjectLifecycle,
+  type OpenProjectHandle,
+  type ProjectResponse,
+} from "@/lib/project-lifecycle";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ChatMsg } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useUiStore, type LlmHighlight } from "@/stores/uiStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 // ── seedChat: THE sanctioned divergence point ────────────────────────────────
@@ -48,6 +55,85 @@ function mockSSE(chunks: string[]): Response {
     },
   });
   return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
+function response(body: unknown, ok = true, status = 200): Response {
+  return {
+    ok,
+    status,
+    json: vi.fn().mockResolvedValue(body),
+  } as unknown as Response;
+}
+
+function lifecycleProjectResponse(demo: boolean): ProjectResponse {
+  return {
+    id: "pid",
+    dbId: 1,
+    name: demo ? "Demo successor" : "Authenticated project",
+    dataUrl: "s3://private/project.json",
+    pdfUrl: "s3://private/project.pdf",
+    numPages: 3,
+    status: "ready",
+    summaries: null,
+    projectIntelligence: null,
+    pages: [{ pageNumber: 1, name: "Page 1", drawingNumber: null }],
+    ...(demo ? { demoConfig: {} } : { chatMessages: [] }),
+  };
+}
+
+async function activateLifecycle(demo = false): Promise<OpenProjectHandle> {
+  const lifecycleFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const prefix = demo ? "/api/demo" : "/api";
+    if (url === `${prefix}/projects/pid`) {
+      return response(lifecycleProjectResponse(demo));
+    }
+    if (url === `${prefix}/projects/pid/pages?from=1&to=15`) {
+      return response({ from: 1, to: 3, pages: [], annotations: [] });
+    }
+    if (!demo && url === "/api/annotation-groups?projectId=pid") {
+      return response({ groups: [], memberships: [] });
+    }
+    throw new Error(`unexpected lifecycle request: ${url}`);
+  });
+  vi.stubGlobal("fetch", lifecycleFetch);
+  const handle = beginProjectLifecycle(qc, "pid", { demo });
+  expect((await handle.result).status).toBe("opened");
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  return handle;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function controllableSSE() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(value) {
+      controller = value;
+    },
+  });
+  return {
+    response: new Response(stream, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }),
+    emit(data: string) {
+      controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+    },
+    close() {
+      controller.close();
+    },
+  };
 }
 
 const fetchMock = vi.fn();
@@ -231,6 +317,171 @@ describe("ChatPanel — Clear guards (T-B8/T-B9)", () => {
     // messages survive a failed DELETE (clearChatMessages runs only after a resolved fetch)
     await waitFor(() => expect(screen.getByRole("button", { name: "Clear" })).not.toBeDisabled());
     expect(bubbleTexts()).toEqual(["m1", "m2"]);
+  });
+
+  it("demo clear is local-only and makes zero write requests", async () => {
+    setViewerStoreStateForTest({ isDemo: true });
+    seedChat([
+      { id: -1, role: "user", content: "demo question" },
+      { id: -2, role: "assistant", content: "demo answer" },
+    ]);
+    renderChatPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+    await waitFor(() => expect(bubbleTexts()).toEqual([]));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChatPanel — exact same-publicId project lifecycle authority", () => {
+  it("does not publish authenticated stream chunks after a demo lifecycle succeeds", async () => {
+    await activateLifecycle(false);
+    const stream = controllableSSE();
+    fetchMock.mockResolvedValueOnce(stream.response);
+    renderChatPanel();
+
+    await sendMessage("authenticated question");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await activateLifecycle(true);
+    });
+    expect(bubbleTexts()).toEqual([]);
+    fireEvent.change(screen.getByPlaceholderText(/Ask about this/i), {
+      target: { value: "demo successor draft" },
+    });
+
+    await act(async () => {
+      stream.emit('{"content":"stale private answer"}');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect.soft(bubbleTexts()).toEqual([]);
+    expect.soft(qc.getQueryData(queryKeys.chatMessages.all("pid"))).toEqual([]);
+
+    await act(async () => {
+      stream.emit("[DONE]");
+      stream.close();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled());
+    expect(bubbleTexts()).toEqual([]);
+    expect(qc.getQueryData(queryKeys.chatMessages.all("pid"))).toEqual([]);
+  });
+
+  it("does not execute an authenticated stream action after a demo lifecycle succeeds", async () => {
+    await activateLifecycle(false);
+    const stream = controllableSSE();
+    fetchMock.mockResolvedValueOnce(stream.response);
+    renderChatPanel();
+
+    await sendMessage("authenticated action request");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await activateLifecycle(true);
+    });
+    const successorHighlight: LlmHighlight = {
+      pageNumber: 1,
+      bbox: [0.1, 0.1, 0.2, 0.2],
+      label: "demo successor highlight",
+    };
+    act(() => {
+      useViewerCoreStore.getState().setPage(1);
+      useUiStore.getState().setLlmHighlight(successorHighlight);
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Ask about this/i), {
+      target: { value: "demo successor draft" },
+    });
+
+    await act(async () => {
+      stream.emit(
+        '{"action":{"action":"highlight","pageNumber":3,"bbox":[0.3,0.3,0.4,0.4],"label":"stale private highlight"}}',
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect.soft(useViewerCoreStore.getState().pageNumber).toBe(1);
+    expect.soft(useUiStore.getState().llmHighlight).toEqual(successorHighlight);
+
+    await act(async () => {
+      stream.emit("[DONE]");
+      stream.close();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled());
+    expect.soft(useViewerCoreStore.getState().pageNumber).toBe(1);
+    expect.soft(useUiStore.getState().llmHighlight).toEqual(successorHighlight);
+    expect.soft(qc.getQueryData(queryKeys.chatMessages.all("pid"))).toEqual([]);
+  });
+
+  it("suppresses an authenticated error and its stale finally focus after demo activation", async () => {
+    await activateLifecycle(false);
+    const pending = deferred<Response>();
+    fetchMock.mockReturnValueOnce(pending.promise);
+    renderChatPanel();
+
+    await sendMessage("authenticated request that will reject");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await activateLifecycle(true);
+      seedChat([{ id: -1, role: "assistant", content: "demo successor message" }]);
+    });
+    await waitFor(() => expect(bubbleTexts()).toEqual(["demo successor message"]));
+    const successorControl = screen.getByRole("button", { name: "Project" });
+    const staleInputFocus = vi.spyOn(
+      screen.getByPlaceholderText(/Ask about this/i) as HTMLTextAreaElement,
+      "focus",
+    );
+    successorControl.focus();
+    expect(document.activeElement).toBe(successorControl);
+
+    await act(async () => {
+      pending.reject(new Error("stale authenticated transport"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect.soft(bubbleTexts()).toEqual(["demo successor message"]);
+    expect.soft(qc.getQueryData(queryKeys.chatMessages.all("pid"))).toEqual([
+      { id: -1, role: "assistant", content: "demo successor message" },
+    ]);
+    expect.soft(staleInputFocus).not.toHaveBeenCalled();
+    expect.soft(document.activeElement).toBe(successorControl);
+  });
+
+  it("does not let an authenticated clear completion erase demo successor messages", async () => {
+    await activateLifecycle(false);
+    seedChat([{ id: 1, role: "user", content: "authenticated history" }]);
+    const pending = deferred<Response>();
+    fetchMock.mockReturnValueOnce(pending.promise);
+    renderChatPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await activateLifecycle(true);
+      seedChat([{ id: -1, role: "assistant", content: "demo successor message" }]);
+    });
+    await waitFor(() => expect(bubbleTexts()).toEqual(["demo successor message"]));
+
+    await act(async () => {
+      pending.resolve(response({}));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const clear = screen.queryByRole("button", { name: "Clear" });
+      expect(clear === null || !clear.hasAttribute("disabled")).toBe(true);
+    });
+    expect(bubbleTexts()).toEqual(["demo successor message"]);
+    expect(qc.getQueryData(queryKeys.chatMessages.all("pid"))).toEqual([
+      { id: -1, role: "assistant", content: "demo successor message" },
+    ]);
   });
 });
 

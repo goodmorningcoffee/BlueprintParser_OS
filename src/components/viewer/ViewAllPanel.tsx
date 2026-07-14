@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToolStore } from "@/stores/toolStore";
 import { navigateViewerPage } from "@/stores/viewerCommands";
@@ -29,6 +29,8 @@ import type { AnnotationGroup, ClientAnnotation, TakeoffGroup, ClientTakeoffItem
 import TreeSection from "./TreeSection";
 import MarkupDialog from "./MarkupDialog";
 import VisibilityEye, { type VisibilityState } from "./VisibilityEye";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
+import { canPersist } from "@/lib/client-persist";
 
 const DETECTION_SOURCES = new Set(["yolo", "shape-parse", "symbol-search"]);
 const ROW_CAP_STEP = 100;
@@ -125,6 +127,9 @@ function setTextAnnotationTypesHiddenBulk(types: string[], hide: boolean) {
 
 export default function ViewAllPanel() {
   const queryClient = useQueryClient();
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
+  const canAdoptProjectLifecycle = useProjectLifecycleGuard(publicId, isDemo);
   const toggleViewAllPanel = useUiStore((s) => s.toggleViewAllPanel);
 
   // [refactor jul11 P2.2⑥] Domain rows subscribe through the publicId-keyed cache facade;
@@ -205,6 +210,7 @@ export default function ViewAllPanel() {
   // everything). Ephemeral — resets when the panel unmounts, which falls back
   // to the original "full reveal" behavior on next show.
   const [masterSnapshot, setMasterSnapshot] = useState<{
+    owner: () => boolean;
     showDetections: boolean;
     showTextAnnotations: boolean;
     hiddenAnnotationIds: number[];
@@ -236,19 +242,29 @@ export default function ViewAllPanel() {
   const [editColor, setEditColor] = useState<string | null>(null);
   const [editActive, setEditActive] = useState(true);
   const [editBusy, setEditBusy] = useState(false);
+  useEffect(() => setEditBusy(false), [canAdoptProjectLifecycle]);
 
   function openEdit(group: AnnotationGroup) {
+    if (!canAdoptProjectLifecycle()) return;
     setEditingGroup(group);
+    if (!canAdoptProjectLifecycle()) return;
     setEditName(group.name);
+    if (!canAdoptProjectLifecycle()) return;
     setEditNote(group.notes ?? "");
+    if (!canAdoptProjectLifecycle()) return;
     setEditCsi(group.csiCode ?? "");
+    if (!canAdoptProjectLifecycle()) return;
     setEditColor(group.color);
+    if (!canAdoptProjectLifecycle()) return;
     setEditActive(group.isActive !== false);
   }
 
   async function handleEditSave() {
+    if (!canAdoptProjectLifecycle()) return;
     if (!editingGroup || !editName.trim()) return;
+    if (!canPersist(publicId, isDemo)) return;
     setEditBusy(true);
+    if (!canAdoptProjectLifecycle()) return;
     try {
       const res = await fetch(`/api/annotation-groups/${editingGroup.id}`, {
         method: "PUT",
@@ -261,14 +277,22 @@ export default function ViewAllPanel() {
           isActive: editActive,
         }),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!canAdoptProjectLifecycle()) return;
+      if (!res.ok) {
+        const detail = await res.text();
+        if (!canAdoptProjectLifecycle()) return;
+        throw new Error(detail);
+      }
       const data = await res.json();
+      if (!canAdoptProjectLifecycle()) return;
       if (data.group) upsertAnnotationGroup(data.group as AnnotationGroup);
+      if (!canAdoptProjectLifecycle()) return;
       setEditingGroup(null);
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("[ViewAllPanel] Edit group failed:", err);
     } finally {
-      setEditBusy(false);
+      if (canAdoptProjectLifecycle()) setEditBusy(false);
     }
   }
 
@@ -279,18 +303,27 @@ export default function ViewAllPanel() {
   // unification is the future owner-signed GROUPS-W1 pass — see the useAnnotationGroups.ts
   // header tripwire. Do not convert opportunistically.
   async function toggleGroupActive(g: AnnotationGroup) {
+    if (!canAdoptProjectLifecycle() || !canPersist(publicId, isDemo)) return;
     const nextActive = g.isActive === false;
     upsertAnnotationGroup({ ...g, isActive: nextActive });
+    if (!canAdoptProjectLifecycle()) return;
     try {
       const res = await fetch(`/api/annotation-groups/${g.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: nextActive }),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!canAdoptProjectLifecycle()) return;
+      if (!res.ok) {
+        const detail = await res.text();
+        if (!canAdoptProjectLifecycle()) return;
+        throw new Error(detail);
+      }
       const data = await res.json();
+      if (!canAdoptProjectLifecycle()) return;
       if (data.group) upsertAnnotationGroup(data.group as AnnotationGroup);
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("[ViewAllPanel] Toggle group active failed:", err);
       upsertAnnotationGroup(g); // rollback
     }
@@ -302,7 +335,12 @@ export default function ViewAllPanel() {
   // (no alert, no console) — all FROZEN by V-5. Tier-2 useMutation unification is the future
   // owner-signed GROUPS-W1 pass — see the useAnnotationGroups.ts header tripwire.
   async function setGroupsActiveBulk(gs: AnnotationGroup[], nextActive: boolean) {
-    for (const g of gs) upsertAnnotationGroup({ ...g, isActive: nextActive });
+    if (!canAdoptProjectLifecycle() || !canPersist(publicId, isDemo)) return;
+    for (const g of gs) {
+      if (!canAdoptProjectLifecycle()) return;
+      upsertAnnotationGroup({ ...g, isActive: nextActive });
+    }
+    if (!canAdoptProjectLifecycle()) return;
     const results = await Promise.allSettled(
       gs.map((g) =>
         fetch(`/api/annotation-groups/${g.id}`, {
@@ -312,7 +350,9 @@ export default function ViewAllPanel() {
         }),
       ),
     );
+    if (!canAdoptProjectLifecycle()) return;
     for (let i = 0; i < results.length; i++) {
+      if (!canAdoptProjectLifecycle()) return;
       const r = results[i];
       if (r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)) {
         upsertAnnotationGroup(gs[i]); // rollback
@@ -325,14 +365,17 @@ export default function ViewAllPanel() {
   // deep-nested row clicks reliably scroll the annotation into view — same
   // mechanism used by tag-browse and LLM tool-use highlights.
   const handleNav = (pageNumber: number, focusId?: number) => {
+    if (!canAdoptProjectLifecycle()) return;
     navigateViewerPage(pageNumber);
+    if (!canAdoptProjectLifecycle()) return;
     if (focusId === undefined) return;
     setFocusAnnotationId(focusId);
-    const publicId = useSessionStore.getState().publicId;
+    if (!canAdoptProjectLifecycle()) return;
+    const livePublicId = useSessionStore.getState().publicId;
     // [refactor jul11 P2.2⑥] Navigation is a handler-time lookup: read the live cache after the
     // state updates above instead of closing over the panel's last rendered annotation array.
-    const ann = readAnnotations(queryClient, publicId).find((a) => a.id === focusId);
-    if (ann) {
+    const ann = readAnnotations(queryClient, livePublicId).find((a) => a.id === focusId);
+    if (ann && canAdoptProjectLifecycle()) {
       useUiStore.getState().setLlmHighlight({
         pageNumber: ann.pageNumber,
         bbox: ann.bbox,
@@ -552,20 +595,27 @@ export default function ViewAllPanel() {
 
   // Reveal helpers — when transitioning a master from hidden → visible we
   // clear per-item/per-class/per-model hides so the reveal is complete.
-  function clearYoloHides() {
+  function clearYoloHides(): boolean {
+    if (!canAdoptProjectLifecycle()) return false;
     const yoloIds = detectionBuckets.allYolo.map((a) => a.id);
     setAnnotationsHiddenBulk(yoloIds, false);
+    if (!canAdoptProjectLifecycle()) return false;
     const modelsInUse = Object.keys(detectionBuckets.yoloModels);
     setModelsHiddenBulk(modelsInUse, false);
+    if (!canAdoptProjectLifecycle()) return false;
     const classKeys: string[] = [];
     for (const [model, classes] of Object.entries(detectionBuckets.yoloModels)) {
       for (const cls of Object.keys(classes)) classKeys.push(`${model}:${cls}`);
     }
     setClassesHiddenBulk(classKeys, false);
+    return canAdoptProjectLifecycle();
   }
-  function clearTextHides() {
+  function clearTextHides(): boolean {
+    if (!canAdoptProjectLifecycle()) return false;
     setTextAnnotationsHiddenBulk(textByPage.allKeys, false);
+    if (!canAdoptProjectLifecycle()) return false;
     setTextAnnotationTypesHiddenBulk(textByPage.typesInUse, false);
+    return canAdoptProjectLifecycle();
   }
 
   // Per-section aggregate states.
@@ -623,9 +673,20 @@ export default function ViewAllPanel() {
   // in before. No snapshot = first-ever reveal or a post-reload reveal → fall
   // back to full reveal of everything.
   function toggleMaster() {
+    if (!canAdoptProjectLifecycle()) return;
     if (masterState === "all-hidden") {
       // Show — restore from snapshot if we have one
       if (masterSnapshot) {
+        // A React-state memento belongs to the exact render lifecycle that created it. A
+        // same-publicId successor must consume the retired memento without treating it as the
+        // ordinary "no snapshot" first-reveal case.
+        if (
+          masterSnapshot.owner !== canAdoptProjectLifecycle ||
+          !masterSnapshot.owner()
+        ) {
+          setMasterSnapshot(null);
+          return;
+        }
         useUiStore.setState({
           showDetections: masterSnapshot.showDetections,
           showTextAnnotations: masterSnapshot.showTextAnnotations,
@@ -636,29 +697,47 @@ export default function ViewAllPanel() {
           activeModels: { ...masterSnapshot.activeModels },
           activeTextAnnotationTypes: { ...masterSnapshot.activeTextAnnotationTypes },
         });
+        if (!canAdoptProjectLifecycle()) return;
         // Restore group active state to match snapshot
         const inactive = new Set(masterSnapshot.inactiveGroupIds);
         const toDeactivate = groupsFiltered.filter((g) => inactive.has(g.id));
         const toActivate = groupsFiltered.filter((g) => !inactive.has(g.id));
-        if (toDeactivate.length > 0) setGroupsActiveBulk(toDeactivate, false);
-        if (toActivate.length > 0) setGroupsActiveBulk(toActivate, true);
+        if (toDeactivate.length > 0) {
+          void setGroupsActiveBulk(toDeactivate, false);
+          if (!canAdoptProjectLifecycle()) return;
+        }
+        if (toActivate.length > 0) {
+          void setGroupsActiveBulk(toActivate, true);
+          if (!canAdoptProjectLifecycle()) return;
+        }
         setMasterSnapshot(null);
       } else {
         // No snapshot — full reveal (first time, or after panel remount)
-        if (!showDetections) toggleDetections();
-        if (!showTextAnnotations) toggleTextAnnotations();
-        clearYoloHides();
-        clearTextHides();
+        if (!showDetections) {
+          toggleDetections();
+          if (!canAdoptProjectLifecycle()) return;
+        }
+        if (!showTextAnnotations) {
+          toggleTextAnnotations();
+          if (!canAdoptProjectLifecycle()) return;
+        }
+        if (!clearYoloHides()) return;
+        if (!clearTextHides()) return;
         setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), false);
+        if (!canAdoptProjectLifecycle()) return;
         setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), false);
+        if (!canAdoptProjectLifecycle()) return;
         setAnnotationsHiddenBulk(markupByPage.all.map((a) => a.id), false);
+        if (!canAdoptProjectLifecycle()) return;
         setTakeoffItemsHiddenBulk(takeoffsByKind.allItems.map((i) => i.id), false);
-        setGroupsActiveBulk(groupsFiltered, true);
+        if (!canAdoptProjectLifecycle()) return;
+        void setGroupsActiveBulk(groupsFiltered, true);
       }
     } else {
       // Hide — snapshot current state FIRST, then hide everything
       const cur = useUiStore.getState();
       setMasterSnapshot({
+        owner: canAdoptProjectLifecycle,
         showDetections: cur.showDetections,
         showTextAnnotations: cur.showTextAnnotations,
         hiddenAnnotationIds: Array.from(cur.hiddenAnnotationIds),
@@ -669,13 +748,24 @@ export default function ViewAllPanel() {
         activeTextAnnotationTypes: { ...cur.activeTextAnnotationTypes },
         inactiveGroupIds: groupsFiltered.filter((g) => g.isActive === false).map((g) => g.id),
       });
-      if (showDetections) toggleDetections();
-      if (showTextAnnotations) toggleTextAnnotations();
+      if (!canAdoptProjectLifecycle()) return;
+      if (showDetections) {
+        toggleDetections();
+        if (!canAdoptProjectLifecycle()) return;
+      }
+      if (showTextAnnotations) {
+        toggleTextAnnotations();
+        if (!canAdoptProjectLifecycle()) return;
+      }
       setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), true);
+      if (!canAdoptProjectLifecycle()) return;
       setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), true);
+      if (!canAdoptProjectLifecycle()) return;
       setAnnotationsHiddenBulk(markupByPage.all.map((a) => a.id), true);
+      if (!canAdoptProjectLifecycle()) return;
       setTakeoffItemsHiddenBulk(takeoffsByKind.allItems.map((i) => i.id), true);
-      setGroupsActiveBulk(groupsFiltered, false);
+      if (!canAdoptProjectLifecycle()) return;
+      void setGroupsActiveBulk(groupsFiltered, false);
     }
   }
 
@@ -879,16 +969,25 @@ export default function ViewAllPanel() {
               <VisibilityEye
                 state={sectionStates.detections}
                 onClick={() => {
+                  if (!canAdoptProjectLifecycle()) return;
                   if (sectionStates.detections === "all-hidden") {
                     // Reveal everything detection-related
-                    if (!showDetections) toggleDetections();
-                    clearYoloHides();
+                    if (!showDetections) {
+                      toggleDetections();
+                      if (!canAdoptProjectLifecycle()) return;
+                    }
+                    if (!clearYoloHides()) return;
                     setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), false);
+                    if (!canAdoptProjectLifecycle()) return;
                     setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), false);
                   } else {
                     // Hide everything detection-related
-                    if (showDetections) toggleDetections();
+                    if (showDetections) {
+                      toggleDetections();
+                      if (!canAdoptProjectLifecycle()) return;
+                    }
                     setAnnotationsHiddenBulk(detectionBuckets.allShape.map((a) => a.id), true);
+                    if (!canAdoptProjectLifecycle()) return;
                     setAnnotationsHiddenBulk(detectionBuckets.allSymbol.map((a) => a.id), true);
                   }
                 }}
@@ -906,9 +1005,13 @@ export default function ViewAllPanel() {
               onToggle={() => toggle("det-yolo")}
               visibility={sectionStates.yolo}
               onToggleVisibility={() => {
+                if (!canAdoptProjectLifecycle()) return;
                 if (sectionStates.yolo === "all-hidden") {
-                  if (!showDetections) toggleDetections();
-                  clearYoloHides();
+                  if (!showDetections) {
+                    toggleDetections();
+                    if (!canAdoptProjectLifecycle()) return;
+                  }
+                  void clearYoloHides();
                 } else {
                   if (showDetections) toggleDetections();
                 }
@@ -932,10 +1035,16 @@ export default function ViewAllPanel() {
                     indent={2}
                     visibility={modelVis}
                     onToggleVisibility={() => {
+                      if (!canAdoptProjectLifecycle()) return;
                       if (modelVis === "all-hidden") {
-                        if (!showDetections) toggleDetections();
+                        if (!showDetections) {
+                          toggleDetections();
+                          if (!canAdoptProjectLifecycle()) return;
+                        }
                         setModelActive(model, true);
+                        if (!canAdoptProjectLifecycle()) return;
                         setClassesHiddenBulk(Object.keys(classes).map((cls) => `${model}:${cls}`), false);
+                        if (!canAdoptProjectLifecycle()) return;
                         setAnnotationsHiddenBulk(modelAnns.map((a) => a.id), false);
                       } else {
                         setModelActive(model, false);
@@ -957,10 +1066,16 @@ export default function ViewAllPanel() {
                             indent={3}
                             visibility={classVis}
                             onToggleVisibility={() => {
+                              if (!canAdoptProjectLifecycle()) return;
                               if (classVis === "all-hidden") {
-                                if (!showDetections) toggleDetections();
+                                if (!showDetections) {
+                                  toggleDetections();
+                                  if (!canAdoptProjectLifecycle()) return;
+                                }
                                 setModelActive(model, true);
+                                if (!canAdoptProjectLifecycle()) return;
                                 setClassesHiddenBulk([`${model}:${cls}`], false);
+                                if (!canAdoptProjectLifecycle()) return;
                                 setAnnotationsHiddenBulk(anns.map((a) => a.id), false);
                               } else {
                                 toggleClassVisibility(model, cls);
@@ -1173,7 +1288,9 @@ export default function ViewAllPanel() {
                                 />
                                 <button
                                   onClick={() => {
+                                    if (!canAdoptProjectLifecycle()) return;
                                     setActiveTakeoffItemId(item.id);
+                                    if (!canAdoptProjectLifecycle()) return;
                                     // Also navigate to the item's first polygon so the
                                     // canvas jumps to where this takeoff lives.
                                     const itemAnns = annotations.filter(
@@ -1226,10 +1343,14 @@ export default function ViewAllPanel() {
               <VisibilityEye
                 state={sectionStates.text}
                 onClick={() => {
+                  if (!canAdoptProjectLifecycle()) return;
                   if (sectionStates.text === "all-hidden") {
                     // Enable master + clear all text-hides for a clean reveal
-                    if (!showTextAnnotations) toggleTextAnnotations();
-                    clearTextHides();
+                    if (!showTextAnnotations) {
+                      toggleTextAnnotations();
+                      if (!canAdoptProjectLifecycle()) return;
+                    }
+                    void clearTextHides();
                   } else {
                     // Disable master; per-item hides persist for next reveal
                     if (showTextAnnotations) toggleTextAnnotations();
@@ -1395,7 +1516,9 @@ export default function ViewAllPanel() {
                         >
                           <button
                             onClick={() => {
+                              if (!canAdoptProjectLifecycle()) return;
                               navigateViewerPage(pnNum);
+                              if (!canAdoptProjectLifecycle()) return;
                               const [l, t, w, h] = r.bbox;
                               useUiStore.getState().setLlmHighlight({
                                 pageNumber: pnNum,

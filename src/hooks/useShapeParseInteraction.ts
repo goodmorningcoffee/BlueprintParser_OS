@@ -17,6 +17,7 @@ import {
 // [refactor jul5 S028] apiErrorMessage: shape-parse now serves {error:{code,message}} for
 // cascade errors (demo-gate 403 stays flat — apiErrorMessage reads both shapes).
 import { apiErrorMessage } from "@/lib/client-persist";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 export interface UseShapeParseInteractionOpts {
   detectionTab: "models" | "tags" | "shape";
@@ -28,6 +29,8 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
 
   const projectId = useSessionStore((s) => s.projectId);
   const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const tableParseRegion = useParseFlowStore((s) => s.tableParseRegion);
   const tableRevision = useParseFlowStore((s) => s.parseOperations.table.revision);
   const showKeynotes = useUiStore((s) => s.showKeynotes);
@@ -38,6 +41,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   const [warnings, setWarnings] = useState<string[]>([]);
   const [region, setRegion] = useState<[number, number, number, number] | null>(null);
   const [drawing, setDrawing] = useState(false);
+  const drawingAuthorityRef = useRef<(() => boolean) | null>(null);
 
   // Tear down local hook state when the user switches projects. The neutral resetProjectData
   // coordinator clears the shared leaf-store fields (tableParseStep,
@@ -55,6 +59,7 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
       setLoading(false);
       setError(null);
       setWarnings([]);
+      drawingAuthorityRef.current = null;
     }
     prevProjectIdRef.current = projectId ?? null;
   }, [projectId]);
@@ -65,7 +70,10 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   // user explicitly clears via startRegionDraw or the × button.
   useEffect(() => {
     if (detectionTab !== "shape" || !drawing || !tableParseRegion) return;
+    const canPublish = drawingAuthorityRef.current;
+    if (!canPublish?.()) return;
     if (!consumeTableParseRegionForShape(tableParseRegion, tableRevision)) return;
+    if (!canPublish()) return;
     setRegion(tableParseRegion as [number, number, number, number]);
   }, [detectionTab, drawing, tableParseRegion, tableRevision]);
 
@@ -74,9 +82,11 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
   // "select-region" step it never entered.
   useEffect(() => {
     if (detectionTab !== "shape" && drawing) {
+      const canPublish = drawingAuthorityRef.current;
       setDrawing(false);
       setRegion(null);
-      setTableParseStepWithTool("idle", "move");
+      drawingAuthorityRef.current = null;
+      if (canPublish?.()) setTableParseStepWithTool("idle", "move");
     }
   }, [detectionTab, drawing]);
 
@@ -84,17 +94,23 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
     // Click-to-toggle: if already engaged (drawing mode OR region already
     // drawn), this click cancels; otherwise enter draw mode.
     if (drawing || region !== null) {
+      const canPublish = drawingAuthorityRef.current;
       setDrawing(false);
       setRegion(null);
-      setTableParseStepWithTool("idle", "move");
+      drawingAuthorityRef.current = null;
+      if (canPublish?.()) setTableParseStepWithTool("idle", "move");
     } else {
+      if (!isRenderedLifecycleCurrent()) return;
+      drawingAuthorityRef.current = isRenderedLifecycleCurrent;
       setDrawing(true);
+      if (!isRenderedLifecycleCurrent()) return;
       setTableParseStepWithTool("select-region", "pointer");
     }
-  }, [drawing, region]);
+  }, [drawing, region, isRenderedLifecycleCurrent]);
 
   const runOnPage = useCallback(async () => {
-    if (!projectId || !publicId || loading) return;
+    if (!projectId || !publicId || loading || !isRenderedLifecycleCurrent()) return;
+    const canAdoptLifecycle = isRenderedLifecycleCurrent;
     setLoading(true);
     setError(null);
     setWarnings([]);
@@ -106,25 +122,43 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        setError(apiErrorMessage(err) || `Failed (${res.status})`);
+        if (canAdoptLifecycle()) {
+          setError(apiErrorMessage(err) || `Failed (${res.status})`);
+        }
         return;
       }
       const data = await res.json();
+      if (!canAdoptLifecycle()) return;
       // [refactor jul11 P2.2⑦] Append against the response-time value under the request's captured
       // project identity. This preserves the old live post-await append without allowing a late A
       // response to write into whichever project happens to be globally open at settlement.
       appendKeynotesForPage(queryClient, publicId, pageNumber, data.keynotes || []);
+      if (!canAdoptLifecycle()) return;
       if (data.warnings?.length) setWarnings(data.warnings);
+      if (!canAdoptLifecycle()) return;
       if (!showKeynotes) toggleKeynotes();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error");
+      if (canAdoptLifecycle()) {
+        setError(err instanceof Error ? err.message : "Network error");
+      }
     } finally {
-      setLoading(false);
+      if (canAdoptLifecycle()) setLoading(false);
     }
-  }, [projectId, publicId, loading, pageNumber, region, queryClient, showKeynotes, toggleKeynotes]);
+  }, [
+    projectId,
+    publicId,
+    loading,
+    pageNumber,
+    region,
+    queryClient,
+    showKeynotes,
+    toggleKeynotes,
+    isRenderedLifecycleCurrent,
+  ]);
 
   const runOnAll = useCallback(async () => {
-    if (!projectId || !publicId || loading) return;
+    if (!projectId || !publicId || loading || !isRenderedLifecycleCurrent()) return;
+    const canAdoptLifecycle = isRenderedLifecycleCurrent;
     setLoading(true);
     setError(null);
     setWarnings([]);
@@ -136,19 +170,34 @@ export function useShapeParseInteraction({ detectionTab }: UseShapeParseInteract
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        setError(apiErrorMessage(err) || `Failed (${res.status})`);
+        if (canAdoptLifecycle()) {
+          setError(apiErrorMessage(err) || `Failed (${res.status})`);
+        }
         return;
       }
       const data = await res.json();
+      if (!canAdoptLifecycle()) return;
       if (data.byPage) mergeKeynotesByPage(queryClient, publicId, data.byPage);
+      if (!canAdoptLifecycle()) return;
       if (data.warnings?.length) setWarnings(data.warnings);
+      if (!canAdoptLifecycle()) return;
       if (!showKeynotes) toggleKeynotes();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error");
+      if (canAdoptLifecycle()) {
+        setError(err instanceof Error ? err.message : "Network error");
+      }
     } finally {
-      setLoading(false);
+      if (canAdoptLifecycle()) setLoading(false);
     }
-  }, [projectId, publicId, loading, queryClient, showKeynotes, toggleKeynotes]);
+  }, [
+    projectId,
+    publicId,
+    loading,
+    queryClient,
+    showKeynotes,
+    toggleKeynotes,
+    isRenderedLifecycleCurrent,
+  ]);
 
   return {
     loading,

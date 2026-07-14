@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useToolStore } from "@/stores/toolStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2④] takeoff items: zustand → TanStack cache facade. handleCreateAndAssign
@@ -12,6 +12,7 @@ import { TWENTY_COLORS } from "@/types";
 import type { ClientTakeoffItem } from "@/types";
 import { apiErrorMessage } from "@/lib/client-persist";
 import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 interface BucketFillAssignDialogProps {
   pendingPolygon: NonNullable<ReturnType<typeof useToolStore.getState>["bucketFillPendingPolygon"]>;
@@ -34,6 +35,7 @@ export default function BucketFillAssignDialog({
   const publicId = useSessionStore((s) => s.publicId);
   const projectId = useSessionStore((s) => s.projectId);
   const isDemo = useSessionStore((s) => s.isDemo);
+  const canAdoptProjectLifecycle = useProjectLifecycleGuard(publicId, isDemo);
 
   const areaItems = takeoffItems.filter((t) => t.shape === "polygon");
 
@@ -45,6 +47,7 @@ export default function BucketFillAssignDialog({
   // block. User reported "click Create → nothing happens" on failures where
   // projectId was temporarily unset or the /api/takeoff-items POST errored.
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  useEffect(() => setCreating(false), [canAdoptProjectLifecycle]);
 
   // Position near polygon centroid, clamped to viewport
   const verts = pendingPolygon.vertices;
@@ -55,9 +58,11 @@ export default function BucketFillAssignDialog({
   const top = Math.min(cy + 20, height - 280);
 
   async function handleCreateAndAssign() {
+    if (!canAdoptProjectLifecycle()) return;
     const name = formName.trim();
     if (!name) return;
     setErrorMsg(null);
+    if (!canAdoptProjectLifecycle()) return;
     // Guard: non-demo requires a hydrated projectId. If the user somehow
     // triggered this dialog before project metadata loaded, surface a
     // retryable message instead of firing a POST that will 400.
@@ -67,6 +72,7 @@ export default function BucketFillAssignDialog({
     }
     setCreating(true);
     try {
+      if (!canAdoptProjectLifecycle()) return;
       let item: ClientTakeoffItem;
       if (isDemo) {
         item = {
@@ -84,20 +90,25 @@ export default function BucketFillAssignDialog({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ projectId, name, shape: "polygon", color: formColor }),
         });
+        if (!canAdoptProjectLifecycle()) return;
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
           try {
             // [refactor jun16 P1.2] read either error envelope (legacy string | {code,message}).
             const msg = apiErrorMessage(await res.json());
+            if (!canAdoptProjectLifecycle()) return;
             if (msg) detail = msg;
           } catch { /* non-JSON body */ }
           throw new Error(detail);
         }
         item = await res.json();
+        if (!canAdoptProjectLifecycle()) return;
       }
       addTakeoffItem(item);
-      commitBucketFill(item);
+      if (!canAdoptProjectLifecycle()) return;
+      commitBucketFill(item, { canAdopt: canAdoptProjectLifecycle });
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("Failed to create area item:", err);
       const msg = err instanceof Error ? err.message : "Failed to create item";
       setErrorMsg(msg);
@@ -136,7 +147,7 @@ export default function BucketFillAssignDialog({
           {areaItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => commitBucketFill(item)}
+              onClick={() => commitBucketFill(item, { canAdopt: canAdoptProjectLifecycle })}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -253,7 +264,9 @@ export default function BucketFillAssignDialog({
 
       {/* Cancel */}
       <button
-        onClick={() => setBucketFillPendingPolygon(null)}
+        onClick={() => {
+          if (canAdoptProjectLifecycle()) setBucketFillPendingPolygon(null);
+        }}
         style={{
           width: "100%",
           padding: "4px 0",

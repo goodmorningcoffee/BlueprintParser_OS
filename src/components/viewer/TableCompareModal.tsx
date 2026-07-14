@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { useQueryClient } from "@tanstack/react-query";
 import { commitParseOperation, useParseOperation } from "@/hooks/useParseOperation";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -36,6 +37,9 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   // Context-only handle for optimistic page writes and the C2 shared save command (zero observer).
   const queryClient = useQueryClient();
   const toggleModal = useUiStore((s) => s.toggleTableCompareModal);
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const tableParseRegion = useParseFlowStore((s) => s.tableParseRegion);
   const tableParsedGrid = useParseFlowStore((s) => s.tableParsedGrid);
@@ -423,10 +427,10 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
   // authoritative intelligence + summaries. Surfaces failures instead of the
   // old fire-and-forget so edits aren't silently lost on close.
   const handleDone = useCallback(async () => {
+    if (!isRenderedLifecycleCurrent()) return;
     const grid = useParseFlowStore.getState().tableParsedGrid;
     if (!grid) { closeModal(); return; }
     const store = useParseFlowStore.getState();
-    const { publicId, isDemo } = useSessionStore.getState();
     const intel = readPageIntelligence(queryClient, publicId, pageNumber) || {};
 
     // Locate the region being edited (match by headers, else by row-count) so
@@ -490,6 +494,8 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
     const started = tableOperation.begin();
     if (started.status === "busy") return;
     const token = started.token;
+    const canPublishCompletion = () =>
+      isRenderedLifecycleCurrent() && tableOperation.isCurrent(token);
 
     try {
       if (!commitParseOperation(token, () => {
@@ -498,19 +504,19 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
       // Query adoption is captured-key durable work, not a synchronous UI completion tail. Check
       // authority before publishing it, then keep it outside commitParseOperation so Query
       // subscribers cannot smuggle yielding/persistence work into the commit seam.
-      if (!tableOperation.isCurrent(token)) return;
+      if (!canPublishCompletion()) return;
       setPageIntelligenceForPage(queryClient, publicId, pageNumber, updatedIntel);
       // Query subscribers are synchronous. A B started by captured-key adoption owns every later
       // local write and newly launched promotion, even though A's adoption itself remains legal.
-      if (!tableOperation.isCurrent(token)) return;
+      if (!canPublishCompletion()) return;
       const keynotePublished = commitParseOperation(token, () => {
         if (updatedKeynoteData) store.setParsedKeynoteData(updatedKeynoteData);
       });
-      if (!keynotePublished || !tableOperation.isCurrent(token)) return;
+      if (!keynotePublished || !canPublishCompletion()) return;
 
       if (!canPersist(publicId, isDemo) || matchedId === null || matchedBbox === null) {
         // Demo / no publicId / no matching region — local-only write above.
-        commitParseOperation(token, closeModal);
+        if (canPublishCompletion()) commitParseOperation(token, closeModal);
         return;
       }
 
@@ -518,11 +524,11 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
         setSaveError(null);
         setSavingRevision(token.revision);
       });
-      if (!phasePublished || !tableOperation.isCurrent(token)) return;
+      if (!phasePublished || !canPublishCompletion()) return;
       const edited = (updatedIntel.parsedRegions as any[]).find((r) => r.id === matchedId);
       await saveParsedRegion(
         queryClient,
-        { publicId, isDemo, pageNumber },
+        { publicId, isDemo, pageNumber, canAdopt: isRenderedLifecycleCurrent },
         {
           via: "parser",
           type: matchedType,
@@ -532,17 +538,22 @@ export default function TableCompareModal({ pdfDoc }: TableCompareModalProps) {
           csiTags: matchedCsiTags,
         },
       );
+      if (!canPublishCompletion()) return;
       commitParseOperation(token, closeModal);
     } catch (err) {
+      if (!canPublishCompletion()) return;
       commitParseOperation(token, () => {
         setSaveError(err instanceof Error ? err.message : "Could not save edits");
       });
     } finally {
-      tableOperation.finish(token);
+      if (canPublishCompletion()) tableOperation.finish(token);
     }
   }, [
     closeModal,
+    isDemo,
+    isRenderedLifecycleCurrent,
     pageNumber,
+    publicId,
     queryClient,
     tableOperation.begin,
     tableOperation.finish,

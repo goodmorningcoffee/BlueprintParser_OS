@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParseFlow } from "@/hooks/useParseFlow";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import {
   commitParseOperation,
   useParseOperation,
@@ -90,6 +91,7 @@ export default function SpecParser() {
   const projectId = useSessionStore((s) => s.projectId);
   const publicId = useSessionStore((s) => s.publicId);
   const isDemo = useSessionStore((s) => s.isDemo);
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
 
   const { region: specParseRegion } = useParseFlow("spec");
@@ -188,6 +190,7 @@ export default function SpecParser() {
     inheritedToken?: ParseOperationToken<"spec">,
     inheritedTarget?: SpecOperationTarget,
   ): Promise<boolean> => {
+    if (!isRenderedLifecycleCurrent()) return false;
     const target = inheritedTarget ?? captureTarget(region);
     if (!canPersist(target.publicId, target.isDemo)) return false;
     const input = clonePreviewSpec(p);
@@ -199,6 +202,9 @@ export default function SpecParser() {
       token = started.token;
     }
     if (!token) return false;
+    const activeToken = token;
+    const canPublishCompletion = () =>
+      isRenderedLifecycleCurrent() && specOperation.isCurrent(activeToken);
     try {
       if (ownsToken) {
         const workspaceLease = invalidateParagraphParseOperationsForOperation(token);
@@ -219,7 +225,12 @@ export default function SpecParser() {
       };
       await saveParsedRegion(
         queryClient,
-        { publicId: target.publicId, isDemo: target.isDemo, pageNumber: target.pageNumber },
+        {
+          publicId: target.publicId,
+          isDemo: target.isDemo,
+          pageNumber: target.pageNumber,
+          canAdopt: isRenderedLifecycleCurrent,
+        },
         {
           via: "parser",
           type: "spec",
@@ -230,7 +241,7 @@ export default function SpecParser() {
           csiTags: input.csiTags ?? [],
         },
       );
-      if (!specOperation.isCurrent(token)) return false;
+      if (!canPublishCompletion()) return false;
       let completed = false;
       commitParseOperation(token, () => {
         setPreview(null);
@@ -238,12 +249,13 @@ export default function SpecParser() {
       });
       return completed;
     } catch (err) {
+      if (!canPublishCompletion()) return false;
       commitParseOperation(token, () => {
         setError(err instanceof Error ? err.message : "Save failed");
       });
       return false;
     } finally {
-      if (ownsToken) specOperation.finish(token);
+      if (ownsToken && canPublishCompletion()) specOperation.finish(token);
     }
   };
 
@@ -253,6 +265,7 @@ export default function SpecParser() {
   };
 
   const saveFromBatch = async () => {
+    if (!isRenderedLifecycleCurrent()) return;
     if (!canPersist(publicId, isDemo) || !specParseRegion || paragraphBatch.length === 0) return;
     const target = captureTarget(specParseRegion);
     const capturedBatch = paragraphBatch.map((paragraph) => ({
@@ -265,6 +278,8 @@ export default function SpecParser() {
     const started = specOperation.begin();
     if (started.status !== "started") return;
     const token = started.token;
+    const canPublishCompletion = () =>
+      isRenderedLifecycleCurrent() && specOperation.isCurrent(token);
     try {
       const workspaceLease = claimParagraphWorkspaceForOperation(
         token,
@@ -288,7 +303,12 @@ export default function SpecParser() {
       };
       await saveParsedRegion(
         queryClient,
-        { publicId: target.publicId, isDemo: target.isDemo, pageNumber: target.pageNumber },
+        {
+          publicId: target.publicId,
+          isDemo: target.isDemo,
+          pageNumber: target.pageNumber,
+          canAdopt: isRenderedLifecycleCurrent,
+        },
         {
           via: "parser",
           type: "spec",
@@ -298,17 +318,18 @@ export default function SpecParser() {
           category: "spec-dense-columns",
         },
       );
-      if (!specOperation.isCurrent(token)) return;
+      if (!canPublishCompletion()) return;
       commitParseOperation(token, () => {
         setPreview(null);
         completeSpecParseOperation(token);
       });
     } catch (err) {
+      if (!canPublishCompletion()) return;
       commitParseOperation(token, () => {
         setError(err instanceof Error ? err.message : "Save failed");
       });
     } finally {
-      specOperation.finish(token);
+      if (canPublishCompletion()) specOperation.finish(token);
     }
   };
 

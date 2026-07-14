@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSelectionUi, useSelectionUiActions } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 // [refactor jul10 P2.2⑤] annotation groups: zustand → TanStack cache facade (import-swap-only
@@ -10,6 +10,7 @@ import { useAnnotations } from "@/queries/useAnnotations";
 import MarkupDialog from "./MarkupDialog";
 import { persistFetch, canPersist } from "@/lib/client-persist";
 import type { AnnotationGroup } from "@/types";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 /**
  * Floating action bar that appears when ≥2 annotations are multi-selected.
@@ -34,6 +35,7 @@ export default function GroupActionsBar() {
   const { removeAnnotation } = useAnnotations();
   const publicId = useSessionStore((s) => s.publicId);
   const isDemo = useSessionStore((s) => s.isDemo);
+  const canAdoptProjectLifecycle = useProjectLifecycleGuard(publicId, isDemo);
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showAddPicker, setShowAddPicker] = useState(false);
@@ -52,6 +54,7 @@ export default function GroupActionsBar() {
   const [editCsi, setEditCsi] = useState("");
   const [editColor, setEditColor] = useState<string | null>(null);
   const [editActive, setEditActive] = useState(true);
+  useEffect(() => setBusy(false), [canAdoptProjectLifecycle]);
 
   const count = selectedAnnotationIds.size;
   if (count < 2) return null;
@@ -59,8 +62,10 @@ export default function GroupActionsBar() {
   const selectedIds = [...selectedAnnotationIds];
 
   async function handleCreateGroup() {
+    if (!canAdoptProjectLifecycle()) return;
     if (!canPersist(publicId, isDemo) || !groupName.trim()) return;
     setBusy(true);
+    if (!canAdoptProjectLifecycle()) return;
     try {
       const data = await persistFetch("/api/annotation-groups", {
         projectId: publicId,
@@ -70,8 +75,10 @@ export default function GroupActionsBar() {
         color: groupColor,
         annotationIds: selectedIds,
       }) as { group?: AnnotationGroup };
+      if (!canAdoptProjectLifecycle()) return;
       if (data.group) {
         upsertAnnotationGroup(data.group as AnnotationGroup);
+        if (!canAdoptProjectLifecycle()) return;
         // Append the new memberships to the existing ones. hydrateGroupMemberships
         // rebuilds from scratch — build the full pair list first.
         const pairs: { annotationId: number; groupId: number }[] = [];
@@ -80,27 +87,38 @@ export default function GroupActionsBar() {
           for (const gid of groupSet) pairs.push({ annotationId: aid, groupId: gid });
         }
         for (const aid of selectedIds) pairs.push({ annotationId: aid, groupId: data.group.id });
+        if (!canAdoptProjectLifecycle()) return;
         hydrateGroupMemberships(pairs);
       }
+      if (!canAdoptProjectLifecycle()) return;
       setShowCreateDialog(false);
+      if (!canAdoptProjectLifecycle()) return;
       setGroupName("");
+      if (!canAdoptProjectLifecycle()) return;
       setGroupNote("");
+      if (!canAdoptProjectLifecycle()) return;
       setGroupCsi("");
+      if (!canAdoptProjectLifecycle()) return;
       setGroupColor(null);
+      if (!canAdoptProjectLifecycle()) return;
       clearSelection();
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("[GroupActionsBar] Create group failed:", err);
       window.alert(`Failed to create group: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
-      setBusy(false);
+      if (canAdoptProjectLifecycle()) setBusy(false);
     }
   }
 
   async function handleAddToExisting(groupId: number) {
+    if (!canAdoptProjectLifecycle()) return;
     if (!canPersist(publicId, isDemo)) return;
     setBusy(true);
+    if (!canAdoptProjectLifecycle()) return;
     try {
       await persistFetch(`/api/annotation-groups/${groupId}/members`, { annotationIds: selectedIds });
+      if (!canAdoptProjectLifecycle()) return;
       // Rebuild membership indexes
       const pairs: { annotationId: number; groupId: number }[] = [];
       for (const [aidStr, groupSet] of Object.entries(annotationGroupMemberships)) {
@@ -112,24 +130,35 @@ export default function GroupActionsBar() {
           pairs.push({ annotationId: aid, groupId });
         }
       }
+      if (!canAdoptProjectLifecycle()) return;
       hydrateGroupMemberships(pairs);
+      if (!canAdoptProjectLifecycle()) return;
       setShowAddPicker(false);
+      if (!canAdoptProjectLifecycle()) return;
       clearSelection();
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("[GroupActionsBar] Add to existing failed:", err);
       window.alert(`Failed to add to group: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
-      setBusy(false);
+      if (canAdoptProjectLifecycle()) setBusy(false);
     }
   }
 
   function openEdit(group: AnnotationGroup) {
+    if (!canAdoptProjectLifecycle()) return;
     setEditingGroup(group);
+    if (!canAdoptProjectLifecycle()) return;
     setEditName(group.name);
+    if (!canAdoptProjectLifecycle()) return;
     setEditNote(group.notes ?? "");
+    if (!canAdoptProjectLifecycle()) return;
     setEditCsi(group.csiCode ?? "");
+    if (!canAdoptProjectLifecycle()) return;
     setEditColor(group.color);
+    if (!canAdoptProjectLifecycle()) return;
     setEditActive(group.isActive !== false);
+    if (!canAdoptProjectLifecycle()) return;
     setShowAddPicker(false);
   }
 
@@ -138,8 +167,11 @@ export default function GroupActionsBar() {
   // are FROZEN by G-4; tier-2 useMutation unification is the future owner-signed GROUPS-W1 pass
   // — see the useAnnotationGroups.ts header tripwire. Do not convert opportunistically.
   async function handleEditSave() {
+    if (!canAdoptProjectLifecycle()) return;
     if (!editingGroup || !editName.trim()) return;
+    if (!canPersist(publicId, isDemo)) return;
     setBusy(true);
+    if (!canAdoptProjectLifecycle()) return;
     try {
       const data = await persistFetch(`/api/annotation-groups/${editingGroup.id}`, {
         name: editName.trim(),
@@ -148,31 +180,43 @@ export default function GroupActionsBar() {
         color: editColor,
         isActive: editActive,
       }, "PUT") as { group?: AnnotationGroup };
+      if (!canAdoptProjectLifecycle()) return;
       if (data.group) {
         upsertAnnotationGroup(data.group as AnnotationGroup);
       }
+      if (!canAdoptProjectLifecycle()) return;
       setEditingGroup(null);
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("[GroupActionsBar] Edit group failed:", err);
       window.alert(`Failed to save group: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
-      setBusy(false);
+      if (canAdoptProjectLifecycle()) setBusy(false);
     }
   }
 
   async function handleMassDelete() {
+    if (!canAdoptProjectLifecycle()) return;
     if (!canPersist(publicId, isDemo)) return;
     setBusy(true);
+    if (!canAdoptProjectLifecycle()) return;
     try {
       await persistFetch("/api/annotations/batch-delete", { projectId: publicId, annotationIds: selectedIds });
-      for (const id of selectedIds) removeAnnotation(id);
+      if (!canAdoptProjectLifecycle()) return;
+      for (const id of selectedIds) {
+        if (!canAdoptProjectLifecycle()) return;
+        removeAnnotation(id);
+      }
+      if (!canAdoptProjectLifecycle()) return;
       clearSelection();
+      if (!canAdoptProjectLifecycle()) return;
       setShowDeleteConfirm(false);
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("[GroupActionsBar] Mass delete failed:", err);
       window.alert(`Failed to delete: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
-      setBusy(false);
+      if (canAdoptProjectLifecycle()) setBusy(false);
     }
   }
 

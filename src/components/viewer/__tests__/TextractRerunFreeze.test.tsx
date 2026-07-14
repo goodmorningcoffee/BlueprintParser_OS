@@ -21,6 +21,13 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import {
+  captureProjectLifecycle,
+  isCurrentProjectLifecycle,
+  openProject,
+  type OpenProjectHandle,
+  type ProjectResponse,
+} from "@/lib/project-lifecycle";
 import { queryKeys } from "@/queries/queryKeys";
 import { seedTextract } from "@/test/seed-textract";
 import type { TextractPageData } from "@/types";
@@ -91,6 +98,45 @@ function response(body: unknown, ok = true, status = 200): Response {
     status,
     json: vi.fn().mockResolvedValue(body),
   } as unknown as Response;
+}
+
+function lifecycleProjectResponse(demo: boolean): ProjectResponse {
+  return {
+    id: PUBLIC_ID,
+    dbId: PROJECT_DB_ID,
+    name: demo ? "Demo successor" : "Authenticated project",
+    dataUrl: "s3://private/project.json",
+    pdfUrl: "s3://private/project.pdf",
+    numPages: 20,
+    status: "ready",
+    summaries: null,
+    projectIntelligence: null,
+    pages: [{ pageNumber: PAGE, name: `Page ${PAGE}`, drawingNumber: null }],
+    ...(demo ? { demoConfig: {} } : {}),
+  };
+}
+
+async function activateLifecycle(demo = false): Promise<OpenProjectHandle> {
+  const lifecycleFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const prefix = demo ? "/api/demo" : "/api";
+    if (url === `${prefix}/projects/${PUBLIC_ID}`) {
+      return response(lifecycleProjectResponse(demo));
+    }
+    if (url === `${prefix}/projects/${PUBLIC_ID}/pages?from=1&to=15`) {
+      return response({ from: 1, to: 15, pages: [], annotations: [] });
+    }
+    if (!demo && url === `/api/annotation-groups?projectId=${PUBLIC_ID}`) {
+      return response({ groups: [], memberships: [] });
+    }
+    throw new Error(`unexpected lifecycle request: ${url}`);
+  });
+  vi.stubGlobal("fetch", lifecycleFetch);
+  const handle = openProject(queryClient, PUBLIC_ID, { demo });
+  expect((await handle.result).status).toBe("opened");
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  return handle;
 }
 
 function renderTab(pageNumber = PAGE) {
@@ -434,6 +480,96 @@ describe("TextractTab rerun writer", () => {
     });
     await waitFor(() => expectCurrentStats(2, 2, 0));
   });
+
+  it.each([
+    { successorDemo: false, transition: "auth to auth" },
+    { successorDemo: true, transition: "auth to demo" },
+  ])(
+    "I5 retires rerun cache and UI settlement across a same-ID $transition lifecycle",
+    async ({ successorDemo }) => {
+      const lifecycleA = await activateLifecycle(false);
+      const snapshotA = captureProjectLifecycle(queryClient);
+      const oldPage = textractFixture(2, 2, 0, "lifecycle-A");
+      seedTextract(queryClient, { [PAGE]: oldPage }, PUBLIC_ID);
+      setViewerStoreStateForTest({
+        projectId: PROJECT_DB_ID,
+        publicId: PUBLIC_ID,
+        isDemo: false,
+        pageNumber: PAGE,
+        numPages: 20,
+      });
+      const pending = deferred<Response>();
+      const successorPending = new Promise<Response>(() => {});
+      fetchMock.mockImplementation((input: RequestInfo | URL) => {
+        if (String(input) === "/api/pages/textract-rerun") return pending.promise;
+        return successorPending;
+      });
+      renderTab();
+      fireEvent.click(screen.getByRole("button", { name: "Re-run Textract" }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+        "/api/pages/textract-rerun",
+        expect.any(Object),
+      ));
+
+      // Hold B at its first exact cleanup await. This prevents the lifecycle fixture itself from
+      // removing B's prepared Textract sentinel while still allowing A's second page cancel.
+      const cleanupGate = deferred<void>();
+      const originalCancel = queryClient.cancelQueries.bind(queryClient);
+      const cancelSpy = vi.spyOn(queryClient, "cancelQueries").mockImplementation(
+        (filters, options) => {
+          const key = (filters as { queryKey?: readonly unknown[] }).queryKey;
+          if (JSON.stringify(key) === JSON.stringify(queryKeys.qtoWorkflows.all(PUBLIC_ID))) {
+            return cleanupGate.promise;
+          }
+          return originalCancel(filters, options);
+        },
+      );
+      const successorPage = textractFixture(4, 5, 1, "successor-B");
+      let lifecycleB!: OpenProjectHandle;
+      await act(async () => {
+        lifecycleB = openProject(queryClient, PUBLIC_ID, { demo: successorDemo });
+        // B's lifecycle token is installed now. Preserve the old render's selector values until A
+        // settles so the stale callback cannot pass merely by borrowing a snapshot captured late.
+        setViewerStoreStateForTest({
+          projectId: PROJECT_DB_ID,
+          publicId: PUBLIC_ID,
+          isDemo: false,
+          pageNumber: PAGE,
+          numPages: 20,
+        });
+        seedTextract(queryClient, { [PAGE]: successorPage }, PUBLIC_ID);
+        pending.resolve(response({
+          textractData: textractFixture(8, 8, 1, "obsolete-A"),
+          durationMs: 800,
+          stats: { wordCount: 800, lineCount: 800, tableCount: 80 },
+        }));
+        for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+      });
+
+      expect.soft(isCurrentProjectLifecycle(queryClient, snapshotA)).toBe(false);
+      expect.soft(isCurrentProjectLifecycle(
+        queryClient,
+        captureProjectLifecycle(queryClient),
+      )).toBe(true);
+      expect.soft(queryClient.getQueryData(
+        queryKeys.textract.page(PUBLIC_ID, PAGE),
+      )).toEqual(successorPage);
+      expect.soft(screen.queryByText("Re-run complete")).not.toBeInTheDocument();
+      const currentCard = statsCard(`Current cached stats — page ${PAGE}`);
+      expect.soft(within(currentCard).getByText("Words").nextElementSibling)
+        .toHaveTextContent("4");
+      expect.soft(within(currentCard).getByText("Lines").nextElementSibling)
+        .toHaveTextContent("5");
+      expect.soft(within(currentCard).getByText("Tables").nextElementSibling)
+        .toHaveTextContent("1");
+
+      lifecycleB.dispose();
+      cleanupGate.resolve();
+      await act(async () => cleanupGate.promise);
+      cancelSpy.mockRestore();
+      lifecycleA.dispose();
+    },
+  );
 
   it("I5 makes a completion after unmount a cache and UI no-op", async () => {
     const oldPage = textractFixture(2, 2, 0, "old");

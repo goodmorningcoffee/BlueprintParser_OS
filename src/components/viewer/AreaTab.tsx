@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, memo } from "react";
+import { useState, useMemo, useCallback, useEffect, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   publishSettledActiveTakeoffItemId,
@@ -29,6 +29,7 @@ import {
   invalidateToolTailAuthority,
   ownsToolTailAuthority,
 } from "@/lib/parse-tool-authority";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 // ─── Scale status bar (top of area tab) ─────────────────────
 function ScaleStatus() {
@@ -100,6 +101,7 @@ export default memo(function AreaTab() {
   const pageDimensions = useViewerCoreStore((s) => s.pageDimensions);
   const scaleCalibrations = useToolStore((s) => s.scaleCalibrations);
   const isDemo = useSessionStore((s) => s.isDemo);
+  const canAdoptProjectLifecycle = useProjectLifecycleGuard(publicId, isDemo);
   const { takeoffGroups, addTakeoffGroup, removeTakeoffGroup, updateTakeoffGroup } = useTakeoffGroups();
 
   const [showForm, setShowForm] = useState(false);
@@ -116,6 +118,7 @@ export default memo(function AreaTab() {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   // Bug 3: which area items have their instance list expanded
   const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
+  useEffect(() => setCreating(false), [canAdoptProjectLifecycle]);
   const toggleItemExpanded = (id: number) => setExpandedItems((s) => {
     const next = new Set(s);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -199,6 +202,7 @@ export default memo(function AreaTab() {
   const anyMissingCalibration = areaItems.some((item) => { const s = areaSummaries[item.id]; return s && !s.hasCalibration; });
 
   async function handleCreate() {
+    if (!canAdoptProjectLifecycle()) return;
     if (!formName.trim()) return;
     const session = useSessionStore.getState();
     const capturedPublicId = session.publicId;
@@ -206,6 +210,7 @@ export default memo(function AreaTab() {
     const token = claimToolTailAuthority({});
     if (session.isDemo) {
       const item = { id: -Date.now(), name: formName.trim(), shape: "polygon" as const, color: formColor, size: 10, sortOrder: areaItems.length };
+      if (!canAdoptProjectLifecycle()) return;
       queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) => [
         ...old,
         item,
@@ -216,22 +221,37 @@ export default memo(function AreaTab() {
       ) {
         consumeToolTailAuthority(token, () => publishSettledActiveTakeoffItemId(item.id));
       }
-      setFormName(""); setShowForm(false); setFormError(null);
+      if (!canAdoptProjectLifecycle()) return;
+      setFormName("");
+      if (!canAdoptProjectLifecycle()) return;
+      setShowForm(false);
+      if (!canAdoptProjectLifecycle()) return;
+      setFormError(null);
       return;
     }
-    setCreating(true); setFormError(null);
+    setCreating(true);
+    if (!canAdoptProjectLifecycle()) return;
+    setFormError(null);
     try {
+      if (!canAdoptProjectLifecycle()) return;
       const res = await fetch("/api/takeoff-items", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId: capturedPublicId, name: formName.trim(), shape: "polygon", color: formColor }),
       });
+      if (!canAdoptProjectLifecycle()) return;
       if (res.ok) {
         const item = await res.json() as ClientTakeoffItem;
+        if (!canAdoptProjectLifecycle()) return;
         queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) => [
           ...old,
           item,
         ]);
-        setFormName(""); setShowForm(false); setFormError(null);
+        if (!canAdoptProjectLifecycle()) return;
+        setFormName("");
+        if (!canAdoptProjectLifecycle()) return;
+        setShowForm(false);
+        if (!canAdoptProjectLifecycle()) return;
+        setFormError(null);
         if (
           useSessionStore.getState().publicId === capturedPublicId &&
           ownsToolTailAuthority(token)
@@ -241,13 +261,20 @@ export default memo(function AreaTab() {
       } else {
         // [refactor jun16 P1.2] read either error envelope (legacy string | {code,message}).
         const err = await res.json().catch(() => null);
+        if (!canAdoptProjectLifecycle()) return;
         setFormError(apiErrorMessage(err) || `Failed (${res.status})`);
       }
-    } catch (err) { setFormError("Network error"); console.error("Failed to create area item:", err); }
-    finally { setCreating(false); }
+    } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
+      setFormError("Network error");
+      console.error("Failed to create area item:", err);
+    } finally {
+      if (canAdoptProjectLifecycle()) setCreating(false);
+    }
   }
 
   async function handleDelete(item: ClientTakeoffItem) {
+    if (!canAdoptProjectLifecycle()) return;
     const session = useSessionStore.getState();
     const capturedPublicId = session.publicId;
     const capturedItemsKey = queryKeys.takeoff.items(capturedPublicId);
@@ -255,101 +282,131 @@ export default memo(function AreaTab() {
     const reconciledAnnotations = annotations.filter((a) => !(a.source === "takeoff" && String((a.data as any)?.takeoffItemId) === String(item.id)));
     invalidateToolTailAuthority();
     if (session.isDemo) {
+      if (!canAdoptProjectLifecycle()) return;
       queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) =>
         old.filter((candidate) => candidate.id !== item.id),
       );
+      if (!canAdoptProjectLifecycle()) return;
       queryClient.setQueryData(capturedAnnotationsKey, reconciledAnnotations);
-      if (useSessionStore.getState().publicId === capturedPublicId) {
+      if (canAdoptProjectLifecycle() && useSessionStore.getState().publicId === capturedPublicId) {
         reconcileSettledDeletedTakeoffItem(item.id);
       }
       return;
     }
     try {
       await persistFetch(`/api/takeoff-items/${item.id}`, undefined, "DELETE");
+      if (!canAdoptProjectLifecycle()) return;
       queryClient.setQueryData<ClientTakeoffItem[]>(capturedItemsKey, (old = []) =>
         old.filter((candidate) => candidate.id !== item.id),
       );
+      if (!canAdoptProjectLifecycle()) return;
       queryClient.setQueryData(capturedAnnotationsKey, reconciledAnnotations);
-      if (useSessionStore.getState().publicId === capturedPublicId) {
+      if (canAdoptProjectLifecycle() && useSessionStore.getState().publicId === capturedPublicId) {
         reconcileSettledDeletedTakeoffItem(item.id);
       }
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("Failed to delete area item:", err);
       window.alert(`Failed to delete item: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   }
 
   async function handleRename(item: ClientTakeoffItem, newName: string) {
+    if (!canAdoptProjectLifecycle()) return;
     if (!newName.trim() || newName === item.name) { setEditingId(null); return; }
     if (isDemo) {
       updateTakeoffItem(item.id, { name: newName.trim() });
+      if (!canAdoptProjectLifecycle()) return;
       setAnnotations(annotations.map((a) => a.source === "takeoff" && (a.data as any)?.takeoffItemId === item.id ? { ...a, name: newName.trim() } : a));
+      if (!canAdoptProjectLifecycle()) return;
       setEditingId(null); return;
     }
     try {
       await persistFetch(`/api/takeoff-items/${item.id}`, { name: newName.trim() }, "PUT");
+      if (!canAdoptProjectLifecycle()) return;
       updateTakeoffItem(item.id, { name: newName.trim() });
+      if (!canAdoptProjectLifecycle()) return;
       setAnnotations(annotations.map((a) => a.source === "takeoff" && (a.data as any)?.takeoffItemId === item.id ? { ...a, name: newName.trim() } : a));
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("Failed to rename:", err);
       window.alert(`Failed to rename item: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
-    setEditingId(null);
+    if (canAdoptProjectLifecycle()) setEditingId(null);
   }
 
   async function handleCreateGroup() {
+    if (!canAdoptProjectLifecycle()) return;
     const name = newGroupName.trim();
     if (!name) return;
     setGroupError(null);
+    if (!canAdoptProjectLifecycle()) return;
     if (isDemo) {
       const g: TakeoffGroup = { id: -Date.now(), name, kind: "area", color: null, csiCode: null, sortOrder: areaGroups.length };
       addTakeoffGroup(g);
-      setNewGroupName(""); setShowGroupForm(false);
+      if (!canAdoptProjectLifecycle()) return;
+      setNewGroupName("");
+      if (!canAdoptProjectLifecycle()) return;
+      setShowGroupForm(false);
       return;
     }
     if (!canPersist(publicId, isDemo)) return;
     try {
       const g = await persistFetch("/api/takeoff-groups", { projectId: publicId, name, kind: "area" });
+      if (!canAdoptProjectLifecycle()) return;
       addTakeoffGroup(g as TakeoffGroup);
-      setNewGroupName(""); setShowGroupForm(false);
+      if (!canAdoptProjectLifecycle()) return;
+      setNewGroupName("");
+      if (!canAdoptProjectLifecycle()) return;
+      setShowGroupForm(false);
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       setGroupError(err instanceof Error ? err.message : "Failed to create group");
       console.error("Failed to create group:", err);
     }
   }
 
   async function handleRenameGroup(id: number, name: string) {
+    if (!canAdoptProjectLifecycle()) return;
     updateTakeoffGroup(id, { name });
+    if (!canAdoptProjectLifecycle()) return;
     if (isDemo) return;
     try {
       await persistFetch(`/api/takeoff-groups/${id}`, { name }, "PUT");
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("Failed to rename group:", err);
       window.alert(`Failed to rename group: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   }
 
   async function handleDeleteGroup(id: number) {
+    if (!canAdoptProjectLifecycle()) return;
     removeTakeoffGroup(id);
+    if (!canAdoptProjectLifecycle()) return;
     if (isDemo) return;
     try {
       await persistFetch(`/api/takeoff-groups/${id}`, undefined, "DELETE");
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("Failed to delete group:", err);
       window.alert(`Failed to delete group: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   }
 
   const handleMoveItem = useCallback(async (itemId: number, targetGroupId: number | null) => {
+    if (!canAdoptProjectLifecycle()) return;
     updateTakeoffItem(itemId, { groupId: targetGroupId });
+    if (!canAdoptProjectLifecycle()) return;
     if (isDemo) return;
     try {
       await persistFetch(`/api/takeoff-items/${itemId}`, { groupId: targetGroupId }, "PUT");
     } catch (err) {
+      if (!canAdoptProjectLifecycle()) return;
       console.error("Failed to move item:", err);
       window.alert(`Failed to move item: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
-  }, [isDemo, updateTakeoffItem]);
+  }, [canAdoptProjectLifecycle, isDemo, updateTakeoffItem]);
 
   const toggleCollapsed = (key: string) => setCollapsedGroups((s) => ({ ...s, [key]: !s[key] }));
 
@@ -375,7 +432,9 @@ export default memo(function AreaTab() {
       <div>
         <div
           onClick={() => {
+            if (!canAdoptProjectLifecycle()) return;
             setActiveTakeoffItemId(isActive ? null : item.id);
+            if (!canAdoptProjectLifecycle()) return;
             const store = useUiStore.getState();
             if (isActive) { store.setTakeoffFilter(null); } else { store.setTakeoffFilter(item.id); }
           }}
@@ -419,7 +478,9 @@ export default memo(function AreaTab() {
                 key={inst.annId}
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (!canAdoptProjectLifecycle()) return;
                   navigateViewerPage(inst.pageNumber);
+                  if (!canAdoptProjectLifecycle()) return;
                   useUiStore.getState().setFocusAnnotationId(inst.annId);
                 }}
                 className="flex items-center gap-2 px-2 py-0.5 text-[11px] rounded cursor-pointer hover:bg-[var(--surface-hover)]"
@@ -436,7 +497,19 @@ export default memo(function AreaTab() {
         )}
         {editPanelId === item.id && (
           <TakeoffEditPanel item={item}
-            onSave={async (updates) => { updateTakeoffItem(item.id, updates); if (!isDemo) { try { await persistFetch(`/api/takeoff-items/${item.id}`, updates, "PUT"); } catch (err) { window.alert(`Failed to save item: ${err instanceof Error ? err.message : "Unknown error"}`); } } }}
+            onSave={async (updates) => {
+              if (!canAdoptProjectLifecycle()) return;
+              updateTakeoffItem(item.id, updates);
+              if (!canAdoptProjectLifecycle()) return;
+              if (!isDemo) {
+                try {
+                  await persistFetch(`/api/takeoff-items/${item.id}`, updates, "PUT");
+                } catch (err) {
+                  if (!canAdoptProjectLifecycle()) return;
+                  window.alert(`Failed to save item: ${err instanceof Error ? err.message : "Unknown error"}`);
+                }
+              }
+            }}
             onLiveUpdate={(updates) => updateTakeoffItem(item.id, updates)}
             onClose={() => setEditPanelId(null)} />
         )}

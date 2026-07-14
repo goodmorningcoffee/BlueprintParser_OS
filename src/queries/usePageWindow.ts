@@ -323,7 +323,7 @@ export function publishBootstrapPageWindow(
 export interface NavigationPageWindowPublication {
   actualFrom: number;
   actualTo: number;
-  /** Generation/identity predicate evaluated once immediately before the first cache write. */
+  /** Generation/identity predicate rechecked at every publication boundary. */
   isCurrent: () => boolean;
 }
 
@@ -339,9 +339,17 @@ export function publishNavigationPageWindow(
   // into the functional response-time update below, so a stateful/malformed row cannot be reread or
   // leave annotations-new + active-window-old.
   const incoming = normalizePageWindowPages(response.pages);
+  // Normalization is pure but may execute user-controlled wire getters. Authority can transfer
+  // reentrantly during that walk, before either destination has been touched.
+  if (!publication.isCurrent()) return false;
 
+  let completed = false;
   notifyManager.batch(() => {
+    if (!publication.isCurrent()) return;
     qc.setQueryData(queryKeys.annotations.all(publicId), response.annotations);
+    // Query subscribers are synchronous. If the first write opens B, A must not publish its paired
+    // window or report a successful adoption to the scale-calibration tail.
+    if (!publication.isCurrent()) return;
     qc.setQueryData<ActivePageWindow>(
       queryKeys.pagesWindow.active(publicId),
       (oldWindow) =>
@@ -352,8 +360,9 @@ export function publishNavigationPageWindow(
           publication.actualTo,
         ),
     );
+    completed = publication.isCurrent();
   });
-  return true;
+  return completed;
 }
 
 // ── AutoQto exact-page intelligence detail ───────────────────────────────────────────────────

@@ -30,6 +30,7 @@ import type { TextAnnotation, AnnotationCategory, ClientAnnotation } from "@/typ
 // csi-recompute routes now return {error:{code,message}}; apiErrorMessage reads that AND the legacy
 // {error:string} (so it stays correct mid-migration).
 import { apiErrorMessage } from "@/lib/client-persist";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import HelpTooltip from "./HelpTooltip";
 
 const CATEGORY_LABELS: Record<AnnotationCategory, string> = {
@@ -184,6 +185,14 @@ function OcrTab({ searchQuery, pageNumber }: { searchQuery: string; pageNumber: 
 // ─── Annotations Tab ──────────────────────────────────────────
 
 function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotation[]; pageNumber: number }) {
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
+  const canPublish = useProjectLifecycleGuard(publicId, isDemo);
+  const annotationsAuthorityRef = useRef({ annotations, canPublish });
+  if (annotationsAuthorityRef.current.annotations !== annotations) {
+    annotationsAuthorityRef.current = { annotations, canPublish };
+  }
+  const canPublishAnnotations = annotationsAuthorityRef.current.canPublish;
   const {
     showTextAnnotations: showAll,
     activeTextAnnotationTypes: activeTypes,
@@ -213,13 +222,14 @@ function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotati
   }, [annotations]);
 
   // Initialize type toggles for all types found
-  useMemo(() => {
+  useEffect(() => {
     for (const ann of annotations) {
+      if (!canPublishAnnotations()) break;
       if (activeTypes[ann.type] === undefined) {
         setType(ann.type, true);
       }
     }
-  }, [annotations]);
+  }, [activeTypes, annotations, canPublishAnnotations, setType]);
 
   if (annotations.length === 0) {
     return (
@@ -273,8 +283,12 @@ function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotati
               <button
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (!canPublish()) return;
                   const newState = !allVisible;
-                  allTypesInCategory.forEach((t) => setType(t, newState));
+                  for (const type of allTypesInCategory) {
+                    if (!canPublish()) break;
+                    setType(type, newState);
+                  }
                 }}
                 className={`px-1.5 py-0.5 rounded ${
                   allVisible ? "text-green-400" : "text-[var(--muted)]"
@@ -470,6 +484,9 @@ function GraphTab({ pageNumber }: { pageNumber: number }) {
 // ─── Markups Tab ────────────────────────────────────────────────
 
 function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
+  const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
+  const canPublish = useProjectLifecycleGuard(publicId, isDemo);
   const { activeAnnotationFilter } = useDetectionUi();
   const { setAnnotationFilter } = useDetectionUiActions();
   const { setSearch } = useSearchUiActions();
@@ -511,7 +528,12 @@ function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
             Filtering: {activeAnnotationFilter}
           </span>
           <button
-            onClick={() => { setAnnotationFilter(null); setSearch(""); }}
+            onClick={() => {
+              if (!canPublish()) return;
+              setAnnotationFilter(null);
+              if (!canPublish()) return;
+              setSearch("");
+            }}
             className="text-[var(--muted)] hover:text-[var(--fg)] shrink-0"
           >
             x
@@ -532,11 +554,14 @@ function MarkupsTab({ markups }: { markups: ClientAnnotation[] }) {
                 key={ann.id}
                 ref={(el) => { scrollRef.current[ann.id] = el; }}
                 onClick={() => {
+                  if (!canPublish()) return;
                   if (isActive) {
                     setAnnotationFilter(null);
+                    if (!canPublish()) return;
                     setSearch("");
                   } else {
                     setAnnotationFilter(ann.name);
+                    if (!canPublish()) return;
                     setSearch(ann.name);
                   }
                 }}
@@ -579,6 +604,7 @@ export function TextractTab({ pageNumber }: { pageNumber: number }) {
   const pageData = useTextractForPage(pageNumber);
   const { publicId, isDemo } = useProject();
   const queryClient = useQueryClient();
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ durationMs: number; stats: { wordCount: number; lineCount: number; tableCount: number } } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -594,7 +620,7 @@ export function TextractTab({ pageNumber }: { pageNumber: number }) {
     return () => {
       requestGenerationRef.current += 1;
     };
-  }, [publicId, pageNumber]);
+  }, [publicId, isDemo, pageNumber, isRenderedLifecycleCurrent]);
 
   const currentStats = {
     words: pageData?.words?.length ?? 0,
@@ -603,16 +629,20 @@ export function TextractTab({ pageNumber }: { pageNumber: number }) {
   };
 
   const handleRerun = async () => {
-    if (loading || !publicId || isDemo) return;
+    if (loading || !publicId || isDemo || !isRenderedLifecycleCurrent()) return;
     const capturedPublicId = publicId;
+    const capturedIsDemo = isDemo;
     const capturedPageNumber = pageNumber;
+    const canAdoptLifecycle = isRenderedLifecycleCurrent;
     const requestGeneration = ++requestGenerationRef.current;
     const isCurrentRequest = () => {
       const liveCore = useViewerCoreStore.getState();
       const liveSession = useSessionStore.getState();
       return requestGenerationRef.current === requestGeneration
         && liveSession.publicId === capturedPublicId
-        && liveCore.pageNumber === capturedPageNumber;
+        && liveSession.isDemo === capturedIsDemo
+        && liveCore.pageNumber === capturedPageNumber
+        && canAdoptLifecycle();
     };
 
     setLoading(true);
@@ -732,11 +762,23 @@ export function TextractTab({ pageNumber }: { pageNumber: number }) {
  *  in-store CSI data so trade filter highlights refresh without a page reload. */
 function CsiRecomputeSection({ pageNumber }: { pageNumber: number }) {
   const queryClient = useQueryClient();
-  const { projectId: projectDbId, publicId } = useProject();
+  const { projectId: projectDbId, publicId, isDemo } = useProject();
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const currentPageCsi = useCsiCodesForPage(pageNumber);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ durationMs: number; stats: { codeCount: number; triggerCount: number; tradeCount: number } } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const requestGenerationRef = useRef(0);
+
+  useEffect(() => {
+    requestGenerationRef.current += 1;
+    setLoading(false);
+    setResult(null);
+    setError(null);
+    return () => {
+      requestGenerationRef.current += 1;
+    };
+  }, [projectDbId, publicId, isDemo, pageNumber, isRenderedLifecycleCurrent]);
 
   const currentStats = {
     codes: currentPageCsi.length,
@@ -745,7 +787,23 @@ function CsiRecomputeSection({ pageNumber }: { pageNumber: number }) {
   };
 
   const handleRecompute = async () => {
-    if (loading || !projectDbId) return;
+    if (loading || !projectDbId || !isRenderedLifecycleCurrent()) return;
+    const capturedProjectDbId = projectDbId;
+    const capturedPublicId = publicId;
+    const capturedIsDemo = isDemo;
+    const capturedPageNumber = pageNumber;
+    const canAdoptLifecycle = isRenderedLifecycleCurrent;
+    const requestGeneration = ++requestGenerationRef.current;
+    const isCurrentRequest = () => {
+      const session = useSessionStore.getState();
+      const core = useViewerCoreStore.getState();
+      return requestGenerationRef.current === requestGeneration &&
+        session.projectId === capturedProjectDbId &&
+        session.publicId === capturedPublicId &&
+        session.isDemo === capturedIsDemo &&
+        core.pageNumber === capturedPageNumber &&
+        canAdoptLifecycle();
+    };
     setLoading(true);
     setError(null);
     setResult(null);
@@ -753,21 +811,28 @@ function CsiRecomputeSection({ pageNumber }: { pageNumber: number }) {
       const res = await fetch("/api/pages/csi-recompute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: projectDbId, pageNumber }),
+        body: JSON.stringify({ projectId: capturedProjectDbId, pageNumber: capturedPageNumber }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(apiErrorMessage(body) || `HTTP ${res.status}`);
       }
       const data = await res.json();
+      if (!isCurrentRequest()) return;
       setResult({ durationMs: data.durationMs, stats: data.stats });
       if (data.csiCodes) {
-        setCsiCodesForPage(queryClient, publicId, pageNumber, data.csiCodes);
+        if (!isCurrentRequest()) return;
+        setCsiCodesForPage(
+          queryClient,
+          capturedPublicId,
+          capturedPageNumber,
+          data.csiCodes,
+        );
       }
     } catch (e: any) {
-      setError(e?.message || "Recompute failed");
+      if (isCurrentRequest()) setError(e?.message || "Recompute failed");
     } finally {
-      setLoading(false);
+      if (isCurrentRequest()) setLoading(false);
     }
   };
 

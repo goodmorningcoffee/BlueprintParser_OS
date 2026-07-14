@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { publishSettledToolMode } from "@/stores/toolStore";
 import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -30,6 +30,7 @@ import {
   consumeToolTailAuthority,
   ownsToolTailAuthority,
 } from "@/lib/parse-tool-authority";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import ClassGroupHeader from "./ClassGroupHeader";
 import HelpTooltip from "./HelpTooltip";
 import AnnotationListItem from "./AnnotationListItem";
@@ -102,6 +103,12 @@ export default function DetectionPanel({
   const setKeynoteFilter = useUiStore((s) => s.setKeynoteFilter);
   const projectId = useSessionStore((s) => s.projectId);
   const publicId = useSessionStore((s) => s.publicId);
+  const isDemo = useSessionStore((s) => s.isDemo);
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
+  useEffect(() => {
+    setShapeSaving(false);
+    setShapeSaveSuccess(null);
+  }, [isRenderedLifecycleCurrent]);
 
   const pageKeynotes = keynotes[pageNumber] || [];
   const hasMultiPageKeynotes = useMemo(() => Object.keys(keynotes).length > 1, [keynotes]);
@@ -130,6 +137,12 @@ export default function DetectionPanel({
   const [csiEdits, setCsiEdits] = useState<Record<string, string>>({});
   const [savingCsi, setSavingCsi] = useState(false);
   const [csiMessage, setCsiMessage] = useState("");
+  const csiSaveRevisionRef = useRef(0);
+  useEffect(() => {
+    csiSaveRevisionRef.current += 1;
+    setSavingCsi(false);
+    setCsiMessage("");
+  }, [isRenderedLifecycleCurrent]);
 
   const yoloAnnotations = useMemo(() => annotations.filter((a) => {
     if (!DETECTION_SOURCES.has(a.source)) return false;
@@ -191,25 +204,35 @@ export default function DetectionPanel({
   }, [yoloTags]);
 
   function handleTagClick(tag: YoloTag) {
+    if (!isRenderedLifecycleCurrent()) return;
     if (activeYoloTagId === tag.id) {
       setActiveYoloTagId(null);
+      if (!isRenderedLifecycleCurrent()) return;
       setYoloTagFilter(null);
+      if (!isRenderedLifecycleCurrent()) return;
       setSearch("");
     } else {
       setActiveYoloTagId(tag.id);
+      if (!isRenderedLifecycleCurrent()) return;
       setYoloTagFilter(tag.id);
+      if (!isRenderedLifecycleCurrent()) return;
       // Populate search with tag text so OCR highlights appear on canvas
       setSearch(tag.tagText);
     }
   }
 
   function handleToggleFilter(name: string) {
-    if (activeAnnotationFilter === name) { setAnnotationFilter(null); setSearch(""); }
+    if (!isRenderedLifecycleCurrent()) return;
+    if (activeAnnotationFilter === name) {
+      setAnnotationFilter(null);
+      if (!isRenderedLifecycleCurrent()) return;
+      setSearch("");
+    }
     else setAnnotationFilter(name);
   }
 
   function acceptScannedTags(selectedOnly: boolean) {
-    if (!tagScanResults) return;
+    if (!tagScanResults || !isRenderedLifecycleCurrent()) return;
     // [refactor jul11 P2.2⑨] Read the cache at click time: this scan preview may have stayed
     // mounted while another tag editor published since the render. The local identity set also
     // reproduces the legacy sequential action's duplicate suppression within this scan batch.
@@ -353,9 +376,13 @@ export default function DetectionPanel({
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     onClick={async () => {
+                      if (!isRenderedLifecycleCurrent() || isDemo || !publicId) return;
+                      const revision = ++csiSaveRevisionRef.current;
+                      const canAdoptCsiSave = () =>
+                        csiSaveRevisionRef.current === revision && isRenderedLifecycleCurrent();
                       setSavingCsi(true);
+                      if (!canAdoptCsiSave()) return;
                       setCsiMessage("");
-                      const publicId = useSessionStore.getState().publicId;
                       // Build overrides from edits
                       const overrides: Record<string, Record<string, string[]>> = {};
                       for (const [key, val] of Object.entries(csiEdits)) {
@@ -370,14 +397,22 @@ export default function DetectionPanel({
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ classCsiOverrides: overrides }),
                         });
+                        if (!canAdoptCsiSave()) return;
                         if (res.ok) {
                           setCsiMessage("Saved to project");
-                          setTimeout(() => setCsiMessage(""), 3000);
+                          setTimeout(() => {
+                            if (!canAdoptCsiSave()) return;
+                            csiSaveRevisionRef.current += 1;
+                            setCsiMessage("");
+                          }, 3000);
                         } else {
                           setCsiMessage("Save failed");
                         }
-                      } catch { setCsiMessage("Save failed"); }
-                      setSavingCsi(false);
+                      } catch {
+                        if (canAdoptCsiSave()) setCsiMessage("Save failed");
+                      } finally {
+                        if (canAdoptCsiSave()) setSavingCsi(false);
+                      }
                     }}
                     disabled={savingCsi}
                     className="px-2 py-0.5 text-[9px] bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-40"
@@ -385,7 +420,12 @@ export default function DetectionPanel({
                     {savingCsi ? "Saving..." : "Save to Project"}
                   </button>
                   <button
-                    onClick={() => { setCsiEdits({}); setCsiMessage(""); }}
+                    onClick={() => {
+                      if (!isRenderedLifecycleCurrent()) return;
+                      setCsiEdits({});
+                      if (!isRenderedLifecycleCurrent()) return;
+                      setCsiMessage("");
+                    }}
                     className="px-2 py-0.5 text-[9px] text-[var(--muted)] hover:text-[var(--fg)]"
                   >
                     Revert to Global
@@ -400,7 +440,12 @@ export default function DetectionPanel({
       {activeAnnotationFilter && (
         <div className="flex items-center gap-2 mx-2 mt-2 px-2 py-1.5 bg-[var(--accent)]/10 rounded text-xs">
           <span className="text-[var(--accent)] font-medium truncate flex-1">Filtering: {activeAnnotationFilter}</span>
-          <button onClick={() => { setAnnotationFilter(null); setSearch(""); }} className="text-[var(--muted)] hover:text-[var(--fg)] shrink-0">&times;</button>
+          <button onClick={() => {
+            if (!isRenderedLifecycleCurrent()) return;
+            setAnnotationFilter(null);
+            if (!isRenderedLifecycleCurrent()) return;
+            setSearch("");
+          }} className="text-[var(--muted)] hover:text-[var(--fg)] shrink-0">&times;</button>
         </div>
       )}
 
@@ -525,7 +570,9 @@ export default function DetectionPanel({
                 <button
                   onClick={() => {
                     acceptScannedTags(true);
+                    if (!isRenderedLifecycleCurrent()) return;
                     setTagScanResults(null);
+                    if (!isRenderedLifecycleCurrent()) return;
                     setScanSelections({});
                   }}
                   className="flex-1 px-2 py-1 text-[10px] rounded bg-amber-600 text-white hover:bg-amber-500 font-medium"
@@ -540,16 +587,24 @@ export default function DetectionPanel({
                       if (t.text) all[t.text] = true;
                     }
                     setScanSelections(all);
+                    if (!isRenderedLifecycleCurrent()) return;
                     // Then trigger accept
                     acceptScannedTags(false);
+                    if (!isRenderedLifecycleCurrent()) return;
                     setTagScanResults(null);
+                    if (!isRenderedLifecycleCurrent()) return;
                     setScanSelections({});
                   }}
                   className="px-2 py-1 text-[10px] rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
                 >
                   Accept All
                 </button>
-                <button onClick={() => { setTagScanResults(null); setScanSelections({}); }}
+                <button onClick={() => {
+                  if (!isRenderedLifecycleCurrent()) return;
+                  setTagScanResults(null);
+                  if (!isRenderedLifecycleCurrent()) return;
+                  setScanSelections({});
+                }}
                   className="px-2 py-1 text-[10px] text-[var(--muted)] hover:text-[var(--fg)]">
                   Cancel
                 </button>
@@ -563,7 +618,12 @@ export default function DetectionPanel({
               <span className="text-[var(--accent)] font-medium truncate flex-1">
                 Active: {yoloTags.find((t) => t.id === activeYoloTagId)?.tagText || activeYoloTagId}
               </span>
-              <button onClick={() => { setActiveYoloTagId(null); setYoloTagFilter(null); }}
+              <button onClick={() => {
+                if (!isRenderedLifecycleCurrent()) return;
+                setActiveYoloTagId(null);
+                if (!isRenderedLifecycleCurrent()) return;
+                setYoloTagFilter(null);
+              }}
                 className="text-[var(--muted)] hover:text-[var(--fg)] shrink-0">&times;</button>
             </div>
           )}
@@ -671,7 +731,12 @@ export default function DetectionPanel({
                                             ) : (
                                               <>
                                                 <span className="text-[10px] text-[var(--muted)] truncate flex-1">{tag.name}</span>
-                                                <button onClick={() => { setEditingTagId(tag.id); setEditingTagName(tag.name); }}
+                                                <button onClick={() => {
+                                                  if (!isRenderedLifecycleCurrent()) return;
+                                                  setEditingTagId(tag.id);
+                                                  if (!isRenderedLifecycleCurrent()) return;
+                                                  setEditingTagName(tag.name);
+                                                }}
                                                   className="text-[9px] text-[var(--muted)] hover:text-[var(--fg)]" title="Rename">&#9998;</button>
                                               </>
                                             )}
@@ -703,10 +768,12 @@ export default function DetectionPanel({
                                           {/* Add missing instance */}
                                           <button
                                             onClick={() => {
+                                              if (!isRenderedLifecycleCurrent()) return;
                                               if (tagAddingMode === tag.id) {
                                                 setTagAddingMode(null);
                                               } else {
                                                 setTagAddingMode(tag.id);
+                                                if (!isRenderedLifecycleCurrent()) return;
                                                 setActiveYoloTagId(tag.id);
                                               }
                                             }}
@@ -811,7 +878,12 @@ export default function DetectionPanel({
               <div className="flex items-center gap-1 text-[9px] text-green-400/70">
                 <span>Region: ({(shapeParse.region[0]*100).toFixed(0)}%,{(shapeParse.region[1]*100).toFixed(0)}%) to ({(shapeParse.region[2]*100).toFixed(0)}%,{(shapeParse.region[3]*100).toFixed(0)}%)</span>
                 <button
-                  onClick={() => { shapeParse.setRegion(null); shapeParse.setDrawing(false); }}
+                  onClick={() => {
+                    if (!isRenderedLifecycleCurrent()) return;
+                    shapeParse.setRegion(null);
+                    if (!isRenderedLifecycleCurrent()) return;
+                    shapeParse.setDrawing(false);
+                  }}
                   className="text-[var(--muted)] hover:text-red-400"
                 >&times;</button>
               </div>
@@ -858,14 +930,17 @@ export default function DetectionPanel({
               <button
                 disabled={shapeSaving}
                 onClick={async () => {
-                  const { publicId: capturedPublicId, isDemo } = useSessionStore.getState();
+                  if (!isRenderedLifecycleCurrent()) return;
+                  const canAdoptLifecycle = isRenderedLifecycleCurrent;
+                  const { publicId: capturedPublicId, isDemo: capturedIsDemo } = useSessionStore.getState();
                   const capturedPageNumber = useViewerCoreStore.getState().pageNumber;
-                  if (!capturedPublicId || isDemo) {
-                    shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
+                  if (!capturedPublicId || capturedIsDemo) {
+                    shapeParse.setError(capturedIsDemo ? "Cannot save in demo mode" : "Project not loaded");
                     return;
                   }
                   const token = claimToolTailAuthority({});
-                  const ownsVisibleTarget = () => ownsToolTailAuthority(token) &&
+                  const ownsVisibleTarget = () => canAdoptLifecycle() &&
+                    ownsToolTailAuthority(token) &&
                     useSessionStore.getState().publicId === capturedPublicId &&
                     useViewerCoreStore.getState().pageNumber === capturedPageNumber;
                   setShapeSaving(true);
@@ -903,6 +978,7 @@ export default function DetectionPanel({
                     }
                     const data = await res.json();
                     if (data.annotations) {
+                      if (!canAdoptLifecycle()) return;
                       // Append the newly-saved rows; prior shape-parse rows
                       // stay untouched (server no longer deletes them). This handler historically
                       // re-read live state AFTER its await, so keep that freshness with a functional
@@ -911,6 +987,7 @@ export default function DetectionPanel({
                         ...current,
                         ...data.annotations,
                       ]);
+                      if (!canAdoptLifecycle()) return;
                       // Clear the pending-shapes panel — they've moved from
                       // "pending" to "saved" (now visible via annotations overlay).
                       setKeynotesForPage(
@@ -919,6 +996,7 @@ export default function DetectionPanel({
                         capturedPageNumber,
                         [],
                       );
+                      if (!canAdoptLifecycle()) return;
                       // Reset the BB draw state so the user can start a new
                       // region without a manual cancel-click.
                       if (ownsVisibleTarget()) {
@@ -926,16 +1004,21 @@ export default function DetectionPanel({
                           shapeParse.setRegion(null);
                           publishSettledToolMode("move");
                         });
+                        if (!canAdoptLifecycle()) return;
                         setShapeSaveSuccess(`Saved ${data.annotations.length} annotations`);
-                        setTimeout(() => setShapeSaveSuccess(null), 3000);
+                        setTimeout(() => {
+                          if (canAdoptLifecycle()) setShapeSaveSuccess(null);
+                        }, 3000);
                       }
                     }
                   } catch (err) {
-                    console.error("[SHAPE_PARSE] Save failed:", err);
-                    shapeParse.setError(err instanceof Error ? err.message : "Save failed");
+                    if (canAdoptLifecycle()) {
+                      console.error("[SHAPE_PARSE] Save failed:", err);
+                      shapeParse.setError(err instanceof Error ? err.message : "Save failed");
+                    }
                   } finally {
                     consumeToolTailAuthority(token, () => {});
-                    setShapeSaving(false);
+                    if (canAdoptLifecycle()) setShapeSaving(false);
                   }
                 }}
                 className={`w-full px-2 py-1 text-[10px] rounded border ${shapeSaving ? "border-[var(--border)] text-[var(--muted)] cursor-wait" : shapeSaveSuccess ? "border-green-500/60 text-green-300 bg-green-500/15" : "border-green-500/40 text-green-300 bg-green-500/5 hover:bg-green-500/10"}`}
@@ -946,13 +1029,16 @@ export default function DetectionPanel({
                 <button
                   disabled={shapeSaving}
                   onClick={async () => {
-                    const { publicId: capturedPublicId, isDemo } = useSessionStore.getState();
-                    if (!capturedPublicId || isDemo) {
-                      shapeParse.setError(isDemo ? "Cannot save in demo mode" : "Project not loaded");
+                    if (!isRenderedLifecycleCurrent()) return;
+                    const canAdoptLifecycle = isRenderedLifecycleCurrent;
+                    const { publicId: capturedPublicId, isDemo: capturedIsDemo } = useSessionStore.getState();
+                    if (!capturedPublicId || capturedIsDemo) {
+                      shapeParse.setError(capturedIsDemo ? "Cannot save in demo mode" : "Project not loaded");
                       return;
                     }
                     const token = claimToolTailAuthority({});
-                    const ownsVisibleTarget = () => ownsToolTailAuthority(token) &&
+                    const ownsVisibleTarget = () => canAdoptLifecycle() &&
+                      ownsToolTailAuthority(token) &&
                       useSessionStore.getState().publicId === capturedPublicId;
                     // [refactor jul11 P2.2⑥] LOAD-BEARING capture before the request. Save-all
                     // historically retained the pre-await zustand snapshot and therefore dropped a
@@ -1001,13 +1087,16 @@ export default function DetectionPanel({
                       }
                       const data = await res.json();
                       if (data.annotations) {
+                        if (!canAdoptLifecycle()) return;
                         queryClient.setQueryData(
                           queryKeys.annotations.all(capturedPublicId),
                           [...capturedAnnotations, ...data.annotations],
                         );
+                        if (!canAdoptLifecycle()) return;
                         // Clear the pending-shapes panel for every page we saved.
                         for (const pn of allPageNums) {
                           setKeynotesForPage(queryClient, capturedPublicId, pn, []);
+                          if (!canAdoptLifecycle()) return;
                         }
                         // Reset BB draw state so the next parse starts fresh.
                         if (ownsVisibleTarget()) {
@@ -1016,15 +1105,19 @@ export default function DetectionPanel({
                             publishSettledToolMode("move");
                           });
                           setShapeSaveSuccess(`Saved ${data.annotations.length} across ${allPageNums.length} pages`);
-                          setTimeout(() => setShapeSaveSuccess(null), 3000);
+                          setTimeout(() => {
+                            if (canAdoptLifecycle()) setShapeSaveSuccess(null);
+                          }, 3000);
                         }
                       }
                     } catch (err) {
-                      console.error("[SHAPE_PARSE] Save all failed:", err);
-                      shapeParse.setError(err instanceof Error ? err.message : "Save failed");
+                      if (canAdoptLifecycle()) {
+                        console.error("[SHAPE_PARSE] Save all failed:", err);
+                        shapeParse.setError(err instanceof Error ? err.message : "Save failed");
+                      }
                     } finally {
                       consumeToolTailAuthority(token, () => {});
-                      setShapeSaving(false);
+                      if (canAdoptLifecycle()) setShapeSaving(false);
                     }
                   }}
                   className={`w-full px-2 py-1 text-[10px] rounded border ${shapeSaving ? "border-[var(--border)] text-[var(--muted)] cursor-wait" : "border-amber-500/40 text-amber-300 bg-amber-500/5 hover:bg-amber-500/10"}`}

@@ -11,6 +11,7 @@ import { useChatMessages } from "@/queries/useChatMessages";
 // [refactor jul5 S025] ai-chat fold flipped route-level errors to {error:{code,message}};
 // apiErrorMessage reads both that and the still-flat delegated errors (503 no-LLM, demo 403).
 import { apiErrorMessage } from "@/lib/client-persist";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 const DISCIPLINE_PROMPTS: Record<string, string[]> = {
   A: ["What rooms are shown?", "Door/window schedules?", "What finishes are specified?", "Any accessibility notes?"],
@@ -47,7 +48,8 @@ export default function ChatPanel() {
   const { chatMessages, addChatMessage, clearChatMessages } = useChatMessages();
   const chatScope = useUiStore((s) => s.chatScope);
   const setChatScope = useUiStore((s) => s.setChatScope);
-  const { publicId, pageNames } = useProject();
+  const { publicId, isDemo, pageNames } = useProject();
+  const canAdoptProjectLifecycle = useProjectLifecycleGuard(publicId, isDemo);
   const { pageNumber } = useNavigation();
 
   const [input, setInput] = useState("");
@@ -57,6 +59,21 @@ export default function ChatPanel() {
   const [activeToolCall, setActiveToolCall] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const sendRevisionRef = useRef(0);
+  const clearRevisionRef = useRef(0);
+  const highlightRevisionRef = useRef(0);
+
+  useEffect(() => {
+    // Retire every local tail when the exact render generation changes. Resetting here gives the
+    // successor usable controls without allowing an obsolete catch/finally to publish into it.
+    sendRevisionRef.current += 1;
+    clearRevisionRef.current += 1;
+    highlightRevisionRef.current += 1;
+    setLoading(false);
+    setClearing(false);
+    setStreamingContent("");
+    setActiveToolCall(null);
+  }, [canAdoptProjectLifecycle]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -64,30 +81,50 @@ export default function ChatPanel() {
   }, [chatMessages, streamingContent]);
 
   async function handleClear() {
+    if (!canAdoptProjectLifecycle()) return;
     if (chatMessages.length === 0 || clearing) return;
+    if (isDemo) {
+      // Demo messages are intentionally transient. Clear the keyed client cache without issuing
+      // a write request that the server must reject at the immutable demo boundary.
+      clearChatMessages();
+      return;
+    }
+    const revision = ++clearRevisionRef.current;
+    const canAdoptClear = () =>
+      clearRevisionRef.current === revision && canAdoptProjectLifecycle();
     setClearing(true);
+    if (!canAdoptClear()) return;
     try {
       const params = new URLSearchParams({ projectId: publicId, scope: chatScope });
       if (chatScope === "page") params.set("pageNumber", String(pageNumber));
-      await fetch(`/api/ai/chat?${params}`, { method: "DELETE" });
+      const res = await fetch(`/api/ai/chat?${params}`, { method: "DELETE" });
+      if (!canAdoptClear() || !res.ok) return;
       clearChatMessages();
     } catch {
       // silently fail — messages stay in UI
     } finally {
-      setClearing(false);
+      if (canAdoptClear()) setClearing(false);
     }
   }
 
   async function handleSend() {
+    if (!canAdoptProjectLifecycle()) return;
     const msg = input.trim();
     if (!msg || loading) return;
+    const revision = ++sendRevisionRef.current;
+    const canAdoptSend = () =>
+      sendRevisionRef.current === revision && canAdoptProjectLifecycle();
 
     setInput("");
+    if (!canAdoptSend()) return;
     setLoading(true);
+    if (!canAdoptSend()) return;
     setStreamingContent("");
+    if (!canAdoptSend()) return;
 
     // Add user message to store immediately
     addChatMessage({ role: "user", content: msg });
+    if (!canAdoptSend()) return;
 
     try {
       const res = await fetch("/api/ai/chat", {
@@ -100,9 +137,11 @@ export default function ChatPanel() {
           scope: chatScope,
         }),
       });
+      if (!canAdoptSend()) return;
 
       if (!res.ok) {
         const err = await res.json().catch(() => undefined);
+        if (!canAdoptSend()) return;
         addChatMessage({
           role: "assistant",
           content: `Error: ${apiErrorMessage(err) || "Chat failed"}`,
@@ -119,6 +158,7 @@ export default function ChatPanel() {
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
+          if (!canAdoptSend()) return;
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
@@ -137,9 +177,11 @@ export default function ChatPanel() {
                   const parsed = JSON.parse(data);
                   if (parsed.content) {
                     fullContent += parsed.content;
+                    if (!canAdoptSend()) return;
                     setStreamingContent(fullContent);
                   } else if (parsed.tool_call) {
                     // Tool use progress
+                    if (!canAdoptSend()) return;
                     if (parsed.status === "start") {
                       setActiveToolCall(parsed.tool_call);
                     } else {
@@ -149,18 +191,32 @@ export default function ChatPanel() {
                     // LLM action: navigate, highlight, createMarkup
                     const act = parsed.action;
                     if (act.action === "navigate" && act.pageNumber) {
+                      if (!canAdoptSend()) return;
                       navigateViewerPage(act.pageNumber);
                     } else if (act.action === "highlight" && act.bbox) {
+                      if (!canAdoptSend()) return;
                       navigateViewerPage(act.pageNumber);
-                      useUiStore.getState().setLlmHighlight({
+                      if (!canAdoptSend()) return;
+                      const highlight = {
                         pageNumber: act.pageNumber,
                         bbox: act.bbox,
                         label: act.label,
-                      });
-                      setTimeout(() => useUiStore.getState().setLlmHighlight(null), 8000);
+                      };
+                      const highlightRevision = ++highlightRevisionRef.current;
+                      useUiStore.getState().setLlmHighlight(highlight);
+                      setTimeout(() => {
+                        if (
+                          highlightRevisionRef.current !== highlightRevision ||
+                          !canAdoptSend() ||
+                          useUiStore.getState().llmHighlight !== highlight
+                        ) return;
+                        highlightRevisionRef.current += 1;
+                        useUiStore.getState().setLlmHighlight(null);
+                      }, 8000);
                     }
                   } else if (parsed.error) {
                     fullContent = `Error: ${parsed.error}`;
+                    if (!canAdoptSend()) return;
                     setStreamingContent(fullContent);
                   }
                 } catch {
@@ -173,20 +229,28 @@ export default function ChatPanel() {
       }
 
       // Add complete assistant message to store
+      if (!canAdoptSend()) return;
       addChatMessage({
         role: "assistant",
         content: fullContent || "No response received. Check LLM configuration in admin panel.",
       });
-    } catch (err) {
+    } catch {
+      if (!canAdoptSend()) return;
       addChatMessage({
         role: "assistant",
         content: "Error: Failed to connect. Please try again.",
       });
     } finally {
-      setLoading(false);
-      setStreamingContent("");
-      setActiveToolCall(null);
-      inputRef.current?.focus();
+      if (canAdoptSend()) {
+        setLoading(false);
+        if (canAdoptSend()) {
+          setStreamingContent("");
+          if (canAdoptSend()) {
+            setActiveToolCall(null);
+            if (canAdoptSend()) inputRef.current?.focus();
+          }
+        }
+      }
     }
   }
 

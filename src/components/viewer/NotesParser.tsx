@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParseFlow } from "@/hooks/useParseFlow";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import {
   commitParseOperation,
   useParseOperation,
@@ -116,6 +117,7 @@ export default function NotesParser() {
   const projectId = useSessionStore((session) => session.projectId);
   const publicId = useSessionStore((session) => session.publicId);
   const isDemo = useSessionStore((session) => session.isDemo);
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const textractData = useTextractForPage(pageNumber);
 
@@ -329,6 +331,7 @@ export default function NotesParser() {
   };
 
   const saveFromParagraphBatch = async () => {
+    if (!isRenderedLifecycleCurrent()) return;
     if (!canPersist(publicId, isDemo) || !notesParseRegion || paragraphBatch.length === 0) return;
     const target = captureTarget(notesParseRegion);
     const capturedBatch = paragraphBatch.map((paragraph) => ({
@@ -341,6 +344,8 @@ export default function NotesParser() {
     const started = notesOperation.begin();
     if (started.status !== "started") return;
     const token = started.token;
+    const canPublishCompletion = () =>
+      isRenderedLifecycleCurrent() && notesOperation.isCurrent(token);
     try {
       const workspaceLease = claimParagraphWorkspaceForOperation(
         token,
@@ -374,7 +379,12 @@ export default function NotesParser() {
       };
       await saveParsedRegion(
         queryClient,
-        { publicId: target.publicId, isDemo: target.isDemo, pageNumber: target.pageNumber },
+        {
+          publicId: target.publicId,
+          isDemo: target.isDemo,
+          pageNumber: target.pageNumber,
+          canAdopt: isRenderedLifecycleCurrent,
+        },
         {
           via: "parser",
           type: "notes",
@@ -384,17 +394,18 @@ export default function NotesParser() {
           category: "notes",
         },
       );
-      if (!notesOperation.isCurrent(token)) return;
+      if (!canPublishCompletion()) return;
       commitParseOperation(token, () => {
         setPreview(null);
         completeNotesParseOperation(token);
       });
     } catch (err) {
+      if (!canPublishCompletion()) return;
       commitParseOperation(token, () => {
         setError(err instanceof Error ? err.message : "Save failed");
       });
     } finally {
-      notesOperation.finish(token);
+      if (canPublishCompletion()) notesOperation.finish(token);
     }
   };
 
@@ -409,6 +420,7 @@ export default function NotesParser() {
     inheritedTarget?: NotesOperationTarget,
     publishPreview = false,
   ): Promise<boolean> => {
+    if (!isRenderedLifecycleCurrent()) return false;
     const target = inheritedTarget ?? captureTarget(region);
     if (!canPersist(target.publicId, target.isDemo)) return false;
     const input = clonePreviewGrid(grid);
@@ -420,6 +432,9 @@ export default function NotesParser() {
       token = started.token;
     }
     if (!token) return false;
+    const activeToken = token;
+    const canPublishCompletion = () =>
+      isRenderedLifecycleCurrent() && notesOperation.isCurrent(activeToken);
     try {
       if (ownsToken) {
         const workspaceLease = target.mode === "guided"
@@ -456,7 +471,12 @@ export default function NotesParser() {
       };
       await saveParsedRegion(
         queryClient,
-        { publicId: target.publicId, isDemo: target.isDemo, pageNumber: target.pageNumber },
+        {
+          publicId: target.publicId,
+          isDemo: target.isDemo,
+          pageNumber: target.pageNumber,
+          canAdopt: isRenderedLifecycleCurrent,
+        },
         {
           via: "parser",
           type: "notes",
@@ -467,7 +487,7 @@ export default function NotesParser() {
           csiTags: input.csiTags ?? [],
         },
       );
-      if (!notesOperation.isCurrent(token)) return false;
+      if (!canPublishCompletion()) return false;
       let completed = false;
       commitParseOperation(token, () => {
         setPreview(null);
@@ -478,12 +498,13 @@ export default function NotesParser() {
       });
       return completed;
     } catch (err) {
+      if (!canPublishCompletion()) return false;
       commitParseOperation(token, () => {
         setError(err instanceof Error ? err.message : "Save failed");
       });
       return false;
     } finally {
-      if (ownsToken) notesOperation.finish(token);
+      if (ownsToken && canPublishCompletion()) notesOperation.finish(token);
     }
   };
 

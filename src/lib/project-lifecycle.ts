@@ -99,6 +99,8 @@ export interface ProjectLifecycleSnapshot {
 interface LifecycleRecord {
   generation: number;
   token: object;
+  /** Stable render-time authority object; invalidated only if metadata canonicalizes publicId. */
+  snapshot: ProjectLifecycleSnapshot | null;
   controller: AbortController;
   publicId: string;
   demo: boolean;
@@ -348,6 +350,7 @@ async function runProjectOpen(
     // before any later failure-path or adoption publication so a reentrant successor inherits the
     // exact prefix A may already have touched, rather than only A's route alias.
     record.publicId = data.id;
+    record.snapshot = null;
 
     const groups = options.demo
       ? null
@@ -421,6 +424,7 @@ export function openProject(
   const record: LifecycleRecord = {
     generation: (previous?.generation ?? 0) + 1,
     token: Object.freeze({}),
+    snapshot: null,
     controller: new AbortController(),
     publicId: routePublicId,
     demo: options.demo,
@@ -456,12 +460,16 @@ export function captureProjectLifecycle(
 ): ProjectLifecycleSnapshot | null {
   const record = lifecycleRecords.get(queryClient);
   if (!record?.active) return null;
-  return Object.freeze({
+  // Render-adjacent consumers call this on every render. Retain one immutable object per record so
+  // exact authority capture adds no allocation churn to the viewer hot path. Metadata may replace a
+  // route alias with the canonical publicId; that assignment invalidates this cache above.
+  record.snapshot ??= Object.freeze({
     generation: record.generation,
     publicId: record.publicId,
     demo: record.demo,
     [lifecycleToken]: record.token,
   });
+  return record.snapshot;
 }
 
 export function isCurrentProjectLifecycle(

@@ -11,6 +11,13 @@ import type { ReactNode } from "react";
 import ts from "typescript";
 import { useChunkLoader } from "@/hooks/useChunkLoader";
 import {
+  captureProjectLifecycle,
+  isCurrentProjectLifecycle,
+  openProject,
+  type OpenProjectHandle,
+  type ProjectResponse,
+} from "@/lib/project-lifecycle";
+import {
   type ActivePageWindow,
   type PageWindowResponse,
   type PageWindowResponsePage,
@@ -21,7 +28,13 @@ import { readActivePageWindow } from "@/queries/usePageWindow";
 import { useToolStore } from "@/stores/toolStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { seedAnnotations } from "@/test/seed-annotations";
-import type { ClientAnnotation, CsiCode, KeynoteShapeData, TextAnnotation } from "@/types";
+import type {
+  ClientAnnotation,
+  CsiCode,
+  KeynoteShapeData,
+  ScaleCalibrationData,
+  TextAnnotation,
+} from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
@@ -116,6 +129,59 @@ function okResponse(chunk: PageWindowResponse): Response {
     status: 200,
     json: vi.fn().mockResolvedValue(chunk),
   } as unknown as Response;
+}
+
+function jsonResponse(body: unknown): Response {
+  return { ok: true, status: 200, json: async () => body } as Response;
+}
+
+function lifecycleProjectResponse(demo: boolean): ProjectResponse {
+  return {
+    id: "pid",
+    dbId: 41,
+    name: demo ? "Demo successor" : "Authenticated project",
+    dataUrl: "s3://private/project.json",
+    pdfUrl: "s3://private/project.pdf",
+    numPages: 100,
+    status: "ready",
+    summaries: null,
+    projectIntelligence: null,
+    pages: [{ pageNumber: 20, name: "Page 20", drawingNumber: null }],
+    demoConfig: demo ? {} : undefined,
+  };
+}
+
+async function activateLifecycle(demo = false): Promise<OpenProjectHandle> {
+  const lifecycleFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const prefix = demo ? "/api/demo" : "/api";
+    if (url === `${prefix}/projects/pid`) {
+      return jsonResponse(lifecycleProjectResponse(demo));
+    }
+    if (url === `${prefix}/projects/pid/pages?from=1&to=15`) {
+      return jsonResponse(emptyChunk({ from: 1, to: 15 }));
+    }
+    if (!demo && url === "/api/annotation-groups?projectId=pid") {
+      return jsonResponse({ groups: [], memberships: [] });
+    }
+    throw new Error(`unexpected lifecycle request: ${url}`);
+  });
+  vi.stubGlobal("fetch", lifecycleFetch);
+  const handle = openProject(qc, "pid", { demo });
+  expect((await handle.result).status).toBe("opened");
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  return handle;
+}
+
+function scaleCalibration(realDistance: number): ScaleCalibrationData {
+  return {
+    type: "scale-calibration",
+    point1: { x: 0, y: 0 },
+    point2: { x: 1, y: 0 },
+    realDistance,
+    unit: "ft",
+  };
 }
 
 function active(overrides: Partial<ActivePageWindow> = {}): ActivePageWindow {
@@ -512,6 +578,150 @@ describe("useChunkLoader navigation freeze — N5/N6 stale settlement", () => {
     expect(readAnnotations(qc, "pid").map((row) => row.id)).toEqual([1]);
     expect(currentWindow().loadedRange).toBeNull();
     expect(currentWindow().keynotes[20]).toBeUndefined();
+  });
+
+  it.each([
+    { successorDemo: false, transition: "auth to auth" },
+    { successorDemo: true, transition: "auth to demo" },
+  ])(
+    "gives an ignored-signal A zero paired-cache and scale effects across same-ID $transition",
+    async ({ successorDemo }) => {
+      const lifecycleA = await activateLifecycle(false);
+      const snapshotA = captureProjectLifecycle(qc);
+      expect(snapshotA).not.toBeNull();
+      setViewerStoreStateForTest({
+        publicId: "pid",
+        isDemo: false,
+        pageNumber: 20,
+        numPages: 100,
+        scaleCalibrations: {},
+      });
+      seedWindow();
+      seedAnnotations(qc, [annotation(1, "lifecycle-A")]);
+
+      const lateA = deferred<Response>();
+      const successorPending = new Promise<Response>(() => {});
+      fetchMock.mockImplementation((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/projects/pid/pages?from=13&to=27") return lateA.promise;
+        return successorPending;
+      });
+      render(<LoaderOnly />, { wrapper });
+      advance(100);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        "/api/projects/pid/pages?from=13&to=27",
+      );
+
+      const successorAnnotations = [annotation(91, "successor-B")];
+      const successorWindow = active({
+        loadedRange: { from: 88, to: 92 },
+        keynotes: { 90: [keynote("successor-B")] },
+      });
+      const successorScale = scaleCalibration(91);
+      let lifecycleB!: OpenProjectHandle;
+      await act(async () => {
+        lifecycleB = openProject(qc, "pid", { demo: successorDemo });
+        // Keep the old render's selectors value-equal until A settles. The lifecycle token is
+        // already B (including demo mode), but React has not activated B's session yet; a stale
+        // closure must retain the A snapshot captured at dispatch rather than borrowing B here.
+        setViewerStoreStateForTest({
+          publicId: "pid",
+          isDemo: false,
+          pageNumber: 20,
+          numPages: 100,
+        });
+        qc.setQueryData(queryKeys.annotations.all("pid"), successorAnnotations);
+        qc.setQueryData(queryKeys.pagesWindow.active("pid"), successorWindow);
+        useToolStore.setState({ scaleCalibrations: { 20: successorScale } });
+        lateA.resolve(okResponse(emptyChunk({
+          pages: [page(20, { keynotes: [keynote("obsolete-A")] })],
+          annotations: [annotation(2, "obsolete-A-scale", 20, {
+            source: "takeoff-scale",
+            data: scaleCalibration(2) as unknown as ClientAnnotation["data"],
+          })],
+        })));
+        for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+      });
+
+      expect.soft(isCurrentProjectLifecycle(qc, snapshotA)).toBe(false);
+      expect.soft(isCurrentProjectLifecycle(qc, captureProjectLifecycle(qc))).toBe(true);
+      expect.soft(readAnnotations(qc, "pid")).toEqual(successorAnnotations);
+      expect.soft(currentWindow()).toEqual(successorWindow);
+      expect.soft(useToolStore.getState().scaleCalibrations[20]).toBe(successorScale);
+      lifecycleB.dispose();
+      lifecycleA.dispose();
+    },
+  );
+
+  it("rechecks lifecycle after paired publication before hydrating the scale tail", async () => {
+    const lifecycleA = await activateLifecycle(false);
+    const snapshotA = captureProjectLifecycle(qc);
+    setViewerStoreStateForTest({
+      publicId: "pid",
+      isDemo: false,
+      pageNumber: 20,
+      numPages: 100,
+      scaleCalibrations: {},
+    });
+    seedWindow();
+    seedAnnotations(qc, [annotation(1, "lifecycle-A")]);
+    const lateA = deferred<Response>();
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/api/projects/pid/pages?from=13&to=27") return lateA.promise;
+      return successorPending;
+    });
+    render(<LoaderOnly />, { wrapper });
+    advance(100);
+
+    const successorAnnotations = [annotation(92, "successor-after-window")];
+    const successorWindow = active({
+      loadedRange: { from: 90, to: 94 },
+      keynotes: { 92: [keynote("successor-after-window")] },
+    });
+    const successorScale = scaleCalibration(92);
+    const activeKey = JSON.stringify(queryKeys.pagesWindow.active("pid"));
+    let transferred = false;
+    const lifecycleB = { current: null as OpenProjectHandle | null };
+    const unsubscribe = qc.getQueryCache().subscribe((event) => {
+      if (
+        event.type !== "updated" ||
+        transferred ||
+        JSON.stringify(event.query.queryKey) !== activeKey
+      ) return;
+      transferred = true;
+      lifecycleB.current = openProject(qc, "pid", { demo: true });
+      setViewerStoreStateForTest({
+        publicId: "pid",
+        isDemo: true,
+        pageNumber: 20,
+        numPages: 100,
+      });
+      qc.setQueryData(queryKeys.annotations.all("pid"), successorAnnotations);
+      qc.setQueryData(queryKeys.pagesWindow.active("pid"), successorWindow);
+      useToolStore.setState({ scaleCalibrations: { 20: successorScale } });
+    });
+
+    try {
+      lateA.resolve(okResponse(emptyChunk({
+        pages: [page(20, { keynotes: [keynote("obsolete-after-window")] })],
+        annotations: [annotation(3, "obsolete-scale-tail", 20, {
+          source: "takeoff-scale",
+          data: scaleCalibration(3) as unknown as ClientAnnotation["data"],
+        })],
+      })));
+      await flushPromises(10);
+
+      expect.soft(transferred).toBe(true);
+      expect.soft(isCurrentProjectLifecycle(qc, snapshotA)).toBe(false);
+      expect.soft(readAnnotations(qc, "pid")).toEqual(successorAnnotations);
+      expect.soft(currentWindow()).toEqual(successorWindow);
+      expect.soft(useToolStore.getState().scaleCalibrations[20]).toBe(successorScale);
+    } finally {
+      unsubscribe();
+      lifecycleB.current?.dispose();
+      lifecycleA.dispose();
+    }
   });
 });
 

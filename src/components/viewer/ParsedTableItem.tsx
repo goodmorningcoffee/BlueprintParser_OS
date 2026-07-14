@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TableCellStructureOperation } from "@/hooks/useTableCellStructureOperation";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import {
   navigateViewerPage,
@@ -53,6 +54,7 @@ export default memo(function ParsedTableItem({
 }: ParsedTableItemProps) {
   // Context-only handle for optimistic page writes and the C2 shared save command (zero observer).
   const queryClient = useQueryClient();
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   // [refactor jul11 P2.2⑨] Action callbacks carry the mounted project epoch across awaits but add
   // no Query observer per table row. Render data still arrives once through the parent prop.
   const { addYoloTagsBulk, tagBrowseNavigate } = useYoloTagActions();
@@ -188,8 +190,16 @@ export default memo(function ParsedTableItem({
 
   const [editError, setEditError] = useState<string | null>(null);
 
+  // A row instance can survive a same-key close/reopen. Retire A's local lock when B renders;
+  // A's stale finally is forbidden from clearing or publishing into the successor lifecycle.
+  useEffect(() => {
+    deletePendingRef.current = false;
+    setDeleting(false);
+    setEditError(null);
+  }, [isRenderedLifecycleCurrent]);
+
   const handleDelete = useCallback(async () => {
-    if (deletePendingRef.current) return;
+    if (!isRenderedLifecycleCurrent() || deletePendingRef.current) return;
     const regionId = table.region?.id as string | undefined;
     if (!regionId) return;
 
@@ -202,17 +212,24 @@ export default memo(function ParsedTableItem({
         isDemo,
         pageNumber: table.pageNum,
         regionId,
+        canAdopt: isRenderedLifecycleCurrent,
       });
+      if (!isRenderedLifecycleCurrent()) return;
       if (result.status === "skipped") {
         throw new Error("Could not delete table: missing project or region identity");
       }
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Could not delete table");
+      if (isRenderedLifecycleCurrent()) {
+        setEditError(err instanceof Error ? err.message : "Could not delete table");
+      }
     } finally {
-      deletePendingRef.current = false;
-      setDeleting(false);
+      if (isRenderedLifecycleCurrent()) {
+        deletePendingRef.current = false;
+        setDeleting(false);
+      }
     }
-  }, [isDemo, publicId, queryClient, table.pageNum, table.region?.id]);
+  }, [isDemo, isRenderedLifecycleCurrent, publicId, queryClient, table.pageNum,
+    table.region?.id]);
 
   // Persist an edited region through the transactional promote upsert (same
   // regionId → REPLACE, never duplicate) instead of the old pages/intelligence
@@ -225,7 +242,7 @@ export default memo(function ParsedTableItem({
     nextData: Record<string, any>,
     category?: string,
   ) => {
-    if (!table.region?.id) return;
+    if (!isRenderedLifecycleCurrent() || !table.region?.id) return;
     const intel = readPageIntelligence(queryClient, publicId, table.pageNum) || {};
     const regions = ((intel as any)?.parsedRegions || []).map((r: any) =>
       r.id === table.region.id
@@ -237,15 +254,20 @@ export default memo(function ParsedTableItem({
       ...intel,
       parsedRegions: regions,
     });
+    if (!isRenderedLifecycleCurrent()) return;
 
-    const { isDemo } = useSessionStore.getState();
     if (!canPersist(publicId, isDemo)) return; // demo / no publicId: local-only
     const bbox = (table.region.bbox ?? [0, 0, 1, 1]) as [number, number, number, number];
     // C2: retain the optimistic write/local return above; the shared persistent tail now also
     // refreshes spatial for edits after authoritative adoption.
     await saveParsedRegion(
       queryClient,
-      { publicId, isDemo, pageNumber: table.pageNum },
+      {
+        publicId,
+        isDemo,
+        pageNumber: table.pageNum,
+        canAdopt: isRenderedLifecycleCurrent,
+      },
       {
         via: "parser",
         type: table.region.type === "keynote" ? "keynote" : "schedule",
@@ -256,9 +278,12 @@ export default memo(function ParsedTableItem({
         csiTags: table.region.csiTags ?? [],
       },
     );
-  }, [publicId, table.pageNum, table.region, queryClient]);
+    if (!isRenderedLifecycleCurrent()) return;
+  }, [isDemo, isRenderedLifecycleCurrent, publicId, table.pageNum, table.region,
+    queryClient]);
 
   const saveName = async () => {
+    if (!isRenderedLifecycleCurrent()) return;
     const trimmed = nameValue.trim();
     setEditingName(false);
     if (!trimmed || trimmed === table.name) return;
@@ -268,14 +293,18 @@ export default memo(function ParsedTableItem({
         { ...table.region.data, tableName: trimmed },
         trimmed,
       );
+      if (!isRenderedLifecycleCurrent()) return;
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Could not save table name");
+      if (isRenderedLifecycleCurrent()) {
+        setEditError(err instanceof Error ? err.message : "Could not save table name");
+      }
     }
   };
 
   // RC5: column rename must PERSIST (previously only mutated local state, so
   // renames silently vanished on refresh). Routes through the promote upsert.
   const saveColumnName = async () => {
+    if (!isRenderedLifecycleCurrent()) return;
     if (editingColIdx === null) return;
     const newName = colEditValue.trim() || `Column ${editingColIdx + 1}`;
     const oldName = headers[editingColIdx];
@@ -296,12 +325,16 @@ export default memo(function ParsedTableItem({
     setEditError(null);
     try {
       await persistRegionEdit({ ...data, headers: newHeaders, rows: newRows, tagColumn: newTagCol });
+      if (!isRenderedLifecycleCurrent()) return;
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Could not save column name");
+      if (isRenderedLifecycleCurrent()) {
+        setEditError(err instanceof Error ? err.message : "Could not save column name");
+      }
     }
   };
 
   const saveTableSettings = async () => {
+    if (!isRenderedLifecycleCurrent()) return;
     setShowSettings(false);
     setEditError(null);
     try {
@@ -312,8 +345,11 @@ export default memo(function ParsedTableItem({
         color: settingsColor,
         opacity: settingsOpacity,
       });
+      if (!isRenderedLifecycleCurrent()) return;
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : "Could not save table settings");
+      if (isRenderedLifecycleCurrent()) {
+        setEditError(err instanceof Error ? err.message : "Could not save table settings");
+      }
     }
   };
 

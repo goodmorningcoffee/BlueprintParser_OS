@@ -31,14 +31,24 @@ import "@testing-library/jest-dom";
 import { render, screen, fireEvent, cleanup, waitFor, act, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import {
+  captureProjectLifecycle,
+  isCurrentProjectLifecycle,
+  openProject,
+  type OpenProjectHandle,
+  type ProjectResponse,
+} from "@/lib/project-lifecycle";
 import { useUiStore } from "@/stores/uiStore";
 import { useToolStore } from "@/stores/toolStore";
+import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
+import { readTakeoffItems } from "@/queries/useTakeoff";
 import { persistFetch } from "@/lib/client-persist";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientAnnotation, ClientTakeoffItem, TakeoffGroup } from "@/types";
 import AreaTab from "../AreaTab";
+import CountTab from "../CountTab";
 import LinearTab from "../LinearTab";
 import ViewAllPanel from "../ViewAllPanel";
 import BucketFillAssignDialog from "../BucketFillAssignDialog";
@@ -64,6 +74,45 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function lifecycleJsonResponse(body: unknown): Response {
+  return { ok: true, status: 200, json: async () => body } as Response;
+}
+
+function lifecycleProjectResponse(): ProjectResponse {
+  return {
+    id: "pid",
+    dbId: 123,
+    name: "Lifecycle project",
+    dataUrl: "s3://private/project.json",
+    pdfUrl: "s3://private/project.pdf",
+    numPages: 6,
+    status: "ready",
+    summaries: null,
+    projectIntelligence: null,
+    pages: [{ pageNumber: 2, name: "Page 2", drawingNumber: null }],
+  };
+}
+
+async function activateLifecycle(): Promise<OpenProjectHandle> {
+  const lifecycleFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/projects/pid") return lifecycleJsonResponse(lifecycleProjectResponse());
+    if (url === "/api/projects/pid/pages?from=1&to=15") {
+      return lifecycleJsonResponse({ from: 1, to: 6, pages: [], annotations: [] });
+    }
+    if (url === "/api/annotation-groups?projectId=pid") {
+      return lifecycleJsonResponse({ groups: [], memberships: [] });
+    }
+    throw new Error(`unexpected lifecycle request: ${url}`);
+  });
+  vi.stubGlobal("fetch", lifecycleFetch);
+  const handle = openProject(qc, "pid", { demo: false });
+  expect((await handle.result).status).toBe("opened");
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  return handle;
 }
 
 function item(over: Partial<ClientTakeoffItem> & { id: number; name: string }): ClientTakeoffItem {
@@ -584,7 +633,219 @@ describe("LinearTab — rename group is optimistic (TL-4)", () => {
   });
 });
 
-// ─── ViewAllPanel ────────────────────────────────────────────────────────────────────────────
+describe("AreaTab / LinearTab — same-ID lifecycle retirement", () => {
+  it.each([
+    {
+      label: "AreaTab",
+      renderTab: () => <AreaTab />,
+      addButton: "+ Add Area Item",
+      placeholder: "Area item name...",
+      shape: "polygon" as const,
+      color: TWENTY_COLORS[0],
+      serverId: 42,
+    },
+    {
+      label: "LinearTab",
+      renderTab: () => <LinearTab />,
+      addButton: "+ Add Linear Item",
+      placeholder: "Linear item name (e.g., Wall Framing)...",
+      shape: "linear" as const,
+      color: TWENTY_COLORS[2],
+      serverId: 43,
+    },
+  ])("$label does not adopt an auth create into a same-ID demo successor", async ({
+    label,
+    renderTab,
+    addButton,
+    placeholder,
+    shape,
+    color,
+    serverId,
+  }) => {
+    const lifecycleA = await activateLifecycle();
+    const snapshotA = captureProjectLifecycle(qc);
+    seedTakeoff(qc, [], []);
+
+    const create = deferred<Response>();
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockImplementation((url: unknown) => {
+      if (url === "/api/takeoff-items") return create.promise;
+      return successorPending;
+    });
+    render(renderTab(), { wrapper });
+
+    const obsoleteName = `Obsolete A ${label}`;
+    fireEvent.click(screen.getByRole("button", { name: addButton }));
+    fireEvent.change(screen.getByPlaceholderText(placeholder), {
+      target: { value: obsoleteName },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/takeoff-items",
+      expect.any(Object),
+    ));
+    expect(readTakeoffItems(qc, "pid")).toEqual([]);
+
+    const successorItem = item({
+      id: 700 + serverId,
+      name: `B ${label} sentinel`,
+      shape,
+      color: "#123456",
+    });
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: true });
+      setViewerStoreStateForTest({ projectId: 0, publicId: "pid", isDemo: true });
+      seedTakeoff(qc, [successorItem], []);
+      create.resolve({
+        ok: true,
+        status: 200,
+        json: async () => item({
+          id: serverId,
+          name: obsoleteName,
+          shape,
+          color,
+        }),
+      } as Response);
+      for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+    });
+
+    expect.soft(isCurrentProjectLifecycle(qc, snapshotA)).toBe(false);
+    expect.soft(readTakeoffItems(qc, "pid")).toEqual([successorItem]);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+});
+
+describe("takeoff tab synchronous publication tails — same-ID lifecycle retirement", () => {
+  it.each([
+    {
+      label: "CountTab",
+      renderTab: () => <CountTab />,
+      row: item({ id: 81, name: "A count row", shape: "circle" }),
+    },
+    {
+      label: "AreaTab",
+      renderTab: () => <AreaTab />,
+      row: item({ id: 82, name: "A area row", shape: "polygon" }),
+    },
+    {
+      label: "LinearTab",
+      renderTab: () => <LinearTab />,
+      row: item({ id: 83, name: "A linear row", shape: "linear" }),
+    },
+  ])("$label item activation does not overwrite successor B's takeoff filter", async ({
+    renderTab,
+    row,
+  }) => {
+    const lifecycleA = await activateLifecycle();
+    seedTakeoff(qc, [row], []);
+    render(renderTab(), { wrapper });
+    await screen.findByText(row.name);
+
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockReturnValue(successorPending);
+    const successorItem = item({ id: 9081, name: "successor B item", shape: row.shape });
+    const successorFilter = 9901;
+    let lifecycleB!: OpenProjectHandle;
+    let admittedB = false;
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeTakeoffItemId === row.id ||
+          state.activeTakeoffItemId !== row.id) return;
+      admittedB = true;
+      lifecycleB = openProject(qc, "pid", { demo: true });
+      setViewerStoreStateForTest({ projectId: 0, publicId: "pid", isDemo: true });
+      seedTakeoff(qc, [successorItem], []);
+      useToolStore.setState({ activeTakeoffItemId: successorItem.id });
+      useUiStore.setState({ activeTakeoffFilter: successorFilter });
+    });
+
+    fireEvent.click(screen.getByText(row.name));
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useToolStore.getState().activeTakeoffItemId).toBe(successorItem.id);
+    expect.soft(useUiStore.getState().activeTakeoffFilter).toBe(successorFilter);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("CountTab page-filter click does not publish A search text into successor B", async () => {
+    const lifecycleA = await activateLifecycle();
+    const row = item({ id: 84, name: "A counted door", shape: "circle" });
+    seedTakeoff(qc, [row], []);
+    seedAnnotations(qc, [takeoffAnn(840, row.id, row.name, "count-marker")]);
+    render(<CountTab />, { wrapper });
+    const filterButton = await screen.findByTitle("Filter pages by this item");
+
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockReturnValue(successorPending);
+    const successorSearch = "successor B search";
+    const successorFilter = 9902;
+    let lifecycleB!: OpenProjectHandle;
+    let admittedB = false;
+    const unsubscribe = useUiStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeTakeoffFilter === row.id ||
+          state.activeTakeoffFilter !== row.id) return;
+      admittedB = true;
+      lifecycleB = openProject(qc, "pid", { demo: true });
+      setViewerStoreStateForTest({ projectId: 0, publicId: "pid", isDemo: true });
+      useUiStore.setState({
+        activeTakeoffFilter: successorFilter,
+        searchQuery: successorSearch,
+      });
+    });
+
+    fireEvent.click(filterButton);
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useUiStore.getState().activeTakeoffFilter).toBe(successorFilter);
+    expect.soft(useUiStore.getState().searchQuery).toBe(successorSearch);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("AreaTab instance navigation does not focus A after successor B opens", async () => {
+    const lifecycleA = await activateLifecycle();
+    const row = item({ id: 85, name: "A room area", shape: "polygon" });
+    const instance = takeoffAnn(850, row.id, row.name, "area-polygon");
+    instance.pageNumber = 2;
+    seedTakeoff(qc, [row], []);
+    seedAnnotations(qc, [instance]);
+    render(<AreaTab />, { wrapper });
+    fireEvent.click(await screen.findByTitle("Expand instances"));
+
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockReturnValue(successorPending);
+    const successorFocus = 9950;
+    let lifecycleB!: OpenProjectHandle;
+    let admittedB = false;
+    const unsubscribe = useViewerCoreStore.subscribe((state, previous) => {
+      if (admittedB || previous.pageNumber === 2 || state.pageNumber !== 2) return;
+      admittedB = true;
+      lifecycleB = openProject(qc, "pid", { demo: true });
+      setViewerStoreStateForTest({
+        projectId: 0,
+        publicId: "pid",
+        isDemo: true,
+        pageNumber: 2,
+        numPages: 6,
+      });
+      useUiStore.setState({ focusAnnotationId: successorFocus });
+    });
+
+    fireEvent.click(screen.getByTitle("Go to page 2"));
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useUiStore.getState().focusAnnotationId).toBe(successorFocus);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+});
+
+// ─── ViewAllPanel ───────────────────────────────────────────────────────────────────────────────────
 
 describe("ViewAllPanel — Takeoffs tree renders seeded items+groups (VA-1)", () => {
   it("3-level expansion: kind → group → rows; missing-group item under 'Ungrouped'", async () => {
@@ -737,6 +998,92 @@ describe("BucketFillAssignDialog — non-demo create is server-first with the NU
     // annotation committed against the SERVER item id, then re-id'd from the annotations response
     await waitFor(() => expect(readSeededAnnotations(qc)[0]?.id).toBe(900));
     expect((readSeededAnnotations(qc)[0].data as { takeoffItemId?: number }).takeoffItemId).toBe(42);
+  });
+});
+
+describe("BucketFillAssignDialog — same-ID lifecycle retirement", () => {
+  it("does not adopt an auth create into a same-ID demo successor", async () => {
+    const lifecycleA = await activateLifecycle();
+    const snapshotA = captureProjectLifecycle(qc);
+    setViewerStoreStateForTest({
+      projectId: 123,
+      publicId: "pid",
+      isDemo: false,
+      pageNumber: 2,
+      numPages: 6,
+      bucketFillPendingPolygon: PENDING_POLYGON,
+      bucketFillError: null,
+    });
+    seedTakeoff(qc, [], []);
+    seedAnnotations(qc, []);
+    const create = deferred<Response>();
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockImplementation((url: unknown) => {
+      if (url === "/api/takeoff-items") return create.promise;
+      return successorPending;
+    });
+    render(
+      <BucketFillAssignDialog
+        pendingPolygon={PENDING_POLYGON}
+        width={800}
+        height={600}
+        cssScale={1}
+      />,
+      { wrapper },
+    );
+    fireEvent.change(screen.getByPlaceholderText("New item name"), {
+      target: { value: "Obsolete A room" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create & Assign" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/takeoff-items",
+      expect.any(Object),
+    ));
+
+    const successorPolygon = {
+      ...PENDING_POLYGON,
+      vertices: [
+        { x: 0.5, y: 0.5 },
+        { x: 0.8, y: 0.5 },
+        { x: 0.6, y: 0.9 },
+      ],
+      bbox: [0.5, 0.5, 0.8, 0.9] as [number, number, number, number],
+      areaSqUnits: 99,
+    };
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: true });
+      setViewerStoreStateForTest({
+        projectId: 0,
+        publicId: "pid",
+        isDemo: true,
+        pageNumber: 5,
+        numPages: 6,
+        bucketFillPendingPolygon: successorPolygon,
+        bucketFillError: null,
+      });
+      seedTakeoff(qc, [], []);
+      seedAnnotations(qc, []);
+      create.resolve({
+        ok: true,
+        status: 200,
+        json: async () => item({
+          id: 42,
+          name: "Obsolete A room",
+          shape: "polygon",
+          size: 24,
+        }),
+      } as Response);
+      for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+    });
+
+    expect.soft(isCurrentProjectLifecycle(qc, snapshotA)).toBe(false);
+    expect.soft(readTakeoffItems(qc, "pid")).toEqual([]);
+    expect.soft(readSeededAnnotations(qc)).toEqual([]);
+    expect.soft(useToolStore.getState().bucketFillPendingPolygon).toBe(successorPolygon);
+    expect.soft(persistFetchMock).not.toHaveBeenCalled();
+    lifecycleB.dispose();
+    lifecycleA.dispose();
   });
 });
 

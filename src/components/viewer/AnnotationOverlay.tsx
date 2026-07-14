@@ -79,6 +79,7 @@ import { persistFetch, canPersist , apiErrorMessage } from "@/lib/client-persist
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 interface AnnotationOverlayProps {
   width: number;
@@ -198,11 +199,51 @@ export default memo(function AnnotationOverlay({
   const mode = useToolStore((s) => s.mode);
   const activeToolKey = useToolStore(selectActiveToolKey);
   const { projectId: projectDbId, publicId, isDemo } = useProject();
-  useEffect(() => () => {
-    const controller = tagScanControllerRef.current;
-    tagScanControllerRef.current = null;
-    controller?.abort();
-  }, [publicId]);
+  const canAdoptProjectLifecycle = useProjectLifecycleGuard(publicId, isDemo);
+  const bucketFillErrorRevisionRef = useRef(0);
+  const splitErrorRevisionRef = useRef(0);
+  useEffect(() => {
+    // A same-id generation change does not necessarily change this component's publicId prop.
+    // The render-bound guard identity is therefore the exact retirement signal for request and
+    // delayed-error ownership.
+    bucketFillErrorRevisionRef.current += 1;
+    splitErrorRevisionRef.current += 1;
+    return () => {
+      const controller = tagScanControllerRef.current;
+      tagScanControllerRef.current = null;
+      controller?.abort();
+    };
+  }, [canAdoptProjectLifecycle]);
+  const publishTransientBucketFillError = useCallback((message: string) => {
+    if (!canAdoptProjectLifecycle()) return;
+    const revision = ++bucketFillErrorRevisionRef.current;
+    useToolStore.getState().setBucketFillError(message);
+    setTimeout(() => {
+      const tool = useToolStore.getState();
+      if (
+        bucketFillErrorRevisionRef.current !== revision ||
+        tool.bucketFillError !== message ||
+        !canAdoptProjectLifecycle()
+      ) return;
+      bucketFillErrorRevisionRef.current += 1;
+      tool.setBucketFillError(null);
+    }, 5000);
+  }, [canAdoptProjectLifecycle]);
+  const publishTransientSplitError = useCallback((message: string, delay = 5000) => {
+    if (!canAdoptProjectLifecycle()) return;
+    const revision = ++splitErrorRevisionRef.current;
+    useToolStore.getState().setSplitError(message);
+    setTimeout(() => {
+      const tool = useToolStore.getState();
+      if (
+        splitErrorRevisionRef.current !== revision ||
+        tool.splitError !== message ||
+        !canAdoptProjectLifecycle()
+      ) return;
+      splitErrorRevisionRef.current += 1;
+      tool.setSplitError(null);
+    }, delay);
+  }, [canAdoptProjectLifecycle]);
   // [refactor jul10 P2.2④] qc for the readTakeoffItems bridge (handler-time sync reads).
   // useQueryClient is provider-stable; it adds ZERO subscriptions to this component.
   const qc = useQueryClient();
@@ -269,11 +310,14 @@ export default memo(function AnnotationOverlay({
   // When set, we transfer the value to local selectedId and clear the field.
   const focusAnnotationId = useUiStore((s) => s.focusAnnotationId);
   useEffect(() => {
-    if (focusAnnotationId !== null) {
-      setSelectedId(focusAnnotationId);
-      useUiStore.getState().setFocusAnnotationId(null);
+    if (focusAnnotationId === null || !canAdoptProjectLifecycle()) return;
+    setSelectedId(focusAnnotationId);
+    if (!canAdoptProjectLifecycle()) return;
+    const ui = useUiStore.getState();
+    if (ui.focusAnnotationId === focusAnnotationId) {
+      ui.setFocusAnnotationId(null);
     }
-  }, [focusAnnotationId]);
+  }, [canAdoptProjectLifecycle, focusAnnotationId]);
 
   // Markup name+notes+csi modal state. csiCode is new — when editing an
   // existing annotation, loaded from data.csiCodes[0] if present. Users can
@@ -318,7 +362,6 @@ export default memo(function AnnotationOverlay({
   const addBucketFillBarrier = useToolStore((s) => s.addBucketFillBarrier);
   const setSplitLineEndpoint = useToolStore((s) => s.setSplitLineEndpoint);
   const setSplitPreview = useToolStore((s) => s.setSplitPreview);
-  const setSplitError = useToolStore((s) => s.setSplitError);
   const showTakeoffPanel = useUiStore((s) => s.showTakeoffPanel);
   const tempPanMode = useToolStore((s) => s.tempPanMode);
   const splitAreaActive = activeToolKey === "split";
@@ -991,6 +1034,7 @@ export default memo(function AnnotationOverlay({
 
   /** Save the current in-progress polygon as an area-polygon annotation */
   const savePolygon = useCallback(() => {
+    if (!canAdoptProjectLifecycle()) return;
     const verts = useToolStore.getState().polygonVertices;
     // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
     const items = readTakeoffItems(qc, publicId);
@@ -1035,23 +1079,27 @@ export default memo(function AnnotationOverlay({
       source: "takeoff",
       data: polygonData as unknown as Record<string, unknown>,
     }, {
+      canAdopt: canAdoptProjectLifecycle,
       onError: (err) => {
-        useToolStore.getState().setBucketFillError(
+        publishTransientBucketFillError(
           err instanceof Error ? `Failed to save area: ${err.message}` : "Failed to save area",
         );
-        setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
       },
     });
+    if (!canAdoptProjectLifecycle()) return;
 
     // persistCreate publishes optimistically before its first await; a cache listener can admit a
     // newer parse during that publication. This older save tail clears its own drawing without
     // revoking the newer parse's exact global Tool capability.
     publishSettledPolygonReset();
+    if (!canAdoptProjectLifecycle()) return;
     setMousePos(null);
-  }, [scaleCalibrations, pageNumber, width, height, publicId, persistCreate]);
+  }, [canAdoptProjectLifecycle, pageNumber, persistCreate, publicId,
+    publishTransientBucketFillError, scaleCalibrations, width, height]);
 
   /** Prepare bucket fill preview for item assignment (doesn't create annotation yet) */
   const prepareBucketFillPolygon = useCallback(() => {
+    if (!canAdoptProjectLifecycle()) return;
     const preview = useToolStore.getState().bucketFillPreview;
     if (!preview || preview.vertices.length < 3) return;
 
@@ -1113,13 +1161,14 @@ export default memo(function AnnotationOverlay({
         source: "takeoff",
         data: polygonData as unknown as Record<string, unknown>,
       }, {
+        canAdopt: canAdoptProjectLifecycle,
         onError: (err) => {
-          useToolStore.getState().setBucketFillError(
+          publishTransientBucketFillError(
             err instanceof Error ? `Failed to save area: ${err.message}` : "Failed to save area",
           );
-          setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
         },
       });
+      if (!canAdoptProjectLifecycle()) return;
       setBucketFillPreview(null);
       return;
     }
@@ -1133,11 +1182,14 @@ export default memo(function AnnotationOverlay({
       areaSqUnits,
       unit,
     });
+    if (!canAdoptProjectLifecycle()) return;
     setBucketFillPreview(null);
-  }, [scaleCalibrations, pageNumber, width, height, setBucketFillPreview, persistCreate, publicId]);
+  }, [canAdoptProjectLifecycle, pageNumber, persistCreate, publicId,
+    publishTransientBucketFillError, scaleCalibrations, setBucketFillPreview, width, height]);
 
   /** Accept a pending Split Area preview: both halves stay under same takeoff item. */
   const acceptSplit = useCallback(() => {
+    if (!canAdoptProjectLifecycle()) return;
     const preview = useToolStore.getState().splitPreview;
     if (!preview) return;
 
@@ -1149,6 +1201,7 @@ export default memo(function AnnotationOverlay({
     const target = currentAnnotations.find((a) => a.id === preview.targetAnnotationId);
     if (!target) {
       useToolStore.getState().setSplitPreview(null);
+      if (!canAdoptProjectLifecycle()) return;
       useToolStore.getState().setSplitLineEndpoint("a", null as unknown as { x: number; y: number });
       return;
     }
@@ -1202,12 +1255,14 @@ export default memo(function AnnotationOverlay({
       source: "takeoff",
       data: rightResult.data as unknown as Record<string, unknown>,
     });
+    if (!canAdoptProjectLifecycle()) return;
 
     // 2. Update original annotation to left half
     updateAnnotation(target.id, {
       bbox: leftResult.bbox,
       data: leftResult.data as unknown as Record<string, unknown>,
     });
+    if (!canAdoptProjectLifecycle()) return;
 
     // 3. Persist both to server. Surface failures via the visible split-error
     //    banner instead of console-only logging, so a dropped split is noticed.
@@ -1221,6 +1276,7 @@ export default memo(function AnnotationOverlay({
               "PUT",
             );
           }
+          if (!canAdoptProjectLifecycle()) return;
           const saved = await persistFetch("/api/annotations", {
             projectId: publicId,
             pageNumber,
@@ -1229,12 +1285,13 @@ export default memo(function AnnotationOverlay({
             source: "takeoff",
             data: rightResult.data,
           }) as { id?: number } | null;
-          if (saved?.id) updateAnnotation(tempAnnId, { id: saved.id });
+          if (saved?.id && canAdoptProjectLifecycle()) {
+            updateAnnotation(tempAnnId, { id: saved.id });
+          }
         } catch (err) {
-          useToolStore.getState().setSplitError(
+          publishTransientSplitError(
             err instanceof Error ? `Failed to save split: ${err.message}` : "Failed to save split",
           );
-          setTimeout(() => useToolStore.getState().setSplitError(null), 5000);
         }
       })();
     }
@@ -1242,12 +1299,16 @@ export default memo(function AnnotationOverlay({
     // 4. Stay in split mode — clear preview + line, ready for next split. Escape exits.
     const store = useToolStore.getState();
     store.setSplitPreview(null);
+    if (!canAdoptProjectLifecycle()) return;
     store.setSplitLineEndpoint("a", null);
+    if (!canAdoptProjectLifecycle()) return;
     store.setSplitLineEndpoint("b", null);
-  }, [scaleCalibrations, pageNumber, width, height, publicId, addAnnotation, updateAnnotation, isDemo]);
+  }, [addAnnotation, canAdoptProjectLifecycle, height, isDemo, pageNumber,
+    publicId, publishTransientSplitError, scaleCalibrations, updateAnnotation, width]);
 
   /** Save the current in-progress polyline as a linear-polyline annotation */
   const saveLinearPolyline = useCallback(() => {
+    if (!canAdoptProjectLifecycle()) return;
     const verts = useToolStore.getState().polygonVertices;
     // [refactor jul10 P2.2④] handler-time sync read via the cache bridge (was getState).
     const items = readTakeoffItems(qc, publicId);
@@ -1291,23 +1352,27 @@ export default memo(function AnnotationOverlay({
       source: "takeoff",
       data: polylineData as unknown as Record<string, unknown>,
     }, {
+      canAdopt: canAdoptProjectLifecycle,
       onError: (err) => {
-        useToolStore.getState().setBucketFillError(
+        publishTransientBucketFillError(
           err instanceof Error ? `Failed to save line: ${err.message}` : "Failed to save line",
         );
-        setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
       },
     });
+    if (!canAdoptProjectLifecycle()) return;
 
     // Same synchronous optimistic-publication boundary as savePolygon above.
     publishSettledPolygonReset();
+    if (!canAdoptProjectLifecycle()) return;
     setMousePos(null);
-  }, [scaleCalibrations, pageNumber, width, height, publicId, persistCreate]);
+  }, [canAdoptProjectLifecycle, pageNumber, persistCreate, publicId,
+    publishTransientBucketFillError, scaleCalibrations, width, height]);
 
   // Track which corner is being resized: null or "tl"|"tr"|"bl"|"br"
   const [resizeCorner, setResizeCorner] = useState<string | null>(null);
 
   function deleteSelected() {
+    if (!canAdoptProjectLifecycle()) return;
     // Multi-selection path: batch-delete via the new endpoint when ≥2
     // annotations are selected. Single DELETE per annotation is still
     // used when only `selectedId` is set (the legacy single-select path).
@@ -1324,15 +1389,19 @@ export default memo(function AnnotationOverlay({
               { projectId: publicId, annotationIds: persistedIds },
             );
           } catch (err) {
-            useToolStore.getState().setBucketFillError(
+            publishTransientBucketFillError(
               err instanceof Error ? `Failed to delete: ${err.message}` : "Failed to delete annotations",
             );
-            setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
           }
         })();
       }
-      for (const id of multiIds) removeAnnotation(id);
+      for (const id of multiIds) {
+        if (!canAdoptProjectLifecycle()) return;
+        removeAnnotation(id);
+      }
+      if (!canAdoptProjectLifecycle()) return;
       multiSelect.clearSelection();
+      if (!canAdoptProjectLifecycle()) return;
       setSelectedId(null);
       return;
     }
@@ -1343,20 +1412,22 @@ export default memo(function AnnotationOverlay({
         try {
           await persistFetch(`/api/annotations/${deleteId}`, undefined, "DELETE");
         } catch (err) {
-          useToolStore.getState().setBucketFillError(
+          publishTransientBucketFillError(
             err instanceof Error ? `Failed to delete: ${err.message}` : "Failed to delete annotation",
           );
-          setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
         }
       })();
     }
     removeAnnotation(selectedId);
+    if (!canAdoptProjectLifecycle()) return;
     setSelectedId(null);
+    if (!canAdoptProjectLifecycle()) return;
     multiSelect.clearSelection();
   }
 
   /** Save the current position of the selected annotation to the API */
   const saveDragPosition = useCallback(() => {
+    if (!canAdoptProjectLifecycle()) return;
     if (selectedId === null) return;
     if (!canPersist(publicId, isDemo)) return;
     if (selectedId <= 0) return; // skip tempIds (optimistic local-only)
@@ -1367,19 +1438,20 @@ export default memo(function AnnotationOverlay({
         try {
           await persistFetch(`/api/annotations/${annId}`, { bbox: ann.bbox }, "PUT");
         } catch (err) {
-          useToolStore.getState().setBucketFillError(
+          publishTransientBucketFillError(
             err instanceof Error ? `Failed to save move: ${err.message}` : "Failed to save move",
           );
-          setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
         }
       })();
     }
-  }, [selectedId, annotations, isDemo, publicId]);
+  }, [annotations, canAdoptProjectLifecycle, isDemo, publicId,
+    publishTransientBucketFillError, selectedId]);
 
   /** Persist a vertex edit: PUTs both bbox and data. Parallel to
    *  saveDragPosition which only sends bbox. Pattern cloned from the
    *  split-area persistence code at L941 which also sends both fields. */
   const saveVertexEdit = useCallback((annId: number) => {
+    if (!canAdoptProjectLifecycle()) return;
     if (!canPersist(publicId, isDemo)) return;
     if (annId <= 0) return; // skip tempIds (optimistic local-only)
     const ann = annotations.find((a) => a.id === annId);
@@ -1388,18 +1460,19 @@ export default memo(function AnnotationOverlay({
       try {
         await persistFetch(`/api/annotations/${annId}`, { bbox: ann.bbox, data: ann.data }, "PUT");
       } catch (err) {
-        useToolStore.getState().setBucketFillError(
+        publishTransientBucketFillError(
           err instanceof Error ? `Failed to save edit: ${err.message}` : "Failed to save edit",
         );
-        setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
       }
     })();
-  }, [annotations, isDemo, publicId]);
+  }, [annotations, canAdoptProjectLifecycle, isDemo, publicId,
+    publishTransientBucketFillError]);
 
   const HANDLE = 8; // corner handle size in pixels
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (!canAdoptProjectLifecycle()) return;
       // Retire any earlier local rectangle. Each accepted branch below then either invalidates the
       // old global tail or replaces it with its own exact deferred/async token.
       cancelDeferredDrawing();
@@ -1455,6 +1528,7 @@ export default memo(function AnnotationOverlay({
         invalidateToolTailAuthority();
         const pointB = { x: normX, y: normY };
         setSplitLineEndpoint("b", pointB);
+        if (!canAdoptProjectLifecycle()) return;
 
         const polyAnnotations = pageAnnotations.filter(
           (a) => a.source === "takeoff" && (a.data as AreaPolygonData)?.type === "area-polygon"
@@ -1466,8 +1540,10 @@ export default memo(function AnnotationOverlay({
         );
 
         if (candidates.length === 0) {
-          setSplitError("Line does not cross any area polygon in exactly 2 places");
-          setTimeout(() => setSplitError(null), 3500);
+          publishTransientSplitError(
+            "Line does not cross any area polygon in exactly 2 places",
+            3500,
+          );
           return;
         }
 
@@ -1498,6 +1574,7 @@ export default memo(function AnnotationOverlay({
           const pending = bfState.barrierPendingPoint;
           if (pending) {
             addBucketFillBarrier({ x1: pending.x, y1: pending.y, x2: normX, y2: normY });
+            if (!canAdoptProjectLifecycle()) return;
             bfState.setBarrierPendingPoint(null);
           } else {
             bfState.setBarrierPendingPoint({ x: normX, y: normY });
@@ -1539,7 +1616,8 @@ export default memo(function AnnotationOverlay({
 
         const ownsBucketFill = () => {
           const current = useToolStore.getState();
-          return ownsToolTailAuthority(bucketToken) &&
+          return canAdoptProjectLifecycle() &&
+            ownsToolTailAuthority(bucketToken) &&
             ownsLatestToolOperation("bucketFill", bucketToken) &&
             current.activeTool === bucketActivation &&
             useSessionStore.getState().projectId === bucketProjectDbId &&
@@ -1691,6 +1769,7 @@ export default memo(function AnnotationOverlay({
           if (toolAtDown.polygonDrawingMode === "idle") {
             // Start new polygon
             setPolygonDrawingMode("drawing");
+            if (!canAdoptProjectLifecycle()) return;
             addPolygonVertex({ x: normX, y: normY });
           } else if (toolAtDown.polygonDrawingMode === "drawing") {
             // Check snap-to-first-point to close (>= 3 vertices required)
@@ -1720,6 +1799,7 @@ export default memo(function AnnotationOverlay({
           if (toolAtDown.polygonDrawingMode === "idle") {
             // Start new polyline
             setPolygonDrawingMode("drawing");
+            if (!canAdoptProjectLifecycle()) return;
             addPolygonVertex({ x: normX, y: normY });
           } else if (toolAtDown.polygonDrawingMode === "drawing") {
             // Finish line: click within 10px of last vertex
@@ -1782,11 +1862,11 @@ export default memo(function AnnotationOverlay({
           source: "takeoff",
           data: markerData as unknown as Record<string, unknown>,
         }, {
+          canAdopt: canAdoptProjectLifecycle,
           onError: (err) => {
-            useToolStore.getState().setBucketFillError(
+            publishTransientBucketFillError(
               err instanceof Error ? `Failed to save marker: ${err.message}` : "Failed to save marker",
             );
-            setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
           },
         });
 
@@ -1849,6 +1929,7 @@ export default memo(function AnnotationOverlay({
               .then(({ texts }) => {
                 if (tagScanControllerRef.current !== controller || controller.signal.aborted) return;
                 if (useSessionStore.getState().publicId !== pid) return;
+                if (!canAdoptProjectLifecycle()) return;
                 useToolStore.getState().setTagScanResults({
                   yoloClass,
                   yoloModel,
@@ -1858,6 +1939,7 @@ export default memo(function AnnotationOverlay({
               .catch((err) => {
                 if ((err as Error).name === "AbortError") return;
                 if (tagScanControllerRef.current !== controller) return;
+                if (!canAdoptProjectLifecycle()) return;
                 console.error("[YOLO_TAG] Class scan failed:", err);
               });
             return;
@@ -1956,12 +2038,20 @@ export default memo(function AnnotationOverlay({
             if (ann.source === "user") {
               // User markup: filter + open TextPanel → Markups tab
               if (isToggleOff) {
-                setSearch(""); setAnnotationFilter(null);
+                setSearch("");
+                if (!canAdoptProjectLifecycle()) return;
+                setAnnotationFilter(null);
+                if (!canAdoptProjectLifecycle()) return;
                 store.setActiveMarkupId(null);
               } else {
-                setSearch(ann.name); setAnnotationFilter(ann.name);
+                setSearch(ann.name);
+                if (!canAdoptProjectLifecycle()) return;
+                setAnnotationFilter(ann.name);
+                if (!canAdoptProjectLifecycle()) return;
                 store.setActiveMarkupId(ann.id);
+                if (!canAdoptProjectLifecycle()) return;
                 store.setTextPanelTab("markups");
+                if (!canAdoptProjectLifecycle()) return;
                 if (!store.showTextPanel) store.toggleTextPanel();
               }
             } else if (ann.source === "takeoff") {
@@ -1970,16 +2060,24 @@ export default memo(function AnnotationOverlay({
               const item = takeoffItems.find((t) => t.id === itemId);
               const itemName = item?.name || ann.name;
               if (isToggleOff || currentSearch.toLowerCase() === itemName.toLowerCase()) {
-                setSearch(""); setTakeoffFilter(null);
+                setSearch("");
+                if (!canAdoptProjectLifecycle()) return;
+                setTakeoffFilter(null);
               } else {
-                setSearch(itemName); setTakeoffFilter(itemId);
+                setSearch(itemName);
+                if (!canAdoptProjectLifecycle()) return;
+                setTakeoffFilter(itemId);
               }
             } else {
               // YOLO or other: annotation name filter
               if (isToggleOff) {
-                setSearch(""); setAnnotationFilter(null);
+                setSearch("");
+                if (!canAdoptProjectLifecycle()) return;
+                setAnnotationFilter(null);
               } else {
-                setSearch(ann.name); setAnnotationFilter(ann.name);
+                setSearch(ann.name);
+                if (!canAdoptProjectLifecycle()) return;
+                setAnnotationFilter(ann.name);
               }
             }
             return;
@@ -2179,12 +2277,15 @@ export default memo(function AnnotationOverlay({
             // skips the default drag/yolo-tag path. Otherwise we fall through
             // to single-select + drag-to-move as before.
             const { handled } = multiSelect.handleAnnotationClick(ann.id, e);
+            if (!canAdoptProjectLifecycle()) return;
             if (handled) return;
             // Plain click on a grouped annotation → expand to group siblings.
             // Hook no-ops when ann isn't in any active group.
             multiSelect.expandSelectionViaGroups(ann.id);
+            if (!canAdoptProjectLifecycle()) return;
             setSelectedId(ann.id);
             setSearch(ann.name);
+            if (!canAdoptProjectLifecycle()) return;
             // If this YOLO annotation matches a known tag, activate it
             if (ann.source === "yolo") {
               const matchingTag = yoloTags.find((t) =>
@@ -2192,7 +2293,9 @@ export default memo(function AnnotationOverlay({
               );
               if (matchingTag) {
                 setActiveYoloTagId(matchingTag.id);
+                if (!canAdoptProjectLifecycle()) return;
                 setYoloTagFilter(matchingTag.id);
+                if (!canAdoptProjectLifecycle()) return;
               }
             }
             setDragging(true);
@@ -2209,6 +2312,7 @@ export default memo(function AnnotationOverlay({
           if (clickX >= left && clickX <= right && clickY >= top && clickY <= bottom) {
             e.stopPropagation();
             setKeynoteFilter({ shape: keynote.shape, text: keynote.text });
+            if (!canAdoptProjectLifecycle()) return;
             if (keynote.text) setSearch(keynote.text);
             return;
           }
@@ -2278,11 +2382,12 @@ export default memo(function AnnotationOverlay({
       e.stopPropagation();
       startDeferredDrawing(pos);
     },
-    [addBucketFillBarrier, addPolygonVertex, cancelDeferredDrawing, getPos, height,
+    [addBucketFillBarrier, addPolygonVertex, canAdoptProjectLifecycle, cancelDeferredDrawing, getPos, height,
       isKeynoteYoloPicking, multiSelect, pageAnnotations, pageKeynotes, pageNumber, persistCreate,
-      projectDbId, publicId, qc, saveLinearPolyline, savePolygon, selectedId,
+      projectDbId, publicId, publishTransientBucketFillError, publishTransientSplitError, qc,
+      saveLinearPolyline, savePolygon, selectedId,
       setActiveYoloTagId, setAnnotationFilter,
-      setKeynoteFilter, setPolygonDrawingMode, setSearch, setSplitError, setSplitLineEndpoint,
+      setKeynoteFilter, setPolygonDrawingMode, setSearch, setSplitLineEndpoint,
       setSplitPreview, setTakeoffFilter, setYoloTagFilter, setYoloTagPickingMode,
       showTableCellStructure, startDeferredDrawing, tableCellStructure, takeoffItems,
       toggleCellHighlight, width, yoloTags]
@@ -2290,11 +2395,14 @@ export default memo(function AnnotationOverlay({
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
+      if (!canAdoptProjectLifecycle()) return;
       // Track cursor for polygon preview (throttled via rAF)
       if (polygonDrawingMode === "drawing") {
         const p = getPos(e);
         cancelAnimationFrame(rafRef.current);
-        rafRef.current = requestAnimationFrame(() => setMousePos(p));
+        rafRef.current = requestAnimationFrame(() => {
+          if (canAdoptProjectLifecycle()) setMousePos(p);
+        });
       }
       // Read drawing state from store (not subscribed — avoids parent re-render)
       if (useToolStore.getState()._drawing) {
@@ -2341,6 +2449,7 @@ export default memo(function AnnotationOverlay({
         cancelAnimationFrame(rafRef.current);
         const id = ann.id;
         rafRef.current = requestAnimationFrame(() => {
+          if (!canAdoptProjectLifecycle()) return;
           updateAnnotation(id, {
             bbox: newBboxVtx,
             data: updatedData as unknown as Record<string, unknown>,
@@ -2389,11 +2498,14 @@ export default memo(function AnnotationOverlay({
         cancelAnimationFrame(rafRef.current);
         const id = selectedId;
         rafRef.current = requestAnimationFrame(() => {
+          if (!canAdoptProjectLifecycle()) return;
           if (dragBboxRef.current) updateAnnotation(id, { bbox: dragBboxRef.current });
         });
       }
     },
-    [dragging, selectedId, dragOffset, resizeCorner, pageAnnotations, width, height, getPos, updateAnnotation, polygonDrawingMode, setDrawEnd, setMousePos, scaleCalibrations]
+    [canAdoptProjectLifecycle, dragging, selectedId, dragOffset, resizeCorner, pageAnnotations,
+      width, height, getPos, updateAnnotation, polygonDrawingMode, setDrawEnd, setMousePos,
+      scaleCalibrations]
   );
 
   const handleMouseUp = useCallback(() => {
@@ -2569,6 +2681,7 @@ export default memo(function AnnotationOverlay({
   // Escape and tool-local keyboard commands always route through the exact live discriminator.
   useEffect(() => {
     function handleEscape(e: KeyboardEvent) {
+      if (!canAdoptProjectLifecycle()) return;
       if (e.key === "Escape") {
         const expectedActiveTool = useToolStore.getState().activeTool;
         cancelDeferredDrawing();
@@ -2605,6 +2718,7 @@ export default memo(function AnnotationOverlay({
         } else if (activeTool?.kind === "takeoffPlacement") {
           if (tool.polygonDrawingMode === "drawing") {
             tool.resetPolygonDrawing();
+            if (!canAdoptProjectLifecycle()) return;
             setMousePos(null);
           } else {
             tool.setActiveTakeoffItemId(null);
@@ -2675,7 +2789,8 @@ export default memo(function AnnotationOverlay({
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [acceptSplit, cancelDeferredDrawing, prepareBucketFillPolygon, publicId, qc, saveLinearPolyline, savePolygon, setMousePos]);
+  }, [acceptSplit, canAdoptProjectLifecycle, cancelDeferredDrawing, prepareBucketFillPolygon,
+    publicId, qc, saveLinearPolyline, savePolygon, setMousePos]);
 
   // Keyboard: Delete/Backspace to delete, Enter to place dragged annotation
   useEffect(() => {
@@ -2687,6 +2802,7 @@ export default memo(function AnnotationOverlay({
         e.target instanceof HTMLTextAreaElement
       )
         return;
+      if (!canAdoptProjectLifecycle()) return;
 
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
@@ -2697,14 +2813,14 @@ export default memo(function AnnotationOverlay({
             try {
               await persistFetch(`/api/annotations/${deleteId}`, undefined, "DELETE");
             } catch (err) {
-              useToolStore.getState().setBucketFillError(
+              publishTransientBucketFillError(
                 err instanceof Error ? `Failed to delete: ${err.message}` : "Failed to delete annotation",
               );
-              setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
             }
           })();
         }
         removeAnnotation(selectedId!);
+        if (!canAdoptProjectLifecycle()) return;
         setSelectedId(null);
       }
 
@@ -2719,7 +2835,8 @@ export default memo(function AnnotationOverlay({
 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [selectedId, dragging, removeAnnotation, saveDragPosition, isDemo, publicId]);
+  }, [canAdoptProjectLifecycle, dragging, isDemo, publicId,
+    publishTransientBucketFillError, removeAnnotation, saveDragPosition, selectedId]);
 
   // The synchronous viewer page command owns every Tool/Parse/drawing boundary. This residual
   // component effect is intentionally local-only and cannot erase destination-page work.
@@ -2730,7 +2847,14 @@ export default memo(function AnnotationOverlay({
   }, [pageNumber]);
 
   // Exit polygon drawing when switching interaction modes
+  const modeCleanupLifecycleRef = useRef(canAdoptProjectLifecycle);
   useEffect(() => {
+    const previousLifecycle = modeCleanupLifecycleRef.current;
+    modeCleanupLifecycleRef.current = canAdoptProjectLifecycle;
+    if (
+      previousLifecycle !== canAdoptProjectLifecycle ||
+      !canAdoptProjectLifecycle()
+    ) return;
     // Atomic specialized entries may deliberately retain a dormant takeoff draft while changing
     // the base mode. Only a true base-mode destination owns this legacy passive cleanup.
     if (
@@ -2738,35 +2862,49 @@ export default memo(function AnnotationOverlay({
       useToolStore.getState().polygonDrawingMode === "drawing"
     ) {
       publishSettledPolygonReset();
+      if (!canAdoptProjectLifecycle()) return;
       setMousePos(null);
     }
-    if (activeTakeoffItemId !== null) {
-      // Don't deactivate here — let the user keep the item selected
-      // Only reset the in-progress drawing
-    }
-  }, [mode]);
+  }, [canAdoptProjectLifecycle, mode, setMousePos]);
 
   // Reset polygon drawing if active item changes
+  const itemCleanupLifecycleRef = useRef(canAdoptProjectLifecycle);
   useEffect(() => {
+    const previousLifecycle = itemCleanupLifecycleRef.current;
+    itemCleanupLifecycleRef.current = canAdoptProjectLifecycle;
+    if (
+      previousLifecycle !== canAdoptProjectLifecycle ||
+      !canAdoptProjectLifecycle()
+    ) return;
     if (useToolStore.getState().polygonDrawingMode === "drawing") {
       publishSettledPolygonReset();
+      if (!canAdoptProjectLifecycle()) return;
       setMousePos(null);
     }
-  }, [activeTakeoffItemId]);
+  }, [activeTakeoffItemId, canAdoptProjectLifecycle, setMousePos]);
 
   // Exit polygon drawing when QTO panel closes
+  const panelCleanupLifecycleRef = useRef(canAdoptProjectLifecycle);
   useEffect(() => {
+    const previousLifecycle = panelCleanupLifecycleRef.current;
+    panelCleanupLifecycleRef.current = canAdoptProjectLifecycle;
+    if (
+      previousLifecycle !== canAdoptProjectLifecycle ||
+      !canAdoptProjectLifecycle()
+    ) return;
     if (!showTakeoffPanel && useToolStore.getState().polygonDrawingMode === "drawing") {
       publishSettledPolygonReset();
+      if (!canAdoptProjectLifecycle()) return;
       setMousePos(null);
     }
-  }, [showTakeoffPanel]);
+  }, [canAdoptProjectLifecycle, setMousePos, showTakeoffPanel]);
 
   // Save markup from dialog (handles both create and edit). CSI code is
   // persisted into data.csiCodes as a single-element array — the server's
   // annotation PUT/POST merges with any auto-detected codes so both manual
   // and detected entries end up in data.csiCodes.
   const saveMarkup = useCallback(() => {
+    if (!canAdoptProjectLifecycle()) return;
     if (!pendingMarkup || !markupName.trim()) return;
     const [minX, minY, maxX, maxY] = pendingMarkup;
     const name = markupName.trim();
@@ -2782,6 +2920,7 @@ export default memo(function AnnotationOverlay({
         ? { ...(existing?.data ?? {}), csiCodes }
         : existing?.data;
       updateAnnotation(editingAnnotationId, { name, note, data: mergedData ?? null });
+      if (!canAdoptProjectLifecycle()) return;
       if (canPersist(publicId, isDemo)) {
         const editId = editingAnnotationId;
         (async () => {
@@ -2792,10 +2931,9 @@ export default memo(function AnnotationOverlay({
               "PUT",
             );
           } catch (err) {
-            useToolStore.getState().setBucketFillError(
+            publishTransientBucketFillError(
               err instanceof Error ? `Failed to save markup: ${err.message}` : "Failed to save markup",
             );
-            setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
           }
         })();
       }
@@ -2810,21 +2948,28 @@ export default memo(function AnnotationOverlay({
         bbox: [minX, minY, maxX, maxY],
         ...(annotationData ? { data: annotationData } : {}),
       }, {
+        canAdopt: canAdoptProjectLifecycle,
         onError: (err) => {
-          useToolStore.getState().setBucketFillError(
+          publishTransientBucketFillError(
             err instanceof Error ? `Failed to save markup: ${err.message}` : "Failed to save markup",
           );
-          setTimeout(() => useToolStore.getState().setBucketFillError(null), 5000);
         },
       });
     }
 
+    if (!canAdoptProjectLifecycle()) return;
     setPendingMarkup(null);
+    if (!canAdoptProjectLifecycle()) return;
     setMarkupName("");
+    if (!canAdoptProjectLifecycle()) return;
     setMarkupNote("");
+    if (!canAdoptProjectLifecycle()) return;
     setMarkupCsi("");
+    if (!canAdoptProjectLifecycle()) return;
     setEditingAnnotationId(null);
-  }, [pendingMarkup, markupName, markupNote, markupCsi, editingAnnotationId, pageNumber, publicId, persistCreate, updateAnnotation, annotations, isDemo]);
+  }, [annotations, canAdoptProjectLifecycle, editingAnnotationId, isDemo, markupCsi,
+    markupName, markupNote, pageNumber, pendingMarkup, persistCreate, publicId,
+    publishTransientBucketFillError, updateAnnotation]);
 
   // Canvas gates — single source of truth so render-null and pointer-events can't drift.
   // Drift here has caused lasso + markup disappear bugs before (see group-tool fix 2026-04-19).

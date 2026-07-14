@@ -35,6 +35,7 @@ const promoteMock = vi.mocked(promoteParsedRegion);
 const PROJECT_A = "project-A";
 const PROJECT_B = "project-B";
 const PAGE_A = 4;
+const alwaysAdopt = () => true;
 
 function promotedRegion(overrides: Partial<PromotedParsedRegion> = {}): PromotedParsedRegion {
   return {
@@ -124,6 +125,43 @@ beforeEach(() => {
 afterEach(() => queryClient.clear());
 
 describe("saveParsedRegion persistent command", () => {
+  it("does not let an omitted adoption predicate overwrite a same-key successor lifecycle", async () => {
+    const predecessor = { rejectedTextRegionIds: ["lifecycle-A"] } satisfies PageIntelligence;
+    const successor = { rejectedTextRegionIds: ["lifecycle-B-sentinel"] } satisfies PageIntelligence;
+    seedWindow(queryClient, PROJECT_A, PAGE_A, predecessor);
+    const response = promotionResponse({
+      intelligence: {
+        rejectedTextRegionIds: ["obsolete-A-response"],
+        parsedRegions: [promotedRegion() as never],
+      },
+      summaries: null,
+    });
+    let resolvePromotion!: (value: PromoteParsedRegionResponse) => void;
+    promoteMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolvePromotion = resolve;
+    }));
+
+    // Intentionally cross the runtime boundary without the now-required predicate: durable work
+    // may settle, but an untyped/legacy caller must fail closed and publish nothing into B.
+    const pending = saveParsedRegion(queryClient, {
+      publicId: PROJECT_A,
+      isDemo: false,
+      pageNumber: PAGE_A,
+    } as unknown as Parameters<typeof saveParsedRegion>[1], {
+      via: "parser",
+      type: "schedule",
+      regionId: "region-authoritative",
+      bboxMinMax: [0.1, 0.2, 0.7, 0.8],
+      data: { headers: ["TAG"], rows: [{ TAG: "D-101" }] },
+    });
+    seedWindow(queryClient, PROJECT_A, PAGE_A, successor);
+    const successorSnapshot = readPageIntelligence(queryClient, PROJECT_A, PAGE_A);
+    resolvePromotion(response);
+    await pending;
+
+    expect(readPageIntelligence(queryClient, PROJECT_A, PAGE_A)).toBe(successorSnapshot);
+  });
+
   it("captures target identity and publishes parser P -> A -> S -> X against A after switching to B", async () => {
     const initialA = { rejectedTextRegionIds: ["keep-A"] } satisfies PageIntelligence;
     const sentinelB = { rejectedTextRegionIds: ["keep-B"] } satisfies PageIntelligence;
@@ -162,7 +200,12 @@ describe("saveParsedRegion persistent command", () => {
       }
     });
 
-    const target = { publicId: PROJECT_A, isDemo: false, pageNumber: PAGE_A };
+    const target = {
+      publicId: PROJECT_A,
+      isDemo: false,
+      pageNumber: PAGE_A,
+      canAdopt: alwaysAdopt,
+    };
     const data = { headers: ["TAG"], rows: [{ TAG: "D-101" }] };
     const csiTags = [{ code: "08 11 13", description: "Hollow Metal Doors" }];
     const pending = saveParsedRegion(queryClient, target, {
@@ -215,6 +258,56 @@ describe("saveParsedRegion persistent command", () => {
     expect(queryClient.getQueryData(queryKeys.summaries.all(PROJECT_B))).toBe(bSummaries);
   });
 
+  it("persists but does not adopt a valid response graph after caller authority is revoked", async () => {
+    const initial = { rejectedTextRegionIds: ["successor-page"] } satisfies PageIntelligence;
+    const stableSummaries = summaries("successor-summaries");
+    seedWindow(queryClient, PROJECT_A, PAGE_A, initial);
+    queryClient.setQueryData(queryKeys.summaries.all(PROJECT_A), stableSummaries);
+    const windowBefore = readActivePageWindow(queryClient, PROJECT_A);
+    const response = promotionResponse({
+      intelligence: {
+        rejectedTextRegionIds: ["obsolete-response"],
+        parsedRegions: [promotedRegion() as never],
+      },
+      summaries: summaries("obsolete-summaries"),
+    });
+    let resolvePromotion!: (value: PromoteParsedRegionResponse) => void;
+    promoteMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolvePromotion = resolve;
+    }));
+    let owned = true;
+    const canAdopt = vi.fn(() => owned);
+    const target = {
+      publicId: PROJECT_A,
+      isDemo: false,
+      pageNumber: PAGE_A,
+      canAdopt,
+    };
+    const updatedKeys: unknown[][] = [];
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type === "updated") updatedKeys.push([...event.query.queryKey]);
+    });
+
+    const pending = saveParsedRegion(queryClient, target, {
+      via: "parser",
+      type: "schedule",
+      regionId: "region-authoritative",
+      bboxMinMax: [0.1, 0.2, 0.7, 0.8],
+      data: { headers: ["TAG"], rows: [{ TAG: "D-101" }] },
+    });
+    owned = false;
+    resolvePromotion(response);
+    await pending;
+    unsubscribe();
+
+    expect.soft(canAdopt).toHaveBeenCalled();
+    expect.soft(updatedKeys).toEqual([]);
+    expect.soft(readActivePageWindow(queryClient, PROJECT_A)).toBe(windowBefore);
+    expect.soft(readPageIntelligence(queryClient, PROJECT_A, PAGE_A)).toBe(initial);
+    expect.soft(queryClient.getQueryData(queryKeys.summaries.all(PROJECT_A)))
+      .toBe(stableSummaries);
+  });
+
   it("builds the exact classifier source request, retains null summaries, then recomputes spatial", async () => {
     const priorSummaries = summaries("retain-me");
     const region = promotedRegion({
@@ -241,6 +334,7 @@ describe("saveParsedRegion persistent command", () => {
       publicId: PROJECT_A,
       isDemo: false,
       pageNumber: PAGE_A,
+      canAdopt: alwaysAdopt,
     }, {
       via: "classifier",
       type: "spec",
@@ -280,6 +374,7 @@ describe("saveParsedRegion persistent command", () => {
       publicId: PROJECT_A,
       isDemo: false,
       pageNumber: PAGE_A,
+      canAdopt: alwaysAdopt,
     }, {
       via: "classifier",
       type: "notes",
@@ -359,6 +454,39 @@ describe("saveParsedRegion persistent command", () => {
 });
 
 describe("deleteParsedRegion persistent command", () => {
+  it("does not let an omitted adoption predicate overwrite a same-key successor lifecycle", async () => {
+    const predecessor = {
+      rejectedTextRegionIds: ["lifecycle-A"],
+      parsedRegions: [promotedRegion({ id: "delete-me" }) as never],
+    } satisfies PageIntelligence;
+    const successor = {
+      rejectedTextRegionIds: ["lifecycle-B-sentinel"],
+      parsedRegions: [promotedRegion({ id: "successor-region" }) as never],
+    } satisfies PageIntelligence;
+    seedWindow(queryClient, PROJECT_A, PAGE_A, predecessor);
+    const response = deletionResponse({
+      intelligence: { rejectedTextRegionIds: ["obsolete-A-delete"], parsedRegions: [] },
+      summaries: null,
+    });
+    let resolveDelete!: (value: DeletePersistedParsedRegionResponse) => void;
+    deleteMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveDelete = resolve;
+    }));
+
+    const pending = deleteParsedRegion(queryClient, {
+      publicId: PROJECT_A,
+      isDemo: false,
+      pageNumber: PAGE_A,
+      regionId: "delete-me",
+    } as unknown as Parameters<typeof deleteParsedRegion>[1]);
+    seedWindow(queryClient, PROJECT_A, PAGE_A, successor);
+    const successorSnapshot = readPageIntelligence(queryClient, PROJECT_A, PAGE_A);
+    resolveDelete(response);
+    await pending;
+
+    expect(readPageIntelligence(queryClient, PROJECT_A, PAGE_A)).toBe(successorSnapshot);
+  });
+
   it("stays server-first, captures identity, then publishes P -> A -> S -> X only against A", async () => {
     const targetRegion = promotedRegion({ id: "delete-me" });
     const initialA = {
@@ -406,6 +534,7 @@ describe("deleteParsedRegion persistent command", () => {
       isDemo: false,
       pageNumber: PAGE_A,
       regionId: "delete-me",
+      canAdopt: alwaysAdopt,
     };
     const pending = deleteParsedRegion(queryClient, target);
 
@@ -439,6 +568,51 @@ describe("deleteParsedRegion persistent command", () => {
     expect(queryClient.getQueryData(queryKeys.summaries.all(PROJECT_B))).toBe(bSummaries);
   });
 
+  it("persists but does not adopt delete intelligence, summaries, or recompute after authority loss", async () => {
+    const initial = {
+      rejectedTextRegionIds: ["successor-page"],
+      parsedRegions: [promotedRegion({ id: "successor-region" }) as never],
+    } satisfies PageIntelligence;
+    const stableSummaries = summaries("successor-summaries");
+    seedWindow(queryClient, PROJECT_A, PAGE_A, initial);
+    queryClient.setQueryData(queryKeys.summaries.all(PROJECT_A), stableSummaries);
+    const windowBefore = readActivePageWindow(queryClient, PROJECT_A);
+    const response = deletionResponse({
+      intelligence: { rejectedTextRegionIds: ["obsolete-delete"], parsedRegions: [] },
+      summaries: summaries("obsolete-delete-summaries"),
+    });
+    let resolveDelete!: (value: DeletePersistedParsedRegionResponse) => void;
+    deleteMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveDelete = resolve;
+    }));
+    let owned = true;
+    const canAdopt = vi.fn(() => owned);
+    const target = {
+      publicId: PROJECT_A,
+      isDemo: false,
+      pageNumber: PAGE_A,
+      regionId: "delete-me",
+      canAdopt,
+    };
+    const updatedKeys: unknown[][] = [];
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type === "updated") updatedKeys.push([...event.query.queryKey]);
+    });
+
+    const pending = deleteParsedRegion(queryClient, target);
+    owned = false;
+    resolveDelete(response);
+    await pending;
+    unsubscribe();
+
+    expect.soft(canAdopt).toHaveBeenCalled();
+    expect.soft(updatedKeys).toEqual([]);
+    expect.soft(readActivePageWindow(queryClient, PROJECT_A)).toBe(windowBefore);
+    expect.soft(readPageIntelligence(queryClient, PROJECT_A, PAGE_A)).toBe(initial);
+    expect.soft(queryClient.getQueryData(queryKeys.summaries.all(PROJECT_A)))
+      .toBe(stableSummaries);
+  });
+
   it("retains prior summaries when the authoritative response has null summaries", async () => {
     const initial = { parsedRegions: [promotedRegion({ id: "delete-me" }) as never] };
     const priorSummaries = summaries("retain-me");
@@ -457,6 +631,7 @@ describe("deleteParsedRegion persistent command", () => {
       isDemo: false,
       pageNumber: PAGE_A,
       regionId: "delete-me",
+      canAdopt: alwaysAdopt,
     })).resolves.toEqual({ status: "persisted", response });
 
     expect(queryClient.getQueryData(queryKeys.summaries.all(PROJECT_A))).toBe(priorSummaries);
@@ -482,12 +657,14 @@ describe("deleteParsedRegion persistent command", () => {
       isDemo: false,
       pageNumber: PAGE_A,
       regionId: "delete-a",
+      canAdopt: alwaysAdopt,
     });
     const second = deleteParsedRegion(queryClient, {
       publicId: PROJECT_A,
       isDemo: false,
       pageNumber: PAGE_A,
       regionId: "delete-b",
+      canAdopt: alwaysAdopt,
     });
 
     expect(deleteMock).toHaveBeenCalledTimes(1);
@@ -537,12 +714,14 @@ describe("deleteParsedRegion persistent command", () => {
       isDemo: false,
       pageNumber: PAGE_A,
       regionId: "delete-a",
+      canAdopt: alwaysAdopt,
     });
     const second = deleteParsedRegion(queryClient, {
       publicId: PROJECT_A,
       isDemo: false,
       pageNumber: PAGE_A,
       regionId: "delete-a",
+      canAdopt: alwaysAdopt,
     });
     expect(deleteMock).toHaveBeenCalledTimes(1);
 
@@ -565,18 +744,21 @@ describe("deleteParsedRegion persistent command", () => {
         isDemo: false,
         pageNumber: PAGE_A,
         regionId: "delete-a",
+        canAdopt: alwaysAdopt,
       }),
       deleteParsedRegion(queryClient, {
         publicId: PROJECT_A,
         isDemo: false,
         pageNumber: PAGE_A + 1,
         regionId: "delete-b",
+        canAdopt: alwaysAdopt,
       }),
       deleteParsedRegion(queryClient, {
         publicId: PROJECT_B,
         isDemo: false,
         pageNumber: PAGE_A,
         regionId: "delete-c",
+        canAdopt: alwaysAdopt,
       }),
     ];
 
@@ -604,6 +786,7 @@ describe("deleteParsedRegion persistent command", () => {
       isDemo: false,
       pageNumber: PAGE_A,
       regionId: "delete-me",
+      canAdopt: alwaysAdopt,
     };
     const failure = new Error("HTTP failure");
 
@@ -673,6 +856,7 @@ describe("deleteParsedRegion local and skipped decisions", () => {
       isDemo: true,
       pageNumber: PAGE_A,
       regionId: "delete-me",
+      canAdopt: alwaysAdopt,
     })).resolves.toEqual({ status: "local", reason: "demo" });
     unsubscribe();
 
@@ -688,19 +872,43 @@ describe("deleteParsedRegion local and skipped decisions", () => {
 
   it.each([
     [
-      { publicId: null, isDemo: false, pageNumber: PAGE_A, regionId: "R" },
+      {
+        publicId: null,
+        isDemo: false,
+        pageNumber: PAGE_A,
+        regionId: "R",
+        canAdopt: alwaysAdopt,
+      },
       { status: "skipped", reason: "missing-public-id" },
     ],
     [
-      { publicId: "", isDemo: true, pageNumber: PAGE_A, regionId: "R" },
+      {
+        publicId: "",
+        isDemo: true,
+        pageNumber: PAGE_A,
+        regionId: "R",
+        canAdopt: alwaysAdopt,
+      },
       { status: "skipped", reason: "missing-public-id" },
     ],
     [
-      { publicId: PROJECT_A, isDemo: false, pageNumber: PAGE_A, regionId: null },
+      {
+        publicId: PROJECT_A,
+        isDemo: false,
+        pageNumber: PAGE_A,
+        regionId: null,
+        canAdopt: alwaysAdopt,
+      },
       { status: "skipped", reason: "missing-region-id" },
     ],
     [
-      { publicId: PROJECT_A, isDemo: true, pageNumber: PAGE_A, regionId: "" },
+      {
+        publicId: PROJECT_A,
+        isDemo: true,
+        pageNumber: PAGE_A,
+        regionId: "",
+        canAdopt: alwaysAdopt,
+      },
       { status: "skipped", reason: "missing-region-id" },
     ],
   ] as const)("returns %j with zero transport or cache publication", async (target, expected) => {
@@ -718,11 +926,23 @@ describe("deleteParsedRegion local and skipped decisions", () => {
 
 describe("saveParsedRegion non-persistent decisions", () => {
   it.each([
-    [{ publicId: PROJECT_A, isDemo: true, pageNumber: PAGE_A }, { status: "local", reason: "demo" }],
-    [{ publicId: null, isDemo: false, pageNumber: PAGE_A }, { status: "skipped", reason: "missing-public-id" }],
-    [{ publicId: "", isDemo: false, pageNumber: PAGE_A }, { status: "skipped", reason: "missing-public-id" }],
+    [
+      { publicId: PROJECT_A, isDemo: true, pageNumber: PAGE_A, canAdopt: alwaysAdopt },
+      { status: "local", reason: "demo" },
+    ],
+    [
+      { publicId: null, isDemo: false, pageNumber: PAGE_A, canAdopt: alwaysAdopt },
+      { status: "skipped", reason: "missing-public-id" },
+    ],
+    [
+      { publicId: "", isDemo: false, pageNumber: PAGE_A, canAdopt: alwaysAdopt },
+      { status: "skipped", reason: "missing-public-id" },
+    ],
     // Demo policy wins when both conditions are true.
-    [{ publicId: null, isDemo: true, pageNumber: PAGE_A }, { status: "local", reason: "demo" }],
+    [
+      { publicId: null, isDemo: true, pageNumber: PAGE_A, canAdopt: alwaysAdopt },
+      { status: "local", reason: "demo" },
+    ],
   ] as const)("returns %j with no transport/cache work", async (target, expected) => {
     const cacheEvents: unknown[] = [];
     const unsubscribe = queryClient.getQueryCache().subscribe((event) => cacheEvents.push(event));

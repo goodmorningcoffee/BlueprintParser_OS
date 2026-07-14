@@ -23,6 +23,7 @@ import {
 // [refactor jun17 P1.3] /api/annotations now serves the {error:{code,message}} envelope;
 // apiErrorMessage reads both that and the legacy {error:string} from un-migrated routes.
 import { apiErrorMessage } from "@/lib/client-persist";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 interface SymbolSearchPanelProps {
   pdfDoc: PDFDocumentProxy | null;
@@ -70,13 +71,19 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
     if (scaleMin === 0.8 && scaleMax === 1.5 && nmsThreshold === 0.3) return "lite";
     return "custom";
   })();
-  const { pageNames } = useProject();
+  const { pageNames, publicId, isDemo } = useProject();
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const { pageNumber } = useNavigation();
 
   // Template preview image
   const [templateImageUrl, setTemplateImageUrl] = useState<string | null>(null);
   const [symbolSaving, setSymbolSaving] = useState(false);
   const [symbolSaveMsg, setSymbolSaveMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSymbolSaving(false);
+    setSymbolSaveMsg(null);
+  }, [isRenderedLifecycleCurrent]);
 
   useEffect(() => {
     if (!pdfDoc || !symbolSearchTemplateBbox || !symbolSearchSourcePage) {
@@ -798,6 +805,8 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
               <button
                 disabled={symbolSaving}
                 onClick={async () => {
+                  if (!isRenderedLifecycleCurrent()) return;
+                  const canAdoptLifecycle = isRenderedLifecycleCurrent;
                   const store = useToolStore.getState();
                   const session = useSessionStore.getState();
                   const capturedPublicId = session.publicId;
@@ -850,20 +859,25 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                     }
                     const data = await res.json();
                     if (data.annotations) {
+                      if (!canAdoptLifecycle()) return;
                       const cleaned = capturedAnnotations.filter((a) => !(a.source === "symbol-search" && pageNums.includes(a.pageNumber)));
                       queryClient.setQueryData(
                         capturedAnnotationsKey,
                         [...cleaned, ...data.annotations],
                       );
+                      if (!canAdoptLifecycle()) return;
                       // Durable rows always land their captured project key. Session cleanup is a
                       // separate exact-lane/project tail and exact-CASes only the activation seen at
                       // admission, so a reentrant Symbol B or unrelated canvas tool survives.
-                      if (ownsSymbolSession(token, capturedPublicId)) {
+                      if (canAdoptLifecycle() && ownsSymbolSession(token, capturedPublicId)) {
                         publishSettledSymbolSearchCleanup(capturedActivation);
-                        if (ownsSymbolSession(token, capturedPublicId)) {
+                        if (canAdoptLifecycle() && ownsSymbolSession(token, capturedPublicId)) {
                           setSymbolSaveMsg(`Saved ${data.annotations.length} annotations`);
                           setTimeout(() => {
-                            if (ownsSymbolSession(token, capturedPublicId)) {
+                            if (
+                              canAdoptLifecycle() &&
+                              ownsSymbolSession(token, capturedPublicId)
+                            ) {
                               setSymbolSaveMsg(null);
                             }
                           }, 3000);
@@ -871,14 +885,17 @@ export default function SymbolSearchPanel({ pdfDoc, embedded = false }: SymbolSe
                       }
                     }
                   } catch (err) {
-                    if (ownsSymbolSession(token, capturedPublicId)) {
+                    if (
+                      canAdoptLifecycle() &&
+                      ownsSymbolSession(token, capturedPublicId)
+                    ) {
                       console.error("[SYMBOL_SEARCH] Save failed:", err);
                       store.setSymbolSearchError(
                         err instanceof Error ? err.message : "Save failed"
                       );
                     }
                   } finally {
-                    setSymbolSaving(false);
+                    if (canAdoptLifecycle()) setSymbolSaving(false);
                   }
                 }}
                 className={`w-full text-[9px] px-2 py-1 rounded border ${symbolSaving ? "border-[var(--border)] text-[var(--muted)] cursor-wait" : symbolSaveMsg ? "border-green-500/60 text-green-300 bg-green-500/15" : "border-green-500/40 text-green-300 bg-green-500/5 hover:bg-green-500/10"}`}

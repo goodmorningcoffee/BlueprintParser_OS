@@ -16,6 +16,11 @@ import {
 } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { persistFetch } from "@/lib/client-persist";
+import {
+  captureProjectLifecycle,
+  isCurrentProjectLifecycle,
+  openProject,
+} from "@/lib/project-lifecycle";
 import { queryKeys } from "@/queries/queryKeys";
 import {
   readAnnotations,
@@ -29,6 +34,7 @@ import {
   type PersistCreateOptions,
 } from "@/queries/useAnnotations";
 import { useToolStore } from "@/stores/toolStore";
+import { useSessionStore } from "@/stores/sessionStore";
 import type { ClientAnnotation, ClientTakeoffItem } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
@@ -146,6 +152,19 @@ async function flushMicrotasks(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+function captureLifecycleAdoption(client: QueryClient): () => boolean {
+  const snapshot = captureProjectLifecycle(client);
+  const session = useSessionStore.getState();
+  const publicId = session.publicId;
+  const isDemo = session.isDemo;
+  return () => {
+    const live = useSessionStore.getState();
+    return live.publicId === publicId &&
+      live.isDemo === isDemo &&
+      isCurrentProjectLifecycle(client, snapshot);
+  };
 }
 
 beforeEach(() => {
@@ -633,6 +652,36 @@ describe("persistCreate extensibility seam", () => {
     expect(readAnnotations(client, "A").map((row) => row.id)).toEqual([8080]);
     expect(readAnnotations(client, "B")).toEqual([bRow]);
   });
+
+  it("suppresses auth A's failure callback after a demo B lifecycle replaces the same publicId", async () => {
+    const client = freshClient();
+    rawFetchMock.mockImplementation(() => new Promise<Response>(() => {}));
+    openProject(client, "A", { demo: false });
+    setViewerStoreStateForTest({ publicId: "A", projectId: 41, isDemo: false });
+
+    const failure = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(failure.promise);
+    const onError = vi.fn();
+    const canAdopt = captureLifecycleAdoption(client);
+    const { result } = renderHook(() => useAnnotations(), { wrapper: makeWrapper(client) });
+    let operation!: Promise<number>;
+    act(() => {
+      operation = result.current.persistCreate(draft(), { onError, canAdopt });
+    });
+
+    let successor!: ReturnType<typeof openProject>;
+    act(() => {
+      successor = openProject(client, "A", { demo: true });
+      setViewerStoreStateForTest({ publicId: "A", projectId: 41, isDemo: true });
+    });
+    failure.reject(new Error("auth A save failed after retirement"));
+    await act(async () => {
+      await operation;
+    });
+
+    expect(onError).not.toHaveBeenCalled();
+    successor.dispose();
+  });
 });
 
 describe("commitBucketFill", () => {
@@ -820,9 +869,151 @@ describe("commitBucketFill", () => {
     expect(readAnnotations(client, "B")).toEqual([bRow]);
     expect(useToolStore.getState().bucketFillError).toBeNull();
   });
+
+  it("does not publish auth A's bucket failure into demo B at the same publicId", async () => {
+    const client = freshClient();
+    rawFetchMock.mockImplementation(() => new Promise<Response>(() => {}));
+    openProject(client, "A", { demo: false });
+    setViewerStoreStateForTest({
+      publicId: "A",
+      projectId: 41,
+      isDemo: false,
+      pageNumber: 2,
+      bucketFillPendingPolygon: pendingPolygon(),
+    });
+
+    const failure = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(failure.promise);
+    const canAdopt = captureLifecycleAdoption(client);
+    const { result } = renderHook(() => useAnnotations(), { wrapper: makeWrapper(client) });
+    act(() => result.current.commitBucketFill(takeoffItem, { canAdopt }));
+
+    let successor!: ReturnType<typeof openProject>;
+    act(() => {
+      successor = openProject(client, "A", { demo: true });
+      setViewerStoreStateForTest({
+        publicId: "A",
+        projectId: 41,
+        isDemo: true,
+        bucketFillError: "demo B sentinel",
+      });
+    });
+    failure.reject(new Error("auth A bucket save failed after retirement"));
+    await failure.promise.catch(() => undefined);
+    await flushMicrotasks();
+
+    expect(useToolStore.getState().bucketFillError).toBe("demo B sentinel");
+    successor.dispose();
+  });
 });
 
 describe("direct takeoff undo/redo bridges", () => {
+  it("undo does not append A's removed row to same-ID lifecycle B's history", () => {
+    const client = freshClient();
+    rawFetchMock.mockImplementation(() => new Promise<Response>(() => {}));
+    const lifecycleA = openProject(client, "A", { demo: false });
+    const removedA = takeoffAnn(5, 7, 1);
+    client.setQueryData(queryKeys.annotations.all("A"), [ann(1), removedA]);
+    setViewerStoreStateForTest({
+      publicId: "A",
+      isDemo: false,
+      pageNumber: 1,
+      activeTool: { kind: "takeoffPlacement" },
+      activeTakeoffItemId: 7,
+      takeoffUndoStack: [],
+      takeoffRedoStack: [],
+    });
+
+    const successorRow = ann(201, { name: "successor-B-row" });
+    const successorUndo = [takeoffAnn(290, 7, 1)];
+    const successorRedo = [takeoffAnn(291, 7, 1)];
+    let admittedB = false;
+    let lifecycleB!: ReturnType<typeof openProject>;
+    const unsubscribe = client.getQueryCache().subscribe((event) => {
+      if (admittedB || event.type !== "updated" ||
+          JSON.stringify(event.query.queryKey) !== JSON.stringify(queryKeys.annotations.all("A"))) {
+        return;
+      }
+      admittedB = true;
+      lifecycleB = openProject(client, "A", { demo: true });
+      setViewerStoreStateForTest({
+        publicId: "A",
+        isDemo: true,
+        pageNumber: 1,
+        activeTool: { kind: "takeoffPlacement" },
+        activeTakeoffItemId: 7,
+      });
+      client.setQueryData(queryKeys.annotations.all("A"), [successorRow]);
+      useToolStore.setState({
+        takeoffUndoStack: successorUndo,
+        takeoffRedoStack: successorRedo,
+      });
+    });
+
+    takeoffUndo(client);
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(readAnnotations(client, "A")).toEqual([successorRow]);
+    expect.soft(useToolStore.getState().takeoffUndoStack).toBe(successorUndo);
+    expect.soft(useToolStore.getState().takeoffRedoStack).toBe(successorRedo);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("redo does not move A's restored row through same-ID lifecycle B's history", () => {
+    const client = freshClient();
+    rawFetchMock.mockImplementation(() => new Promise<Response>(() => {}));
+    const lifecycleA = openProject(client, "A", { demo: false });
+    const restoredA = takeoffAnn(5, 7, 1);
+    client.setQueryData(queryKeys.annotations.all("A"), [ann(1)]);
+    setViewerStoreStateForTest({
+      publicId: "A",
+      isDemo: false,
+      pageNumber: 1,
+      activeTool: { kind: "takeoffPlacement" },
+      activeTakeoffItemId: 7,
+      takeoffUndoStack: [restoredA],
+      takeoffRedoStack: [],
+    });
+
+    const successorRow = ann(301, { name: "successor-B-row" });
+    const successorUndo = [takeoffAnn(390, 7, 1)];
+    const successorRedo = [takeoffAnn(391, 7, 1)];
+    let admittedB = false;
+    let lifecycleB!: ReturnType<typeof openProject>;
+    const unsubscribe = client.getQueryCache().subscribe((event) => {
+      if (admittedB || event.type !== "updated" ||
+          JSON.stringify(event.query.queryKey) !== JSON.stringify(queryKeys.annotations.all("A"))) {
+        return;
+      }
+      admittedB = true;
+      lifecycleB = openProject(client, "A", { demo: true });
+      setViewerStoreStateForTest({
+        publicId: "A",
+        isDemo: true,
+        pageNumber: 1,
+        activeTool: { kind: "takeoffPlacement" },
+        activeTakeoffItemId: 7,
+      });
+      client.setQueryData(queryKeys.annotations.all("A"), [successorRow]);
+      useToolStore.setState({
+        takeoffUndoStack: successorUndo,
+        takeoffRedoStack: successorRedo,
+      });
+    });
+
+    takeoffRedo(client);
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(readAnnotations(client, "A")).toEqual([successorRow]);
+    expect.soft(useToolStore.getState().takeoffUndoStack).toBe(successorUndo);
+    expect.soft(useToolStore.getState().takeoffRedoStack).toBe(successorRedo);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
   it("null-active and no-match undo preserve cache and both stack references exactly", () => {
     const client = freshClient();
     client.setQueryData(queryKeys.annotations.all("A"), [takeoffAnn(1, 7, 1)]);

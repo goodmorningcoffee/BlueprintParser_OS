@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import {
   useParseFlowStore,
   type ParsedKeynoteEntry,
@@ -64,6 +65,8 @@ export default function KeynoteItem({
   // Context-only handle for optimistic page writes and the C2 shared save command. This remains
   // subscription-free: a per-row Query observer would fan every summaries write across the list.
   const queryClient = useQueryClient();
+  const isDemo = useSessionStore((s) => s.isDemo);
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const [expanded, setExpanded] = useState(false);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editNote, setEditNote] = useState("");
@@ -101,12 +104,12 @@ export default function KeynoteItem({
   const [nameError, setNameError] = useState<string | null>(null);
 
   const saveName = async () => {
+    if (!isRenderedLifecycleCurrent()) return;
     const trimmed = nameValue.trim();
     setEditingName(false);
     if (!trimmed) return;
     setNameError(null);
     const store = useParseFlowStore.getState();
-    const session = useSessionStore.getState();
     // This prop is also the promote request identity. Keep both optimistic and authoritative
     // replacements on that same project cache (the default empty id covers pre-project/demo use).
     const identityPublicId = publicId ?? "";
@@ -123,6 +126,7 @@ export default function KeynoteItem({
       });
       store.setParsedKeynoteData(updated);
     }
+    if (!isRenderedLifecycleCurrent()) return;
 
     // 2. Update matching parsedRegion in pageIntelligence (optimistic local write)
     const intel = readPageIntelligence(queryClient, identityPublicId, keynote.pageNumber) || {};
@@ -146,11 +150,12 @@ export default function KeynoteItem({
       ...intel,
       parsedRegions: regions,
     });
+    if (!isRenderedLifecycleCurrent()) return;
 
     // 3. Persist via the transactional promote upsert (same regionId → REPLACE)
     // instead of the old blob-overwrite. Gated on publicId (canPersist), NOT
     // numeric projectId. Surfaces failures instead of fire-and-forget.
-    if (!canPersist(publicId, session.isDemo) || matchedId === null || matchedBbox === null || matchedData === null) {
+    if (!canPersist(publicId, isDemo) || matchedId === null || matchedBbox === null || matchedData === null) {
       return; // demo / no publicId / no DB-backed region — local-only update above
     }
     try {
@@ -158,7 +163,12 @@ export default function KeynoteItem({
       // write above and local-only early return exactly where they were.
       await saveParsedRegion(
         queryClient,
-        { publicId: publicId!, isDemo: session.isDemo, pageNumber: keynote.pageNumber },
+        {
+          publicId: publicId!,
+          isDemo,
+          pageNumber: keynote.pageNumber,
+          canAdopt: isRenderedLifecycleCurrent,
+        },
         {
           via: "parser",
           type: "keynote",
@@ -169,8 +179,11 @@ export default function KeynoteItem({
           csiTags: matchedCsiTags,
         },
       );
+      if (!isRenderedLifecycleCurrent()) return;
     } catch (err) {
-      setNameError(err instanceof Error ? err.message : "Could not save name");
+      if (isRenderedLifecycleCurrent()) {
+        setNameError(err instanceof Error ? err.message : "Could not save name");
+      }
     }
   };
 

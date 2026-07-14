@@ -4,6 +4,7 @@ import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParseFlow } from "@/hooks/useParseFlow";
 import { commitParseOperation, useParseOperation } from "@/hooks/useParseOperation";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import { useTableCellStructureOperation } from "@/hooks/useTableCellStructureOperation";
 import { useParseFlowStore, useTableParseExtensions } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
@@ -87,6 +88,7 @@ export default function TableParsePanel() {
   const setParsedRegionColorMode = useUiStore((s) => s.setParsedRegionColorMode);
   const focusedParsedRegionId = useUiStore((s) => s.focusedParsedRegionId);
   const { publicId, isDemo } = useProject();
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
 
   const [showExportModal, setShowExportModal] = useState(false);
 
@@ -188,6 +190,7 @@ export default function TableParsePanel() {
     opts,
     inheritedToken,
   ) => {
+    if (!isRenderedLifecycleCurrent()) return false;
     // resetAfter (default true) reverts the tab to idle after a save — what the
     // explicit Save button wants. Auto-persist-on-parse passes false so the
     // review + Map Tags UI stays mounted for the user to continue working.
@@ -197,17 +200,18 @@ export default function TableParsePanel() {
     if (started?.status === "busy") return false;
     const token = inheritedToken ?? (started?.status === "started" ? started.token : null);
     if (!token) return false;
+    const canPublishCompletion = () =>
+      isRenderedLifecycleCurrent() && tableOperation.isCurrent(token);
 
     try {
-      if (token.kind !== "table" || !tableOperation.isCurrent(token)) return false;
+      if (token.kind !== "table" || !canPublishCompletion()) return false;
       // The best-effort CSI request is an async boundary. Freeze every persistence input before
       // crossing it: a project/page switch must not combine A's table with B's identity or region.
       // Clone nested grid values as well; Auto/Manual pass their Zustand-owned object directly.
-      const targetSession = useSessionStore.getState();
       const liveRegion = useParseFlowStore.getState().tableParseRegion;
       const target: TableSaveTarget = {
-        publicId: targetSession.publicId,
-        isDemo: targetSession.isDemo,
+        publicId,
+        isDemo,
         pageNumber,
         bbox: liveRegion
           ? [liveRegion[0], liveRegion[1], liveRegion[2], liveRegion[3]]
@@ -239,8 +243,9 @@ export default function TableParsePanel() {
       }
       const commitGrid: TableGrid = { ...frozenGrid, csiTags: detectedCsiTags };
 
-      // CSI is one admitted async stage. If a newer flow owns Table now, do not launch a fresh
-      // promotion/local-adoption stage behind it; only already-started durable work may settle.
+      // CSI belongs to this admitted invocation. A later project lifecycle retires client
+      // publication but must not cancel the captured durable promotion. Operation supersession,
+      // however, still prevents a new persistence stage from being launched behind newer work.
       if (!tableOperation.isCurrent(token)) return false;
 
       if (canPersist(target.publicId, target.isDemo)) {
@@ -251,6 +256,7 @@ export default function TableParsePanel() {
             publicId: target.publicId,
             isDemo: target.isDemo,
             pageNumber: target.pageNumber,
+            canAdopt: isRenderedLifecycleCurrent,
           },
           {
             via: "parser",
@@ -273,13 +279,15 @@ export default function TableParsePanel() {
         );
       } else {
         // Demo / no publicId: optimistic local-only save so the region renders.
+        if (!canPublishCompletion()) return false;
         saveParsedToIntelligence(commitGrid, target);
-        if (!tableOperation.isCurrent(token)) return false;
+        if (!canPublishCompletion()) return false;
         refreshPageCsiSpatialMap(queryClient, target.publicId, target.pageNumber);
       }
 
       // Durable/Query work above is target-keyed and may settle for an invalidated A. Only the
       // current owner may reset the live wizard or publish caller-local completion state.
+      if (!canPublishCompletion()) return false;
       if (resetAfter) {
         return completeTableParseOperation(token, {
           resetGuided: opts?.resetGuided,
@@ -296,10 +304,13 @@ export default function TableParsePanel() {
         opts?.onLocalSuccess?.();
       });
     } finally {
-      if (ownsToken) tableOperation.finish(token);
+      if (ownsToken && canPublishCompletion()) tableOperation.finish(token);
     }
   }, [
+    isDemo,
+    isRenderedLifecycleCurrent,
     pageNumber,
+    publicId,
     queryClient,
     saveParsedToIntelligence,
     tableOperation.begin,

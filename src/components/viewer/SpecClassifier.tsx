@@ -12,6 +12,7 @@ import {
   usePageIntelligenceForPage,
 } from "@/queries/usePageWindow";
 import type { PageIntelligence, TextRegion } from "@/types";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 interface SpecClassifierProps {
   onEditInParser: () => void;
@@ -31,6 +32,7 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
   const projectId = useSessionStore((s) => s.projectId);
   const publicId = useSessionStore((s) => s.publicId);
   const isDemo = useSessionStore((s) => s.isDemo);
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   const intel = usePageIntelligenceForPage(pageNumber);
   const [rowStates, setRowStates] = useState<Record<string, RowAction>>({});
@@ -40,9 +42,20 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
   // cannot release or repaint the currently rendered row.
   const activeRowActionKeysRef = useRef(new Set<string>());
 
+  useEffect(() => {
+    activeRowActionKeysRef.current.clear();
+    setRowStates({});
+    setErrorByRow({});
+  }, [isRenderedLifecycleCurrent]);
+
   const prunedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!canPersist(publicId, isDemo) || !intel?.textRegions || !intel.rejectedTextRegionIds?.length) return;
+    if (
+      !isRenderedLifecycleCurrent() ||
+      !canPersist(publicId, isDemo) ||
+      !intel?.textRegions ||
+      !intel.rejectedTextRegionIds?.length
+    ) return;
     const key = `${publicId}:${pageNumber}`;
     if (prunedKeyRef.current === key) return;
     const activeIds = new Set(intel.textRegions.map((tr) => tr.id));
@@ -61,10 +74,18 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
           "PATCH",
         );
       } catch {
-        prunedKeyRef.current = null;
+        if (isRenderedLifecycleCurrent()) prunedKeyRef.current = null;
       }
     })();
-  }, [projectId, publicId, isDemo, pageNumber, intel, queryClient]);
+  }, [
+    projectId,
+    publicId,
+    isDemo,
+    pageNumber,
+    intel,
+    queryClient,
+    isRenderedLifecycleCurrent,
+  ]);
 
   const visibleRegions = useMemo(() => {
     if (!intel?.textRegions) return [];
@@ -94,7 +115,8 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
     });
 
   const handleAccept = async (tr: TextRegion) => {
-    if (!canPersist(publicId, isDemo)) return;
+    if (!isRenderedLifecycleCurrent() || !canPersist(publicId, isDemo)) return;
+    const canAdoptLifecycle = isRenderedLifecycleCurrent;
 
     // Include the request/cache identity so an old target's completion cannot release a same-id
     // promotion admitted for a newly rendered project or page.
@@ -107,25 +129,29 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
       setRowError(actionKey, null);
       await saveParsedRegion(
         queryClient,
-        { publicId, isDemo, pageNumber },
+        { publicId, isDemo, pageNumber, canAdopt: canAdoptLifecycle },
         { via: "classifier", type: "spec", sourceTextRegionId: tr.id },
       );
     } catch (err) {
-      setRowError(actionKey, err instanceof Error ? err.message : "Promote failed");
+      if (canAdoptLifecycle()) {
+        setRowError(actionKey, err instanceof Error ? err.message : "Promote failed");
+      }
     } finally {
       activeRowActionKeysRef.current.delete(actionKey);
-      setRowState(actionKey, "idle");
+      if (canAdoptLifecycle()) setRowState(actionKey, "idle");
     }
   };
 
   const handleEdit = (tr: TextRegion) => {
+    if (!isRenderedLifecycleCurrent()) return;
     const [l, t, w, h] = tr.bbox;
     acceptSpecParseRegion([l, t, l + w, t + h]);
     onEditInParser();
   };
 
   const handleReject = async (tr: TextRegion) => {
-    if (!canPersist(publicId, isDemo) || !intel) return;
+    if (!isRenderedLifecycleCurrent() || !canPersist(publicId, isDemo) || !intel) return;
+    const canAdoptLifecycle = isRenderedLifecycleCurrent;
     const actionKey = rowKey(tr.id);
     if (activeRowActionKeysRef.current.has(actionKey)) return;
     activeRowActionKeysRef.current.add(actionKey);
@@ -149,11 +175,15 @@ export default function SpecClassifier({ onEditInParser }: SpecClassifierProps) 
         "PATCH",
       );
     } catch (err) {
-      setPageIntelligenceForPage(queryClient, publicId, pageNumber, intel);
-      setRowError(actionKey, err instanceof Error ? err.message : "Reject failed");
+      if (canAdoptLifecycle()) {
+        setPageIntelligenceForPage(queryClient, publicId, pageNumber, intel);
+        if (canAdoptLifecycle()) {
+          setRowError(actionKey, err instanceof Error ? err.message : "Reject failed");
+        }
+      }
     } finally {
       activeRowActionKeysRef.current.delete(actionKey);
-      setRowState(actionKey, "idle");
+      if (canAdoptLifecycle()) setRowState(actionKey, "idle");
     }
   };
 

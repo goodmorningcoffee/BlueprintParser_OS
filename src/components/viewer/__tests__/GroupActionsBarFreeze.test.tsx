@@ -51,7 +51,10 @@ import { useUiStore } from "@/stores/uiStore";
 import { seedAnnotationGroups } from "@/test/seed-annotation-groups";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { persistFetch } from "@/lib/client-persist";
+import { openProject } from "@/lib/project-lifecycle";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
+import { queryKeys } from "@/queries/queryKeys";
+import type { AnnotationGroupsPayload } from "@/queries/useAnnotationGroups";
 import type { AnnotationGroup, ClientAnnotation } from "@/types";
 import GroupActionsBar from "../GroupActionsBar";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -135,6 +138,57 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+function lifecycleFetch() {
+  fetchMock.mockImplementation((rawUrl: unknown) => {
+    const url = String(rawUrl);
+    if (url === "/api/projects/pid" || url === "/api/demo/projects/pid") {
+      const demo = url.startsWith("/api/demo/");
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          id: "pid",
+          dbId: 701,
+          name: demo ? "Demo successor" : "Authenticated predecessor",
+          dataUrl: "projects/pid",
+          pdfUrl: "https://example.test/original.pdf",
+          numPages: 1,
+          status: "completed",
+          summaries: null,
+          projectIntelligence: null,
+          pages: [{ pageNumber: 1, name: "Page 1", drawingNumber: null }],
+          takeoffItems: [],
+          takeoffGroups: [],
+          chatMessages: [],
+          demoConfig: demo ? {} : undefined,
+        }),
+      } as Response);
+    }
+    if (
+      url === "/api/projects/pid/pages?from=1&to=15" ||
+      url === "/api/demo/projects/pid/pages?from=1&to=15"
+    ) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ from: 1, to: 1, pages: [], annotations: [] }),
+      } as Response);
+    }
+    if (url === "/api/annotation-groups?projectId=pid") {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ groups: [], memberships: [] }),
+      } as Response);
+    }
+    throw new Error(`unexpected lifecycle fetch in anngroups freeze test: ${url}`);
+  });
+}
+
+async function activateLifecycle(demo: boolean) {
+  const handle = openProject(qc, "pid", { demo });
+  const result = await handle.result;
+  expect(result.status).toBe("opened");
+  return handle;
+}
 
 // ─── G-1: create group is SERVER-FIRST + full index rebuild + clearSelection ─────────────────
 
@@ -445,5 +499,44 @@ describe("GroupActionsBar — demo never writes at the three guarded sites (G-6)
     expect(persistFetchMock).not.toHaveBeenCalled(); // write channel silent
     expect(fetchMock).not.toHaveBeenCalled(); // raw channel silent (also: zero GETs post-migration)
     expect(alertMock).not.toHaveBeenCalled(); // guards return silently, no error UX
+  });
+});
+
+describe("GroupActionsBar — exact same-publicId project lifecycle authority", () => {
+  it("auth A group creation cannot repopulate or clear selection in demo lifecycle B", async () => {
+    lifecycleFetch();
+    await activateLifecycle(false);
+    seedAnnotationGroups(qc, [], []);
+    useUiStore.setState({ selectedAnnotationIds: new Set([20, 21]) });
+    const create = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(create.promise);
+    render(<GroupActionsBar />, { wrapper });
+
+    fireEvent.click(screen.getByRole("button", { name: "Group" }));
+    fireEvent.change(screen.getByPlaceholderText(GROUP_NAME_PLACEHOLDER), {
+      target: { value: "Generation A group" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(persistFetchMock).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await activateLifecycle(true);
+      useUiStore.setState({ selectedAnnotationIds: new Set([90, 91]) });
+    });
+    expect(
+      qc.getQueryData<AnnotationGroupsPayload>(queryKeys.annotationGroups.all("pid")),
+    ).toEqual({ groups: [], memberships: [] });
+
+    await act(async () => {
+      create.resolve({
+        group: grp({ id: 2, name: "Generation A group", color: "#00ff00" }),
+      });
+      await Promise.resolve();
+    });
+
+    expect(
+      qc.getQueryData<AnnotationGroupsPayload>(queryKeys.annotationGroups.all("pid")),
+    ).toEqual({ groups: [], memberships: [] });
+    expect(useUiStore.getState().selectedAnnotationIds).toEqual(new Set([90, 91]));
   });
 });

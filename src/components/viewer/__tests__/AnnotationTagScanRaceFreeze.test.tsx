@@ -21,6 +21,7 @@ import { queryKeys } from "@/queries/queryKeys";
 import { seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
+import { openProject } from "@/lib/project-lifecycle";
 
 vi.mock("../DrawingPreviewLayer", () => ({ default: () => null }));
 vi.mock("../MarkupDialog", () => ({ default: () => null }));
@@ -97,6 +98,8 @@ function scanTexts(label: string, annotationId: number): ToolTagScanResults["tex
 
 let queryClient: QueryClient;
 let requests: Deferred<Response>[];
+let deleteRequests: Deferred<Response>[];
+let demoMetadataHold: Deferred<Response> | null;
 const fetchMock = vi.fn();
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -168,14 +171,65 @@ async function resolveScan(
 beforeEach(() => {
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   requests = [];
+  deleteRequests = [];
+  demoMetadataHold = null;
   fetchMock.mockReset();
   fetchMock.mockImplementation((url: unknown) => {
-    if (typeof url !== "string" || !url.endsWith("/map-tags-batch")) {
-      throw new Error(`unexpected AnnotationOverlay scan request: ${String(url)}`);
+    if (url === `/api/annotations/${DOOR.id}`) {
+      const request = deferred<Response>();
+      deleteRequests.push(request);
+      return request.promise;
     }
-    const request = deferred<Response>();
-    requests.push(request);
-    return request.promise;
+    if (typeof url === "string" && url.endsWith("/map-tags-batch")) {
+      const request = deferred<Response>();
+      requests.push(request);
+      return request.promise;
+    }
+    if (url === `/api/projects/${PROJECT_A}` || url === `/api/demo/projects/${PROJECT_A}`) {
+      const demo = String(url).startsWith("/api/demo/");
+      const response = {
+        ok: true,
+        json: async () => ({
+          id: PROJECT_A,
+          dbId: 101,
+          name: demo ? "Demo successor" : "Authenticated predecessor",
+          dataUrl: "projects/project-A",
+          pdfUrl: "https://example.test/original.pdf",
+          numPages: 1,
+          status: "completed",
+          summaries: null,
+          projectIntelligence: { yoloTags: [] },
+          pages: [{ pageNumber: 1, name: "Page 1", drawingNumber: null }],
+          takeoffItems: [],
+          takeoffGroups: [],
+          chatMessages: [],
+          demoConfig: demo ? {} : undefined,
+        }),
+      } as Response;
+      if (demo && demoMetadataHold) return demoMetadataHold.promise;
+      return Promise.resolve(response);
+    }
+    if (
+      url === `/api/projects/${PROJECT_A}/pages?from=1&to=15` ||
+      url === `/api/demo/projects/${PROJECT_A}/pages?from=1&to=15`
+    ) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          from: 1,
+          to: 1,
+          pages: [],
+          annotations: [DOOR, WINDOW],
+        }),
+      } as Response);
+    }
+    if (url === `/api/annotation-groups?projectId=${PROJECT_A}`) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ groups: [], memberships: [] }),
+      } as Response);
+    }
+    throw new Error(`unexpected AnnotationOverlay scan request: ${String(url)}`);
   });
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(noopContext());
@@ -188,6 +242,10 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   queryClient.clear();
+  if (vi.isFakeTimers()) {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -201,6 +259,13 @@ function renderCanvas(): HTMLCanvasElement {
   if (!(canvas instanceof HTMLCanvasElement)) throw new Error("Expected AnnotationOverlay canvas");
   vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(canvasRect());
   return canvas;
+}
+
+async function activateLifecycle(demo: boolean) {
+  const handle = openProject(queryClient, PROJECT_A, { demo });
+  const result = await handle.result;
+  expect(result.status).toBe("opened");
+  return handle;
 }
 
 describe("AnnotationOverlay scanClass request ownership", () => {
@@ -331,5 +396,132 @@ describe("AnnotationOverlay scanClass request ownership", () => {
       yoloModel: MODEL,
       texts: windowTexts,
     });
+  });
+
+  it("rejects auth A scan completion after demo B opens the same publicId", async () => {
+    await activateLifecycle(false);
+    act(() => {
+      installProject(PROJECT_A);
+    });
+    const canvas = renderCanvas();
+    clickAt(canvas, 20, 20);
+    expect(requests).toHaveLength(1);
+
+    const successor: ToolTagScanResults = {
+      yoloClass: "Demo-B-sentinel",
+      yoloModel: "B model",
+      texts: scanTexts("Demo-B", 909),
+    };
+    demoMetadataHold = deferred<Response>();
+    let successorHandle!: ReturnType<typeof openProject>;
+    act(() => {
+      successorHandle = openProject(queryClient, PROJECT_A, { demo: true });
+      setViewerStoreStateForTest({
+        projectId: 101,
+        publicId: PROJECT_A,
+        isDemo: true,
+        pageNumber: PAGE,
+        numPages: 1,
+      });
+      useToolStore.setState({ tagScanResults: successor });
+    });
+    expect(useToolStore.getState().tagScanResults).toBe(successor);
+
+    await resolveScan(0, scanTexts("Auth-A", DOOR.id));
+
+    expect(useToolStore.getState().tagScanResults).toBe(successor);
+
+    successorHandle.dispose();
+    demoMetadataHold.resolve({ ok: false, status: 499 } as Response);
+    await successorHandle.result;
+  });
+
+  it("does not publish auth A's delete failure into demo B at the same publicId", async () => {
+    await activateLifecycle(false);
+    act(() => {
+      installProject(PROJECT_A);
+      useToolStore.setState({ activeTool: null, mode: "pointer" });
+    });
+    const canvas = renderCanvas();
+    clickAt(canvas, 20, 20);
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(deleteRequests).toHaveLength(1);
+
+    demoMetadataHold = deferred<Response>();
+    let successorHandle!: ReturnType<typeof openProject>;
+    act(() => {
+      successorHandle = openProject(queryClient, PROJECT_A, { demo: true });
+      setViewerStoreStateForTest({
+        projectId: 101,
+        publicId: PROJECT_A,
+        isDemo: true,
+        pageNumber: PAGE,
+        numPages: 1,
+      });
+      useToolStore.setState({ bucketFillError: "demo B genuine error" });
+    });
+
+    await act(async () => {
+      deleteRequests[0].reject(new Error("auth A delete failed after retirement"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const observed = useToolStore.getState().bucketFillError;
+    successorHandle.dispose();
+    demoMetadataHold.resolve({ ok: false, status: 499 } as Response);
+    await successorHandle.result;
+
+    expect(observed).toBe("demo B genuine error");
+  });
+
+  it("does not let auth A's delayed delete-error clear erase demo B's same-publicId error", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await activateLifecycle(false);
+    act(() => {
+      installProject(PROJECT_A);
+      useToolStore.setState({ activeTool: null, mode: "pointer" });
+    });
+    const canvas = renderCanvas();
+    clickAt(canvas, 20, 20);
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(deleteRequests).toHaveLength(1);
+
+    await act(async () => {
+      deleteRequests[0].reject(new Error("auth A delete failed"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(useToolStore.getState().bucketFillError).toBe(
+      "Failed to delete: Network error while saving: auth A delete failed",
+    );
+
+    demoMetadataHold = deferred<Response>();
+    let successorHandle!: ReturnType<typeof openProject>;
+    act(() => {
+      successorHandle = openProject(queryClient, PROJECT_A, { demo: true });
+      setViewerStoreStateForTest({
+        projectId: 101,
+        publicId: PROJECT_A,
+        isDemo: true,
+        pageNumber: PAGE,
+        numPages: 1,
+      });
+      useToolStore.setState({ bucketFillError: "demo B genuine error" });
+    });
+
+    let observedAfterTimer: string | null;
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      observedAfterTimer = useToolStore.getState().bucketFillError;
+    } finally {
+      successorHandle.dispose();
+      demoMetadataHold.resolve({ ok: false, status: 499 } as Response);
+      await successorHandle.result;
+    }
+    expect(observedAfterTimer).toBe("demo B genuine error");
   });
 });

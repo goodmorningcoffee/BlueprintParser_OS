@@ -578,7 +578,7 @@ describe("paired bootstrap/navigation publication", () => {
     unsubscribe();
 
     expect(published).toBe(true);
-    expect(isCurrent).toHaveBeenCalledTimes(1);
+    expect(isCurrent).toHaveBeenCalled();
     expect(events).toEqual([
       JSON.stringify(queryKeys.annotations.all("A")),
       JSON.stringify(queryKeys.pagesWindow.active("A")),
@@ -592,7 +592,7 @@ describe("paired bootstrap/navigation publication", () => {
     expect(window.keynotes[20]?.[0].text).toBe("server-covered");
   });
 
-  it("checks generation once before the first write and makes a stale publication a total no-op", () => {
+  it("checks authority before normalization and makes an already-stale publication a total no-op", () => {
     const client = freshClient();
     const oldAnnotations = [annotation(1)];
     const oldWindow = active({ keynotes: { 20: [keynote("old")] } });
@@ -611,6 +611,73 @@ describe("paired bootstrap/navigation publication", () => {
     expect(isCurrent).toHaveBeenCalledTimes(1);
     expect(client.getQueryData(queryKeys.annotations.all("A"))).toBe(oldAnnotations);
     expect(readActivePageWindow(client, "A")).toBe(oldWindow);
+  });
+
+  it("rechecks authority after the pure wire walk before publishing either paired cache", () => {
+    const client = freshClient();
+    const oldAnnotations = [annotation(1)];
+    const oldWindow = active({ keynotes: { 20: [keynote("old")] } });
+    client.setQueryData(queryKeys.annotations.all("A"), oldAnnotations);
+    seed(client, "A", oldWindow);
+    let current = true;
+    const statefulPage = page(20);
+    Object.defineProperty(statefulPage, "keynotes", {
+      enumerable: true,
+      get() {
+        current = false;
+        return [keynote("superseded-during-normalization")];
+      },
+    });
+
+    const published = publishNavigationPageWindow(
+      client,
+      "A",
+      response([statefulPage], [annotation(2)]),
+      { actualFrom: 13, actualTo: 27, isCurrent: () => current },
+    );
+
+    expect.soft(published).toBe(false);
+    expect.soft(client.getQueryData(queryKeys.annotations.all("A"))).toBe(oldAnnotations);
+    expect.soft(readActivePageWindow(client, "A")).toBe(oldWindow);
+  });
+
+  it("stops the paired tail when the annotation write reentrantly transfers authority", () => {
+    const client = freshClient();
+    client.setQueryData(queryKeys.annotations.all("A"), [annotation(1)]);
+    seed(client, "A", active({ keynotes: { 20: [keynote("old-A")] } }));
+    const successorAnnotations = [annotation(90)];
+    const successorWindow = active({
+      loadedRange: { from: 88, to: 92 },
+      keynotes: { 90: [keynote("successor-B")] },
+    });
+    let current = true;
+    let transferOnNextAnnotationWrite = true;
+    const annotationKey = JSON.stringify(queryKeys.annotations.all("A"));
+    const unsubscribe = client.getQueryCache().subscribe((event) => {
+      if (
+        event.type !== "updated" ||
+        !transferOnNextAnnotationWrite ||
+        JSON.stringify(event.query.queryKey) !== annotationKey
+      ) return;
+      transferOnNextAnnotationWrite = false;
+      current = false;
+      client.setQueryData(queryKeys.annotations.all("A"), successorAnnotations);
+      seed(client, "A", successorWindow);
+    });
+
+    const published = publishNavigationPageWindow(
+      client,
+      "A",
+      response([page(20, { keynotes: [keynote("stale-A")] })], [annotation(2)]),
+      { actualFrom: 13, actualTo: 27, isCurrent: () => current },
+    );
+    unsubscribe();
+
+    expect.soft(published).toBe(false);
+    // TanStack structural sharing may clone the replacement containers; the lifecycle contract is
+    // the successor value, not caller-owned fixture identity.
+    expect.soft(client.getQueryData(queryKeys.annotations.all("A"))).toEqual(successorAnnotations);
+    expect.soft(readActivePageWindow(client, "A")).toEqual(successorWindow);
   });
 
   it("normalizes before the first write so mapper failure cannot split the paired caches", () => {
@@ -665,7 +732,7 @@ describe("paired bootstrap/navigation publication", () => {
       ),
     ).toBe(true);
 
-    expect(isCurrent).toHaveBeenCalledTimes(1);
+    expect(isCurrent).toHaveBeenCalled();
     expect(getterReads).toBe(1);
     expect(client.getQueryData(queryKeys.annotations.all("A"))).toEqual([annotation(2)]);
     expect(readKeynotesForPage(client, "A", 20)).toBe(serverKeynotes);

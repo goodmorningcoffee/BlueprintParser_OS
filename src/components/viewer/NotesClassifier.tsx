@@ -12,6 +12,7 @@ import {
   usePageIntelligenceForPage,
 } from "@/queries/usePageWindow";
 import type { PageIntelligence, TextRegion } from "@/types";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 interface NotesClassifierProps {
   /** Called after the user clicks Edit so NotesPanel can switch to the Parser
@@ -40,6 +41,7 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
   const projectId = useSessionStore((s) => s.projectId);
   const publicId = useSessionStore((s) => s.publicId);
   const isDemo = useSessionStore((s) => s.isDemo);
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   const pageNumber = useViewerCoreStore((s) => s.pageNumber);
   // Scoped subscription: rerender only when this page's intel changes,
   // not when any page's intel changes.
@@ -51,13 +53,24 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
   // cannot release or repaint the currently rendered row.
   const activeRowActionKeysRef = useRef(new Set<string>());
 
+  useEffect(() => {
+    activeRowActionKeysRef.current.clear();
+    setRowStates({});
+    setErrorByRow({});
+  }, [isRenderedLifecycleCurrent]);
+
   // One-shot prune of stale rejectedTextRegionIds — IDs whose textRegion no
   // longer exists after a Layer 1 reprocess. Keyed on (projectId, pageNumber)
   // so we prune at most once per page visit. Fires only when there's actually
   // stale data to avoid unnecessary PATCH traffic.
   const prunedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!canPersist(publicId, isDemo) || !intel?.textRegions || !intel.rejectedTextRegionIds?.length) return;
+    if (
+      !isRenderedLifecycleCurrent() ||
+      !canPersist(publicId, isDemo) ||
+      !intel?.textRegions ||
+      !intel.rejectedTextRegionIds?.length
+    ) return;
     const key = `${publicId}:${pageNumber}`;
     if (prunedKeyRef.current === key) return;
     const activeIds = new Set(intel.textRegions.map((tr) => tr.id));
@@ -76,10 +89,18 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
           "PATCH",
         );
       } catch {
-        prunedKeyRef.current = null;
+        if (isRenderedLifecycleCurrent()) prunedKeyRef.current = null;
       }
     })();
-  }, [projectId, publicId, isDemo, pageNumber, intel, queryClient]);
+  }, [
+    projectId,
+    publicId,
+    isDemo,
+    pageNumber,
+    intel,
+    queryClient,
+    isRenderedLifecycleCurrent,
+  ]);
 
   const visibleRegions = useMemo(() => {
     if (!intel?.textRegions) return [];
@@ -109,7 +130,8 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
     });
 
   const handleAccept = async (tr: TextRegion) => {
-    if (!canPersist(publicId, isDemo)) return;
+    if (!isRenderedLifecycleCurrent() || !canPersist(publicId, isDemo)) return;
+    const canAdoptLifecycle = isRenderedLifecycleCurrent;
 
     // Include the request/cache identity so an old target's completion cannot release a same-id
     // promotion admitted for a newly rendered project or page.
@@ -122,18 +144,21 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
       setRowError(actionKey, null);
       await saveParsedRegion(
         queryClient,
-        { publicId, isDemo, pageNumber },
+        { publicId, isDemo, pageNumber, canAdopt: canAdoptLifecycle },
         { via: "classifier", type: "notes", sourceTextRegionId: tr.id },
       );
     } catch (err) {
-      setRowError(actionKey, err instanceof Error ? err.message : "Promote failed");
+      if (canAdoptLifecycle()) {
+        setRowError(actionKey, err instanceof Error ? err.message : "Promote failed");
+      }
     } finally {
       activeRowActionKeysRef.current.delete(actionKey);
-      setRowState(actionKey, "idle");
+      if (canAdoptLifecycle()) setRowState(actionKey, "idle");
     }
   };
 
   const handleEdit = (tr: TextRegion) => {
+    if (!isRenderedLifecycleCurrent()) return;
     // textRegion.bbox is LTWH; viewer stores parse regions as MinMax.
     const [l, t, w, h] = tr.bbox;
     acceptNotesParseRegion([l, t, l + w, t + h]);
@@ -141,7 +166,8 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
   };
 
   const handleReject = async (tr: TextRegion) => {
-    if (!canPersist(publicId, isDemo) || !intel) return;
+    if (!isRenderedLifecycleCurrent() || !canPersist(publicId, isDemo) || !intel) return;
+    const canAdoptLifecycle = isRenderedLifecycleCurrent;
     const actionKey = rowKey(tr.id);
     if (activeRowActionKeysRef.current.has(actionKey)) return;
     activeRowActionKeysRef.current.add(actionKey);
@@ -169,11 +195,15 @@ export default function NotesClassifier({ onEditInParser }: NotesClassifierProps
       );
     } catch (err) {
       // Roll back the optimistic update
-      setPageIntelligenceForPage(queryClient, publicId, pageNumber, intel);
-      setRowError(actionKey, err instanceof Error ? err.message : "Reject failed");
+      if (canAdoptLifecycle()) {
+        setPageIntelligenceForPage(queryClient, publicId, pageNumber, intel);
+        if (canAdoptLifecycle()) {
+          setRowError(actionKey, err instanceof Error ? err.message : "Reject failed");
+        }
+      }
     } finally {
       activeRowActionKeysRef.current.delete(actionKey);
-      setRowState(actionKey, "idle");
+      if (canAdoptLifecycle()) setRowState(actionKey, "idle");
     }
   };
 

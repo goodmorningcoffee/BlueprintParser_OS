@@ -16,9 +16,18 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import NotesClassifier from "@/components/viewer/NotesClassifier";
+import SpecClassifier from "@/components/viewer/SpecClassifier";
 import TableParsePanel from "@/components/viewer/TableParsePanel";
+import TextPanel from "@/components/viewer/TextPanel";
 import { useShapeParseInteraction } from "@/hooks/useShapeParseInteraction";
 import { refreshPageCsiSpatialMap } from "@/lib/csi-spatial-refresh";
+import {
+  captureProjectLifecycle,
+  isCurrentProjectLifecycle,
+  openProject,
+  type OpenProjectHandle,
+  type ProjectResponse,
+} from "@/lib/project-lifecycle";
 import {
   EMPTY_ACTIVE_PAGE_WINDOW,
   type ActivePageWindow,
@@ -39,6 +48,9 @@ import type {
   TextRegion,
 } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
+import { useParseFlowStore } from "@/stores/parseFlowStore";
+import { useToolStore } from "@/stores/toolStore";
+import { useUiStore } from "@/stores/uiStore";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";
 
 const tableSaveHarness = vi.hoisted(() => ({
@@ -81,6 +93,55 @@ const fetchMock = vi.fn();
 
 function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+}
+
+function lifecycleJsonResponse(body: unknown): Response {
+  return { ok: true, status: 200, json: async () => body } as Response;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function lifecycleProjectResponse(): ProjectResponse {
+  return {
+    id: "pid",
+    dbId: 1,
+    name: "Lifecycle project",
+    dataUrl: "s3://private/project.json",
+    pdfUrl: "s3://private/project.pdf",
+    numPages: 12,
+    status: "ready",
+    summaries: null,
+    projectIntelligence: null,
+    pages: [{ pageNumber: 4, name: "Page 4", drawingNumber: null }],
+  };
+}
+
+async function activateLifecycle(): Promise<OpenProjectHandle> {
+  const lifecycleFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/projects/pid") return lifecycleJsonResponse(lifecycleProjectResponse());
+    if (url === "/api/projects/pid/pages?from=1&to=15") {
+      return lifecycleJsonResponse({ from: 1, to: 12, pages: [], annotations: [] });
+    }
+    if (url === "/api/annotation-groups?projectId=pid") {
+      return lifecycleJsonResponse({ groups: [], memberships: [] });
+    }
+    throw new Error(`unexpected lifecycle request: ${url}`);
+  });
+  vi.stubGlobal("fetch", lifecycleFetch);
+  const handle = openProject(qc, "pid", { demo: false });
+  expect((await handle.result).status).toBe("opened");
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  return handle;
 }
 
 function seedWindow(publicId: string, overrides: Partial<ActivePageWindow> = {}): void {
@@ -183,7 +244,65 @@ describe("mixed page-window writer semantics", () => {
     expect(readPageIntelligence(qc, "pid", 4)?.rejectedTextRegionIds).toBeUndefined();
   });
 
-  it("classifier adopts A, seeds its summaries, and recomputes A spatial after switching to B", async () => {
+  it("Notes reject failure does not roll captured A over a same-ID successor page", async () => {
+    const lifecycleA = await activateLifecycle();
+    const snapshotA = captureProjectLifecycle(qc);
+    setViewerStoreStateForTest({
+      projectId: 1,
+      publicId: "pid",
+      isDemo: false,
+      pageNumber: 4,
+      numPages: 12,
+    });
+    seedWindow("pid");
+    setPageIntelligenceForPage(qc, "pid", 4, { textRegions: [noteRegion] });
+    let resolveReject!: (response: Response) => void;
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/api/pages/intelligence") {
+        return new Promise<Response>((resolve) => { resolveReject = resolve; });
+      }
+      return successorPending;
+    });
+    render(<NotesClassifier onEditInParser={() => undefined} />, { wrapper });
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pages/intelligence",
+      expect.any(Object),
+    ));
+
+    const successorIntel = {
+      textRegions: [noteRegion],
+      noteBlocks: [],
+    } satisfies PageIntelligence;
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: false });
+      setViewerStoreStateForTest({
+        projectId: 1,
+        publicId: "pid",
+        isDemo: false,
+        pageNumber: 4,
+        numPages: 12,
+      });
+      seedWindow("pid", { pageIntelligence: { 4: successorIntel } });
+      resolveReject({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { code: "FAILED", message: "obsolete reject failed" } }),
+      } as Response);
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+
+    expect.soft(isCurrentProjectLifecycle(qc, snapshotA)).toBe(false);
+    // The page-window seed is structurally shared by Query; freeze the successor value, not the
+    // fixture object's incidental reference identity.
+    expect.soft(readPageIntelligence(qc, "pid", 4)).toEqual(successorIntel);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("classifier settles promotion but publishes no client state after switching to B", async () => {
     const projectA = "pid";
     const projectB = "other";
     const serverRegion = {
@@ -202,12 +321,15 @@ describe("mixed page-window writer semantics", () => {
       parsedRegions: [serverRegion as never],
     } satisfies PageIntelligence;
     const serverSummaries = summariesFixture("server-A");
+    const stableASummaries = summariesFixture("stable-A");
     const stableBSummaries = summariesFixture("stable-B");
 
     setPageIntelligenceForPage(qc, projectA, 4, {
       textRegions: [noteRegion],
       classifiedTables: [{ category: "stale-server-deleted-field" }] as never,
     });
+    qc.setQueryData(queryKeys.summaries.all(projectA), stableASummaries);
+    const aWindowBefore = readActivePageWindow(qc, projectA);
     seedWindow(projectB, {
       pageIntelligence: { 4: { rejectedTextRegionIds: ["B-sentinel"] } },
     });
@@ -226,34 +348,105 @@ describe("mixed page-window writer semantics", () => {
     act(() => {
       setViewerStoreStateForTest({ projectId: 2, publicId: projectB });
     });
+    const responseJson = vi.fn(async () => ({
+      ok: true,
+      parsedRegion: serverRegion,
+      updatedIntelligence: authoritative,
+      summaries: serverSummaries,
+    }));
     await act(async () => {
+      resolvePromotion({
+        ok: true,
+        status: 200,
+        json: responseJson,
+      } as unknown as Response);
+    });
+
+    // The durable request still settles and its response graph is parsed/validated. Render A is
+    // retired, however, so page adoption, summaries, and spatial recompute are all client no-ops.
+    await waitFor(() => expect(responseJson).toHaveBeenCalledTimes(1));
+    expect(readActivePageWindow(qc, projectA)).toBe(aWindowBefore);
+    expect(qc.getQueryData(queryKeys.summaries.all(projectA))).toBe(stableASummaries);
+    expect(readActivePageWindow(qc, projectB)).toBe(bWindowBefore);
+    expect(qc.getQueryData(queryKeys.summaries.all(projectB))).toBe(stableBSummaries);
+  });
+
+  it("classifier success does not adopt or spatially recompute into a same-ID demo successor", async () => {
+    const lifecycleA = await activateLifecycle();
+    const snapshotA = captureProjectLifecycle(qc);
+    setViewerStoreStateForTest({
+      projectId: 1,
+      publicId: "pid",
+      isDemo: false,
+      pageNumber: 4,
+      numPages: 12,
+    });
+    seedWindow("pid", { pageIntelligence: { 4: { textRegions: [noteRegion] } } });
+    let resolvePromotion!: (response: Response) => void;
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/api/regions/promote") {
+        return new Promise<Response>((resolve) => { resolvePromotion = resolve; });
+      }
+      return successorPending;
+    });
+    render(<NotesClassifier onEditInParser={() => undefined} />, { wrapper });
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/regions/promote",
+      expect.any(Object),
+    ));
+
+    const successorIntel = {
+      textRegions: [noteRegion],
+      noteBlocks: [],
+    } satisfies PageIntelligence;
+    const successorSummaries = summariesFixture("successor-B");
+    const obsoleteRegion = {
+      id: "obsolete-promoted-note",
+      type: "notes",
+      category: "notes",
+      bbox: [0.1, 0.1, 0.3, 0.2],
+      confidence: 0.95,
+      csiTags: [{ code: "08 11 13", description: "Hollow Metal Doors" }],
+      data: { headers: ["Key"], rows: [{ Key: "N1" }] },
+      source: "user",
+      sourceTextRegionId: noteRegion.id,
+    };
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: true });
+      // B's demo lifecycle is current before activation. Preserve the old render values so the
+      // event closure must rely on its A snapshot rather than a late capture of B.
+      setViewerStoreStateForTest({
+        projectId: 1,
+        publicId: "pid",
+        isDemo: false,
+        pageNumber: 4,
+        numPages: 12,
+      });
+      seedWindow("pid", { pageIntelligence: { 4: successorIntel } });
+      qc.setQueryData(queryKeys.summaries.all("pid"), successorSummaries);
       resolvePromotion({
         ok: true,
         status: 200,
         json: async () => ({
           ok: true,
-          parsedRegion: serverRegion,
-          updatedIntelligence: authoritative,
-          summaries: serverSummaries,
+          parsedRegion: obsoleteRegion,
+          updatedIntelligence: { parsedRegions: [obsoleteRegion] },
+          summaries: summariesFixture("obsolete-A"),
         }),
       } as Response);
+      for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
     });
 
-    await waitFor(() => {
-      expect(readPageIntelligence(qc, projectA, 4)?.rejectedTextRegionIds).toEqual([
-        "server-authoritative",
-      ]);
-    });
-    const adopted = readPageIntelligence(qc, projectA, 4);
-    expect(adopted?.classifiedTables).toBeUndefined();
-    expect(adopted).toHaveProperty("csiSpatialMap");
-    const codes = adopted?.csiSpatialMap?.zones.flatMap((zone) =>
-      zone.divisions.flatMap((division) => division.codes),
-    );
-    expect(codes).toContain("08 11 13");
-    expect(qc.getQueryData(queryKeys.summaries.all(projectA))).toBe(serverSummaries);
-    expect(readActivePageWindow(qc, projectB)).toBe(bWindowBefore);
-    expect(qc.getQueryData(queryKeys.summaries.all(projectB))).toBe(stableBSummaries);
+    expect.soft(isCurrentProjectLifecycle(qc, snapshotA)).toBe(false);
+    expect.soft(readPageIntelligence(qc, "pid", 4)).toEqual(successorIntel);
+    expect.soft(qc.getQueryData(queryKeys.summaries.all("pid")))
+      .toEqual(successorSummaries);
+    expect.soft(readPageIntelligence(qc, "pid", 4)?.csiSpatialMap).toBeUndefined();
+    lifecycleB.dispose();
+    lifecycleA.dispose();
   });
 
   it("TableParse local save appends against invocation-live regions and creates one stable id", async () => {
@@ -290,6 +483,7 @@ describe("mixed page-window writer semantics", () => {
     seedWindow(projectA, {
       pageIntelligence: { [pageA]: { rejectedTextRegionIds: ["A-before"] } },
     });
+    const projectAPageBefore = readPageIntelligence(qc, projectA, pageA);
     seedWindow(projectB, {
       // The stale A completion currently targets B at A's render-captured page. Seed that exact
       // key so the adoption assertion cannot pass merely because B's visible page changed.
@@ -410,10 +604,9 @@ describe("mixed page-window writer semantics", () => {
         csiTags: [{ code: "08 11 13", description: "Hollow Metal Doors" }],
       },
     });
-    await waitFor(() => {
-      expect(readPageIntelligence(qc, projectA, pageA)?.rejectedTextRegionIds)
-        .toEqual(["server-A"]);
-    });
+    // The captured durable request settles, but render A is no longer current and therefore owns
+    // no authoritative adoption, summaries, spatial recompute, or caller-local completion.
+    expect(readPageIntelligence(qc, projectA, pageA)).toBe(projectAPageBefore);
     expect(readPageIntelligence(qc, projectB, pageA)).toBe(projectBPageBefore);
     expect(tableSaveHarness.delayedGrid).toEqual({
       headers: ["Tag", "Description"],
@@ -547,5 +740,426 @@ describe("mixed page-window writer semantics", () => {
       "response",
     ]);
     expect(activeQuery?.getObserversCount()).toBe(0);
+  });
+
+  it("shape completion cannot append, warn, or toggle a same-ID successor lifecycle", async () => {
+    const lifecycleA = await activateLifecycle();
+    const snapshotA = captureProjectLifecycle(qc);
+    setViewerStoreStateForTest({
+      projectId: 1,
+      publicId: "pid",
+      isDemo: false,
+      pageNumber: 4,
+      numPages: 12,
+      showKeynotes: false,
+    });
+    seedWindow("pid", {
+      keynotes: { 4: [{ shape: "rectangle", text: "lifecycle-A", bbox: [0, 0, 1, 1] }] },
+    });
+    let resolveFetch!: (response: Response) => void;
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/api/shape-parse") {
+        return new Promise<Response>((resolve) => { resolveFetch = resolve; });
+      }
+      return successorPending;
+    });
+    const hook = renderHook(
+      () => useShapeParseInteraction({ detectionTab: "shape" }),
+      { wrapper },
+    );
+    let request!: Promise<void>;
+    act(() => {
+      request = hook.result.current.runOnPage();
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/shape-parse",
+      expect.any(Object),
+    ));
+
+    const successorShapes = [{
+      shape: "circle",
+      text: "successor-B",
+      bbox: [0.4, 0.4, 0.5, 0.5],
+    }] satisfies KeynoteShapeData[];
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: false });
+      setViewerStoreStateForTest({
+        projectId: 1,
+        publicId: "pid",
+        isDemo: false,
+        pageNumber: 4,
+        numPages: 12,
+        showKeynotes: false,
+      });
+      seedWindow("pid", { keynotes: { 4: successorShapes } });
+      useUiStore.setState({ showKeynotes: false });
+      resolveFetch({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          keynotes: [{ shape: "square", text: "obsolete-A", bbox: [0.2, 0.2, 0.3, 0.3] }],
+          warnings: ["obsolete A warning"],
+        }),
+      } as Response);
+      await request;
+    });
+
+    expect.soft(isCurrentProjectLifecycle(qc, snapshotA)).toBe(false);
+    expect.soft(readActivePageWindow(qc, "pid").keynotes[4]).toEqual(successorShapes);
+    expect.soft(useUiStore.getState().showKeynotes).toBe(false);
+    expect.soft(hook.result.current.warnings).toEqual([]);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("does not let A's retained drawing flag consume a region published by same-ID lifecycle B", async () => {
+    const lifecycleA = await activateLifecycle();
+    setViewerStoreStateForTest({
+      projectId: 1,
+      publicId: "pid",
+      isDemo: false,
+      pageNumber: 4,
+      numPages: 12,
+    });
+    const hook = renderHook(
+      () => useShapeParseInteraction({ detectionTab: "shape" }),
+      { wrapper },
+    );
+    act(() => hook.result.current.startRegionDraw());
+    expect(hook.result.current.drawing).toBe(true);
+
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockReturnValue(successorPending);
+    const successorRegion = [0.55, 0.56, 0.85, 0.86] as [number, number, number, number];
+    let lifecycleB!: OpenProjectHandle;
+    act(() => {
+      lifecycleB = openProject(qc, "pid", { demo: false });
+      setViewerStoreStateForTest({
+        projectId: 1,
+        publicId: "pid",
+        isDemo: false,
+        pageNumber: 4,
+        numPages: 12,
+      });
+      useParseFlowStore.setState({
+        tableParseStep: "select-region",
+        tableParseRegion: successorRegion,
+      });
+    });
+
+    expect(useParseFlowStore.getState().tableParseRegion).toBe(successorRegion);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("does not let A's retained drawing flag cancel same-ID lifecycle B when leaving Shape", async () => {
+    const lifecycleA = await activateLifecycle();
+    setViewerStoreStateForTest({
+      projectId: 1,
+      publicId: "pid",
+      isDemo: false,
+      pageNumber: 4,
+      numPages: 12,
+    });
+    const hook = renderHook(
+      ({ tab }: { tab: "shape" | "models" }) =>
+        useShapeParseInteraction({ detectionTab: tab }),
+      { wrapper, initialProps: { tab: "shape" as "shape" | "models" } },
+    );
+    act(() => hook.result.current.startRegionDraw());
+    expect(hook.result.current.drawing).toBe(true);
+
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockReturnValue(successorPending);
+    const successorTool = { kind: "parseRect", flow: "table" } as const;
+    let lifecycleB!: OpenProjectHandle;
+    act(() => {
+      lifecycleB = openProject(qc, "pid", { demo: false });
+      setViewerStoreStateForTest({
+        projectId: 1,
+        publicId: "pid",
+        isDemo: false,
+        pageNumber: 4,
+        numPages: 12,
+        activeTool: successorTool,
+        mode: "pointer",
+        tableParseStep: "select-region",
+        tableParseRegion: null,
+      });
+    });
+    act(() => hook.rerender({ tab: "models" }));
+
+    expect.soft(useParseFlowStore.getState().tableParseStep).toBe("select-region");
+    expect.soft(useToolStore.getState().activeTool).toBe(successorTool);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+});
+
+describe("TextPanel synchronous publication tails — same-ID lifecycle retirement", () => {
+  const successorSearch = "successor B search";
+  const successorFilter = "successor B markup filter";
+
+  function textAnnotation(
+    type: TextAnnotation["type"],
+    text: string,
+  ): TextAnnotation {
+    return {
+      type,
+      category: "contact",
+      text,
+      bbox: [0.1, 0.1, 0.2, 0.03],
+      confidence: 0.99,
+      wordIndices: [0],
+    };
+  }
+
+  function installSameIdSuccessor(seed: () => void): OpenProjectHandle {
+    fetchMock.mockImplementation(() => new Promise<Response>(() => {}));
+    const lifecycleB = openProject(qc, "pid", { demo: true });
+    setViewerStoreStateForTest({
+      projectId: 0,
+      publicId: "pid",
+      isDemo: true,
+      pageNumber: 4,
+      numPages: 12,
+    });
+    seed();
+    return lifecycleB;
+  }
+
+  async function activateTextLifecycle(
+    textAnnotations: TextAnnotation[] = [],
+  ): Promise<OpenProjectHandle> {
+    const lifecycleA = await activateLifecycle();
+    setViewerStoreStateForTest({
+      publicId: "pid",
+      isDemo: false,
+      pageNumber: 4,
+      numPages: 12,
+      textPanelTab: "annotations",
+    });
+    seedWindow("pid", { textAnnotations: { 4: textAnnotations } });
+    return lifecycleA;
+  }
+
+  it("type initialization stops when its first publication admits successor B", async () => {
+    const lifecycleA = await activateTextLifecycle([
+      textAnnotation("phone", "555-0100"),
+      textAnnotation("email", "a@example.test"),
+    ]);
+    const successorTypes = { "successor-only": true };
+    let admittedB = false;
+    let lifecycleB!: OpenProjectHandle;
+    const unsubscribe = useUiStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeTextAnnotationTypes.phone === true ||
+          state.activeTextAnnotationTypes.phone !== true) return;
+      admittedB = true;
+      lifecycleB = installSameIdSuccessor(() => {
+        useUiStore.setState({ activeTextAnnotationTypes: successorTypes });
+      });
+    });
+
+    render(<TextPanel embedded />, { wrapper });
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useUiStore.getState().activeTextAnnotationTypes).toBe(successorTypes);
+    lifecycleB?.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("category visibility fanout stops when its first type publication admits successor B", async () => {
+    const lifecycleA = await activateTextLifecycle([
+      textAnnotation("phone", "555-0100"),
+      textAnnotation("email", "a@example.test"),
+    ]);
+    setViewerStoreStateForTest({
+      activeTextAnnotationTypes: { phone: true, email: true },
+    });
+    render(<TextPanel embedded />, { wrapper });
+
+    const successorTypes = { "successor-only": true };
+    let admittedB = false;
+    let lifecycleB!: OpenProjectHandle;
+    const unsubscribe = useUiStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeTextAnnotationTypes.phone === false ||
+          state.activeTextAnnotationTypes.phone !== false) return;
+      admittedB = true;
+      lifecycleB = installSameIdSuccessor(() => {
+        useUiStore.setState({ activeTextAnnotationTypes: successorTypes });
+      });
+    });
+
+    fireEvent.click(screen.getByTitle("Hide category"));
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useUiStore.getState().activeTextAnnotationTypes).toBe(successorTypes);
+    lifecycleB?.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("markup row filtering does not publish A search text into successor B", async () => {
+    const lifecycleA = await activateTextLifecycle();
+    const markup: ClientAnnotation = {
+      id: 401,
+      pageNumber: 4,
+      name: "A markup",
+      bbox: [0.1, 0.1, 0.2, 0.2],
+      note: null,
+      source: "user",
+      data: null,
+    };
+    qc.setQueryData(queryKeys.annotations.all("pid"), [markup]);
+    setViewerStoreStateForTest({
+      textPanelTab: "markups",
+      activeAnnotationFilter: null,
+      searchQuery: "",
+    });
+    render(<TextPanel embedded />, { wrapper });
+
+    let admittedB = false;
+    let lifecycleB!: OpenProjectHandle;
+    const unsubscribe = useUiStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeAnnotationFilter === markup.name ||
+          state.activeAnnotationFilter !== markup.name) return;
+      admittedB = true;
+      lifecycleB = installSameIdSuccessor(() => {
+        useUiStore.setState({
+          activeAnnotationFilter: successorFilter,
+          searchQuery: successorSearch,
+        });
+      });
+    });
+
+    fireEvent.click(screen.getByText(markup.name));
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useUiStore.getState().activeAnnotationFilter).toBe(successorFilter);
+    expect.soft(useUiStore.getState().searchQuery).toBe(successorSearch);
+    lifecycleB?.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("markup filter indicator clear does not clear successor B's search", async () => {
+    const lifecycleA = await activateTextLifecycle();
+    const markup: ClientAnnotation = {
+      id: 402,
+      pageNumber: 4,
+      name: "Active A markup",
+      bbox: [0.2, 0.2, 0.3, 0.3],
+      note: null,
+      source: "user",
+      data: null,
+    };
+    qc.setQueryData(queryKeys.annotations.all("pid"), [markup]);
+    setViewerStoreStateForTest({
+      textPanelTab: "markups",
+      activeAnnotationFilter: markup.name,
+      searchQuery: markup.name,
+    });
+    render(<TextPanel embedded />, { wrapper });
+
+    let admittedB = false;
+    let lifecycleB!: OpenProjectHandle;
+    const unsubscribe = useUiStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeAnnotationFilter !== markup.name ||
+          state.activeAnnotationFilter !== null) return;
+      admittedB = true;
+      lifecycleB = installSameIdSuccessor(() => {
+        useUiStore.setState({
+          activeAnnotationFilter: successorFilter,
+          searchQuery: successorSearch,
+        });
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "x" }));
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useUiStore.getState().activeAnnotationFilter).toBe(successorFilter);
+    expect.soft(useUiStore.getState().searchQuery).toBe(successorSearch);
+    lifecycleB?.dispose();
+    lifecycleA.dispose();
+  });
+});
+
+describe("classifier row liveness — same-ID lifecycle retirement", () => {
+  const specRegion = {
+    ...noteRegion,
+    id: "spec-region",
+    type: "spec-dense-columns",
+    headerText: "Specifications",
+  } satisfies TextRegion;
+
+  it.each([
+    {
+      label: "NotesClassifier",
+      Component: NotesClassifier,
+      region: noteRegion,
+      title: "Accept the classifier-proposed grid as a committed ParsedRegion",
+    },
+    {
+      label: "SpecClassifier",
+      Component: SpecClassifier,
+      region: specRegion,
+      title: "Accept the classifier-proposed spec sections as a committed ParsedRegion",
+    },
+  ])("$label does not leave successor B's same-key row busy", async ({
+    Component,
+    region,
+    title,
+  }) => {
+    const lifecycleA = await activateLifecycle();
+    setViewerStoreStateForTest({
+      projectId: 1,
+      publicId: "pid",
+      isDemo: false,
+      pageNumber: 4,
+      numPages: 12,
+    });
+    seedWindow("pid", { pageIntelligence: { 4: { textRegions: [region] } } });
+    const promotion = deferred<Response>();
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/api/regions/promote") return promotion.promise;
+      return successorPending;
+    });
+    render(<Component onEditInParser={() => undefined} />, { wrapper });
+    fireEvent.click(screen.getByTitle(title));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/regions/promote",
+      expect.any(Object),
+    ));
+
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: false });
+      setViewerStoreStateForTest({
+        projectId: 1,
+        publicId: "pid",
+        isDemo: false,
+        pageNumber: 4,
+        numPages: 12,
+      });
+      seedWindow("pid", { pageIntelligence: { 4: { textRegions: [region] } } });
+      promotion.resolve({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { code: "FAILED", message: "obsolete A failed" } }),
+      } as Response);
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+
+    const successorAccept = screen.getByTitle(title);
+    expect.soft(successorAccept).toHaveTextContent("Accept");
+    expect.soft(successorAccept).toBeEnabled();
+    lifecycleB.dispose();
+    lifecycleA.dispose();
   });
 });

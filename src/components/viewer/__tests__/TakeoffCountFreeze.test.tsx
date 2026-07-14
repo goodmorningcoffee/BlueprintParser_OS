@@ -39,7 +39,10 @@ import type { ReactNode } from "react";
 import { useToolStore } from "@/stores/toolStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import { seedTakeoff } from "@/test/seed-takeoff";
+import { readTakeoffItems } from "@/queries/useTakeoff";
+import { queryKeys } from "@/queries/queryKeys";
 import { persistFetch } from "@/lib/client-persist";
+import { openProject, type OpenProjectHandle } from "@/lib/project-lifecycle";
 import { TWENTY_COLORS } from "@/types";
 import type { ClientAnnotation, ClientTakeoffItem, TakeoffGroup } from "@/types";
 import CountTab from "../CountTab";
@@ -98,6 +101,10 @@ function unrelatedAnn(id: number, name: string): ClientAnnotation {
   };
 }
 
+function readTakeoffGroupRows(): TakeoffGroup[] {
+  return qc.getQueryData<TakeoffGroup[]>(queryKeys.takeoff.groups("pid")) ?? [];
+}
+
 const fetchMock = vi.fn();
 const alertMock = vi.fn();
 const confirmMock = vi.fn(() => true); // group delete goes through confirm() — frozen behavior
@@ -135,6 +142,80 @@ function mockCreateItemPost(response: Promise<unknown>) {
     }
     return response;
   });
+}
+
+type LifecycleBootstrapOptions = {
+  demo: boolean;
+  takeoffItems?: ClientTakeoffItem[];
+  takeoffGroups?: TakeoffGroup[];
+};
+
+function lifecycleMetadata({
+  demo,
+  takeoffItems = [],
+  takeoffGroups = [],
+}: LifecycleBootstrapOptions) {
+  return {
+    id: "pid",
+    dbId: 701,
+    name: demo ? "Demo successor" : "Authenticated successor",
+    dataUrl: "projects/pid",
+    pdfUrl: "https://example.test/original.pdf",
+    numPages: 1,
+    status: "completed",
+    summaries: null,
+    projectIntelligence: null,
+    pages: [{ pageNumber: 1, name: "Page 1", drawingNumber: null }],
+    takeoffItems,
+    takeoffGroups,
+    chatMessages: [],
+    demoConfig: demo ? {} : undefined,
+  };
+}
+
+function lifecycleFetch(
+  mutation?: (url: string, init?: RequestInit) => Promise<unknown> | undefined,
+) {
+  fetchMock.mockImplementation((rawUrl: unknown, init?: RequestInit) => {
+    const url = String(rawUrl);
+    const mutationResult = mutation?.(url, init);
+    if (mutationResult) return mutationResult;
+    if (url === "/api/projects/pid" || url === "/api/demo/projects/pid") {
+      const demo = url.startsWith("/api/demo/");
+      return Promise.resolve({
+        ok: true,
+        json: async () => lifecycleMetadata({ demo }),
+      } as Response);
+    }
+    if (
+      url === "/api/projects/pid/pages?from=1&to=15" ||
+      url === "/api/demo/projects/pid/pages?from=1&to=15"
+    ) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ from: 1, to: 1, pages: [], annotations: [] }),
+      } as Response);
+    }
+    if (url === "/api/annotation-groups?projectId=pid") {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ groups: [], memberships: [] }),
+      } as Response);
+    }
+    throw new Error(`unexpected lifecycle fetch in takeoff freeze test: ${url}`);
+  });
+}
+
+async function activateLifecycle(
+  options: LifecycleBootstrapOptions,
+): Promise<OpenProjectHandle> {
+  const handle = openProject(qc, "pid", { demo: options.demo });
+  const result = await handle.result;
+  expect(result.status).toBe("opened");
+  if (options.takeoffItems || options.takeoffGroups) {
+    seedTakeoff(qc, options.takeoffItems ?? [], options.takeoffGroups ?? []);
+  }
+  return handle;
 }
 
 // ─── TC-1: create item is SERVER-FIRST (W1) ──────────────────────────────────────────────────
@@ -566,5 +647,144 @@ describe("CountTab — demo group create/rename/delete are local-only (TC-13)", 
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(persistFetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ─── P2 phase-review lifecycle freezes ─────────────────────────────────────────────────────
+
+describe("CountTab — exact same-publicId project lifecycle authority", () => {
+  it("auth A create cannot refill the takeoff/tool state seeded by demo lifecycle B", async () => {
+    const create = deferred<Response>();
+    lifecycleFetch((url) => url === "/api/takeoff-items" ? create.promise : undefined);
+    await activateLifecycle({ demo: false });
+    seedTakeoff(qc, [], []);
+    render(<CountTab />, { wrapper });
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Add Count Item" }));
+    fireEvent.change(screen.getByPlaceholderText("Item name..."), {
+      target: { value: "Generation A door" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/takeoff-items")).toBe(true),
+    );
+
+    await act(async () => {
+      await activateLifecycle({ demo: true });
+    });
+    expect(readTakeoffItems(qc, "pid")).toEqual([]);
+    expect(useToolStore.getState().activeTakeoffItemId).toBeNull();
+
+    await act(async () => {
+      create.resolve({
+        ok: true,
+        json: async () => item({ id: 42, name: "Generation A door" }),
+      } as Response);
+      await Promise.resolve();
+    });
+
+    expect(readTakeoffItems(qc, "pid")).toEqual([]);
+    expect(useToolStore.getState().activeTakeoffItemId).toBeNull();
+  });
+
+  it("auth A delete cannot remove auth lifecycle B's same-key item or annotation", async () => {
+    lifecycleFetch();
+    await activateLifecycle({ demo: false });
+    seedTakeoff(qc, [item({ id: 7, name: "Generation A door" })], []);
+    seedAnnotations(qc, [takeoffAnn(100, 7, "Generation A marker")]);
+    const remove = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(remove.promise);
+    render(<CountTab />, { wrapper });
+    await waitFor(() => expect(screen.getByText("Generation A door")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTitle("Delete item and all markers"));
+    await waitFor(() =>
+      expect(persistFetchMock).toHaveBeenCalledWith("/api/takeoff-items/7", undefined, "DELETE"),
+    );
+
+    const successorItem = item({ id: 7, name: "Generation B door" });
+    const successorAnnotation = unrelatedAnn(901, "Generation B annotation");
+    await act(async () => {
+      await activateLifecycle({ demo: false, takeoffItems: [successorItem] });
+      seedAnnotations(qc, [successorAnnotation]);
+    });
+    expect(readTakeoffItems(qc, "pid")).toEqual([successorItem]);
+    expect(readSeededAnnotations(qc)).toEqual([successorAnnotation]);
+
+    await act(async () => {
+      remove.resolve({ success: true });
+      await Promise.resolve();
+    });
+
+    expect(readTakeoffItems(qc, "pid")).toEqual([successorItem]);
+    expect(readSeededAnnotations(qc)).toEqual([successorAnnotation]);
+  });
+
+  it("auth A group create cannot refill the takeoff groups seeded empty by demo B", async () => {
+    lifecycleFetch();
+    await activateLifecycle({ demo: false });
+    seedTakeoff(qc, [], []);
+    const create = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(create.promise);
+    render(<CountTab />, { wrapper });
+
+    fireEvent.click(screen.getByRole("button", { name: "+ New Group" }));
+    fireEvent.change(screen.getByPlaceholderText("Group name (e.g. Division 08)"), {
+      target: { value: "Generation A group" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() =>
+      expect(persistFetchMock).toHaveBeenCalledWith("/api/takeoff-groups", {
+        projectId: "pid",
+        name: "Generation A group",
+        kind: "count",
+      }),
+    );
+
+    await act(async () => {
+      await activateLifecycle({ demo: true });
+    });
+    expect(readTakeoffGroupRows()).toEqual([]);
+
+    await act(async () => {
+      create.resolve(group({ id: 51, name: "Generation A group" }));
+      await Promise.resolve();
+    });
+
+    expect(readTakeoffGroupRows()).toEqual([]);
+  });
+
+  it("auth A group-delete rejection cannot alert or disturb auth B at the same key", async () => {
+    lifecycleFetch();
+    await activateLifecycle({ demo: false });
+    seedTakeoff(qc, [], [group({ id: 5, name: "Generation A group" })]);
+    const remove = deferred<unknown>();
+    persistFetchMock.mockReturnValueOnce(remove.promise);
+    render(<CountTab />, { wrapper });
+    await waitFor(() => expect(screen.getByText("Generation A group")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTitle("Delete group"));
+    await waitFor(() =>
+      expect(persistFetchMock).toHaveBeenCalledWith(
+        "/api/takeoff-groups/5",
+        undefined,
+        "DELETE",
+      ),
+    );
+
+    const successorGroup = group({ id: 5, name: "Generation B group" });
+    await act(async () => {
+      await activateLifecycle({ demo: false, takeoffGroups: [successorGroup] });
+    });
+    expect(readTakeoffGroupRows()).toEqual([successorGroup]);
+
+    await act(async () => {
+      remove.reject(new Error("auth A delete failed after retirement"));
+      await remove.promise.catch(() => undefined);
+      await Promise.resolve();
+    });
+
+    expect(readTakeoffGroupRows()).toEqual([successorGroup]);
+    expect(alertMock).not.toHaveBeenCalled();
   });
 });

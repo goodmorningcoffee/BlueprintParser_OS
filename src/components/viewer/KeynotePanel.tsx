@@ -3,6 +3,7 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParseFlow } from "@/hooks/useParseFlow";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 import {
   commitParseOperation,
   useParseOperation,
@@ -148,6 +149,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   // Context-only handle for optimistic page writes and both C2 shared save-command paths — zero
   // subscription; summaries publication happens inside the captured-target command.
   const queryClient = useQueryClient();
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
 
   // This proposed-grid workspace is shared with Table guided parsing, not Keynote-owned state.
   const {
@@ -199,9 +201,11 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     input: KeynoteSaveInput,
     token: ParseOperationToken<"keynote">,
   ): Promise<boolean> => {
+    const canPublish = () =>
+      isRenderedLifecycleCurrent() && keynoteOperation.isCurrent(token);
     // A nested helper inherits admission. It may finish durable work that it starts here, but it
     // must not begin new Query/persistence work after a synchronous subscriber has already revoked A.
-    if (!keynoteOperation.isCurrent(token)) return false;
+    if (!canPublish()) return false;
     const keys = input.keys.map((entry) => ({ ...entry }));
     const csiTags = input.csiTags?.map((entry) => ({ ...entry })) ?? [];
     const persistToDb = input.persistToDb ?? true;
@@ -262,7 +266,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
     // Query observers are synchronous. If that optimistic publication handed the workspace to B,
     // A must not start a fresh persistence/spatial request afterward.
-    if (!keynoteOperation.isCurrent(token)) return false;
+    if (!canPublish()) return false;
 
     if (!persistToDb) return true;
     if (canPersist(target.publicId, target.isDemo)) {
@@ -274,6 +278,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           publicId: target.publicId,
           isDemo: target.isDemo,
           pageNumber: target.pageNumber,
+          canAdopt: isRenderedLifecycleCurrent,
         },
         {
           via: "parser",
@@ -285,13 +290,15 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           csiTags,
         },
       );
+      if (!canPublish()) return false;
     } else {
       // Preserve the synchronous local/demo spatial publication; do not await the command's local
       // result and insert a microtask into the existing UI sequence.
       refreshPageCsiSpatialMap(queryClient, target.publicId, target.pageNumber);
+      if (!canPublish()) return false;
     }
     return true;
-  }, [queryClient, keynoteOperation.isCurrent]);
+  }, [isRenderedLifecycleCurrent, queryClient, keynoteOperation.isCurrent]);
 
   const [autoParsingRevision, setAutoParsingRevision] = useState<number | null>(null);
   const autoParsing = keynoteOperation.busy && autoParsingRevision === keynoteOperation.revision;
@@ -419,7 +426,9 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     yoloModel?: string;
     pageNumber: number;
   }, token: ParseOperationToken<"keynote">): Promise<boolean> => {
-    if (!keynoteOperation.isCurrent(token)) return false;
+    const canPublish = () =>
+      isRenderedLifecycleCurrent() && keynoteOperation.isCurrent(token);
+    if (!canPublish()) return false;
     const { publicId, keys, yoloClass, yoloModel, pageNumber } = params;
     if (!publicId) return false;
     const uniqueKeys = [...new Set(
@@ -442,6 +451,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           selectedPages: [pageNumber],
         },
       );
+      if (!canPublish()) return false;
       if (!result.ok) {
         commitParseOperation(token, () => {
           console.error(`[KeynotePanel] Map Tags failed: HTTP ${result.status}`);
@@ -465,17 +475,21 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         }));
       // Captured-key Query adoption may settle for A; subsequent parse/tool/reset tails still
       // re-authorize through the inherited token.
+      if (!canPublish()) return false;
       if (newTags.length > 0) addYoloTagsBulk(newTags);
     } catch (e) {
-      commitParseOperation(token, () => {
-        console.error("[KeynotePanel] Map Tags error", e);
-      });
+      if (canPublish()) {
+        commitParseOperation(token, () => {
+          console.error("[KeynotePanel] Map Tags error", e);
+        });
+      }
     }
-    return true;
-  }, [addYoloTagsBulk, keynoteOperation.isCurrent]);
+    return canPublish();
+  }, [addYoloTagsBulk, isRenderedLifecycleCurrent, keynoteOperation.isCurrent]);
 
   // ─── Parse keynotes from column/row intersections ───────
   const parseKeynotes = useCallback(async () => {
+    if (!isRenderedLifecycleCurrent()) return;
     if (!pageTextract?.words || keynoteColumnBBs.length < 2 || keynoteRowBBs.length === 0) return;
 
     const cols = keynoteColumnBBs; // draw order = column order
@@ -513,6 +527,8 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       const started = keynoteOperation.begin();
       if (started.status === "busy") return;
       const token = started.token;
+      const canPublish = () =>
+        isRenderedLifecycleCurrent() && keynoteOperation.isCurrent(token);
 
       try {
         const targetKeys = keys.map((entry) => ({ ...entry }));
@@ -530,29 +546,33 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
             tableName,
           });
         });
-        if (!admitted || !keynoteOperation.isCurrent(token)) return;
+        if (!admitted || !canPublish()) return;
 
         // Auto-persist on parse. The helper starts only while this token is current; once started,
         // its captured Query/durable work may settle even if a later flow revokes the UI owner.
-        await saveKeynoteToIntelligence({
+        const saved = await saveKeynoteToIntelligence({
           keys: targetKeys,
           tableName,
           target,
         }, token);
-        await mapKeynoteKeysToYoloTags({
+        if (!saved || !canPublish()) return;
+        const mapped = await mapKeynoteKeysToYoloTags({
           publicId: target.publicId,
           keys: targetKeys,
           yoloClass: targetYoloClass?.className,
           yoloModel: targetYoloClass?.model,
           pageNumber: target.pageNumber,
         }, token);
+        if (!mapped || !canPublish()) return;
         completeKeynoteParseOperation(token);
       } catch (err) {
-        commitParseOperation(token, () => {
-          setKeynoteSaveError(err instanceof Error ? err.message : "Could not save keynotes");
-        });
+        if (canPublish()) {
+          commitParseOperation(token, () => {
+            setKeynoteSaveError(err instanceof Error ? err.message : "Could not save keynotes");
+          });
+        }
       } finally {
-        keynoteOperation.finish(token);
+        if (isRenderedLifecycleCurrent()) keynoteOperation.finish(token);
       }
     }
   }, [
@@ -563,6 +583,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     keynoteParseRegion,
     addParsedKeynote,
     captureKeynoteTarget,
+    isRenderedLifecycleCurrent,
     saveKeynoteToIntelligence,
     mapKeynoteKeysToYoloTags,
     keynoteOperation.begin,
@@ -572,9 +593,12 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
   // ─── Auto parse via API ─────────────────────────────────
   const autoParseKeynote = useCallback(async (bbox: [number, number, number, number]) => {
+    if (!isRenderedLifecycleCurrent()) return;
     const started = keynoteOperation.begin();
     if (started.status === "busy") return;
     const token = started.token;
+    const canPublish = () =>
+      isRenderedLifecycleCurrent() && keynoteOperation.isCurrent(token);
 
     try {
       const targetProjectId = projectId;
@@ -595,8 +619,10 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           regionBbox: target.bbox,
         }),
       });
+      if (!canPublish()) return;
       if (!resp.ok) throw new Error("API error");
       const result = await resp.json();
+      if (!canPublish()) return;
       if (result.headers?.length >= 2 && result.rows?.length > 0) {
         // First column = key, rest = description
         const tagHeader = result.headers[0];
@@ -616,35 +642,40 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
               tableName,
             });
           });
-          if (!completionPublished || !keynoteOperation.isCurrent(token)) return;
+          if (!completionPublished || !canPublish()) return;
 
-          await saveKeynoteToIntelligence({
+          const saved = await saveKeynoteToIntelligence({
             keys: targetKeys,
             tableName,
             csiTags: result.csiTags || [],
             target,
           }, token);
+          if (!saved || !canPublish()) return;
           // Auto-parse doesn't pick a YOLO class, so we map as text-only.
-          await mapKeynoteKeysToYoloTags({
+          const mapped = await mapKeynoteKeysToYoloTags({
             publicId: target.publicId,
             keys: targetKeys,
             pageNumber: target.pageNumber,
           }, token);
+          if (!mapped || !canPublish()) return;
           completeKeynoteParseOperation(token);
         }
       }
     } catch (err) {
-      commitParseOperation(token, () => {
-        console.error("[keynote auto-parse] Failed:", err);
-        setKeynoteSaveError(err instanceof Error ? err.message : "Auto-parse failed");
-      });
+      if (canPublish()) {
+        commitParseOperation(token, () => {
+          console.error("[keynote auto-parse] Failed:", err);
+          setKeynoteSaveError(err instanceof Error ? err.message : "Auto-parse failed");
+        });
+      }
     } finally {
-      keynoteOperation.finish(token);
+      if (isRenderedLifecycleCurrent()) keynoteOperation.finish(token);
     }
   }, [
     projectId,
     addParsedKeynote,
     captureKeynoteTarget,
+    isRenderedLifecycleCurrent,
     saveKeynoteToIntelligence,
     mapKeynoteKeysToYoloTags,
     keynoteOperation.begin,
@@ -760,6 +791,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
   // ─── Guided parse: parse from grid ─────────────────────
   const parseFromGuidedGrid = useCallback(async () => {
+    if (!isRenderedLifecycleCurrent()) return;
     // Unlike the manual path, guided parsing is a live action read: a user can leave the grid open
     // across an OCR replacement. The imperative facade touches LRU recency without an observer.
     const pageTextract = readTextractForPage(queryClient, publicId, pageNumber);
@@ -772,6 +804,8 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     const started = keynoteOperation.begin();
     if (started.status === "busy") return;
     const token = started.token;
+    const canPublish = () =>
+      isRenderedLifecycleCurrent() && keynoteOperation.isCurrent(token);
 
     try {
       const target = {
@@ -803,11 +837,11 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
       const workspaceAdmitted = commitParseOperation(token, () => {
         invalidateGuidedParseOperations("keynote");
       });
-      if (!workspaceAdmitted || !keynoteOperation.isCurrent(token)) return;
+      if (!workspaceAdmitted || !canPublish()) return;
       const admitted = commitParseOperation(token, () => {
         setKeynoteSaveError(null);
       });
-      if (!admitted || !keynoteOperation.isCurrent(token)) return;
+      if (!admitted || !canPublish()) return;
 
       // Detect CSI
       let csiTags: KeynoteCsiTag[] = [];
@@ -817,15 +851,17 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ headers: target.headers, rows: target.rows }),
         });
+        if (!canPublish()) return;
         if (csiResp.ok) {
           const csiData = await csiResp.json();
+          if (!canPublish()) return;
           csiTags = csiData.csiTags || [];
         }
       } catch { /* best-effort */ }
 
       // CSI was the admitted request. Do not launch a new optimistic/promotion/map chain if a page,
       // tab, grid edit, or parser handoff revoked this root while CSI was pending.
-      if (!keynoteOperation.isCurrent(token)) return;
+      if (!canPublish()) return;
 
       // Save as parsed keynote (optimistic local write).
       const newRegion = {
@@ -844,7 +880,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
 
       // The optimistic Query write can synchronously hand control to B. Re-authorize before any
       // additional local publication or newly launched promotion/spatial work.
-      if (!keynoteOperation.isCurrent(token)) return;
+      if (!canPublish()) return;
 
       // Also save as parsedKeynoteData for All Keynotes tab
       if (keys.length > 0) {
@@ -855,7 +891,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
             tableName: `Keynotes p.${target.pageNumber}`,
           });
         });
-        if (!appendPublished || !keynoteOperation.isCurrent(token)) return;
+        if (!appendPublished || !canPublish()) return;
       }
 
       // Auto-persist on parse via the transactional promote upsert. Gated on
@@ -868,6 +904,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
             publicId: target.publicId,
             isDemo: target.isDemo,
             pageNumber: target.pageNumber,
+            canAdopt: isRenderedLifecycleCurrent,
           },
           {
             via: "parser",
@@ -879,25 +916,31 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
             csiTags,
           },
         );
+        if (!canPublish()) return;
       } else {
         refreshPageCsiSpatialMap(queryClient, target.publicId, target.pageNumber);
+        if (!canPublish()) return;
       }
 
       if (keys.length > 0) {
-        await mapKeynoteKeysToYoloTags({
+        const mapped = await mapKeynoteKeysToYoloTags({
           publicId: target.publicId,
           keys,
           pageNumber: target.pageNumber,
         }, token);
+        if (!mapped || !canPublish()) return;
       }
 
+      if (!canPublish()) return;
       completeKeynoteParseOperation(token, { resetGuided: true });
     } catch (err) {
-      commitParseOperation(token, () => {
-        setKeynoteSaveError(err instanceof Error ? err.message : "Could not save keynotes");
-      });
+      if (canPublish()) {
+        commitParseOperation(token, () => {
+          setKeynoteSaveError(err instanceof Error ? err.message : "Could not save keynotes");
+        });
+      }
     } finally {
-      keynoteOperation.finish(token);
+      if (isRenderedLifecycleCurrent()) keynoteOperation.finish(token);
     }
   }, [
     pageNumber,
@@ -908,6 +951,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
     guidedParseRegion,
     ownsGuidedWorkspace,
     addParsedKeynote,
+    isRenderedLifecycleCurrent,
     mapKeynoteKeysToYoloTags,
     queryClient,
     keynoteOperation.begin,

@@ -10,6 +10,7 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useToolStore } from "@/stores/toolStore";
 import type { PageWindowResponse } from "@/queries/pageWindowCore";
 import type { ScaleCalibrationData } from "@/types";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
 const CHUNK_RADIUS = 7; // current page ± 7 = 15-page window (covers 11-13 visible thumbnails + buffer)
 const DEBOUNCE_MS = 100; // debounce rapid page changes (arrow keys)
@@ -24,6 +25,7 @@ interface ActiveChunkRequest {
   to: number;
   identityKey: string;
   controller: AbortController;
+  canAdopt: () => boolean;
 }
 
 function chunkRequestIdentity(
@@ -48,6 +50,7 @@ export function useChunkLoader() {
   const numPages = useViewerCoreStore((s) => s.numPages);
   const publicId = useSessionStore((s) => s.publicId);
   const isDemo = useSessionStore((s) => s.isDemo);
+  const isRenderedLifecycleCurrent = useProjectLifecycleGuard(publicId, isDemo);
   // This is intentionally the loader's one cache observer. Range publication must reschedule the
   // state machine when a completed far-away request evicts the page the user returned to.
   const loadedPageRange = useLoadedPageRange();
@@ -76,7 +79,7 @@ export function useChunkLoader() {
 
       active?.controller.abort();
     };
-  }, [queryClient, publicId, isDemo]);
+  }, [queryClient, publicId, isDemo, isRenderedLifecycleCurrent]);
 
   useEffect(() => {
     if (!publicId || numPages === 0) return;
@@ -111,6 +114,7 @@ export function useChunkLoader() {
       // Effects normally clean up first, but this synchronous identity check closes the small window
       // between an external store identity change and React running that cleanup.
       if (liveSession.publicId !== publicId || liveSession.isDemo !== isDemo) return;
+      if (!isRenderedLifecycleCurrent()) return;
 
       const currentPage = liveCore.pageNumber;
       // Re-read the project-keyed cache at dispatch. The range may have changed during the real
@@ -141,6 +145,9 @@ export function useChunkLoader() {
         to: actualTo,
         identityKey: actualKey,
         controller,
+        // Bind the request to the render authority present at dispatch. Settlement handlers must
+        // never recapture and borrow a same-ID successor generation.
+        canAdopt: isRenderedLifecycleCurrent,
       };
       generationRef.current = request.generation;
       activeRequestRef.current = request;
@@ -160,7 +167,8 @@ export function useChunkLoader() {
           active.routeVariant === request.routeVariant &&
           active.from === request.from &&
           active.to === request.to &&
-          active.identityKey === request.identityKey
+          active.identityKey === request.identityKey &&
+          request.canAdopt()
         );
       };
 
@@ -190,10 +198,12 @@ export function useChunkLoader() {
           // paired publication; stale responses can never hydrate it.
           for (const ann of chunk.annotations) {
             if (ann.source === "takeoff-scale" && (ann.data as any)?.type === "scale-calibration") {
+              if (!isCurrentRequest()) return;
               useToolStore.getState().setScaleCalibration(
                 ann.pageNumber,
                 ann.data as unknown as ScaleCalibrationData
               );
+              if (!isCurrentRequest()) return;
             }
           }
 
@@ -222,5 +232,13 @@ export function useChunkLoader() {
       clearTimeout(timer);
       if (debounceRef.current === timer) debounceRef.current = null;
     };
-  }, [pageNumber, numPages, publicId, isDemo, loadedPageRange, queryClient]);
+  }, [
+    pageNumber,
+    numPages,
+    publicId,
+    isDemo,
+    loadedPageRange,
+    queryClient,
+    isRenderedLifecycleCurrent,
+  ]);
 }

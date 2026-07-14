@@ -225,6 +225,7 @@ describe("project lifecycle target", () => {
   it("supersedes every generation, including same-id/same-mode opens", async () => {
     const first = openProject(queryClient, "same-id", { demo: false });
     const firstSnapshot = captureProjectLifecycle(queryClient);
+    expect(captureProjectLifecycle(queryClient)).toBe(firstSnapshot);
     const second = openProject(queryClient, "same-id", { demo: false });
     const secondSnapshot = captureProjectLifecycle(queryClient);
 

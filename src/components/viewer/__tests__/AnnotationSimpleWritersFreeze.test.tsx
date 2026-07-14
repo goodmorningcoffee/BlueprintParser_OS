@@ -13,9 +13,8 @@
 //   - CalibrationInput is demo-local, but non-demo is server-first: sequential DELETEs of every
 //     same-page scale row, one POST, then a wholesale local same-page replacement. A failed POST
 //     leaves the captured local rows/calibration gesture intact and reports inline.
-//   - AnnotationListItem always fires its raw PUT — even in demo — and updates locally after any
-//     JSON response without checking `res.ok`. That demo hole is intentional characterization,
-//     NOT approval; a future fix must move this pin deliberately (ANNOTATIONS-W1 tripwire).
+//   - AnnotationListItem is server-first on private projects, adopts only `res.ok`, and performs
+//     no network/local publication on a demo project.
 //
 // Backing-agnostic witness discipline: assertions never read `getState().annotations`. Instead,
 // AnnotationPanel and DetectionPanel are mounted as real production subscribers, while the few
@@ -37,8 +36,16 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { ClientAnnotation, YoloTag } from "@/types";
+import {
+  captureProjectLifecycle,
+  isCurrentProjectLifecycle,
+  openProject,
+  type OpenProjectHandle,
+  type ProjectResponse,
+} from "@/lib/project-lifecycle";
 import { useUiStore } from "@/stores/uiStore";
-import { useToolStore } from "@/stores/toolStore";
+import { useToolStore, type ToolTagScanResults } from "@/stores/toolStore";
+import { queryKeys } from "@/queries/queryKeys";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import {
   readYoloTags,
@@ -105,6 +112,43 @@ function yoloAnn(id: number, over: Partial<ClientAnnotation> = {}): ClientAnnota
   });
 }
 
+function yoloTag(overrides: Partial<YoloTag> = {}): YoloTag {
+  return {
+    id: "tag-a",
+    name: "Door tag A",
+    tagText: "D-01",
+    yoloClass: "Door",
+    yoloModel: "Fixture Model",
+    source: "manual",
+    scope: "project",
+    instances: [{
+      pageNumber: 3,
+      annotationId: 70,
+      bbox: [0.1, 0.1, 0.2, 0.2],
+      confidence: 0.99,
+    }],
+    ...overrides,
+  };
+}
+
+function tagScanResults(label: string): ToolTagScanResults {
+  return {
+    yoloClass: `${label} class`,
+    yoloModel: `${label} model`,
+    texts: [{
+      text: `${label}-01`,
+      count: 1,
+      pages: [3],
+      instances: [{
+        pageNumber: 3,
+        annotationId: 70,
+        bbox: [0.1, 0.1, 0.2, 0.2],
+        confidence: 0.99,
+      }],
+    }],
+  };
+}
+
 function jsonResponse(
   body: unknown,
   { ok = true, status = ok ? 200 : 500 }: { ok?: boolean; status?: number } = {},
@@ -124,6 +168,45 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function lifecycleProjectResponse(): ProjectResponse {
+  return {
+    id: "pid",
+    dbId: 1,
+    name: "Lifecycle project",
+    dataUrl: "s3://private/project.json",
+    pdfUrl: "s3://private/project.pdf",
+    numPages: 10,
+    status: "ready",
+    summaries: null,
+    projectIntelligence: null,
+    pages: [{ pageNumber: 3, name: "Page 3", drawingNumber: null }],
+  };
+}
+
+async function activateLifecycle(demo = false): Promise<OpenProjectHandle> {
+  const lifecycleFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === (demo ? "/api/demo/projects/pid" : "/api/projects/pid")) {
+      return jsonResponse(lifecycleProjectResponse());
+    }
+    if (url === (demo
+      ? "/api/demo/projects/pid/pages?from=1&to=15"
+      : "/api/projects/pid/pages?from=1&to=15")) {
+      return jsonResponse({ from: 1, to: 10, pages: [], annotations: [] });
+    }
+    if (!demo && url === "/api/annotation-groups?projectId=pid") {
+      return jsonResponse({ groups: [], memberships: [] });
+    }
+    throw new Error(`unexpected lifecycle request: ${url}`);
+  });
+  vi.stubGlobal("fetch", lifecycleFetch);
+  const handle = openProject(qc, "pid", { demo });
+  expect((await handle.result).status).toBe("opened");
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  return handle;
 }
 
 // [refactor jul11 P2.2⑥] WHY this wrapper stays tiny: pre-response ordering pins need a direct
@@ -404,6 +487,64 @@ describe("CalibrationInput annotation replacement freeze", () => {
     expect(screen.getByPlaceholderText("Distance...")).toHaveValue(null);
   });
 
+  it("does not adopt a saved calibration into a same-ID successor lifecycle", async () => {
+    const lifecycleA = await activateLifecycle();
+    const snapshotA = captureProjectLifecycle(qc);
+    setViewerStoreStateForTest({
+      publicId: "pid",
+      isDemo: false,
+      pageNumber: 3,
+      numPages: 10,
+      activeTool: { kind: "calibration" },
+      calibrationMode: "input",
+      calibrationPoints: { p1: { x: 0.2, y: 0.3 }, p2: { x: 0.7, y: 0.8 } },
+    });
+    seedAnnotations(qc, [ann(40, { name: "Lifecycle A row" })]);
+    const savedA = scaleAnn(90, 3, "Obsolete A scale");
+    const pending = deferred<Response>();
+    const successorPending = new Promise<Response>(() => {});
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/api/annotations") return pending.promise;
+      return successorPending;
+    });
+    render(<CalibrationInput />, { wrapper });
+    fireEvent.change(screen.getByPlaceholderText("Distance..."), { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/annotations",
+      expect.any(Object),
+    ));
+
+    const successorRows = [ann(140, { name: "Successor B row" })];
+    const successorScale = {
+      type: "scale-calibration" as const,
+      point1: { x: 0, y: 0 },
+      point2: { x: 1, y: 0 },
+      realDistance: 140,
+      unit: "ft" as const,
+    };
+    let lifecycleB!: OpenProjectHandle;
+    await act(async () => {
+      lifecycleB = openProject(qc, "pid", { demo: false });
+      setViewerStoreStateForTest({
+        publicId: "pid",
+        isDemo: false,
+        pageNumber: 3,
+        numPages: 10,
+      });
+      seedAnnotations(qc, successorRows);
+      useToolStore.setState({ scaleCalibrations: { 3: successorScale } });
+      pending.resolve(jsonResponse(savedA));
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+
+    expect.soft(isCurrentProjectLifecycle(qc, snapshotA)).toBe(false);
+    expect.soft(readAnnotationRows()).toEqual(successorRows);
+    expect.soft(useToolStore.getState().scaleCalibrations[3]).toBe(successorScale);
+    lifecycleB.dispose();
+    lifecycleA.dispose();
+  });
+
   it("surfaces the shell error message and keeps local rows plus the calibration gesture on POST failure", async () => {
     setViewerStoreStateForTest({
       pageNumber: 5,
@@ -547,7 +688,7 @@ describe("AnnotationListItem note-save freeze", () => {
     expect(remounted.csi).toHaveValue("08, 08 11 16, 09 91 00");
   });
 
-  it("still fires raw PUT in demo and publishes locally after a JSON 403 response (intentional hole pin)", async () => {
+  it("L5 freeze: demo save performs zero network and leaves the shared annotation unchanged", async () => {
     setViewerStoreStateForTest({ isDemo: true });
     const row = yoloAnn(71, { note: "Before" });
     seedAnnotations(qc, [row]);
@@ -562,20 +703,37 @@ describe("AnnotationListItem note-save freeze", () => {
     fireEvent.change(editor.note, { target: { value: "Demo-local edit" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    // [refactor jul11 P2.2⑥] Tripwire, not endorsement: AnnotationListItem has no canPersist/isDemo
-    // gate AND never checks res.ok. The server remains the persistence guard, while this session's
-    // local annotation still changes. A later deliberate demo fix must update this test + ledger.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/annotations/71");
-    expect(init.method).toBe("PUT");
-    expect(JSON.parse(String(init.body))).toMatchObject({ note: "Demo-local edit" });
     await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(readAnnotationRows()[0]).toBe(row);
 
     view.unmount();
     render(<DetectionPanel embedded lockedTab="models" />, { wrapper });
     const remounted = openFirstDetectionEditor();
-    expect(remounted.note).toHaveValue("Demo-local edit");
+    expect(remounted.note).toHaveValue("Before");
+  });
+
+  it("L5 freeze: a resolved HTTP error is not adopted into the shared annotation", async () => {
+    const row = yoloAnn(73, { note: "Persisted before" });
+    seedAnnotations(qc, [row]);
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        { error: { code: "FORBIDDEN", message: "Denied" } },
+        { ok: false, status: 403 },
+      ),
+    );
+    const view = renderAnnotationListItem(row);
+    const editor = openDirectAnnotationEditor();
+    fireEvent.change(editor.note, { target: { value: "Rejected draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(readAnnotationRows()[0]).toBe(row);
+
+    view.unmount();
+    render(<DetectionPanel embedded lockedTab="models" />, { wrapper });
+    expect(openFirstDetectionEditor().note).toHaveValue("Persisted before");
   });
 
   it("silently keeps the editor draft but leaves the shared annotation untouched on network reject", async () => {
@@ -611,5 +769,253 @@ describe("AnnotationListItem note-save freeze", () => {
     const remounted = openFirstDetectionEditor();
     expect(remounted.note).toHaveValue("Persisted before");
     expect(remounted.csi).toHaveValue("08");
+  });
+});
+
+describe("DetectionPanel CSI override security freeze", () => {
+  function openCsiOverrideEditor() {
+    render(<DetectionPanel embedded lockedTab="models" />, { wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /CSI Tags/ }));
+    const input = screen.getByPlaceholderText("CSI codes...");
+    fireEvent.change(input, { target: { value: "09 91 00" } });
+    return screen.getByRole("button", { name: "Save to Project" });
+  }
+
+  it("L5 freeze: demo CSI override performs zero network", async () => {
+    setViewerStoreStateForTest({ isDemo: true });
+    seedAnnotations(qc, [yoloAnn(80)]);
+    fetchMock.mockResolvedValueOnce(jsonResponse({}, { ok: false, status: 403 }));
+    fireEvent.click(openCsiOverrideEditor());
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save to Project" })).toBeEnabled());
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("adopts success messaging only when the CSI response is ok", async () => {
+    seedAnnotations(qc, [yoloAnn(81)]);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: "denied" }, { ok: false, status: 403 }));
+    fireEvent.click(openCsiOverrideEditor());
+
+    expect(await screen.findByText("Save failed")).toBeInTheDocument();
+    expect(screen.queryByText("Saved to project")).not.toBeInTheDocument();
+  });
+});
+
+describe("DetectionPanel synchronous publication tails — same-ID lifecycle retirement", () => {
+  const successorSearch = "successor B search";
+  const successorAnnotationFilter = "successor B annotation filter";
+  const successorTagId = "successor-b-tag";
+  const successorTagFilter = "successor-b-tag-filter";
+
+  function installSameIdSuccessor(seed: () => void): OpenProjectHandle {
+    fetchMock.mockImplementation(() => new Promise<Response>(() => {}));
+    const lifecycleB = openProject(qc, "pid", { demo: true });
+    setViewerStoreStateForTest({
+      projectId: 0,
+      publicId: "pid",
+      isDemo: true,
+      pageNumber: 3,
+      numPages: 10,
+    });
+    seed();
+    return lifecycleB;
+  }
+
+  function renderModelRow(active: boolean) {
+    setViewerStoreStateForTest({
+      pageNumber: 3,
+      activeAnnotationFilter: active ? "Door" : null,
+      searchQuery: active ? "A search" : "",
+    });
+    seedAnnotations(qc, [yoloAnn(170, { pageNumber: 3 })]);
+    render(<DetectionPanel embedded lockedTab="models" />, { wrapper });
+    fireEvent.click(screen.getByRole("button", { name: "▶" }));
+  }
+
+  function renderTagPanel({ active = false }: { active?: boolean } = {}) {
+    seedYoloTagsFromBootstrap(qc, "pid", { yoloTags: [yoloTag()] });
+    setViewerStoreStateForTest({
+      activeYoloTagId: active ? "tag-a" : null,
+      activeYoloTagFilter: active ? "tag-a" : null,
+    });
+    render(<DetectionPanel embedded lockedTab="tags" />, { wrapper });
+  }
+
+  it("AnnotationListItem row filtering does not publish A search text into successor B", async () => {
+    const lifecycleA = await activateLifecycle();
+    renderModelRow(false);
+    fireEvent.click(screen.getByRole("button", { name: "▶" }));
+
+    let admittedB = false;
+    let lifecycleB!: OpenProjectHandle;
+    const unsubscribe = useUiStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeAnnotationFilter === "Door" ||
+          state.activeAnnotationFilter !== "Door") return;
+      admittedB = true;
+      lifecycleB = installSameIdSuccessor(() => {
+        useUiStore.setState({
+          activeAnnotationFilter: successorAnnotationFilter,
+          searchQuery: successorSearch,
+        });
+      });
+    });
+
+    const row = screen.getAllByTitle("Door").at(-1);
+    expect(row).toBeDefined();
+    fireEvent.click(row!);
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useUiStore.getState().activeAnnotationFilter).toBe(successorAnnotationFilter);
+    expect.soft(useUiStore.getState().searchQuery).toBe(successorSearch);
+    lifecycleB?.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("clearing an active detection class does not clear successor B's search", async () => {
+    const lifecycleA = await activateLifecycle();
+    renderModelRow(true);
+
+    let admittedB = false;
+    let lifecycleB!: OpenProjectHandle;
+    const unsubscribe = useUiStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeAnnotationFilter !== "Door" ||
+          state.activeAnnotationFilter !== null) return;
+      admittedB = true;
+      lifecycleB = installSameIdSuccessor(() => {
+        useUiStore.setState({
+          activeAnnotationFilter: successorAnnotationFilter,
+          searchQuery: successorSearch,
+        });
+      });
+    });
+
+    fireEvent.click(screen.getByTitle("Door"));
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useUiStore.getState().activeAnnotationFilter).toBe(successorAnnotationFilter);
+    expect.soft(useUiStore.getState().searchQuery).toBe(successorSearch);
+    lifecycleB?.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("selecting a tag does not publish A's filter or search into successor B", async () => {
+    const lifecycleA = await activateLifecycle(true);
+    renderTagPanel();
+
+    let admittedB = false;
+    let lifecycleB!: OpenProjectHandle;
+    const unsubscribe = useUiStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeYoloTagId === "tag-a" ||
+          state.activeYoloTagId !== "tag-a") return;
+      admittedB = true;
+      lifecycleB = installSameIdSuccessor(() => {
+        useUiStore.setState({
+          activeYoloTagId: successorTagId,
+          activeYoloTagFilter: successorTagFilter,
+          searchQuery: successorSearch,
+        });
+      });
+    });
+
+    fireEvent.click(screen.getByText("D-01"));
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useUiStore.getState().activeYoloTagId).toBe(successorTagId);
+    expect.soft(useUiStore.getState().activeYoloTagFilter).toBe(successorTagFilter);
+    expect.soft(useUiStore.getState().searchQuery).toBe(successorSearch);
+    lifecycleB?.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("active-tag indicator clear does not clear successor B's tag filter", async () => {
+    const lifecycleA = await activateLifecycle(true);
+    renderTagPanel({ active: true });
+
+    let admittedB = false;
+    let lifecycleB!: OpenProjectHandle;
+    const unsubscribe = useUiStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeYoloTagId !== "tag-a" ||
+          state.activeYoloTagId !== null) return;
+      admittedB = true;
+      lifecycleB = installSameIdSuccessor(() => {
+        useUiStore.setState({
+          activeYoloTagId: successorTagId,
+          activeYoloTagFilter: successorTagFilter,
+        });
+      });
+    });
+
+    const activeIndicator = screen.getByText("Active: D-01").parentElement;
+    const clear = activeIndicator?.querySelector("button");
+    expect(clear).not.toBeNull();
+    fireEvent.click(clear!);
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useUiStore.getState().activeYoloTagId).toBe(successorTagId);
+    expect.soft(useUiStore.getState().activeYoloTagFilter).toBe(successorTagFilter);
+    lifecycleB?.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("Add Missing does not publish A's active tag after successor B owns the tool", async () => {
+    const lifecycleA = await activateLifecycle(true);
+    renderTagPanel();
+    fireEvent.click(screen.getByRole("button", { name: "▶" }));
+
+    let admittedB = false;
+    let lifecycleB!: OpenProjectHandle;
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
+      if (admittedB || previous.activeTool?.kind === "tagAdd" ||
+          state.activeTool?.kind !== "tagAdd" || state.activeTool.tagId !== "tag-a") return;
+      admittedB = true;
+      lifecycleB = installSameIdSuccessor(() => {
+        useToolStore.setState({ activeTool: { kind: "tagAdd", tagId: successorTagId } });
+        useUiStore.setState({ activeYoloTagId: successorTagId });
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Add Missing" }));
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useToolStore.getState().activeTool).toEqual({
+      kind: "tagAdd",
+      tagId: successorTagId,
+    });
+    expect.soft(useUiStore.getState().activeYoloTagId).toBe(successorTagId);
+    lifecycleB?.dispose();
+    lifecycleA.dispose();
+  });
+
+  it("Accept Selected does not clear successor B's scan preview", async () => {
+    const lifecycleA = await activateLifecycle(true);
+    const scanA = tagScanResults("A");
+    setViewerStoreStateForTest({ pageNumber: 3, tagScanResults: scanA });
+    render(<DetectionPanel embedded lockedTab="tags" />, { wrapper });
+
+    const scanB = tagScanResults("successor B");
+    let admittedB = false;
+    let lifecycleB!: OpenProjectHandle;
+    const expectedKey = JSON.stringify(queryKeys.yoloTags.all("pid"));
+    const unsubscribe = qc.getQueryCache().subscribe((event) => {
+      if (admittedB || event.type !== "updated" ||
+          JSON.stringify(event.query.queryKey) !== expectedKey) return;
+      admittedB = true;
+      lifecycleB = installSameIdSuccessor(() => {
+        useToolStore.setState({ tagScanResults: scanB });
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Accept Selected" }));
+    unsubscribe();
+
+    expect.soft(admittedB).toBe(true);
+    expect.soft(useToolStore.getState().tagScanResults).toBe(scanB);
+    lifecycleB?.dispose();
+    lifecycleA.dispose();
   });
 });

@@ -4,6 +4,11 @@ import { useCallback } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { canPersist, persistFetch } from "@/lib/client-persist";
 import { invalidateToolTailAuthority } from "@/lib/parse-tool-authority";
+import {
+  captureProjectLifecycle,
+  isCurrentProjectLifecycle,
+  type ProjectLifecycleSnapshot,
+} from "@/lib/project-lifecycle";
 import { queryKeys } from "@/queries/queryKeys";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
@@ -49,6 +54,13 @@ export interface PersistCreateOptions {
   onError?: (error: Error) => void;
   /** Future-only opt-in. Existing annotation writers keep optimistic rows on failure. */
   rollbackOnError?: boolean;
+  /** Exact render/invocation authority supplied by the owning component. */
+  canAdopt?: () => boolean;
+}
+
+export interface AnnotationCommitOptions {
+  /** Exact render/invocation authority supplied by the owning component. */
+  canAdopt?: () => boolean;
 }
 
 /** Public facade surface. Keeping this explicit makes new feature call sites discoverable. */
@@ -59,7 +71,7 @@ export interface UseAnnotationsResult {
   updateAnnotation: (id: number, updates: Partial<ClientAnnotation>) => void;
   /** Captured whole-array replacement; intentionally not an AnnotationUpdater overload. */
   setAnnotations: (annotations: ClientAnnotation[]) => void;
-  commitBucketFill: (item: ClientTakeoffItem) => void;
+  commitBucketFill: (item: ClientTakeoffItem, options?: AnnotationCommitOptions) => void;
   persistCreate: (
     draft: NewAnnotationDraft,
     options?: PersistCreateOptions,
@@ -119,6 +131,18 @@ function reportPersistCreateError(error: Error, label?: string): void {
   console.error(`[ANNOTATIONS] ${label ?? "Annotation drawn locally but NOT saved"}:`, error);
 }
 
+function captureDirectActionAuthority(qc: QueryClient): () => boolean {
+  const session = useSessionStore.getState();
+  const lifecycle: ProjectLifecycleSnapshot | null = captureProjectLifecycle(qc);
+  return () => {
+    const current = useSessionStore.getState();
+    if (current.publicId !== session.publicId || current.isDemo !== session.isDemo) return false;
+    return lifecycle
+      ? isCurrentProjectLifecycle(qc, lifecycle)
+      : captureProjectLifecycle(qc) === null;
+  };
+}
+
 /** Hoisted store action: remove the last active-item annotation on the current page. */
 export function takeoffUndo(qc: QueryClient): void {
   invalidateToolTailAuthority();
@@ -127,6 +151,7 @@ export function takeoffUndo(qc: QueryClient): void {
   const sessionSnapshot = useSessionStore.getState();
   const coreSnapshot = useViewerCoreStore.getState();
   const toolSnapshot = useToolStore.getState();
+  const canPublish = captureDirectActionAuthority(qc);
   if (toolSnapshot.activeTool?.kind !== "takeoffPlacement") return;
   const activeId = toolSnapshot.activeTakeoffItemId;
   if (!activeId) return;
@@ -149,6 +174,7 @@ export function takeoffUndo(qc: QueryClient): void {
   // LOAD-BEARING guard: the old action cleared redo only inside its found-row branch. A null
   // active item or no matching annotation is a no-op on BOTH cache and stacks.
   if (!removed) return;
+  if (!canPublish()) return;
   const removedRow = removed;
   useToolStore.setState((state) => ({
     takeoffUndoStack: [...state.takeoffUndoStack, removedRow],
@@ -161,23 +187,29 @@ export function takeoffRedo(qc: QueryClient): void {
   invalidateToolTailAuthority();
   const sessionSnapshot = useSessionStore.getState();
   const toolSnapshot = useToolStore.getState();
+  const canPublish = captureDirectActionAuthority(qc);
   if (toolSnapshot.activeTool?.kind !== "takeoffPlacement") return;
   if (toolSnapshot.takeoffUndoStack.length === 0) return;
 
   // Deliberately no active-item guard: the old direct action could redo with activeId=null.
   const restored = toolSnapshot.takeoffUndoStack[toolSnapshot.takeoffUndoStack.length - 1];
   writeAnns(qc, sessionSnapshot.publicId, (rows) => [...rows, restored]);
+  if (!canPublish()) return;
   useToolStore.setState((state) => ({
     takeoffUndoStack: state.takeoffUndoStack.slice(0, -1),
     takeoffRedoStack: [...state.takeoffRedoStack, restored],
   }));
 }
 
-function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void {
+function useBucketFillCommit(
+  qc: QueryClient,
+): (item: ClientTakeoffItem, options?: AnnotationCommitOptions) => void {
   return useCallback(
-    (item: ClientTakeoffItem) => {
+    (item: ClientTakeoffItem, options?: AnnotationCommitOptions) => {
       // Invocation-time snapshots preserve the singleton store action's freshness. Capture all
       // owners adjacently, then use those values for cache key and request if navigation races.
+      const canAdopt = options?.canAdopt ?? (() => true);
+      if (!canAdopt()) return;
       const sessionSnapshot = useSessionStore.getState();
       const coreSnapshot = useViewerCoreStore.getState();
       const toolSnapshot = useToolStore.getState();
@@ -210,7 +242,9 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
       // reverse these lines: the post-migration dialog unmounts from the pending clear while cache
       // notification is deferred, and this ordering minimizes the sanctioned D8 visual tear.
       writeAnns(qc, sessionSnapshot.publicId, (rows) => [...rows, optimistic]);
+      if (!canAdopt()) return;
       useToolStore.setState({ bucketFillPendingPolygon: null });
+      if (!canAdopt()) return;
 
       // Preserve the original two-tier G6 gate byte-for-behavior: demo is local-only and silent;
       // non-demo with unresolved publicId keeps the local row but exposes a persistent error.
@@ -232,6 +266,7 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
         data: polygonData,
       })
         .then((saved) => {
+          if (!canAdopt()) return;
           // The server may enrich the row (for example CSI data), but current writers reconcile
           // ID ONLY. Adopting the whole response here would be an unsanctioned behavior change.
           const savedId = (saved as { id?: number } | null)?.id;
@@ -244,6 +279,7 @@ function useBucketFillCommit(qc: QueryClient): (item: ClientTakeoffItem) => void
           }
         })
         .catch((error: Error) => {
+          if (!canAdopt()) return;
           // NO rollback by design: the user still sees locally drawn geometry and a clear warning.
           useToolStore.setState({
             bucketFillError: `Bucket fill drawn locally but NOT saved: ${error.message}`,
@@ -264,12 +300,14 @@ function usePersistCreate(
 ): (draft: NewAnnotationDraft, options?: PersistCreateOptions) => Promise<number> {
   return useCallback(
     async (draft: NewAnnotationDraft, options?: PersistCreateOptions): Promise<number> => {
+      const canAdopt = options?.canAdopt ?? (() => true);
+      const tempId = -Date.now();
+      if (!canAdopt()) return tempId;
       // Snapshot BEFORE the optimistic add. The original SPEC pseudocode placed this below add,
       // making rollback inert by restoring a snapshot that already contained the temp row.
       const rollbackSnapshot = options?.rollbackOnError
         ? readAnnotations(qc, publicId)
         : null;
-      const tempId = -Date.now();
       // [refactor jul11 P2.2⑥ C4] Normalize only the local row. The request below still spreads
       // the caller's exact draft, so optional fields that were historically omitted stay omitted.
       addAnnotation({
@@ -281,6 +319,7 @@ function usePersistCreate(
         source: draft.source ?? "user",
         data: draft.data ?? null,
       });
+      if (!canAdopt()) return tempId;
 
       // Optimistic local creation is always available, including demo/pre-bootstrap sessions.
       if (!canPersist(publicId, isDemo)) return tempId;
@@ -290,6 +329,7 @@ function usePersistCreate(
           projectId: publicId,
           ...draft,
         })) as { id?: number } | null;
+        if (!canAdopt()) return tempId;
         const savedId = saved?.id;
         if (savedId) {
           updateAnnotation(tempId, { id: savedId });
@@ -298,6 +338,7 @@ function usePersistCreate(
         // Match every existing reconcile site: null/missing/falsy IDs leave AND return the temp ID.
         return tempId;
       } catch (caught) {
+        if (!canAdopt()) return tempId;
         const error = caught instanceof Error ? caught : new Error(String(caught));
         // Explicit future capability only. Snapshot replacement can itself discard concurrent
         // rows, which is why no existing writer opts in during the behavior-faithful migration.

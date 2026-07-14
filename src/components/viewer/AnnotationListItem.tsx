@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ClientAnnotation } from "@/types";
 import { useAnnotations } from "@/queries/useAnnotations";
 import { normalizeCsiCodes, CSI_INPUT_PLACEHOLDER } from "@/lib/csi-utils";
+import { useProjectIdentity } from "@/stores/sessionStore";
+import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
+import { canPersist } from "@/lib/client-persist";
 
 interface AnnotationListItemProps {
   annotation: ClientAnnotation;
@@ -24,6 +27,9 @@ export default function AnnotationListItem({
   const [note, setNote] = useState(annotation.note || "");
   const [saving, setSaving] = useState(false);
   const { updateAnnotation } = useAnnotations();
+  const { publicId, isDemo } = useProjectIdentity();
+  const canAdoptProjectLifecycle = useProjectLifecycleGuard(publicId, isDemo);
+  useEffect(() => setSaving(false), [canAdoptProjectLifecycle]);
 
   const confidence = annotation.data?.confidence as number | undefined;
   const csiCodes = (annotation.data?.csiCodes as string[]) || [];
@@ -31,15 +37,17 @@ export default function AnnotationListItem({
   const [csiInput, setCsiInput] = useState(csiCodes.join(", "));
 
   function handleRowClick() {
+    if (!canAdoptProjectLifecycle()) return;
     onToggleFilter(annotation.name);
+    if (!canAdoptProjectLifecycle()) return;
     if (!isActive) onSearchKeyword(annotation.name);
   }
 
   async function handleSave() {
+    if (!canAdoptProjectLifecycle() || !canPersist(publicId, isDemo)) return;
     setSaving(true);
+    if (!canAdoptProjectLifecycle()) return;
     try {
-      // [refactor jul10 P2.2⑥] Preserve the legacy unguarded PUT (including in demo); this pass
-      // moves only the successful optimistic merge to cache and does not repair the demo gate.
       const normalizedCsi = normalizeCsiCodes(csiInput);
       const updatedData = { ...annotation.data, note, csiCodes: normalizedCsi.length > 0 ? normalizedCsi : undefined };
       const res = await fetch(`/api/annotations/${annotation.id}`, {
@@ -47,18 +55,21 @@ export default function AnnotationListItem({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ note, data: updatedData }),
       });
+      if (!canAdoptProjectLifecycle() || !res.ok) return;
       const result = await res.json();
+      if (!canAdoptProjectLifecycle()) return;
       // Merge auto-detected CSI codes from note text
       if (result.autoCsiCodes?.length > 0) {
         const merged = [...new Set([...normalizedCsi, ...result.autoCsiCodes])];
         updatedData.csiCodes = merged;
         setCsiInput(merged.join(", "));
       }
+      if (!canAdoptProjectLifecycle()) return;
       updateAnnotation(annotation.id, { note: note || null, data: updatedData });
     } catch {
       // Silently fail -- user can retry
     } finally {
-      setSaving(false);
+      if (canAdoptProjectLifecycle()) setSaving(false);
     }
   }
 
