@@ -1,9 +1,8 @@
-// [refactor jul8 P2.1] Query-key factory for the P2 state split (plan 03 §2.1-2.2).
+// [refactor jul14 P2] Query-key factory for the live Query-owned domains and project catalogs.
 //
 // ONE hierarchical, typed home for every TanStack Query key, so invalidation scopes are
-// grep-able and no component hand-rolls a key string. Introduced EMPTY of consumers —
-// P2.1 is zero-behavior; each P2.2 domain migration (①→⑨, blast-radius order below)
-// starts using its factory as the viewerStore field becomes a facade over the cache.
+// grep-able and no component hand-rolls a key string. All nine P2.2 domains use these factories;
+// the project lifecycle also owns the project-catalog key and project-wide cache teardown.
 //
 // Conventions (locked here so ①-⑨ stay uniform):
 //   • Everything project-scoped nests under ["project", publicId] — one invalidation

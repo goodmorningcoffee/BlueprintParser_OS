@@ -242,24 +242,6 @@ export function activeToolAfterPageChange(state: ActiveToolProjection): ActiveTo
   }
 }
 
-export function activeToolAfterProjectReset(current: ActiveTool): ActiveTool {
-  if (current === null) return null;
-  switch (current.kind) {
-    case "bucketFill":
-    case "split":
-      return current;
-    case "calibration":
-    case "takeoffPlacement":
-    case "symbolTemplate":
-    case "tagPick":
-    case "tagAdd":
-    case "parseRect":
-      return null;
-    default:
-      return assertNever(current);
-  }
-}
-
 export function resolveCanvasGestureOwner(
   snapshot: CanvasGestureSnapshot,
 ): CanvasGestureOwner | null {

@@ -918,7 +918,10 @@ describe("P2.3 T2 AnnotationOverlay event-command characterization", () => {
         "setTableParseStepWithTool", "setKeynoteParseStepWithTool",
         "setNotesParseStepWithTool", "setSpecParseStepWithTool",
       ],
-      ["tool.resetPolygonDrawing", "setMousePos", "tool.setActiveTakeoffItemId"],
+      [
+        "tool.resetPolygonDrawing", "canAdoptProjectLifecycle", "setMousePos",
+        "tool.setActiveTakeoffItemId",
+      ],
       ["tool.resetCalibration"],
       ["tool.setSymbolSearchActive"],
       ["tool.setYoloTagPickingMode"],

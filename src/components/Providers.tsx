@@ -1,12 +1,11 @@
 "use client";
 
-// [refactor jul8 P2.1] TanStack Query introduced (plan 03 §2.1 — zero behavior change:
-// no component consumes the cache yet). Each §2.2 domain migration (①chat→⑨yoloTags)
-// starts pointing its reads/mutations here; keys come from src/queries/queryKeys.ts.
+// [refactor jul14 P2] TanStack Query is the live client owner for migrated project server data.
+// This provider supplies the single browser QueryClient used by the domain hooks and project
+// lifecycle bootstrap/reset; keys come from src/queries/queryKeys.ts.
 // Client instantiated inside useState so SSR/App-Router re-renders reuse ONE instance
 // (a module-level client would leak state across requests in dev HMR).
-// Defaults stay TanStack's own — per-domain staleTime/gcTime land WITH each migration,
-// pinned by that domain's tests, not preemptively here.
+// Defaults stay TanStack's own — each live domain owns and tests its staleTime/gcTime policy.
 import { useState } from "react";
 import { SessionProvider } from "next-auth/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

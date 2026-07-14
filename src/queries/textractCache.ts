@@ -9,10 +9,10 @@ import {
 import { queryKeys } from "@/queries/queryKeys";
 import type { TextractPageData } from "@/types";
 
-// [refactor jul11 P2.2⑧ C2] Production-dead Textract cache/coordinator. The authoritative contract is
-// P2_DESIGN/TEXTRACT_IMPL/SPEC.md. Normal GET transport will be owned by one imperative navigation
-// controller in C3; components receive disabled data observers through useTextract.ts. Keeping the
-// transport policy here makes dedupe, cancellation, retention, and publicId provenance one concern.
+// [refactor jul14 P2.2⑧ C3] Live Textract Query cache/coordinator. useTextractLoader owns the
+// imperative navigation transport; components receive disabled data observers through
+// useTextract.ts. Keeping transport policy here makes dedupe, cancellation, retention, and publicId
+// provenance one concern. The authoritative contract is P2_DESIGN/TEXTRACT_IMPL/SPEC.md.
 
 export const MAX_RETAINED_TEXTRACT_PAGES = 12;
 export const MAX_RETAINED_TEXTRACT_BYTES = 8 * 1024 * 1024;

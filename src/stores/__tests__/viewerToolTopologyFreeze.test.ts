@@ -180,7 +180,7 @@ const ANNOTATION_TOOL_PRIMITIVES = [
   "dismissedSymbolMatches", "activeTakeoffItemId", "scaleCalibrations", "polygonDrawingMode",
   "setPolygonDrawingMode", "addPolygonVertex", "undoLastVertex", "bucketFillLoading",
   "setBucketFillPreview", "bucketFillBarrierMode", "addBucketFillBarrier",
-  "setSplitLineEndpoint", "setSplitPreview", "setSplitError", "tempPanMode",
+  "setSplitLineEndpoint", "setSplitPreview", "tempPanMode",
 ] as const;
 
 const PREVIEW_TOOL_PRIMITIVES = [
@@ -982,11 +982,17 @@ describe("P2.3 T2 grouped tool surfaces", () => {
 });
 
 describe("P2.3 T2 sacred canvas subscription topology", () => {
-  it("pins AnnotationOverlay's 19 direct primitives plus one derived hot discriminator", () => {
+  it("pins AnnotationOverlay's 18 direct primitives plus one derived hot discriminator", () => {
     const source = parse(ANNOTATION_OVERLAY);
     const raw = primitiveSelectorMembers(source, ACTIVE_TOOL_OWNER)
       .filter((member) => TOOL_MEMBERS.has(member));
     expect(raw).toEqual(ANNOTATION_TOOL_PRIMITIVES);
+    // Split errors remain live behavior, but the lifecycle/revision-aware transient helper reads
+    // the stable action imperatively instead of adding it back to the sacred canvas selector set.
+    expect(storeMemberAccesses(source, ACTIVE_TOOL_OWNER, TOOL_MEMBERS)
+      .filter((access) => access.member === "setSplitError")
+      .map((access) => access.kind)
+      .sort()).toEqual(["getState-alias", "getState-direct"]);
     expect(importedCallCount(source, [VIEWER_OWNER.module, TOOL_OWNER.module], "useSymbolSearch")).toBe(0);
     expect(importedSelectorUseCount(
       source, ACTIVE_TOOL_OWNER, ACTIVE_TOOL_STATE_MODULE, "selectActiveToolKey",

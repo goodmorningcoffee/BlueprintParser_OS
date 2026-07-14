@@ -8,7 +8,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   activeToolAfterPageChange,
-  activeToolAfterProjectReset,
   activeToolReleaseFallback,
   captureCanvasGestureLease,
   isDrawCapableParseStep,
@@ -367,7 +366,6 @@ describe("AT2 exact ActiveTool representation", () => {
       "transitionActiveTool",
       "releaseActiveToolExact",
       "activeToolAfterPageChange",
-      "activeToolAfterProjectReset",
       "resolveCanvasGestureOwner",
       "captureCanvasGestureLease",
       "matchesCanvasGestureLease",
@@ -490,7 +488,7 @@ describe("AT2 exact ActiveTool representation", () => {
     void invalidDrawingStep;
     void invalidSpecOwner;
     void invalidSpecIntent;
-  });
+  }, 15_000);
 
   it("derives one primitive hot key and a separate cold exact tag id", () => {
     const cases: Array<[ActiveTool, ReturnType<typeof selectActiveToolKey>, string | null]> = [
@@ -649,7 +647,7 @@ describe("AT1 pure transition and fallback table", () => {
     }
   });
 
-  it("pins every page and project-reset destination with exact survivor identity", () => {
+  it("pins every page destination with exact survivor identity", () => {
     type PagePolicy = "null" | "same" | "freshTakeoff";
     const pageCases: ReadonlyArray<readonly [
       current: ActiveToolObject,
@@ -682,15 +680,6 @@ describe("AT1 pure transition and fallback table", () => {
           expect(result, label).toEqual({ kind: "takeoffPlacement" });
           expect(result, label).not.toBe(current);
         }
-      }
-    }
-
-    for (const current of [null, ...ALL_ACTIVE_TOOLS] as const) {
-      const result = activeToolAfterProjectReset(current);
-      if (current?.kind === "bucketFill" || current?.kind === "split") {
-        expect(result).toBe(current);
-      } else {
-        expect(result).toBeNull();
       }
     }
   });

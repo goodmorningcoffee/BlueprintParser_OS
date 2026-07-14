@@ -154,7 +154,10 @@ type CommandArguments = {
 const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
   "src/components/viewer/KeynoteItem.tsx:saveName": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "session.isDemo", pageNumber: "keynote.pageNumber" },
+    target: {
+      publicId: "publicId", isDemo: "isDemo", pageNumber: "keynote.pageNumber",
+      canAdopt: "isRenderedLifecycleCurrent",
+    },
     promotion: {
       via: '"parser"', type: '"keynote"', regionId: "matchedId", bboxMinMax: "matchedBbox",
       data: "matchedData", category: "trimmed", csiTags: "matchedCsiTags",
@@ -166,6 +169,7 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
       publicId: "target.publicId",
       isDemo: "target.isDemo",
       pageNumber: "target.pageNumber",
+      canAdopt: "isRenderedLifecycleCurrent",
     },
     promotion: {
       via: '"parser"', type: '"keynote"', regionId: "regionId", bboxMinMax: "target.bbox",
@@ -178,6 +182,7 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
       publicId: "target.publicId",
       isDemo: "target.isDemo",
       pageNumber: "target.pageNumber",
+      canAdopt: "isRenderedLifecycleCurrent",
     },
     promotion: {
       via: '"parser"', type: '"keynote"', regionId: "regionId", bboxMinMax: "bbox",
@@ -186,7 +191,10 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
   },
   "src/components/viewer/NotesClassifier.tsx:handleAccept": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    target: {
+      publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber",
+      canAdopt: "canAdoptLifecycle",
+    },
     promotion: {
       via: '"classifier"', type: '"notes"', sourceTextRegionId: "tr.id",
     },
@@ -195,6 +203,7 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
     queryClient: "queryClient",
     target: {
       publicId: "target.publicId", isDemo: "target.isDemo", pageNumber: "target.pageNumber",
+      canAdopt: "isRenderedLifecycleCurrent",
     },
     promotion: {
       via: '"parser"', type: '"notes"', regionId: "regionIdFor(target.pageNumber,target.region)",
@@ -205,6 +214,7 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
     queryClient: "queryClient",
     target: {
       publicId: "target.publicId", isDemo: "target.isDemo", pageNumber: "target.pageNumber",
+      canAdopt: "isRenderedLifecycleCurrent",
     },
     promotion: {
       via: '"parser"', type: '"notes"', regionId: "regionIdFor(target.pageNumber,unionBbox)",
@@ -213,7 +223,10 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
   },
   "src/components/viewer/ParsedTableItem.tsx:persistRegionEdit": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "table.pageNum" },
+    target: {
+      publicId: "publicId", isDemo: "isDemo", pageNumber: "table.pageNum",
+      canAdopt: "isRenderedLifecycleCurrent",
+    },
     promotion: {
       via: '"parser"', type: 'table.region.type==="keynote"?"keynote":"schedule"',
       regionId: "table.region.id", bboxMinMax: "bbox", data: "nextData", category: "category",
@@ -222,7 +235,10 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
   },
   "src/components/viewer/SpecClassifier.tsx:handleAccept": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    target: {
+      publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber",
+      canAdopt: "canAdoptLifecycle",
+    },
     promotion: {
       via: '"classifier"', type: '"spec"', sourceTextRegionId: "tr.id",
     },
@@ -231,6 +247,7 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
     queryClient: "queryClient",
     target: {
       publicId: "target.publicId", isDemo: "target.isDemo", pageNumber: "target.pageNumber",
+      canAdopt: "isRenderedLifecycleCurrent",
     },
     promotion: {
       via: '"parser"', type: '"spec"', regionId: "regionIdFor(target.pageNumber,target.region)",
@@ -242,6 +259,7 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
     queryClient: "queryClient",
     target: {
       publicId: "target.publicId", isDemo: "target.isDemo", pageNumber: "target.pageNumber",
+      canAdopt: "isRenderedLifecycleCurrent",
     },
     promotion: {
       via: '"parser"', type: '"spec"', regionId: "regionIdFor(target.pageNumber,unionBbox)",
@@ -250,7 +268,10 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
   },
   "src/components/viewer/TableCompareModal.tsx:handleDone": {
     queryClient: "queryClient",
-    target: { publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber" },
+    target: {
+      publicId: "publicId", isDemo: "isDemo", pageNumber: "pageNumber",
+      canAdopt: "isRenderedLifecycleCurrent",
+    },
     promotion: {
       via: '"parser"', type: "matchedType", regionId: "matchedId", bboxMinMax: "matchedBbox",
       data: "edited?.data??{}", csiTags: "matchedCsiTags",
@@ -260,6 +281,7 @@ const EXPECTED_COMMAND_ARGUMENTS: Record<string, CommandArguments> = {
     queryClient: "queryClient",
     target: {
       publicId: "target.publicId", isDemo: "target.isDemo", pageNumber: "target.pageNumber",
+      canAdopt: "isRenderedLifecycleCurrent",
     },
     promotion: {
       via: '"parser"', type: '"schedule"',
@@ -1143,6 +1165,7 @@ describe("P2.4 C3 parse client-I/O topology", () => {
         isDemo: "isDemo",
         pageNumber: "table.pageNum",
         regionId: "regionId",
+        canAdopt: "isRenderedLifecycleCurrent",
       },
     }]);
 

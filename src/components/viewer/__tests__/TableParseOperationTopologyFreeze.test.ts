@@ -254,7 +254,12 @@ describe("A2b exact Table operation topology", () => {
     expect(helper).toContain("conststarted=ownsToken?tableOperation.begin():null");
     expect(helper).toContain("completeTableParseOperation(token,{resetGuided:opts?.resetGuided,afterTerminal:");
     expect(helper).toContain("opts?.onLocalSuccess?.()");
-    expect(helper).toContain("if(ownsToken)tableOperation.finish(token)");
+    expect(helper).toContain(
+      "constcanPublishCompletion=()=>isRenderedLifecycleCurrent()&&tableOperation.isCurrent(token)",
+    );
+    expect(helper).toContain(
+      "if(ownsToken&&canPublishCompletion())tableOperation.finish(token)",
+    );
 
     const combined = [TABLE_PANEL, AUTO, MANUAL, GUIDED, MODAL, CELL_STRUCTURE_HOOK]
       .map((path) => readFileSync(join(process.cwd(), path), "utf8"))
@@ -340,7 +345,10 @@ describe("A2b exact Table operation topology", () => {
     expect(hasIdentifierCallAncestor(queryWrite, "commitParseOperation", root)).toBe(false);
 
     const text = compact(root);
-    expect(text).toContain("if(!tableOperation.isCurrent(token))return;setPageIntelligenceForPage(");
+    expect(text).toContain(
+      "constcanPublishCompletion=()=>isRenderedLifecycleCurrent()&&tableOperation.isCurrent(token)",
+    );
+    expect(text).toContain("if(!canPublishCompletion())return;setPageIntelligenceForPage(");
     expect(text.indexOf("tableOperation.begin()"))
       .toBeLessThan(text.indexOf("setPageIntelligenceForPage("));
   });

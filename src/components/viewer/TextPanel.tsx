@@ -188,11 +188,9 @@ function AnnotationsTab({ annotations, pageNumber }: { annotations: TextAnnotati
   const publicId = useSessionStore((s) => s.publicId);
   const isDemo = useSessionStore((s) => s.isDemo);
   const canPublish = useProjectLifecycleGuard(publicId, isDemo);
-  const annotationsAuthorityRef = useRef({ annotations, canPublish });
-  if (annotationsAuthorityRef.current.annotations !== annotations) {
-    annotationsAuthorityRef.current = { annotations, canPublish };
-  }
-  const canPublishAnnotations = annotationsAuthorityRef.current.canPublish;
+  // Bind authority to the rows so a same-ID successor cannot publish predecessor annotations.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const canPublishAnnotations = useMemo(() => canPublish, [annotations]);
   const {
     showTextAnnotations: showAll,
     activeTextAnnotationTypes: activeTypes,

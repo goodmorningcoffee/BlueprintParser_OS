@@ -178,7 +178,12 @@ describe("A2d exact Notes/Spec operation topology", () => {
       expect(body).toContain("inheritedToken");
       expect(body).toContain("ownsToken");
       expect(body).toContain(`${owner}.isCurrent(token)`);
-      expect(body).toMatch(new RegExp(`if\\(ownsToken\\)${owner}\\.finish\\(token\\)`));
+      expect(body).toContain(
+        `constcanPublishCompletion=()=>isRenderedLifecycleCurrent()&&${owner}.isCurrent(activeToken)`,
+      );
+      expect(body).toContain(
+        `if(ownsToken&&canPublishCompletion())${owner}.finish(token)`,
+      );
     }
 
     for (const retired of ["isSavingRef", "setLoading(false)", "setSaving(false)"]) {

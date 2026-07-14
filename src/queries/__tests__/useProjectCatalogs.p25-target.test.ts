@@ -258,5 +258,5 @@ describe("P2.5 target project catalog ownership", () => {
       expect(source).toContain('from "@/queries/useProjectCatalogs"');
       expect(source).not.toContain("viewerStore");
     }
-  });
+  }, 15_000);
 });

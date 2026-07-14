@@ -30,9 +30,13 @@ describe("Table region consumption for Shape", () => {
     );
     // The command-level denial cases below prove stale/equal-by-value inputs return false. This
     // source pin closes the consumer half of that contract: a denied CAS must return before the
-    // React-local region is adopted.
+    // React-local region is adopted. The same captured drawing lifecycle must own both sides of
+    // the synchronous shared-store publication because a subscriber can retire it reentrantly.
     expect(source).toContain(
+      "constcanPublish=drawingAuthorityRef.current;" +
+      "if(!canPublish?.())return;" +
       "if(!consumeTableParseRegionForShape(tableParseRegion,tableRevision))return;" +
+      "if(!canPublish())return;" +
       "setRegion(tableParseRegionas[number,number,number,number]);",
     );
   });

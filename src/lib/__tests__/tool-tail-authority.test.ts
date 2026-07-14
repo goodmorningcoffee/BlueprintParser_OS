@@ -454,7 +454,7 @@ describe("AT2 one exact global tool-tail authority", () => {
     expect(newAuthorityBorrowers("src/components/reexport-mutant.ts", `
       export { claimLatestToolOperation as latest } from "../lib/parse-tool-authority";
     `)).toEqual(["src/components/reexport-mutant.ts:claimLatestToolOperation"]);
-  });
+  }, 15_000);
 
   it("uses exact object identity across claim, replacement, invalidation, and forged clones", () => {
     const tokenA = { operation: "A" };

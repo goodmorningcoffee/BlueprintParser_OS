@@ -3004,12 +3004,16 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
     });
     expect(consumeEffects, "Shape shared-region consume effect").toHaveLength(1);
     expect(callLabels(consumeEffects[0].arguments[0], source)).toEqual([
+      "canPublish",
       "consumeTableParseRegionForShape",
+      "canPublish",
       "setRegion",
     ]);
     const consumeCalls = descendants(consumeEffects[0].arguments[0], ts.isCallExpression);
-    expect(consumeCalls.slice(0, 2).map((call) => compact(call, source))).toEqual([
+    expect(consumeCalls.map((call) => compact(call, source))).toEqual([
+      "canPublish?.()",
       "consumeTableParseRegionForShape(tableParseRegion,tableRevision)",
+      "canPublish()",
       "setRegion(tableParseRegionas[number,number,number,number])",
     ]);
   });

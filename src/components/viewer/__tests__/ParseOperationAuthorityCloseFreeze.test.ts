@@ -66,6 +66,31 @@ const EXPECTED_ROOTS = [
   { kind: "spec", path: "src/components/viewer/SpecParser.tsx", owner: "saveFromBatch", policy: "reject" },
 ] as const satisfies readonly RootLedgerEntry[];
 
+// These nine roots gained project-generation fencing in P2.5. Their exact finally predicate is
+// part of the authority contract: a retired A may not clear B's live busy lane, while openProject's
+// synchronous reset has already invalidated A's token. Roots absent from this map retain the prior
+// direct/ownsToken-only finish contract.
+const EXPECTED_LIFECYCLE_FINISH_GUARDS = {
+  "src/components/viewer/KeynotePanel.tsx:autoParseKeynote":
+    "isRenderedLifecycleCurrent()",
+  "src/components/viewer/KeynotePanel.tsx:parseFromGuidedGrid":
+    "isRenderedLifecycleCurrent()",
+  "src/components/viewer/KeynotePanel.tsx:parseKeynotes":
+    "isRenderedLifecycleCurrent()",
+  "src/components/viewer/NotesParser.tsx:persistPreviewGrid":
+    "ownsToken&&canPublishCompletion()",
+  "src/components/viewer/NotesParser.tsx:saveFromParagraphBatch":
+    "canPublishCompletion()",
+  "src/components/viewer/SpecParser.tsx:persistPreview":
+    "ownsToken&&canPublishCompletion()",
+  "src/components/viewer/SpecParser.tsx:saveFromBatch":
+    "canPublishCompletion()",
+  "src/components/viewer/TableCompareModal.tsx:handleDone":
+    "canPublishCompletion()",
+  "src/components/viewer/TableParsePanel.tsx:detectCsiAndPersist":
+    "ownsToken&&canPublishCompletion()",
+} as const satisfies Record<string, string>;
+
 const EXPECTED_HOOK_BINDINGS = [
   { kind: "table", path: "src/components/viewer/AutoParseTab.tsx", owner: "AutoParseTab", binding: "tableOperation" },
   { kind: "table", path: "src/hooks/useTableCellStructureOperation.ts", owner: "useTableCellStructureOperation", binding: "tableOperation" },
@@ -484,9 +509,21 @@ function hasExclusiveFinally(call: ts.CallExpression): boolean {
   const block = nearestFinally(call);
   if (!block || block.statements.length !== 1) return false;
   const statement = block.statements[0];
-  if (isDirectFinishStatement(statement, call)) return true;
-  if (!ts.isIfStatement(statement) || statement.elseStatement ||
-      statement.expression.getText(statement.getSourceFile()) !== "ownsToken") return false;
+  const source = statement.getSourceFile();
+  const root = `${source.fileName}:${staticOwner(call)}`;
+  const lifecycleGuard = EXPECTED_LIFECYCLE_FINISH_GUARDS[
+    root as keyof typeof EXPECTED_LIFECYCLE_FINISH_GUARDS
+  ];
+  if (lifecycleGuard === undefined) {
+    if (isDirectFinishStatement(statement, call)) return true;
+    if (!ts.isIfStatement(statement) || statement.elseStatement ||
+        statement.expression.getText(source) !== "ownsToken") return false;
+  } else if (
+    !ts.isIfStatement(statement) || statement.elseStatement ||
+    statement.expression.getText(source).replace(/\s+/g, "") !== lifecycleGuard
+  ) {
+    return false;
+  }
   const thenStatement = statement.thenStatement;
   if (ts.isBlock(thenStatement)) {
     return thenStatement.statements.length === 1 &&
@@ -1172,6 +1209,59 @@ function isNullTokenGuard(statement: ts.Statement): boolean {
   return ts.isIdentifier(operand) && operand.text === "token";
 }
 
+function isActiveTokenAlias(statement: ts.Statement): boolean {
+  if (!ts.isVariableStatement(statement) ||
+      !(statement.declarationList.flags & ts.NodeFlags.Const) ||
+      statement.declarationList.declarations.length !== 1) return false;
+  const declaration = statement.declarationList.declarations[0];
+  return ts.isIdentifier(declaration.name) && declaration.name.text === "activeToken" &&
+    !!declaration.initializer && ts.isIdentifier(unwrap(declaration.initializer)) &&
+    (unwrap(declaration.initializer) as ts.Identifier).text === "token";
+}
+
+function isDeferredLifecycleAuthority(
+  statement: ts.Statement,
+  kind: OperationKind,
+): boolean {
+  if (!ts.isVariableStatement(statement) ||
+      !(statement.declarationList.flags & ts.NodeFlags.Const) ||
+      statement.declarationList.declarations.length !== 1) return false;
+  const declaration = statement.declarationList.declarations[0];
+  if (!ts.isIdentifier(declaration.name) ||
+      (declaration.name.text !== "canPublish" &&
+        declaration.name.text !== "canPublishCompletion") ||
+      !declaration.initializer) return false;
+  const initializer = unwrap(declaration.initializer);
+  if (!ts.isArrowFunction(initializer) || initializer.parameters.length !== 0 ||
+      ts.isBlock(initializer.body)) return false;
+  const body = initializer.body.getText(statement.getSourceFile()).replace(/\s+/g, "");
+  return body ===
+    `isRenderedLifecycleCurrent()&&${kind}Operation.isCurrent(token)` ||
+    body ===
+    `isRenderedLifecycleCurrent()&&${kind}Operation.isCurrent(activeToken)`;
+}
+
+function isSafePreTryTail(
+  statements: readonly ts.Statement[],
+  expected: RootLedgerEntry,
+): boolean {
+  const expectsLifecycleAuthority = EXPECTED_LIFECYCLE_FINISH_GUARDS[
+    `${expected.path}:${expected.owner}` as keyof typeof EXPECTED_LIFECYCLE_FINISH_GUARDS
+  ] !== undefined;
+  let index = 0;
+  if (statements[index] && isNullTokenGuard(statements[index])) index += 1;
+  if (expectsLifecycleAuthority && statements[index] &&
+      isActiveTokenAlias(statements[index])) index += 1;
+  let sawLifecycleAuthority = false;
+  if (expectsLifecycleAuthority && statements[index] &&
+      isDeferredLifecycleAuthority(statements[index], expected.kind)) {
+    index += 1;
+    sawLifecycleAuthority = true;
+  }
+  return index === statements.length &&
+    (!expectsLifecycleAuthority || sawLifecycleAuthority);
+}
+
 function directlyOwnedTryWithFinish(
   root: ts.FunctionLikeDeclaration,
 ): ts.TryStatement[] {
@@ -1310,10 +1400,7 @@ function tryFinallyDominanceAnalysis(
       continue;
     }
     const preTryTail = operationBlock.statements.slice(anchorIndex + 1, tryIndex);
-    if (
-      preTryTail.length > 1 ||
-      (preTryTail.length === 1 && !isNullTokenGuard(preTryTail[0]))
-    ) {
+    if (!isSafePreTryTail(preTryTail, expected)) {
       violations.push(`${id}:unguarded-work-before-try`);
     }
   }
@@ -1628,8 +1715,11 @@ describe("P2.4 A2e exact cross-family operation authority close", () => {
     const table = PRODUCTION_SOURCES.get(tablePath)!;
     const postTokenWork = new Map([[tablePath, replaceOnce(
       table,
-      "    const token = started.token;\n\n    try {",
-      "    const token = started.token;\n    setSaveError(null);\n\n    try {",
+      "    const token = started.token;\n    const canPublishCompletion = () =>\n" +
+        "      isRenderedLifecycleCurrent() && tableOperation.isCurrent(token);\n\n    try {",
+      "    const token = started.token;\n    const canPublishCompletion = () =>\n" +
+        "      isRenderedLifecycleCurrent() && tableOperation.isCurrent(token);\n" +
+        "    setSaveError(null);\n\n    try {",
     )]]);
     expect(tryFinallyDominanceAnalysis(postTokenWork)).toContain(
       `table:${tablePath}:handleDone:unguarded-work-before-try`,
@@ -1786,6 +1876,15 @@ describe("P2.4 A2e exact cross-family operation authority close", () => {
     )]]);
     expect(authorityAnalysis(missingFinish).finishes).toHaveLength(19);
 
+    const lifecycleBlindFinish = new Map([[tablePath, replaceOnce(
+      table,
+      "if (canPublishCompletion()) tableOperation.finish(token);",
+      "tableOperation.finish(token);",
+    )]]);
+    expect(authorityAnalysis(lifecycleBlindFinish).violations).toContain(
+      `${tablePath}:handleDone:non-exclusive-finally`,
+    );
+
     const extraBinding = new Map([[tablePath, replaceOnce(
       table,
       'const tableOperation = useParseOperation("table");',
@@ -1864,8 +1963,9 @@ describe("P2.4 A2e exact cross-family operation authority close", () => {
     const table = PRODUCTION_SOURCES.get(tablePath)!;
     const blindFinally = new Map([[tablePath, replaceOnce(
       table,
-      "    } finally {\n      tableOperation.finish(token);\n    }",
-      "    } finally {\n      setSavingRevision(null);\n      tableOperation.finish(token);\n    }",
+      "    } finally {\n      if (canPublishCompletion()) tableOperation.finish(token);\n    }",
+      "    } finally {\n      setSavingRevision(null);\n" +
+        "      if (canPublishCompletion()) tableOperation.finish(token);\n    }",
     )]]);
     expect(authorityAnalysis(blindFinally).violations).toContain(
       `${tablePath}:handleDone:non-exclusive-finally`,
