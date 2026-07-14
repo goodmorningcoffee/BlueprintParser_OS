@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { apiErrorMessage } from "@/lib/client-persist";
-import { useViewerStore } from "@/stores/viewerStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useSessionStore } from "@/stores/sessionStore";
 

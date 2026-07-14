@@ -125,6 +125,32 @@ describe("ensurePageIntelligence exact-page operation", () => {
     client.clear();
   });
 
+  it.each([
+    { boundary: "fetch", decisions: [false], jsonCalls: 0 },
+    { boundary: "JSON", decisions: [true, false], jsonCalls: 1 },
+    { boundary: "cache write", decisions: [true, true, false], jsonCalls: 1 },
+  ])("can decline stale adoption at the $boundary boundary", async ({ decisions, jsonCalls }) => {
+    const client = new QueryClient();
+    const oldWindow = active({ pageIntelligence: { 7: { rejectedTextRegionIds: ["successor"] } } });
+    client.setQueryData(queryKeys.pagesWindow.active("pid"), oldWindow);
+    const json = vi.fn(async () => payload(7, { rejectedTextRegionIds: ["stale"] }));
+    fetchMock.mockResolvedValueOnce({ ok: true, json } as unknown as Response);
+    const pendingDecisions = [...decisions];
+    const canAdopt = vi.fn(() => pendingDecisions.shift() ?? false);
+
+    await expect(ensurePageIntelligence(client, {
+      publicId: "pid",
+      pageNumber: 7,
+      isDemo: false,
+      canAdopt,
+    })).resolves.toBeUndefined();
+
+    expect(canAdopt).toHaveBeenCalledTimes(decisions.length);
+    expect(json).toHaveBeenCalledTimes(jsonCalls);
+    expect(readActivePageWindow(client, "pid")).toBe(oldWindow);
+    client.clear();
+  });
+
   it("adopts only first-row PI and preserves range, all other maps, and annotations", async () => {
     const client = new QueryClient();
     const keynotes = { 7: [keynote("local")] };

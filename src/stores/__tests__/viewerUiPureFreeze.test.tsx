@@ -21,8 +21,8 @@ import {
 type ViewerState = ReturnType<typeof useViewerStore.getState>;
 type ToolState = ReturnType<typeof useToolStore.getState>;
 
-// P2.3 U2: this is the exact mechanically-pure uiStore owner. Tool activation,
-// parse drafts/tabs, project data, and mutable server-row drafts deliberately stay out.
+// P2.5: this is the exact UI owner. Tool activation, parse drafts/tabs, and server collections
+// deliberately stay out; the active Auto-QTO selection is project-scoped UI state.
 const UI_FIELDS = [
   "searchQuery",
   "searchResults",
@@ -84,6 +84,7 @@ const UI_FIELDS = [
   "parsedRegionColorMode",
   "hiddenParsedRegionIds",
   "focusedParsedRegionId",
+  "activeQtoWorkflow",
 ] as const satisfies readonly (keyof ViewerState)[];
 
 type UiField = (typeof UI_FIELDS)[number];
@@ -193,6 +194,7 @@ const UI_ACTION_FIELDS = [
   "setParsedRegionColorMode",
   "toggleParsedRegionVisibility",
   "setFocusedParsedRegionId",
+  "setActiveQtoWorkflow",
   "resetProjectUiState",
 ] as const satisfies readonly (keyof ViewerState)[];
 
@@ -214,28 +216,14 @@ function pickUiActions(state: ViewerState): Pick<ViewerState, UiActionField> {
 
 beforeEach(() => {
   resetProjectData();
-
-  // The compatibility reset intentionally retains these fields. Normalize only
-  // the omissions here so every characterization starts at construction defaults.
-  useViewerStore.setState({
-    focusAnnotationId: null,
-    selectedAnnotationIds: new Set<number>(),
-    showTextPanel: false,
-    showChatPanel: true,
-    showTips: false,
-    helpMode: false,
-    showKeynotes: false,
-    hiddenClasses: {},
-    hiddenTakeoffItemIds: new Set<number>(),
-    showParsedRegions: true,
-    parsedRegionColorMode: "striped",
-    hiddenParsedRegionIds: new Set<string>(),
-  });
+  // Project reset preserves the approved presentation policy. Restore construction state so
+  // independent characterizations cannot inherit presentation choices from the preceding case.
+  useViewerStore.setState(useViewerStore.getInitialState(), true);
 });
 
 describe("uiStore — P2.3 post-carve pure UI ownership", () => {
-  it("freezes the exact 60-field candidate and its construction defaults", () => {
-    expect(UI_FIELDS).toHaveLength(60);
+  it("freezes the exact 61-field candidate and its construction defaults", () => {
+    expect(UI_FIELDS).toHaveLength(61);
     expect(pickUi(useViewerStore.getState())).toEqual({
       searchQuery: "",
       searchResults: [],
@@ -297,6 +285,7 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       parsedRegionColorMode: "striped",
       hiddenParsedRegionIds: new Set<string>(),
       focusedParsedRegionId: null,
+      activeQtoWorkflow: null,
     });
   });
 
@@ -386,6 +375,7 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     const mixedPatch = {
       publicId: "destination",
       searchQuery: "needle",
+      activeQtoWorkflow: { id: 41 } as ViewerState["activeQtoWorkflow"],
       pageNumber: 7,
       ...toolPatch,
       tableParseStep: "review" as const,
@@ -394,7 +384,10 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     const partitions = partitionViewerStoreTestState(mixedPatch);
     expect(partitions).toEqual({
       session: { publicId: "destination" },
-      ui: { searchQuery: "needle" },
+      ui: {
+        searchQuery: "needle",
+        activeQtoWorkflow: { id: 41 },
+      },
       core: { pageNumber: 7 },
       tool: toolPatch,
       parse: { tableParseStep: "review" },
@@ -635,10 +628,11 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
   });
 
   it("freezes the complete reset touched/retained ledger and container/action identities", () => {
-    const retainedSelection = new Set([41]);
-    const retainedHiddenClasses = { "model-z:window": false };
-    const retainedHiddenTakeoffs = new Set([42]);
-    const retainedHiddenRegions = new Set(["region-z"]);
+    const dirtySelection = new Set([41]);
+    const retainedTextAnnotationColors = { note: "#abcdef" };
+    const dirtyHiddenClasses = { "model-z:window": false };
+    const dirtyHiddenTakeoffs = new Set([42]);
+    const dirtyHiddenRegions = new Set(["region-z"]);
     const tableView: ViewerState["activeTableTagViews"][string] = {
       regionId: "region-z",
       pageNum: 9,
@@ -653,11 +647,11 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       searchMatches: { 9: [] },
       searchLoading: true,
       focusAnnotationId: 41,
-      selectedAnnotationIds: retainedSelection,
+      selectedAnnotationIds: dirtySelection,
       showTextAnnotations: true,
       activeTextAnnotationTypes: { note: true },
       hiddenTextAnnotations: new Set(["9:1"]),
-      textAnnotationColors: { note: "#abcdef" },
+      textAnnotationColors: retainedTextAnnotationColors,
       activeTextAnnotationFilter: { type: "note", text: "needle" },
       textPanelTab: "graph",
       activeMarkupId: 43,
@@ -692,10 +686,10 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       confidenceThreshold: 0.88,
       confidenceThresholds: { "model-z": 0.66 },
       hiddenAnnotationIds: new Set([45]),
-      hiddenClasses: retainedHiddenClasses,
+      hiddenClasses: dirtyHiddenClasses,
       showKeynotes: true,
       activeKeynoteHighlight: { pageNumber: 9, key: "K-9" },
-      hiddenTakeoffItemIds: retainedHiddenTakeoffs,
+      hiddenTakeoffItemIds: dirtyHiddenTakeoffs,
       takeoffTab: "area",
       activeYoloTagId: "tag-z",
       yoloTagVisibility: { "tag-z": false },
@@ -706,8 +700,9 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       llmHighlight: { pageNumber: 9, bbox: [0.1, 0.2, 0.3, 0.4], label: "hit" },
       showParsedRegions: false,
       parsedRegionColorMode: "checkerboard",
-      hiddenParsedRegionIds: retainedHiddenRegions,
+      hiddenParsedRegionIds: dirtyHiddenRegions,
       focusedParsedRegionId: "region-z",
+      activeQtoWorkflow: { id: 91 } as ViewerState["activeQtoWorkflow"],
     });
 
     const dirty = useViewerStore.getState();
@@ -720,51 +715,51 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       searchResults: [],
       searchMatches: {},
       searchLoading: false,
-      focusAnnotationId: 41,
-      selectedAnnotationIds: retainedSelection,
-      showTextAnnotations: false,
+      focusAnnotationId: null,
+      selectedAnnotationIds: new Set<number>(),
+      showTextAnnotations: true,
       activeTextAnnotationTypes: {},
       hiddenTextAnnotations: new Set<string>(),
-      textAnnotationColors: {},
+      textAnnotationColors: retainedTextAnnotationColors,
       activeTextAnnotationFilter: null,
-      textPanelTab: "annotations",
+      textPanelTab: "graph",
       activeMarkupId: null,
       activeTakeoffFilter: null,
       activeKeynoteFilter: null,
       activeAnnotationFilter: null,
       activeTradeFilter: null,
       activeCsiFilter: null,
-      sidebarCollapsed: false,
-      annotationPanelCollapsed: false,
+      sidebarCollapsed: true,
+      annotationPanelCollapsed: true,
       showTips: true,
       helpMode: true,
       showTextPanel: true,
       showChatPanel: false,
-      showDetections: false,
-      showDetectionPanel: false,
-      showViewAllPanel: false,
-      showCsiPanel: false,
-      showPageIntelPanel: false,
-      showTakeoffPanel: false,
-      showTableParsePanel: false,
-      showKeynoteParsePanel: false,
-      showSpecsNotesPanel: false,
-      showParsePanel: false,
-      showToolsPanel: false,
-      showTableCompareModal: false,
-      specsNotesTab: "spec-parse",
-      parsePanelTab: "shape",
-      toolsPanelTab: "csi",
-      chatScope: "page",
+      showDetections: true,
+      showDetectionPanel: true,
+      showViewAllPanel: true,
+      showCsiPanel: true,
+      showPageIntelPanel: true,
+      showTakeoffPanel: true,
+      showTableParsePanel: true,
+      showKeynoteParsePanel: true,
+      showSpecsNotesPanel: true,
+      showParsePanel: true,
+      showToolsPanel: true,
+      showTableCompareModal: true,
+      specsNotesTab: "notes-parse",
+      parsePanelTab: "template",
+      toolsPanelTab: "text",
+      chatScope: "project",
       activeModels: {},
       confidenceThreshold: 0.1,
       confidenceThresholds: {},
       hiddenAnnotationIds: new Set<number>(),
-      hiddenClasses: retainedHiddenClasses,
+      hiddenClasses: {},
       showKeynotes: true,
       activeKeynoteHighlight: null,
-      hiddenTakeoffItemIds: retainedHiddenTakeoffs,
-      takeoffTab: "count",
+      hiddenTakeoffItemIds: new Set<number>(),
+      takeoffTab: "area",
       activeYoloTagId: null,
       yoloTagVisibility: {},
       activeYoloTagFilter: null,
@@ -774,15 +769,13 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
       llmHighlight: null,
       showParsedRegions: false,
       parsedRegionColorMode: "checkerboard",
-      hiddenParsedRegionIds: retainedHiddenRegions,
+      hiddenParsedRegionIds: new Set<string>(),
       focusedParsedRegionId: null,
+      activeQtoWorkflow: null,
     });
 
     const retainedContainerFields = [
-      "selectedAnnotationIds",
-      "hiddenClasses",
-      "hiddenTakeoffItemIds",
-      "hiddenParsedRegionIds",
+      "textAnnotationColors",
     ] as const satisfies readonly UiField[];
     for (const field of retainedContainerFields) {
       expect(reset[field]).toBe(dirty[field]);
@@ -791,14 +784,17 @@ describe("uiStore — P2.3 post-carve pure UI ownership", () => {
     const replacedContainerFields = [
       "searchResults",
       "searchMatches",
+      "selectedAnnotationIds",
       "activeTextAnnotationTypes",
       "hiddenTextAnnotations",
-      "textAnnotationColors",
       "activeModels",
       "confidenceThresholds",
       "hiddenAnnotationIds",
+      "hiddenClasses",
+      "hiddenTakeoffItemIds",
       "yoloTagVisibility",
       "activeTableTagViews",
+      "hiddenParsedRegionIds",
     ] as const satisfies readonly UiField[];
     for (const field of replacedContainerFields) {
       expect(reset[field]).not.toBe(dirty[field]);

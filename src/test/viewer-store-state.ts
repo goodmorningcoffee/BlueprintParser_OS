@@ -102,6 +102,7 @@ export const UI_TEST_STATE_KEYS = [
   "parsedRegionColorMode",
   "hiddenParsedRegionIds",
   "focusedParsedRegionId",
+  "activeQtoWorkflow",
 ] as const satisfies readonly (keyof UiStoreTestState)[];
 
 export type UiTestStateKey = (typeof UI_TEST_STATE_KEYS)[number];
@@ -279,8 +280,6 @@ export const REMAINING_VIEWER_TEST_KEYS = [
   "setAllTrades",
   "allCsiCodes",
   "setAllCsiCodes",
-  "activeQtoWorkflow",
-  "setActiveQtoWorkflow",
   "resetViewerState",
 ] as const satisfies readonly (keyof ViewerStoreTestState)[];
 
@@ -378,12 +377,6 @@ export function setViewerStoreStateForTest(patch: ViewerStoreTestPatch): void {
     ...("setAllTrades" in viewer ? { setAllTrades: viewer.setAllTrades } : {}),
     ...("allCsiCodes" in viewer ? { allCsiCodes: viewer.allCsiCodes } : {}),
     ...("setAllCsiCodes" in viewer ? { setAllCsiCodes: viewer.setAllCsiCodes } : {}),
-    ...("activeQtoWorkflow" in viewer
-      ? { activeQtoWorkflow: viewer.activeQtoWorkflow }
-      : {}),
-    ...("setActiveQtoWorkflow" in viewer
-      ? { setActiveQtoWorkflow: viewer.setActiveQtoWorkflow }
-      : {}),
     ...("resetViewerState" in viewer
       ? { resetViewerState: viewer.resetViewerState }
       : {}),

@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 
 import {
-  activeToolAfterProjectReset,
   releaseActiveToolExact,
   transitionActiveTool,
   type ActiveTool,
@@ -183,7 +182,7 @@ export interface ToolStoreActions {
   setSymbolSearchPreset: (preset: ToolStoreData["symbolSearchPreset"]) => void;
   clearSymbolSearch: () => void;
 
-  /** Preserve the exact temporary 20-touched/20-retained project-switch policy until P2.5. */
+  /** Clear every project-owned tool field while preserving action identities. */
   resetProjectToolState: () => void;
 }
 
@@ -557,16 +556,36 @@ export const useToolStore = create<ToolStoreState>((set) => ({
     invalidateToolTailAuthority();
     invalidateLatestToolOperation("bucketFill");
     invalidateLatestToolOperation("symbolSession");
-    set((state) => ({
+    set({
+      mode: "move",
       tempPanMode: false,
-      activeTool: activeToolAfterProjectReset(state.activeTool),
+      activeTool: null,
+      _drawing: false,
+      _drawStart: { x: 0, y: 0 },
+      _drawEnd: { x: 0, y: 0 },
+      _mousePos: null,
       activeTakeoffItemId: null,
       scaleCalibrations: {},
       calibrationMode: "idle",
       calibrationPoints: {},
       polygonDrawingMode: "idle",
       polygonVertices: [],
+      bucketFillPreview: null,
+      bucketFillLoading: false,
+      bucketFillError: null,
+      bucketFillTolerance: 30,
+      bucketFillDilatePx: 3,
       bucketFillResolution: 1000,
+      bucketFillPendingPolygon: null,
+      splitLineA: null,
+      splitLineB: null,
+      splitPreview: null,
+      splitError: null,
+      bucketFillBarriers: [],
+      bucketFillBarrierMode: false,
+      barrierPendingPoint: null,
+      takeoffUndoStack: [],
+      takeoffRedoStack: [],
       tagScanResults: null,
       symbolSearchLoading: false,
       symbolSearchProgress: null,
@@ -586,7 +605,7 @@ export const useToolStore = create<ToolStoreState>((set) => ({
         maxMatchesPerPage: 50,
       },
       symbolSearchPreset: "lite",
-    }));
+    });
   },
 }));
 

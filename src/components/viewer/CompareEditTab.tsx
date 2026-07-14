@@ -2,17 +2,16 @@
 
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useProject } from "@/stores/sessionStore";
+import { openTableCompareModal } from "@/stores/uiStore";
 
 interface CompareEditTabProps {
   allParsedTables: any[];
   loadExistingParsed: (parsed: any, targetPage?: number) => void;
-  toggleTableCompareModal: () => void;
 }
 
 export default function CompareEditTab({
   allParsedTables,
   loadExistingParsed,
-  toggleTableCompareModal,
 }: CompareEditTabProps) {
   const { pageNumber } = useNavigation();
   const { pageNames } = useProject();
@@ -45,7 +44,7 @@ export default function CompareEditTab({
                   <button
                     key={`cur-${i}`}
                     onClick={() => {
-                      toggleTableCompareModal();
+                      openTableCompareModal();
                       loadExistingParsed(t.region);
                     }}
                     className="w-full text-left px-2 py-2 rounded border border-pink-400/30 bg-pink-500/5 hover:bg-pink-500/10 space-y-0.5"
@@ -69,7 +68,7 @@ export default function CompareEditTab({
                   <button
                     key={`other-${i}`}
                     onClick={() => {
-                      toggleTableCompareModal();
+                      openTableCompareModal();
                       loadExistingParsed(t.region, t.pageNum);
                     }}
                     className="w-full text-left px-2 py-1.5 rounded border border-[var(--border)] hover:bg-[var(--surface-hover)] space-y-0.5"

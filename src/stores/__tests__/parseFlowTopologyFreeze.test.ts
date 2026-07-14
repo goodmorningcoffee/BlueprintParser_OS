@@ -3029,13 +3029,13 @@ describe("P2.4 phase-aware shared borrower manifests", () => {
     const editCallbacks = descendants(parsedItemSource, ts.isArrowFunction).filter((callback) => {
       const text = compact(callback, parsedItemSource);
       return text.includes("openTableReviewTarget(") &&
-        text.includes("toggleTableCompareModal()");
+        text.includes("openTableCompareModal()");
     });
     expect(editCallbacks, "ParsedTableItem View/Edit callback").toHaveLength(1);
     const parsedItemText = compact(editCallbacks[0], parsedItemSource);
     expect(parsedItemText).not.toContain("setTableParsedGrid(");
     expect(parsedItemText).not.toContain("setTableParseRegion(");
-    expect(parsedItemText.indexOf("toggleTableCompareModal()")).toBeLessThan(
+    expect(parsedItemText.indexOf("openTableCompareModal()")).toBeLessThan(
       parsedItemText.indexOf("openTableReviewTarget("),
     );
 

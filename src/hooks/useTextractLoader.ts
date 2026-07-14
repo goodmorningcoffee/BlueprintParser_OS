@@ -4,7 +4,6 @@ import { useEffect, useRef } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   cancelTextractPage,
-  clearTextractProject,
   ensureTextractPage,
   setTextractProtectedPages,
 } from "@/queries/textractCache";
@@ -48,11 +47,10 @@ export function useTextractLoader(): void {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeBatchRef = useRef<TextractBatch | null>(null);
 
-  // Project identity/unmount is the ownership boundary for this heavy domain. Clear only the exact
-  // Textract prefix; broader project removal would destroy sibling cache semantics established by
-  // earlier P2.2 migrations.
+  // Hook identity/unmount owns only its timer and exact active page batch. Project lifecycle is the
+  // sole Textract-prefix teardown authority; a hook cleanup has no lifecycle token and could
+  // otherwise await cancellation, then erase a newer same-publicId generation.
   useEffect(() => {
-    const capturedPublicId = publicId;
     return () => {
       generationRef.current += 1;
       if (timerRef.current) {
@@ -63,7 +61,6 @@ export function useTextractLoader(): void {
       const activeBatch = activeBatchRef.current;
       activeBatchRef.current = null;
       cancelBatch(qc, activeBatch);
-      if (capturedPublicId) void clearTextractProject(qc, capturedPublicId);
     };
   }, [publicId, qc]);
 

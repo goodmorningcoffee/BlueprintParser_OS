@@ -42,14 +42,7 @@ const LEGACY_ACTION_KEYS = [
   "setSymbolSearchPreset", "clearSymbolSearch",
 ] as const;
 
-const RESET_KEYS = [
-  "tempPanMode", "activeTool", "activeTakeoffItemId", "scaleCalibrations", "calibrationMode",
-  "calibrationPoints", "polygonDrawingMode", "polygonVertices", "bucketFillResolution",
-  "tagScanResults", "symbolSearchLoading", "symbolSearchProgress", "symbolSearchResults",
-  "symbolSearchConfidence", "dismissedSymbolMatches", "symbolSearchError",
-  "symbolSearchTemplateBbox", "symbolSearchSourcePage", "symbolSearchConfig",
-  "symbolSearchPreset",
-] as const;
+const RESET_KEYS = DATA_KEYS;
 
 const SYMBOL_HOOK_KEYS = [
   "symbolSearchActive", "setSymbolSearchActive", "symbolSearchLoading", "setSymbolSearchLoading",
@@ -226,7 +219,7 @@ describe("toolStore AT2 — atomic active-tool contract", () => {
     ].sort());
   });
 
-  it("keeps the reset source-owned by exactly the frozen 20-field partial ledger", () => {
+  it("keeps the reset source-owned by exactly the frozen 40-field construction ledger", () => {
     const reset = directProperty(toolObject, "resetProjectToolState");
     const objects = descendants(reset.initializer, ts.isObjectLiteralExpression)
       .filter((object) => objectKeys(object).includes("tempPanMode"));

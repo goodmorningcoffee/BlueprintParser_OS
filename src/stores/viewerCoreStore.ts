@@ -35,12 +35,13 @@ function freshViewerCoreState(): ViewerCoreData {
 
 function freshViewerCoreReset(): Pick<
   ViewerCoreData,
-  "pageNumber" | "numPages" | "scale" | "pageDimensions"
+  "pageNumber" | "numPages" | "scale" | "pendingCenter" | "pageDimensions"
 > {
   return {
     pageNumber: 1,
     numPages: 0,
     scale: 1,
+    pendingCenter: false,
     pageDimensions: {},
   };
 }
@@ -69,7 +70,6 @@ export const useViewerCoreStore = create<ViewerCoreState>((set, get) => ({
       },
     }));
   },
-  // Preserve the current pendingCenter omission. P2.5 owns the reset-policy decision.
   resetViewerCoreState: () => set(freshViewerCoreReset()),
 }));
 

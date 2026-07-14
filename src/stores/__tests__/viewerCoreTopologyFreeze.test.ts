@@ -607,18 +607,19 @@ describe("P2.3 V2 viewerCore ownership", () => {
     expect(() => directProperty(coreObject, "resetViewerCoreState")).not.toThrow();
   });
 
-  it("pins the four-field core reset and rejects core keys in residual viewer reset", () => {
+  it("pins the five-field core reset and rejects core keys in residual viewer reset", () => {
     expect(directObjectKeys(coreReset)).toEqual([
       "pageNumber",
       "numPages",
       "scale",
+      "pendingCenter",
       "pageDimensions",
     ]);
     expect(compact(propertyInitializer(coreReset, "pageNumber"), coreSource)).toBe("1");
     expect(compact(propertyInitializer(coreReset, "numPages"), coreSource)).toBe("0");
     expect(compact(propertyInitializer(coreReset, "scale"), coreSource)).toBe("1");
+    expect(compact(propertyInitializer(coreReset, "pendingCenter"), coreSource)).toBe("false");
     expect(compact(propertyInitializer(coreReset, "pageDimensions"), coreSource)).toBe("{}");
-    expect(directObjectKeys(coreReset)).not.toContain("pendingCenter");
 
     const resetProperty = directProperty(viewerObject, "resetViewerState");
     expect(ts.isPropertyAssignment(resetProperty)).toBe(true);

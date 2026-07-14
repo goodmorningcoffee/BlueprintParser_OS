@@ -1,7 +1,10 @@
 import { create } from "zustand";
-import type { QtoWorkflow } from "@/types";
 
 interface ViewerState {
+  // [refactor jul14 P2.5] This <100-line fail-closed compatibility sentinel is intentionally
+  // retained after Query assumed both project catalogs and uiStore assumed active QTO. No live
+  // component selects it; legacy topology/tests pin the shell until its owning phase removes it.
+
   // [refactor jul10 P2.2⑤] annotation groups + the M:N membership indexes moved to the
   // TanStack Query cache — see src/queries/useAnnotationGroups.ts (ONE key holds the raw
   // {groups, memberships} payload; the forward/reverse Set indexes are derived in-hook).
@@ -9,11 +12,11 @@ interface ViewerState {
   // 6 actions are DELETED, not bridged; 4 of the 9 selector members were dead surface (E7).
 
   // [refactor jul11 P2.3] Project identity, demo policy, page labels, and labeling-session state
-  // live in sessionStore. The residual csiGraph bootstrap value lives in useCsiGraph. Do not add
-  // project/session or drawing data back to this residual metadata/draft store.
+  // live in sessionStore; the csiGraph bootstrap value is Query-owned by useCsiGraph. Do not add
+  // project/session, server, UI, or drawing data back to this inert compatibility sentinel.
 
-  // [refactor jul11 P2.2⑦/⑧] Active page-window maps and per-page Textract OCR are query-owned.
-  // Only project-wide bootstrap metadata from those former server-data slices remains here.
+  // [refactor jul11 P2.2⑦/⑧ + jul14 P2.5] Active page-window maps, per-page Textract OCR,
+  // and project catalogs are Query-owned. The two fields below are inert compatibility sentinels.
   allTrades: string[];
   setAllTrades: (trades: string[]) => void;
 
@@ -21,15 +24,8 @@ interface ViewerState {
   allCsiCodes: { code: string; description: string }[];
   setAllCsiCodes: (codes: { code: string; description: string }[]) => void;
 
-  // ─── Auto-QTO ────────────────────────────────────────────
-  // [refactor jul10 P2.2②] qtoWorkflows COLLECTION moved to the TanStack cache
-  // (src/queries/useQtoWorkflows.ts). The active pointer stays here: it is a UI-selection /
-  // in-progress draft, not a server collection (P2_DESIGN/QTO_IMPL/SPEC.md §3).
-  activeQtoWorkflow: QtoWorkflow | null;
-  setActiveQtoWorkflow: (w: QtoWorkflow | null) => void;
-
   // ─── Reset ─────────────────────────────────────────────
-  /** Remaining metadata reset. Call resetProjectData from viewerCommands. */
+  /** Inert-shell reset; production project opens call viewerCommands.resetProjectData. */
   resetViewerState: () => void;
 }
 
@@ -50,26 +46,21 @@ export const useViewerStore = create<ViewerState>((set) => ({
   allCsiCodes: [],
   setAllCsiCodes: (allCsiCodes) => set({ allCsiCodes }),
 
-  // ─── Auto-QTO ──────────────────────────────────────────── (collection → query cache, P2.2②)
-  activeQtoWorkflow: null,
-  setActiveQtoWorkflow: (activeQtoWorkflow) => set({ activeQtoWorkflow }),
-
   resetViewerState: () =>
     set({
-      // [refactor jul11 P2.2⑥] annotations reset deleted: loader seeds the publicId-keyed cache
-      // unconditionally before reveal; the coordinator's preceding session reset re-keys observers.
+      // [refactor jul11 P2.2⑥] annotations reset deleted: openProject seeds the publicId-keyed
+      // cache before activation; the coordinator's preceding session reset re-keys observers.
       // [refactor jul11 P2.3] session identity/page-label fields and csiGraph are reset by the
       // neutral viewerCommands.resetProjectData coordinator, not this leaf store.
       // [refactor jul10 P2.2③] `summaries: null` reset line deleted — summaries live in the query
       // cache now (publicId-keyed entries give free cross-project isolation; the old key's entry
-      // persists but is unobservable: resetProjectData resets session identity first, and consumers
-      // are unmounted behind the loaders' `loading` gates until the fresh seed lands).
+      // persists but is unobservable: openProject resets session identity first, and route content
+      // stays behind its loading gate until the fresh lifecycle seed and activation land).
       allTrades: [],
       allCsiCodes: [],
-      activeQtoWorkflow: null,
-      // qtoWorkflows: cache-backed since P2.2② — reset deliberately does NOT touch the query
-      // cache (RECIPE step 7; publicId-keyed isolation makes it unnecessary, SPEC §7).
-      // Parse lifetime is coordinated immediately before this residual reset.
+      // qtoWorkflows: Query-backed since P2.2②; openProject owns exact cancellation/empty seeding.
+      // The active pointer is uiStore-owned and clears earlier in the coordinated project reset.
+      // Parse lifetime is coordinated immediately before this inert-shell reset.
     }),
 }));
 
@@ -90,15 +81,11 @@ import { useShallow } from "zustand/react/shallow";
 
 // [refactor jul11 P2.4 S2] useTableParse/useKeynoteParse now live only in parseFlowStore.
 
-/** Project-wide CSI catalog. Its active display filter lives in uiStore. */
+/** Inert compatibility selector; live catalog readers use queries/useProjectCatalogs. */
 export const usePageData = () =>
   useViewerStore(useShallow((s) => ({
     allCsiCodes: s.allCsiCodes,
   })));
-
-// [refactor jul10 P2.2②] useQtoWorkflow selector DELETED — its sole consumer (AutoQtoTab) now
-// uses the cache facade src/queries/useQtoWorkflows.ts, which also surfaces the zustand-resident
-// activeQtoWorkflow pair. (Unlike chat's useChat, no second caller kept a slice alive.)
 
 // [refactor jul11 P2.2⑦] useSummaries remains a cache-only compatibility name in
 // src/queries/useSummaries.ts. Its temporary loaded-range/loading passthrough was removed with the

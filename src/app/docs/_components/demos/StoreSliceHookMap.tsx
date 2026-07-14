@@ -1,7 +1,7 @@
 /** Viewer client-state access map. Session, presentation, viewport geometry, tools (including
- *  drawing), and parsing have dedicated Zustand leaves; residual metadata/drafts remain in viewerStore while
- *  server-owned collections sit behind project-keyed Query facades. Keeping every ownership
- *  family visible here prevents future features from reaching around their domain's public API. */
+ *  drawing), and parsing have dedicated Zustand leaves while server-owned collections and project
+ *  catalogs sit behind project-keyed Query facades. The bounded viewerStore compatibility sentinel
+ *  has no live access surface and therefore no node. */
 const SLICES = [
   { name: "useNavigation",           line: 77,   purpose: "→ viewerCoreStore: pageNumber, numPages + actions" },
   { name: "usePanelVisibility",      line: 565,  purpose: "→ uiStore: panel/overlay visibility" },
@@ -19,9 +19,8 @@ const SLICES = [
   { name: "useTableParse",           line: 395,  purpose: "→ parseFlowStore: step, region, grid, col/row BBs" },
   { name: "useKeynoteParse",         line: 417,  purpose: "→ parseFlowStore: step, region, yolo-class bind" },
   { name: "useProject",              line: 99,   purpose: "→ sessionStore (P2.3): identity, demo policy, page labels" },
-  // [refactor jul11 P2.2⑦/⑧] Both server-data owners are gone; this compatibility slice now carries
-  // only project-wide CSI UI/filter controls.
-  { name: "usePageData",             line: 129,  purpose: "→ residual viewerStore: project-wide CSI catalog" },
+  // [refactor jul14 P2.5] The live project catalogs moved out of the inert compatibility shell.
+  { name: "useProjectCatalogs",      line: 70,   purpose: "→ Query facade: project-wide trade + CSI catalogs" },
   { name: "useDetectionUi",          line: 641,  purpose: "→ uiStore: model/display config (annotations → Query)" },
   // [refactor jul11 P2.2⑨] Collection/CRUD + serialized debounce moved to the query facade;
   // only selection/visibility/picking/browse state remains in Zustand.
@@ -31,7 +30,7 @@ const SLICES = [
   // [refactor jul10 P2.2②] row rewritten: the old entry was doubly stale (line pointed at useChat;
   // purpose described table-parse state). The store selector is deleted; the facade lives in
   // src/queries/useQtoWorkflows.ts (list → query cache; activeQtoWorkflow stays zustand).
-  { name: "useQtoWorkflows",         line: 39,   purpose: "→ src/queries facade (P2.2②): list in query cache, active stays zustand" },
+  { name: "useQtoWorkflows",         line: 39,   purpose: "→ Query facade: list in cache; active pointer stays in uiStore" },
   // [refactor jul11 P2.2⑦] The temporary summary→chunk passthrough is gone; summaries and the
   // active page window are independent cache domains with independent narrow subscriptions.
   { name: "useSummaries",            line: 108,  purpose: "→ src/queries facade (P2.2③): cache-only project summaries" },
@@ -69,7 +68,7 @@ export function StoreSliceHookMap() {
           <circle cx="480" cy="400" r="78" fill="none" stroke="#60a5fa" strokeWidth="2.5" />
           <text x="480" y="390" textAnchor="middle" fontSize="13" fontWeight="bold" fill="#60a5fa">Domain owners</text>
           <text x="480" y="408" textAnchor="middle" fontSize="10" opacity="0.75" fontFamily="monospace">Zustand + Query</text>
-          <text x="480" y="424" textAnchor="middle" fontSize="9" opacity="0.6">(session · UI · core · tools · parse · residual · server data)</text>
+          <text x="480" y="424" textAnchor="middle" fontSize="9" opacity="0.6">(session · UI · core · tools · parse · server data)</text>
         </g>
 
         {/* Ring of slice hooks */}

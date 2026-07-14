@@ -119,16 +119,16 @@ describe("toolStore AT2 — atomic active-tool transitions", () => {
     expect(useToolStore.getState().activeTool).toBe(tagPick);
   });
 
-  it("preserves only the exact temporary bucket/split owner across project reset", () => {
+  it("clears every owner across project reset, including temporary bucket and split", () => {
     useToolStore.getState().setBucketFillActive(true);
-    const bucket = useToolStore.getState().activeTool;
+    expect(useToolStore.getState().activeTool).toEqual({ kind: "bucketFill" });
     useToolStore.getState().resetProjectToolState();
-    expect(useToolStore.getState().activeTool).toBe(bucket);
+    expect(useToolStore.getState().activeTool).toBeNull();
 
     useToolStore.getState().setSplitAreaActive(true);
-    const split = useToolStore.getState().activeTool;
+    expect(useToolStore.getState().activeTool).toEqual({ kind: "split" });
     useToolStore.getState().resetProjectToolState();
-    expect(useToolStore.getState().activeTool).toBe(split);
+    expect(useToolStore.getState().activeTool).toBeNull();
 
     useToolStore.getState().setYoloTagPickingMode(true);
     useToolStore.getState().resetProjectToolState();

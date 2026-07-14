@@ -176,7 +176,7 @@ describe("viewerCoreStore — dedicated geometry owner", () => {
     unsubscribe();
   });
 
-  it("resets only the four legacy-touched values with fresh containers and stable actions", () => {
+  it("resets all five core values with fresh containers and stable actions", () => {
     const dirtyDimensions = { 8: { width: 900, height: 1200 } };
     useViewerCoreStore.setState({
       pageNumber: 8,
@@ -194,7 +194,7 @@ describe("viewerCoreStore — dedicated geometry owner", () => {
       pageNumber: 1,
       numPages: 0,
       scale: 1,
-      pendingCenter: true,
+      pendingCenter: false,
       pageDimensions: {},
     });
     expect(after.pageDimensions).not.toBe(dirtyDimensions);
@@ -205,6 +205,6 @@ describe("viewerCoreStore — dedicated geometry owner", () => {
     const firstResetDimensions = after.pageDimensions;
     after.resetViewerCoreState();
     expect(useViewerCoreStore.getState().pageDimensions).not.toBe(firstResetDimensions);
-    expect(useViewerCoreStore.getState().pendingCenter).toBe(true);
+    expect(useViewerCoreStore.getState().pendingCenter).toBe(false);
   });
 });

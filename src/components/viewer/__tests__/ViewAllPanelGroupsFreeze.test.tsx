@@ -102,8 +102,8 @@ function mockGroupPuts(routes: Record<number, Promise<unknown>>) {
 beforeEach(() => {
   qc = new QueryClient(); // pure defaults, matching production Providers.tsx
   resetProjectData();
-  // Store-bleed guards — see GroupActionsBarFreeze beforeEach for the rationale (selection +
-  // group fields are NOT in resetProjectData; hiddenTakeoffItemIds guard per ④ precedent).
+  // P2.5 reset clears selection and hiddenTakeoffItemIds; explicit destination values keep this
+  // fixture local, while group/annotation Query entries still require cache-side empty seeds.
   setViewerStoreStateForTest({
     publicId: "pid",
     isDemo: false,

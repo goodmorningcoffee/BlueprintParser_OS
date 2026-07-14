@@ -21,7 +21,6 @@ import {
   useTakeoffItems,
   useTakeoffGroups,
 } from "@/queries/useTakeoff";
-import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -48,8 +47,8 @@ function useBoth() {
   return { items: useTakeoffItems(), groups: useTakeoffGroups() };
 }
 
-// ── seedTakeoffCache — the ONE production full-collection write helper (2 loaders) ────────────
-describe("seedTakeoffCache (loader seed, both keys)", () => {
+// ── seedTakeoffCache — the lifecycle's one production full-collection write helper ─────────────
+describe("seedTakeoffCache (project-lifecycle seed, both keys)", () => {
   it("undefined collections seed [] — the v5 setQueryData(undefined) silent-no-op trap (D3)", () => {
     const qc = new QueryClient();
     // pre-populate a "previous visit" entry under the SAME publicId: without `?? []` a demo/
@@ -81,7 +80,7 @@ describe("seedTakeoffCache (loader seed, both keys)", () => {
     expect(qc.getQueryData(queryKeys.takeoff.groups("p-B"))).toBeUndefined();
   });
 
-  it("re-seeding the same publicId REPLACES both entries (loader overwrite on re-open)", () => {
+  it("re-seeding the same publicId REPLACES both entries (lifecycle overwrite on re-open)", () => {
     const qc = new QueryClient();
     seedTakeoffCache(qc, "p", [item({ id: 1, name: "Old" })], [group({ id: 5, name: "Old G" })]);
     const nextItems = [item({ id: 2, name: "New" })];
@@ -92,12 +91,10 @@ describe("seedTakeoffCache (loader seed, both keys)", () => {
   });
 });
 
-// ── seedTakeoffFromBootstrap — the dashboard loader's field-mapping adapter ───────────────────
-// [DETECTOR jul10 closer] Mutation testing showed deleting the loader's takeoff seed passed the
-// whole suite — the payload-field→cache-key mapping was test-invisible. These cases pin the
-// mapping itself (the loader keeps one trivial call: seedTakeoffFromBootstrap(qc, data.id, data)).
-// The loader CALL is still not executable-pinned (page not cleanly jsdom-mountable) — known,
-// accepted residual, named in the closer commit body.
+// ── seedTakeoffFromBootstrap — historical loader field-mapping adapter ───────────────────
+// [DETECTOR jul10 closer] The old inline loader mapping was test-invisible, so these cases retain
+// its payload-field→cache-key characterization. Shared openProject now calls seedTakeoffCache
+// directly; its guarded live sequence is covered by the lifecycle target suite.
 describe("seedTakeoffFromBootstrap (loader field-mapping adapter)", () => {
   it("maps takeoffItems→items key and takeoffGroups→groups key (a field swap fails here)", () => {
     const qc = new QueryClient();
@@ -145,7 +142,7 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
     expect(result.current.items.takeoffItems).toEqual([]);
     expect(result.current.groups.takeoffGroups).toEqual([]);
     // enabled:false + initialData -> immediate success, idle; an error status here would mean the
-    // throwing queryFn fired (the loader-seed contract was violated).
+    // throwing queryFn fired (the lifecycle-seed contract was violated).
     for (const key of [queryKeys.takeoff.items("p-A"), queryKeys.takeoff.groups("p-A")]) {
       const q = client.getQueryCache().find({ queryKey: key })!;
       expect(q.state.status).toBe("success");
@@ -153,12 +150,12 @@ describe("useTakeoffItems / useTakeoffGroups", () => {
     }
   });
 
-  it("seed→read round-trip: a pre-mount loader-style seed is what both hooks render", async () => {
+  it("seed→read round-trip: a pre-mount lifecycle-style seed is what both hooks render", async () => {
     setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     const items = [item({ id: 1, name: "Door" }), item({ id: 2, name: "Window", groupId: 5 })];
     const groups = [group({ id: 5, name: "Div 08" })];
-    seedTakeoffCache(client, "p-A", items, groups); // loader runs BEFORE consumers mount
+    seedTakeoffCache(client, "p-A", items, groups); // openProject seeds BEFORE consumers mount
     const { result } = renderHook(useBoth, { wrapper: makeWrapper(client) });
     await waitFor(() => expect(result.current.items.takeoffItems).toEqual(items));
     await waitFor(() => expect(result.current.groups.takeoffGroups).toEqual(groups));

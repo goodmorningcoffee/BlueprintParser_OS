@@ -14,7 +14,7 @@ import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 // [refactor jul10 P2.2④] takeoff (items + groups): zustand viewerStore -> TanStack Query cache
 // (variant a, bootstrap-seeded — P2_DESIGN/TAKEOFF_IMPL/SPEC.md is authoritative). There is NO
 // client GET for takeoff: both collections arrive top-level in the project bootstrap payload
-// (data.takeoffItems / data.takeoffGroups) and the loader seeds the cache via seedTakeoffCache.
+// (data.takeoffItems / data.takeoffGroups) and openProject seeds them via seedTakeoffCache.
 // TWO cache keys, ONE domain: queryKeys.takeoff.items(publicId) + .groups(publicId).
 //
 // TWO HOOKS BY DESIGN; do NOT add a combined useTakeoff() export (SPEC §2.2). Items-only readers
@@ -43,10 +43,10 @@ import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 // > Converting a call site fails loudly only in ITS OWN consumer's cases — do not assume TC
 // > coverage extends beyond CountTab. (SPEC §3.4 + §9 errata appendix)
 
-// [refactor jul10 P2.2④] Loader-side seed of BOTH takeoff cache entries — the ONE production
-// write helper for full-collection hydration (dashboard + demo loaders). The old store setters
-// setTakeoffItems/setTakeoffGroups are DELETED, not ported: these loader seeds were their sole
-// callers (SPEC §2.4), and porting them would create an untested whole-collection write path
+// [refactor jul10 P2.2④ + jul14 P2.5] Project-open seed of BOTH takeoff cache entries — the ONE
+// production write helper for full-collection hydration in the shared auth/demo lifecycle. The old
+// store setters setTakeoffItems/setTakeoffGroups were DELETED, not ported: their former loader
+// calls converged here, and porting them would create an untested whole-collection write path
 // bypassing this helper's `?? []` guard.
 //
 // `?? []` is LOAD-BEARING: RQ v5 setQueryData(key, undefined) is a silent NO-OP (query-core:
@@ -55,29 +55,32 @@ import type { ClientTakeoffItem, TakeoffGroup } from "@/types";
 // re-open. Coercion reproduces the old reset-then-conditional-set net behavior (resetProjectData
 // cleared both arrays before the loader's conditional sets — SPEC §5-D3).
 //
-// `publicId` is an explicit param (loaders pass `data.id`); call in the same synchronous block
-// as / after `useSessionStore.setState({ publicId })` so the keyed entries match the live project.
-// Both collection args are REQUIRED (no defaults) so a future third takeoff key can't hide
-// behind the signature.
+// `publicId` is explicit: openProject passes server-canonical `data.id`, and its generation guard
+// pairs both entries with the later single session activation. Both collection args are REQUIRED
+// (no defaults) so a future third takeoff key cannot hide behind the signature.
 export function seedTakeoffCache(
   qc: QueryClient,
   publicId: string,
   items: ClientTakeoffItem[] | undefined | null,
   groups: TakeoffGroup[] | undefined | null,
-): void {
+  canPublish: () => boolean = () => true,
+): boolean {
+  if (!canPublish()) return false;
   qc.setQueryData(queryKeys.takeoff.items(publicId), items ?? []);
+  // A Query subscriber may synchronously start a newer project generation. Never let the second
+  // half of this paired seed publish after that generation has begun.
+  if (!canPublish()) return false;
   qc.setQueryData(queryKeys.takeoff.groups(publicId), groups ?? []);
+  return canPublish();
 }
 
-// [DETECTOR jul10 P2.2④ closer] Bootstrap-payload adapter for the loader seed — a PURE no-op
-// extract of the field mapping the dashboard loader previously inlined
+// [DETECTOR jul10 P2.2④ closer] Historical bootstrap-payload adapter — a PURE no-op extract of
+// the field mapping the dashboard loader previously inlined
 // (`seedTakeoffCache(qc, data.id, data.takeoffItems, data.takeoffGroups)`). Exists so the
 // takeoffItems→items-key / takeoffGroups→groups-key MAPPING is unit-pinned (useTakeoff.test.tsx):
-// mutation testing showed deleting the loader's seed call passed the entire suite — the mapping
-// was test-invisible. The loader CALL itself is still not executable-pinned (the dashboard page
-// is not cleanly jsdom-mountable: next/navigation + next-auth + triple-fetch bootstrap); this
-// extract narrows that hole to one trivial, comment-guarded loader line. Payload is structural
-// (`{ takeoffItems?, takeoffGroups? }`) so both loaders' response types satisfy it.
+// mutation testing showed the old loader call was test-invisible. Shared openProject now calls
+// seedTakeoffCache directly; this adapter remains as the migration mapping characterization.
+// Payload is structural (`{ takeoffItems?, takeoffGroups? }`).
 export function seedTakeoffFromBootstrap(
   qc: QueryClient,
   publicId: string,
@@ -104,8 +107,8 @@ export function readTakeoffItems(qc: QueryClient, publicId: string): ClientTakeo
 // deleted store bindings (addTakeoffItem/removeTakeoffItem/updateTakeoffItem mirror
 // viewerStore.ts:1024-1033 verbatim). Config is chat-verbatim (useChatMessages.ts precedent):
 //   • throwing queryFn — no client GET exists; any refetch reaching it is a BUG, fail loud
-//     rather than silently clobbering the loader seed. Never fires: enabled:false + initialData.
-//   • enabled:false — loader seed is the sole source of truth; no fetch path, ever.
+//     rather than silently clobbering the lifecycle seed. Never fires: enabled:false + initialData.
+//   • enabled:false — openProject's seed is the sole source of truth; no fetch path, ever.
 //   • initialData [] — matches the old store default (viewerStore init); consumers array-safe.
 //   • staleTime Infinity — bootstrap-seeded; nothing may mark it stale.
 //   • gcTime Infinity — CORRECTNESS, not a nicety (SPEC §2.1): enabled:false + throwing queryFn

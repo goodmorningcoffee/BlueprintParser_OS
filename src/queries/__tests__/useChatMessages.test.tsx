@@ -8,7 +8,6 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { mapChatRows, seedChatCache, useChatMessages } from "@/queries/useChatMessages";
-import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ChatMsg } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -39,10 +38,10 @@ describe("mapChatRows (T-A1)", () => {
   });
 });
 
-// [DETECTOR closer] seedChatCache freezes the loader's ONE deliberate behavior change: an
+// [DETECTOR closer] seedChatCache freezes the project-open migration behavior: an
 // UNCONDITIONAL, publicId-scoped seed with a `?? []` default (the demo/undefined path). The
 // conditional-if version this replaced would leave stale client-echoes on a demo re-open.
-describe("seedChatCache (loader seed — the migration's behavior change)", () => {
+describe("seedChatCache (project-lifecycle seed — the migration's behavior change)", () => {
   it("undefined rows (demo omits chat) seeds [] under the publicId key", () => {
     const qc = new QueryClient();
     seedChatCache(qc, "demo-pub", undefined);
@@ -161,8 +160,8 @@ describe("useChatMessages hook", () => {
   // past the observer's unmount: under the hook's gcTime:Infinity the entry survives; if a future
   // edit lowers gcTime below an hour (the recipe default for heavy siblings is finite), the entry
   // GCs and the remount reads empty via initialData:[] — this test then FAILS, catching the
-  // regression the DETECTOR flagged (panel closed > gcTime -> reopen empty; loader re-seeds only on
-  // a full project load, never on a showChatPanel toggle).
+  // regression the DETECTOR flagged (panel closed > gcTime -> reopen empty; openProject re-seeds
+  // only on a full project open, never on a showChatPanel toggle).
   it("T-A6: gcTime:Infinity keeps chat alive across an observer gap even after an hour passes", () => {
     vi.useFakeTimers();
     try {

@@ -6,7 +6,7 @@ import {
   useParseFlowStore,
   type ParsedKeynoteEntry,
 } from "@/stores/parseFlowStore";
-import { useUiStore } from "@/stores/uiStore";
+import { openTableCompareModal, useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import {
   openTableReviewTarget,
@@ -261,7 +261,7 @@ export default function KeynoteItem({
                 <button
                   onClick={() => {
                     const grid = keynoteDataToGrid(region.data || {});
-                    useUiStore.getState().toggleTableCompareModal();
+                    openTableCompareModal();
                     openTableReviewTarget(keynote.pageNumber, {
                       grid: {
                         headers: grid.headers,

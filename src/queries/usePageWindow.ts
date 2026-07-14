@@ -299,17 +299,25 @@ export function publishBootstrapPageWindow(
   publicId: string,
   response: PageWindowResponse | null | undefined,
   numPages: number | null | undefined,
-): void {
+  canPublish: () => boolean = () => true,
+): boolean {
   const activeWindow = response
     ? buildBootstrapPageWindow(response, numPages)
     : EMPTY_ACTIVE_PAGE_WINDOW;
 
+  let completed = false;
   notifyManager.batch(() => {
+    if (!canPublish()) return;
     // Physical order is load-bearing: a synchronous active-window reader may never see annotations
     // older than the range it just observed. Both writes remain in this one no-await callback.
     qc.setQueryData(queryKeys.annotations.all(publicId), response?.annotations ?? []);
+    // Project-open is reentrant through Query subscribers. If the first publication starts B,
+    // suppress A's paired window write; B owns every publication from that point forward.
+    if (!canPublish()) return;
     qc.setQueryData(queryKeys.pagesWindow.active(publicId), activeWindow);
+    completed = canPublish();
   });
+  return completed;
 }
 
 export interface NavigationPageWindowPublication {
@@ -365,6 +373,8 @@ export interface EnsurePageIntelligenceOptions {
   pageNumber: number;
   isDemo: boolean;
   signal?: AbortSignal;
+  /** Exact lifecycle/operation predicate checked at every async adoption boundary. */
+  canAdopt?: () => boolean;
 }
 
 /**
@@ -381,13 +391,16 @@ export async function ensurePageIntelligence(
   const response = options.signal
     ? await fetch(endpoint, { signal: options.signal })
     : await fetch(endpoint);
+  if (options.canAdopt && !options.canAdopt()) return undefined;
   if (!response.ok) throw new PageWindowHttpError(response.status);
 
   const payload = (await response.json()) as PageWindowResponse;
+  if (options.canAdopt && !options.canAdopt()) return undefined;
   // The exact N..N route returns at most that requested row. Keep the live caller's pages[0]
   // adoption semantics instead of inventing a new malformed-response policy during extraction.
   const intelligence = payload.pages[0]?.pageIntelligence;
   if (!intelligence) return undefined;
+  if (options.canAdopt && !options.canAdopt()) return undefined;
 
   setPageIntelligenceForPage(
     qc,

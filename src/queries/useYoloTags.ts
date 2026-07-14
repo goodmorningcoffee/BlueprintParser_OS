@@ -228,7 +228,7 @@ export function readYoloTags(qc: QueryClient, publicId: string): YoloTag[] {
 }
 
 /**
- * Loader adapter: seeds the collection unconditionally and returns PI with its duplicate yoloTags
+ * Project-open adapter: seeds the collection unconditionally and returns PI with duplicate yoloTags
  * property removed. The returned object feeds only the narrow csiGraph Query seed; retaining the
  * nested tag array there would duplicate the collection even at that one bootstrap boundary.
  */
@@ -238,7 +238,7 @@ export function seedYoloTagsFromBootstrap(
   projectIntelligence: ProjectIntelligence,
 ): Record<string, unknown> | null {
   // Every bootstrap publication starts a new adoption epoch—including a same-publicId reopen.
-  // Async map callbacks capture the mounted epoch and cannot write after the next loader cycle.
+  // Async map callbacks capture the mounted epoch and cannot write after the next lifecycle open.
   bumpProjectEpoch(qc, publicId);
   if (!projectIntelligence) {
     qc.setQueryData<YoloTag[]>(queryKeys.yoloTags.all(publicId), []);
@@ -255,7 +255,7 @@ export function seedYoloTagsFromBootstrap(
   return withoutYoloTags;
 }
 
-/** Exact project teardown used by both loaders; never broaden this to queryKeys.project(). */
+/** Exact teardown owned by openProject; never broaden this to queryKeys.project(). */
 export function clearYoloTagsProject(qc: QueryClient, publicId: string): void {
   bumpProjectEpoch(qc, publicId);
   const lane = saveLanes.get(qc)?.get(publicId);
@@ -362,8 +362,8 @@ function useRowsQuery<T = YoloTag[]>(select?: (rows: YoloTag[]) => T): T {
     initialData: EMPTY_YOLO_TAGS,
     staleTime: Infinity,
     // Correctness + memory are paired: there is no recovery GET, so the active project's entry
-    // cannot GC. Both loaders call clearYoloTagsProject for the previous exact key, bounding the
-    // cache to current ownership instead of accumulating every visited instance graph.
+    // cannot GC. openProject clears the previous exact key, bounding cache ownership instead of
+    // accumulating every visited instance graph.
     gcTime: Infinity,
     ...(select ? { select } : {}),
   });

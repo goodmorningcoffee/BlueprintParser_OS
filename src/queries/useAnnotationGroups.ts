@@ -6,8 +6,8 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { AnnotationGroup, AnnotationGroupMembership } from "@/types";
 
-// [refactor jul10 P2.2⑤] ANNOTATION-GROUPS domain: zustand viewerStore → TanStack Query cache
-// (variant b, EAGER-LOADER-SEEDED — P2_DESIGN/ANNGROUPS_IMPL/SPEC.md is authoritative).
+// [refactor jul10 P2.2⑤ + jul14 P2.5] ANNOTATION-GROUPS domain: zustand viewerStore →
+// TanStack Query cache (variant b, EAGER-LIFECYCLE-SEEDED).
 //
 // ONE cache key (queryKeys.annotationGroups.all(publicId)) holds the RAW server payload
 // {groups, memberships}; the M:N Set indexes (annotationGroupMemberships / groupMembers) are
@@ -31,16 +31,16 @@ import type { AnnotationGroup, AnnotationGroupMembership } from "@/types";
 //   • the config quartet below guarantees ZERO background fetches, ever (E5/E8).
 //
 // staleTime: Infinity — NOT the qto precedent's 0 (SPEC verdict 1). qto's staleTime:0 encoded
-// qto's OLD fetch-on-every-mount effect; groups' old behavior is fetch-ONCE-per-open (the loader
-// Promise.all GET). Under staleTime 0 the eager seed stamps dataUpdatedAt and every observer
+// qto's OLD fetch-on-every-mount effect; groups preserve fetch-ONCE-per-open in openProject's
+// Promise.all GET. Under staleTime 0 the eager seed stamps dataUpdatedAt and every observer
 // mount (reveal, each ViewAllPanel toggle) plus focus/reconnect would fire uncharacterized GETs,
 // one racing the optimistic-toggle window. Infinity = exactly-one-GET-per-open for any session
 // length. Any finite T reintroduces panel-toggle refetches after T.
 //
 // ⚠️ initialData × option-(a) COUPLING (SPEC §2.2): initialData counts as FRESH
 // (dataUpdatedAt=now); combined with staleTime ∞ this query would NEVER fetch on its own — safe
-// ONLY because the loader's unconditional seedAnnotationGroupsCache is the source of truth
-// (eager fetch stays in the loader's Promise.all, keeping network errors FATAL like today).
+// ONLY because openProject's unconditional seedAnnotationGroupsCache is the source of truth
+// (the eager fetch stays in its Promise.all, preserving fatal network-error behavior).
 // Do not flip to observer-fetch (option b) without flipping these fields.
 //
 // FUNCTIONAL-UPDATER MANDATE (SPEC verdict 5): both writes merge into the live entry via
@@ -66,7 +66,7 @@ import type { AnnotationGroup, AnnotationGroupMembership } from "@/types";
 // VAP-edit/toggle/bulk). If a future demo group seed ever appears, those four sites fire real
 // PUTs (server rejects them — resolveProjectOrThrow without allowDemo — but client noise +
 // error dialogs would be new demo behavior). Keep demo groups empty: enabled gate below +
-// zero-diff demo loader + empty initialData.
+// openProject's explicit empty demo seed + empty initialData.
 
 /** Raw cache-entry shape — the annotation-groups GET response, verbatim (no client mapper). */
 export type AnnotationGroupsPayload = {
@@ -106,10 +106,10 @@ export function deriveGroupIndexes(pairs: AnnotationGroupMembership[]): {
   return { annotationGroupMemberships: memberships, groupMembers: reverse };
 }
 
-// [refactor jul10 P2.2⑤] Loader-side seed — the ONE production write helper for full-payload
-// hydration (dashboard loader; the demo loader deliberately never calls it — demo stays empty).
+// [refactor jul10 P2.2⑤ + jul14 P2.5] Project-open seed — the ONE production write helper for
+// full-payload hydration. Auth passes its groups response; demo passes null and stays empty.
 //
-// UNCONDITIONAL + ATOMIC both-fields (SPEC §2.3): the loader calls this even when the groups GET
+// UNCONDITIONAL + ATOMIC both-fields (SPEC §2.3): the lifecycle calls this even when the groups GET
 // returned non-ok/unparseable (payload null). A conditional skip would leave a stale-or-ABSENT
 // entry — absent + a real queryFn = a post-reveal recovery GET the old app never did (designed
 // out, ③/④ D3 doctrine). The atomic both-fields replace also removes the old per-field
@@ -119,11 +119,9 @@ export function deriveGroupIndexes(pairs: AnnotationGroupMembership[]): {
 // the 3 group fields — that omission was the old bug); SAME-project failed-reload now CLEARS
 // previously-visible groups (E3c — deliberate, regression-shaped, owner-sanctioned).
 //
-// `publicId` is an explicit param — loaders pass `data.id` (server-canonical, like the sibling
-// chat/summaries/takeoff seeds), NEVER the user-controlled route param. Call after
-// setState({publicId}); seed-before-reveal (before setLoading(false)) is the invariant that
-// keeps groups painted at first reveal with no pop-in (SPEC §2.1 — NOT "same synchronous block":
-// this seed legitimately sits after an await on the sibling groups response).
+// `publicId` is explicit: openProject passes `data.id` (server-canonical), NEVER the route param.
+// Seed-before-activation/reveal keeps groups painted at first reveal with no pop-in; the lifecycle
+// legitimately reaches this publication after awaiting the sibling groups response.
 export function seedAnnotationGroupsCache(
   qc: QueryClient,
   publicId: string,
@@ -139,16 +137,12 @@ export function seedAnnotationGroupsCache(
   });
 }
 
-// [DETECTOR jul10 closer M8/M11] The dashboard loader's groups-seed tail, extracted VERBATIM
-// from page.tsx (④'s seedTakeoffFromBootstrap precedent, d2229a3): ok-gate → parse-or-null →
-// UNCONDITIONAL seed. A pure adapter over seedAnnotationGroupsCache so the response mapping and
-// the publicId keying are unit-pinnable (the migrate-commit mutation pass showed the old inline
-// pair was deletable/mis-keyable with a fully green suite). Contract = exactly what the loader
-// line did: !ok short-circuits (json() is never called) → null; unparseable json → null; the
-// seed helper's `?? []` turns null/omitted fields into empty halves — the entry is ALWAYS
-// written, never skipped (E3 clear-on-fail semantics). The loader passes `data.id`
-// (server-canonical), never the route param — the wrong-key pin guards that regression.
-// `groupsRes` is typed structurally (ok + json) so tests need no real Response.
+// [DETECTOR jul10 closer M8/M11] Historical dashboard-loader groups-seed tail, extracted VERBATIM
+// from page.tsx (④'s seedTakeoffFromBootstrap precedent, d2229a3). The migration adapter remains
+// unit-pinned even though shared openProject now parses the response and calls the cache seed
+// directly. Its historical contract was: !ok short-circuits without json() → null; unparseable
+// JSON → null; the seed helper writes empty halves rather than skipping. `groupsRes` remains
+// structurally typed so characterization tests need no real Response.
 export async function seedAnnotationGroupsFromBootstrap(
   qc: QueryClient,
   publicId: string,
@@ -187,7 +181,7 @@ export function useAnnotationGroups() {
     queryKey: key,
     // Variant-b contract: the key stays honest (a real queryFn exists) but is DORMANT by
     // construction under option (a) — initialData marks the entry fresh, staleTime ∞ keeps it
-    // fresh, and the loader seed overwrites it every load(). Hook suite pins fetchCount 0.
+    // fresh, and openProject overwrites it every open. Hook suite pins fetchCount 0.
     // If it ever DID run: non-ok / unparseable → EMPTY_PAYLOAD, mirroring the old loader's
     // net "no groups this open" (the old code skipped the seed on !ok).
     queryFn: async ({ signal }): Promise<AnnotationGroupsPayload> => {
@@ -202,8 +196,8 @@ export function useAnnotationGroups() {
     // flows through `enabled` (M10 pin in the hook suite) — and (2) config drift: any future
     // staleTime/initialData change would expose demo to the allowDemo-readable GET (DB rows old
     // demo never showed), and demo write-inertness for the four unguarded PUT sites depends on
-    // demo groups staying EMPTY (SPEC §7.1). Gate-order safe: the demo loader sets isDemo:true
-    // before publicId, so this never flickers true.
+    // demo groups staying EMPTY (SPEC §7.1). Gate-order safe: openProject publishes the empty
+    // demo entry before its single session activation, so this never flickers true.
     enabled: !!publicId && !isDemo,
     // Matches the old zustand inits ([], {}, {} → derived-empty). See the header COUPLING note.
     initialData: EMPTY_PAYLOAD,
@@ -218,7 +212,7 @@ export function useAnnotationGroups() {
     gcTime: Infinity,
     // Old Promise.all fetch was single-attempt.
     retry: false,
-    // The loader's loadedIdRef exists precisely to block focus re-loads; also closes the
+    // The shared lifecycle owns the one GET per open; disabling focus reload also closes the
     // focus-GET-races-optimistic-toggle window (SPEC §5-E8).
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,

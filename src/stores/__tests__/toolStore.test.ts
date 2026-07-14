@@ -42,22 +42,10 @@ const LEGACY_ACTION_KEYS = [
   "setSymbolSearchPreset", "clearSymbolSearch",
 ] as const satisfies readonly (keyof ToolStoreState)[];
 
-const RESET_TOUCHED_KEYS = [
-  "tempPanMode", "activeTool", "activeTakeoffItemId", "scaleCalibrations", "calibrationMode",
-  "calibrationPoints", "polygonDrawingMode", "polygonVertices", "bucketFillResolution",
-  "tagScanResults", "symbolSearchLoading", "symbolSearchProgress", "symbolSearchResults",
-  "symbolSearchConfidence", "dismissedSymbolMatches", "symbolSearchError",
-  "symbolSearchTemplateBbox", "symbolSearchSourcePage", "symbolSearchConfig",
-  "symbolSearchPreset",
-] as const satisfies readonly (keyof ToolStoreData)[];
-
-const RESET_RETAINED_KEYS = [
-  "mode", "_drawing", "_drawStart", "_drawEnd", "_mousePos",
-  "takeoffUndoStack", "takeoffRedoStack",
-  "bucketFillPreview", "bucketFillLoading", "bucketFillError", "bucketFillTolerance",
-  "bucketFillDilatePx", "bucketFillPendingPolygon", "bucketFillBarriers",
-  "bucketFillBarrierMode", "barrierPendingPoint", "splitLineA",
-  "splitLineB", "splitPreview", "splitError",
+const MUTABLE_DEFAULT_KEYS = [
+  "_drawStart", "_drawEnd", "scaleCalibrations", "calibrationPoints", "polygonVertices",
+  "bucketFillBarriers", "takeoffUndoStack", "takeoffRedoStack", "dismissedSymbolMatches",
+  "symbolSearchConfig",
 ] as const satisfies readonly (keyof ToolStoreData)[];
 
 type DataKey = (typeof DATA_KEYS)[number];
@@ -134,6 +122,13 @@ function sorted(keys: readonly DataKey[]): DataKey[] {
   return [...keys].sort();
 }
 
+function pickData(state: ToolStoreState): Pick<ToolStoreState, DataKey> {
+  return Object.fromEntries(DATA_KEYS.map((key) => [key, state[key]])) as Pick<
+    ToolStoreState,
+    DataKey
+  >;
+}
+
 function pickActions(state: ToolStoreState): Pick<ToolStoreState, LegacyActionKey> {
   return Object.fromEntries(LEGACY_ACTION_KEYS.map((key) => [key, state[key]])) as Pick<
     ToolStoreState,
@@ -161,9 +156,8 @@ describe("toolStore drawing-last — exact isolated contract", () => {
     expect(new Set(LEGACY_ACTION_KEYS).size).toBe(47);
     expect(data).toEqual([...DATA_KEYS].sort());
     expect(actions).toEqual([...LEGACY_ACTION_KEYS, "resetProjectToolState"].sort());
-    expect(RESET_TOUCHED_KEYS).toHaveLength(20);
-    expect(RESET_RETAINED_KEYS).toHaveLength(20);
-    expect(sorted([...RESET_TOUCHED_KEYS, ...RESET_RETAINED_KEYS])).toEqual(sorted(DATA_KEYS));
+    expect(MUTABLE_DEFAULT_KEYS).toHaveLength(10);
+    expect(new Set(MUTABLE_DEFAULT_KEYS).size).toBe(10);
   });
 
   it("freezes all construction defaults", () => {
@@ -538,26 +532,22 @@ describe("toolStore AT2 — allocation and reset policy", () => {
     expect(useToolStore.getState().splitPreview).toBe(SPLIT);
   });
 
-  it("resetProjectToolState publishes once from defaults and allocates its five containers", () => {
+  it("resetProjectToolState publishes once from defaults and allocates fresh mutable defaults", () => {
     const before = useToolStore.getState();
     const listener = vi.fn();
     const unsubscribe = useToolStore.subscribe(listener);
     before.resetProjectToolState();
     const after = useToolStore.getState();
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(changedKeys(before, after)).toEqual(sorted([
-      "scaleCalibrations", "calibrationPoints", "polygonVertices",
-      "dismissedSymbolMatches", "symbolSearchConfig",
-    ]));
-    expect(after.scaleCalibrations).not.toBe(before.scaleCalibrations);
-    expect(after.calibrationPoints).not.toBe(before.calibrationPoints);
-    expect(after.polygonVertices).not.toBe(before.polygonVertices);
-    expect(after.dismissedSymbolMatches).not.toBe(before.dismissedSymbolMatches);
-    expect(after.symbolSearchConfig).not.toBe(before.symbolSearchConfig);
+    expect(changedKeys(before, after)).toEqual(sorted(MUTABLE_DEFAULT_KEYS));
+    expect(pickData(after)).toEqual(pickData(useToolStore.getInitialState()));
+    for (const key of MUTABLE_DEFAULT_KEYS) {
+      expect(after[key], `fresh reset container ${key}`).not.toBe(before[key]);
+    }
     unsubscribe();
   });
 
-  it("resetProjectToolState publishes once dirty, touches 20, retains 20, and keeps actions", () => {
+  it("resetProjectToolState publishes once dirty, clears all 40 fields, and keeps actions", () => {
     const scaleCalibrations = { 3: CALIBRATION };
     const calibrationPoints = { p1: { x: 0.1, y: 0.2 } };
     const vertices = [{ x: 0.1, y: 0.2 }];
@@ -599,10 +589,8 @@ describe("toolStore AT2 — allocation and reset policy", () => {
     const after = useToolStore.getState();
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(changedKeys(before, after)).toEqual(sorted(RESET_TOUCHED_KEYS));
-    for (const key of RESET_RETAINED_KEYS) {
-      expect(after[key], `retained ${key}`).toBe(before[key]);
-    }
+    expect(changedKeys(before, after)).toEqual(sorted(DATA_KEYS));
+    expect(pickData(after)).toEqual(pickData(useToolStore.getInitialState()));
     for (const key of LEGACY_ACTION_KEYS) {
       expect(after[key], `stable action ${key}`).toBe(actions[key]);
     }
@@ -622,23 +610,24 @@ describe("toolStore AT2 — allocation and reset policy", () => {
     expect(after.polygonVertices).not.toBe(vertices);
     expect(after.dismissedSymbolMatches).not.toBe(dismissed);
     expect(after.symbolSearchConfig).not.toBe(config);
-    expect(after._drawing).toBe(true);
-    expect(after._drawStart).toBe(drawStart);
-    expect(after._drawEnd).toBe(drawEnd);
-    expect(after._mousePos).toBe(mousePos);
+    expect(after._drawStart).not.toBe(drawStart);
+    expect(after._drawEnd).not.toBe(drawEnd);
+    expect(after.bucketFillBarriers).not.toBe(barriers);
+    expect(after.takeoffUndoStack).not.toBe(undo);
+    expect(after.takeoffRedoStack).not.toBe(redo);
     unsubscribe();
   });
 
-  it("preserves exact bucket/split owner identity but clears every other owner on project reset", () => {
+  it("clears every active owner, including temporary bucket and split owners", () => {
     const bucket = { kind: "bucketFill" } as const;
     useToolStore.setState({ activeTool: bucket });
     useToolStore.getState().resetProjectToolState();
-    expect(useToolStore.getState().activeTool).toBe(bucket);
+    expect(useToolStore.getState().activeTool).toBeNull();
 
     const split = { kind: "split" } as const;
     useToolStore.setState({ activeTool: split });
     useToolStore.getState().resetProjectToolState();
-    expect(useToolStore.getState().activeTool).toBe(split);
+    expect(useToolStore.getState().activeTool).toBeNull();
 
     useToolStore.setState({ activeTool: { kind: "takeoffPlacement" } });
     useToolStore.getState().resetProjectToolState();

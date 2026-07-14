@@ -496,11 +496,20 @@ export async function replaceTextractForPage(
 }
 
 /** Exact heavy-domain teardown. Never remove the broader project prefix. */
-export async function clearTextractProject(qc: QueryClient, publicId: string): Promise<void> {
+export async function clearTextractProject(
+  qc: QueryClient,
+  publicId: string,
+  canContinue: () => boolean = () => true,
+): Promise<void> {
   if (!publicId) return;
+  if (!canContinue()) return;
   const prefix = queryKeys.textract.all(publicId);
   await qc.cancelQueries({ queryKey: prefix, exact: false }, { silent: true });
+  // Cancellation is an await boundary. A newer same-ID open may already have adopted its own OCR
+  // payloads, so stale teardown must stop before removing or touching coordinator state.
+  if (!canContinue()) return;
   qc.removeQueries({ queryKey: prefix, exact: false });
+  if (!canContinue()) return;
 
   const coordinator = getCoordinator(qc);
   const project = projectCoordinator(coordinator, publicId);

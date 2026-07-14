@@ -22,7 +22,6 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { queryKeys } from "@/queries/queryKeys";
-import { useViewerStore } from "@/stores/viewerStore";
 import { seedTextract } from "@/test/seed-textract";
 import type { TextractPageData } from "@/types";
 import { TextractTab } from "../TextPanel";

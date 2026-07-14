@@ -22,12 +22,11 @@ export function mapChatRows(
   }));
 }
 
-// [refactor jul9 P2.2① · DETECTOR closer] Loader-side seed of the chat cache, extracted from the
-// project loader so the one deliberate behavior change of this migration is unit-testable. The seed
-// is UNCONDITIONAL with `rows ?? []`: reproduces the OLD net behavior (resetProjectData used to
-// clear chatMessages:[] then the loader conditionally overwrote) AND overwrites any stale client
-// echoes cached under this publicId on re-open. The demo path matters: getDemoProject omits
-// chatMessages (rows === undefined) -> this seeds [] rather than leaving a stale entry.
+// [refactor jul9 P2.2① · jul14 P2.5] Project-open chat seed, originally extracted from the
+// authenticated loader so the migration behavior stayed unit-testable. Shared openProject calls it
+// unconditionally with `rows ?? []`: this preserves the OLD reset-then-conditional-set net result
+// and overwrites stale client echoes under a same-publicId reopen. Demo omits chatMessages, so its
+// lifecycle publication is an explicit [] rather than a retained cache entry.
 export function seedChatCache(
   qc: QueryClient,
   publicId: string,
@@ -39,7 +38,7 @@ export function seedChatCache(
 // [refactor jul9 P2.2①] chat: zustand viewerStore -> TanStack Query cache (FIRST of 9 domains;
 // this is the reusable template for the bootstrap-seeded/no-GET domains ③④⑨). There is NO GET
 // endpoint for chat — rows arrive in the project bootstrap payload and are seeded via setQueryData
-// in the loader (project/[id]/page.tsx). This hook is a pure cache SUBSCRIPTION + two client-only
+// by the shared openProject lifecycle. This hook is a pure cache SUBSCRIPTION + two client-only
 // mutations; the queryFn MUST NEVER run. It returns the SAME shape the old useChat() gave for chat
 // data, so ChatPanel changes only its import + destructure. `chatScope`/`showChatPanel` stay in
 // zustand (UI state) — only the server-backed message collection migrates.
@@ -66,7 +65,7 @@ export function useChatMessages() {
     staleTime: Infinity, // documents "never auto-refetch" (moot under enabled:false)
     // gcTime:Infinity — ChatPanel is the SOLE observer and is CONDITIONALLY mounted
     // ({showChatPanel && <ChatPanel/>}, PDFViewer.tsx:674). Client-sent messages live only in this
-    // cache for the session — the loader re-seeds ONLY on a full project (re)load, NOT on a panel
+    // cache for the session — openProject re-seeds ONLY on a full project (re)open, NOT on a panel
     // toggle. A finite gcTime would GC them while the panel is closed > gcTime and reopen EMPTY =
     // a regression vs the old zustand field (which held them all session). Chat is text (KB-scale)
     // so retention is cheap. NOTE: retention is per-domain, not a recipe-wide default: ⑥

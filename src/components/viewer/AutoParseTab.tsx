@@ -13,7 +13,7 @@ import {
   setTableParseStepWithTool,
 } from "@/stores/viewerCommands";
 import { useNavigation } from "@/stores/viewerCoreStore";
-import { useUiStore } from "@/stores/uiStore";
+import { openTableCompareModal } from "@/stores/uiStore";
 import { useProject } from "@/stores/sessionStore";
 import { exportTableCsv } from "@/lib/table-parse-utils";
 // [refactor jul5 S027] apiErrorMessage: table-parse now serves {error:{code,message}}
@@ -108,7 +108,6 @@ export default function AutoParseTab({
     tableParseTab,
     tableParseOptions, setTableParseOptions,
   } = useTableParseExtensions();
-  const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
 
   const [autoParsingRevision, setAutoParsingRevision] = useState<number | null>(null);
   const autoParsing = tableOperation.busy && autoParsingRevision === tableOperation.revision;
@@ -602,7 +601,7 @@ export default function AutoParseTab({
             </button>
             <button
               onClick={() => {
-                toggleTableCompareModal();
+                openTableCompareModal();
                 invalidateTableOperation();
               }}
               className="flex-1 text-xs px-3 py-1.5 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"

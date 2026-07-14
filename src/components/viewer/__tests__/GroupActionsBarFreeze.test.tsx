@@ -2,7 +2,7 @@
 //
 // Written GREEN against the CURRENT (zustand-backed) code and MUST stay green byte-for-byte
 // after the annotation-groups domain (groups + M:N membership indexes) migrates to the TanStack
-// Query cache (variant b, eager-loader-seeded — P2_DESIGN/ANNGROUPS_IMPL/SPEC.md is
+// Query cache (variant b, now eagerly seeded by openProject — P2_DESIGN/ANNGROUPS_IMPL/SPEC.md is
 // authoritative). The single sanctioned divergence point is the SHARED `seedAnnotationGroups`
 // helper (src/test/seed-annotation-groups.ts); annotation rows ride the SHARED `seedAnnotations`
 // helper (⑥ owns ITS flip). Every test body here stays identical across the C3 flip.
@@ -113,10 +113,9 @@ beforeEach(() => {
   // nets run against production-equivalent client defaults (③ DETECTOR-closer rationale).
   qc = new QueryClient();
   resetProjectData();
-  // Store-bleed guards: resetProjectData clears `annotations` but NOT `selectedAnnotationIds`
-  // (never in the reset block) and NOT the three group fields (the E3 reset omission — frozen,
-  // do not "fix" the store). Selection resets here; groups reset through the seed helper so the
-  // guard itself survives the C3 flip (post-flip it seeds an empty cache entry instead).
+  // P2.5 resetProjectData clears UI selection but does not own QueryClient collections. Install
+  // the destination identity and an explicit empty group entry so this test cache cannot inherit
+  // rows from another case.
   setViewerStoreStateForTest({ publicId: "pid", isDemo: false, selectedAnnotationIds: new Set<number>() });
   seedAnnotationGroups(qc, [], []); // AFTER publicId — the post-flip cache key derives from it
   fetchMock.mockReset();
@@ -407,7 +406,7 @@ describe("GroupActionsBar — mass delete sweeps ⑥-zustand annotations, indexe
 
 // ─── G-6: demo inertness — the THREE canPersist-guarded sites only ───────────────────────────
 // The four UNGUARDED PUT sites (GAB-edit :131, VAP-edit/toggle/bulk) are unreachable-surface
-// exclusions: production demo groups are ALWAYS empty (demo loader never seeds groups), so no
+// exclusions: production demo groups are ALWAYS empty (openProject explicitly seeds empty), so no
 // picker/panel row exists to click. This test seeds a demo group ONLY to make the guarded
 // add-to-existing path clickable — do NOT extend it to the edit pencil: that path WOULD fire a
 // real PUT (the documented tripwire, SPEC §7.1).

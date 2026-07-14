@@ -10,7 +10,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { seedSummariesCache, useSummariesData, useSummaries } from "@/queries/useSummaries";
 import type { ActivePageWindow } from "@/queries/pageWindowCore";
-import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { ProjectSummaries } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -45,8 +44,8 @@ function freshClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
-// ── seedSummariesCache — the ONE production write helper (8 call sites) ───────────────────────
-describe("seedSummariesCache (loader/refresher seed)", () => {
+// ── seedSummariesCache — one lifecycle seed + two refresh paths ───────────────────────
+describe("seedSummariesCache (lifecycle/refresher seed)", () => {
   it("undefined summaries seed NULL — the v5 setQueryData(undefined) silent-no-op trap", () => {
     const qc = new QueryClient();
     // pre-populate a "previous visit" entry: without the `?? null` coercion this would be
@@ -57,7 +56,7 @@ describe("seedSummariesCache (loader/refresher seed)", () => {
     expect(qc.getQueryData(queryKeys.summaries.all("p"))).toBeNull();
   });
 
-  it("null summaries seed null (loader parity: response with summaries: null)", () => {
+  it("null summaries seed null (lifecycle parity: response with summaries: null)", () => {
     const qc = new QueryClient();
     seedSummariesCache(qc, "p", null);
     expect(qc.getQueryData(queryKeys.summaries.all("p"))).toBeNull();
@@ -73,7 +72,7 @@ describe("seedSummariesCache (loader/refresher seed)", () => {
     expect(qc.getQueryData(queryKeys.summaries.all("p-B"))).toBeUndefined();
   });
 
-  it("re-seeding the same key REPLACES (loader overwrites a stale same-key entry on re-open)", () => {
+  it("re-seeding the same key REPLACES (lifecycle overwrites a stale same-key entry on re-open)", () => {
     const qc = new QueryClient();
     seedSummariesCache(qc, "p", summariesFixture({ allTrades: ["Old"] }));
     const next = summariesFixture({ allTrades: ["New"] });
@@ -100,11 +99,11 @@ describe("useSummaries hooks", () => {
     expect(q.state.fetchStatus).toBe("idle");
   });
 
-  it("seed→read round-trip: a pre-mount loader-style seed is what the hook renders", async () => {
+  it("seed→read round-trip: a pre-mount lifecycle-style seed is what the hook renders", async () => {
     setViewerStoreStateForTest({ publicId: "p-A" });
     const client = freshClient();
     const s = summariesFixture({ allTrades: ["Electrical"] });
-    seedSummariesCache(client, "p-A", s); // loader runs BEFORE consumers mount (seed-before-reveal)
+    seedSummariesCache(client, "p-A", s); // lifecycle seeds before activation/reveal
     const { result } = renderHook(() => useSummariesData(), { wrapper: makeWrapper(client) });
     // pre-mount seed is read synchronously at construction (initialData never clobbers it),
     // but keep waitFor for uniformity with RQ's async notify elsewhere.
@@ -182,7 +181,7 @@ describe("useSummaries hooks", () => {
 
   // gcTime:Infinity — same fake-timer mechanics as chat's T-A6 (a synchronous unmount/remount
   // would pass for ANY gcTime; only advancing timers past a plausible finite value discriminates).
-  // Rationale differs from chat's, deliberately: summaries would be RECOVERABLE (loader re-seeds
+  // Rationale differs from chat's: summaries are RECOVERABLE (openProject re-seeds
   // on re-entry; refresher writes are server-persisted) — Infinity is pure faithfulness to the
   // always-resident zustand field, and this pin keeps that config from silently drifting.
   it("gcTime:Infinity keeps the entry alive across an observer gap even after an hour passes", () => {

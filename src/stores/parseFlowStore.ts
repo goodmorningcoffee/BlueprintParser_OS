@@ -219,8 +219,8 @@ export interface ParseFlowState {
   invalidateParseOperation: (kind: ParseKind) => void;
 
   /**
-   * Project-reset seam. It intentionally preserves the characterized three-field policy:
-   * tableCellStructure, showTableCellStructure, and tableParseOptions retain their references.
+   * Project-reset seam. Every project-owned parse field returns to its initial value while
+   * operation revisions advance so delayed work from the previous project loses authority.
    */
   resetProjectParseState: () => void;
 }
@@ -438,16 +438,26 @@ export const useParseFlowStore = create<ParseFlowState>((set, get) => ({
   })),
 
   resetProjectParseState: () => set((state) => ({
-    // Exact post-D2 project-reset policy: 31 touched, with three Table fields retained above.
-    // A2 adds only the monotonic four-kind invalidation below; no legacy survival policy changes.
     tableParseTab: "all",
     tableParseStep: "idle",
     tableParseRegion: null,
     tableParsedGrid: null,
     tableParseMeta: null,
+    tableCellStructure: null,
+    showTableCellStructure: false,
     tableParseColumnBBs: [],
     tableParseColumnNames: [],
     tableParseRowBBs: [],
+    tableParseOptions: {
+      rowTolerance: 0.006,
+      minColGap: 0.015,
+      colHitRatio: 0.3,
+      headerMode: "auto",
+      minHLineLengthRatio: 0.15,
+      minVLineLengthRatio: 0.10,
+      clusteringTolerance: 15,
+      mergerEditDistance: 2,
+    },
     keynoteParseTab: "all",
     keynoteParseStep: "idle",
     keynoteParseRegion: null,

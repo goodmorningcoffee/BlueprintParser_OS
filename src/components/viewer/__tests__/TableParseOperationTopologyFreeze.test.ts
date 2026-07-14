@@ -379,9 +379,9 @@ describe("A2b Table invalidation topology", () => {
     const compare = compact(source("src/components/viewer/CompareEditTab.tsx"));
     expect(compare).not.toContain("beforeHandoff");
     expect(compare).not.toContain("setPage(");
-    expect(compare).toContain("toggleTableCompareModal();loadExistingParsed(t.region)");
+    expect(compare).toContain("openTableCompareModal();loadExistingParsed(t.region)");
     expect(compare).toContain(
-      "toggleTableCompareModal();loadExistingParsed(t.region,t.pageNum)",
+      "openTableCompareModal();loadExistingParsed(t.region,t.pageNum)",
     );
 
     for (const [path, sourceKind] of [
@@ -389,7 +389,7 @@ describe("A2b Table invalidation topology", () => {
       ["src/components/viewer/KeynoteItem.tsx", "keynote"],
     ] as const) {
       const item = readFileSync(join(process.cwd(), path), "utf8").replace(/\s+/g, "");
-      expect(item).toContain("toggleTableCompareModal();openTableReviewTarget(");
+      expect(item).toContain("openTableCompareModal();openTableReviewTarget(");
       expect(item).not.toContain("invalidateKeynoteTableOperations()");
       expect(item).not.toContain('invalidateParseOperation("table")');
       if (sourceKind === "keynote") expect(item).toContain('},"keynote")');
@@ -405,7 +405,7 @@ describe("A2b Table invalidation topology", () => {
       "onClick={()=>{loadExistingParsed(p);}}",
     );
     expect(compactAuto).toContain(
-      "onClick={()=>{toggleTableCompareModal();invalidateTableOperation();}}",
+      "onClick={()=>{openTableCompareModal();invalidateTableOperation();}}",
     );
     const restart = compactAuto.indexOf("restartTableParseFromCurrentRegion()");
     const reparseMarker = compactAuto.lastIndexOf("/*Reparsewithadjustedoptions*/", restart);

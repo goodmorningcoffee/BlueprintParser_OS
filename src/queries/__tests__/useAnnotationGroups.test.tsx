@@ -1,5 +1,5 @@
-// [refactor jul10 P2.2⑤] Hook suite for the annotation-groups query facade (variant b,
-// eager-loader-seeded) — born CACHE-FORM at C2 (SPEC §6.4; the new code is app-unused until C3).
+// [refactor jul10 P2.2⑤ + jul14 P2.5] Hook suite for the annotation-groups query facade
+// (variant b, eagerly seeded by openProject) — born CACHE-FORM at C2.
 // P2_DESIGN/ANNGROUPS_IMPL/SPEC.md is authoritative.
 //
 // WHAT THIS SUITE IS: the E6 identity pins are THE canvas-sacred crux — they enforce
@@ -28,7 +28,6 @@ import {
   deriveGroupIndexes,
   type AnnotationGroupsPayload,
 } from "@/queries/useAnnotationGroups";
-import { useViewerStore } from "@/stores/viewerStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { AnnotationGroup, AnnotationGroupMembership } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -84,7 +83,7 @@ afterEach(() => {
   onlineManager.setOnline(true);
 });
 
-// ─── seedAnnotationGroupsCache (the loader write) ────────────────────────────────────────────
+// ─── seedAnnotationGroupsCache (the project-lifecycle write) ──────────────────────────────────────
 
 describe("seedAnnotationGroupsCache", () => {
   it("seeds the raw payload verbatim under the exact publicId-keyed tuple; other publicIds untouched", () => {
@@ -106,7 +105,7 @@ describe("seedAnnotationGroupsCache", () => {
       groups: [grp({ id: 1, name: "A" })],
       memberships: [pair(10, 1)],
     });
-    // The loader calls this with null when groupsRes is !ok/unparseable. Old code RETAINED the
+    // openProject calls this with null when groupsRes is !ok/unparseable. Old code RETAINED the
     // previously-shown groups on a same-project failed reload — E3c sanctioned clear-on-fail.
     // A conditional-seed regression (skip on null) fails here.
     seedAnnotationGroupsCache(client, "P", null);
@@ -130,13 +129,12 @@ describe("seedAnnotationGroupsCache", () => {
   });
 });
 
-// ─── seedAnnotationGroupsFromBootstrap (the dashboard-loader adapter, DETECTOR M8/M11) ───────
+// ─── seedAnnotationGroupsFromBootstrap (historical loader adapter, DETECTOR M8/M11) ───────
 
 describe("seedAnnotationGroupsFromBootstrap", () => {
-  // The loader's groupsRes handling, extracted verbatim so it is unit-pinnable — the migrate
-  // commit's mutation pass (DETECTOR wf_b2563a99-b02) showed the inline pair was deletable
-  // (M8) and mis-keyable (M11) with a fully green suite. The loader CALL line itself remains
-  // executable-unpinned (④ precedent — the page is not cleanly jsdom-mountable).
+  // Historical groupsRes handling, extracted verbatim so the migration mapping remains
+  // unit-pinnable. Shared openProject now parses/adopts groups directly; its live call sequence is
+  // covered by the lifecycle target suite.
   const okRes = (body: unknown) => ({ ok: true, json: async () => body });
 
   it("M8 happy path: ok response seeds the parsed payload verbatim", async () => {
@@ -252,7 +250,7 @@ describe("useAnnotationGroups — reads and writes", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("seed→read round-trip: a pre-mount loader-style seed is what the hook renders, indexes derived", async () => {
+  it("seed→read round-trip: a pre-mount lifecycle-style seed is what the hook renders, indexes derived", async () => {
     const client = freshClient();
     seedAnnotationGroupsCache(client, "P", {
       groups: [grp({ id: 1, name: "A", color: "#f00" })],

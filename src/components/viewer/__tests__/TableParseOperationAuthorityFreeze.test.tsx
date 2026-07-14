@@ -123,6 +123,9 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
 
   resetProjectData();
+  // [refactor jul14 P2.5] This presentation preference intentionally survives a project reset.
+  // Establish the modal's closed starting state explicitly so later toggle assertions are isolated.
+  useUiStore.setState({ showTableCompareModal: false });
   setViewerStoreStateForTest({
     projectId: 41,
     publicId: PUBLIC_ID,
@@ -332,6 +335,9 @@ describe("A2b Table review save operation authority", () => {
     const started = useParseFlowStore.getState().beginParseOperation("table");
     if (started.status !== "started") throw new Error("could not seed retained-row token A");
     const tokenA = started.token;
+    // P2.5 deliberately preserves this presentation preference across project switches. Opening a
+    // retained row must be idempotent when the flag survived true but the reset cleared its grid.
+    useUiStore.setState({ showTableCompareModal: true });
 
     render(<TableParsePanel />, { wrapper });
     const expander = await screen.findByRole("button", { name: "▶" });

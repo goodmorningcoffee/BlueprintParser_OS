@@ -21,9 +21,14 @@ import { render, screen, fireEvent, cleanup, waitFor, within, act } from "@testi
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import AutoQtoTab from "../AutoQtoTab";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { queryKeys } from "@/queries/queryKeys";
 import { persistFetch } from "@/lib/client-persist";
+import {
+  openProject,
+  type OpenProjectHandle,
+  type ProjectResponse,
+} from "@/lib/project-lifecycle";
 // [refactor jul10 P2.2③] summaries seeds now route through the SHARED seedSummaries helper —
 // the ③ migration's single test-side flip point (its body moves store→cache; call sites frozen).
 import { seedSummaries } from "@/test/seed-summaries";
@@ -44,6 +49,7 @@ const persistFetchMock = vi.mocked(persistFetch);
 // flipping this ONE helper body — nothing else in the file — was the entire test-side delta of
 // the migration. Demo/failure cases only; non-demo cases seed via the GET mock, SPEC §6.1.)
 let qc: QueryClient;
+let lifecycleHandle: OpenProjectHandle;
 function seedQtoWorkflows(rows: QtoWorkflow[]) {
   qc.setQueryData(queryKeys.qtoWorkflows.all(useSessionStore.getState().publicId), rows);
 }
@@ -53,6 +59,16 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 function renderTab() {
   return render(<AutoQtoTab />, { wrapper });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 // Minimal valid QtoWorkflow row (matches the server's raw drizzle-row superset — extra timestamp
@@ -112,19 +128,70 @@ function mockQtoGet(rowsByPublicId: Record<string, QtoWorkflow[] | { status: num
 // jsdom errors "not implemented" if left unstubbed.
 const alertMock = vi.fn();
 
-beforeEach(() => {
+function projectResponse(id: string): ProjectResponse {
+  return {
+    id,
+    dbId: 1,
+    name: id,
+    dataUrl: `projects/${id}`,
+    pdfUrl: `https://example.test/${id}.pdf`,
+    numPages: 1,
+    status: "completed",
+    summaries: null,
+    projectIntelligence: null,
+    pages: [{ pageNumber: 1, name: "A-101", drawingNumber: null }],
+  };
+}
+
+function jsonResponse(body: unknown): Response {
+  return { ok: true, status: 200, json: async () => body } as Response;
+}
+
+async function activateLifecycle(demo: boolean): Promise<OpenProjectHandle> {
+  const id = "pid";
+  const bootstrapFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === `/api/${demo ? "demo/" : ""}projects/${id}`) {
+      return jsonResponse(projectResponse(id));
+    }
+    if (url === `/api/${demo ? "demo/" : ""}projects/${id}/pages?from=1&to=15`) {
+      return jsonResponse({ from: 1, to: 1, pages: [], annotations: [] });
+    }
+    if (!demo && url === `/api/annotation-groups?projectId=${id}`) {
+      return jsonResponse({ groups: [], memberships: [] });
+    }
+    if (url === `/api/qto-workflows?projectId=${id}`) {
+      return jsonResponse([]);
+    }
+    throw new Error(`unexpected lifecycle request: ${url}`);
+  });
+  vi.stubGlobal("fetch", bootstrapFetch);
+  const handle = openProject(qc, id, { demo });
+  expect((await handle.result).status).toBe("opened");
+  vi.stubGlobal("fetch", fetchMock);
+  return handle;
+}
+
+async function activateDemoForTest(
+  patch: Parameters<typeof setViewerStoreStateForTest>[0] = {},
+): Promise<void> {
+  lifecycleHandle = await activateLifecycle(true);
+  seedPreflightOk();
+  setViewerStoreStateForTest(patch);
+}
+
+beforeEach(async () => {
   // [DETECTOR closer] PURE-DEFAULTS client, matching production (Providers.tsx has no
   // defaultOptions). A test-level retry:false here masked whether the HOOK pins retry itself —
   // the freeze net must run against production-equivalent client defaults.
   qc = new QueryClient();
   resetProjectData();
-  setViewerStoreStateForTest({ publicId: "pid", isDemo: false, pageNames: {} });
-  seedPreflightOk();
-  vi.stubGlobal("fetch", fetchMock);
-  vi.stubGlobal("alert", alertMock);
   fetchMock.mockReset();
   persistFetchMock.mockReset();
   alertMock.mockReset();
+  lifecycleHandle = await activateLifecycle(false);
+  seedPreflightOk();
+  vi.stubGlobal("alert", alertMock);
 });
 
 afterEach(() => {
@@ -183,7 +250,7 @@ describe("AutoQtoTab — non-ok GET clears the list (Q-2)", () => {
 
 describe("AutoQtoTab — demo never GETs (Q-3)", () => {
   it("isDemo: no qto fetch fires; a seeded list still renders", async () => {
-    setViewerStoreStateForTest({ isDemo: true });
+    await activateDemoForTest();
     seedQtoWorkflows([wf({ id: 4, materialLabel: "Equipment", step: "confirm-tags" })]);
     renderTab();
 
@@ -197,7 +264,7 @@ describe("AutoQtoTab — demo never GETs (Q-3)", () => {
 
 describe("AutoQtoTab — open a previous workflow (Q-4)", () => {
   it("click → active view (label + step header); header ← Back returns to the picker with the list intact", async () => {
-    setViewerStoreStateForTest({ isDemo: true }); // demo = no mount fetch; list is purely seeded
+    await activateDemoForTest(); // demo = no mount fetch; list is purely seeded
     seedQtoWorkflows([wf({ id: 5, materialLabel: "Doors" })]);
     renderTab();
 
@@ -241,7 +308,7 @@ describe("AutoQtoTab — create workflow, non-demo (Q-5)", () => {
 
 describe("AutoQtoTab — create workflow, demo (Q-6)", () => {
   it("builds a local temp workflow (no API at all), activates + prepends it", async () => {
-    setViewerStoreStateForTest({ isDemo: true });
+    await activateDemoForTest();
     seedQtoWorkflows([]);
     renderTab();
 
@@ -263,7 +330,7 @@ describe("AutoQtoTab — demo temp workflow survives unmount/remount (Q-7)", () 
   // this SYNCHRONOUS remount does NOT discriminate gcTime values (no GC timer fires without a
   // timer advance) — the actual gcTime:Infinity pin is the hook suite's T-Q9 fake-timer test.
   it("create temp in demo → unmount → remount → temp still listed", async () => {
-    setViewerStoreStateForTest({ isDemo: true });
+    await activateDemoForTest();
     seedQtoWorkflows([]);
     const view = renderTab();
 
@@ -273,7 +340,7 @@ describe("AutoQtoTab — demo temp workflow survives unmount/remount (Q-7)", () 
     view.unmount(); // sub-tab switched away
     // NOTE deliberately NO reset here — same project, same session, panel toggled.
     // active pointer survives in zustand either way; clear it so the remount shows the picker.
-    useViewerStore.setState({ activeQtoWorkflow: null });
+    useUiStore.setState({ activeQtoWorkflow: null });
 
     renderTab(); // sub-tab switched back
     await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Doors")).toBeInTheDocument());
@@ -311,7 +378,7 @@ describe("AutoQtoTab — updateWorkflowStep, non-demo (Q-8)", () => {
 
 describe("AutoQtoTab — updateWorkflowStep, demo (Q-9)", () => {
   it("Done from review updates the UI locally; NO PUT (demo never writes)", async () => {
-    setViewerStoreStateForTest({ isDemo: true });
+    await activateDemoForTest();
     seedQtoWorkflows([wf({ id: -99, materialLabel: "Doors", step: "review", lineItems: [] })]);
     renderTab();
 
@@ -452,7 +519,7 @@ describe("AutoQtoTab — save failure keeps the optimistic update, NO ROLLBACK (
 
 describe("AutoQtoTab — demo feature gate (Q-17)", () => {
   it("isDemo + demoFeatureConfig {autoQto:false} renders the not-available notice, nothing else", async () => {
-    setViewerStoreStateForTest({ isDemo: true, demoFeatureConfig: { autoQto: false } as never });
+    await activateDemoForTest({ demoFeatureConfig: { autoQto: false } as never });
     renderTab();
 
     expect(screen.getByText(/Auto-QTO is not available in demo mode/)).toBeInTheDocument();
@@ -466,7 +533,7 @@ describe("AutoQtoTab — mapping step render-only (Q-18)", () => {
   // COMPLETION is now covered by Q-19/Q-20 below (added with the MappingStep self-abort fix,
   // jul10) — this case just pins that the spinner renders while the POST is in flight.
   it("map-tags workflow shows the 'Mapping N tags' spinner", async () => {
-    setViewerStoreStateForTest({ isDemo: true });
+    await activateDemoForTest();
     const mapWf = wf({
       id: 14,
       materialLabel: "Doors",
@@ -638,7 +705,7 @@ const MAP_RESULTS = {
 
 describe("AutoQtoTab — mapping completes and advances to review (Q-19)", () => {
   it("POST resolves → line items built → step advances to review (no self-abort)", async () => {
-    setViewerStoreStateForTest({ isDemo: true }); // demo: updateWorkflowStep is local, no PUT
+    await activateDemoForTest(); // demo: updateWorkflowStep is local, no PUT
     seedQtoWorkflows([mapWorkflow(15)]);
     vi.stubGlobal("fetch", abortAwareFetch(() => ({ ok: true, body: { results: MAP_RESULTS } })));
     renderTab();
@@ -655,7 +722,7 @@ describe("AutoQtoTab — mapping completes and advances to review (Q-19)", () =>
 
 describe("AutoQtoTab — unrelated rerender cannot abort active mapping (Q-21)", () => {
   it("page-label publication while POST is pending keeps one request alive through review", async () => {
-    setViewerStoreStateForTest({ isDemo: true });
+    await activateDemoForTest();
     seedQtoWorkflows([mapWorkflow(17)]);
     const controlled = controlledAbortAwareFetch({ results: MAP_RESULTS });
     vi.stubGlobal("fetch", controlled.fetch);
@@ -869,7 +936,7 @@ describe("AutoQtoTab — workflow persistence is serialized through mapping (Q-2
       expect(screen.getByText("2 instances of 1 tags across 2 pages")).toBeInTheDocument();
     });
     expect(puts).toHaveLength(1);
-    expect(useViewerStore.getState().activeQtoWorkflow?.step).toBe("review");
+    expect(useUiStore.getState().activeQtoWorkflow?.step).toBe("review");
     expect(
       qc.getQueryData<QtoWorkflow[]>(queryKeys.qtoWorkflows.all("pid"))?.[0],
     ).toMatchObject({ id: 20, step: "review" });
@@ -889,7 +956,7 @@ describe("AutoQtoTab — workflow persistence is serialized through mapping (Q-2
     // PUT2 is pending. This is the dangerous intermediate point that an eventual-only test misses.
     expect(screen.getByText("Step: review")).toBeInTheDocument();
     expect(controlled.fetch).toHaveBeenCalledTimes(1);
-    expect(useViewerStore.getState().activeQtoWorkflow?.step).toBe("review");
+    expect(useUiStore.getState().activeQtoWorkflow?.step).toBe("review");
     expect(
       qc.getQueryData<QtoWorkflow[]>(queryKeys.qtoWorkflows.all("pid"))?.[0],
     ).toMatchObject({ id: 20, step: "review", lineItems: expect.any(Array) });
@@ -927,7 +994,7 @@ describe("AutoQtoTab — workflow persistence is serialized through mapping (Q-2
     expect(persistFetchMock).toHaveBeenCalledTimes(2);
     expect(controlled.fetch).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Step: review")).toBeInTheDocument();
-    expect(useViewerStore.getState().activeQtoWorkflow).toMatchObject({
+    expect(useUiStore.getState().activeQtoWorkflow).toMatchObject({
       id: 20,
       step: "review",
       yoloClassFilter: "door_single",
@@ -940,7 +1007,7 @@ describe("AutoQtoTab — workflow persistence is serialized through mapping (Q-2
 
 describe("AutoQtoTab — changed mapping inputs replace the owned request (Q-23)", () => {
   it("same workflow id + new YOLO class aborts the old POST and only the replacement reaches review", async () => {
-    setViewerStoreStateForTest({ isDemo: true });
+    await activateDemoForTest();
     const original = mapWorkflow(19);
     seedQtoWorkflows([original]);
     const controlled = controlledAbortAwareFetchSequence();
@@ -967,7 +1034,7 @@ describe("AutoQtoTab — changed mapping inputs replace the owned request (Q-23)
     })) as QtoWorkflow;
     act(() => {
       qc.setQueryData(queryKeys.qtoWorkflows.all("pid"), [changed]);
-      useViewerStore.getState().setActiveQtoWorkflow(changed);
+      useUiStore.getState().setActiveQtoWorkflow(changed);
     });
 
     await waitFor(() => expect(controlled.fetch).toHaveBeenCalledTimes(2));
@@ -1006,18 +1073,18 @@ describe("AutoQtoTab — changed mapping inputs replace the owned request (Q-23)
     expect(screen.getByText("1 instances of 1 tags across 1 pages")).toBeInTheDocument();
     expect(screen.getByText("window")).toBeInTheDocument();
     expect(controlled.fetch).toHaveBeenCalledTimes(2);
-    expect(useViewerStore.getState().activeQtoWorkflow).toMatchObject({
+    expect(useUiStore.getState().activeQtoWorkflow).toMatchObject({
       id: 19,
       step: "review",
       yoloClassFilter: "window",
     });
-    expect(useViewerStore.getState().activeQtoWorkflow?.lineItems?.[0]?.tag).toBe("window");
+    expect(useUiStore.getState().activeQtoWorkflow?.lineItems?.[0]?.tag).toBe("window");
   });
 });
 
 describe("AutoQtoTab — mapping ownership ends on unmount (Q-25)", () => {
   it("unmount aborts the pending request", async () => {
-    setViewerStoreStateForTest({ isDemo: true });
+    await activateDemoForTest();
     seedQtoWorkflows([mapWorkflow(21)]);
     const controlled = controlledAbortAwareFetchSequence();
     vi.stubGlobal("fetch", controlled.fetch);
@@ -1036,7 +1103,7 @@ describe("AutoQtoTab — mapping ownership ends on unmount (Q-25)", () => {
 
 describe("AutoQtoTab — schedule-backed mapping builds per-tag review rows (Q-26)", () => {
   it("trims schedule tags, preserves row order/specs, and retains an unmatched tag", async () => {
-    setViewerStoreStateForTest({ isDemo: true });
+    await activateDemoForTest();
     seedQtoWorkflows([wf({
       id: 22,
       step: "map-tags",
@@ -1085,7 +1152,7 @@ describe("AutoQtoTab — schedule-backed mapping builds per-tag review rows (Q-2
     await act(async () => controlled.resolve());
     await waitFor(() => expect(screen.getByText("Step: review")).toBeInTheDocument());
 
-    const active = useViewerStore.getState().activeQtoWorkflow;
+    const active = useUiStore.getState().activeQtoWorkflow;
     expect(active).toMatchObject({ id: 22, step: "review" });
     expect(active?.lineItems).toMatchObject([
       {
@@ -1119,7 +1186,7 @@ describe("AutoQtoTab — schedule-backed mapping builds per-tag review rows (Q-2
 
 describe("AutoQtoTab — Retry re-arms a failed mapping (Q-20)", () => {
   it("first attempt errors → Retry → second attempt completes to review (retryTick pin)", async () => {
-    setViewerStoreStateForTest({ isDemo: true });
+    await activateDemoForTest();
     seedQtoWorkflows([mapWorkflow(16)]);
     // attempt 1 → server error (shows Retry); attempt 2 → success
     const retryFetch = abortAwareFetch((n) =>
@@ -1166,9 +1233,9 @@ describe("AutoQtoTab — Retry re-arms a failed mapping (Q-20)", () => {
 });
 
 describe("AutoQtoTab — project switch swaps the visible list (Q-11)", () => {
-  // Models the REAL navigation flow (project/[id]/page.tsx load()): resetProjectData → set
-  // publicId. The list re-populates from the GET for the new project under EITHER backing
-  // (old: effect deps [publicId]; new: key change → fresh query). Final states asserted only.
+  // Models the final identity/list state under either backing. Production project switches now run
+  // through shared openProject, which owns reset, empty seed, activation, and auth-list refetch;
+  // this legacy characterization intentionally asserts only final rendered states.
   it("open A → A's rows; switch to B → B's rows; back to A → A's rows", async () => {
     mockQtoGet({
       A: [wf({ id: 1, materialLabel: "A-only" })],
@@ -1194,5 +1261,417 @@ describe("AutoQtoTab — project switch swaps the visible list (Q-11)", () => {
     view.rerender(<QueryClientProvider client={qc}><AutoQtoTab /></QueryClientProvider>);
     await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("A-only")).toBeInTheDocument());
     expect(screen.queryByText("B-only")).not.toBeInTheDocument();
+  });
+});
+
+describe("AutoQtoTab — P2.5 delayed create ownership", () => {
+  async function startDelayedAuthenticatedCreate() {
+    mockQtoGet({ pid: [] });
+    const create = deferred<QtoWorkflow | null>();
+    persistFetchMock.mockReturnValueOnce(create.promise);
+    renderTab();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /^D ?Doors$/ }));
+    await waitFor(() => expect(persistFetchMock).toHaveBeenCalledTimes(1));
+    return create;
+  }
+
+  async function settleCreate(
+    create: ReturnType<typeof deferred<QtoWorkflow | null>>,
+    workflow: QtoWorkflow,
+  ) {
+    await act(async () => {
+      create.resolve(workflow);
+      await create.promise;
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+  }
+
+  async function rejectCreate(
+    create: ReturnType<typeof deferred<QtoWorkflow | null>>,
+    error: Error,
+  ) {
+    await act(async () => {
+      create.reject(error);
+      await create.promise.catch(() => undefined);
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+  }
+
+  it("fails closed before authenticated create when the session has no lifecycle authority", async () => {
+    lifecycleHandle.dispose();
+    mockQtoGet({ pid: [] });
+    persistFetchMock.mockReturnValue(new Promise(() => {}));
+    renderTab();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /^D ?Doors$/ }));
+
+    expect(persistFetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText("Pick a material to take off")).toBeInTheDocument();
+  });
+
+  it("rejects an old click handler when a different lifecycle is current before POST", async () => {
+    mockQtoGet({ pid: [] });
+    persistFetchMock.mockReturnValue(new Promise(() => {}));
+    renderTab();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const oldDoorsButton = screen.getByRole("button", { name: /^D ?Doors$/ });
+
+    // Navigation installs lifecycle B and synchronously clears session A before React commits the
+    // replacement view. A queued click on the old DOM handler must not write using A's closure.
+    const replacementFetch = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", replacementFetch);
+    act(() => {
+      lifecycleHandle = openProject(qc, "replacement", { demo: false });
+      oldDoorsButton.click();
+    });
+
+    expect(persistFetchMock).not.toHaveBeenCalled();
+    lifecycleHandle.dispose();
+  });
+
+  it("same-publicId reopen rejects the previous generation's delayed POST adoption", async () => {
+    const create = await startDelayedAuthenticatedCreate();
+
+    // A real same-id/same-mode lifecycle generation supersedes the captured POST authority even
+    // when React can observe the same final session selector values after the reset/adoption batch.
+    await act(async () => {
+      lifecycleHandle = await activateLifecycle(false);
+      seedPreflightOk();
+    });
+    await waitFor(() =>
+      expect(qc.getQueryState(queryKeys.qtoWorkflows.all("pid"))?.fetchStatus).toBe("idle"),
+    );
+    const liveRows = [wf({ id: 900, materialLabel: "Fresh reopen" })];
+    act(() => seedQtoWorkflows(liveRows));
+
+    await settleCreate(create, wf({ id: 41, materialLabel: "Stale auth create" }));
+
+    expect.soft(useUiStore.getState().activeQtoWorkflow).toBeNull();
+    expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual(liveRows);
+  });
+
+  it("same-publicId auth -> demo rejects the authenticated generation's delayed POST adoption", async () => {
+    const create = await startDelayedAuthenticatedCreate();
+
+    await act(async () => {
+      lifecycleHandle = await activateLifecycle(true);
+      seedPreflightOk();
+    });
+    const liveRows = [wf({ id: -900, projectId: 0, materialLabel: "Fresh demo" })];
+    act(() => seedQtoWorkflows(liveRows));
+
+    await settleCreate(create, wf({ id: 42, materialLabel: "Stale auth create" }));
+
+    expect.soft(useUiStore.getState().activeQtoWorkflow).toBeNull();
+    expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual(liveRows);
+  });
+
+  it("same-publicId successor restores create liveness when stale POST settles", async () => {
+    const staleCreate = await startDelayedAuthenticatedCreate();
+    expect(screen.getByRole("button", { name: /^D ?Doors$/ })).toBeDisabled();
+
+    // Model a batched same-id/same-mode successor: B installs a new lifecycle generation, while
+    // the subscribed session selectors finish the batch with A's same publicId/mode values. The
+    // pageNames change forces a render that captures B without giving [publicId,isDemo] effects a
+    // dependency change. B starts no create of its own, so its picker must become live again.
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    act(() => {
+      lifecycleHandle = openProject(qc, "pid", { demo: false });
+      setViewerStoreStateForTest({
+        publicId: "pid",
+        isDemo: false,
+        pageNames: { 1: "Successor generation B" },
+      });
+      seedPreflightOk();
+    });
+
+    await settleCreate(staleCreate, wf({ id: 43, materialLabel: "Stale auth create" }));
+
+    expect(useUiStore.getState().activeQtoWorkflow).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^D ?Doors$/ })).not.toBeDisabled(),
+    );
+  });
+
+  it("same-publicId successor suppresses a rejected POST's error and finally publications", async () => {
+    const staleCreate = await startDelayedAuthenticatedCreate();
+
+    // Same-id/same-mode B must retire A's local `creating` ownership even though both session
+    // selectors finish with identical values. Start a B create after that reset and leave it
+    // pending: A's eventual `finally` must not re-enable B's material buttons.
+    await act(async () => {
+      lifecycleHandle = await activateLifecycle(false);
+      seedPreflightOk();
+    });
+    await waitFor(() =>
+      expect(qc.getQueryState(queryKeys.qtoWorkflows.all("pid"))?.fetchStatus).toBe("idle"),
+    );
+    const liveRows = [wf({ id: 906, materialLabel: "Successor row" })];
+    act(() => seedQtoWorkflows(liveRows));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^F ?Finishes$/ })).not.toBeDisabled(),
+    );
+
+    const successorCreate = deferred<QtoWorkflow | null>();
+    persistFetchMock.mockReturnValueOnce(successorCreate.promise);
+    fireEvent.click(screen.getByRole("button", { name: /^F ?Finishes$/ }));
+    await waitFor(() => expect(persistFetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: /^F ?Finishes$/ })).toBeDisabled();
+
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    alertMock.mockClear();
+    await rejectCreate(staleCreate, new Error("late stale create failure"));
+
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(alertMock).not.toHaveBeenCalled();
+    expect(useUiStore.getState().activeQtoWorkflow).toBeNull();
+    expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual(liveRows);
+    // B still owns the in-flight create. A's stale finally cannot publish `creating=false`.
+    expect(screen.getByRole("button", { name: /^F ?Finishes$/ })).toBeDisabled();
+  });
+
+  it("stops a demo create when its active-pointer write synchronously opens a successor", async () => {
+    await activateDemoForTest();
+    seedQtoWorkflows([]);
+    renderTab();
+
+    const live = wf({ id: 705, materialLabel: "Auth successor" });
+    let startedSuccessor = false;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    const unsubscribe = useUiStore.subscribe((state) => {
+      if (!startedSuccessor && (state.activeQtoWorkflow?.id ?? 0) < 0) {
+        startedSuccessor = true;
+        lifecycleHandle = openProject(qc, "pid", { demo: false });
+        qc.setQueryData(queryKeys.qtoWorkflows.all("pid"), [live]);
+        useUiStore.setState({ activeQtoWorkflow: live });
+      }
+    });
+
+    try {
+      fireEvent.click(screen.getByRole("button", { name: /^D ?Doors$/ }));
+
+      expect(startedSuccessor).toBe(true);
+      expect(useUiStore.getState().activeQtoWorkflow).toEqual(live);
+      expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual([live]);
+      expect(persistFetchMock).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+      lifecycleHandle.dispose();
+    }
+  });
+});
+
+describe("AutoQtoTab — P2.5 render-bound workflow selection ownership", () => {
+  it("an old same-id demo list button cannot install its private workflow into the successor", async () => {
+    await activateDemoForTest();
+    const privateA = wf({ id: -801, projectId: 0, materialLabel: "Private A" });
+    seedQtoWorkflows([privateA]);
+    renderTab();
+    const oldPrivateButton = await screen.findByRole("button", { name: /Private A/ });
+
+    const successorRows = [wf({ id: -802, projectId: 0, materialLabel: "Demo B" })];
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    act(() => {
+      lifecycleHandle = openProject(qc, "pid", { demo: true });
+      seedPreflightOk();
+      qc.setQueryData(queryKeys.qtoWorkflows.all("pid"), successorRows);
+      useUiStore.setState({ activeQtoWorkflow: null });
+      // Click while React still has A's delegated handler installed. B's lifecycle record and
+      // successor state are already synchronous, but the replacement commit is still batched.
+      oldPrivateButton.click();
+    });
+
+    expect(useUiStore.getState().activeQtoWorkflow).toBeNull();
+    expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual(successorRows);
+  });
+
+  it("an old same-id Back button cannot clear the successor's active workflow", async () => {
+    await activateDemoForTest();
+    const privateA = wf({ id: -803, projectId: 0, materialLabel: "Private A" });
+    seedQtoWorkflows([privateA]);
+    renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: /Private A/ }));
+    const oldBackButton = screen.getByRole("button", { name: "← Back" });
+
+    const liveB = wf({ id: -804, projectId: 0, materialLabel: "Demo B", step: "confirm-tags" });
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    act(() => {
+      lifecycleHandle = openProject(qc, "pid", { demo: true });
+      seedPreflightOk();
+      qc.setQueryData(queryKeys.qtoWorkflows.all("pid"), [liveB]);
+      useUiStore.setState({ activeQtoWorkflow: liveB });
+      oldBackButton.click();
+    });
+
+    expect(useUiStore.getState().activeQtoWorkflow).toEqual(liveB);
+    expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual([liveB]);
+  });
+
+  it("an old same-id Done handler cannot borrow the authenticated successor for a PUT", async () => {
+    const reviewA = wf({ id: 805, materialLabel: "Auth A", step: "review", lineItems: [] });
+    mockQtoGet({ pid: [reviewA] });
+    persistFetchMock.mockReturnValue(new Promise(() => {}));
+    renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: /Auth A/ }));
+    const oldDoneButton = screen.getByRole("button", { name: "Done" });
+
+    const liveB = wf({ id: 805, materialLabel: "Auth B", step: "confirm-tags" });
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    act(() => {
+      lifecycleHandle = openProject(qc, "pid", { demo: false });
+      qc.setQueryData(queryKeys.qtoWorkflows.all("pid"), [liveB]);
+      useUiStore.setState({ activeQtoWorkflow: liveB });
+      oldDoneButton.click();
+    });
+
+    expect(persistFetchMock).not.toHaveBeenCalled();
+    expect(useUiStore.getState().activeQtoWorkflow).toEqual(liveB);
+    expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual([liveB]);
+  });
+});
+
+describe("AutoQtoTab — P2.5 delayed update ownership", () => {
+  async function startDelayedAuthenticatedUpdate(id: number, label: string) {
+    const source = wf({ id, materialLabel: label, step: "review", lineItems: [] });
+    const save = deferred<QtoWorkflow | null>();
+    mockQtoGet({ pid: [source] });
+    persistFetchMock.mockReturnValueOnce(save.promise).mockResolvedValue(null);
+    renderTab();
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText(label)).toBeInTheDocument());
+    fireEvent.click(within(prevWorkflowsRegion()).getByText(label));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(persistFetchMock).toHaveBeenCalledTimes(1));
+    return { save, source };
+  }
+
+  async function installSameIdSuccessor(demo: boolean, live: QtoWorkflow) {
+    await act(async () => {
+      lifecycleHandle = await activateLifecycle(demo);
+      seedPreflightOk();
+    });
+    if (!demo) {
+      await waitFor(() =>
+        expect(qc.getQueryState(queryKeys.qtoWorkflows.all("pid"))?.fetchStatus).toBe("idle"),
+      );
+    }
+    act(() => {
+      seedQtoWorkflows([live]);
+      useUiStore.setState({ activeQtoWorkflow: live });
+    });
+  }
+
+  async function settleDelayedUpdate(
+    save: ReturnType<typeof deferred<QtoWorkflow | null>>,
+    serverRow: QtoWorkflow,
+  ) {
+    await act(async () => {
+      save.resolve(serverRow);
+      await save.promise;
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+  }
+
+  async function rejectDelayedUpdate(
+    save: ReturnType<typeof deferred<QtoWorkflow | null>>,
+    error: Error,
+  ) {
+    await act(async () => {
+      save.reject(error);
+      await save.promise.catch(() => undefined);
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+  }
+
+  it("same-publicId auth -> demo suppresses the old PUT's active and cache reconciliation", async () => {
+    const { save, source } = await startDelayedAuthenticatedUpdate(701, "Auth A");
+    const live = wf({ id: 701, projectId: 0, materialLabel: "Demo B", step: "confirm-tags" });
+    await installSameIdSuccessor(true, live);
+
+    await settleDelayedUpdate(save, { ...source, materialLabel: "Stale auth response", step: "done" });
+
+    expect(useUiStore.getState().activeQtoWorkflow).toEqual(live);
+    expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual([live]);
+  });
+
+  it("same-publicId auth -> auth suppresses the old PUT's active and cache reconciliation", async () => {
+    const { save, source } = await startDelayedAuthenticatedUpdate(702, "Auth generation A");
+    const live = wf({ id: 702, materialLabel: "Auth generation B", step: "confirm-tags" });
+    await installSameIdSuccessor(false, live);
+
+    await settleDelayedUpdate(save, { ...source, materialLabel: "Stale auth response", step: "done" });
+
+    expect(useUiStore.getState().activeQtoWorkflow).toEqual(live);
+    expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual([live]);
+  });
+
+  it("same-publicId successor suppresses a rejected PUT's stale error publication", async () => {
+    const { save } = await startDelayedAuthenticatedUpdate(707, "Rejected generation A");
+    const live = wf({ id: 707, materialLabel: "Live generation B", step: "confirm-tags" });
+    await installSameIdSuccessor(false, live);
+
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    alertMock.mockClear();
+    await rejectDelayedUpdate(save, new Error("late stale update failure"));
+
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(alertMock).not.toHaveBeenCalled();
+    expect(useUiStore.getState().activeQtoWorkflow).toEqual(live);
+    expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual([live]);
+    expect(screen.getByText("Live generation B")).toBeInTheDocument();
+    expect(screen.getByText("Step: confirm-tags")).toBeInTheDocument();
+  });
+
+  it("rechecks lifecycle authority before dispatching a write queued behind an older PUT", async () => {
+    const { save, source } = await startDelayedAuthenticatedUpdate(703, "Queued A");
+
+    // Done is PUT1. Back is optimistically published but its PUT2 must wait behind PUT1.
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(screen.getByText("Step: confirm-tags")).toBeInTheDocument());
+    expect(persistFetchMock).toHaveBeenCalledTimes(1);
+
+    const live = wf({ id: 703, materialLabel: "Successor B", step: "select-schedule" });
+    await installSameIdSuccessor(false, live);
+    await settleDelayedUpdate(save, { ...source, materialLabel: "Stale PUT1", step: "done" });
+
+    // A generation-blind queued closure would dispatch PUT2 as soon as PUT1 releases its tail.
+    expect(persistFetchMock).toHaveBeenCalledTimes(1);
+    expect(useUiStore.getState().activeQtoWorkflow).toEqual(live);
+    expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual([live]);
+  });
+
+  it("stops a demo update when its active-pointer write synchronously opens a successor", async () => {
+    await activateDemoForTest();
+    const source = wf({ id: -704, projectId: 0, materialLabel: "Demo A", step: "review", lineItems: [] });
+    const live = wf({ id: -704, materialLabel: "Auth B", step: "confirm-tags" });
+    seedQtoWorkflows([source]);
+    renderTab();
+    await waitFor(() => expect(within(prevWorkflowsRegion()).getByText("Demo A")).toBeInTheDocument());
+    fireEvent.click(within(prevWorkflowsRegion()).getByText("Demo A"));
+
+    let startedSuccessor = false;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    const unsubscribe = useUiStore.subscribe((state) => {
+      if (!startedSuccessor && state.activeQtoWorkflow?.step === "done") {
+        startedSuccessor = true;
+        lifecycleHandle = openProject(qc, "pid", { demo: false });
+        qc.setQueryData(queryKeys.qtoWorkflows.all("pid"), [live]);
+        useUiStore.setState({ activeQtoWorkflow: live });
+      }
+    });
+
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+
+      expect(startedSuccessor).toBe(true);
+      expect(useUiStore.getState().activeQtoWorkflow).toEqual(live);
+      expect(qc.getQueryData(queryKeys.qtoWorkflows.all("pid"))).toEqual([live]);
+      expect(persistFetchMock).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+      lifecycleHandle.dispose();
+    }
   });
 });

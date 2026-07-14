@@ -94,13 +94,12 @@ export function writeAnns(
 }
 
 /**
- * [refactor jul11 P2.2⑥] Shared dashboard/demo bootstrap adapter.
+ * [refactor jul11 P2.2⑥ + jul14 P2.5] Historical dashboard/demo bootstrap adapter.
  *
- * Both loaders must seed unconditionally—including an omitted/null collection becoming `[]`—so
- * reopening the same project after a failed/partial bootstrap cannot reveal a stale cached window.
- * `publicId` is explicit and server-canonical (`data.id` at both callers), never read from mutable
- * route/store state. The live navigation loader has a separate same-block RACE-2 write because it
- * must pair this domain with its pages-window zustand publication.
+ * It remains as a unit-pinned mapping seam. The live shared lifecycle instead uses
+ * publishBootstrapPageWindow so annotations and the active page window publish through one guarded
+ * owner. Both paths coerce omitted/null rows to `[]`; explicit publicId models server-canonical
+ * `data.id` rather than mutable route/store state.
  */
 export function seedAnnotationsFromBootstrap(
   qc: QueryClient,

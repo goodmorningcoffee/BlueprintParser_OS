@@ -59,8 +59,8 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   qc = new QueryClient(); // pure defaults, matching production Providers.tsx
   resetProjectData();
-  // selection + group fields are NOT in resetProjectData (bleed guards; see the ⑤ freeze
-  // doctrine header in GroupActionsBarFreeze.test.tsx).
+  // P2.5 resetProjectData clears UI selection but intentionally does not mutate QueryClient data;
+  // seed the group entry explicitly so this cache cannot inherit another case's rows.
   setViewerStoreStateForTest({ publicId: "pid", isDemo: false, selectedAnnotationIds: new Set<number>() });
   seedAnnotationGroups(qc, [], []); // AFTER publicId
   fetchMock.mockReset();

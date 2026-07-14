@@ -107,14 +107,11 @@ describe("viewer UI command freeze — project reset", () => {
     expect(useSessionStore.getState().publicId).toBe("");
     expect(useUiStore.getState().searchQuery).toBe("");
     expect(useViewerCoreStore.getState().pageNumber).toBe(1);
-    // Project reset deliberately retains interaction mode until P2.5 decides survival policy.
-    expect(useToolStore.getState().mode).toBe("markup");
-    // Drawing is the other deliberate Tool survivor: project reset does not synthesize a gesture
-    // boundary, and it preserves all coordinate identities in the raw dormant snapshot.
-    expect(useToolStore.getState()._drawing).toBe(true);
-    expect(useToolStore.getState()._drawStart).toBe(drawStart);
-    expect(useToolStore.getState()._drawEnd).toBe(drawEnd);
-    expect(useToolStore.getState()._mousePos).toBe(mousePos);
+    expect(useToolStore.getState().mode).toBe("move");
+    expect(useToolStore.getState()._drawing).toBe(false);
+    expect(useToolStore.getState()._drawStart).toEqual({ x: 0, y: 0 });
+    expect(useToolStore.getState()._drawEnd).toEqual({ x: 0, y: 0 });
+    expect(useToolStore.getState()._mousePos).toBeNull();
     unsubscribeSession();
     unsubscribeUi();
     unsubscribeCore();
@@ -742,10 +739,10 @@ describe("viewer UI command freeze — YOLO browse navigation", () => {
   });
 });
 
-const DEMO_LOADER = "src/app/demo/project/[id]/page.tsx";
+const PROJECT_LIFECYCLE = "src/lib/project-lifecycle.ts";
 
-function parseDemoLoader(): ts.SourceFile {
-  const absolutePath = join(process.cwd(), DEMO_LOADER);
+function parseProjectLifecycle(): ts.SourceFile {
+  const absolutePath = join(process.cwd(), PROJECT_LIFECYCLE);
   return ts.createSourceFile(
     absolutePath,
     readFileSync(absolutePath, "utf8"),
@@ -772,22 +769,15 @@ function compact(node: ts.Node, source: ts.SourceFile): string {
   return node.getText(source).replace(/\s+/g, "");
 }
 
-function findLoadTryBlock(source: ts.SourceFile): ts.Block {
+function findFunctionBody(source: ts.SourceFile, name: string): ts.Block {
   const declarations = descendants(
     source,
-    (node): node is ts.VariableDeclaration =>
-      ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "load",
+    (node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === name,
   );
   expect(declarations).toHaveLength(1);
-  const initializer = declarations[0].initializer;
-  expect(initializer && ts.isCallExpression(initializer)).toBe(true);
-  const callback = (initializer as ts.CallExpression).arguments[0];
-  expect(callback && ts.isArrowFunction(callback)).toBe(true);
-  const body = (callback as ts.ArrowFunction).body;
-  expect(ts.isBlock(body)).toBe(true);
-  const tries = (body as ts.Block).statements.filter(ts.isTryStatement);
-  expect(tries).toHaveLength(1);
-  return tries[0].tryBlock;
+  expect(declarations[0].body).toBeDefined();
+  return declarations[0].body!;
 }
 
 function directStatement(node: ts.Node, block: ts.Block): ts.Statement {
@@ -812,24 +802,38 @@ function callPath(call: ts.CallExpression): string {
   return parts.join(".");
 }
 
-describe("viewer UI command freeze — demo mixed bootstrap source", () => {
-  it("publishes session policy, direct tool defaults, and the UI patch in order before transport", () => {
-    const source = parseDemoLoader();
-    const tryBlock = findLoadTryBlock(source);
-    const calls = descendants(tryBlock, ts.isCallExpression);
+describe("viewer UI command freeze — unified project lifecycle", () => {
+  it("applies demo tuning during adoption and publishes session activation last", () => {
+    const source = parseProjectLifecycle();
+    const adoptBody = findFunctionBody(source, "adoptProject");
+    const calls = descendants(adoptBody, ts.isCallExpression);
     const oneCall = (path: string) => {
       const matches = calls.filter((call) => callPath(call) === path);
       expect(matches).toHaveLength(1);
       return matches[0];
     };
-    const reset = oneCall("resetProjectData");
-    const demoPolicy = oneCall("setIsDemo");
-    const confidence = oneCall("useUiStore.getState().setConfidenceThreshold");
+    const confidence = oneCall("ui.setConfidenceThreshold");
     const parsePatch = oneCall("useParseFlowStore.setState");
     const uiPatch = oneCall("useUiStore.setState");
-    const promiseAll = oneCall("Promise.all");
+    const corePatch = oneCall("useViewerCoreStore.setState");
+    const activation = oneCall("useSessionStore.setState");
+    const catalogSeeds = calls.filter(
+      (call) => callPath(call) === "seedProjectCatalogsCache",
+    );
+    expect(catalogSeeds).toHaveLength(2);
+    expect(compact(catalogSeeds[0].arguments[2], source)).toBe("null");
+    expect(compact(catalogSeeds[1].arguments[2], source)).toBe(
+      "deriveProjectCatalogs(data.summaries,chunk?.pages,options.demo)",
+    );
+    const catalogSeedIndexes = catalogSeeds.map((call) =>
+      adoptBody.statements.indexOf(directStatement(call, adoptBody)));
+    expect(catalogSeedIndexes[1]).toBe(catalogSeedIndexes[0] + 2);
+    for (const seedIndex of catalogSeedIndexes) {
+      expect(compact(adoptBody.statements[seedIndex + 1], source)).toBe(
+        "if(!canPublish())returnfalse;",
+      );
+    }
 
-    expect(compact(demoPolicy.arguments[0], source)).toBe("true");
     expect(compact(confidence.arguments[0], source)).toBe("0");
     expect(parsePatch.arguments).toHaveLength(1);
     expect(compact(parsePatch.arguments[0], source)).toBe('{tableParseTab:"auto"}');
@@ -850,19 +854,59 @@ describe("viewer UI command freeze — demo mixed bootstrap source", () => {
       showTableParsePanel: "true",
     });
 
-    const indexes = [reset, demoPolicy, confidence, parsePatch, uiPatch, promiseAll].map((node) =>
-      tryBlock.statements.indexOf(directStatement(node, tryBlock)),
+    const demoIfs = adoptBody.statements.filter(
+      (statement): statement is ts.IfStatement =>
+        ts.isIfStatement(statement) && compact(statement.expression, source) === "options.demo",
     );
-    expect(indexes).toEqual([
-      indexes[0],
-      indexes[0] + 1,
-      indexes[0] + 2,
-      indexes[0] + 3,
-      indexes[0] + 4,
-      indexes[0] + 5,
-    ]);
-    for (const call of [reset, demoPolicy, confidence, parsePatch, uiPatch]) {
-      expect(descendants(directStatement(call, tryBlock), ts.isAwaitExpression)).toHaveLength(0);
+    expect(demoIfs).toHaveLength(1);
+    for (const call of [confidence, parsePatch, uiPatch]) {
+      expect(directStatement(call, adoptBody)).toBe(demoIfs[0]);
     }
+
+    expect(ts.isObjectLiteralExpression(activation.arguments[0])).toBe(true);
+    const activationProperties = Object.fromEntries(
+      (activation.arguments[0] as ts.ObjectLiteralExpression).properties.map((property) => {
+        if (ts.isShorthandPropertyAssignment(property)) {
+          return [property.name.text, property.name.text];
+        }
+        expect(ts.isPropertyAssignment(property)).toBe(true);
+        const assignment = property as ts.PropertyAssignment;
+        expect(ts.isIdentifier(assignment.name)).toBe(true);
+        return [(assignment.name as ts.Identifier).text, compact(assignment.initializer, source)];
+      }),
+    );
+    expect(activationProperties).toMatchObject({
+      publicId: "publicId",
+      isDemo: "options.demo",
+      demoFeatureConfig: "options.demo?(data.demoConfig??null):null",
+    });
+
+    const activationStatement = directStatement(activation, adoptBody);
+    // Session activation is the final publication. The sole following statement must recheck the
+    // exact lifecycle token because a synchronous session subscriber can start successor B during
+    // setState; A must then report superseded rather than reveal stale route-local state.
+    expect(adoptBody.statements.at(-2)).toBe(activationStatement);
+    const authorityReturn = adoptBody.statements.at(-1)!;
+    expect(ts.isReturnStatement(authorityReturn)).toBe(true);
+    expect(compact((authorityReturn as ts.ReturnStatement).expression!, source)).toBe(
+      "canPublish()",
+    );
+    const activationIndex = adoptBody.statements.indexOf(activationStatement);
+    const preparedBeforeActivation = [
+      "seedYoloTagsFromBootstrap",
+      "seedCsiGraphFromBootstrap",
+      "seedSummariesCache",
+      "seedChatCache",
+      "seedTakeoffCache",
+      "seedAnnotationGroupsCache",
+      "queryClient.setQueryData",
+      "publishBootstrapPageWindow",
+    ].map(oneCall);
+    for (const call of [...preparedBeforeActivation, ...catalogSeeds, corePatch]) {
+      expect(adoptBody.statements.indexOf(directStatement(call, adoptBody))).toBeLessThan(
+        activationIndex,
+      );
+    }
+    expect(descendants(adoptBody, ts.isAwaitExpression)).toHaveLength(0);
   });
 });

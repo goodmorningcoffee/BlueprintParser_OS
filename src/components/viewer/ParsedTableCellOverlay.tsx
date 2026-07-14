@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, memo } from "react";
-import { useViewerStore } from "@/stores/viewerStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
 import { usePageIntelligenceForPage } from "@/queries/usePageWindow";

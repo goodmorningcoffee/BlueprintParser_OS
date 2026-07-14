@@ -150,7 +150,8 @@ async function flushMicrotasks(): Promise<void> {
 
 beforeEach(() => {
   resetProjectData();
-  // resetProjectData intentionally does not own all tool-history fields yet.
+  // P2.5 resetProjectData now clears the full project-owned tool/history surface. Repeat this
+  // suite's destination values explicitly so each handler precondition remains visible.
   setViewerStoreStateForTest({
     publicId: "A",
     isDemo: false,

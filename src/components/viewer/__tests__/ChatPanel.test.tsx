@@ -263,11 +263,9 @@ describe("ChatPanel — scope is display UI, NOT a message filter (T-B10/T-B11)"
 });
 
 describe("ChatPanel — navigation between projects swaps the visible list (T-B12)", () => {
-  // Models the REAL navigation flow (project/[id]/page.tsx load()): every project open runs
-  // resetProjectData() → set publicId → seed. This is backing-agnostic (green pre- AND post-
-  // migration). The PURE cache-key isolation property (switch publicId with NO re-seed and still
-  // see the right list) is only meaningful once chat is cache-backed — that lives in the hook
-  // test T-A5, not here, because pre-migration the store is a single flat list.
+  // This characterization helper reproduces the final reset → identity → seed state used by
+  // both backings. Production now reaches that state through the generation-aware shared
+  // openProject lifecycle; lifecycle ordering/atomicity is pinned in its target suite.
   function openProject(publicId: string, msgs: ChatMsg[]) {
     resetProjectData();
     setViewerStoreStateForTest({ publicId });

@@ -2,9 +2,13 @@
 
 import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useViewerStore } from "@/stores/viewerStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useUiStore } from "@/stores/uiStore";
+import {
+  captureProjectLifecycle,
+  isCurrentProjectLifecycle,
+} from "@/lib/project-lifecycle";
+import type { ProjectLifecycleSnapshot } from "@/lib/project-lifecycle";
 import {
   openSpecsNotesParseTab,
   navigateViewerPage,
@@ -123,11 +127,66 @@ export default function AutoQtoTab() {
   const isDemo = useSessionStore((s) => s.isDemo);
   const { summaries } = useSummaries();
 
+  // Capture authority during render, then keep its object identity stable for the whole lifecycle
+  // generation. A DOM handler retained from A must continue to carry A's token after same-id B has
+  // become current; capturing inside the eventual handler would let that stale closure borrow B.
+  const capturedLifecycle = captureProjectLifecycle(queryClient);
+  const renderedLifecycleRef = useRef<{
+    owner: typeof queryClient;
+    snapshot: ProjectLifecycleSnapshot | null;
+  } | null>(null);
+  const retainedLifecycle = renderedLifecycleRef.current;
+  const sameRenderedLifecycle = retainedLifecycle?.owner === queryClient &&
+    retainedLifecycle.snapshot?.generation === capturedLifecycle?.generation &&
+    retainedLifecycle.snapshot?.publicId === capturedLifecycle?.publicId &&
+    retainedLifecycle.snapshot?.demo === capturedLifecycle?.demo;
+  if (!sameRenderedLifecycle) {
+    renderedLifecycleRef.current = { owner: queryClient, snapshot: capturedLifecycle };
+  }
+  const renderedLifecycle = renderedLifecycleRef.current!.snapshot;
+  const isRenderedLifecycleCurrent = useCallback(() => {
+    const session = useSessionStore.getState();
+    return !!renderedLifecycle &&
+      renderedLifecycle.publicId === publicId &&
+      renderedLifecycle.demo === isDemo &&
+      session.publicId === publicId &&
+      session.isDemo === isDemo &&
+      isCurrentProjectLifecycle(queryClient, renderedLifecycle);
+  }, [isDemo, publicId, queryClient, renderedLifecycle]);
+
   const [creating, setCreating] = useState(false);
   const [customName, setCustomName] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [loadingScheduleKey, setLoadingScheduleKey] = useState<string | null>(null);
+  const createOwnerEpoch = useRef(0);
+  const scheduleDetailController = useRef<AbortController | null>(null);
+  const scheduleDetailCleanup = useRef<(() => void) | null>(null);
+
+  const retireScheduleDetail = useCallback((clearLoading = true) => {
+    const controller = scheduleDetailController.current;
+    controller?.abort();
+    scheduleDetailCleanup.current?.();
+    if (scheduleDetailController.current === controller) {
+      scheduleDetailController.current = null;
+      scheduleDetailCleanup.current = null;
+      if (clearLoading) setLoadingScheduleKey(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    createOwnerEpoch.current += 1;
+    setCreating(false);
+    return () => {
+      createOwnerEpoch.current += 1;
+    };
+  }, [publicId, isDemo, renderedLifecycle?.generation]);
+
+  useEffect(() => {
+    retireScheduleDetail();
+    setScheduleError(null);
+    return () => retireScheduleDetail(false);
+  }, [isDemo, publicId, queryClient, renderedLifecycle?.generation, retireScheduleDetail]);
 
   const scheduleDetections = useMemo(
     () => computeScheduleDetections(pageIntelligence as any, summaries?.schedules, pageNames),
@@ -197,6 +256,13 @@ export default function AutoQtoTab() {
   const startWorkflow = useCallback(async (materialType: string, materialLabel: string) => {
     if (!publicId) return;
 
+    const ownerEpoch = createOwnerEpoch.current;
+    const isCurrentCreate = () => {
+      return createOwnerEpoch.current === ownerEpoch &&
+        isRenderedLifecycleCurrent();
+    };
+    if (!isCurrentCreate()) return;
+
     // Demo mode: create workflow locally in Zustand (no API, session-only)
     if (isDemo) {
       const tempWorkflow: QtoWorkflow = {
@@ -215,6 +281,7 @@ export default function AutoQtoTab() {
         exportedAt: null,
       };
       setActiveQtoWorkflow(tempWorkflow);
+      if (!isCurrentCreate()) return;
       setQtoWorkflows([tempWorkflow, ...qtoWorkflows]);
       return;
     }
@@ -222,56 +289,98 @@ export default function AutoQtoTab() {
     if (!canPersist(publicId, isDemo)) return;
     setCreating(true);
     try {
+      // Recheck at the transport boundary. A queued handler from the previous route may execute
+      // after a successor lifecycle has synchronously deactivated its captured session.
+      if (!isCurrentCreate()) return;
       const workflow = await persistFetch("/api/qto-workflows", { projectId: publicId, materialType, materialLabel });
+      if (!isCurrentCreate()) return;
       setActiveQtoWorkflow(workflow as QtoWorkflow);
+      if (!isCurrentCreate()) return;
       setQtoWorkflows([workflow as QtoWorkflow, ...qtoWorkflows]);
     } catch (err) {
+      if (!isCurrentCreate()) return;
       console.error("[auto-qto] Failed to create workflow:", err);
       window.alert(`Failed to create workflow: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
-      setCreating(false);
+      if (isCurrentCreate()) setCreating(false);
     }
-  }, [publicId, isDemo, qtoWorkflows, setActiveQtoWorkflow, setQtoWorkflows]);
+  }, [
+    publicId,
+    isDemo,
+    isRenderedLifecycleCurrent,
+    qtoWorkflows,
+    setActiveQtoWorkflow,
+    setQtoWorkflows,
+  ]);
 
   const updateWorkflowStep = useCallback(async (workflow: QtoWorkflow, updates: Partial<QtoWorkflow>) => {
+    const lifecycle = renderedLifecycle;
+    if (!lifecycle) return;
+    const isCurrentUpdate = isRenderedLifecycleCurrent;
+    if (!isCurrentUpdate()) return;
+
     if (isDemo) {
       // Demo workflows are session-only and never enter the persistence queue.
       const updated = { ...workflow, ...updates };
       setActiveQtoWorkflow(updated);
+      if (!isCurrentUpdate()) return;
       setQtoWorkflows((rows) => rows.map((w) => w.id === updated.id ? updated : w));
       return;
     }
 
     const queued = enqueueQtoWorkflowWrite({
+      lifecycleOwner: queryClient,
+      lifecycleGeneration: lifecycle.generation,
       publicId,
       workflow,
       updates,
-      write: (body) => persistFetch(`/api/qto-workflows/${workflow.id}`, body, "PUT") as Promise<QtoWorkflow | null>,
+      write: (body) => {
+        // A FIFO task may not reach the transport until long after the originating lifecycle ended.
+        if (!isCurrentUpdate()) return Promise.resolve(null);
+        return persistFetch(
+          `/api/qto-workflows/${workflow.id}`,
+          body,
+          "PUT",
+        ) as Promise<QtoWorkflow | null>;
+      },
     });
     const updated = queued.optimistic;
 
     // UI publication stays immediate even when this request is waiting behind an older write.
+    if (!isCurrentUpdate()) return;
     setActiveQtoWorkflow(updated);
+    if (!isCurrentUpdate()) return;
     setQtoWorkflows((rows) => rows.map((w) => w.id === updated.id ? updated : w));
 
     try {
       const serverUpdated = await queued.completion;
-      if (serverUpdated && queued.isCurrent()) {
+      if (serverUpdated && queued.isCurrent() && isCurrentUpdate()) {
         // Never reopen an old workflow/project or overwrite a newer optimistic draft. The source
         // project's cache row may still reconcile through its project-keyed facade safely.
-        const liveActive = useViewerStore.getState().activeQtoWorkflow;
+        const liveActive = useUiStore.getState().activeQtoWorkflow;
         if (useSessionStore.getState().publicId === publicId && liveActive === updated) {
           setActiveQtoWorkflow(serverUpdated);
+          if (!isCurrentUpdate()) return;
         }
+        if (!isCurrentUpdate()) return;
         setQtoWorkflows((rows) => rows.map((w) => w.id === serverUpdated.id ? serverUpdated : w));
       }
     } catch (err) {
       // A newer cumulative task supersedes this failure and will persist all desired fields.
-      if (!queued.isCurrent()) return;
+      if (!queued.isCurrent() || !isCurrentUpdate()) return;
       console.error("[auto-qto] Failed to update workflow:", err);
+      if (!isCurrentUpdate()) return;
       window.alert(`Failed to save workflow: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
-  }, [publicId, isDemo, setActiveQtoWorkflow, setQtoWorkflows]);
+  }, [
+    publicId,
+    isDemo,
+    isRenderedLifecycleCurrent,
+    queryClient,
+    renderedLifecycle,
+    setActiveQtoWorkflow,
+    setQtoWorkflows,
+  ]);
 
   // ─── Demo feature gate ─────────────────────────────────
   if (isDemo && !isDemoFeatureEnabled("autoQto")) {
@@ -289,7 +398,10 @@ export default function AutoQtoTab() {
             <div className="text-[9px] text-[var(--muted)]">Step: {activeQtoWorkflow.step}</div>
           </div>
           <button
-            onClick={() => setActiveQtoWorkflow(null)}
+            onClick={() => {
+              if (!isRenderedLifecycleCurrent()) return;
+              setActiveQtoWorkflow(null);
+            }}
             className="text-[10px] text-[var(--muted)] hover:text-[var(--fg)] px-2 py-0.5 rounded border border-[var(--border)]"
           >
             &larr; Back
@@ -378,7 +490,16 @@ export default function AutoQtoTab() {
                     key={key}
                     disabled={loadingScheduleKey === key}
                     onClick={async () => {
+                      const ownsScheduleSelection = () =>
+                        isRenderedLifecycleCurrent() &&
+                        useUiStore.getState().activeQtoWorkflow === activeQtoWorkflow;
+                      if (!ownsScheduleSelection()) return;
+                      // Every owned click is a new selection operation, including direct/cache hits
+                      // that later prove empty. Retire an older detail request before choosing which
+                      // data path this click will take so its late response cannot win afterward.
+                      retireScheduleDetail();
                       setScheduleError(null);
+                      if (!ownsScheduleSelection()) return;
                       let headers: string[] = [];
                       let rows: Record<string, string>[] = [];
                       let tagColumn = "";
@@ -403,13 +524,44 @@ export default function AutoQtoTab() {
                           rows = localPr.data.rows || [];
                           tagColumn = localPr.data.tagColumn || headers[0] || "";
                         } else {
+                          const detailController = new AbortController();
+                          scheduleDetailController.current = detailController;
+                          const ownsDetailOperation = () =>
+                            !detailController.signal.aborted &&
+                            scheduleDetailController.current === detailController &&
+                            ownsScheduleSelection();
+                          const unsubscribeLifecycle = useSessionStore.subscribe(() => {
+                            // openProject installs B's lifecycle record before its synchronous reset,
+                            // so the first session notification retires A even for same-id/mode B.
+                            if (!ownsScheduleSelection()) retireScheduleDetail();
+                          });
+                          const unsubscribeWorkflow = useUiStore.subscribe((state) => {
+                            // Back or another workflow selection permanently retires this operation.
+                            // Reopening the same object cannot make an already-aborted response current.
+                            if (state.activeQtoWorkflow !== activeQtoWorkflow) retireScheduleDetail();
+                          });
+                          let subscriptionsActive = true;
+                          const cleanupSubscriptions = () => {
+                            if (!subscriptionsActive) return;
+                            subscriptionsActive = false;
+                            unsubscribeLifecycle();
+                            unsubscribeWorkflow();
+                          };
+                          scheduleDetailCleanup.current = cleanupSubscriptions;
                           setLoadingScheduleKey(key);
+                          if (!ownsDetailOperation()) {
+                            retireScheduleDetail();
+                            return;
+                          }
                           try {
                             const detailIntel = await ensurePageIntelligence(queryClient, {
                               publicId,
                               pageNumber: s.pageNum,
                               isDemo,
+                              signal: detailController.signal,
+                              canAdopt: ownsDetailOperation,
                             });
+                            if (!ownsDetailOperation()) return;
                             const pr = detailIntel?.parsedRegions?.find((r: any) =>
                               r.data?.tableName === s.name || r.category === s.category
                             );
@@ -427,6 +579,8 @@ export default function AutoQtoTab() {
                               tagColumn = scheduleData.tagColumn || headers[0] || "";
                             }
                           } catch (err) {
+                            if (!ownsDetailOperation() ||
+                              (err instanceof Error && err.name === "AbortError")) return;
                             if (err instanceof PageWindowHttpError) {
                               setScheduleError(`Failed to load schedule data (HTTP ${err.status})`);
                             } else {
@@ -434,17 +588,26 @@ export default function AutoQtoTab() {
                               setScheduleError("Network error while loading schedule. Check your connection.");
                             }
                           } finally {
-                            setLoadingScheduleKey(null);
+                            cleanupSubscriptions();
+                            if (scheduleDetailController.current === detailController) {
+                              scheduleDetailController.current = null;
+                              if (scheduleDetailCleanup.current === cleanupSubscriptions) {
+                                scheduleDetailCleanup.current = null;
+                              }
+                              setLoadingScheduleKey(null);
+                            }
                           }
                         }
                       }
 
+                      if (!ownsScheduleSelection()) return;
                       if (headers.length === 0) {
                         setScheduleError("Could not load schedule data. Try parsing the schedule first.");
                         return;
                       }
 
-                      updateWorkflowStep(activeQtoWorkflow, {
+                      if (!ownsScheduleSelection()) return;
+                      void updateWorkflowStep(activeQtoWorkflow, {
                         step: "confirm-tags",
                         schedulePageNumber: s.pageNum,
                         parsedSchedule: {
@@ -667,7 +830,10 @@ export default function AutoQtoTab() {
           {qtoWorkflows.map((w) => (
             <button
               key={w.id}
-              onClick={() => setActiveQtoWorkflow(w)}
+              onClick={() => {
+                if (!isRenderedLifecycleCurrent()) return;
+                setActiveQtoWorkflow(w);
+              }}
               className="w-full text-left px-2 py-1.5 rounded hover:bg-[var(--surface-hover)] text-[10px]"
             >
               <span className="text-[var(--fg)]">{w.materialLabel || w.materialType}</span>

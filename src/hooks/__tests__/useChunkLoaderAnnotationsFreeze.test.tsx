@@ -17,7 +17,6 @@ import {
   useKeynotesForPage,
   useLoadedPageRange,
 } from "@/queries/usePageWindow";
-import { useViewerStore } from "@/stores/viewerStore";
 import { readSeededAnnotations, seedAnnotations } from "@/test/seed-annotations";
 import type { ClientAnnotation } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";

@@ -382,7 +382,7 @@ describe("yoloTags observer/action topology and navigation", () => {
 
     act(() => setViewerStoreStateForTest({ isDemo: false }));
     const freshBeforeReopen = first.result.current.addYoloTag;
-    seedYoloTagsFromBootstrap(qc, "project-A", { yoloTags: [] }); // same-id loader epoch
+    seedYoloTagsFromBootstrap(qc, "project-A", { yoloTags: [] }); // same-id lifecycle epoch
     act(() => freshBeforeReopen(tag("must-not-write-after-reopen")));
     expect(readYoloTags(qc, "project-A")).toEqual([]);
   });

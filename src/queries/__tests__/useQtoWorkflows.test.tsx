@@ -7,7 +7,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, focusManager, onlineManager } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useQtoWorkflows } from "@/queries/useQtoWorkflows";
-import { useViewerStore } from "@/stores/viewerStore";
+import { useUiStore } from "@/stores/uiStore";
 import { queryKeys } from "@/queries/queryKeys";
 import type { QtoWorkflow } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
@@ -264,7 +264,7 @@ describe("useQtoWorkflows hook", () => {
 
     act(() => result.current.setActiveQtoWorkflow(row(3)));
     await waitFor(() => expect(result.current.activeQtoWorkflow).toEqual(row(3)));
-    expect(useViewerStore.getState().activeQtoWorkflow).toEqual(row(3)); // still zustand-backed
+    expect(useUiStore.getState().activeQtoWorkflow).toEqual(row(3));
 
     act(() => result.current.setActiveQtoWorkflow(null));
     await waitFor(() => expect(result.current.activeQtoWorkflow).toBeNull());

@@ -73,7 +73,6 @@ export default function TableParsePanel() {
     tableParsedGrid,
     tableParseTab,
   } = useTableParseExtensions();
-  const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
   const pageNames = useSessionStore((s) => s.pageNames);
   const pageDrawingNumbers = useSessionStore((s) => s.pageDrawingNumbers);
   // [refactor jul11 P2.2⑥] Server-owned annotation window now subscribes via its cache facade.
@@ -747,7 +746,6 @@ export default function TableParsePanel() {
           <CompareEditTab
             allParsedTables={allParsedTables}
             loadExistingParsed={loadExistingParsed}
-            toggleTableCompareModal={toggleTableCompareModal}
           />
         )}
       </div>

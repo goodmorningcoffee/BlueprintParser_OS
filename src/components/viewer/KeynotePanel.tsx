@@ -143,7 +143,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
   const yoloTags = useYoloTagRows();
   // Action-only facade keeps async map responses behind the captured project/epoch guard.
   const { addYoloTagsBulk } = useYoloTagActions();
-  const toggleTableCompareModal = useUiStore((s) => s.toggleTableCompareModal);
   const showParsedRegions = useUiStore((s) => s.showParsedRegions);
   const { publicId, isDemo } = useProject();
   // Context-only handle for optimistic page writes and both C2 shared save-command paths — zero
@@ -1555,7 +1554,6 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           <CompareEditTab
             allParsedTables={allParsedKeynotes}
             loadExistingParsed={loadExistingKeynote}
-            toggleTableCompareModal={toggleTableCompareModal}
           />
         )}
       </div>

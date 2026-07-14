@@ -20,7 +20,6 @@ import {
   useCachedTextractForPages,
   useTextractForPage,
 } from "@/queries/useTextract";
-import { useViewerStore } from "@/stores/viewerStore";
 import type { TextractPageData } from "@/types";
 import { resetProjectData } from "@/stores/viewerCommands";
 import { setViewerStoreStateForTest } from "@/test/viewer-store-state";

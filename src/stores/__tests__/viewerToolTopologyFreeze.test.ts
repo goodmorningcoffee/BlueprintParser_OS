@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 const VIEWER_STORE_FILE = "src/stores/viewerStore.ts";
 const PARSE_STORE_FILE = "src/stores/parseFlowStore.ts";
 const TOOL_STORE_FILE = "src/stores/toolStore.ts";
+const UI_STORE_FILE = "src/stores/uiStore.ts";
 const ANNOTATION_OVERLAY = "src/components/viewer/AnnotationOverlay.tsx";
 const DRAWING_PREVIEW = "src/components/viewer/DrawingPreviewLayer.tsx";
 const YOLO_FACADE = "src/queries/useYoloTags.ts";
@@ -140,7 +141,7 @@ const PREVIEW_PARSE_DATA = [
 
 const BOUNDARY_EXCLUSIONS = {
   serverMetadata: ["allTrades", "setAllTrades", "allCsiCodes", "setAllCsiCodes"],
-  mutableServerDraft: ["activeQtoWorkflow", "setActiveQtoWorkflow"],
+  projectUiDraft: ["activeQtoWorkflow", "setActiveQtoWorkflow"],
   parseFlow: [
     "tableParseStep", "keynoteParseStep", "notesParseStep", "specParseStep",
     "guidedParseActive", "paragraphWorkspaceOwner", "paragraphClipboard",
@@ -849,10 +850,16 @@ describe("P2.3 T2 flat tool ownership", () => {
   const viewerSource = parse(VIEWER_STORE_FILE);
   const parseSource = parse(PARSE_STORE_FILE);
   const toolSource = parse(TOOL_STORE_FILE);
+  const uiSource = parse(UI_STORE_FILE);
   const viewerInterfaceKeys = interfaceKeys(findInterface(viewerSource, "ViewerState"));
   const parseInterfaceKeys = interfaceKeys(findInterface(parseSource, "ParseFlowState"));
+  const uiInterfaceKeys = [
+    ...interfaceKeys(findInterface(uiSource, "UiData")),
+    ...interfaceKeys(findInterface(uiSource, "UiActions")),
+  ];
   const viewerObject = findStoreObject(viewerSource, "useViewerStore");
   const parseObject = findStoreObject(parseSource, "useParseFlowStore");
+  const uiObject = findStoreObject(uiSource, "useUiStore");
   const toolInterfaceKeys = [
     ...interfaceKeys(findInterface(toolSource, "ToolStoreData")),
     ...interfaceKeys(findInterface(toolSource, "ToolStoreActions")),
@@ -892,13 +899,20 @@ describe("P2.3 T2 flat tool ownership", () => {
       expect(TOOL_MEMBERS, `${member} excluded`).not.toContain(member);
     }
 
-    const viewerOwned = [
-      ...BOUNDARY_EXCLUSIONS.serverMetadata,
-      ...BOUNDARY_EXCLUSIONS.mutableServerDraft,
-    ];
-    for (const member of viewerOwned) {
+    for (const member of BOUNDARY_EXCLUSIONS.serverMetadata) {
       expect(viewerInterfaceKeys, `${member} remains residual viewer-owned`).toContain(member);
       expect(() => directProperty(viewerObject, member)).not.toThrow();
+      expect(parseInterfaceKeys, `${member} excluded from parse owner`).not.toContain(member);
+      expect(() => directProperty(parseObject, member)).toThrow();
+    }
+
+    for (const member of BOUNDARY_EXCLUSIONS.projectUiDraft) {
+      expect(viewerInterfaceKeys, `${member} deleted from residual viewer`).not.toContain(member);
+      expect(() => directProperty(viewerObject, member)).toThrow();
+      expect(uiInterfaceKeys, `${member} present on UI owner`).toContain(member);
+      if (member === "setActiveQtoWorkflow") {
+        expect(() => directProperty(uiObject, member)).not.toThrow();
+      }
       expect(parseInterfaceKeys, `${member} excluded from parse owner`).not.toContain(member);
       expect(() => directProperty(parseObject, member)).toThrow();
     }

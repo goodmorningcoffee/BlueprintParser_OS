@@ -94,7 +94,7 @@ export function Section12ForLlms() {
             [<InlineCode key="a9">BP_TOOLS</InlineCode>, "src/lib/llm/tools-defs.ts", "20 tool definitions. Client-safe (no db/fs)."],
             [<InlineCode key="a10">executeToolCall</InlineCode>, "src/lib/llm/tools.ts", "Server-side tool executors. Full db + fs access."],
             [<InlineCode key="a11">canvasWantsEvents</InlineCode>, "src/components/viewer/AnnotationOverlay.tsx:2609", "Render-gate condition #1. Also touch L2620, L2649, L2653."],
-            [<InlineCode key="a12">domain stores</InlineCode>, "src/stores/{sessionStore,uiStore,viewerCoreStore,toolStore,parseFlowStore,viewerStore}.ts", "Use the owning leaf; toolStore owns drawing, parseFlowStore owns parsing, and viewerStore is residual metadata/drafts."],
+            [<InlineCode key="a12">domain stores</InlineCode>, "src/stores/{sessionStore,uiStore,viewerCoreStore,toolStore,parseFlowStore}.ts + Query facades", "Use the owning leaf/facade; viewerStore is only a bounded inert compatibility sentinel."],
             [<InlineCode key="a13">resetAllTools</InlineCode>, "src/stores/viewerCommands.ts", "Neutral tool/parse reset command; leaf stores do not import siblings."],
             [<InlineCode key="a14">focusAnnotationId</InlineCode>, "src/stores/uiStore.ts", "One-shot UI signal. Read-and-clear pattern."],
             [<InlineCode key="a15">assembleContextWithConfig</InlineCode>, "src/lib/context-builder.ts", "LLM prompt assembly. Priority-sorted section packing."],
@@ -114,9 +114,11 @@ export function Section12ForLlms() {
         <p>
           Every panel, toolbar button, and canvas overlay reads from an explicit owner. Use a
           primitive selector on the relevant Zustand leaf, or the domain&apos;s Query facade for
-          server rows. Cross-owner product behavior lives in neutral commands. Check this map
-          before adding state so a feature does not recreate duplicate ownership or a broad canvas
-          subscription.
+          server rows and project catalogs. The active Auto-QTO pointer belongs to uiStore; do not
+          add consumers to the inert viewerStore sentinel. Cross-owner project bootstrap/reset is
+          coordinated by the shared <InlineCode>openProject</InlineCode> lifecycle, while neutral
+          commands compose other cross-owner behavior. Check this map before adding state so a
+          feature does not recreate duplicate ownership or a broad canvas subscription.
         </p>
         <Figure
           kind="live"

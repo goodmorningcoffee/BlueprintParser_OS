@@ -8,7 +8,7 @@ import {
   navigateViewerPage,
   openTableReviewTarget,
 } from "@/stores/viewerCommands";
-import { useUiStore } from "@/stores/uiStore";
+import { openTableCompareModal, useUiStore } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { readAnnotations } from "@/queries/useAnnotations";
 import {
@@ -527,7 +527,7 @@ export default memo(function ParsedTableItem({
                   onClick={() => {
                     if (!table.region) return;
                     // Modal visibility publishes before the one terminal Parse/page handoff.
-                    useUiStore.getState().toggleTableCompareModal();
+                    openTableCompareModal();
                     openTableReviewTarget(table.pageNum, {
                       grid: {
                         headers: table.region.data?.headers || [],

@@ -71,6 +71,7 @@ const UI_FIELDS = [
   "parsedRegionColorMode",
   "hiddenParsedRegionIds",
   "focusedParsedRegionId",
+  "activeQtoWorkflow",
 ] as const satisfies readonly (keyof UiData)[];
 
 type UiField = (typeof UI_FIELDS)[number];
@@ -136,41 +137,59 @@ const DEFAULT_UI = {
   parsedRegionColorMode: "striped",
   hiddenParsedRegionIds: new Set<string>(),
   focusedParsedRegionId: null,
+  activeQtoWorkflow: null,
 } satisfies UiData;
 
 const RETAINED_FIELDS = [
-  "focusAnnotationId",
-  "selectedAnnotationIds",
+  "showTextAnnotations",
+  "textAnnotationColors",
+  "textPanelTab",
+  "sidebarCollapsed",
+  "annotationPanelCollapsed",
   "showTips",
   "helpMode",
   "showTextPanel",
   "showChatPanel",
-  "hiddenClasses",
+  "showDetections",
+  "showDetectionPanel",
+  "showViewAllPanel",
+  "showCsiPanel",
+  "showPageIntelPanel",
+  "showTakeoffPanel",
+  "showTableParsePanel",
+  "showKeynoteParsePanel",
+  "showSpecsNotesPanel",
+  "showParsePanel",
+  "showToolsPanel",
+  "showTableCompareModal",
+  "specsNotesTab",
+  "parsePanelTab",
+  "toolsPanelTab",
+  "chatScope",
   "showKeynotes",
-  "hiddenTakeoffItemIds",
+  "takeoffTab",
   "showParsedRegions",
   "parsedRegionColorMode",
-  "hiddenParsedRegionIds",
 ] as const satisfies readonly UiField[];
 
 const RETAINED_CONTAINER_FIELDS = [
-  "selectedAnnotationIds",
-  "hiddenClasses",
-  "hiddenTakeoffItemIds",
-  "hiddenParsedRegionIds",
+  "textAnnotationColors",
 ] as const satisfies readonly UiField[];
 
 const REPLACED_CONTAINER_FIELDS = [
   "searchResults",
   "searchMatches",
+  "selectedAnnotationIds",
   "activeTextAnnotationTypes",
   "hiddenTextAnnotations",
-  "textAnnotationColors",
   "activeModels",
   "confidenceThresholds",
   "hiddenAnnotationIds",
+  "hiddenClasses",
+  "hiddenTakeoffItemIds",
   "yoloTagVisibility",
   "activeTableTagViews",
+  "hiddenParsedRegionIds",
 ] as const satisfies readonly UiField[];
 
 const CONSTRUCTION_COLLECTIONS = (() => {
@@ -201,23 +220,8 @@ function pickUi(state: UiState): Pick<UiData, UiField> {
 }
 
 function normalizeConstructionDefaults(): void {
+  useUiStore.setState(useUiStore.getInitialState(), true);
   useUiStore.getState().resetProjectUiState();
-  // The compatibility reset deliberately retains these values. A production-dead leaf test still
-  // needs each case to begin at construction defaults, so normalize only the documented omissions.
-  useUiStore.setState({
-    focusAnnotationId: null,
-    selectedAnnotationIds: new Set<number>(),
-    showTips: false,
-    helpMode: false,
-    showTextPanel: false,
-    showChatPanel: true,
-    hiddenClasses: {},
-    showKeynotes: false,
-    hiddenTakeoffItemIds: new Set<number>(),
-    showParsedRegions: true,
-    parsedRegionColorMode: "striped",
-    hiddenParsedRegionIds: new Set<string>(),
-  });
 }
 
 beforeEach(() => {
@@ -225,14 +229,14 @@ beforeEach(() => {
 });
 
 describe("uiStore — additive presentation owner", () => {
-  it("has exactly the frozen 60 data fields and construction defaults", () => {
+  it("has exactly the frozen 61 data fields and construction defaults", () => {
     const state = useUiStore.getState();
     const runtimeDataFields = Object.entries(state)
       .filter(([, value]) => typeof value !== "function")
       .map(([field]) => field)
       .sort();
 
-    expect(UI_FIELDS).toHaveLength(60);
+    expect(UI_FIELDS).toHaveLength(61);
     expect(runtimeDataFields).toEqual([...UI_FIELDS].sort());
     expect(pickUi(state)).toEqual(DEFAULT_UI);
   });
@@ -577,10 +581,11 @@ describe("uiStore — additive presentation owner", () => {
   });
 
   it("preserves the exact reset touched/retained value and reference ledger", () => {
-    const retainedSelection = new Set([41]);
-    const retainedHiddenClasses = { "model-z:window": false };
-    const retainedHiddenTakeoffs = new Set([42]);
-    const retainedHiddenRegions = new Set(["region-z"]);
+    const dirtySelection = new Set([41]);
+    const retainedTextAnnotationColors = { note: "#abcdef" };
+    const dirtyHiddenClasses = { "model-z:window": false };
+    const dirtyHiddenTakeoffs = new Set([42]);
+    const dirtyHiddenRegions = new Set(["region-z"]);
     const tableView: UiData["activeTableTagViews"][string] = {
       regionId: "region-z",
       pageNum: 9,
@@ -594,11 +599,11 @@ describe("uiStore — additive presentation owner", () => {
       searchMatches: { 9: [] },
       searchLoading: true,
       focusAnnotationId: 41,
-      selectedAnnotationIds: retainedSelection,
+      selectedAnnotationIds: dirtySelection,
       showTextAnnotations: true,
       activeTextAnnotationTypes: { note: true },
       hiddenTextAnnotations: new Set(["9:1"]),
-      textAnnotationColors: { note: "#abcdef" },
+      textAnnotationColors: retainedTextAnnotationColors,
       activeTextAnnotationFilter: { type: "note", text: "needle" },
       textPanelTab: "graph",
       activeMarkupId: 43,
@@ -633,10 +638,10 @@ describe("uiStore — additive presentation owner", () => {
       confidenceThreshold: 0.88,
       confidenceThresholds: { "model-z": 0.66 },
       hiddenAnnotationIds: new Set([45]),
-      hiddenClasses: retainedHiddenClasses,
+      hiddenClasses: dirtyHiddenClasses,
       showKeynotes: true,
       activeKeynoteHighlight: { pageNumber: 9, key: "K-9" },
-      hiddenTakeoffItemIds: retainedHiddenTakeoffs,
+      hiddenTakeoffItemIds: dirtyHiddenTakeoffs,
       takeoffTab: "area",
       activeYoloTagId: "tag-z",
       yoloTagVisibility: { "tag-z": false },
@@ -647,8 +652,9 @@ describe("uiStore — additive presentation owner", () => {
       llmHighlight: { pageNumber: 9, bbox: [0.1, 0.2, 0.3, 0.4], label: "hit" },
       showParsedRegions: false,
       parsedRegionColorMode: "checkerboard",
-      hiddenParsedRegionIds: retainedHiddenRegions,
+      hiddenParsedRegionIds: dirtyHiddenRegions,
       focusedParsedRegionId: "region-z",
+      activeQtoWorkflow: { id: 91 } as UiData["activeQtoWorkflow"],
     } satisfies UiData;
 
     useUiStore.setState(dirtyValues);
@@ -661,21 +667,38 @@ describe("uiStore — additive presentation owner", () => {
     const reset = useUiStore.getState();
     const expectedReset = {
       ...DEFAULT_UI,
-      focusAnnotationId: dirtyValues.focusAnnotationId,
-      selectedAnnotationIds: retainedSelection,
+      showTextAnnotations: dirtyValues.showTextAnnotations,
+      textAnnotationColors: retainedTextAnnotationColors,
+      textPanelTab: dirtyValues.textPanelTab,
+      sidebarCollapsed: dirtyValues.sidebarCollapsed,
+      annotationPanelCollapsed: dirtyValues.annotationPanelCollapsed,
       showTips: dirtyValues.showTips,
       helpMode: dirtyValues.helpMode,
       showTextPanel: dirtyValues.showTextPanel,
       showChatPanel: dirtyValues.showChatPanel,
-      hiddenClasses: retainedHiddenClasses,
+      showDetections: dirtyValues.showDetections,
+      showDetectionPanel: dirtyValues.showDetectionPanel,
+      showViewAllPanel: dirtyValues.showViewAllPanel,
+      showCsiPanel: dirtyValues.showCsiPanel,
+      showPageIntelPanel: dirtyValues.showPageIntelPanel,
+      showTakeoffPanel: dirtyValues.showTakeoffPanel,
+      showTableParsePanel: dirtyValues.showTableParsePanel,
+      showKeynoteParsePanel: dirtyValues.showKeynoteParsePanel,
+      showSpecsNotesPanel: dirtyValues.showSpecsNotesPanel,
+      showParsePanel: dirtyValues.showParsePanel,
+      showToolsPanel: dirtyValues.showToolsPanel,
+      showTableCompareModal: dirtyValues.showTableCompareModal,
+      specsNotesTab: dirtyValues.specsNotesTab,
+      parsePanelTab: dirtyValues.parsePanelTab,
+      toolsPanelTab: dirtyValues.toolsPanelTab,
+      chatScope: dirtyValues.chatScope,
       showKeynotes: dirtyValues.showKeynotes,
-      hiddenTakeoffItemIds: retainedHiddenTakeoffs,
+      takeoffTab: dirtyValues.takeoffTab,
       showParsedRegions: dirtyValues.showParsedRegions,
       parsedRegionColorMode: dirtyValues.parsedRegionColorMode,
-      hiddenParsedRegionIds: retainedHiddenRegions,
     } satisfies UiData;
 
-    expect(RETAINED_FIELDS).toHaveLength(12);
+    expect(RETAINED_FIELDS).toHaveLength(29);
     expect(pickUi(reset)).toEqual(expectedReset);
     for (const field of RETAINED_CONTAINER_FIELDS) {
       expect(reset[field], field).toBe(dirty[field]);

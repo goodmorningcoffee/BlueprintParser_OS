@@ -170,8 +170,9 @@ beforeEach(() => {
 
   qc = new QueryClient(); // pure defaults, matching production Providers.tsx
   resetProjectData();
-  // resetProjectData intentionally omits a few presentation fields; pin them here so another
-  // test cannot hide the model probe or perturb the post-save lifecycle.
+  // P2.5 resetProjectData deliberately preserves approved presentation preferences. Pin the
+  // required destination choices here so another test cannot hide the model probe or perturb the
+  // post-save lifecycle.
   setViewerStoreStateForTest({
     publicId: "pid",
     projectId: 41,

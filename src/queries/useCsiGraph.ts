@@ -11,7 +11,7 @@ import type { CsiNetworkGraph } from "@/lib/csi-graph";
 
 type ProjectIntelligence = Record<string, unknown> | null | undefined;
 
-/** Unconditional loader seed. `null` is explicit because setQueryData(undefined) is a v5 no-op. */
+/** Unconditional openProject seed; `null` is explicit because undefined is a v5 no-op. */
 export function seedCsiGraphFromBootstrap(
   qc: QueryClient,
   publicId: string,

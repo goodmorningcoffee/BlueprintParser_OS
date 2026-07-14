@@ -48,8 +48,8 @@ type UiFieldContract = {
   readonly actions: readonly string[];
 };
 
-// Exact 60-field pure-display ledger. Defaults are compact AST source text so Sets and literals
-// remain distinguishable; cross-store compound commands are frozen separately below.
+// Exact 61-field UI ledger. Defaults are compact AST source text so Sets and literals remain
+// distinguishable; cross-store compound commands are frozen separately below.
 const PURE_UI_CONTRACT = {
   searchQuery: { default: '""', actions: ["setSearch"] },
   searchResults: { default: "[]", actions: ["setSearchResults"] },
@@ -141,6 +141,7 @@ const PURE_UI_CONTRACT = {
   chatScope: { default: '"page"', actions: ["setChatScope"] },
   activeKeynoteHighlight: { default: "null", actions: ["setActiveKeynoteHighlight"] },
   showTableCompareModal: { default: "false", actions: ["toggleTableCompareModal"] },
+  activeQtoWorkflow: { default: "null", actions: ["setActiveQtoWorkflow"] },
 } as const satisfies Record<string, UiFieldContract>;
 
 const PURE_UI_MEMBER_NAMES = new Set<string>([
@@ -151,7 +152,7 @@ const PURE_UI_MEMBER_NAMES = new Set<string>([
 
 // Explicit non-UI seams found in the U0 census. They stay visible here so a future mechanical
 // carve cannot silently sweep server metadata, active tools, core geometry, parse drafts, or a
-// mutable server-row draft into a store merely because the current UI happens to display them.
+// server-owned row collection into a store merely because the current UI happens to display it.
 const UI_BOUNDARY_EXCLUSIONS = {
   serverMetadata: ["allTrades", "allCsiCodes"],
   viewerCore: ["pageNumber", "numPages", "scale", "pendingCenter", "pageDimensions"],
@@ -170,7 +171,6 @@ const UI_BOUNDARY_EXCLUSIONS = {
     "tableParseTab",
     "keynoteParseTab",
   ],
-  mutableServerDraft: ["activeQtoWorkflow"],
 } as const;
 
 const COMPOUND_COMMAND_MEMBERS = {
@@ -927,10 +927,10 @@ describe("P2.3 U2 pure UI ownership contract", () => {
     .map((member) => ("name" in member ? staticName(member.name) : null))
     .filter((name): name is string => name !== null);
 
-  it("enumerates exactly 60 pure UI fields with their defaults and companion actions", () => {
+  it("enumerates exactly 61 UI fields with their defaults and companion actions", () => {
     const entries = Object.entries(PURE_UI_CONTRACT);
-    expect(entries).toHaveLength(60);
-    expect(new Set(entries.map(([field]) => field)).size).toBe(60);
+    expect(entries).toHaveLength(61);
+    expect(new Set(entries.map(([field]) => field)).size).toBe(61);
 
     for (const [field, contract] of entries) {
       expect(interfaceKeys, `${field} interface owner`).toContain(field);
@@ -945,7 +945,7 @@ describe("P2.3 U2 pure UI ownership contract", () => {
     }
   });
 
-  it("records the server/core/tool/parse/draft fields excluded from uiStore", () => {
+  it("records the server/core/tool/parse fields excluded from uiStore", () => {
     const pureFields = new Set(Object.keys(PURE_UI_CONTRACT));
     const exclusions = Object.values(UI_BOUNDARY_EXCLUSIONS).flat();
     expect(new Set(exclusions).size).toBe(exclusions.length);

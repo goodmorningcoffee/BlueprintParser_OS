@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 
-import type { SearchWordMatch, TakeoffTab } from "@/types";
+import type { QtoWorkflow, SearchWordMatch, TakeoffTab } from "@/types";
 
 export type TextPanelTab = "ocr" | "annotations" | "graph" | "markups" | "textract";
 export type SpecsNotesTab = "spec-parse" | "notes-parse" | "keynotes";
@@ -121,6 +121,9 @@ export interface UiData {
   parsedRegionColorMode: ParsedRegionColorMode;
   hiddenParsedRegionIds: Set<string>;
   focusedParsedRegionId: string | null;
+
+  // Project-scoped Auto-QTO selection / working draft (the collection is Query-owned).
+  activeQtoWorkflow: QtoWorkflow | null;
 }
 
 // `showDetections` is the canvas overlay gate rather than a sidebar panel, but it remains in this
@@ -219,6 +222,7 @@ interface UiActions {
   setParsedRegionColorMode: (parsedRegionColorMode: ParsedRegionColorMode) => void;
   toggleParsedRegionVisibility: (id: string) => void;
   setFocusedParsedRegionId: (focusedParsedRegionId: string | null) => void;
+  setActiveQtoWorkflow: (activeQtoWorkflow: QtoWorkflow | null) => void;
 
   resetProjectUiState: () => void;
 }
@@ -287,6 +291,7 @@ function freshUiState(): UiData {
     parsedRegionColorMode: "striped",
     hiddenParsedRegionIds: new Set<string>(),
     focusedParsedRegionId: null,
+    activeQtoWorkflow: null,
   };
 }
 
@@ -296,42 +301,24 @@ function freshProjectUiReset(): Partial<UiData> {
     searchResults: [],
     searchMatches: {},
     searchLoading: false,
-    showTextAnnotations: false,
+    focusAnnotationId: null,
+    selectedAnnotationIds: new Set<number>(),
     activeTextAnnotationTypes: {},
     hiddenTextAnnotations: new Set<string>(),
-    textAnnotationColors: {},
     activeTextAnnotationFilter: null,
-    textPanelTab: "annotations",
     activeMarkupId: null,
     activeTakeoffFilter: null,
     activeKeynoteFilter: null,
     activeAnnotationFilter: null,
     activeTradeFilter: null,
     activeCsiFilter: null,
-    sidebarCollapsed: false,
-    annotationPanelCollapsed: false,
-    showDetections: false,
-    showDetectionPanel: false,
-    showViewAllPanel: false,
-    showCsiPanel: false,
-    showPageIntelPanel: false,
-    showTakeoffPanel: false,
-    showTableParsePanel: false,
-    showKeynoteParsePanel: false,
-    showSpecsNotesPanel: false,
-    showParsePanel: false,
-    showToolsPanel: false,
-    showTableCompareModal: false,
-    specsNotesTab: "spec-parse",
-    parsePanelTab: "shape",
-    toolsPanelTab: "csi",
-    chatScope: "page",
     activeModels: {},
     confidenceThreshold: 0.10,
     confidenceThresholds: {},
     hiddenAnnotationIds: new Set<number>(),
+    hiddenClasses: {},
     activeKeynoteHighlight: null,
-    takeoffTab: "count",
+    hiddenTakeoffItemIds: new Set<number>(),
     activeYoloTagId: null,
     yoloTagVisibility: {},
     activeYoloTagFilter: null,
@@ -339,7 +326,9 @@ function freshProjectUiReset(): Partial<UiData> {
     tagBrowseId: null,
     tagBrowseIndex: 0,
     llmHighlight: null,
+    hiddenParsedRegionIds: new Set<string>(),
     focusedParsedRegionId: null,
+    activeQtoWorkflow: null,
   };
 }
 
@@ -505,10 +494,17 @@ export const useUiStore = create<UiState>((set) => ({
       return { hiddenParsedRegionIds: next };
     }),
   setFocusedParsedRegionId: (focusedParsedRegionId) => set({ focusedParsedRegionId }),
+  setActiveQtoWorkflow: (activeQtoWorkflow) => set({ activeQtoWorkflow }),
 
-  // Preserve today's project-switch omissions. P2.5 owns the policy decision about retained UI.
+  // P2.5's explicit ledger resets project-owned selections/results while retaining the 29
+  // presentation preferences characterized by projectLifecycleResetPolicyFreeze.
   resetProjectUiState: () => set(freshProjectUiReset()),
 }));
+
+/** Idempotent open command for a modal preference that intentionally survives project switches. */
+export function openTableCompareModal(): void {
+  useUiStore.setState({ showTableCompareModal: true });
+}
 
 export const useSearchUi = () =>
   useUiStore(

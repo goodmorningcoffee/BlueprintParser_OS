@@ -46,7 +46,6 @@ import {
   useTextAnnotationsForPage,
 } from "@/queries/usePageWindow";
 import { useAnnotations } from "@/queries/useAnnotations";
-import { useViewerStore } from "@/stores/viewerStore";
 import type {
   ClientAnnotation,
   CsiCode,

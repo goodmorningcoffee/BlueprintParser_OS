@@ -129,6 +129,42 @@ describe("sessionStore — additive session ownership", () => {
     expect(useSessionStore.getState().pageDrawingNumbers).not.toBe(oldNumbers);
     expect(useSessionStore.getState().labelingSessions).not.toBe(oldSessions);
   });
+
+  it("allocates fresh construction containers on consecutive resets without replacing actions", () => {
+    const construction = useSessionStore.getInitialState();
+    const beforeReset = useSessionStore.getState();
+
+    beforeReset.resetSession();
+    const firstReset = useSessionStore.getState();
+    firstReset.resetSession();
+    const secondReset = useSessionStore.getState();
+
+    for (const key of ["pageNames", "pageDrawingNumbers", "labelingSessions"] as const) {
+      expect(firstReset[key]).not.toBe(construction[key]);
+      expect(secondReset[key]).not.toBe(construction[key]);
+      expect(secondReset[key]).not.toBe(firstReset[key]);
+      expect(secondReset[key]).toEqual(construction[key]);
+    }
+
+    for (const key of [
+      "setProjectId",
+      "setPublicId",
+      "setDataUrl",
+      "setIsDemo",
+      "setDemoFeatureConfig",
+      "setPageNames",
+      "setPageName",
+      "setPageDrawingNumbers",
+      "setShowLabelingWizard",
+      "setLabelingWizardStep",
+      "setLabelingSessions",
+      "setLabelingCredentials",
+      "resetSession",
+    ] as const) {
+      expect(firstReset[key]).toBe(beforeReset[key]);
+      expect(secondReset[key]).toBe(beforeReset[key]);
+    }
+  });
 });
 
 describe("sessionStore — demo feature policy", () => {

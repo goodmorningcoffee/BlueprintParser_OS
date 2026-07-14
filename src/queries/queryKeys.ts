@@ -32,6 +32,10 @@ export const queryKeys = {
   summaries: {
     all: (publicId: string) => ["project", publicId, "summaries"] as const,
   },
+  // P2.5 bootstrap-owned project-wide trade and CSI filter catalogs.
+  projectCatalogs: {
+    all: (publicId: string) => ["project", publicId, "projectCatalogs"] as const,
+  },
   // ④ takeoff items + groups — SPLIT write ordering preserved (server-first creates/item-mutations,
   // optimistic group-ops), NO rollback; see TAKEOFF_IMPL/SPEC.md §3 + takeoff freeze suite before touching.
   takeoff: {

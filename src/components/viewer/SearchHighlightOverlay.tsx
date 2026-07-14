@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useMemo, memo } from "react";
 import { useUiStore } from "@/stores/uiStore";
-import { useViewerStore } from "@/stores/viewerStore";
 import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useCsiCodesForPage } from "@/queries/usePageWindow";
 import { useTextractForPage } from "@/queries/useTextract";

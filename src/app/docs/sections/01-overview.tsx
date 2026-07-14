@@ -107,7 +107,8 @@ export function Section01Overview() {
           populates JSONB blobs on <InlineCode>pages</InlineCode>. YOLO Post-Pipeline
           augments those blobs on admin trigger. The Viewer reads server collections through
           project-keyed Query facades and keeps client state in explicit Zustand owners: session,
-          UI, viewer core, tools (including drawing), parsing, and a residual metadata store. User parsing tools write back
+          UI, viewer core, tools (including drawing), and parsing. The remaining viewerStore file is
+          only an inert compatibility sentinel. User parsing tools write back
           to the same blobs via the transactional <InlineCode>POST /api/regions/promote</InlineCode>{" "}
           commit and <InlineCode>DELETE /api/regions</InlineCode> deletion routes. The Graph/Output
           layer re-derives summaries after each mutation and serves them
@@ -162,8 +163,9 @@ export function Section01Overview() {
           BP is a single Next.js 16 application (App Router, React 19, TypeScript)
           backed by PostgreSQL 16 via <InlineCode>drizzle-orm</InlineCode>. State in
           the viewer is partitioned across explicit <InlineCode>zustand</InlineCode> owners for
-          session, UI, viewer core, tools (including drawing), parsing, and residual metadata state; project-keyed TanStack
-          Query facades own server collections. LLM access goes through a thin adapter layer over the
+          session, UI, viewer core, tools (including drawing), and parsing; project-keyed TanStack
+          Query facades own server collections and project catalogs. The bounded viewerStore shell
+          is an inert compatibility sentinel. LLM access goes through a thin adapter layer over the
           Anthropic, OpenAI, and Groq SDKs, plus a generic OpenAI-compatible
           endpoint for Ollama and self-hosted models. The CSI network graph is
           rendered with <InlineCode>d3-force</InlineCode>. Python sidecars

@@ -7,12 +7,10 @@ import { join } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-const AUTH_LOADER = "src/app/(dashboard)/project/[id]/page.tsx";
-const DEMO_LOADER = "src/app/demo/project/[id]/page.tsx";
+const PROJECT_LIFECYCLE = "src/lib/project-lifecycle.ts";
 const CSI_PANEL = "src/components/viewer/CsiPanel.tsx";
 const CSI_FACADE = "@/queries/useCsiGraph";
 const QUERY_KEYS_MODULE = "@/queries/queryKeys";
-const VIEWER_COMMANDS = "@/stores/viewerCommands";
 const VIEWER_STORE = "@/stores/viewerStore";
 
 function sourceFiles(directory = "src"): string[] {
@@ -367,35 +365,29 @@ describe("P2.3 csiGraph migration topology", () => {
     expect(csiQueryKeyReferenceCount(fixture)).toBe(2);
   });
 
-  it("pins exactly one observer and two canonical bootstrap seeds", () => {
+  it("pins exactly one observer and one lifecycle-owned canonical bootstrap seed", () => {
     expect(callTopology(CSI_FACADE, "useCsiGraph")).toEqual({ [CSI_PANEL]: 1 });
     expect(callTopology(CSI_FACADE, "seedCsiGraphFromBootstrap")).toEqual({
-      [AUTH_LOADER]: 1,
-      [DEMO_LOADER]: 1,
+      [PROJECT_LIFECYCLE]: 1,
     });
 
-    for (const loader of [AUTH_LOADER, DEMO_LOADER]) {
-      const source = parse(loader);
-      const call = importedSymbolCalls(source, CSI_FACADE, "seedCsiGraphFromBootstrap")[0];
-      expect(call.arguments).toHaveLength(3);
-      expect(call.arguments[0].getText(source)).toBe("queryClient");
-      expect(call.arguments[1].getText(source)).toBe("data.id");
-      expect(call.arguments[2].getText(source)).toBe("projectIntelligenceWithoutYoloTags");
-    }
+    const source = parse(PROJECT_LIFECYCLE);
+    const call = importedSymbolCalls(source, CSI_FACADE, "seedCsiGraphFromBootstrap")[0];
+    expect(call.arguments).toHaveLength(3);
+    expect(call.arguments[0].getText(source)).toBe("queryClient");
+    expect(call.arguments[1].getText(source)).toBe("publicId");
+    expect(call.arguments[2].getText(source)).toBe("projectIntelligenceWithoutYoloTags");
   }, 60_000);
 
-  it("pins exact prior-project cleanup before the neutral reset command", () => {
+  it("pins exact prior-project cleanup inside the sole lifecycle authority", () => {
     expect(callTopology(CSI_FACADE, "clearCsiGraphProject")).toEqual({
-      [AUTH_LOADER]: 1,
-      [DEMO_LOADER]: 1,
+      [PROJECT_LIFECYCLE]: 1,
     });
-    for (const loader of [AUTH_LOADER, DEMO_LOADER]) {
-      const source = parse(loader);
-      const clear = importedSymbolCalls(source, CSI_FACADE, "clearCsiGraphProject")[0];
-      const reset = importedSymbolCalls(source, VIEWER_COMMANDS, "resetProjectData")[0];
-      expect(clear.arguments[1].getText(source)).toBe("previousPublicId");
-      expect(clear.getStart(source)).toBeLessThan(reset.getStart(source));
-    }
+    const source = parse(PROJECT_LIFECYCLE);
+    const clear = importedSymbolCalls(source, CSI_FACADE, "clearCsiGraphProject")[0];
+    expect(clear.arguments).toHaveLength(2);
+    expect(clear.arguments[0].getText(source)).toBe("queryClient");
+    expect(clear.arguments[1].getText(source)).toBe("cleanupPublicId");
   });
 
   it("keeps all direct csiGraph Query-key ownership inside the facade", () => {

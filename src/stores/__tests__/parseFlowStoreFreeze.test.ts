@@ -109,11 +109,14 @@ const PARSE_OPERATION_ACTION_KEYS = [
   "invalidateParseOperation",
 ] as const satisfies readonly (keyof ParseState)[];
 
-export const PROJECT_PARSE_RETAINED_KEYS = [
-  "tableCellStructure",
-  "showTableCellStructure",
-  "tableParseOptions",
-] as const satisfies readonly (typeof PARSE_DATA_KEYS)[number][];
+const PROJECT_PARSE_DATA_KEYS = [
+  ...PARSE_DATA_KEYS,
+  "guidedParseOwner",
+] as const satisfies readonly (keyof ParseState)[];
+
+export const PROJECT_PARSE_RETAINED_KEYS = [] as const satisfies readonly (
+  typeof PROJECT_PARSE_DATA_KEYS
+)[number][];
 
 export const RESET_ALL_PARSE_RETAINED_KEYS = [
   "tableParseTab",
@@ -356,7 +359,8 @@ describe("P2.4 shared parse boundary and defaults", () => {
       ...PARSE_DATA_KEYS.slice(30),
     ]);
     expect(PARSE_TEST_ACTION_KEYS).toEqual(PARSE_ACTION_KEYS);
-    expect(PROJECT_PARSE_RETAINED_KEYS).toHaveLength(3);
+    expect(PROJECT_PARSE_DATA_KEYS).toHaveLength(35);
+    expect(PROJECT_PARSE_RETAINED_KEYS).toHaveLength(0);
     expect(RESET_ALL_PARSE_RETAINED_KEYS).toHaveLength(8);
     const state = useParseFlowStore.getState();
     for (const action of PARSE_ACTION_KEYS) expect(state[action]).toBeTypeOf("function");
@@ -983,8 +987,17 @@ describe("P2.4 shared reset matrices", () => {
     unsubscribe();
   });
 
-  it("project reset changes exactly 31 parse fields and retains the three current-policy references", () => {
-    useParseFlowStore.setState({ ...nonDefaultParsePatch(), guidedParseOwner: "notes" });
+  it("project reset resets all 35 semantic fields and monotonically invalidates every operation lane", () => {
+    useParseFlowStore.setState({
+      ...nonDefaultParsePatch(),
+      guidedParseOwner: "notes",
+      parseOperations: {
+        table: { revision: 7, busy: true },
+        keynote: { revision: 11, busy: false },
+        notes: { revision: 13, busy: true },
+        spec: { revision: 17, busy: false },
+      },
+    });
     const before = useParseFlowStore.getState();
     const actionsBefore = pickParseActions(before);
     const initial = useParseFlowStore.getInitialState();
@@ -995,14 +1008,10 @@ describe("P2.4 shared reset matrices", () => {
     const after = useParseFlowStore.getState();
 
     expect(listener).toHaveBeenCalledTimes(1);
-    const retainedSet = new Set<ParseDataKey>(PROJECT_PARSE_RETAINED_KEYS);
-    expect(changedParseKeys(before, after)).toEqual(sorted(
-      PARSE_DATA_KEYS.filter((key) => !retainedSet.has(key)),
-    ));
-    for (const key of PROJECT_PARSE_RETAINED_KEYS) {
-      expect(after[key], `project reset retains ${key}`).toBe(before[key]);
-    }
-    for (const key of PARSE_DATA_KEYS.filter((key) => !retainedSet.has(key))) {
+    expect(PROJECT_PARSE_RETAINED_KEYS).toHaveLength(0);
+    expect(PROJECT_PARSE_DATA_KEYS.filter((key) => !Object.is(before[key], after[key])).sort())
+      .toEqual([...PROJECT_PARSE_DATA_KEYS].sort());
+    for (const key of PROJECT_PARSE_DATA_KEYS) {
       expect(after[key], `project reset resets ${key} to construction destination`).toEqual(
         initial[key],
       );
@@ -1015,8 +1024,17 @@ describe("P2.4 shared reset matrices", () => {
     expect(new Set(RESET_ARRAY_KEYS.map((key) => after[key])).size).toBe(
       RESET_ARRAY_KEYS.length,
     );
+    expect(after.tableParseOptions).not.toBe(before.tableParseOptions);
+    expect(after.tableParseOptions).not.toBe(initial.tableParseOptions);
     expect(after.guidedParseOwner).toBeNull();
+    expect(after.parseOperations).toEqual({
+      table: { revision: 8, busy: false },
+      keynote: { revision: 12, busy: false },
+      notes: { revision: 14, busy: false },
+      spec: { revision: 18, busy: false },
+    });
     expectParseActionsStable(actionsBefore, after);
+    expectNonDataSurfaceStable(before, after, { allowOperationChange: true });
     unsubscribe();
   });
 });

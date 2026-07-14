@@ -148,10 +148,8 @@ describe("P2.3 viewerCore characterization", () => {
       pageNumber: 1,
       numPages: 0,
       scale: 1,
+      pendingCenter: false,
       pageDimensions: {},
     });
-    // Current resetProjectData intentionally omits pendingCenter. Preserve that oddity in P2.3;
-    // P2.5's explicit reset-policy ledger decides whether it should change.
-    expect(useViewerStore.getState().pendingCenter).toBe(true);
   });
 });

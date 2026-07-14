@@ -9,23 +9,23 @@ import type { ProjectSummaries } from "@/types";
 // [refactor jul10 P2.2③] summaries: zustand viewerStore -> TanStack Query cache (variant a,
 // bootstrap-seeded — P2_DESIGN/SUMMARIES_IMPL/SPEC.md is authoritative). There is NO GET endpoint
 // for summaries: the server flattens projectIntelligence.summaries to a TOP-LEVEL `summaries` key
-// on both project responses (services/projects.ts:140→:152 authed, :245→:267 demo) and the two
-// loaders seed the cache from it. NOTE: RECIPE.md step 4's "③ seeds from
+// on both project responses (services/projects.ts:140→:152 authed, :245→:267 demo), and shared
+// openProject seeds the cache from it. NOTE: RECIPE.md step 4's "③ seeds from
 // data.projectIntelligence.summaries" is WRONG for ③ — erratum filed in SPEC §8 + RECIPE.
 //
 // Three exports:
-//   • seedSummariesCache — the ONE write helper for all 3 production seed sites (2 loaders
-//     unconditional, the shared ParsedRegion command guarded — see the two-semantics note below).
+//   • seedSummariesCache — the ONE write helper for all 3 production seed sites (openProject
+//     unconditional, two ParsedRegion refresh paths guarded — see the two-semantics note below).
 //   • useSummariesData   — narrow cache-only read { summaries, setSummaries }. SpecIndex and
 //     NotesIndex use the explicit narrow name to document that they observe summaries only;
 //     active page-window transport/range data does not compose into this cache hook.
 //   • useSummaries       — compatibility name for cache-only summary readers. Its temporary
 //     chunk-loader passthrough disappeared in P2.2⑦ when the active range moved to pagesWindow.
 
-// [refactor jul10 P2.2③] Loader/refresher seed of the summaries cache.
+// [refactor jul10 P2.2③ + jul14 P2.5] Project-open/refresher seed of the summaries cache.
 //
 // TWO write semantics share this helper — the single most implementation-trapping detail (SPEC §2):
-//   • LOADERS call it UNCONDITIONALLY with `data.summaries` (may be null/undefined). The `?? null`
+//   • OPENPROJECT calls it UNCONDITIONALLY with `data.summaries` (may be null/undefined). `?? null`
 //     is LOAD-BEARING: RQ v5 setQueryData(key, undefined) is a silent NO-OP (query-core:
 //     `if (data === void 0) return`), so without the coercion an omitted-summaries load response
 //     would silently RETAIN the previous visit's cache entry — the exact stale bug the old
@@ -38,7 +38,7 @@ import type { ProjectSummaries } from "@/types";
 // `publicId` is an explicit param (never read from the store here): the refresher must seed under the
 // SAME captured publicId the promote request used — a mid-await project switch would otherwise
 // leak project A's recomputed summaries into project B's cache entry (SPEC §5-S3, qto-S6
-// precedent). Loaders pass `data.id` (the fresh project's publicId).
+// precedent). openProject passes server-canonical `data.id`.
 export function seedSummariesCache(
   qc: QueryClient,
   publicId: string,
@@ -48,9 +48,9 @@ export function seedSummariesCache(
 }
 
 // [refactor jul10 P2.2③] Narrow cache-backed read: the exact { summaries, setSummaries } pair the
-// store held. Render-captured publicId is correct for READS: on project switch resetProjectData
-// sets publicId:"" — subscribers re-key to a fresh null-initialData entry, and all consumers are
-// unmounted behind the loaders' `loading` gates anyway (seed-before-reveal, SPEC §5-S5).
+// store held. Render-captured publicId is correct for READS: openProject resets publicId to "",
+// re-keying subscribers to a null entry, while route content stays behind its loading gate until
+// the lifecycle has seeded and activated the destination (SPEC §5-S5).
 export function useSummariesData(): {
   summaries: ProjectSummaries | null;
   setSummaries: (s: ProjectSummaries | null) => void;
@@ -72,17 +72,17 @@ export function useSummariesData(): {
         "summaries is bootstrap-seeded (no GET endpoint); queryFn must never run",
       );
     },
-    enabled: false, // sole sources are the 8 seed sites; no refetch path can clobber a seed
+    enabled: false, // sole sources are openProject + 2 refresh paths; no refetch can clobber a seed
     // The cast is REQUIRED: bare `initialData: null` with a throwing queryFn infers
     // TQueryFnData = null, typing `data` as `null` and compile-breaking every `summaries?.x`
     // consumer (analog of chat's `[] as ChatMsg[]`). v5: any non-undefined initialData ->
     // status:'success', data === null, no refetch pressure; initialData applies only at query
-    // construction, so a pre-mount loader seed is never clobbered by a later observer.
+    // construction, so a pre-activation lifecycle seed is never clobbered by a later observer.
     initialData: null as ProjectSummaries | null,
     staleTime: Infinity, // no queryFn to go stale against; defensive pin (root QueryClient has no defaultOptions)
     // gcTime:Infinity — FAITHFULNESS + CHEAPNESS, *not* chat's "unrecoverable" rationale: zustand
     // held summaries all session; the payload is KB-scale; refresher-written summaries are
-    // server-persisted and the loader unconditionally re-seeds on re-entry, so a GC'd entry WOULD
+    // server-persisted and openProject unconditionally re-seeds on re-entry, so a GC'd entry WOULD
     // be recoverable. Kept Infinity purely to match the old always-resident field. ④–⑨: do not
     // cargo-cult "unrecoverable" here onto domains where it's false. ⑥ annotations and ⑦
     // pagesWindow each have one project key and deliberately use Infinity; ⑧ textract is the
@@ -91,7 +91,7 @@ export function useSummariesData(): {
   });
 
   // Facade parity with the deleted store action `setSummaries(s: ProjectSummaries | null)`
-  // (loaders/tests pass null-shaped values; the type must keep accepting null). Plain
+  // (the lifecycle/tests pass null-shaped values; the type must keep accepting null). Plain
   // value-replace == the old `set({ summaries })`; zero read-modify-write callers exist.
   const setSummaries = useCallback(
     (next: ProjectSummaries | null) => qc.setQueryData(key, next),

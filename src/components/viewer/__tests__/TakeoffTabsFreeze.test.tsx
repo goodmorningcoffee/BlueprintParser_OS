@@ -117,10 +117,9 @@ const alertMock = vi.fn();
 beforeEach(() => {
   qc = new QueryClient(); // pure defaults, matching production Providers.tsx
   resetProjectData();
-  // [DETECTOR jul10 closer] Store-bleed guard: resetProjectData deliberately EXCLUDES
-  // hiddenTakeoffItemIds (census flag 9 — never in the reset block, frozen; do not "fix" in
-  // the store) and bucketFillPendingPolygon, so VA-2's hide-toggle and the BF cases' pending
-  // polygon would leak into later tests through the module-singleton store. Reset both here.
+  // [DETECTOR jul10 closer] P2.5 resetProjectData now clears hiddenTakeoffItemIds and
+  // bucketFillPendingPolygon. Repeat both destination values explicitly so VA-2/BF fixture
+  // preconditions remain visible and cannot depend on a preceding case.
   setViewerStoreStateForTest({
     publicId: "pid",
     isDemo: false,

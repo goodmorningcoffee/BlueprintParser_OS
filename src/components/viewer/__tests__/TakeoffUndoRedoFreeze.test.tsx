@@ -126,8 +126,8 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   qc = new QueryClient(); // pure production defaults; provider exists from birth for the C3 hook
   resetProjectData();
-  // resetProjectData does not clear these history arrays, so reset them explicitly to prevent the
-  // module-singleton store from leaking one case's undo history into the next.
+  // P2.5 resetProjectData clears both history arrays; repeat their destination values here with the
+  // rest of this fixture so handler preconditions remain explicit.
   setViewerStoreStateForTest({
     publicId: "pid",
     isDemo: false,

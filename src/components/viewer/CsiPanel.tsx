@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { usePageData } from "@/stores/viewerStore";
+import { useProjectCatalogs } from "@/queries/useProjectCatalogs";
 import { useNavigation } from "@/stores/viewerCoreStore";
 import { useUiStore, useSearchUiActions } from "@/stores/uiStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -41,7 +41,7 @@ const DIVISION_NAMES: Record<string, string> = {
 export default function CsiPanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { pageNumber } = useNavigation();
   const pageCsiCodes = useCsiCodesForPage(pageNumber);
-  const { allCsiCodes } = usePageData();
+  const { allCsiCodes } = useProjectCatalogs();
   const activeCsiFilter = useUiStore((s) => s.activeCsiFilter);
   const setCsiFilter = useUiStore((s) => s.setCsiFilter);
   const toggleCsiPanel = useUiStore((s) => s.toggleCsiPanel);

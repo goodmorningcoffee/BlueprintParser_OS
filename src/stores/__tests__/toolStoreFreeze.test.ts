@@ -109,52 +109,21 @@ export const TOOL_ACTION_KEYS = [
   "clearSymbolSearch",
 ] as const satisfies readonly (keyof ToolState)[];
 
-/** Exact project-reset subset; survival-policy changes belong to P2.5, not this carve. */
-export const TOOL_PROJECT_RESET_TOUCHED_KEYS = [
-  "tempPanMode",
-  "activeTool",
-  "activeTakeoffItemId",
-  "scaleCalibrations",
-  "calibrationMode",
-  "calibrationPoints",
-  "polygonDrawingMode",
-  "polygonVertices",
-  "bucketFillResolution",
-  "tagScanResults",
-  "symbolSearchLoading",
-  "symbolSearchProgress",
-  "symbolSearchResults",
-  "symbolSearchConfidence",
-  "dismissedSymbolMatches",
-  "symbolSearchError",
-  "symbolSearchTemplateBbox",
-  "symbolSearchSourcePage",
-  "symbolSearchConfig",
-  "symbolSearchPreset",
-] as const satisfies readonly (typeof TOOL_DATA_KEYS)[number][];
+/** Every Tool field is project-owned and returns to its construction default at activation reset. */
+export const TOOL_PROJECT_RESET_KEYS = TOOL_DATA_KEYS;
 
-/** Exact project-reset omissions, including live tools/history that currently leak by policy. */
-export const TOOL_PROJECT_RESET_RETAINED_KEYS = [
-  "mode",
-  "_drawing",
+/** Reset must allocate these mutable construction defaults afresh. */
+export const TOOL_PROJECT_RESET_MUTABLE_KEYS = [
   "_drawStart",
   "_drawEnd",
-  "_mousePos",
-  "bucketFillPreview",
-  "bucketFillLoading",
-  "bucketFillError",
-  "bucketFillTolerance",
-  "bucketFillDilatePx",
-  "bucketFillPendingPolygon",
-  "splitLineA",
-  "splitLineB",
-  "splitPreview",
-  "splitError",
+  "scaleCalibrations",
+  "calibrationPoints",
+  "polygonVertices",
   "bucketFillBarriers",
-  "bucketFillBarrierMode",
-  "barrierPendingPoint",
   "takeoffUndoStack",
   "takeoffRedoStack",
+  "dismissedSymbolMatches",
+  "symbolSearchConfig",
 ] as const satisfies readonly (typeof TOOL_DATA_KEYS)[number][];
 
 type ToolDataKey = (typeof TOOL_DATA_KEYS)[number];
@@ -277,19 +246,16 @@ beforeEach(() => {
 });
 
 describe("flat toolStore drawing-last — exact boundary and defaults", () => {
-  it("exports a unique 40-data / 47-action / 20-touched / 20-retained ledger", () => {
+  it("exports a unique 40-data / 47-action / 40-field project-reset ledger", () => {
     expect(TOOL_DATA_KEYS).toHaveLength(40);
     expect(new Set(TOOL_DATA_KEYS).size).toBe(40);
     expect(TOOL_ACTION_KEYS).toHaveLength(47);
     expect(new Set(TOOL_ACTION_KEYS).size).toBe(47);
-    expect(TOOL_PROJECT_RESET_TOUCHED_KEYS).toHaveLength(20);
-    expect(new Set(TOOL_PROJECT_RESET_TOUCHED_KEYS).size).toBe(20);
-    expect(TOOL_PROJECT_RESET_RETAINED_KEYS).toHaveLength(20);
-    expect(new Set(TOOL_PROJECT_RESET_RETAINED_KEYS).size).toBe(20);
-    expect(sorted([
-      ...TOOL_PROJECT_RESET_TOUCHED_KEYS,
-      ...TOOL_PROJECT_RESET_RETAINED_KEYS,
-    ])).toEqual(sorted(TOOL_DATA_KEYS));
+    expect(TOOL_PROJECT_RESET_KEYS).toHaveLength(40);
+    expect(new Set(TOOL_PROJECT_RESET_KEYS).size).toBe(40);
+    expect(TOOL_PROJECT_RESET_KEYS).toEqual(TOOL_DATA_KEYS);
+    expect(TOOL_PROJECT_RESET_MUTABLE_KEYS).toHaveLength(10);
+    expect(new Set(TOOL_PROJECT_RESET_MUTABLE_KEYS).size).toBe(10);
 
     const state = useToolStore.getState();
     for (const action of TOOL_ACTION_KEYS) expect(state[action]).toBeTypeOf("function");
@@ -968,7 +934,7 @@ describe("flat toolStore AT2 — container and argument identity", () => {
 });
 
 describe("flat toolStore drawing-last — project reset policy", () => {
-  it("touches exactly 20 fields, retains exactly 20, allocates five containers, and keeps actions", () => {
+  it("clears all 40 fields, allocates fresh mutable defaults, and keeps actions", () => {
     const scaleCalibrations = { 3: CALIBRATION };
     const calibrationPoints = { p1: { x: 0.1, y: 0.2 }, p2: { x: 0.7, y: 0.8 } };
     const polygonVertices = [{ x: 0.1, y: 0.2 }];
@@ -1044,10 +1010,8 @@ describe("flat toolStore drawing-last — project reset policy", () => {
     before.resetProjectToolState();
 
     const after = useToolStore.getState();
-    expect(changedToolKeys(before, after)).toEqual(sorted(TOOL_PROJECT_RESET_TOUCHED_KEYS));
-    for (const key of TOOL_PROJECT_RESET_RETAINED_KEYS) {
-      expect(after[key], `reset must retain ${key}`).toBe(before[key]);
-    }
+    expect(changedToolKeys(before, after)).toEqual(sorted(TOOL_PROJECT_RESET_KEYS));
+    expect(pickToolData(after)).toEqual(pickToolData(useToolStore.getInitialState()));
     for (const key of TOOL_ACTION_KEYS) {
       expect(after[key], `reset must retain action ${key}`).toBe(actionsBefore[key]);
     }
@@ -1078,35 +1042,25 @@ describe("flat toolStore drawing-last — project reset policy", () => {
     expect(after.scaleCalibrations).not.toBe(scaleCalibrations);
     expect(after.calibrationPoints).not.toBe(calibrationPoints);
     expect(after.polygonVertices).not.toBe(polygonVertices);
+    expect(after._drawStart).not.toBe(drawStart);
+    expect(after._drawEnd).not.toBe(drawEnd);
+    expect(after.bucketFillBarriers).not.toBe(barriers);
+    expect(after.takeoffUndoStack).not.toBe(undo);
+    expect(after.takeoffRedoStack).not.toBe(redo);
     expect(after.dismissedSymbolMatches).not.toBe(dismissed);
     expect(after.symbolSearchConfig).not.toBe(symbolConfig);
-
-    expect(after.mode).toBe("markup");
-    expect(after._drawing).toBe(true);
-    expect(after._drawStart).toBe(drawStart);
-    expect(after._drawEnd).toBe(drawEnd);
-    expect(after._mousePos).toBe(mousePos);
-    expect(after.bucketFillPreview).toBe(bucketPreview);
-    expect(after.bucketFillPendingPolygon).toBe(pendingPolygon);
-    expect(after.splitLineA).toBe(splitLineA);
-    expect(after.splitLineB).toBe(splitLineB);
-    expect(after.splitPreview).toBe(splitPreview);
-    expect(after.bucketFillBarriers).toBe(barriers);
-    expect(after.barrierPendingPoint).toBe(barrierPendingPoint);
-    expect(after.takeoffUndoStack).toBe(undo);
-    expect(after.takeoffRedoStack).toBe(redo);
   });
 
-  it("preserves exact bucket/split owner identity while clearing every other owner", () => {
+  it("clears every active owner, including temporary bucket and split owners", () => {
     const bucket = { kind: "bucketFill" } as const;
     useToolStore.setState({ activeTool: bucket });
     useToolStore.getState().resetProjectToolState();
-    expect(useToolStore.getState().activeTool).toBe(bucket);
+    expect(useToolStore.getState().activeTool).toBeNull();
 
     const split = { kind: "split" } as const;
     useToolStore.setState({ activeTool: split });
     useToolStore.getState().resetProjectToolState();
-    expect(useToolStore.getState().activeTool).toBe(split);
+    expect(useToolStore.getState().activeTool).toBeNull();
 
     useToolStore.setState({ activeTool: { kind: "calibration" } });
     useToolStore.getState().resetProjectToolState();

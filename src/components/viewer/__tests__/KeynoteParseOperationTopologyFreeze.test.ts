@@ -285,7 +285,7 @@ describe("A2c Keynote invalidation and shared-workspace topology", () => {
     expect(load).not.toContain("invalidateParseOperation(");
     const keynoteItem = compact(text(KEYNOTE_ITEM));
     expect(keynoteItem).toContain(
-      "toggleTableCompareModal();openTableReviewTarget(keynote.pageNumber,",
+      "openTableCompareModal();openTableReviewTarget(keynote.pageNumber,",
     );
     expect(keynoteItem).toContain('},"keynote")');
     expect(keynoteItem).not.toContain("invalidateKeynoteTableOperations()");
@@ -293,7 +293,7 @@ describe("A2c Keynote invalidation and shared-workspace topology", () => {
     expect(compare).not.toContain("beforeHandoff");
     expect(compare).not.toContain("setPage(");
     expect(compare).toContain(
-      "toggleTableCompareModal();loadExistingParsed(t.region,t.pageNum)",
+      "openTableCompareModal();loadExistingParsed(t.region,t.pageNum)",
     );
     expect(compact(namedRoot(SPECS_NOTES, "handleClose")))
       .toContain("toggleSpecsNotesParsePanel()");

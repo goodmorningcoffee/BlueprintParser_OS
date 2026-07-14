@@ -116,6 +116,8 @@ const TEXTRACT_BOOTSTRAP_OR_LOADER_FILES = [
   "src/hooks/useTextractLoader.ts",
 ] as const;
 
+const PROJECT_LIFECYCLE = "src/lib/project-lifecycle.ts";
+
 const parsedSourceCache = new Map<string, ts.SourceFile>();
 
 function parse(relativePath: string): ts.SourceFile {
@@ -785,8 +787,8 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     const interfaceKeys = interfaces[0].members
       .map((member) => ("name" in member ? staticName(member.name) : null))
       .filter((name): name is string => name !== null);
-    // P2.3 moved page navigation and tools to leaf owners; keep a residual metadata sentinel so this test still
-    // proves it parsed the live ViewerState rather than an empty/wrong interface.
+    // P2.3 moved page navigation/tools to leaf owners; P2.5 keeps an inert compatibility sentinel
+    // so this still proves it parsed the live ViewerState rather than an empty/wrong interface.
     expect(interfaceKeys).toEqual(expect.arrayContaining(["allTrades", "setAllTrades"]));
     expectNoLegacyMembers(interfaceKeys);
 
@@ -822,8 +824,8 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     });
     expect(selectorObjects, "usePageData selector result").toHaveLength(1);
     const selectorObject = selectorObjects[0];
-    // P2.3 moves the CSI presentation filter/action to uiStore; this residual viewer facade is
-    // bootstrap-derived catalog data only.
+    // P2.3 moved the CSI presentation filter/action to uiStore. P2.5 leaves this one-field selector
+    // only as an inert compatibility sentinel; live catalog reads use the projectCatalogs Query.
     expect(directObjectKeys(selectorObject)).toEqual(["allCsiCodes"]);
 
     const selectedStoreMembers = descendants(
@@ -939,11 +941,17 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
     expect(violations).toEqual([]);
   }, 15_000);
 
-  it.each([
-    "src/app/(dashboard)/project/[id]/page.tsx",
-    "src/app/demo/project/[id]/page.tsx",
-  ])("clears only the previous Textract prefix before %s resets UI state", (relativePath) => {
-    const source = parse(relativePath);
+  it("keeps exact previous-project Textract cleanup inside the sole lifecycle authority", () => {
+    const productionSources = sourceFilesUnder("src").filter(isProductionSource);
+    expect(
+      importedCallTopology(
+        productionSources,
+        "@/queries/textractCache",
+        "clearTextractProject",
+      ),
+    ).toEqual({ [PROJECT_LIFECYCLE]: 1 });
+
+    const source = parse(PROJECT_LIFECYCLE);
     const clearCalls = importedSymbolCalls(
       source,
       source,
@@ -956,19 +964,27 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
 
     expect(clearCalls).toHaveLength(1);
     expect(resetCalls).toHaveLength(1);
-    expect(clearCalls[0].getStart(source)).toBeLessThan(resetCalls[0].getStart(source));
-    expect(ts.isAwaitExpression(clearCalls[0].parent), "clear must finish before reset").toBe(true);
-    expect(clearCalls[0].arguments).toHaveLength(2);
+    expect(ts.isAwaitExpression(clearCalls[0].parent), "clear must finish before transport").toBe(true);
+    expect(clearCalls[0].arguments).toHaveLength(3);
     expect(
       ts.isIdentifier(clearCalls[0].arguments[0]) && clearCalls[0].arguments[0].text,
     ).toBe("queryClient");
     expect(
       ts.isIdentifier(clearCalls[0].arguments[1]) && clearCalls[0].arguments[1].text,
-    ).toBe("previousPublicId");
+    ).toBe("cleanupPublicId");
+    expect(clearCalls[0].arguments[2].getText(source).replace(/\s+/g, "")).toBe(
+      "()=>ownsRecord(queryClient,record)",
+    );
 
-    const previousPublicId = findVariable(source, "previousPublicId");
-    expect(previousPublicId.initializer).toBeTruthy();
-    const capture = unwrapExpression(previousPublicId.initializer!);
+    const cleanupPublicIds = findVariable(source, "cleanupPublicIds");
+    expect(cleanupPublicIds.initializer?.getText(source).replace(/\s+/g, "")).toBe(
+      "newSet(previous?.cleanupPublicIds)",
+    );
+    const livePublicId = findVariable(source, "livePublicId");
+    expect(livePublicId.initializer).toBeTruthy();
+    expect(livePublicId.getStart(source)).toBeLessThan(resetCalls[0].getStart(source));
+    expect(source.getText()).toContain("if (livePublicId) cleanupPublicIds.add(livePublicId)");
+    const capture = unwrapExpression(livePublicId.initializer!);
     expect(ts.isPropertyAccessExpression(capture) && capture.name.text).toBe("publicId");
     const getStateCall = ts.isPropertyAccessExpression(capture)
       ? unwrapExpression(capture.expression)
@@ -994,7 +1010,7 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
           "getState",
           stringConstants,
         ),
-      "previousPublicId must capture live sessionStore publicId",
+      "livePublicId must capture the live session before reset and join inherited cleanup",
     ).toBe(true);
 
     // OCR has no bootstrap payload. A helper seed here would both widen the response and create a
@@ -1011,8 +1027,7 @@ describe("P2.2⑦ legacy page-window ownership deletion", () => {
       ),
     ).toBe(0);
     expect(textractKeyReferenceCount(source)).toBe(0);
-    expect(callMemberNames(source)).not.toContain("setQueryData");
-  });
+  }, 15_000);
 
   it("pins exact per-page, action-only, and passive Textract consumer topology", () => {
     const productionSources = sourceFilesUnder("src").filter(isProductionSource);

@@ -496,7 +496,42 @@ describe("useTextractLoader C3 — exact cancellation, identity, and lifetime", 
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("unmount aborts exact siblings and clears only the captured Textract prefix", async () => {
+  it("a stale unmount never starts prefix teardown or removes same-ID successor OCR", async () => {
+    const originalCancelQueries = queryClient.cancelQueries.bind(queryClient);
+    const stalledPrefixCancel = deferred<void>();
+    let prefixCancelCalls = 0;
+    vi.spyOn(queryClient, "cancelQueries").mockImplementation((filters, options) => {
+      const queryKey = filters?.queryKey;
+      if (
+        Array.isArray(queryKey) &&
+        queryKey.length === 3 &&
+        queryKey[0] === "project" &&
+        queryKey[1] === "public-project-A" &&
+        queryKey[2] === "textract"
+      ) {
+        prefixCancelCalls += 1;
+        return stalledPrefixCancel.promise;
+      }
+      return originalCancelQueries(filters, options);
+    });
+
+    const obsolete = render(<TextractLoaderController />, { wrapper });
+    obsolete.unmount();
+    await flushPromises();
+
+    // A same-publicId successor can mount and publish while obsolete prefix cancellation is
+    // suspended. Hook cleanup must own only its exact batch; lifecycle owns project-prefix removal.
+    render(<TextractLoaderController />, { wrapper });
+    const successor = textract("same-ID-successor");
+    act(() => seedTextract(queryClient, { 99: successor }, "public-project-A"));
+    stalledPrefixCancel.resolve();
+    await flushPromises();
+
+    expect(prefixCancelCalls).toBe(0);
+    expect(cached(99)).toBe(successor);
+  });
+
+  it("unmount aborts exact active siblings without clearing retained Textract pages", async () => {
     const aSentinel = textract("A-sentinel");
     const bSentinel = textract("B-sentinel");
     seedTextract(queryClient, { 99: aSentinel }, "public-project-A");
@@ -511,11 +546,10 @@ describe("useTextractLoader C3 — exact cancellation, identity, and lifetime", 
     await flushPromises();
 
     for (const signal of signals) expect(signal.aborted).toBe(true);
-    expect(
-      queryClient.getQueriesData({
-        queryKey: queryKeys.textract.all("public-project-A"),
-      }),
-    ).toEqual([]);
+    expect(queryFor(19)).toBeUndefined();
+    expect(queryFor(20)).toBeUndefined();
+    expect(queryFor(21)).toBeUndefined();
+    expect(cached(99, "public-project-A")).toBe(aSentinel);
     expect(cached(99, "public-project-B")).toBe(bSentinel);
     expect(queryClient.getQueryData(queryKeys.chatMessages.all("public-project-A")))
       .toEqual(["chat"]);

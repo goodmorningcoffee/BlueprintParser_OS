@@ -1,9 +1,9 @@
-// [refactor jul11 P2.3] Temporary cross-store project reset coordinator.
+// [refactor jul11 P2.3 + jul14 P2.5] Neutral cross-store project reset coordinator.
 //
 // Leaf stores must not import one another. Keeping the old reset as a viewerStore action would make
 // the UI/tool store own session lifetime; duplicating it in loaders/tests would reopen reset drift.
-// P2.3 therefore preserves today's reset output behind this neutral command. P2.5 replaces it with
-// the generation/AbortController-aware openProject orchestrator and an explicit survival policy.
+// P2.3 therefore centralized leaf reset output here. P2.5's generation/AbortController-aware
+// openProject orchestrator is its sole production caller and separately owns Query teardown/seeding.
 
 import {
   invalidateParseOperationKinds,
@@ -45,21 +45,31 @@ import { useViewerCoreStore } from "@/stores/viewerCoreStore";
 import { useViewerStore } from "@/stores/viewerStore";
 import type { ParsedRegion } from "@/types";
 
-export function resetProjectData(): void {
+export function resetProjectData(canContinue: () => boolean = () => true): boolean {
+  if (!canContinue()) return false;
   // Capabilities belong to the old project even before the session identity publication re-keys
   // Query observers. Invalidate all three non-reactive lanes first.
   invalidateToolTailAuthority();
+  if (!canContinue()) return false;
   invalidateLatestToolOperation("bucketFill");
+  if (!canContinue()) return false;
   invalidateLatestToolOperation("symbolSession");
+  if (!canContinue()) return false;
   // Session first: every Query observer immediately re-keys away from the old project before the
-  // remaining UI/core/tool/viewer reset publishes. All writes are synchronous; there is no
-  // await/paint gap.
+  // remaining UI/core/tool/viewer reset publishes. A synchronous subscriber may start successor B,
+  // so exact lifecycle callers recheck between every publication despite there being no await.
   useSessionStore.getState().resetSession();
+  if (!canContinue()) return false;
   useUiStore.getState().resetProjectUiState();
+  if (!canContinue()) return false;
   useViewerCoreStore.getState().resetViewerCoreState();
+  if (!canContinue()) return false;
   useToolStore.getState().resetProjectToolState();
+  if (!canContinue()) return false;
   useParseFlowStore.getState().resetProjectParseState();
+  if (!canContinue()) return false;
   useViewerStore.getState().resetViewerState();
+  return canContinue();
 }
 
 type TableParseStep = "idle" | "select-region" | "define-column" | "define-row" | "review";

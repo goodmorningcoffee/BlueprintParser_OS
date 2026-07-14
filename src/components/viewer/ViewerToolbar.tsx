@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useViewerStore, usePageData } from "@/stores/viewerStore";
+import { useProjectCatalogs } from "@/queries/useProjectCatalogs";
 import { useToolStore } from "@/stores/toolStore";
 import { useNavigation, useViewerCoreStore } from "@/stores/viewerCoreStore";
 import {
@@ -55,7 +55,7 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   } = usePanelVisibility();
   const { toggleChatPanel, toggleToolsPanel, toggleViewAllPanel } =
     usePanelUiActions();
-  const { allCsiCodes } = usePageData();
+  const { allTrades, allCsiCodes } = useProjectCatalogs();
   const activeCsiFilter = useUiStore((s) => s.activeCsiFilter);
   const setCsiFilter = useUiStore((s) => s.setCsiFilter);
   const { activeModels } = useDetectionUi();
@@ -76,7 +76,6 @@ export default function ViewerToolbar({ projectName, backHref = "/home", onRenam
   const toggleDetections = useUiStore((s) => s.toggleDetections);
   const confidenceThresholds = useUiStore((s) => s.confidenceThresholds);
   const setModelConfidence = useUiStore((s) => s.setModelConfidence);
-  const allTrades = useViewerStore((s) => s.allTrades);
   const activeTradeFilter = useUiStore((s) => s.activeTradeFilter);
   const setTradeFilter = useUiStore((s) => s.setTradeFilter);
   const showKeynotes = useUiStore((s) => s.showKeynotes);

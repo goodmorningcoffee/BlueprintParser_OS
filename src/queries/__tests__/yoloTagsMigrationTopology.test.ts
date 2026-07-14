@@ -9,8 +9,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const FACADE = "src/queries/useYoloTags.ts";
-const AUTH_LOADER = "src/app/(dashboard)/project/[id]/page.tsx";
-const DEMO_LOADER = "src/app/demo/project/[id]/page.tsx";
+const PROJECT_LIFECYCLE = "src/lib/project-lifecycle.ts";
 const sourceText = new Map<string, string>();
 
 function sourceFiles(directory = "src"): string[] {
@@ -152,19 +151,17 @@ describe("P2.2⑨ yoloTags migration topology", () => {
     });
   });
 
-  it("requires both loaders to clear exactly and seed through the PI-splitting adapter", () => {
+  it("requires the sole lifecycle to clear exactly and seed through the PI-splitting adapter", () => {
     expect(topology("seedYoloTagsFromBootstrap")).toEqual({
-      [AUTH_LOADER]: 1,
-      [DEMO_LOADER]: 1,
+      [PROJECT_LIFECYCLE]: 1,
     });
     expect(topology("clearYoloTagsProject")).toEqual({
-      [AUTH_LOADER]: 1,
-      [DEMO_LOADER]: 1,
+      [PROJECT_LIFECYCLE]: 1,
     });
-    for (const loader of [AUTH_LOADER, DEMO_LOADER]) {
-      expect(propertyAccesses(loader, "yoloTags"), loader).toBe(0);
-      expect(readFileSync(join(process.cwd(), loader), "utf8")).not.toContain("setYoloTags");
-    }
+    expect(propertyAccesses(PROJECT_LIFECYCLE, "yoloTags")).toBe(0);
+    expect(readFileSync(join(process.cwd(), PROJECT_LIFECYCLE), "utf8")).not.toContain(
+      "setYoloTags",
+    );
   });
 
   it("keeps the full-array persistence endpoint owned by the facade alone", () => {

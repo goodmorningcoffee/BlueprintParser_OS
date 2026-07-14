@@ -9,6 +9,9 @@ import { useSessionStore } from "@/stores/sessionStore";
 // Reset store before each test
 beforeEach(() => {
   resetProjectData();
+  // P2.5 intentionally preserves presentation choices across project switches. Each independent
+  // test starts from construction UI state so one case cannot leak an approved survivor to the next.
+  useUiStore.setState(useUiStore.getInitialState(), true);
 });
 
 describe("viewerCoreStore — navigation", () => {
@@ -158,16 +161,28 @@ describe("viewerStore — resetProjectData", () => {
   });
 });
 
+describe("uiStore — active Auto-QTO workflow", () => {
+  it("owns the active selection and clears it with project data", () => {
+    useUiStore.getState().setActiveQtoWorkflow(
+      { id: 91 } as ReturnType<typeof useUiStore.getState>["activeQtoWorkflow"],
+    );
+    expect(useUiStore.getState().activeQtoWorkflow).toMatchObject({ id: 91 });
+
+    resetProjectData();
+    expect(useUiStore.getState().activeQtoWorkflow).toBeNull();
+  });
+});
+
 // [refactor jul9 P2.2①] Chat slice characterization (SPEC §2.C). After the migration ONLY the
 // chatScope UI knob remains in zustand — the message DATA (list + add/set/clear) moved to the
 // TanStack Query cache (covered by src/queries/__tests__/useChatMessages.test.tsx). T-C1 and the
 // chatMessages half of T-C2 were RETIRED here in the same commit that deleted those store fields.
 describe("uiStore — chat scope (data lives in the query cache)", () => {
   // ── T-C2 (scope half — chatMessages assertion retired with the field) ──────
-  it("resetProjectData re-defaults chatScope to 'page'", () => {
+  it("resetProjectData preserves chatScope as an approved presentation choice", () => {
     useUiStore.getState().setChatScope("project");
     resetProjectData();
-    expect(useUiStore.getState().chatScope).toBe("page");
+    expect(useUiStore.getState().chatScope).toBe("project");
   });
 
   // ── T-C3 (chatScope default + toggle) ──────────────────────────────────────
