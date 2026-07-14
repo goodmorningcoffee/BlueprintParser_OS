@@ -90,11 +90,12 @@ import {
   createUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
 import { db } from "@/lib/db";
-import { chatMessages, companies } from "@/lib/db/schema";
+import { annotations, chatMessages, companies, takeoffItems } from "@/lib/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { LLMError } from "@/lib/llm/types";
 
@@ -361,15 +362,113 @@ describe.skipIf(!dbUp)("POST — demo semantics (FC-3/FC-6/FC-7)", () => {
     expect(h.checkChatQuota).not.toHaveBeenCalled();
   });
 
-  it("FC-3 CRITICAL: same-company member on demo project, demo.chat=false → NO gate, COMPANY quota, streams", async () => {
+  it("L5 freeze: same-company membership cannot bypass the public demo chat policy", async () => {
     const { company, user, project } = await createWorld({ isDemo: true });
     await setPipeline(company.id, { demo: { chat: false } });
-    asUser(user); // scope resolves member (api-utils carve-out), NOT demo → isDemo=false in the route
-    const res = await callPost({ projectId: project.publicId, message: "hi" });
-    const { sawDone } = await drainSse(res);
-    expect(sawDone).toBe(true);
-    expect(h.checkChatQuota).toHaveBeenCalledWith(user.companyId);
-    expect(h.checkDemoChatQuota).not.toHaveBeenCalled();
+    asUser(user);
+    const response = await callPost({ projectId: project.publicId, message: "hi" });
+    let body: unknown;
+    if (response.ok) {
+      await drainSse(response);
+    } else {
+      body = await response.json();
+    }
+    expect(response.status).toBe(403);
+    if (!response.ok) {
+      expect(body).toEqual({ error: "LLM Chat is disabled for demo users. Sign in to use this feature." });
+    }
+    expect(h.checkChatQuota).not.toHaveBeenCalled();
+  });
+
+  it("L5 freeze: anonymous demo context excludes private canaries and persists no chat rows", async () => {
+    const { project } = await createWorld({
+      projectSummary: "PRIVATE-PROJECT-SUMMARY-CANARY",
+    });
+    await createPage(project.id, 1, { rawText: "PUBLIC OCR TEXT" });
+    await db.insert(annotations).values({
+      projectId: project.id,
+      pageNumber: 1,
+      name: "PRIVATE-ANNOTATION-CANARY",
+      note: "PRIVATE-ANNOTATION-NOTE-CANARY",
+      minX: 0.1,
+      minY: 0.1,
+      maxX: 0.2,
+      maxY: 0.2,
+      source: "user",
+    });
+    await db.insert(takeoffItems).values({
+      projectId: project.id,
+      name: "Private takeoff",
+      shape: "circle",
+      color: "#fff",
+      notes: "PRIVATE-TAKEOFF-NOTE-CANARY",
+    });
+    await db.insert(chatMessages).values({
+      projectId: project.id,
+      role: "user",
+      content: "PRIVATE-CHAT-HISTORY-CANARY",
+    });
+    await publishDemoFixture(project.id);
+
+    let capturedMessages: unknown = null;
+    h.createLLMClient.mockImplementationOnce(() => ({
+      provider: "groq",
+      streamChat: async function* (options: { messages: unknown }) {
+        capturedMessages = options.messages;
+        yield "Public answer";
+      },
+    }));
+    const response = await callPost({ projectId: project.publicId, message: "public question" });
+    await drainSse(response);
+
+    const serialized = JSON.stringify(capturedMessages);
+    for (const canary of [
+      "PRIVATE-PROJECT-SUMMARY-CANARY",
+      "PRIVATE-ANNOTATION-CANARY",
+      "PRIVATE-ANNOTATION-NOTE-CANARY",
+      "PRIVATE-TAKEOFF-NOTE-CANARY",
+      "PRIVATE-CHAT-HISTORY-CANARY",
+    ]) {
+      expect.soft(serialized).not.toContain(canary);
+    }
+    const rows = await rowsFor(project.id);
+    expect.soft(rows.map((row) => row.content)).toEqual(["PRIVATE-CHAT-HISTORY-CANARY"]);
+  });
+
+  it("L5 freeze: demo tool mode exposes read-only tools and rejects a mutating callback", async () => {
+    const { company, project } = await createWorld({ isDemo: true });
+    await setPipeline(company.id, { llm: { toolUse: true } });
+    h.resolveLLMConfig.mockResolvedValue({ ...CONFIG, provider: "anthropic" });
+    let exposedTools: string[] = [];
+    let mutationResult: unknown;
+    h.createLLMClient.mockImplementationOnce(() => ({
+      provider: "anthropic",
+      streamChatWithTools: async function* (options: {
+        tools: Array<{ name: string }>;
+        executeToolCall: (name: string, input: Record<string, unknown>) => Promise<unknown>;
+      }) {
+        exposedTools = options.tools.map((tool) => tool.name);
+        mutationResult = await options.executeToolCall("createMarkup", {
+          pageNumber: 1,
+          name: "PRIVATE-TOOL-WRITE-CANARY",
+          minX: 0.1,
+          minY: 0.1,
+          maxX: 0.2,
+          maxY: 0.2,
+        });
+        yield { type: "done" };
+      },
+    }));
+
+    const response = await callPost({ projectId: project.publicId, message: "try a write" });
+    await drainSse(response);
+
+    expect.soft(exposedTools).not.toContain("createMarkup");
+    expect.soft(exposedTools).not.toContain("addNoteToAnnotation");
+    expect.soft(exposedTools).not.toContain("batchAddNotes");
+    expect.soft(mutationResult).toMatchObject({ error: expect.any(String) });
+    expect.soft(await db.select().from(annotations).where(eq(annotations.projectId, project.id))).toEqual([]);
+    expect.soft(await rowsFor(project.id)).toEqual([]);
   });
 
   it("CROSS-company authed on demo project → scope demo: gate applies (session does not escape demo)", async () => {
@@ -534,13 +633,23 @@ describe.skipIf(!dbUp)("DELETE /api/ai/chat (FC-10)", () => {
     expect(body).toEqual({ error: { code: "VALIDATION", message: "projectId required" } }); // [S025 fold: A applied]
   });
 
-  it("demo project ANON → 401 (NO allowDemo on DELETE) and unknown uuid → 404", async () => {
-    const { project } = await createWorld({ isDemo: true });
-    let r = await readJson(await callDelete(`projectId=${project.publicId}`));
-    expect(r.status).toBe(401);
-    expect(r.body).toEqual({ error: { code: "UNAUTHORIZED", message: "Unauthorized" } }); // [S025 fold: A applied]
+  it("L5 freeze: demo DELETE denies signed-out, member, admin, and root and preserves history", async () => {
+    const { company, project } = await createWorld();
+    await db.insert(chatMessages).values({ projectId: project.id, role: "user", content: "KEEP" });
+    await publishDemoFixture(project.id);
+    const member = await createUser(company.id);
+    const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser((await createCompany()).id, { role: "admin", isRootAdmin: true });
+    const statuses: number[] = [];
+    for (const actor of [null, member, admin, root]) {
+      actor ? asUser(actor) : signedOut();
+      statuses.push((await readJson(await callDelete(`projectId=${project.publicId}`))).status);
+    }
+    expect.soft(statuses).toEqual([403, 403, 403, 403]);
+    expect.soft((await rowsFor(project.id)).map((row) => row.content)).toEqual(["KEEP"]);
+
     signedOut();
-    r = await readJson(await callDelete("projectId=00000000-0000-4000-8000-000000000000"));
+    const r = await readJson(await callDelete("projectId=00000000-0000-4000-8000-000000000000"));
     expect(r.status).toBe(404);
     expect(r.body).toEqual({ error: { code: "NOT_FOUND", message: "Not found" } }); // [S025 fold: A applied]
   });

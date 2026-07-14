@@ -12,5 +12,5 @@ import { yoloStatus } from "@/server/services/yolo";
 
 export const GET = defineRoute({
   auth: "session",
-  handler: ({ req }) => yoloStatus(req),
+  handler: ({ req, session }) => yoloStatus(req, session!),
 });

@@ -6,7 +6,14 @@
 // for end-to-end debugging (env-setup memory) — without this line a stray
 // `import { db }` in a test could open a pool against production. Tests can
 // NEVER see a non-localhost database, by construction.
-export const TEST_DATABASE_URL = "postgres://bp_test:bp_test@localhost:5433/bp_test";
+export const TEST_DATABASE_URL =
+  process.env.BP_TEST_DATABASE_URL ??
+  "postgres://bp_test:bp_test@localhost:5433/bp_test";
+
+const testDatabase = new URL(TEST_DATABASE_URL);
+if (!["localhost", "127.0.0.1", "::1"].includes(testDatabase.hostname)) {
+  throw new Error("BP_TEST_DATABASE_URL must target localhost");
+}
 
 process.env.DATABASE_URL = TEST_DATABASE_URL;
 // (NODE_ENV is already "test" under vitest — relied on by db/index.ts to skip SSL)
@@ -18,9 +25,9 @@ process.env.AWS_ACCESS_KEY_ID ||= "test-dummy";
 process.env.AWS_SECRET_ACCESS_KEY ||= "test-dummy";
 process.env.AWS_REGION ||= "us-east-1";
 process.env.S3_BUCKET ||= "test-dummy-bucket";
-process.env.CLOUDFRONT_DOMAIN ||= "cdn.test.invalid";
 process.env.NEXTAUTH_SECRET ||= "test-dummy-secret";
 process.env.AUTH_SECRET ||= "test-dummy-secret";
 process.env.NEXTAUTH_URL ||= "http://localhost:3000";
 process.env.PROCESSING_WEBHOOK_SECRET ||= "test-webhook-secret";
-process.env.STEP_FUNCTION_ARN ||= "arn:aws:states:us-east-1:000000000000:stateMachine:test-dummy";
+process.env.STEP_FUNCTION_ARN ||=
+  "arn:aws:states:us-east-1:000000000000:stateMachine:test-dummy";

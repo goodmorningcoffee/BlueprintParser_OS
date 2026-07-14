@@ -1,29 +1,7 @@
-import "dotenv/config";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
-import { logger } from "@/lib/logger";
-
-async function runMigrations() {
-  logger.info("Running database migrations...");
-
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl:
-      process.env.NODE_ENV === "production"
-        ? { rejectUnauthorized: false }
-        : undefined,
-  });
-
-  const db = drizzle(pool);
-
-  await migrate(db, { migrationsFolder: "./drizzle" });
-
-  logger.info("Migrations complete.");
-  await pool.end();
-}
-
-runMigrations().catch((err) => {
-  logger.error("Migration failed:", err);
-  process.exit(1);
-});
+// Retained only as a fail-closed pointer for old operator notes. Local
+// development uses `npm run db:migrate`; production uses the singleton,
+// quiescent task launched by scripts/p2-schema-cutover.sh.
+console.error(
+  "This migration entry point is disabled. Use npm run db:migrate for a loopback development database or scripts/p2-schema-cutover.sh for production.",
+);
+process.exitCode = 64;

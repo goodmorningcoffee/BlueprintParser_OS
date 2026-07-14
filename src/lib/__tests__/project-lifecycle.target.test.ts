@@ -39,7 +39,7 @@ function metadata(
     id,
     dbId: id === "canonical-B" ? 202 : 101,
     name: id,
-    dataUrl: `projects/${id}`,
+    assetBaseUrl: `projects/${id}`,
     pdfUrl: `https://example.test/${id}.pdf`,
     numPages: 1,
     status: "completed",
@@ -645,7 +645,7 @@ describe("project lifecycle target", () => {
     queryClient.setQueryData(queryKeys.chatMessages.all(id), privateChat);
     queryClient.setQueryData(queryKeys.annotationGroups.all(id), privateGroups);
     queryClient.setQueryData(queryKeys.qtoWorkflows.all(id), privateQto);
-    useSessionStore.setState({ projectId: 99, publicId: id, dataUrl: "auth", isDemo: false });
+    useSessionStore.setState({ projectId: 99, publicId: id, assetBaseUrl: "auth", isDemo: false });
 
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -671,7 +671,7 @@ describe("project lifecycle target", () => {
     const id = "same-id-qto-race";
     const delayedPrivateRows = deferred<QtoWorkflow[]>();
     const qtoSignals: AbortSignal[] = [];
-    useSessionStore.setState({ projectId: 99, publicId: id, dataUrl: "auth", isDemo: false });
+    useSessionStore.setState({ projectId: 99, publicId: id, assetBaseUrl: "auth", isDemo: false });
 
     // Model the independent-fetch QTO observer. It reads the signal but deliberately ignores the
     // abort, so only TanStack's exact query cancellation can prevent the late retryer settlement
@@ -746,7 +746,7 @@ describe("project lifecycle target", () => {
       throw new Error(`Unexpected QTO cleanup-transfer request: ${url}`);
     }));
 
-    useSessionStore.setState({ publicId: id, projectId: 7, dataUrl: "old.pdf", isDemo: false });
+    useSessionStore.setState({ publicId: id, projectId: 7, assetBaseUrl: "old.pdf", isDemo: false });
     const obsolete = openProject(queryClient, id, { demo: false });
     await firstCancellationReached.promise;
 
@@ -775,7 +775,7 @@ describe("project lifecycle target", () => {
     const currentRows = deferred<QtoWorkflow[]>();
     const signals: AbortSignal[] = [];
     let fetchCount = 0;
-    useSessionStore.setState({ projectId: 99, publicId: id, dataUrl: "auth", isDemo: false });
+    useSessionStore.setState({ projectId: 99, publicId: id, assetBaseUrl: "auth", isDemo: false });
 
     const observer = new QueryObserver<QtoWorkflow[]>(queryClient, {
       queryKey: queryKeys.qtoWorkflows.all(id),
@@ -1148,7 +1148,7 @@ describe("project lifecycle target", () => {
       }
       return originalCancelQueries(filters, options);
     });
-    useSessionStore.setState({ publicId: id, projectId: 1, dataUrl: "old.pdf", isDemo: false });
+    useSessionStore.setState({ publicId: id, projectId: 1, assetBaseUrl: "old.pdf", isDemo: false });
     const privateAuthTextract = { blocks: [{ id: "private-auth-A" }] };
     queryClient.setQueryData(queryKeys.textract.page(id, 1), privateAuthTextract);
 

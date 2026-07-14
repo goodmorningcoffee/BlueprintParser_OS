@@ -21,7 +21,7 @@ import { POST } from "@/app/api/pages/csi-recompute/route";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { detectCsiCodes } from "@/lib/csi-detect";
-import { asUser, createPage, createUser, createWorld, makeReq, readJson, signedOut } from "@/test/harness";
+import { asUser, createCompany, createPage, createUser, createWorld, makeReq, publishDemoFixture, readJson, signedOut } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -130,14 +130,27 @@ describe.skipIf(!dbUp)("POST /api/pages/csi-recompute", () => {
     expect(body.error).toEqual({ code: "VALIDATION", message: "Missing projectId or pageNumber" });
   });
 
-  it("demo blocked (NO allowDemo): signed-out demo caller → 401 (auth precedence, before any 404)", async () => {
-    // [detector-review jun17] tightened from expect([401,404]).toContain — deterministic 401 on both.
-    const { project } = await createWorld({ isDemo: true });
-    await createPage(project.id, 1, { textractData: TD as any, rawText: "x" });
-    signedOut();
-    const { status, body } = await readJson(await req({ projectId: project.id, pageNumber: 1 }));
-    expect(status).toBe(401);
-    expect(body.error.code).toBe("UNAUTHORIZED");
+  it("L5 freeze: demo CSI recompute denies all roles before detection or page writes", async () => {
+    const { company, project } = await createWorld();
+    const original = [{ code: "PRIVATE-CANARY" }];
+    const page = await createPage(project.id, 1, {
+      textractData: TD as any,
+      rawText: "x",
+      csiCodes: original as any,
+    });
+    await publishDemoFixture(project.id);
+    const member = await createUser(company.id);
+    const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser((await createCompany()).id, { role: "admin", isRootAdmin: true });
+    const statuses: number[] = [];
+    for (const actor of [null, member, admin, root]) {
+      actor ? asUser(actor) : signedOut();
+      statuses.push((await readJson(await req({ projectId: project.id, pageNumber: 1 }))).status);
+    }
+    expect(statuses).toEqual([403, 403, 403, 403]);
+    expect(detectCsiCodes).not.toHaveBeenCalled();
+    const [row] = await db.select({ csiCodes: pages.csiCodes }).from(pages).where(eq(pages.id, page.id));
+    expect(row.csiCodes).toEqual(original);
   });
 
   it("cross-tenant → 404", async () => {

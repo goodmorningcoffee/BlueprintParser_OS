@@ -133,7 +133,7 @@ function projectResponse(id: string): ProjectResponse {
     id,
     dbId: 1,
     name: id,
-    dataUrl: `projects/${id}`,
+    assetBaseUrl: `projects/${id}`,
     pdfUrl: `https://example.test/${id}.pdf`,
     numPages: 1,
     status: "completed",

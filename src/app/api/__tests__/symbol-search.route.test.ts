@@ -98,6 +98,7 @@ import {
   createUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -202,8 +203,9 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
   // ── access matrix (valid body; happy stack mocked so 200-paths stream) ────────────────────
 
   it("access matrix: demo signed-out 200-stream; non-demo signed-out 401; cross-tenant 404; root 200; unknown 404-before-auth; negative id 404", async () => {
-    const demo = await createWorld({ isDemo: true });
+    const demo = await createWorld();
     await createPage(demo.project.id, 1);
+    await publishDemoFixture(demo.project.id);
     signedOut();
     const demoRes = await call(body(demo.project.id));
     expect(demoRes.status).toBe(200); // public demo read (feature default-on)
@@ -249,8 +251,9 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
   it("demo feature disabled → 403 verbatim (kill-switch read from companies.pipelineConfig.demo); flipping it on restores the stream", async () => {
     const company = await createCompany({ pipelineConfig: { demo: { symbolSearch: false } } });
     const user = await createUser(company.id);
-    const project = await createProject(company.id, user.id, { isDemo: true });
+    const project = await createProject(company.id, user.id);
     await createPage(project.id, 1);
+    await publishDemoFixture(project.id);
     signedOut();
     const gated = await readJson(await call(body(project.id)));
     expect(gated.status).toBe(403);
@@ -283,11 +286,11 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     expect(filtered.body).toEqual({ error: { code: "VALIDATION", message: "No pages to search" } }); // [S024 fold: A] flipped
   });
 
-  it("PDF fetch !ok → 500 'Failed to fetch PDF' (controlled message)", async () => {
+  it("private S3 PDF read failure → 500 'Failed to fetch PDF' (controlled message)", async () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1);
     asUser(user);
-    h.fetch.mockResolvedValue(new Response("", { status: 500 }));
+    h.downloadFromS3.mockRejectedValueOnce(new Error("private S3 unavailable"));
     const { status, body: resBody } = await readJson(await call(body(project.id)));
     expect(status).toBe(500);
     expect(resBody).toEqual({ error: { code: "INTERNAL", message: "Failed to fetch PDF" } }); // [S024 fold: A] flipped — message PRESERVED (controlled string, not a leak-drop; pins the envelope.ts:42 doc/code contradiction — the shell DOES surface INTERNAL ApiError messages)
@@ -297,7 +300,9 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1);
     asUser(user);
-    h.downloadFromS3.mockRejectedValue(new Error("s3 down"));
+    h.downloadFromS3
+      .mockResolvedValueOnce(pngDims()) // original.pdf
+      .mockRejectedValue(new Error("s3 down")); // every page image
     // source raster (300 DPI) must succeed so setup passes; per-page fallback (200 DPI) fails
     h.rasterizePage.mockImplementation(async (_buf: Buffer, _page: number, dpi: number) => {
       if (dpi === 300) return pngDims();
@@ -428,6 +433,7 @@ describe.skipIf(!dbUp)("POST /api/symbol-search", () => {
     expect(progress.page).toBe(2); // pageMap[0] = first surviving page
     const fetchedKeys = h.downloadFromS3.mock.calls.map((c: unknown[]) => c[0]).sort();
     expect(fetchedKeys).toEqual([
+      `${project.dataUrl}/original.pdf`,
       `${project.dataUrl}/pages/page_0002.png`,
       `${project.dataUrl}/pages/page_0003.png`,
     ]); // page_0001 NOT fetched; no page_0099

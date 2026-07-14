@@ -10,13 +10,20 @@
 //     errors propagate to the shell generic INTERNAL 500.
 // PRESERVED byte-exact: the GET raw-SQL (companyId-scoped, status='running', model_config NOT
 // NULL, DESC) + the bare-array model_config shaping; the PUT status map (Completed→completed /
-// Failed|Stopped→failed) + the executionId-keyed update (⚠️ NOT company-scoped, legacy).
+// Failed|Stopped→failed) + executionId lookup. P2 resolves the owning project, hides foreign
+// jobs from company admins, preserves the root operations bypass, and rechecks provider terminality.
 
 import { db } from "@/lib/db";
 import { processingJobs } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
-import { ApiError } from "@/server/api/envelope";
+import { ApiError, notFound } from "@/server/api/envelope";
+import {
+  assertProjectWritable,
+  resolveProjectOrThrow,
+} from "@/server/api/access";
+import { withProjectWrite } from "@/server/api/project-write-capability";
+import { getYoloJobStatus } from "@/lib/yolo";
 
 export async function getRunningJobs(session: AuthSession): Promise<unknown> {
   try {
@@ -49,21 +56,75 @@ export async function getRunningJobs(session: AuthSession): Promise<unknown> {
   }
 }
 
-export async function updateRunningJob(rawBody: Record<string, unknown>): Promise<unknown> {
-  const { executionId, status } = rawBody as { executionId?: string; status?: string };
+export async function updateRunningJob(
+  rawBody: Record<string, unknown>,
+  session: AuthSession,
+): Promise<unknown> {
+  const { executionId, status } = rawBody as {
+    executionId?: string;
+    status?: string;
+  };
   if (!executionId || !status) {
     throw new ApiError("VALIDATION", "executionId and status required");
   }
 
-  const dbStatus = status === "Completed" ? "completed" : status === "Failed" || status === "Stopped" ? "failed" : null;
-  if (!dbStatus) {
+  const requestedStatus =
+    status === "Completed" || status === "Failed" || status === "Stopped"
+      ? status
+      : null;
+  if (!requestedStatus) {
     throw new ApiError("VALIDATION", "Invalid terminal status");
   }
 
-  await db
-    .update(processingJobs)
-    .set({ status: dbStatus, completedAt: new Date() })
-    .where(eq(processingJobs.executionId, executionId));
+  const [job] = await db
+    .select({
+      id: processingJobs.id,
+      projectId: processingJobs.projectId,
+      executionId: processingJobs.executionId,
+    })
+    .from(processingJobs)
+    .where(
+      and(
+        eq(processingJobs.executionId, executionId),
+        isNotNull(processingJobs.modelConfig),
+      ),
+    )
+    .limit(1);
+  if (!job) throw notFound();
+
+  const { project } = await resolveProjectOrThrow(
+    { dbId: job.projectId },
+    { allowDemo: true },
+  );
+  if (!session.user.isRootAdmin && project.companyId !== session.user.companyId)
+    throw notFound();
+  if (project.isDemo) assertProjectWritable(project);
+  const writeCapability = assertProjectWritable(project);
+
+  // The browser also polls SageMaker, but its status string is not an attestation: accepting it
+  // here would let any company admin retire the publication blocker while the provider job was
+  // still writing to the project's S3 prefix. Re-read the authoritative, monotonic provider
+  // state and fail closed on non-terminal/unknown responses or provider errors.
+  const provider = await getYoloJobStatus(job.executionId!);
+  const dbStatus =
+    provider.status === "Completed"
+      ? "completed"
+      : provider.status === "Failed" || provider.status === "Stopped"
+        ? "failed"
+        : null;
+  if (!dbStatus) {
+    throw new ApiError(
+      "CONFLICT",
+      "Job has not reached a terminal provider status",
+    );
+  }
+
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx
+      .update(processingJobs)
+      .set({ status: dbStatus, completedAt: new Date() })
+      .where(eq(processingJobs.id, job.id));
+  });
 
   return { success: true };
 }

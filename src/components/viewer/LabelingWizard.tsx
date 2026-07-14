@@ -21,8 +21,6 @@ export default function LabelingWizard({ onClose, projectName, isDemo }: Labelin
   const setWizardStep = useSessionStore((s) => s.setLabelingWizardStep);
   const storedSessions = useSessionStore((s) => s.labelingSessions);
   const setStoredSessions = useSessionStore((s) => s.setLabelingSessions);
-  const storedCreds = useSessionStore((s) => s.labelingCredentials);
-  const setStoredCreds = useSessionStore((s) => s.setLabelingCredentials);
 
   // Local form state (OK to reset)
   const [pagesPerProject, setPagesPerProject] = useState(10);
@@ -55,11 +53,8 @@ export default function LabelingWizard({ onClose, projectName, isDemo }: Labelin
     }
   }, []);
 
-  // For demo users: fetch existing sessions on mount. The public credentials
-  // endpoint was removed as a pre-launch security fix (it leaked Label Studio
-  // admin creds to any visitor). Demo users see sessions but must sign up
-  // for their own labeling flow — admins hit the auth'd
-  // `/api/labeling/credentials` variant after login.
+  // For demo users: fetch existing sessions on mount. Provider credentials are server-only;
+  // neither public nor authenticated browser flows receive the shared operator identity.
   useEffect(() => {
     if (!isDemo) return;
     setLoadingSessions(true);
@@ -96,8 +91,6 @@ export default function LabelingWizard({ onClose, projectName, isDemo }: Labelin
 
       const data = await res.json();
       setStoredSessions(data.sessions);
-      // Fetch LS credentials
-      fetch("/api/labeling/credentials").then((r) => r.json()).then(setStoredCreds).catch(() => {});
       setWizardStep(3);
     } catch (err: any) {
       setError(err.message || "Failed to create labeling project");
@@ -252,36 +245,15 @@ export default function LabelingWizard({ onClose, projectName, isDemo }: Labelin
               </div>
             )}
 
-            {/* Credentials section */}
-            {storedCreds && storedSessions.length > 0 && (
-              <div className="p-3 bg-[var(--bg)] rounded border border-[var(--border)] space-y-2">
-                <p className="text-xs text-[var(--muted)] font-medium">Label Studio Login</p>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--muted)]">Email:</span>
-                  <span className="text-xs text-[var(--fg)] font-mono select-all">{storedCreds.email}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--muted)]">Password:</span>
-                  <span className="text-xs text-[var(--fg)] font-mono select-all">{storedCreds.password}</span>
-                </div>
-                <p className="text-xs text-[var(--muted)] italic">Log in once — your session will persist.</p>
-              </div>
-            )}
-
             {storedSessions.map((s, i) => (
               <div key={i} className="flex items-center justify-between p-3 bg-[var(--bg)] rounded border border-[var(--border)]">
                 <div>
                   <span className="text-xs text-[var(--muted)]">Pages {s.pageRange}</span>
                   <span className="text-xs text-[var(--muted)] ml-2">({s.taskCount} images)</span>
                 </div>
-                <a
-                  href={s.labelStudioUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-1 text-xs bg-[var(--accent)] text-white rounded hover:bg-[var(--accent-hover)]"
-                >
-                  Open Label Studio
-                </a>
+                <span className="px-3 py-1 text-xs text-[var(--muted)] border border-[var(--border)] rounded">
+                  Submitted for operator labeling
+                </span>
               </div>
             ))}
 
@@ -289,7 +261,7 @@ export default function LabelingWizard({ onClose, projectName, isDemo }: Labelin
             {!isDemo && (
               <div className="flex justify-between mt-4">
                 <button
-                  onClick={() => { setStoredSessions([]); setStoredCreds(null); setWizardStep(1); }}
+                  onClick={() => { setStoredSessions([]); setWizardStep(1); }}
                   className="px-4 py-2 text-sm text-[var(--muted)] hover:text-[var(--fg)]"
                 >
                   Create Another

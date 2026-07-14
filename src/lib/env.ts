@@ -25,7 +25,6 @@ const requiredInProd = z.object({
   DATABASE_URL: req,
   NEXTAUTH_URL: req,
   S3_BUCKET: req,
-  CLOUDFRONT_DOMAIN: req,
   AWS_REGION: req,
   STEP_FUNCTION_ARN: req, // ingest kickoff (projects POST → SFN StartExecution)
   PROCESSING_WEBHOOK_SECRET: req, // worker→webhook auth (Bearer+HMAC)
@@ -40,6 +39,11 @@ const optional = z.object({
   GOOGLE_CLIENT_ID: opt, // pair required together for Google SSO
   GOOGLE_CLIENT_SECRET: opt,
   ROOT_ADMIN_EMAIL: opt, // root-admin bootstrap
+
+  // Legacy edge-cache invalidation only. Browser assets use the same-origin
+  // application gateway; self-hosted installs may omit this pair entirely.
+  CLOUDFRONT_DOMAIN: opt,
+  CLOUDFRONT_DISTRIBUTION_ID: opt,
 
   // LLM providers — chat works with any one; per-tenant keys may override.
   GROQ_API_KEY: opt,
@@ -63,8 +67,9 @@ const optional = z.object({
   // Label Studio integration (group: all-or-none)
   LABEL_STUDIO_URL: opt,
   LABEL_STUDIO_API_KEY: opt,
-  LABEL_STUDIO_ADMIN_EMAIL: opt,
-  LABEL_STUDIO_ADMIN_PASSWORD: opt,
+  // Opaque identity of the provider's persistent state (Terraform uses the LS EFS ID). Cleanup
+  // refuses a mismatched value so numeric project IDs cannot be replayed against a replacement.
+  LABEL_STUDIO_INSTANCE_ID: opt,
 
   // email — DEAD in prod today (no ses:* IAM + FROM unset); P5.5 decides
   SES_FROM_EMAIL: opt,
@@ -99,14 +104,24 @@ export function checkEnv(source: NodeJS.ProcessEnv = process.env): {
     missing.push("NEXTAUTH_SECRET|AUTH_SECRET (one required)");
   }
 
+  // Terraform supplies both values. Outside Terraform, both absent means no
+  // legacy edge cache to invalidate; a partial pair must fail closed at boot.
+  if (source.CLOUDFRONT_DOMAIN && !source.CLOUDFRONT_DISTRIBUTION_ID) {
+    missing.push("CLOUDFRONT_DISTRIBUTION_ID");
+  } else if (
+    source.CLOUDFRONT_DISTRIBUTION_ID &&
+    !source.CLOUDFRONT_DOMAIN
+  ) {
+    missing.push("CLOUDFRONT_DOMAIN");
+  }
+
   // all-or-none groups → partial config is a misconfig worth naming
   const groups: Record<string, string[]> = {
     "Google SSO": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
     "Label Studio": [
       "LABEL_STUDIO_URL",
       "LABEL_STUDIO_API_KEY",
-      "LABEL_STUDIO_ADMIN_EMAIL",
-      "LABEL_STUDIO_ADMIN_PASSWORD",
+      "LABEL_STUDIO_INSTANCE_ID",
     ],
   };
   for (const [name, keys] of Object.entries(groups)) {

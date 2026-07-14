@@ -38,6 +38,7 @@ import {
   createWorld,
   makeReq,
   params,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -85,7 +86,7 @@ function s4PageIntelligenceFixture() {
 
 describe.skipIf(!dbUp)("GET /api/demo/projects/[id]/pages", () => {
   it("happy (signed-out): {from,to,pages,annotations}, ||null maps, bbox order, NO Cache-Control", async () => {
-    const { project } = await createWorld({ isDemo: true });
+    const { project } = await createWorld();
     await createPage(project.id, 1, {
       drawingNumber: "A-101",
       keynotes: [{ k: 1 }] as never,
@@ -95,6 +96,7 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]/pages", () => {
     });
     await createPage(project.id, 2); // bare page → textAnnotations/pageIntelligence fall to ||null
     const projAnn = await seedAnnotation(project.id, 1, { name: "proj-scoped", note: "n1" }); // null creator
+    await publishDemoFixture(project.id);
     signedOut();
 
     const res = await win(project.publicId, "?from=1&to=2");
@@ -132,13 +134,14 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]/pages", () => {
   });
 
   it("visibility: null-creator + machine sources IN; a user's hand-drawn OUT (frozen or())", async () => {
-    const { user, project } = await createWorld({ isDemo: true });
+    const { user, project } = await createWorld();
     await createPage(project.id, 1);
     await seedAnnotation(project.id, 1, { name: "null-creator" });
     await seedAnnotation(project.id, 1, { name: "yolo-owned", source: "yolo", creatorId: user.id });
     await seedAnnotation(project.id, 1, { name: "shape", source: "shape-parse", creatorId: user.id });
     await seedAnnotation(project.id, 1, { name: "symbol", source: "symbol-search", creatorId: user.id });
     await seedAnnotation(project.id, 1, { name: "hand-drawn", source: "user", creatorId: user.id }); // EXCLUDED
+    await publishDemoFixture(project.id);
     signedOut();
 
     const { status, body } = await readJson(await win(project.publicId, "?from=1&to=1"));
@@ -148,13 +151,14 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]/pages", () => {
   });
 
   it("S4 trims exactly four top-level PI keys while retaining ensemble/user/unknown and legacy JSON shapes", async () => {
-    const { project } = await createWorld({ isDemo: true });
+    const { project } = await createWorld();
     const source = s4PageIntelligenceFixture();
     const legacyArray = [{ yoloHeatmap: "nested value survives because the top-level is an array" }];
     await createPage(project.id, 1, { pageIntelligence: source as any });
     await createPage(project.id, 2, { pageIntelligence: legacyArray as any });
     await createPage(project.id, 3, { pageIntelligence: "legacy-scalar" as any });
     await createPage(project.id, 4, { pageIntelligence: false as any });
+    await publishDemoFixture(project.id);
     signedOut();
 
     const res = await win(project.publicId, "?from=1&to=4");
@@ -217,8 +221,9 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]/pages", () => {
   });
 
   it("empty window → 200; to-from===50 accept boundary; absent params → frozen defaults from=1/to=9", async () => {
-    const { project } = await createWorld({ isDemo: true });
+    const { project } = await createWorld();
     await createPage(project.id, 1);
+    await publishDemoFixture(project.id);
     signedOut();
     const { status, body } = await readJson(await win(project.publicId, "?from=40&to=45"));
     expect(status).toBe(200);

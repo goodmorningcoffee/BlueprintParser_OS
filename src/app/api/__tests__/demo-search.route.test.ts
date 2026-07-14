@@ -33,6 +33,7 @@ import {
   createUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -64,23 +65,28 @@ function td(words: Array<{ text: string; bbox: [number, number, number, number] 
 }
 
 /** A completed, isDemo project (the only kind /api/demo/search serves). */
-async function createDemoProject(over: Partial<typeof projects.$inferInsert> = {}) {
+async function createDemoProject(
+  over: Partial<typeof projects.$inferInsert> = {},
+  publish = true,
+) {
   const company = await createCompany();
   const author = await createUser(company.id);
-  const project = await createProject(company.id, author.id, { isDemo: true, status: "completed", ...over });
-  return { company, author, project };
+  const project = await createProject(company.id, author.id, { status: "completed", ...over });
+  const publishedProject = publish ? await publishDemoFixture(project.id) : project;
+  return { company, author, project: publishedProject };
 }
 
 // ── IN-PROJECT branch (projectId present) ──────────────────────────────────────────────
 describe.skipIf(!dbUp)("/api/demo/search — in-project (projectId)", () => {
   it("200 happy: stemMatch wordMatches + identical body for signed-out / owner / root (no demo-slim fields)", async () => {
-    const { author, project } = await createDemoProject();
+    const { author, project } = await createDemoProject({}, false);
     await seed(project.id, 1, "door schedule concrete wall", {
       textractData: td([
         { text: "DOOR", bbox: [0.1, 0.1, 0.05, 0.02] },
         { text: "SCHEDULE", bbox: [0.2, 0.1, 0.08, 0.02] },
       ]),
     });
+    await publishDemoFixture(project.id);
 
     // signed-out (the typical public-demo caller)
     signedOut();
@@ -119,7 +125,7 @@ describe.skipIf(!dbUp)("/api/demo/search — in-project (projectId)", () => {
   });
 
   it("200 exact-phrase: quotes preserved in echo + consecutive run pushes; single-word-quoted → default branch", async () => {
-    const { project } = await createDemoProject();
+    const { project } = await createDemoProject({}, false);
     signedOut();
     await seed(project.id, 1, "door schedule and door schedule again", {
       textractData: td([
@@ -129,14 +135,16 @@ describe.skipIf(!dbUp)("/api/demo/search — in-project (projectId)", () => {
         { text: "schedule", bbox: [0.3, 0, 0.1, 0.05] },
       ]),
     });
+    await publishDemoFixture(project.id);
     const phrase = await readJson(await runDemo(`projectId=${project.publicId}&q=${encodeURIComponent('"door schedule"')}`));
     expect(phrase.status).toBe(200);
     expect(phrase.body.query).toBe('"door schedule"'); // surrounding quotes kept in echo
     expect(phrase.body.results[0].wordMatches).toHaveLength(4); // two consecutive runs, 4 pushes (no dedup)
     expect(phrase.body.results[0].matchCount).toBe(4);
 
-    const { project: p2 } = await createDemoProject();
+    const { project: p2 } = await createDemoProject({}, false);
     await seed(p2.id, 1, "door", { textractData: td([{ text: "DOOR", bbox: [0, 0, 0.1, 0.05] }]) });
+    await publishDemoFixture(p2.id);
     const single = await readJson(await runDemo(`projectId=${p2.publicId}&q=${encodeURIComponent('"door"')}`));
     expect(single.status).toBe(200);
     expect(single.body.query).toBe('"door"');
@@ -144,14 +152,15 @@ describe.skipIf(!dbUp)("/api/demo/search — in-project (projectId)", () => {
   });
 
   it("200 stemMatch quirks (proves the local copy == the exported one after the fold): hyphen strip + ORIGINAL echo; ≤2-char exact; empty-strip excluded", async () => {
-    const { project } = await createDemoProject();
+    const { project } = await createDemoProject({}, false);
     signedOut();
     await seed(project.id, 1, "door-frame", { textractData: td([{ text: "door-frame", bbox: [0, 0, 0.1, 0.05] }]) });
+    await publishDemoFixture(project.id);
     const hyphen = await readJson(await runDemo(`projectId=${project.publicId}&q=door`));
     expect(hyphen.status).toBe(200);
     expect(hyphen.body.results[0].wordMatches).toEqual([{ text: "door-frame", bbox: [0, 0, 0.1, 0.05] }]);
 
-    const { project: p2 } = await createDemoProject();
+    const { project: p2 } = await createDemoProject({}, false);
     await seed(p2.id, 1, "abc", {
       textractData: td([
         { text: "ab", bbox: [0, 0, 0.1, 0.05] }, // len 2 → exact-equality only → excluded
@@ -159,21 +168,24 @@ describe.skipIf(!dbUp)("/api/demo/search — in-project (projectId)", () => {
         { text: "---", bbox: [0.2, 0, 0.1, 0.05] }, // strips to "" → excluded
       ]),
     });
+    await publishDemoFixture(p2.id);
     const short = await readJson(await runDemo(`projectId=${p2.publicId}&q=abc`));
     expect(short.status).toBe(200);
     expect(short.body.results[0].wordMatches).toEqual([{ text: "abcd", bbox: [0.1, 0, 0.1, 0.05] }]);
   });
 
   it("200 pageName fallback: stored name '' → `Page N`; empty results when no SQL match", async () => {
-    const { project } = await createDemoProject();
+    const { project } = await createDemoProject({}, false);
     signedOut();
     await seed(project.id, 7, "door", { name: "" });
+    await publishDemoFixture(project.id);
     const named = await readJson(await runDemo(`projectId=${project.publicId}&q=door`));
     expect(named.status).toBe(200);
     expect(named.body.results[0].pageName).toBe("Page 7");
 
-    const { project: p2 } = await createDemoProject();
+    const { project: p2 } = await createDemoProject({}, false);
     await seed(p2.id, 1, "concrete wall");
+    await publishDemoFixture(p2.id);
     const empty = await readJson(await runDemo(`projectId=${p2.publicId}&q=elevator`));
     expect(empty.status).toBe(200);
     expect(empty.body.results).toEqual([]);
@@ -265,11 +277,13 @@ describe.skipIf(!dbUp)("/api/demo/search — cross-project gallery (no projectId
     // NOTE: a UNIQUE tag in the query term keeps this test isolated from other demo projects in the
     // shared DB (the gallery query is cross-project over ALL is_demo+completed rows).
     const term = `zql${randomUUID().slice(0, 6)}`;
-    const { project: projX } = await createDemoProject();
+    const { project: projX } = await createDemoProject({}, false);
     await seed(projX.id, 1, `alpha ${term} one`);
     await seed(projX.id, 2, `beta ${term} ${term} two`);
-    const { project: projY } = await createDemoProject();
+    await publishDemoFixture(projX.id);
+    const { project: projY } = await createDemoProject({}, false);
     await seed(projY.id, 1, `gamma ${term} three`);
+    await publishDemoFixture(projY.id);
 
     signedOut();
     const res = await readJson(await runDemo(`q=${term}`));
@@ -297,11 +311,13 @@ describe.skipIf(!dbUp)("/api/demo/search — cross-project gallery (no projectId
     const { project: realProj } = await createWorld();
     await seed(realProj.id, 1, `wall ${term} real`);
     // a demo-but-processing project with a matching page
-    const { project: procProj } = await createDemoProject({ status: "processing" });
+    const { project: procProj } = await createDemoProject({ status: "processing" }, false);
     await seed(procProj.id, 1, `wall ${term} processing`);
+    await publishDemoFixture(procProj.id);
     // a demo+completed project with a matching page (the only one that should appear)
-    const { project: okProj } = await createDemoProject();
+    const { project: okProj } = await createDemoProject({}, false);
     await seed(okProj.id, 1, `wall ${term} ok`);
+    await publishDemoFixture(okProj.id);
 
     signedOut();
     const res = await readJson(await runDemo(`q=${term}`));

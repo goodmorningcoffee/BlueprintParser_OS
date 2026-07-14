@@ -31,6 +31,11 @@ import { DIVISION_NAMES } from "@/lib/csi-divisions";
 import { db } from "@/lib/db";
 import { pages, annotations, projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import {
+  assertProjectWriteCapability,
+  type ProjectWriteCapability,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
 
 interface PageSummary {
   pageNumber: number;
@@ -306,7 +311,11 @@ interface AnnotationRow {
  * Called at end of processing pipeline and after YOLO load.
  * Stores result in projects.projectIntelligence.summaries.
  */
-export async function computeProjectSummaries(projectId: number): Promise<ProjectSummaries> {
+export async function computeProjectSummaries(
+  projectId: number,
+  writeCapability: ProjectWriteCapability,
+): Promise<ProjectSummaries> {
+  await assertProjectWriteCapability(writeCapability, projectId);
   // Fetch all page metadata (lightweight columns only, no textractData/rawText)
   const pageRows: PageRow[] = await db
     .select({
@@ -545,20 +554,23 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
       .sort((a, b) => a.code.localeCompare(b.code)),
   };
 
-  // Persist: merge summaries into existing projectIntelligence
-  const [currentProject] = await db
-    .select({ pi: projects.projectIntelligence })
-    .from(projects)
-    .where(eq(projects.id, projectId));
+  // The potentially long read/analysis phase stays outside a transaction. Re-read merge state and
+  // publish only after acquiring the parent project lock for this exact lifecycle generation.
+  await withProjectWrite(writeCapability, projectId, async (tx) => {
+    const [currentProject] = await tx
+      .select({ pi: projects.projectIntelligence })
+      .from(projects)
+      .where(eq(projects.id, projectId));
 
-  const existingPi = currentProject?.pi || {};
-  await db
-    .update(projects)
-    .set({
-      projectIntelligence: { ...existingPi, summaries },
-      updatedAt: new Date(),
-    })
-    .where(eq(projects.id, projectId));
+    const existingPi = currentProject?.pi || {};
+    await tx
+      .update(projects)
+      .set({
+        projectIntelligence: { ...existingPi, summaries },
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, projectId));
+  });
 
   return summaries;
 }
@@ -571,27 +583,31 @@ export async function computeProjectSummaries(projectId: number): Promise<Projec
 export async function patchProjectSummaries(
   projectId: number,
   patch: Partial<ProjectSummaries>,
+  writeCapability: ProjectWriteCapability,
 ): Promise<void> {
-  const [currentProject] = await db
-    .select({ pi: projects.projectIntelligence })
-    .from(projects)
-    .where(eq(projects.id, projectId));
+  const patched = await withProjectWrite(writeCapability, projectId, async (tx) => {
+    const [currentProject] = await tx
+      .select({ pi: projects.projectIntelligence })
+      .from(projects)
+      .where(eq(projects.id, projectId));
 
-  const existingPi = currentProject?.pi || {};
-  const existingSummaries = existingPi.summaries || null;
+    const existingPi = currentProject?.pi || {};
+    const existingSummaries = existingPi.summaries || null;
+    if (!existingSummaries) return false;
 
-  if (!existingSummaries) {
+    const mergedSummaries = { ...existingSummaries, ...patch };
+    await tx
+      .update(projects)
+      .set({
+        projectIntelligence: { ...existingPi, summaries: mergedSummaries },
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, projectId));
+    return true;
+  });
+
+  if (!patched) {
     // No summaries yet — do a full computation instead
-    await computeProjectSummaries(projectId);
-    return;
+    await computeProjectSummaries(projectId, writeCapability);
   }
-
-  const mergedSummaries = { ...existingSummaries, ...patch };
-  await db
-    .update(projects)
-    .set({
-      projectIntelligence: { ...existingPi, summaries: mergedSummaries },
-      updatedAt: new Date(),
-    })
-    .where(eq(projects.id, projectId));
 }

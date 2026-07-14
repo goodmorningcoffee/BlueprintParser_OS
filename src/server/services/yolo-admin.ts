@@ -3,13 +3,16 @@
 // 3ef0130:src/app/api/admin/{yolo-status,yolo-purge}/route.ts). DR005 GAP-1: these two were
 // UNACCOUNTED in the plan/memories until the 2026-07-07 drift review. Char:
 // __tests__/admin-yolo-admin.route.test.ts (YS-*/YP-*). Both requireAdmin (the shell provides
-// auth:"admin"), both company-SCOPED raw SQL, no body. Sanctioned diff A only (flat auth →
-// envelope); no body → no E; no catch-500 literal → no B. PRESERVED byte-exact: the two
-// raw-SQL queries + the nested-object shaping + the {deleted:rowCount} response.
+// auth:"admin"), both company-scoped, no body. Sanctioned diff A only (flat auth → envelope);
+// no body → no E; no catch-500 literal → no B. Status shaping and purge response stay
+// frozen; P2 routes purge through stable multi-project lifecycle locks.
 
 import { db } from "@/lib/db";
-import { sql } from "drizzle-orm";
+import { annotations, projects } from "@/lib/db/schema";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
+import { assertProjectWritable } from "@/server/api/access";
+import { withProjectWrites } from "@/server/api/project-write-capability";
 
 export async function getYoloStatus(session: AuthSession): Promise<unknown> {
   const results = await db.execute(sql`
@@ -34,13 +37,34 @@ export async function getYoloStatus(session: AuthSession): Promise<unknown> {
 }
 
 export async function purgeYolo(session: AuthSession): Promise<unknown> {
-  const result = await db.execute(sql`
-    DELETE FROM annotations
-    WHERE source = 'yolo'
-      AND project_id IN (
-        SELECT id FROM projects WHERE company_id = ${session.user.companyId}
-      )
-  `);
+  const targetProjects = await db
+    .selectDistinct({
+      id: projects.id,
+      publicId: projects.publicId,
+      companyId: projects.companyId,
+      isDemo: projects.isDemo,
+      lifecycleEpoch: projects.lifecycleEpoch,
+    })
+    .from(projects)
+    .innerJoin(annotations, eq(annotations.projectId, projects.id))
+    .where(and(
+      eq(projects.companyId, session.user.companyId),
+      eq(projects.isDemo, false),
+      eq(annotations.source, "yolo"),
+    ));
 
-  return { deleted: result.rowCount ?? 0 };
+  if (targetProjects.length === 0) return { deleted: 0 };
+  const ids = targetProjects.map((project) => project.id);
+  const deleted = await withProjectWrites(
+    targetProjects.map(assertProjectWritable),
+    async (tx) => tx
+      .delete(annotations)
+      .where(and(
+        eq(annotations.source, "yolo"),
+        inArray(annotations.projectId, ids),
+      ))
+      .returning({ id: annotations.id }),
+  );
+
+  return { deleted: deleted.length };
 }

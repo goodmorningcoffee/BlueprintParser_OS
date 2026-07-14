@@ -4,7 +4,23 @@ import { logger } from "@/lib/logger";
 import { lookupCountry } from "@/lib/geo";
 import { recordAbuseEvent } from "@/lib/admin-logs/record-abuse";
 import { isManuallyBanned } from "@/lib/admin-logs/manual-ban-cache";
+import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { getToken } from "next-auth/jwt";
+import {
+  apiIpBackstopForRule,
+  findRateRule,
+  isGeneralBucketExempt,
+  isRateLimited,
+  pruneExpiredRateBuckets,
+} from "@/lib/middleware-rate-limit";
+export {
+  findRateRule,
+  isGeneralBucketExempt,
+  isLabelAssetTransportRatePath,
+  isViewerTransportRatePath,
+  middlewareRateLimitStoreSizeForTest,
+} from "@/lib/middleware-rate-limit";
+export { trustedClientIp } from "@/lib/trusted-client-ip";
 
 /**
  * Run in Node.js runtime (Next 15+). Required so this module can import
@@ -26,22 +42,62 @@ const SESSION_TTL_SEC = 24 * 60 * 60;
 // Phase 4.1 of the Reddit-launch hardening pass.
 const DEPRECATED_ROUTES = [
   "/api/demo/labeling/credentials",
+  "/api/labeling/credentials",
 ];
+
+// Tombstones are intentionally unauthenticated while stale clients drain.
+// Give them a small bucket before any durable telemetry write, and sample one
+// abuse row per client/path/window. This prevents a scanner from converting
+// every 410 request into a persistent database insert.
+const DEPRECATED_ROUTE_LIMIT = 5;
+const DEPRECATED_ROUTE_WINDOW_MS = 60_000;
+
+interface DeprecatedRouteBucket {
+  count: number;
+  resetAt: number;
+  telemetryRecorded: boolean;
+}
+
+const deprecatedRouteStore = new Map<string, DeprecatedRouteBucket>();
+
+function admitDeprecatedRoute(
+  ip: string,
+  pathname: string,
+): {
+  rateLimited: boolean;
+  shouldRecordTelemetry: boolean;
+} {
+  const now = Date.now();
+  const key = `${ip}:${pathname}`;
+  let bucket = deprecatedRouteStore.get(key);
+  if (!bucket || bucket.resetAt < now) {
+    bucket = {
+      count: 1,
+      resetAt: now + DEPRECATED_ROUTE_WINDOW_MS,
+      telemetryRecorded: true,
+    };
+    deprecatedRouteStore.set(key, bucket);
+    return { rateLimited: false, shouldRecordTelemetry: true };
+  }
+
+  bucket.count += 1;
+  const shouldRecordTelemetry = !bucket.telemetryRecorded;
+  bucket.telemetryRecorded = true;
+  return {
+    rateLimited: bucket.count > DEPRECATED_ROUTE_LIMIT,
+    shouldRecordTelemetry,
+  };
+}
 
 // 404-scan detection: >5 404-inducing requests from the same IP within
 // this window trips a SCAN_404_BURST abuse event. Tuned lenient so legitimate
 // "user mistyped a URL" doesn't flag.
 const SCAN_404_WINDOW_MS = 60_000;
 const SCAN_404_THRESHOLD = 5;
-const scan404Store = new Map<string, { count: number; windowStart: number; alerted: boolean }>();
-
-// ─── In-memory rate limit store ──────────────────────────────
-interface RateBucket {
-  count: number;
-  resetAt: number;
-}
-
-const store = new Map<string, RateBucket>();
+const scan404Store = new Map<
+  string,
+  { count: number; windowStart: number; alerted: boolean }
+>();
 
 // ─── Tiered IP abuse detection (Phase 3 hardening) ──────────
 //
@@ -91,115 +147,29 @@ function isAbusiveRoute(pathname: string): boolean {
 
 // Clean expired entries every 5 min — includes the cooldown/ban stores
 // alongside the original rate-bucket store.
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, bucket] of store) {
-    if (bucket.resetAt < now) store.delete(key);
-  }
-  for (const [ip, entry] of cooldownStore) {
-    const violationsExpired = now - entry.firstViolationAt > VIOLATION_MEMORY_MS;
-    const cooldownExpired = entry.cooldownUntil < now;
-    if (violationsExpired && cooldownExpired) cooldownStore.delete(ip);
-  }
-  for (const [ip, entry] of banStore) {
-    if (entry.bannedUntil < now) banStore.delete(ip);
-  }
-  for (const [ip, entry] of scan404Store) {
-    if (now - entry.windowStart > SCAN_404_WINDOW_MS * 2) scan404Store.delete(ip);
-  }
-}, 5 * 60 * 1000);
-
-function isRateLimited(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  const bucket = store.get(key);
-
-  if (!bucket || bucket.resetAt < now) {
-    store.set(key, { count: 1, resetAt: now + windowMs });
-    return false;
-  }
-
-  bucket.count++;
-  return bucket.count > limit;
-}
-
-// ─── Route-specific limits ───────────────────────────────────
-interface RateRule {
-  pattern: string;
-  method: string;
-  limit: number;
-  windowMs: number;
-  keyType: "ip" | "user" | "ip+path";
-  // [refactor jun13 P0.5-G9] true = pathname must equal pattern exactly.
-  // Default (prefix match) is right for rules meant to cover a subtree
-  // (/api/demo*); it was wrong for /api/projects POST, which swallowed every
-  // POST under /api/projects/[id]/* — bulk map-tagging burned the 10/hr
-  // project-CREATE budget and 429'd mid-workflow.
-  exact?: boolean;
-}
-
-const RATE_RULES: RateRule[] = [
-  // Auth - tight limits per IP
-  { pattern: "/api/register", method: "POST", limit: 3, windowMs: 15 * 60 * 1000, keyType: "ip" },
-  { pattern: "/api/auth/forgot-password", method: "POST", limit: 3, windowMs: 15 * 60 * 1000, keyType: "ip" },
-  { pattern: "/api/auth/reset-password", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "ip" },
-  // NOTE: no blanket /api/auth POST limit. It counted SUCCESSFUL logins and
-  // sign-outs (a few sign-in/out cycles tripped 5/15min and 429'd the user).
-  // Password brute-force is handled correctly in src/lib/auth.ts authorize()
-  // (per-email failed-attempt lockout that only fires on WRONG passwords and
-  // resets on success); the general 120 req/min/IP cap below backstops floods.
-
-  // Expensive operations - per user
-  { pattern: "/api/ai/chat", method: "POST", limit: 30, windowMs: 60 * 60 * 1000, keyType: "user" },
-  { pattern: "/api/yolo/run", method: "POST", limit: 9999, windowMs: 60 * 60 * 1000, keyType: "user" },
-  { pattern: "/api/projects", method: "POST", limit: 10, windowMs: 60 * 60 * 1000, keyType: "user", exact: true },
-  { pattern: "/api/s3/credentials", method: "POST", limit: 10, windowMs: 60 * 60 * 1000, keyType: "user" },
-
-  // Moderate limits
-  { pattern: "/api/takeoff-items", method: "POST", limit: 50, windowMs: 60 * 60 * 1000, keyType: "user" },
-  // [refactor jun16 P0-review G9-1] bulk delete gets its own user-keyed budget
-  // and the create rule is exact. Previously "/api/annotations/batch-delete"
-  // POST prefix-matched the create rule and burned the 200/hr annotation-CREATE
-  // budget (same bug-class G9 fixed for /api/projects). Listed before the create
-  // rule so the matcher's .find() picks it for the batch path.
-  { pattern: "/api/annotations/batch-delete", method: "POST", limit: 100, windowMs: 60 * 60 * 1000, keyType: "user" },
-  { pattern: "/api/annotations", method: "POST", limit: 200, windowMs: 60 * 60 * 1000, keyType: "user", exact: true },
-
-  // Invite requests - tight limit per IP
-  { pattern: "/api/invite", method: "POST", limit: 5, windowMs: 15 * 60 * 1000, keyType: "ip" },
-
-  // Labeling endpoints - tight limits
-  { pattern: "/api/labeling/login", method: "GET", limit: 10, windowMs: 15 * 60 * 1000, keyType: "ip" },
-  { pattern: "/api/labeling/create", method: "POST", limit: 5, windowMs: 60 * 60 * 1000, keyType: "user" },
-
-  // LLM config test - admin only, tight limit
-  { pattern: "/api/admin/llm-config/test", method: "POST", limit: 5, windowMs: 60 * 1000, keyType: "user" },
-
-  // Demo endpoints - per IP
-  { pattern: "/api/demo", method: "GET", limit: 60, windowMs: 60 * 1000, keyType: "ip" },
-  { pattern: "/api/demo/chat", method: "POST", limit: 10, windowMs: 60 * 1000, keyType: "ip" },
-];
-
-// [bugfix jul9 P2-entry, owner-sanctioned] paths exempt from the GENERAL 120/min bucket
-// (per-endpoint RATE_RULES above still apply if one matches). GET /api/auth/session only:
-// NextAuth's SessionProvider reads it on every document load; a 429 here silently bricks
-// the project page ("Loading project..." forever — the bootstrap is session-gated with no
-// retry, and authjs only refetches on window focus). A power user's own traffic (thumbnail
-// + chunk bursts) legitimately crosses 120/min, so their next F5 in that window hung. Same
-// bug class as the removed blanket /api/auth POST rule (see RATE_RULES note) — per-email
-// lockout + tight per-endpoint rules still cover abuse; session GET is a cheap read.
-// Exported for unit tests only.
-export function isGeneralBucketExempt(pathname: string, method: string): boolean {
-  return method === "GET" && pathname === "/api/auth/session";
-}
-
-// [refactor jun13 P0.5-G9] single matcher for both the rule lookup and the
-// "fall through to the general 120/min bucket" check — they previously
-// duplicated the predicate inline. Exported for unit tests only.
-export function findRateRule(pathname: string, method: string): RateRule | undefined {
-  return RATE_RULES.find(
-    (r) => (r.exact ? pathname === r.pattern : pathname.startsWith(r.pattern)) && method === r.method
-  );
-}
+setInterval(
+  () => {
+    const now = Date.now();
+    pruneExpiredRateBuckets(now);
+    for (const [ip, entry] of cooldownStore) {
+      const violationsExpired =
+        now - entry.firstViolationAt > VIOLATION_MEMORY_MS;
+      const cooldownExpired = entry.cooldownUntil < now;
+      if (violationsExpired && cooldownExpired) cooldownStore.delete(ip);
+    }
+    for (const [ip, entry] of banStore) {
+      if (entry.bannedUntil < now) banStore.delete(ip);
+    }
+    for (const [ip, entry] of scan404Store) {
+      if (now - entry.windowStart > SCAN_404_WINDOW_MS * 2)
+        scan404Store.delete(ip);
+    }
+    for (const [key, bucket] of deprecatedRouteStore) {
+      if (bucket.resetAt < now) deprecatedRouteStore.delete(key);
+    }
+  },
+  5 * 60 * 1000,
+);
 
 // ─── Security headers ────────────────────────────────────────
 const SECURITY_HEADERS: Record<string, string> = {
@@ -214,7 +184,7 @@ const SECURITY_HEADERS: Record<string, string> = {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const method = request.method;
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const ip = trustedClientIp(request.headers.get("x-forwarded-for"));
   const userAgent = request.headers.get("user-agent") || "";
   const startTs = Date.now();
 
@@ -225,14 +195,22 @@ export async function middleware(request: NextRequest) {
   const sessionIsNew = !sessionId;
   if (!sessionId) sessionId = crypto.randomUUID();
 
-  // The NextAuth session cookie presence is a cheap "authed?" proxy. We can't
-  // decode the JWT in middleware cheaply so we just note presence.
+  // Cookie presence is only a hint that verification is worth attempting; its
+  // bytes are caller-controlled and must never become a rate-limit identity.
+  // Reuse one signature-verifying decode for user-keyed rules and visit logs.
   const hasNextAuthSession = !!(
     request.cookies.get("next-auth.session-token")?.value ||
     request.cookies.get("__Secure-next-auth.session-token")?.value ||
     request.cookies.get("authjs.session-token")?.value ||
     request.cookies.get("__Secure-authjs.session-token")?.value
   );
+  const verifiedAuthToken = hasNextAuthSession
+    ? getToken({
+        req: request,
+        secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
+        secureCookie: process.env.NODE_ENV === "production",
+      }).catch(() => null)
+    : Promise.resolve(null);
 
   // Attach security headers + session cookie + emit one structured [visit]
   // log line per response. All early-return paths (429, 403) go through here
@@ -281,13 +259,7 @@ export async function middleware(request: NextRequest) {
     void (async () => {
       const [country, token] = await Promise.all([
         lookupCountry(ip),
-        hasNextAuthSession
-          ? getToken({
-              req: request,
-              secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
-              secureCookie: process.env.NODE_ENV === "production",
-            }).catch(() => null)
-          : Promise.resolve(null),
+        verifiedAuthToken,
       ]);
       logger.info("visit", {
         tag: "visit",
@@ -299,9 +271,10 @@ export async function middleware(request: NextRequest) {
         status: response.status,
         latencyMs: Date.now() - startTs,
         userAgent,
-        authed: hasNextAuthSession,
+        authed: typeof token?.dbId === "number",
         userId: typeof token?.dbId === "number" ? token.dbId : undefined,
-        companyId: typeof token?.companyId === "number" ? token.companyId : undefined,
+        companyId:
+          typeof token?.companyId === "number" ? token.companyId : undefined,
       });
     })();
     return response;
@@ -311,24 +284,39 @@ export async function middleware(request: NextRequest) {
   // Cache is process-local with background setInterval refresh, so this
   // call is a synchronous O(1) Set.has(). No DB touch, no await.
   if (isManuallyBanned(ip)) {
-    return finalize(new NextResponse(
-      JSON.stringify({ error: "Access blocked." }),
-      {
+    return finalize(
+      new NextResponse(JSON.stringify({ error: "Access blocked." }), {
         status: 403,
         headers: { "Content-Type": "application/json" },
-      },
-    ));
+      }),
+    );
   }
 
-  // Deprecated-route hit — a scanner/old-link hit a route we've removed for
-  // security. Fire the abuse event early and let Next return its own 404.
+  // Deprecated-route hit — rate-limit before durable telemetry because these
+  // tombstones are deliberately unauthenticated. The first admitted hit per
+  // client/path/window records one signal; repeats are sampled and then 429'd.
   if (DEPRECATED_ROUTES.includes(pathname)) {
-    recordAbuseEvent({
-      eventType: "DEPRECATED_ROUTE",
-      ip,
-      path: pathname,
-      userAgent,
-    });
+    const admission = admitDeprecatedRoute(ip, pathname);
+    if (admission.shouldRecordTelemetry) {
+      recordAbuseEvent({
+        eventType: "DEPRECATED_ROUTE",
+        ip,
+        path: pathname,
+        userAgent,
+        details: { windowMs: DEPRECATED_ROUTE_WINDOW_MS },
+      });
+    }
+    if (admission.rateLimited) {
+      return finalize(
+        new NextResponse(JSON.stringify({ error: "Too many requests." }), {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": String(Math.ceil(DEPRECATED_ROUTE_WINDOW_MS / 1000)),
+          },
+        }),
+      );
+    }
   }
 
   // Only rate limit API routes
@@ -341,35 +329,43 @@ export async function middleware(request: NextRequest) {
     if (isAbusiveRoute(pathname)) {
       const banEntry = banStore.get(ip);
       if (banEntry && banEntry.bannedUntil > now) {
-        return finalize(new NextResponse(
-          JSON.stringify({
-            error: "Access temporarily blocked due to repeated abuse.",
-            bannedUntil: new Date(banEntry.bannedUntil).toISOString(),
-          }),
-          {
-            status: 403,
-            headers: {
-              "Content-Type": "application/json",
-              "Retry-After": String(Math.ceil((banEntry.bannedUntil - now) / 1000)),
+        return finalize(
+          new NextResponse(
+            JSON.stringify({
+              error: "Access temporarily blocked due to repeated abuse.",
+              bannedUntil: new Date(banEntry.bannedUntil).toISOString(),
+            }),
+            {
+              status: 403,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": String(
+                  Math.ceil((banEntry.bannedUntil - now) / 1000),
+                ),
+              },
             },
-          },
-        ));
+          ),
+        );
       }
       const coolEntry = cooldownStore.get(ip);
       if (coolEntry && coolEntry.cooldownUntil > now) {
-        return finalize(new NextResponse(
-          JSON.stringify({
-            error: "Too many parser requests. Cooldown active.",
-            retryAfter: Math.ceil((coolEntry.cooldownUntil - now) / 1000),
-          }),
-          {
-            status: 429,
-            headers: {
-              "Content-Type": "application/json",
-              "Retry-After": String(Math.ceil((coolEntry.cooldownUntil - now) / 1000)),
+        return finalize(
+          new NextResponse(
+            JSON.stringify({
+              error: "Too many parser requests. Cooldown active.",
+              retryAfter: Math.ceil((coolEntry.cooldownUntil - now) / 1000),
+            }),
+            {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": String(
+                  Math.ceil((coolEntry.cooldownUntil - now) / 1000),
+                ),
+              },
             },
-          },
-        ));
+          ),
+        );
       }
 
       // Apply the abusive-route burst limit. On breach, escalate.
@@ -404,91 +400,110 @@ export async function middleware(request: NextRequest) {
             ip,
             path: pathname,
             userAgent,
-            details: { bannedUntil: new Date(now + BAN_MS).toISOString(), violations },
-          });
-          return finalize(new NextResponse(
-            JSON.stringify({
-              error: "Access temporarily blocked due to repeated abuse.",
+            details: {
               bannedUntil: new Date(now + BAN_MS).toISOString(),
+              violations,
+            },
+          });
+          return finalize(
+            new NextResponse(
+              JSON.stringify({
+                error: "Access temporarily blocked due to repeated abuse.",
+                bannedUntil: new Date(now + BAN_MS).toISOString(),
+              }),
+              {
+                status: 403,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Retry-After": String(Math.ceil(BAN_MS / 1000)),
+                },
+              },
+            ),
+          );
+        }
+        return finalize(
+          new NextResponse(
+            JSON.stringify({
+              error: "Too many parser requests. Cooldown active.",
+              retryAfter: Math.ceil(COOLDOWN_MS / 1000),
             }),
             {
-              status: 403,
+              status: 429,
               headers: {
                 "Content-Type": "application/json",
-                "Retry-After": String(Math.ceil(BAN_MS / 1000)),
+                "Retry-After": String(Math.ceil(COOLDOWN_MS / 1000)),
               },
             },
-          ));
-        }
-        return finalize(new NextResponse(
-          JSON.stringify({
-            error: "Too many parser requests. Cooldown active.",
-            retryAfter: Math.ceil(COOLDOWN_MS / 1000),
-          }),
-          {
-            status: 429,
-            headers: {
-              "Content-Type": "application/json",
-              "Retry-After": String(Math.ceil(COOLDOWN_MS / 1000)),
-            },
-          },
-        ));
+          ),
+        );
       }
     }
 
     // Find matching rule
     const rule = findRateRule(pathname, method);
 
-    if (rule) {
-      // Build rate limit key
-      let key: string;
-      if (rule.keyType === "ip") {
-        key = `rl:${rule.pattern}:${ip}`;
-      } else if (rule.keyType === "ip+path") {
-        key = `rl:${pathname}:${ip}`;
-      } else {
-        // "user" - use session cookie as proxy (can't decode JWT in edge middleware cheaply).
-        // [refactor jun13 P0.5-G9] v5 cookie names first — next-auth is pinned
-        // at 5.0.0-beta.30 (authjs.*); with only the v4 names every "user"
-        // rule silently fell back to keying by IP, so an office NAT shared
-        // one bucket and per-user limits weren't per-user at all.
-        const sessionToken =
-          request.cookies.get("authjs.session-token")?.value ||
-          request.cookies.get("__Secure-authjs.session-token")?.value ||
-          request.cookies.get("next-auth.session-token")?.value ||
-          request.cookies.get("__Secure-next-auth.session-token")?.value ||
-          ip;
-        key = `rl:${rule.pattern}:${sessionToken}`;
-      }
-
-      if (isRateLimited(key, rule.limit, rule.windowMs)) {
-        return finalize(new NextResponse(
-          JSON.stringify({
-            error: "Too many requests. Please try again later.",
-            retryAfter: Math.ceil(rule.windowMs / 1000),
-          }),
-          {
+    // Apply the independently namespaced IP backstop even when a route-specific
+    // rule matches. Otherwise rotating a purported user identity could skip the
+    // only IP-wide admission control. Session GET is the sole exact exemption.
+    if (!isGeneralBucketExempt(pathname, method)) {
+      const backstop = apiIpBackstopForRule(rule);
+      if (
+        isRateLimited(
+          `rl:backstop:${backstop.keyScope}:${ip}`,
+          backstop.limit,
+          backstop.windowMs,
+        )
+      ) {
+        return finalize(
+          new NextResponse(JSON.stringify({ error: "Too many requests." }), {
             status: 429,
             headers: {
               "Content-Type": "application/json",
-              "Retry-After": String(Math.ceil(rule.windowMs / 1000)),
+              "Retry-After": String(Math.ceil(backstop.windowMs / 1000)),
             },
-          }
-        ));
+          }),
+        );
       }
     }
 
-    // General API rate limit: 120 req/min per IP — session GETs exempt (see
-    // isGeneralBucketExempt for the full rationale; jul9 reload-brick bugfix)
-    if (!isGeneralBucketExempt(pathname, method) && !findRateRule(pathname, method)) {
-      if (isRateLimited(`rl:api:${ip}`, 120, 60 * 1000)) {
-        return finalize(new NextResponse(
-          JSON.stringify({ error: "Too many requests." }),
-          {
-            status: 429,
-            headers: { "Content-Type": "application/json" },
-          }
-        ));
+    if (rule) {
+      // Route buckets are namespaced separately from the IP backstop. A user
+      // identity is accepted only from a successfully verified JWT; missing or
+      // invalid credentials fall back to the trusted ALB client IP.
+      let key: string;
+      if (rule.keyType === "ip") {
+        key = `rl:route:${rule.pattern}:ip:${ip}`;
+      } else if (rule.keyType === "ip+path") {
+        key = `rl:route:${pathname}:ip:${ip}`;
+      } else {
+        const token = await verifiedAuthToken;
+        const verifiedUserId =
+          typeof token?.dbId === "number" &&
+          Number.isSafeInteger(token.dbId) &&
+          token.dbId > 0
+            ? token.dbId
+            : null;
+        key = verifiedUserId
+          ? `rl:route:${rule.pattern}:user:${verifiedUserId}`
+          : `rl:route:${rule.pattern}:ip:${ip}`;
+      }
+
+      if (isRateLimited(key, rule.limit, rule.windowMs)) {
+        return finalize(
+          new NextResponse(
+            JSON.stringify({
+              error: "Too many requests. Please try again later.",
+              retryAfter: Math.ceil(rule.windowMs / 1000),
+            }),
+            {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": String(Math.ceil(rule.windowMs / 1000)),
+              },
+            },
+          ),
+        );
       }
     }
   }

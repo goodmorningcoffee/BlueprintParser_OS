@@ -118,6 +118,8 @@ export type ProjectAccessRow = {
   name: string;
   numPages: number | null;
   status: string;
+  lifecycleEpoch: number;
+  updatedAt: Date | null;
 };
 
 type ProjectLookup = { publicId: string } | { dbId: number };
@@ -175,6 +177,8 @@ export async function resolveProjectAccess(
     name: projects.name,
     numPages: projects.numPages,
     status: projects.status,
+    lifecycleEpoch: projects.lifecycleEpoch,
+    updatedAt: projects.updatedAt,
   }).from(projects).where(where).limit(1);
 
   if (!project) {

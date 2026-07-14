@@ -30,7 +30,7 @@
 
 import { db } from "@/lib/db";
 import { projects, takeoffItems, takeoffGroups } from "@/lib/db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { TAKEOFF_SHAPES } from "@/types";
 import { detectCsiCodes } from "@/lib/csi-detect";
 // [refactor jul9 P2-A C1] company CSI context resolver (config + custom DB), threaded into
@@ -39,7 +39,14 @@ import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { logger } from "@/lib/logger";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
-import { resolveByPublicId, resolveProjectOrThrow } from "@/server/api/access";
+import {
+  resolveByPublicId,
+  resolveWritableProjectOrThrow,
+} from "@/server/api/access";
+import {
+  assertProjectWritable,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
 
 const VALID_KINDS = ["count", "area", "linear"] as const;
 
@@ -96,13 +103,23 @@ export async function createTakeoffItem(body: Record<string, unknown>) {
 
   // [refactor jul8 P1-review PR-C1] allowDemo:true was hardcoded inside the old local helper;
   // now passed explicitly to the shared access.ts helper. Behavior identical.
-  const { project, scope } = await resolveByPublicId(projectId, { allowDemo: true });
-  if (project.isDemo && scope !== "admin" && scope !== "root") {
-    throw new ApiError("FORBIDDEN", "Demo projects are read-only");
-  }
+  const { project } = await resolveByPublicId(projectId, { allowDemo: true });
+  const writeCapability = assertProjectWritable(project);
 
   try {
-    const item = await db.transaction(async (tx) => {
+    const item = await withProjectWrite(writeCapability, project.id, async (tx) => {
+      if (groupId !== undefined && groupId !== null) {
+        const [group] = await tx
+          .select({ id: takeoffGroups.id })
+          .from(takeoffGroups)
+          .where(and(
+            eq(takeoffGroups.id, groupId as number),
+            eq(takeoffGroups.projectId, project.id),
+          ))
+          .limit(1);
+        if (!group) throw new ApiError("NOT_FOUND", "Not found");
+      }
+
       // Next sort order is project-wide (NOT per-shape) — frozen ladder.
       const maxResult = await tx.execute(
         sql`SELECT COALESCE(MAX(sort_order), -1)::int + 1 AS next_order FROM takeoff_items WHERE project_id = ${project.id}`,
@@ -134,6 +151,7 @@ export async function createTakeoffItem(body: Record<string, unknown>) {
       groupId: item.groupId,
     };
   } catch (err) {
+    if (err instanceof ApiError) throw err;
     // Was a raw-pg-leak 500; now: rich server-side log + generic envelope (no leak).
     const cause = (err as { cause?: { message?: string; detail?: string; code?: string } })?.cause;
     logger.error("[takeoff] create item failed:", { cause, pgCode: cause?.code });
@@ -147,7 +165,13 @@ export async function updateTakeoffItem(idParam: string, body: Record<string, un
   const [item] = await db.select().from(takeoffItems).where(eq(takeoffItems.id, itemId)).limit(1);
   if (!item) throw new ApiError("NOT_FOUND", "Not found");
 
-  await resolveProjectOrThrow({ dbId: item.projectId });
+  const { project, writeCapability } = await resolveWritableProjectOrThrow({ dbId: item.projectId });
+
+  if (body.groupId !== undefined && body.groupId !== null) {
+    if (!Number.isInteger(body.groupId)) {
+      throw new ApiError("VALIDATION", "invalid groupId");
+    }
+  }
 
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name;
@@ -156,21 +180,39 @@ export async function updateTakeoffItem(idParam: string, body: Record<string, un
   if (body.size !== undefined) updates.size = body.size;
   if (body.notes !== undefined) updates.notes = body.notes;
   if (body.groupId !== undefined) {
-    if (body.groupId !== null && !Number.isInteger(body.groupId)) {
-      throw new ApiError("VALIDATION", "invalid groupId");
-    }
     updates.groupId = body.groupId;
   }
   updates.updatedAt = new Date();
 
-  await db.update(takeoffItems).set(updates).where(eq(takeoffItems.id, itemId));
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    if (body.groupId !== undefined && body.groupId !== null) {
+      const [group] = await tx
+        .select({ id: takeoffGroups.id })
+        .from(takeoffGroups)
+        .where(and(
+          eq(takeoffGroups.id, body.groupId as number),
+          eq(takeoffGroups.projectId, project.id),
+        ))
+        .limit(1);
+      if (!group) throw new ApiError("NOT_FOUND", "Not found");
+    }
 
-  // Sync annotation names if the item was renamed.
-  if (body.name !== undefined && body.name !== item.name) {
-    await db.execute(
-      sql`UPDATE annotations SET name = ${body.name} WHERE source = 'takeoff' AND data->>'takeoffItemId' = ${String(itemId)}`,
-    );
-  }
+    await tx
+      .update(takeoffItems)
+      .set(updates)
+      .where(and(eq(takeoffItems.id, itemId), eq(takeoffItems.projectId, project.id)));
+
+    // Sync annotation names if the item was renamed.
+    if (body.name !== undefined && body.name !== item.name) {
+      await tx.execute(
+        sql`UPDATE annotations
+            SET name = ${body.name}
+            WHERE project_id = ${project.id}
+              AND source = 'takeoff'
+              AND data->>'takeoffItemId' = ${String(itemId)}`,
+      );
+    }
+  });
 
   return { success: true as const };
 }
@@ -181,12 +223,19 @@ export async function deleteTakeoffItem(idParam: string) {
   const [item] = await db.select().from(takeoffItems).where(eq(takeoffItems.id, itemId)).limit(1);
   if (!item) throw new ApiError("NOT_FOUND", "Not found");
 
-  await resolveProjectOrThrow({ dbId: item.projectId });
+  const { project, writeCapability } = await resolveWritableProjectOrThrow({ dbId: item.projectId });
 
-  await db.execute(
-    sql`DELETE FROM annotations WHERE source = 'takeoff' AND data->>'takeoffItemId' = ${String(itemId)}`,
-  );
-  await db.delete(takeoffItems).where(eq(takeoffItems.id, itemId));
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx.execute(
+      sql`DELETE FROM annotations
+          WHERE project_id = ${project.id}
+            AND source = 'takeoff'
+            AND data->>'takeoffItemId' = ${String(itemId)}`,
+    );
+    await tx
+      .delete(takeoffItems)
+      .where(and(eq(takeoffItems.id, itemId), eq(takeoffItems.projectId, project.id)));
+  });
 
   return { success: true as const };
 }
@@ -240,17 +289,15 @@ export async function createTakeoffGroup(body: Record<string, unknown>) {
 
   // [refactor jul8 P1-review PR-C1] allowDemo:true was hardcoded inside the old local helper;
   // now passed explicitly to the shared access.ts helper. Behavior identical.
-  const { project, scope } = await resolveByPublicId(projectId, { allowDemo: true });
-  if (project.isDemo && scope !== "admin" && scope !== "root") {
-    throw new ApiError("FORBIDDEN", "Demo projects are read-only");
-  }
+  const { project } = await resolveByPublicId(projectId, { allowDemo: true });
+  const writeCapability = assertProjectWritable(project);
 
   // [refactor jul9 P2-A C1] Resolve company CSI context BEFORE the tx (I-1); the
   // detect at the auto-CSI branch inside the tx receives the resolved bundle.
   const csiCtx = await getCompanyCsiContext(project.companyId);
 
   try {
-    const group = await db.transaction(async (tx) => {
+    const group = await withProjectWrite(writeCapability, project.id, async (tx) => {
       // Sort order is scoped to (projectId, kind) — separate ladder per kind.
       const maxResult = await tx.execute(
         sql`SELECT COALESCE(MAX(sort_order), -1)::int + 1 AS next_order
@@ -290,6 +337,7 @@ export async function createTakeoffGroup(body: Record<string, unknown>) {
       sortOrder: group.sortOrder,
     };
   } catch (err) {
+    if (err instanceof ApiError) throw err;
     const cause = (err as { cause?: { message?: string; detail?: string; code?: string } })?.cause;
     logger.error("[takeoff-groups] create failed:", { cause, pgCode: cause?.code });
     throw new ApiError("INTERNAL", "Internal server error");
@@ -305,7 +353,7 @@ export async function updateTakeoffGroup(idParam: string, body: Record<string, u
   if (!group) throw new ApiError("NOT_FOUND", "Not found");
 
   // [refactor jul9 P2-A C1] keep the resolved project (was discarded) for companyId.
-  const { project } = await resolveProjectOrThrow({ dbId: group.projectId });
+  const { project, writeCapability } = await resolveWritableProjectOrThrow({ dbId: group.projectId });
 
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) {
@@ -342,11 +390,14 @@ export async function updateTakeoffGroup(idParam: string, body: Record<string, u
   }
   updates.updatedAt = new Date();
 
-  const [updated] = await db
-    .update(takeoffGroups)
-    .set(updates)
-    .where(eq(takeoffGroups.id, groupId))
-    .returning();
+  const updated = await withProjectWrite(writeCapability, project.id, async (tx) => {
+    const [row] = await tx
+      .update(takeoffGroups)
+      .set(updates)
+      .where(and(eq(takeoffGroups.id, groupId), eq(takeoffGroups.projectId, project.id)))
+      .returning();
+    return row;
+  });
 
   return {
     id: updated.id,
@@ -366,10 +417,26 @@ export async function deleteTakeoffGroup(idParam: string) {
   const [group] = await db.select().from(takeoffGroups).where(eq(takeoffGroups.id, groupId)).limit(1);
   if (!group) throw new ApiError("NOT_FOUND", "Not found");
 
-  await resolveProjectOrThrow({ dbId: group.projectId });
+  const { project, writeCapability } = await resolveWritableProjectOrThrow({ dbId: group.projectId });
 
-  // FK ON DELETE SET NULL on takeoff_items.group_id orphans items automatically.
-  await db.delete(takeoffGroups).where(eq(takeoffGroups.id, groupId));
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    const [foreignReference] = await tx
+      .select({ id: takeoffItems.id })
+      .from(takeoffItems)
+      .where(and(
+        eq(takeoffItems.groupId, groupId),
+        ne(takeoffItems.projectId, project.id),
+      ))
+      .limit(1);
+    if (foreignReference) {
+      throw new ApiError("CONFLICT", "Takeoff group is referenced by another project");
+    }
+
+    // FK ON DELETE SET NULL on takeoff_items.group_id orphans items automatically.
+    await tx
+      .delete(takeoffGroups)
+      .where(and(eq(takeoffGroups.id, groupId), eq(takeoffGroups.projectId, project.id)));
+  });
 
   return { success: true as const };
 }

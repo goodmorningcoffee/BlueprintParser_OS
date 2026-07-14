@@ -16,6 +16,15 @@ import {
 } from "@/lib/api-utils";
 import { zPublicId } from "@/server/api/schemas";
 import { ApiError } from "./envelope";
+import {
+  assertProjectWritable,
+  type ProjectWriteCapability,
+} from "./project-write-capability";
+export {
+  assertProjectWritable,
+  assertProjectWriteCapability,
+  type ProjectWriteCapability,
+} from "./project-write-capability";
 
 export type ResolvedProject = {
   project: ProjectAccessRow;
@@ -46,6 +55,22 @@ export async function resolveProjectOrThrow(
     );
   }
   return { project: res.project, session: res.session, scope: res.scope };
+}
+
+/**
+ * Resolve a mutation target with demo visibility enabled, then deny every caller role when the
+ * canonical row is a demo. Enabling visibility is important: anonymous, member, admin, and root
+ * callers must all receive the same project-derived 403 instead of auth/scope-dependent 401/200
+ * behavior.
+ */
+export async function resolveWritableProjectOrThrow(
+  lookup: ProjectLookup,
+): Promise<ResolvedProject & { writeCapability: ProjectWriteCapability }> {
+  const resolved = await resolveProjectOrThrow(lookup, { allowDemo: true });
+  return {
+    ...resolved,
+    writeCapability: assertProjectWritable(resolved.project),
+  };
 }
 
 // ── shared dual-ID resolvers ─────────────────────────────────────────────────────────────────

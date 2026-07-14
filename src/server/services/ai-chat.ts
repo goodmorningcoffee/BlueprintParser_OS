@@ -49,7 +49,6 @@
 //   DECLINED: zPublicId pre-validation on projectId (would flip the pg-cast 500 → 400).
 
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
 import { chatMessages } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
@@ -58,7 +57,12 @@ import { checkChatQuota, checkDemoChatQuota } from "@/lib/quotas";
 import { handleGlobalChat } from "@/lib/services/chat/global";
 import { handleScopedChat } from "@/lib/services/chat/scoped";
 import { ApiError } from "@/server/api/envelope";
-import { resolveProjectOrThrow } from "@/server/api/access";
+import {
+  assertProjectWritable,
+  resolveProjectOrThrow,
+  resolveWritableProjectOrThrow,
+} from "@/server/api/access";
+import { withProjectWrite } from "@/server/api/project-write-capability";
 
 /**
  * POST /api/ai/chat — global (cross-project RAG) or page/project-scoped chat.
@@ -97,7 +101,11 @@ export async function chatPost(rawBody: Record<string, unknown>): Promise<Respon
 
   const access = await resolveProjectOrThrow({ publicId: projectId }, { allowDemo: true });
   const { project } = access;
-  const isDemo = access.scope === "demo"; // FC-3 — NOT project.isDemo
+  // Demo immutability is a property of the canonical project, never of the caller's scope.
+  // Same-company members/admins and root therefore share the public demo policy.
+  const isDemo = project.isDemo;
+  const noPersist = isDemo;
+  const writeCapability = noPersist ? undefined : assertProjectWritable(project);
 
   if (isDemo) {
     const gate = await assertDemoFeatureEnabled(project.companyId, "chat");
@@ -124,6 +132,7 @@ export async function chatPost(rawBody: Record<string, unknown>): Promise<Respon
     pageNumber,
     session: access.session,
     isDemo,
+    writeCapability,
   });
 }
 
@@ -141,7 +150,7 @@ export async function chatDelete(req: Request): Promise<{ success: true }> {
     throw new ApiError("VALIDATION", "projectId required");
   }
 
-  const { project } = await resolveProjectOrThrow({ publicId: projectId }); // NO allowDemo
+  const { project, writeCapability } = await resolveWritableProjectOrThrow({ publicId: projectId });
 
   const conditions = [eq(chatMessages.projectId, project.id)];
 
@@ -151,7 +160,9 @@ export async function chatDelete(req: Request): Promise<{ success: true }> {
     conditions.push(isNull(chatMessages.pageNumber));
   }
 
-  await db.delete(chatMessages).where(and(...conditions));
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx.delete(chatMessages).where(and(...conditions));
+  });
 
   return { success: true };
 }

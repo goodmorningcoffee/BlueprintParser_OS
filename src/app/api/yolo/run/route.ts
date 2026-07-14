@@ -15,7 +15,9 @@ import { zLooseBody } from "@/server/api/schemas";
 import { yoloRun } from "@/server/services/yolo";
 
 export const POST = defineRoute({
-  auth: "session",
+  // The service performs a demo-target preflight before authentication so public demo
+  // immutability has one status for signed-out and authenticated callers alike.
+  auth: "none",
   body: zLooseBody,
-  handler: ({ body, session, req }) => yoloRun(body, session!, req),
+  handler: ({ body, req }) => yoloRun(body, req),
 });

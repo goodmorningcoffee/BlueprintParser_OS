@@ -159,7 +159,7 @@ function lifecycleMetadata({
     id: "pid",
     dbId: 701,
     name: demo ? "Demo successor" : "Authenticated successor",
-    dataUrl: "projects/pid",
+    assetBaseUrl: "projects/pid",
     pdfUrl: "https://example.test/original.pdf",
     numPages: 1,
     status: "completed",

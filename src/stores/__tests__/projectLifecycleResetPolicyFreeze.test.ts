@@ -16,7 +16,7 @@ import type { ClientAnnotation, ScaleCalibrationData } from "@/types";
 const SESSION_KEYS = [
   "projectId",
   "publicId",
-  "dataUrl",
+  "assetBaseUrl",
   "isDemo",
   "demoFeatureConfig",
   "pageNames",
@@ -24,7 +24,6 @@ const SESSION_KEYS = [
   "showLabelingWizard",
   "labelingWizardStep",
   "labelingSessions",
-  "labelingCredentials",
 ] as const satisfies readonly (keyof SessionData)[];
 
 const CORE_KEYS = [
@@ -376,11 +375,11 @@ function restoreStores(): void {
 beforeEach(restoreStores);
 
 describe("P2.5 target project reset policy", () => {
-  it("resets all 11 session fields and replaces project containers", () => {
+  it("resets all 10 session fields and replaces project containers", () => {
     useSessionStore.setState({
       projectId: 7,
       publicId: "old-project",
-      dataUrl: "old/data.pdf",
+      assetBaseUrl: "old/data.pdf",
       isDemo: true,
       demoFeatureConfig: { chat: false },
       pageNames: { 1: "Old" },
@@ -388,7 +387,6 @@ describe("P2.5 target project reset policy", () => {
       showLabelingWizard: true,
       labelingWizardStep: 4,
       labelingSessions: [{ labelStudioUrl: "https://labels.test/9", pageRange: "all", taskCount: 1 }],
-      labelingCredentials: { email: "old@example.test", password: "old" },
     });
     const before = useSessionStore.getState();
 
@@ -396,7 +394,7 @@ describe("P2.5 target project reset policy", () => {
 
     const after = useSessionStore.getState();
     const initial = useSessionStore.getInitialState();
-    expect(SESSION_KEYS).toHaveLength(11);
+    expect(SESSION_KEYS).toHaveLength(10);
     for (const key of SESSION_KEYS) expect.soft(after[key], `session reset: ${key}`).toEqual(initial[key]);
     for (const key of ["pageNames", "pageDrawingNumbers", "labelingSessions"] as const) {
       expect.soft(after[key], `fresh session container: ${key}`).not.toBe(before[key]);

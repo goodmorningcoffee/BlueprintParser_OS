@@ -39,9 +39,13 @@ import { eq, and, or, isNull, sql } from "drizzle-orm";
 import { uploadToS3, createModelUploadPresignedPost } from "@/lib/s3";
 import { ApiError } from "@/server/api/envelope";
 import type { AuthSession } from "@/lib/api-utils";
+import { isCanonicalModelStoragePath } from "@/lib/model-storage-authority";
 
 // GET — list models, or get presigned URL for upload
-export async function listModels(req: Request, session: AuthSession): Promise<unknown> {
+export async function listModels(
+  req: Request,
+  session: AuthSession,
+): Promise<unknown> {
   const url = new URL(req.url);
   const action = url.searchParams.get("action");
 
@@ -57,14 +61,16 @@ export async function listModels(req: Request, session: AuthSession): Promise<un
       throw new ApiError("FORBIDDEN", "Not authorized");
     }
     if (process.env.ALLOW_MODEL_UPLOAD !== "true") {
-      throw new ApiError("FORBIDDEN", "Model uploads are disabled on this deployment.");
+      throw new ApiError(
+        "FORBIDDEN",
+        "Model uploads are disabled on this deployment.",
+      );
     }
     const name = url.searchParams.get("name");
     if (!name) {
       throw new ApiError("VALIDATION", "name required");
     }
-    const modelSlug = name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-    const presigned = await createModelUploadPresignedPost(modelSlug);
+    const presigned = await createModelUploadPresignedPost(name);
     return presigned;
   }
 
@@ -94,9 +100,15 @@ export async function listModels(req: Request, session: AuthSession): Promise<un
     // Root admin sees all models with company names
     const allModels = await db
       .select({
-        id: models.id, name: models.name, type: models.type, s3Path: models.s3Path,
-        config: models.config, isDefault: models.isDefault, createdAt: models.createdAt,
-        companyId: models.companyId, companyName: companies.name,
+        id: models.id,
+        name: models.name,
+        type: models.type,
+        s3Path: models.s3Path,
+        config: models.config,
+        isDefault: models.isDefault,
+        createdAt: models.createdAt,
+        companyId: models.companyId,
+        companyName: companies.name,
       })
       .from(models)
       .leftJoin(companies, eq(models.companyId, companies.id))
@@ -108,9 +120,15 @@ export async function listModels(req: Request, session: AuthSession): Promise<un
   // Company admin: own models + shared models with enabled flag
   const ownModels = await db
     .select({
-      id: models.id, name: models.name, type: models.type, s3Path: models.s3Path,
-      config: models.config, isDefault: models.isDefault, createdAt: models.createdAt,
-      companyId: models.companyId, enabled: sql<boolean>`true`.as("enabled"),
+      id: models.id,
+      name: models.name,
+      type: models.type,
+      s3Path: models.s3Path,
+      config: models.config,
+      isDefault: models.isDefault,
+      createdAt: models.createdAt,
+      companyId: models.companyId,
+      enabled: sql<boolean>`true`.as("enabled"),
       shared: sql<boolean>`false`.as("shared"),
     })
     .from(models)
@@ -123,10 +141,15 @@ export async function listModels(req: Request, session: AuthSession): Promise<un
       // grantee reconstruct the object key. The real fix is the CloudFront
       // Deny in s3.tf; this just stops handing out the path. Own-company and
       // root listings keep s3Path. No client consumes s3Path from this list.
-      id: models.id, name: models.name, type: models.type,
+      id: models.id,
+      name: models.name,
+      type: models.type,
       s3Path: sql<string | null>`NULL`.as("s3Path"),
-      config: models.config, isDefault: models.isDefault, createdAt: models.createdAt,
-      companyId: models.companyId, enabled: modelAccess.enabled,
+      config: models.config,
+      isDefault: models.isDefault,
+      createdAt: models.createdAt,
+      companyId: models.companyId,
+      enabled: modelAccess.enabled,
       shared: sql<boolean>`true`.as("shared"),
     })
     .from(modelAccess)
@@ -136,19 +159,28 @@ export async function listModels(req: Request, session: AuthSession): Promise<un
         eq(modelAccess.companyId, companyId),
         eq(modelAccess.enabled, true),
         // Company-wide grant (user_id NULL) OR a grant to this specific user.
-        or(isNull(modelAccess.userId), eq(modelAccess.userId, session.user.dbId))
-      )
+        or(
+          isNull(modelAccess.userId),
+          eq(modelAccess.userId, session.user.dbId),
+        ),
+      ),
     );
 
   // Deduplicate (own models might also have model_access rows)
   const ownIds = new Set(ownModels.map((m) => m.id));
-  const combined = [...ownModels, ...sharedModels.filter((m) => !ownIds.has(m.id))];
+  const combined = [
+    ...ownModels,
+    ...sharedModels.filter((m) => !ownIds.has(m.id)),
+  ];
 
   return combined;
 }
 
 // POST — register model after S3 upload is complete
-export async function registerModel(session: AuthSession, body: Record<string, unknown>): Promise<unknown> {
+export async function registerModel(
+  session: AuthSession,
+  body: Record<string, unknown>,
+): Promise<unknown> {
   // Pre-launch kill-switch. YOLO .pt files are Python pickles and loading
   // one via Ultralytics/PyTorch can execute arbitrary code inside SageMaker,
   // where the role holds broad S3 access. Proper fix (weights_only=True,
@@ -166,16 +198,31 @@ export async function registerModel(session: AuthSession, body: Record<string, u
     );
   }
 
+  // Model storage is a single global namespace (models/<canonical-slug>), and
+  // the resulting artifacts may be shared across companies. Keep both halves
+  // of the upload protocol root-only: a tenant admin must not be able to
+  // register a colliding slug after a root admin minted the presign.
+  if (!session.user.isRootAdmin) {
+    throw new ApiError("FORBIDDEN", "Not authorized");
+  }
+
   const { name, s3Path, classes, confidence, iou } = body as {
-    name?: string; s3Path?: string; classes?: string[]; confidence?: number; iou?: number;
+    name?: string;
+    s3Path?: string;
+    classes?: string[];
+    confidence?: number;
+    iou?: number;
   };
 
   if (!name || !s3Path) {
     throw new ApiError("VALIDATION", "name and s3Path required");
   }
+  if (!isCanonicalModelStoragePath(name, s3Path)) {
+    throw new ApiError("VALIDATION", "Invalid model storage path");
+  }
 
-  const conf = confidence ?? 0.10;
-  const iouVal = iou ?? 0.60;
+  const conf = confidence ?? 0.1;
+  const iouVal = iou ?? 0.6;
   const classList = classes || [];
 
   // Generate and upload config.yaml to S3
@@ -190,14 +237,18 @@ save_annotated: false
 classes:
 ${classList.map((c: string) => `  - ${c}`).join("\n")}
 `;
-  await uploadToS3(`${s3Path}/config.yaml`, Buffer.from(configYaml), "text/yaml");
+  await uploadToS3(
+    `${s3Path}/config.yaml`,
+    Buffer.from(configYaml),
+    "text/yaml",
+  );
 
   // Upload classes.txt if provided
   if (classList.length > 0) {
     await uploadToS3(
       `${s3Path}/classes.txt`,
       Buffer.from(classList.join("\n")),
-      "text/plain"
+      "text/plain",
     );
   }
 
@@ -209,7 +260,12 @@ ${classList.map((c: string) => `  - ${c}`).join("\n")}
       name,
       type: "yolo",
       s3Path,
-      config: { classes: classList, confidence: conf, iou: iouVal, imageSize: 1280 },
+      config: {
+        classes: classList,
+        confidence: conf,
+        iou: iouVal,
+        imageSize: 1280,
+      },
       isDefault: false,
     })
     .returning();
@@ -223,22 +279,49 @@ ${classList.map((c: string) => `  - ${c}`).join("\n")}
 }
 
 // PUT — update model class config (types, CSI codes, keywords)
-export async function updateModelConfig(session: AuthSession, body: Record<string, unknown>): Promise<unknown> {
-  const { id, classTypes, classCsiCodes, classKeywords, confidence, iou, imageSize } = body as {
-    id?: number; classTypes?: unknown; classCsiCodes?: unknown; classKeywords?: unknown;
-    confidence?: unknown; iou?: unknown; imageSize?: unknown;
+export async function updateModelConfig(
+  session: AuthSession,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const {
+    id,
+    classTypes,
+    classCsiCodes,
+    classKeywords,
+    confidence,
+    iou,
+    imageSize,
+  } = body as {
+    id?: number;
+    classTypes?: unknown;
+    classCsiCodes?: unknown;
+    classKeywords?: unknown;
+    confidence?: unknown;
+    iou?: unknown;
+    imageSize?: unknown;
   };
   if (!id) {
     throw new ApiError("VALIDATION", "id required");
   }
-  if (!classTypes && !classCsiCodes && !classKeywords && confidence === undefined && iou === undefined && imageSize === undefined) {
+  if (
+    !classTypes &&
+    !classCsiCodes &&
+    !classKeywords &&
+    confidence === undefined &&
+    iou === undefined &&
+    imageSize === undefined
+  ) {
     throw new ApiError("VALIDATION", "At least one field required");
   }
 
   // Fetch existing model UNSCOPED, then JS-side tenancy 404 (scoped to company unless
   // root admin). Do NOT push companyId into the query — the missing-vs-cross-company
   // message distinction ("Model not found" vs "Not found") is frozen (MD-11).
-  const [model] = await db.select().from(models).where(eq(models.id, id)).limit(1);
+  const [model] = await db
+    .select()
+    .from(models)
+    .where(eq(models.id, id))
+    .limit(1);
   if (!model) {
     throw new ApiError("NOT_FOUND", "Model not found");
   }
@@ -249,7 +332,8 @@ export async function updateModelConfig(session: AuthSession, body: Record<strin
   // Merge provided fields into existing config JSONB — SPREAD-MERGE (H6-class), never a
   // column replace. Class fields are TRUTHY-gated; numeric fields are !==undefined-gated
   // with Number() coercion (confidence:0 applies, classTypes:"" does not) — MD-12 pins.
-  const existingConfig = (model.config as unknown as Record<string, unknown>) || {};
+  const existingConfig =
+    (model.config as unknown as Record<string, unknown>) || {};
   const updates: Record<string, unknown> = {};
   if (classTypes) updates.classTypes = classTypes;
   if (classCsiCodes) updates.classCsiCodes = classCsiCodes;
@@ -259,18 +343,28 @@ export async function updateModelConfig(session: AuthSession, body: Record<strin
   if (imageSize !== undefined) updates.imageSize = Number(imageSize);
   const updatedConfig = { ...existingConfig, ...updates };
 
-  await db.update(models).set({ config: updatedConfig as never }).where(eq(models.id, id));
+  await db
+    .update(models)
+    .set({ config: updatedConfig as never })
+    .where(eq(models.id, id));
 
   return { success: true, config: updatedConfig };
 }
 
 // DELETE — remove model
-export async function deleteModel(session: AuthSession, body: Record<string, unknown>): Promise<unknown> {
+export async function deleteModel(
+  session: AuthSession,
+  body: Record<string, unknown>,
+): Promise<unknown> {
   const { id } = body as { id?: number };
 
   // Verify ownership. NB: NO !id guard (legacy) — an absent id matches nothing and lands
   // on the ordinary 404 below (MD-14 freeze correction: NOT a throw).
-  const [model] = await db.select().from(models).where(eq(models.id, id!)).limit(1);
+  const [model] = await db
+    .select()
+    .from(models)
+    .where(eq(models.id, id!))
+    .limit(1);
   if (!model) {
     throw new ApiError("NOT_FOUND", "Model not found");
   }
@@ -284,9 +378,18 @@ export async function deleteModel(session: AuthSession, body: Record<string, unk
 }
 
 // PATCH — share model to a company or toggle enabled
-export async function shareModel(session: AuthSession, body: Record<string, unknown>): Promise<unknown> {
-  const { modelId, companyId: targetCompanyId, enabled } = body as {
-    modelId?: number; companyId?: number; enabled?: boolean;
+export async function shareModel(
+  session: AuthSession,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const {
+    modelId,
+    companyId: targetCompanyId,
+    enabled,
+  } = body as {
+    modelId?: number;
+    companyId?: number;
+    enabled?: boolean;
   };
 
   if (!modelId) {
@@ -294,22 +397,40 @@ export async function shareModel(session: AuthSession, body: Record<string, unkn
   }
 
   // Sharing to another company requires root admin
-  if (targetCompanyId && targetCompanyId !== session.user.companyId && !session.user.isRootAdmin) {
-    throw new ApiError("FORBIDDEN", "Only root admin can share models to other companies");
+  if (
+    targetCompanyId &&
+    targetCompanyId !== session.user.companyId &&
+    !session.user.isRootAdmin
+  ) {
+    throw new ApiError(
+      "FORBIDDEN",
+      "Only root admin can share models to other companies",
+    );
   }
 
   const effectiveCompanyId = targetCompanyId || session.user.companyId;
 
   // Non-root admin: can only toggle existing access (not create new)
   if (!session.user.isRootAdmin) {
-    const [model] = await db.select({ companyId: models.companyId }).from(models).where(eq(models.id, modelId)).limit(1);
+    const [model] = await db
+      .select({ companyId: models.companyId })
+      .from(models)
+      .where(eq(models.id, modelId))
+      .limit(1);
     if (!model) throw new ApiError("NOT_FOUND", "Model not found");
     // Company admin can only toggle models they own or that were shared to them.
     // (ANY modelAccess row for (model, own company) passes — even a per-user grant;
     // the upsert below then creates a COMPANY-level row beside it. MD-16 pins.)
     if (model.companyId !== session.user.companyId) {
-      const [hasAccess] = await db.select().from(modelAccess)
-        .where(and(eq(modelAccess.modelId, modelId), eq(modelAccess.companyId, session.user.companyId)))
+      const [hasAccess] = await db
+        .select()
+        .from(modelAccess)
+        .where(
+          and(
+            eq(modelAccess.modelId, modelId),
+            eq(modelAccess.companyId, session.user.companyId),
+          ),
+        )
         .limit(1);
       if (!hasAccess) throw new ApiError("NOT_FOUND", "Not found");
     }
@@ -320,11 +441,13 @@ export async function shareModel(session: AuthSession, body: Record<string, unkn
   const [existing] = await db
     .select()
     .from(modelAccess)
-    .where(and(
-      eq(modelAccess.modelId, modelId),
-      eq(modelAccess.companyId, effectiveCompanyId),
-      isNull(modelAccess.userId)
-    ))
+    .where(
+      and(
+        eq(modelAccess.modelId, modelId),
+        eq(modelAccess.companyId, effectiveCompanyId),
+        isNull(modelAccess.userId),
+      ),
+    )
     .limit(1);
 
   if (existing) {

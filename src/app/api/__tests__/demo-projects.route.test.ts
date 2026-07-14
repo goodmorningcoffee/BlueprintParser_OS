@@ -37,22 +37,29 @@ import {
   createUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
 import { db } from "@/lib/db";
-import { getS3Url } from "@/lib/s3";
 
 const dbUp = inject("dbUp") as boolean;
 
-const runList = () => demoProjectsGET(makeReq("/api/demo/projects", { method: "GET" }));
+const runList = () =>
+  demoProjectsGET(makeReq("/api/demo/projects", { method: "GET" }));
 
 /** company + author + a demo project, with control over the project columns. */
-async function makeDemoProject(projectOver: Partial<Parameters<typeof createProject>[2]> = {}) {
+async function makeDemoProject(
+  projectOver: Partial<Parameters<typeof createProject>[2]> = {},
+  publish = true,
+) {
   const company = await createCompany();
   const author = await createUser(company.id);
-  const project = await createProject(company.id, author.id, { isDemo: true, ...projectOver });
-  return { company, author, project };
+  const project = await createProject(company.id, author.id, projectOver);
+  const publishedProject = publish
+    ? await publishDemoFixture(project.id)
+    : project;
+  return { company, author, project: publishedProject };
 }
 
 /** Filter a bare-array response down to a set of publicIds, preserving response order. */
@@ -64,15 +71,19 @@ function only(body: any[], ids: string[]): any[] {
 describe.skipIf(!dbUp)("GET /api/demo/projects (demo gallery list)", () => {
   it("200 bare array: each item has EXACTLY 5 fields; numPages = live page count; thumbnailUrl set when completed", async () => {
     // completed project, real page count (3) overrides the numPages column (99)
-    const { project: completed } = await makeDemoProject({ status: "completed", numPages: 99 });
+    const { project: completed } = await makeDemoProject(
+      { status: "completed", numPages: 99 },
+      false,
+    );
     await createPage(completed.id, 1);
     await createPage(completed.id, 2);
     await createPage(completed.id, 3);
+    await publishDemoFixture(completed.id);
 
     signedOut(); // public — no auth required
     const raw = await runList();
     expect(raw.status).toBe(200);
-    expect(raw.headers.get("Cache-Control")).toBeNull(); // legacy sets none — do NOT couple to getProject's header
+    expect(raw.headers.get("Cache-Control")).toBe("public, no-store");
     const body = await raw.json();
     expect(Array.isArray(body)).toBe(true);
 
@@ -80,16 +91,27 @@ describe.skipIf(!dbUp)("GET /api/demo/projects (demo gallery list)", () => {
     expect(mine).toHaveLength(1);
     const item = mine[0];
     // EXACTLY these 5 PUBLIC fields — pinned so the fold can never leak listProjects's authed-only fields.
-    expect(Object.keys(item).sort()).toEqual(["id", "name", "numPages", "status", "thumbnailUrl"]);
+    expect(Object.keys(item).sort()).toEqual([
+      "id",
+      "name",
+      "numPages",
+      "status",
+      "thumbnailUrl",
+    ]);
     expect(item.id).toBe(completed.publicId);
     expect(item.name).toBe(completed.name);
     expect(item.numPages).toBe(3); // live count (3) wins over the numPages column (99)
     expect(item.status).toBe("completed");
-    expect(item.thumbnailUrl).toBe(getS3Url(completed.dataUrl, "thumbnail.png"));
+    expect(item.thumbnailUrl).toBe(
+      `/api/project-assets/${completed.publicId}/thumbnail.png`,
+    );
   });
 
   it("200 numPages fallback (no pages → numPages column) and thumbnailUrl null when not completed", async () => {
-    const { project: pending } = await makeDemoProject({ status: "processing", numPages: 7 });
+    const { project: pending } = await makeDemoProject({
+      status: "processing",
+      numPages: 7,
+    });
     // no pages seeded → pageCounts[id] = 0 (falsy) → falls back to the numPages column (7)
     signedOut();
     const { body } = await readJson(await runList());
@@ -102,7 +124,10 @@ describe.skipIf(!dbUp)("GET /api/demo/projects (demo gallery list)", () => {
 
   it("200 numPages terminal `|| 0` fallback: no pages AND numPages column 0 → 0", async () => {
     // DETECTOR completeness (F6): exercise the final `|| 0` — pageCounts[id]=0 (falsy) AND p.numPages=0 (falsy).
-    const { project: zero } = await makeDemoProject({ status: "processing", numPages: 0 });
+    const { project: zero } = await makeDemoProject({
+      status: "processing",
+      numPages: 0,
+    });
     signedOut();
     const { body } = await readJson(await runList());
     const item = only(body, [zero.publicId])[0];
@@ -121,11 +146,17 @@ describe.skipIf(!dbUp)("GET /api/demo/projects (demo gallery list)", () => {
   });
 
   it("oldest-first ordering (.orderBy(createdAt)) — relative order among own projects", async () => {
-    const older = (await makeDemoProject({ createdAt: new Date("2020-01-01T00:00:00Z") })).project;
-    const newer = (await makeDemoProject({ createdAt: new Date("2020-06-01T00:00:00Z") })).project;
+    const older = (
+      await makeDemoProject({ createdAt: new Date("2020-01-01T00:00:00Z") })
+    ).project;
+    const newer = (
+      await makeDemoProject({ createdAt: new Date("2020-06-01T00:00:00Z") })
+    ).project;
     signedOut();
     const { body } = await readJson(await runList());
-    const mineIds = only(body, [older.publicId, newer.publicId]).map((p) => p.id);
+    const mineIds = only(body, [older.publicId, newer.publicId]).map(
+      (p) => p.id,
+    );
     expect(mineIds).toEqual([older.publicId, newer.publicId]); // older precedes newer (ascending createdAt)
   });
 
@@ -149,7 +180,10 @@ describe.skipIf(!dbUp)("GET /api/demo/projects (demo gallery list)", () => {
     });
     const res = await readJson(await runList());
     expect(res.status).toBe(500);
-    expect(res.body.error).toEqual({ code: "INTERNAL", message: "Internal server error" });
+    expect(res.body.error).toEqual({
+      code: "INTERNAL",
+      message: "Internal server error",
+    });
     expect(JSON.stringify(res.body)).not.toContain("SECRET_LEAK_xyz"); // underlying cause never leaks
     spy.mockRestore();
   });
@@ -165,7 +199,10 @@ describe.skipIf(!dbUp)("GET /api/demo/projects (demo gallery list)", () => {
     });
     const res = await readJson(await runList());
     expect(res.status).toBe(500);
-    expect(res.body.error).toEqual({ code: "INTERNAL", message: "Internal server error" });
+    expect(res.body.error).toEqual({
+      code: "INTERNAL",
+      message: "Internal server error",
+    });
     expect(JSON.stringify(res.body)).not.toContain("SECRET_LEAK_abc");
     spy.mockRestore();
   });

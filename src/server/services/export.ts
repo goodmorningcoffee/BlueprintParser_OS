@@ -9,9 +9,8 @@
 // BYTE-IDENTICAL to legacy; only error paths carry the sanctioned envelope flips.
 //
 // Two shapes:
-//   • exportProject = ACCESS-FIRST via resolveProjectOrThrow({allowDemo:true}) — demo projects
-//     export WITHOUT auth (frozen); unknown → 404 BEFORE auth (engine order); root bypass.
-//     Shell auth:"none" + service-resolved (the searchProjectPages recipe).
+//   • exportProject = AUTH-FIRST in the route shell, then resolveProjectOrThrow without a public
+//     demo carveout. Same-company users and root retain the full external-tooling contract.
 //   • exportIndex = AUTH-FIRST requireAuth → shell auth:"session". Scope: root admin → ALL
 //     projects (every company — frozen); member → own company only.
 //
@@ -67,9 +66,9 @@ export async function exportProject(req: Request, idParam: string) {
     throw new ApiError("VALIDATION", "Invalid project id");
   }
 
-  // ACCESS-FIRST, allowDemo (demo projects export signed-out; unknown → 404 before auth; root
-  // bypass) — the same engine legacy called via resolveProjectAccess.
-  const { project } = await resolveProjectOrThrow({ publicId: parsed.data }, { allowDemo: true });
+  // The shell has already authenticated. This second-stage resolution enforces company tenancy
+  // (with the established root bypass) and deliberately has no anonymous demo carveout.
+  const { project } = await resolveProjectOrThrow({ publicId: parsed.data });
 
   const omit = new Set(
     (url.searchParams.get("omit") ?? "")

@@ -47,6 +47,7 @@ import {
   projects,
   pages,
   processingJobs,
+  projectAssetDeletions,
   companies,
   chatMessages,
   takeoffItems,
@@ -54,16 +55,33 @@ import {
 } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { processProject } from "@/lib/processing";
-import { getS3Url, headS3Object } from "@/lib/s3";
+import { headS3Object } from "@/lib/s3";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 import { checkUploadQuota } from "@/lib/quotas";
 import { deleteProjectFully } from "@/lib/project-delete";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { ApiError, notFound } from "@/server/api/envelope";
+import {
+  isCanonicalProjectPath,
+  projectUploadStagingKey,
+} from "@/lib/project-upload-authority";
+import {
+  assertProjectWritable,
+  type ProjectWriteCapability,
+} from "@/server/api/access";
+import {
+  withProjectMutationLease,
+  lockProjectStorageRoot,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
 import { zPublicId } from "@/server/api/schemas";
-import type { AuthSession } from "@/lib/api-utils";
+import type { AuthSession, ProjectAccessRow } from "@/lib/api-utils";
 import type { StagingFile } from "@/types";
+import {
+  projectAssetBaseUrl,
+  projectAssetUrl,
+} from "@/server/services/project-assets";
 
 // Verbatim from legacy projects/route.ts:13-14.
 const PROJECT_AGGREGATE_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
@@ -77,7 +95,10 @@ const PROJECT_MAX_FILES = 30;
  * gets 404 (no existence leak, never 403). Signed-out callers never reach here — the shell's auth:"session"
  * 401s first. Returns the full row or throws notFound().
  */
-async function loadProjectWithRootBypass(idParam: string, session: AuthSession) {
+async function loadProjectWithRootBypass(
+  idParam: string,
+  session: AuthSession,
+) {
   const parsed = zPublicId.safeParse(idParam);
   if (!parsed.success) throw new ApiError("VALIDATION", "Invalid project id");
 
@@ -87,7 +108,10 @@ async function loadProjectWithRootBypass(idParam: string, session: AuthSession) 
     .where(
       session.user.isRootAdmin
         ? eq(projects.publicId, parsed.data)
-        : and(eq(projects.publicId, parsed.data), eq(projects.companyId, session.user.companyId)),
+        : and(
+            eq(projects.publicId, parsed.data),
+            eq(projects.companyId, session.user.companyId),
+          ),
     )
     .limit(1);
 
@@ -105,14 +129,26 @@ async function loadProjectWithRootBypass(idParam: string, session: AuthSession) 
  * and the full `projectIntelligence` exposed as separate `|| null` keys; `dbId` (numeric) exposed alongside
  * `id` (publicId); Cache-Control private max-age=60.
  */
-export async function getProject(idParam: string, session: AuthSession): Promise<Response> {
+export async function getProject(
+  idParam: string,
+  session: AuthSession,
+): Promise<Response> {
   const project = await loadProjectWithRootBypass(idParam, session);
 
   // Fetch page list, takeoff items, takeoff groups, and chat history in parallel (all independent, need
   // only project.id). The takeoff `.catch(()=>[])` swallowers are FROZEN legacy behavior.
-  const [projectPages, projectTakeoffItems, projectTakeoffGroups, projectChats] = await Promise.all([
+  const [
+    projectPages,
+    projectTakeoffItems,
+    projectTakeoffGroups,
+    projectChats,
+  ] = await Promise.all([
     db
-      .select({ pageNumber: pages.pageNumber, name: pages.name, drawingNumber: pages.drawingNumber })
+      .select({
+        pageNumber: pages.pageNumber,
+        name: pages.name,
+        drawingNumber: pages.drawingNumber,
+      })
       .from(pages)
       .where(eq(pages.projectId, project.id))
       .orderBy(pages.pageNumber),
@@ -135,8 +171,8 @@ export async function getProject(idParam: string, session: AuthSession): Promise
       .orderBy(chatMessages.createdAt),
   ]);
 
-  // Build PDF URL server-side (has access to CLOUDFRONT_DOMAIN / S3_BUCKET env vars)
-  const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
+  const assetBaseUrl = projectAssetBaseUrl(project.publicId);
+  const pdfUrl = projectAssetUrl(project.publicId, "original.pdf");
 
   // Extract summaries + graph from projectIntelligence (computed during processing)
   const pi = project.projectIntelligence as Record<string, unknown> | null;
@@ -147,7 +183,7 @@ export async function getProject(idParam: string, session: AuthSession): Promise
     id: project.publicId,
     dbId: project.id,
     name: project.name,
-    dataUrl: project.dataUrl,
+    assetBaseUrl,
     pdfUrl,
     numPages: project.numPages,
     status: project.status,
@@ -184,7 +220,7 @@ export async function getProject(idParam: string, session: AuthSession): Promise
       model: c.model,
     })),
   });
-  response.headers.set("Cache-Control", "private, max-age=60");
+  response.headers.set("Cache-Control", "private, no-store");
   return response;
 }
 
@@ -237,12 +273,17 @@ export async function getDemoProject(idParam: string): Promise<Response> {
 
   // Lightweight page list (detail data comes via /pages?from=N&to=M). ORDER BY pageNumber.
   const projectPages = await db
-    .select({ pageNumber: pages.pageNumber, name: pages.name, drawingNumber: pages.drawingNumber })
+    .select({
+      pageNumber: pages.pageNumber,
+      name: pages.name,
+      drawingNumber: pages.drawingNumber,
+    })
     .from(pages)
     .where(eq(pages.projectId, project.id))
     .orderBy(pages.pageNumber);
 
-  const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
+  const assetBaseUrl = projectAssetBaseUrl(project.publicId);
+  const pdfUrl = projectAssetUrl(project.publicId, "original.pdf");
 
   const pi = project.projectIntelligence as Record<string, unknown> | null;
   const summaries = (pi?.summaries as Record<string, unknown>) || null;
@@ -256,14 +297,17 @@ export async function getDemoProject(idParam: string): Promise<Response> {
       .from(companies)
       .where(eq(companies.id, project.companyId))
       .limit(1);
-    demoConfig = (company?.pipelineConfig?.demo as Record<string, boolean>) || {};
-  } catch { /* ignore */ }
+    demoConfig =
+      (company?.pipelineConfig?.demo as Record<string, boolean>) || {};
+  } catch {
+    /* ignore */
+  }
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     id: project.publicId,
     dbId: project.id,
     name: project.name,
-    dataUrl: project.dataUrl,
+    assetBaseUrl,
     pdfUrl,
     numPages: project.numPages,
     status: project.status,
@@ -276,6 +320,8 @@ export async function getDemoProject(idParam: string): Promise<Response> {
       drawingNumber: p.drawingNumber,
     })),
   });
+  response.headers.set("Cache-Control", "public, no-store");
+  return response;
 }
 
 // ── GET /api/demo/projects ─────────────────────────────────────────────────────────
@@ -309,17 +355,21 @@ export async function listDemoProjects() {
     const result = await db.execute(sql`
       SELECT COUNT(*)::int as cnt FROM pages WHERE project_id = ${proj.id}
     `);
-    pageCounts[proj.id] = (result.rows[0] as { cnt?: number } | undefined)?.cnt || 0;
+    pageCounts[proj.id] =
+      (result.rows[0] as { cnt?: number } | undefined)?.cnt || 0;
   }
 
-  return demoProjects.map((p) => ({
+  const payload = demoProjects.map((p) => ({
     id: p.publicId,
     name: p.name,
     numPages: pageCounts[p.id] || p.numPages || 0,
     status: p.status,
     thumbnailUrl:
-      p.status === "completed" ? getS3Url(p.dataUrl, "thumbnail.png") : null,
+      p.status === "completed" ? projectAssetUrl(p.publicId, "thumbnail.png") : null,
   }));
+  const response = NextResponse.json(payload);
+  response.headers.set("Cache-Control", "public, no-store");
+  return response;
 }
 
 // ── PUT /api/projects/[id] ─────────────────────────────────────────────────────────
@@ -334,16 +384,15 @@ export async function listDemoProjects() {
 export async function updateProject(
   idParam: string,
   body: Record<string, unknown>,
-  session: AuthSession,
+  session: AuthSession | null,
+  accessProject: ProjectAccessRow,
 ): Promise<{ success: true }> {
+  // The route resolves with allowDemo:true so every caller role reaches this single policy gate.
+  // Private projects cannot reach the handler without a scoped session.
+  const writeCapability = assertProjectWritable(accessProject);
+  if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
   const project = await loadProjectWithRootBypass(idParam, session);
 
-  // [refactor jul11 P2.2⑨] Client demo gating is UX, not an authorization boundary. Block only
-  // the yolo artifact write here so ordinary admin metadata policy is unchanged, and apply the
-  // gate even to the owning company/root: public demo content is read-only by owner policy.
-  if (body.yoloTags !== undefined && project.isDemo) {
-    throw new ApiError("FORBIDDEN", "Demo projects are read-only");
-  }
   if (body.yoloTags !== undefined && !Array.isArray(body.yoloTags)) {
     throw new ApiError("VALIDATION", "yoloTags must be an array");
   }
@@ -354,16 +403,20 @@ export async function updateProject(
 
   // Merge into projectIntelligence (preserving existing data)
   if (body.classCsiOverrides !== undefined || body.yoloTags !== undefined) {
-    const existingPi = (project.projectIntelligence as Record<string, unknown>) || {};
+    const existingPi =
+      (project.projectIntelligence as Record<string, unknown>) || {};
     const merged = { ...existingPi };
-    if (body.classCsiOverrides !== undefined) merged.classCsiOverrides = body.classCsiOverrides;
+    if (body.classCsiOverrides !== undefined)
+      merged.classCsiOverrides = body.classCsiOverrides;
     if (body.yoloTags !== undefined) merged.yoloTags = body.yoloTags;
     updates.projectIntelligence = merged;
   }
 
   updates.updatedAt = new Date();
 
-  await db.update(projects).set(updates).where(eq(projects.id, project.id));
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx.update(projects).set(updates).where(eq(projects.id, project.id));
+  });
 
   return { success: true };
 }
@@ -377,15 +430,24 @@ export async function updateProject(
  * publicId STRING, not the numeric id). The legacy `catch{ apiError(err.message,500) }` leak block is
  * DROPPED (sanctioned diff c) — a throw from deleteProjectFully propagates to the shell's leak-free 500.
  */
-export async function deleteProject(idParam: string, session: AuthSession): Promise<{ success: true }> {
+export async function deleteProject(
+  idParam: string,
+  session: AuthSession | null,
+  accessProject: ProjectAccessRow,
+): Promise<{ success: true }> {
+  const writeCapability = assertProjectWritable(accessProject);
+  if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
   const project = await loadProjectWithRootBypass(idParam, session);
 
-  await deleteProjectFully({
-    id: project.id,
-    dataUrl: project.dataUrl,
-    jobId: project.jobId,
-    name: project.name,
-  });
+  await deleteProjectFully(
+    {
+      id: project.id,
+      dataUrl: project.dataUrl,
+      jobId: project.jobId,
+      name: project.name,
+    },
+    writeCapability,
+  );
 
   audit("project_deleted", {
     userId: session.user.dbId,
@@ -403,12 +465,13 @@ export async function deleteProject(idParam: string, session: AuthSession): Prom
  * upload quota, insert the row, then trigger processing (SFN in prod / processProject fire-and-forget in
  * dev). Order is auth-FIRST (the shell 401s before this handler runs), then field validation. Frozen quirks:
  *   • checkUploadQuota called with 2 args (companyId, role) — root admins ARE quota-limited (NO isRootAdmin).
- *   • stagingFiles === undefined skips the ENTIRE staging block (legacy single-PDF path).
+ *   • stagingFiles must be the exact isolated keys issued for this project path; the legacy
+ *     staging-less/direct-final path is disabled because its reusable signer crossed publication.
  *   • the "Staged file missing" error interpolates the human `filename`, not the stagingKey.
  *   • the aggregate-cap message computes MB as bytes/(1024*1024) = 2048 → "Project exceeds 2048 MB cap"; 413.
  *   • the dataUrl-prefix message is verbatim (em-dash + the trailing-slash predicate are load-bearing — this
  *     is the cross-tenant-deletion guard).
- *   • `...(stagingManifest && { stagingManifest })` conditional spread (column null when staging-less).
+ *   • the verified staging manifest is persisted before processing begins.
  *   • the SFN try/catch ABSORBS failures (sets the DB row to status:"error", logs, does NOT re-throw → still
  *     200); it is NOT a leak block and survives verbatim.
  *   • response `id` = publicId (uuid string, not numeric); `status` = the in-memory `.returning()` row value
@@ -428,11 +491,10 @@ export async function createProject(
     throw new ApiError("VALIDATION", "Name and dataUrl required");
   }
 
-  // SECURITY: validate that `dataUrl` is inside the caller's own company prefix. Before this check, an
-  // authenticated user could POST any S3 key (including other tenants' prefixes), later DELETE the project,
-  // and wipe the victim's files via `deleteProjectFiles(project.dataUrl)`. generateProjectPath() format is
-  // `${company.dataKey}/${randomHex}`, so we enforce that pattern here. companyId comes from the SESSION,
-  // never the body.
+  // SECURITY: accept only the canonical, non-nesting project root format minted by
+  // generateProjectPath(). A mere company-prefix check lets a private project alias
+  // `${publishedDemo.dataUrl}/pages` and later erase that public demo subtree on delete.
+  // companyId comes from the SESSION, never the body.
   const [callerCompany] = await db
     .select({ dataKey: companies.dataKey })
     .from(companies)
@@ -441,7 +503,10 @@ export async function createProject(
   if (!callerCompany) {
     throw new ApiError("NOT_FOUND", "Company not found");
   }
-  if (typeof dataUrl !== "string" || !dataUrl.startsWith(`${callerCompany.dataKey}/`)) {
+  if (
+    typeof dataUrl !== "string" ||
+    !isCanonicalProjectPath(callerCompany.dataKey, dataUrl)
+  ) {
     throw new ApiError(
       "VALIDATION",
       "Invalid dataUrl — must be inside your company prefix (use /api/s3/staging-credentials to obtain one)",
@@ -449,123 +514,231 @@ export async function createProject(
   }
 
   // Check upload quota (2-arg call — isRootAdmin defaults false, so root admins are NOT exempt; frozen).
-  const quota = await checkUploadQuota(session.user.companyId, session.user.role);
+  const quota = await checkUploadQuota(
+    session.user.companyId,
+    session.user.role,
+  );
   if (!quota.allowed) {
-    throw new ApiError("RATE_LIMITED", quota.message ?? "Daily upload limit reached");
+    throw new ApiError(
+      "RATE_LIMITED",
+      quota.message ?? "Daily upload limit reached",
+    );
   }
 
-  // Validate the multi-file staging manifest if provided. Legacy single-PDF uploads (staging-less) pass
-  // stagingFiles=undefined and skip this block — `processing.ts` then expects `original.pdf` at dataUrl.
-  let stagingManifest: StagingFile[] | undefined;
-  if (stagingFiles !== undefined) {
-    if (!Array.isArray(stagingFiles) || stagingFiles.length === 0) {
-      throw new ApiError("VALIDATION", "stagingFiles must be a non-empty array");
-    }
-    if (stagingFiles.length > PROJECT_MAX_FILES) {
-      throw new ApiError("VALIDATION", `Maximum ${PROJECT_MAX_FILES} files per project`);
-    }
-    const stagingPrefix = `${dataUrl}/staging/`;
-    for (const sf of stagingFiles as Array<{ filename?: unknown; stagingKey?: unknown }>) {
-      if (
-        !sf ||
-        typeof sf.filename !== "string" ||
-        typeof sf.stagingKey !== "string" ||
-        !sf.stagingKey.startsWith(stagingPrefix)
-      ) {
-        throw new ApiError("VALIDATION", "Each stagingFile needs filename + stagingKey under dataUrl/staging/");
-      }
-    }
-
-    // Confirm every staged upload landed + collect sizes. Parallel HeadObject keeps the common case fast
-    // (~one AWS RTT per file, overlapped).
-    const heads = await Promise.all(
-      (stagingFiles as Array<{ filename: string; stagingKey: string }>).map(async (sf) => {
-        const head = await headS3Object(sf.stagingKey);
-        return { ...sf, head };
-      }),
+  // Direct-final upload credentials are disabled. Requiring the exact isolated staging manifest
+  // also prevents a credential minted before that change from creating a new mutable-final project.
+  if (!Array.isArray(stagingFiles) || stagingFiles.length === 0) {
+    throw new ApiError("VALIDATION", "stagingFiles must be a non-empty array");
+  }
+  if (stagingFiles.length > PROJECT_MAX_FILES) {
+    throw new ApiError(
+      "VALIDATION",
+      `Maximum ${PROJECT_MAX_FILES} files per project`,
     );
-    for (const h of heads) {
-      if (!h.head.exists) {
-        throw new ApiError("VALIDATION", `Staged file missing in S3: ${h.filename}`);
-      }
-    }
-
-    const totalBytes = heads.reduce((sum, h) => sum + (h.head.size ?? 0), 0);
-    if (totalBytes > PROJECT_AGGREGATE_MAX_BYTES) {
+  }
+  for (const [index, sf] of (
+    stagingFiles as Array<{
+      filename?: unknown;
+      stagingKey?: unknown;
+    }>
+  ).entries()) {
+    if (
+      !sf ||
+      typeof sf.filename !== "string" ||
+      sf.filename.length === 0 ||
+      sf.filename.length > 255 ||
+      typeof sf.stagingKey !== "string" ||
+      sf.stagingKey !== projectUploadStagingKey(dataUrl, sf.filename, index)
+    ) {
       throw new ApiError(
         "VALIDATION",
-        `Project exceeds ${PROJECT_AGGREGATE_MAX_BYTES / (1024 * 1024)} MB cap (got ${Math.round(
-          totalBytes / (1024 * 1024),
-        )} MB)`,
-        413,
+        "Each stagingFile needs its exact issued stagingKey",
       );
     }
-
-    stagingManifest = heads.map((h) => ({
-      filename: h.filename,
-      stagingKey: h.stagingKey,
-      size: h.head.size ?? 0,
-    }));
   }
 
-  const [project] = await db
-    .insert(projects)
-    .values({
-      name: name as string,
-      dataUrl,
-      status: "uploading",
-      authorId: session.user.dbId,
-      companyId: session.user.companyId,
-      ...(stagingManifest && { stagingManifest }),
-    })
-    .returning();
+  // Confirm every staged upload landed + collect sizes. Parallel HeadObject keeps the common case fast
+  // (~one AWS RTT per file, overlapped).
+  const heads = await Promise.all(
+    (stagingFiles as Array<{ filename: string; stagingKey: string }>).map(
+      async (sf) => {
+        const head = await headS3Object(sf.stagingKey);
+        return { ...sf, head };
+      },
+    ),
+  );
+  for (const h of heads) {
+    if (!h.head.exists) {
+      throw new ApiError(
+        "VALIDATION",
+        `Staged file missing in S3: ${h.filename}`,
+      );
+    }
+    if (!h.head.versionId || h.head.versionId === "null") {
+      throw new ApiError(
+        "CONFLICT",
+        `Staged file is not version-pinned: ${h.filename}`,
+      );
+    }
+  }
+
+  const totalBytes = heads.reduce((sum, h) => sum + (h.head.size ?? 0), 0);
+  if (totalBytes > PROJECT_AGGREGATE_MAX_BYTES) {
+    throw new ApiError(
+      "VALIDATION",
+      `Project exceeds ${PROJECT_AGGREGATE_MAX_BYTES / (1024 * 1024)} MB cap (got ${Math.round(
+        totalBytes / (1024 * 1024),
+      )} MB)`,
+      413,
+    );
+  }
+
+  const stagingManifest: StagingFile[] = heads.map((h) => ({
+    filename: h.filename,
+    stagingKey: h.stagingKey,
+    size: h.head.size ?? 0,
+    versionId: h.head.versionId!,
+  }));
+
+  const project = await db.transaction(async (tx) => {
+    // Serialize root creation against deletion before consulting the permanent tombstone. Without
+    // this lock, an INSERT could snapshot "no tombstone", wait on the projects.data_url unique row
+    // that a concurrent delete removes, and then reuse a retired public asset path.
+    await lockProjectStorageRoot(tx, dataUrl);
+    const [retiredRoot] = await tx
+      .select({ id: projectAssetDeletions.id })
+      .from(projectAssetDeletions)
+      .where(eq(projectAssetDeletions.storageRoot, dataUrl))
+      .limit(1);
+    if (retiredRoot) {
+      throw new ApiError("CONFLICT", "Project storage root has been retired");
+    }
+
+    const [inserted] = await tx
+      .insert(projects)
+      .values({
+        name: name as string,
+        dataUrl,
+        status: "uploading",
+        authorId: session.user.dbId,
+        companyId: session.user.companyId,
+        stagingManifest,
+      })
+      .returning();
+    if (!inserted) throw new Error("Failed to create project");
+    return inserted;
+  });
+
+  // INSERT defaults isDemo=false; mint the same capability required by every internal
+  // project-processing mutation sink before handing work to either execution mode.
+  const writeCapability: ProjectWriteCapability =
+    assertProjectWritable(project);
 
   // Trigger processing pipeline. The SFN try/catch ABSORBS failures (still returns 200); it is NOT a leak
   // block and is reproduced verbatim from the legacy route.
   if (process.env.STEP_FUNCTION_ARN) {
     // Production: start Step Functions execution (ECS task processes in background)
     try {
-      const sfnClient = new SFNClient({ region: process.env.AWS_REGION || "us-east-1" });
       const executionName = `proj-${project.id}-${Date.now()}`;
+      const expectedExecutionArn = `${process.env.STEP_FUNCTION_ARN.replace(":stateMachine:", ":execution:")}:${executionName}`;
+      await withProjectMutationLease(
+        writeCapability,
+        { kind: "processing-start", idempotencyKey: executionName },
+        async () => {
+          // Persist a provider-addressable running intent before StartExecution. An SDK timeout can
+          // follow AWS acceptance; in that ambiguous state the row must remain a publication/delete
+          // blocker until the worker webhook or provider-aware reconciliation confirms terminal.
+          const pendingJobId = await withProjectWrite(
+            writeCapability,
+            project.id,
+            async (tx) => {
+              const [job] = await tx
+                .insert(processingJobs)
+                .values({
+                  projectId: project.id,
+                  stepFunctionArn: process.env.STEP_FUNCTION_ARN,
+                  executionId: expectedExecutionArn,
+                  status: "running",
+                })
+                .returning({ id: processingJobs.id });
+              if (!job)
+                throw new Error("Failed to create processing job intent");
+              await tx
+                .update(projects)
+                .set({ status: "processing", jobId: executionName })
+                .where(eq(projects.id, project.id));
+              return job.id;
+            },
+          );
 
-      const sfnResponse = await sfnClient.send(
-        new StartExecutionCommand({
-          stateMachineArn: process.env.STEP_FUNCTION_ARN,
-          name: executionName,
-          input: JSON.stringify({
-            projectId: project.id,
-            dataUrl: project.dataUrl,
-            s3Bucket: process.env.S3_BUCKET,
-            webhookUrl: `${process.env.NEXTAUTH_URL}/api/processing/webhook`,
-            webhookSecret: process.env.PROCESSING_WEBHOOK_SECRET,
-          }),
-        }),
+          const sfnClient = new SFNClient({
+            region: process.env.AWS_REGION || "us-east-1",
+          });
+          let sfnResponse: { executionArn?: string };
+          try {
+            sfnResponse = await sfnClient.send(
+              new StartExecutionCommand({
+                stateMachineArn: process.env.STEP_FUNCTION_ARN,
+                name: executionName,
+                input: JSON.stringify({
+                  projectId: project.id,
+                  dataUrl: project.dataUrl,
+                  s3Bucket: process.env.S3_BUCKET,
+                  webhookUrl: `${process.env.NEXTAUTH_URL}/api/processing/webhook`,
+                  webhookSecret: process.env.PROCESSING_WEBHOOK_SECRET,
+                }),
+              }),
+            );
+          } catch (error) {
+            await withProjectWrite(writeCapability, project.id, async (tx) => {
+              await tx
+                .update(processingJobs)
+                .set({ error: "Step Functions start outcome unknown" })
+                .where(eq(processingJobs.id, pendingJobId));
+            }).catch((intentError) => {
+              logger.error(
+                "Processing job intent uncertainty update failed:",
+                intentError,
+              );
+            });
+            throw error;
+          }
+
+          // The deterministic ARN is already durable; retain the provider response if it differs.
+          if (
+            sfnResponse.executionArn &&
+            sfnResponse.executionArn !== expectedExecutionArn
+          ) {
+            await withProjectWrite(writeCapability, project.id, async (tx) => {
+              await tx
+                .update(processingJobs)
+                .set({ executionId: sfnResponse.executionArn })
+                .where(eq(processingJobs.id, pendingJobId));
+            });
+          }
+        },
       );
-
-      await db.insert(processingJobs).values({
-        projectId: project.id,
-        stepFunctionArn: process.env.STEP_FUNCTION_ARN,
-        executionId: sfnResponse.executionArn || null,
-        status: "running",
-      });
-
-      await db
-        .update(projects)
-        .set({ status: "processing", jobId: executionName })
-        .where(eq(projects.id, project.id));
     } catch (err) {
       logger.error("Step Functions start failed:", err);
-      await db
-        .update(projects)
-        .set({
-          status: "error",
-          processingError: err instanceof Error ? err.message : "Failed to start processing",
-        })
-        .where(eq(projects.id, project.id));
+      await withProjectWrite(writeCapability, project.id, async (tx) => {
+        await tx
+          .update(projects)
+          .set({
+            status: "error",
+            processingError:
+              err instanceof Error ? err.message : "Failed to start processing",
+          })
+          .where(eq(projects.id, project.id));
+      });
     }
-  } else if (process.env.NODE_ENV !== "production" || process.env.DEV_PROCESSING_ENABLED === "true") {
+  } else if (
+    process.env.NODE_ENV !== "production" ||
+    process.env.DEV_PROCESSING_ENABLED === "true"
+  ) {
     // Dev mode: call processing logic directly (fire-and-forget)
-    processProject(project.id).catch((err) => logger.error("Processing failed:", err));
+    processProject(project.id, writeCapability).catch((err) =>
+      logger.error("Processing failed:", err),
+    );
   }
 
   // status = the in-memory `.returning()` value ("uploading") even after the SFN branch updates the DB row.
@@ -587,7 +760,11 @@ export async function listProjects(session: AuthSession) {
   const allProjects = await db
     .select()
     .from(projects)
-    .where(session.user.isRootAdmin ? undefined : eq(projects.companyId, session.user.companyId))
+    .where(
+      session.user.isRootAdmin
+        ? undefined
+        : eq(projects.companyId, session.user.companyId),
+    )
     .orderBy(projects.createdAt);
 
   // Get actual page counts in a single query (skipped entirely when there are no projects)
@@ -596,13 +773,16 @@ export async function listProjects(session: AuthSession) {
     const countResult = await db.execute(sql`
       SELECT project_id, COUNT(*)::int AS cnt FROM pages GROUP BY project_id
     `);
-    for (const row of countResult.rows as any[]) pageCounts[row.project_id] = row.cnt;
+    for (const row of countResult.rows as any[])
+      pageCounts[row.project_id] = row.cnt;
   }
 
   // For root admin: fetch company names for grouping
   let companyNames: Record<number, string> = {};
   if (session.user.isRootAdmin) {
-    const allCompanies = await db.select({ id: companies.id, name: companies.name }).from(companies);
+    const allCompanies = await db
+      .select({ id: companies.id, name: companies.name })
+      .from(companies);
     for (const c of allCompanies) companyNames[c.id] = c.name;
   }
 
@@ -612,11 +792,13 @@ export async function listProjects(session: AuthSession) {
     numPages: pageCounts[p.id] || p.numPages || 0,
     status: p.status,
     pagesProcessed: pageCounts[p.id] || null,
-    dataUrl: p.dataUrl,
-    thumbnailUrl: p.status === "completed" ? getS3Url(p.dataUrl, "thumbnail.png") : null,
+    thumbnailUrl:
+      p.status === "completed" ? projectAssetUrl(p.publicId, "thumbnail.png") : null,
     isDemo: p.isDemo,
     createdAt: p.createdAt,
     companyId: session.user.isRootAdmin ? p.companyId : undefined,
-    companyName: session.user.isRootAdmin ? companyNames[p.companyId] : undefined,
+    companyName: session.user.isRootAdmin
+      ? companyNames[p.companyId]
+      : undefined,
   }));
 }

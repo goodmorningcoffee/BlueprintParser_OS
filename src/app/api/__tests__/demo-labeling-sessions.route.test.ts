@@ -8,10 +8,9 @@
 //   • project gate = and(publicId, isDemo=true) → unknown uuid AND non-demo project BOTH return
 //     **[] at 200 — NOT 404** (THE quirk; unlike the demo pages twin which 404s — do not
 //     harmonize either way).
-//   • 200 = BARE ARRAY mapped to EXACTLY 5 fields {id, labelStudioUrl, taskType, pageRange,
-//     taskCount} with taskCount HARDCODED 0 ("Not stored in DB, cosmetic only") — must NEVER
-//     grow the authed 8-field shape (labelStudioProjectId/labels/status/createdAt stay absent:
-//     data-minimization on an UNAUTHENTICATED endpoint).
+//   • 200 = BARE ARRAY. Migration 0037 requires zero legacy sessions and database publication
+//     guards reject every demo transition while a new-protocol session exists, so the only
+//     reachable demo result is now []. This endpoint remains as a compatibility read tombstone.
 //   • non-uuid projectId: legacy had no catch → pg uuid-cast THREW (S003 class). Now a clean 400
 //     "Invalid project id" AFTER the required-400 (sanctioned diff C).
 // Assertions tagged [P1.5 fold] were flipped in the fold commit from the legacy {error:string}
@@ -25,14 +24,14 @@ vi.mock("@/lib/auth", async () => {
 });
 
 import { GET } from "@/app/api/demo/labeling/sessions/route";
-import { db } from "@/lib/db";
-import { labelingSessions } from "@/lib/db/schema";
 import {
   asUser,
   createCompany,
+  createLabelingSessionFixture,
   createUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -47,63 +46,15 @@ const list = (projectId?: string) =>
     ),
   );
 
-async function seedSession(projectId: number, companyId: number, over: Record<string, unknown> = {}) {
-  const [row] = await db
-    .insert(labelingSessions)
-    .values({
-      projectId,
-      companyId,
-      labelStudioProjectId: 70000 + Math.floor(Math.random() * 9999),
-      labelStudioUrl: "http://ls.test/projects/70001",
-      taskType: "generic",
-      pageRange: "1-3",
-      status: "active",
-      ...over,
-    })
-    .returning();
-  return row;
-}
-
-// The exact 5 public wire fields (alphabetical for the sorted key-set assertion).
-const WIRE_FIELDS = ["id", "labelStudioUrl", "pageRange", "taskCount", "taskType"];
-
 describe.skipIf(!dbUp)("GET /api/demo/labeling/sessions", () => {
-  it("happy (signed-out): bare array of EXACTLY the 5 public fields, values pinned, taskCount hardcoded 0", async () => {
-    const { project, company } = await createWorld({ isDemo: true });
-    const s1 = await seedSession(project.id, company.id, {
-      labelStudioUrl: "http://ls.test/projects/71001",
-      pageRange: "1-3",
-    });
-    const s2 = await seedSession(project.id, company.id, {
-      labelStudioUrl: "http://ls.test/projects/71002",
-      taskType: "tiled",
-      pageRange: "4-9",
-    });
+  it("signed-out published demo → 200 [] (new-protocol demos cannot retain sessions)", async () => {
+    const { project } = await createWorld();
+    await publishDemoFixture(project.id);
     signedOut();
 
     const { status, body } = await readJson(await list(project.publicId));
     expect(status).toBe(200);
-    expect(Array.isArray(body)).toBe(true); // BARE array
-    expect(body).toHaveLength(2);
-    for (const row of body) {
-      expect(Object.keys(row).sort()).toEqual(WIRE_FIELDS); // 5-field subset — authed-only fields NEVER leak
-      expect(row.taskCount).toBe(0); // hardcoded cosmetic 0
-    }
-    const byId = Object.fromEntries(body.map((r: { id: number }) => [r.id, r]));
-    expect(byId[s1.id]).toEqual({
-      id: s1.id,
-      labelStudioUrl: "http://ls.test/projects/71001",
-      taskType: "generic",
-      pageRange: "1-3",
-      taskCount: 0,
-    });
-    expect(byId[s2.id]).toEqual({
-      id: s2.id,
-      labelStudioUrl: "http://ls.test/projects/71002",
-      taskType: "tiled",
-      pageRange: "4-9",
-      taskCount: 0,
-    });
+    expect(body).toEqual([]);
   });
 
   it("missing projectId → 400 'projectId required'", async () => {
@@ -121,8 +72,8 @@ describe.skipIf(!dbUp)("GET /api/demo/labeling/sessions", () => {
   });
 
   it("NON-demo project with sessions → 200 [] (isDemo gate; no existence signal, no data)", async () => {
-    const { project, company } = await createWorld(); // isDemo: false
-    await seedSession(project.id, company.id);
+    const { project } = await createWorld(); // isDemo: false
+    await createLabelingSessionFixture(project);
     // even an authed cross-company (or any) caller: same public [] — route never reads a session
     asUser(await createUser((await createCompany()).id, { isRootAdmin: true }));
     const { status, body } = await readJson(await list(project.publicId));

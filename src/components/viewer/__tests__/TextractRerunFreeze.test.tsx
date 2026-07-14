@@ -105,7 +105,7 @@ function lifecycleProjectResponse(demo: boolean): ProjectResponse {
     id: PUBLIC_ID,
     dbId: PROJECT_DB_ID,
     name: demo ? "Demo successor" : "Authenticated project",
-    dataUrl: "s3://private/project.json",
+    assetBaseUrl: "s3://private/project.json",
     pdfUrl: "s3://private/project.pdf",
     numPages: 20,
     status: "ready",

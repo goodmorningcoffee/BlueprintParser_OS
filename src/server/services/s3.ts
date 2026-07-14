@@ -1,6 +1,6 @@
 // [refactor jul6 S033] s3 pair route contracts, folded from the legacy routes (git show
 // HEAD^:src/app/api/s3/*/route.ts at the freeze). PRESIGN ENGINES BYTE-UNTOUCHED
-// (@/lib/s3 createStagingUploadPresignedPost / createUploadPresignedPost /
+// (@/lib/s3 createStagingUploadPresignedPost /
 // generateProjectPath / extensionFromFilename). Char: __tests__/s3-credentials.route.test.ts.
 //   • SQ3-1 staging: validation ladder IN ORDER (non-empty array → MAX 30 → per-file
 //     non-empty string ≤255 → extension allowlist w/ interpolated message);
@@ -8,16 +8,14 @@
 //     submission-order fanout {projectPath, files}. The legacy route's own
 //     req.json-catch emitted the SAME "Invalid JSON body" text the shell uses — the
 //     malformed-body flip is SHAPE-ONLY (A/E hybrid); the route-local try/catch retired.
-//   • SQ3-2 credentials GET: company 404 → presign passthrough. ZERO runtime consumers
-//     (P5 dead-route candidate; middleware's POST rate rule on this path is DEAD — P1
-//     ledger). Diff B class: presign/db throws were raw Next 500s → shell generic.
+//   • SQ3-2 credentials GET had ZERO runtime consumers and wrote directly to final
+//     original.pdf. It is disabled: reusable credentials cannot survive demo publication.
 
 import { db } from "@/lib/db";
 import { companies } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
   createStagingUploadPresignedPost,
-  createUploadPresignedPost,
   generateProjectPath,
   extensionFromFilename,
 } from "@/lib/s3";
@@ -80,18 +78,8 @@ export async function stagingCredentials(rawBody: Record<string, unknown>, sessi
 }
 
 export async function uploadCredentials(session: AuthSession): Promise<unknown> {
-  const [company] = await db
-    .select()
-    .from(companies)
-    .where(eq(companies.id, session.user.companyId))
-    .limit(1);
-
-  if (!company) {
-    throw new ApiError("NOT_FOUND", "Company not found");
-  }
-
-  const projectPath = generateProjectPath(company.dataKey);
-  const presigned = await createUploadPresignedPost(projectPath);
-
-  return presigned;
+  void session;
+  // The supported staging flow signs disposable staging keys. This legacy endpoint signed the
+  // final original.pdf key, so replay within its 15-minute lifetime could mutate a public demo.
+  throw new ApiError("NOT_FOUND", "Legacy direct upload credentials are disabled", 410);
 }

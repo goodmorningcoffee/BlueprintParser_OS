@@ -12,8 +12,9 @@
 
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { computeProjectSummaries } from "@/lib/project-analysis";
+import { assertProjectWritable } from "@/server/api/project-write-capability";
 
 async function main() {
   console.log("[backfill] Starting summary backfill...");
@@ -21,12 +22,17 @@ async function main() {
   const allProjects = await db
     .select({
       id: projects.id,
+      publicId: projects.publicId,
+      companyId: projects.companyId,
+      isDemo: projects.isDemo,
+      lifecycleEpoch: projects.lifecycleEpoch,
       name: projects.name,
       status: projects.status,
+      updatedAt: projects.updatedAt,
       projectIntelligence: projects.projectIntelligence,
     })
     .from(projects)
-    .where(eq(projects.status, "completed"));
+    .where(and(eq(projects.status, "completed"), eq(projects.isDemo, false)));
 
   console.log(`[backfill] Found ${allProjects.length} completed projects`);
 
@@ -43,7 +49,7 @@ async function main() {
     }
 
     try {
-      await computeProjectSummaries(project.id);
+      await computeProjectSummaries(project.id, assertProjectWritable(project));
       updated++;
       console.log(`[backfill] Computed summaries for "${project.name}" (${updated}/${allProjects.length})`);
     } catch (err) {

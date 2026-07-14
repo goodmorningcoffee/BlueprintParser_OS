@@ -51,6 +51,7 @@ import {
   createProject,
   createPage,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -276,6 +277,66 @@ describe.skipIf(!dbUp)("admin/models/reprocess-csi (RC, requireAdmin)", () => {
     expect(data.csiCodes).toEqual(["08 11 00"]); // stamped
     expect(data.keywords).toEqual(["hinged"]);
     expect(data.keep).toBe("me"); // MERGE preserved the sibling key (|| not replace)
+  });
+
+  it("L5 freeze: reprocess-csi excludes foreign grantee projects and demo projects", async () => {
+    const ownerCompany = await createCompany();
+    const admin = await createUser(ownerCompany.id, { role: "admin" });
+    const ownerAuthor = await createUser(ownerCompany.id);
+    const model = await makeModel(ownerCompany.id, {
+      classCsiCodes: { Door: ["08 11 00"] },
+      classKeywords: { Door: ["hinged"] },
+    });
+
+    const ownProject = await createProject(ownerCompany.id, ownerAuthor.id);
+    const demoProject = await createProject(ownerCompany.id, ownerAuthor.id);
+    const granteeCompany = await createCompany();
+    const granteeAuthor = await createUser(granteeCompany.id);
+    const foreignProject = await createProject(granteeCompany.id, granteeAuthor.id);
+    await db.insert(modelAccess).values({
+      modelId: model.id,
+      companyId: granteeCompany.id,
+      userId: null,
+      enabled: true,
+      grantedBy: admin.id,
+    });
+
+    for (const [projectId, privateCanary] of [
+      [ownProject.id, "OWN"],
+      [foreignProject.id, "FOREIGN-GRANTEE"],
+      [demoProject.id, "DEMO"],
+    ] as const) {
+      await db.insert(annotations).values({
+        name: "Door",
+        minX: 0,
+        maxX: 1,
+        minY: 0,
+        maxY: 1,
+        pageNumber: 1,
+        projectId,
+        source: "yolo",
+        data: { modelId: model.id, privateCanary } as never,
+      });
+    }
+    await publishDemoFixture(demoProject.id);
+
+    asUser(admin);
+    const response = await readJson(await rcPOST(rcReq({ modelId: model.id })));
+    const rows = await db
+      .select()
+      .from(annotations)
+      .where(and(eq(annotations.name, "Door"), eq(annotations.source, "yolo")));
+    const byProject = new Map(rows.map((row) => [row.projectId, row.data as Record<string, unknown>]));
+
+    expect.soft(response.status).toBe(200);
+    expect.soft(response.body.annotationsUpdated).toBe(1);
+    expect.soft(response.body.projectsProcessed).toBe(1);
+    expect.soft(byProject.get(ownProject.id)?.csiCodes).toEqual(["08 11 00"]);
+    expect.soft(byProject.get(foreignProject.id)).toEqual({
+      modelId: model.id,
+      privateCanary: "FOREIGN-GRANTEE",
+    });
+    expect.soft(byProject.get(demoProject.id)).toEqual({ modelId: model.id, privateCanary: "DEMO" });
   });
 
   it("RC-6 malformed body: legacy await req.json() throws (500-class)", async () => {

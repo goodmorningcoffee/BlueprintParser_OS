@@ -16,7 +16,7 @@ vi.mock("@/lib/auth", async () => {
 import { DELETE, PUT } from "@/app/api/annotations/[id]/route";
 import { db } from "@/lib/db";
 import { annotations } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import {
   asUser,
   createCompany,
@@ -24,6 +24,7 @@ import {
   createWorld,
   makeReq,
   params,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -100,23 +101,38 @@ describe.skipIf(!dbUp)("PUT/DELETE /api/annotations/[id]", () => {
     expect((row.data as { csiCodes: string[] }).csiCodes).toContain("03 30 00");
   });
 
-  it("demo write gate: signed-out PUT/DELETE on a demo project → 401/404; row survives", async () => {
-    const { project } = await createWorld({ isDemo: true });
-    const ann = await seedAnnotation(project.id);
-    signedOut();
-    // annotation writes NEVER allow demo — a signed-out demo write is denied (no allowDemo path).
-    expect([401, 404]).toContain((await readJson(await put(ann.id, { name: "x" }))).status);
-    expect([401, 404]).toContain((await readJson(await del(ann.id))).status);
-    expect((await db.select().from(annotations).where(eq(annotations.id, ann.id))).length).toBe(1);
-  });
+  it("L5 freeze: demo PUT/DELETE deny signed-out, member, admin, and root with zero row changes", async () => {
+    const { company, project } = await createWorld();
+    const member = await createUser(company.id);
+    const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser((await createCompany()).id, { role: "admin", isRootAdmin: true });
+    const actors = [null, member, admin, root];
+    const ids: number[] = [];
+    const responses: Array<{ status: number; body: any }> = [];
+    const seededPairs = [];
 
-  it("demo carve-out: the owning-company member CAN PUT on their own demo project", async () => {
-    const { user, project } = await createWorld({ isDemo: true });
-    asUser(user);
-    const ann = await seedAnnotation(project.id);
-    // With no allowDemo, a demo project is treated as a normal company-scoped project: its owner
-    // still passes the company-match check. (This is the positive half of the demo-write policy.)
-    expect((await readJson(await put(ann.id, { name: "x" }))).status).toBe(200);
+    for (const [index] of actors.entries()) {
+      const updateRow = await seedAnnotation(project.id, { name: `Old update ${index}` });
+      const deleteRow = await seedAnnotation(project.id, { name: `Old delete ${index}` });
+      ids.push(updateRow.id, deleteRow.id);
+      seededPairs.push({ updateRow, deleteRow });
+    }
+    await publishDemoFixture(project.id);
+
+    for (const [index, actor] of actors.entries()) {
+      const { updateRow, deleteRow } = seededPairs[index];
+      actor ? asUser(actor) : signedOut();
+      responses.push(await readJson(await put(updateRow.id, { name: "MUTATED" })));
+      responses.push(await readJson(await del(deleteRow.id)));
+    }
+
+    expect(responses.map((response) => response.status)).toEqual(Array(8).fill(403));
+    expect(responses.map((response) => response.body.error)).toEqual(
+      Array(8).fill({ code: "FORBIDDEN", message: "Demo projects are read-only" }),
+    );
+    const rows = await db.select().from(annotations).where(inArray(annotations.id, ids));
+    expect(rows).toHaveLength(8);
+    expect(rows.some((row) => row.name === "MUTATED")).toBe(false);
   });
 
   it("PUT: missing → 404; non-numeric id → 500; signed-out on existing → 401; cross-tenant → 404", async () => {

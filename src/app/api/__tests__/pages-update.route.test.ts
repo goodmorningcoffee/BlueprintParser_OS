@@ -18,10 +18,12 @@ import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import {
   asUser,
+  createCompany,
   createPage,
   createUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -144,12 +146,21 @@ describe.skipIf(!dbUp)("POST /api/pages/update", () => {
     expect(body.error.code).toBe("VALIDATION");
   });
 
-  it("NO demo write-gate: a same-company member CAN rename a demo project's page", async () => {
-    const { user, project } = await createWorld({ isDemo: true });
+  it("L5 freeze: demo rename denies signed-out, member, admin, and root with no page change", async () => {
+    const { company, project } = await createWorld();
     await createPage(project.id, 1);
-    asUser(user);
-    const { status, body } = await readJson(await req({ projectId: project.publicId, pageNumber: 1, name: "DemoRenamed" }));
-    expect(status).toBe(200);
-    expect(body).toEqual({ success: true });
+    await publishDemoFixture(project.id);
+    const member = await createUser(company.id);
+    const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser((await createCompany()).id, { role: "admin", isRootAdmin: true });
+    const statuses: number[] = [];
+    for (const actor of [null, member, admin, root]) {
+      actor ? asUser(actor) : signedOut();
+      statuses.push(
+        (await readJson(await req({ projectId: project.publicId, pageNumber: 1, name: "DemoRenamed" }))).status,
+      );
+    }
+    expect(statuses).toEqual([403, 403, 403, 403]);
+    expect(await pageName(project.id, 1)).toBe("Page 1");
   });
 });

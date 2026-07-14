@@ -84,7 +84,7 @@ import { eq } from "drizzle-orm";
 import { ApiError } from "@/server/api/envelope";
 import { resolveProjectOrThrow } from "@/server/api/access";
 import { assertDemoFeatureEnabled } from "@/lib/demo-features";
-import { getS3Url, downloadFromS3 } from "@/lib/s3";
+import { downloadFromS3 } from "@/lib/s3";
 import { rasterizePage } from "@/lib/pdf-rasterize";
 import { readFile, writeFile, rm, mkdtemp } from "fs/promises";
 import { join } from "path";
@@ -165,12 +165,12 @@ export async function symbolSearch(rawBody: Record<string, unknown>): Promise<Re
     }
 
     // ─── Download PDF and rasterize source page for template ──
-    const pdfUrl = getS3Url(project.dataUrl, "original.pdf");
-    const pdfResp = await fetch(pdfUrl);
-    if (!pdfResp.ok) {
+    let pdfBuffer: Buffer;
+    try {
+      pdfBuffer = await downloadFromS3(`${project.dataUrl}/original.pdf`);
+    } catch {
       throw new ApiError("INTERNAL", "Failed to fetch PDF"); // controlled message, surfaces verbatim — see header
     }
-    const pdfBuffer = Buffer.from(await pdfResp.arrayBuffer());
 
     // Rasterize source page at 300 DPI for template extraction (FQ-12)
     const sourcePng = await rasterizePage(pdfBuffer, sourcePageNumber, 300);

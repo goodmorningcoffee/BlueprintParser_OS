@@ -43,7 +43,15 @@ import { GET as daGET } from "@/app/api/demo/admin/route";
 import { db } from "@/lib/db";
 import { appSettings, annotations, companies, models, projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { createCompany, createProject, createUser, makeReq, readJson, signedOut } from "@/test/harness";
+import {
+  createCompany,
+  createProject,
+  createUser,
+  makeReq,
+  publishDemoFixture,
+  readJson,
+  signedOut,
+} from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -146,7 +154,7 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
   it("DA-2 SECURITY SCRUB: isDemo-only projects · minimal model shape · mock-model dedup · demo-only pipelineConfig · hardcoded toggles", async () => {
     const company = await createCompany();
     const author = await createUser(company.id);
-    const demoProj = await createProject(company.id, author.id, { isDemo: true });
+    const demoProj = await createProject(company.id, author.id);
     const privateProj = await createProject(company.id, author.id); // NOT demo → excluded
     // a real model whose name COLLIDES with a mock (dedup pin) + a private-config model
     const [realYolo] = await db.insert(models).values([
@@ -157,6 +165,7 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
       projectId: demoProj.id, name: "d1", minX: 0, minY: 0, maxX: 0.5, maxY: 0.5, pageNumber: 1,
       source: "yolo", data: { modelId: realYolo.id, modelName: "yolo_doors" } as never,
     });
+    await publishDemoFixture(demoProj.id);
     // pipelineConfig with private keys that MUST be scrubbed
     await db.update(companies).set({
       pipelineConfig: { csi: { tier2Weight: 9 }, heuristics: [{ id: "h1" }], demo: { chatEnabled: true } } as never,

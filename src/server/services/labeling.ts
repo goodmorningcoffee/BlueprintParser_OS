@@ -1,10 +1,11 @@
 // [refactor jul3 P1.5] Labeling service — the four /api/labeling routes' behavior.
 //
-// The four labeling route files (sessions [GET list], sessions/[id] [DELETE], credentials [GET],
-// create [POST]) are now thin `defineRoute` shells; ALL behavior lives here. No P0.3 char file
+// The three live labeling route files (sessions [GET list], sessions/[id] [DELETE], create [POST])
+// are thin `defineRoute` shells; ALL live behavior lives here. The former credentials route is a
+// 410 tombstone: a shared provider bootstrap identity must never cross the browser boundary. No P0.3 char file
 // existed — the NEW src/app/api/__tests__/labeling-{sessions,sessions-id,credentials}.route.test.ts
-// written WITH this migration ARE the freeze (create is NOT integration-tested: sharp/S3/Label-
-// Studio deps — its port is review-verified only; flag for the P1 phase review).
+// written WITH this migration ARE the freeze. The create path now also has boundary integration
+// coverage for versioned S3 snapshots, grants, tiling, and Label Studio compensation.
 //
 // Access shapes — three DIFFERENT ones, deliberately NOT unified, and NONE use
 // resolveProjectOrThrow (its engine root-bypasses; swapping it in would silently GRANT root
@@ -14,10 +15,6 @@
 //     cross-company → 404, no existence leak).
 //   • deleteLabelingSession = AUTH-FIRST + DIRECT lookup on the sessions table's DENORMALIZED
 //     companyId column (no project join, no bypass). parseInt(id) verbatim — see FQ-2.
-//   • getLabelingCredentials = shell auth:"none" + the service calls auth() ITSELF: the legacy
-//     gate returns 403 "Admin only" for a SIGNED-OUT caller (NOT 401). defineRoute auth:"admin"
-//     would 401 a null session before the role check — wrong status. First service to import
-//     auth() directly; flagged for P1 phase-review sign-off.
 //   • createLabelingSessions = AUTH-FIRST + ownership lookup WITH the isRootAdmin ternary bypass
 //     (root: publicId-only) — the CONTRAST with list/delete is legacy-faithful, not an oversight.
 //
@@ -51,41 +48,132 @@
 //        tilingEnabled/tileGrid/updatedAt), NO orderBy.
 //   FQ-2 delete uses parseInt (NOT Number): trailing garbage tolerated ("5abc"→5→404), only a
 //        leading non-digit reaches the NaN-500. Swapping to Number() would flip "5abc" 404→500.
-//   FQ-3 delete SWALLOWS a Label Studio deleteProject failure (log only) and still deletes the
-//        DB row + returns {success:true}; no affected-rows check (TOCTOU no-op).
-//   FQ-4 credentials: ONE combined gate — signed-out AND non-admin both get 403 "Admin only";
-//        the OR arm means a role:"member" root admin passes.
+//   FQ-3 security repair: delete retires the Label Studio project before the DB row and propagates
+//        provider failure so publication/project deletion remain blocked and retryable.
 //   FQ-5 create: demo kill-switch bypass predicate is isRootAdmin (create gate) but the rate-limit
 //        bypass predicate is role==="admin" — TWO DIFFERENT predicates; a member-role root admin
 //        bypasses the demo gate but NOT the rate limit. Do NOT unify.
 //   FQ-6 create rate limit counts a ROLLING 24h window (NOW() - INTERVAL '1 day'), not a calendar
 //        day, despite the "/day" message.
-//   FQ-7 create page-selection: "current" → [parseInt(pageRange)] with NO NaN guard; "range" with
-//        no "-" → end=undefined → NaN → empty loop → 200 {success:true,sessions:[]} and ZERO
-//        writes; else → 1..numPages.
+//   FQ-7 was retired by the P2 close review: page selections are now strict finite integers inside
+//        the project range, so malformed requests cannot mint broken page_NaN tasks.
 //   FQ-8 create demo gate returns the assertDemoFeatureEnabled NextResponse VERBATIM (shell
 //        Response-passthrough) — that module still speaks the legacy {error:string} envelope and
 //        owns it until IT migrates.
-//   [LB-1] create builds UNPADDED `page_${n}.png` S3 keys (both the tiling download and the
-//        non-tiling CloudFront URL, plus the tile keys) — the rest of the codebase pads with
-//        String(n).padStart(4,"0") (e.g. services/pages.ts thumbnail path). This is a KNOWN BUG
-//        deliberately PRESERVED by the refactor's zero-behavior-change rule. Do NOT pad.
+//   [LB-1] retired by the P2 close review: sources use canonical padded page keys and imported
+//        tasks receive revocable app URLs backed by unique immutable snapshot objects.
+
+import { randomUUID } from "node:crypto";
 
 import { db } from "@/lib/db";
-import { projects, labelingSessions } from "@/lib/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import {
+  projects,
+  labelingSessions,
+  labelStudioAssetGrants,
+  labelStudioProjectIntents,
+} from "@/lib/db/schema";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { ApiError, notFound } from "@/server/api/envelope";
 import { zPublicId } from "@/server/api/schemas";
 import { auth } from "@/lib/auth";
-import { createProject, deleteProject, importTasks } from "@/lib/label-studio";
-import { getS3Url, downloadFromS3, uploadToS3 } from "@/lib/s3";
-import { assertDemoFeatureEnabled } from "@/lib/demo-features";
+import {
+  configuredLabelStudioProvider,
+  createProject,
+  deleteProject,
+  importTasks,
+  type LabelStudioProviderBinding,
+} from "@/lib/label-studio";
+import {
+  copyS3ObjectVersion,
+  downloadFromS3,
+  uploadS3VersionedSnapshot,
+} from "@/lib/s3";
 import { logger } from "@/lib/logger";
 import type { AuthSession } from "@/lib/api-utils";
+import { assertProjectWritable } from "@/server/api/access";
+import {
+  withProjectMutationLease,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
+import {
+  activateLabelStudioAssetGrants,
+  createLabelStudioGrantSecret,
+  deleteIntentLabelStudioAssetGrants,
+  labelStudioAssetUrl,
+  requireVersionedSource,
+  revokeIntentLabelStudioAssetGrants,
+  revokeSessionLabelStudioAssetGrants,
+  withLabelStudioSnapshotLock,
+  type PreparedLabelStudioGrant,
+} from "@/lib/label-studio-asset-grant";
+import { reconcileLabelStudioSessionRetirement } from "@/lib/label-studio-session-retirement";
 
 const DEFAULT_LABEL_CONFIG = `<View>
   <Image name="image" value="$image" zoomControl="true" rotateControl="true"/>
 </View>`;
+
+const LABEL_STUDIO_REQUEST_LEASE_SECONDS = 2 * 60 * 60;
+const LABEL_STUDIO_INTENT_ERROR_LENGTH = 4_000;
+
+interface LabelingTaskSpec {
+  pageNumber: number;
+  row?: number;
+  col?: number;
+}
+
+interface PreparedLabelingTask {
+  grant: PreparedLabelStudioGrant;
+  meta: Record<string, number>;
+}
+
+function canonicalPageAsset(pageNumber: number): string {
+  return `pages/page_${String(pageNumber).padStart(4, "0")}.png`;
+}
+
+function selectLabelingPages(
+  selection: unknown,
+  rawRange: unknown,
+  numPages: number,
+): number[] {
+  if (selection === "current") {
+    if (typeof rawRange !== "string" || !/^[0-9]+$/.test(rawRange)) {
+      throw new ApiError("VALIDATION", "Invalid page range");
+    }
+    const page = Number(rawRange);
+    if (!Number.isSafeInteger(page) || page < 1 || page > numPages) {
+      throw new ApiError("VALIDATION", "Invalid page range");
+    }
+    return [page];
+  }
+  if (selection === "range") {
+    if (typeof rawRange !== "string") {
+      throw new ApiError("VALIDATION", "Invalid page range");
+    }
+    const match = /^([0-9]+)-([0-9]+)$/.exec(rawRange);
+    if (!match) throw new ApiError("VALIDATION", "Invalid page range");
+    const start = Number(match[1]);
+    const requestedEnd = Number(match[2]);
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(requestedEnd) ||
+      start < 1 ||
+      start > numPages ||
+      requestedEnd < start
+    ) {
+      throw new ApiError("VALIDATION", "Invalid page range");
+    }
+    const end = Math.min(requestedEnd, numPages);
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  }
+  return Array.from({ length: numPages }, (_, index) => index + 1);
+}
+
+function labelStudioIntentError(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(
+    0,
+    LABEL_STUDIO_INTENT_ERROR_LENGTH,
+  );
+}
 
 /** GET /api/labeling/sessions — list a project's labeling sessions (company-scoped, no bypass). */
 export async function listLabelingSessions(
@@ -117,7 +205,12 @@ export async function listLabelingSessions(
   const [project] = await db
     .select()
     .from(projects)
-    .where(and(eq(projects.publicId, parsed.data), eq(projects.companyId, session.user.companyId)))
+    .where(
+      and(
+        eq(projects.publicId, parsed.data),
+        eq(projects.companyId, session.user.companyId),
+      ),
+    )
     .limit(1);
 
   if (!project) {
@@ -157,7 +250,9 @@ export async function listLabelingSessions(
  *  B (leak-drop: legacy had no catch → raw 500, now the shell's generic INTERNAL 500),
  *  C (non-uuid projectId → clean 400 "Invalid project id", was a pg uuid-cast 500, gated AFTER
  *  the required-400). Success bodies byte-identical. */
-export async function listDemoLabelingSessions(projectId: string | null): Promise<
+export async function listDemoLabelingSessions(
+  projectId: string | null,
+): Promise<
   Array<{
     id: number;
     labelStudioUrl: string | null;
@@ -204,10 +299,35 @@ export async function listDemoLabelingSessions(projectId: string | null): Promis
 /** DELETE /api/labeling/sessions/[id] — company-scoped via the DENORMALIZED companyId, no bypass. */
 export async function deleteLabelingSession(
   idParam: string,
-  session: AuthSession,
 ): Promise<{ success: true }> {
   // FQ-2: parseInt verbatim — "5abc"→5 (tolerated), "abc"→NaN → pg int-cast throw → shell 500.
   const sessionId = parseInt(idParam);
+
+  // A public demo target must be denied before auth so every caller role observes the same
+  // immutable-resource policy. Unknown/private IDs retain the legacy auth result below.
+  const [preflightRecord] = await db
+    .select({ projectId: labelingSessions.projectId })
+    .from(labelingSessions)
+    .where(eq(labelingSessions.id, sessionId))
+    .limit(1);
+  if (preflightRecord) {
+    const [target] = await db
+      .select({
+        id: projects.id,
+        publicId: projects.publicId,
+        companyId: projects.companyId,
+        isDemo: projects.isDemo,
+        lifecycleEpoch: projects.lifecycleEpoch,
+        updatedAt: projects.updatedAt,
+      })
+      .from(projects)
+      .where(eq(projects.id, preflightRecord.projectId))
+      .limit(1);
+    if (target?.isDemo) assertProjectWritable(target);
+  }
+
+  const session = (await auth()) as unknown as AuthSession | null;
+  if (!session?.user) throw new ApiError("UNAUTHORIZED", "Unauthorized");
 
   const [record] = await db
     .select()
@@ -224,48 +344,82 @@ export async function deleteLabelingSession(
     throw notFound(); // "Not found"
   }
 
-  // FQ-3: Label Studio failure is swallowed — DB cleanup proceeds regardless.
-  try {
-    await deleteProject(record.labelStudioProjectId);
-  } catch (err) {
-    logger.error("[LABELING] Failed to delete LS project:", err);
-    // Continue with DB cleanup even if LS API fails
-  }
+  const [targetProject] = await db
+    .select({
+      id: projects.id,
+      publicId: projects.publicId,
+      companyId: projects.companyId,
+      isDemo: projects.isDemo,
+      lifecycleEpoch: projects.lifecycleEpoch,
+      updatedAt: projects.updatedAt,
+    })
+    .from(projects)
+    .where(eq(projects.id, record.projectId))
+    .limit(1);
+  if (!targetProject) throw notFound();
+  const writeCapability = assertProjectWritable(targetProject);
 
-  await db.delete(labelingSessions).where(eq(labelingSessions.id, sessionId));
+  // Revoke every imported bearer and durably enqueue retirement before provider I/O. Provider
+  // DELETE is idempotent, so its short reclaimable session lease can be retried safely after a
+  // timeout or worker crash; the session row remains a publication/project-deletion blocker.
+  await withProjectWrite(writeCapability, targetProject.id, async (tx) => {
+    const [retiring] = await tx
+      .update(labelingSessions)
+      .set({
+        status: "retiring",
+        retirementNextAttemptAt: sql`CURRENT_TIMESTAMP`,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(
+        and(
+          eq(labelingSessions.id, sessionId),
+          eq(labelingSessions.projectId, targetProject.id),
+          eq(labelingSessions.companyId, session.user.companyId),
+        ),
+      )
+      .returning({ id: labelingSessions.id });
+    if (!retiring) throw notFound();
+    await revokeSessionLabelStudioAssetGrants(tx, sessionId);
+    const [grantWitness] = await tx
+      .select({ id: labelStudioAssetGrants.id })
+      .from(labelStudioAssetGrants)
+      .where(
+        and(
+          eq(labelStudioAssetGrants.labelingSessionId, sessionId),
+          eq(labelStudioAssetGrants.state, "revoked"),
+        ),
+      )
+      .limit(1);
+    if (!grantWitness) {
+      throw new Error("Label Studio session has no revoked asset grants");
+    }
+  });
+
+  const retirement = await reconcileLabelStudioSessionRetirement(sessionId);
+  if (retirement === "unavailable") {
+    const [remaining] = await db
+      .select({ id: labelingSessions.id })
+      .from(labelingSessions)
+      .where(eq(labelingSessions.id, sessionId))
+      .limit(1);
+    if (remaining) {
+      throw new ApiError(
+        "CONFLICT",
+        "Label Studio session retirement already in progress",
+      );
+    }
+  }
 
   return { success: true };
 }
 
-/** GET /api/labeling/credentials — Label Studio login for admins; env-sourced, never hardcoded. */
-export async function getLabelingCredentials(): Promise<{ email: string; password: string }> {
-  // FQ-4: the service resolves auth ITSELF (shell is auth:"none") to preserve the legacy ONE
-  // combined gate: signed-out → 403 "Admin only" (NOT 401). auth:"admin" would 401 a null session.
-  const session = await auth();
-  if (!session?.user || (session.user.role !== "admin" && !session.user.isRootAdmin)) {
-    throw new ApiError("FORBIDDEN", "Admin only");
-  }
-
-  const email = process.env.LABEL_STUDIO_ADMIN_EMAIL;
-  const password = process.env.LABEL_STUDIO_ADMIN_PASSWORD;
-
-  if (!email || !password) {
-    // VALIDATION + statusOverride 503 (projects.ts VALIDATION+413 precedent): a NON-INTERNAL code
-    // so the shell forwards the message verbatim; INTERNAL would scrub it to the generic text.
-    throw new ApiError("VALIDATION", "Label Studio not configured", 503);
-  }
-
-  return { email, password };
-}
-
 /**
  * POST /api/labeling/create — create Label Studio project(s) from a BP project's page images.
- * HEAVY path (sharp/S3/Label Studio) — NOT integration-tested; port review-verified only.
+ * HEAVY path (sharp/S3/Label Studio), covered with provider/S3 boundary integration fixtures.
  * Returns the demo-gate NextResponse verbatim via the shell's Response passthrough (FQ-8).
  */
 export async function createLabelingSessions(
   body: Record<string, unknown>,
-  session: AuthSession,
 ): Promise<
   | Response
   | {
@@ -279,13 +433,36 @@ export async function createLabelingSessions(
       }>;
     }
 > {
-  const { projectId, pagesPerProject, pageSelection, pageRange, tiling } = body as {
-    projectId?: unknown;
-    pagesPerProject?: unknown;
-    pageSelection?: unknown;
-    pageRange?: unknown;
-    tiling?: unknown;
-  };
+  const { projectId, pagesPerProject, pageSelection, pageRange, tiling } =
+    body as {
+      projectId?: unknown;
+      pagesPerProject?: unknown;
+      pageSelection?: unknown;
+      pageRange?: unknown;
+      tiling?: unknown;
+    };
+
+  // Only valid, existing demo IDs are preflighted here. Missing/invalid/private targets continue
+  // through the historical auth/validation sequence; demos get the canonical all-role 403.
+  const preflightId = zPublicId.safeParse(projectId);
+  if (preflightId.success) {
+    const [target] = await db
+      .select({
+        id: projects.id,
+        publicId: projects.publicId,
+        companyId: projects.companyId,
+        isDemo: projects.isDemo,
+        lifecycleEpoch: projects.lifecycleEpoch,
+        updatedAt: projects.updatedAt,
+      })
+      .from(projects)
+      .where(eq(projects.publicId, preflightId.data))
+      .limit(1);
+    if (target?.isDemo) assertProjectWritable(target);
+  }
+
+  const session = (await auth()) as unknown as AuthSession | null;
+  if (!session?.user) throw new ApiError("UNAUTHORIZED", "Unauthorized");
 
   if (!projectId) {
     throw new ApiError("VALIDATION", "projectId required");
@@ -296,7 +473,10 @@ export async function createLabelingSessions(
     throw new ApiError("VALIDATION", "Invalid project id");
   }
 
-  const safePagesPerProject = Math.max(2, Math.min((pagesPerProject as number) || 10, 50));
+  const safePagesPerProject = Math.max(
+    2,
+    Math.min((pagesPerProject as number) || 10, 50),
+  );
 
   // Verify project ownership — WITH the isRootAdmin bypass (root: publicId-only), the legacy
   // contrast to list/delete's strict company scoping.
@@ -306,7 +486,10 @@ export async function createLabelingSessions(
     .where(
       session.user.isRootAdmin
         ? eq(projects.publicId, parsedId.data)
-        : and(eq(projects.publicId, parsedId.data), eq(projects.companyId, session.user.companyId)),
+        : and(
+            eq(projects.publicId, parsedId.data),
+            eq(projects.companyId, session.user.companyId),
+          ),
     )
     .limit(1);
 
@@ -314,158 +497,603 @@ export async function createLabelingSessions(
     throw notFound("Project not found"); // distinct from list/delete's bare "Not found"
   }
 
-  // Runtime kill-switch — admin can disable labeling on demo projects via the Demo Features
-  // panel. Full admin ownership bypasses intentionally. FQ-8: the gate's NextResponse (legacy
-  // {error:string} envelope, owned by demo-features.ts) is returned VERBATIM via passthrough.
-  if (project.isDemo && !session.user.isRootAdmin) {
-    const gate = await assertDemoFeatureEnabled(project.companyId, "labeling");
-    if (gate) return gate;
-  }
+  const writeCapability = assertProjectWritable(project);
 
-  // Rate limit: max 10 labeling sessions per company per day (admin bypasses).
-  // FQ-5: bypass predicate here is role==="admin" (NOT isRootAdmin — different from the demo
-  // gate above). FQ-6: rolling 24h window despite the "/day" wording.
-  if (session.user.role !== "admin") {
-    const todayCount = await db.execute(
-      sql`SELECT COUNT(*)::int AS cnt FROM labeling_sessions
+  return withProjectMutationLease(
+    writeCapability,
+    { kind: "labeling-session-create", idempotencyKey: String(project.id) },
+    async (mutationLease) => {
+      // Rate limit: max 10 labeling sessions per company per day (admin bypasses).
+      // FQ-5: bypass predicate here is role==="admin" (NOT isRootAdmin — different from the demo
+      // gate above). FQ-6: rolling 24h window despite the "/day" wording.
+      if (session.user.role !== "admin") {
+        const todayCount = await db.execute(
+          sql`SELECT COUNT(*)::int AS cnt FROM labeling_sessions
           WHERE company_id = ${session.user.companyId}
             AND created_at > NOW() - INTERVAL '1 day'`,
-    );
-    if (((todayCount.rows[0] as { cnt?: number })?.cnt ?? 0) >= 10) {
-      throw new ApiError("RATE_LIMITED", "Daily labeling limit reached (10 projects/day)");
-    }
-  }
+        );
+        if (((todayCount.rows[0] as { cnt?: number })?.cnt ?? 0) >= 10) {
+          throw new ApiError(
+            "RATE_LIMITED",
+            "Daily labeling limit reached (10 projects/day)",
+          );
+        }
+      }
 
-  // Check Label Studio env vars are configured (VALIDATION+503, message verbatim — see FQ-4 note).
-  if (!process.env.LABEL_STUDIO_URL || !process.env.LABEL_STUDIO_API_KEY) {
-    throw new ApiError(
-      "VALIDATION",
-      "Label Studio not configured. Set LABEL_STUDIO_URL and LABEL_STUDIO_API_KEY.",
-      503,
-    );
-  }
+      // Capture one immutable provider identity before creating any durable witness. Numeric Label
+      // Studio project IDs are meaningful only inside this exact persistent provider instance.
+      let labelStudioProvider: LabelStudioProviderBinding;
+      try {
+        if (!process.env.LABEL_STUDIO_API_KEY)
+          throw new Error("missing API key");
+        labelStudioProvider = configuredLabelStudioProvider();
+      } catch {
+        throw new ApiError(
+          "VALIDATION",
+          "Label Studio not configured. Set LABEL_STUDIO_URL, LABEL_STUDIO_INSTANCE_ID, and LABEL_STUDIO_API_KEY.",
+          503,
+        );
+      }
 
-  // Determine which pages to include. FQ-7: "current" has no NaN guard; a "range" without "-"
-  // yields an empty loop → 200 with zero sessions.
-  const numPages = project.numPages || 1;
-  let pageNumbers: number[] = [];
-
-  if (pageSelection === "current" && pageRange) {
-    pageNumbers = [parseInt(pageRange as string)];
-  } else if (pageSelection === "range" && pageRange) {
-    const [start, end] = (pageRange as string).split("-").map(Number);
-    for (let i = start; i <= Math.min(end, numPages); i++) pageNumbers.push(i);
-  } else {
-    for (let i = 1; i <= numPages; i++) pageNumbers.push(i);
-  }
-
-  // Build tasks — either direct CloudFront URLs or tiled images
-  let tasks: Array<{ data: { image: string }; meta: Record<string, number> }>;
-
-  if (tiling) {
-    const sharp = (await import("sharp")).default;
-    tasks = [];
-    // Process in batches of 5 for performance
-    const batchSize = 5;
-    for (let b = 0; b < pageNumbers.length; b += batchSize) {
-      const batch = pageNumbers.slice(b, b + batchSize);
-      const batchResults = await Promise.all(
-        batch.map(async (pageNum) => {
-          // [LB-1] UNPADDED page key (bug preserved — see header; the repo convention pads to 4).
-          const key = `${project.dataUrl}/pages/page_${pageNum}.png`;
-          const buffer = await downloadFromS3(key);
-          const metadata = await sharp(buffer).metadata();
-          const tileW = Math.floor((metadata.width || 3000) / 3);
-          const tileH = Math.floor((metadata.height || 2000) / 3);
-          const tileTasks: typeof tasks = [];
-
-          for (let row = 0; row < 3; row++) {
-            for (let col = 0; col < 3; col++) {
-              const tileBuffer = await sharp(buffer)
-                .extract({ left: col * tileW, top: row * tileH, width: tileW, height: tileH })
-                .png()
-                .toBuffer();
-              const tileKey = `${project.dataUrl}/tiles/page_${pageNum}_r${row}_c${col}.png`;
-              await uploadToS3(tileKey, tileBuffer, "image/png");
-              const url = getS3Url(project.dataUrl, `tiles/page_${pageNum}_r${row}_c${col}.png`);
-              tileTasks.push({ data: { image: url }, meta: { pageNumber: pageNum, row, col } });
-            }
-          }
-          return tileTasks;
-        }),
+      // Every task must bind to a real canonical page. The old permissive parseInt flow minted
+      // page_NaN and unpadded keys that Label Studio could never load.
+      const numPages = project.numPages || 1;
+      const pageNumbers = selectLabelingPages(
+        pageSelection,
+        pageRange,
+        numPages,
       );
-      tasks.push(...batchResults.flat());
-    }
-  } else {
-    tasks = pageNumbers.map((pageNum) => ({
-      // [LB-1] UNPADDED page key (bug preserved — see header).
-      data: { image: getS3Url(project.dataUrl, `pages/page_${pageNum}.png`) },
-      meta: { pageNumber: pageNum },
-    }));
-  }
+      const taskSpecs: LabelingTaskSpec[] = tiling
+        ? pageNumbers.flatMap((pageNumber) =>
+            Array.from({ length: 9 }, (_, tile) => ({
+              pageNumber,
+              row: Math.floor(tile / 3),
+              col: tile % 3,
+            })),
+          )
+        : pageNumbers.map((pageNumber) => ({ pageNumber }));
 
-  // Split into chunks based on pagesPerProject
-  const chunks: (typeof tasks)[] = [];
-  for (let i = 0; i < tasks.length; i += safePagesPerProject) {
-    chunks.push(tasks.slice(i, i + safePagesPerProject));
-  }
+      // Preserve the historical chunk size contract (tiling counts each tile as one task).
+      const chunks: LabelingTaskSpec[][] = [];
+      for (let i = 0; i < taskSpecs.length; i += safePagesPerProject) {
+        chunks.push(taskSpecs.slice(i, i + safePagesPerProject));
+      }
 
-  const lsUrl = process.env.LABEL_STUDIO_URL.replace(/\/$/, "");
-  const sessions: Array<{
-    id: number;
-    labelStudioProjectId: number;
-    labelStudioUrl: string;
-    pageRange: string;
-    taskCount: number;
-  }> = [];
+      const lsUrl = labelStudioProvider.baseUrl;
+      const sessions: Array<{
+        id: number;
+        labelStudioProjectId: number;
+        labelStudioUrl: string;
+        pageRange: string;
+        taskCount: number;
+      }> = [];
 
-  // [diff B] legacy wrapped this loop in try/catch returning 500 {error:`Failed to create Label
-  // Studio project: ${err.message}`} — an err.message leak. Now any throw propagates to the
-  // shell's outer catch (server-side log with route+requestId, generic INTERNAL 500).
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    // Determine page range for this chunk
-    const chunkPages = [...new Set(chunk.map((t) => t.meta.pageNumber))].sort((a, b) => a - b);
-    const range =
-      chunkPages.length === 1
-        ? String(chunkPages[0])
-        : `${chunkPages[0]}-${chunkPages[chunkPages.length - 1]}`;
+      // [diff B] legacy wrapped this loop in try/catch returning 500 {error:`Failed to create Label
+      // Studio project: ${err.message}`} — an err.message leak. Now any throw propagates to the
+      // shell's outer catch (server-side log with route+requestId, generic INTERNAL 500).
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        // Determine page range for this chunk
+        const chunkPages = [
+          ...new Set(chunk.map((task) => task.pageNumber)),
+        ].sort((a, b) => a - b);
+        const range =
+          chunkPages.length === 1
+            ? String(chunkPages[0])
+            : `${chunkPages[0]}-${chunkPages[chunkPages.length - 1]}`;
 
-    const title = chunks.length === 1 ? project.name : `${project.name} (pages ${range})`;
+        const title =
+          chunks.length === 1
+            ? project.name
+            : `${project.name} (pages ${range})`;
 
-    // Create LS project with default image-only config
-    const lsProject = await createProject(title, DEFAULT_LABEL_CONFIG);
+        // Snapshot every task to a never-reused current object before provider CREATE. Source
+        // versions and every copy/upload are captured while a parent SHARE lock excludes the two
+        // supported page-image writers. A crash can leave only private orphan bytes; project-prefix
+        // deletion already purges them, and no grant row exists yet.
+        const preparedTasks = await withLabelStudioSnapshotLock(
+          project,
+          async (storageRoot): Promise<PreparedLabelingTask[]> => {
+            const prepared = new Array<PreparedLabelingTask>(chunk.length);
+            const byPage = new Map<
+              number,
+              Array<{ spec: LabelingTaskSpec; index: number }>
+            >();
+            chunk.forEach((spec, index) => {
+              const group = byPage.get(spec.pageNumber) ?? [];
+              group.push({ spec, index });
+              byPage.set(spec.pageNumber, group);
+            });
+            const sharp = tiling ? (await import("sharp")).default : undefined;
 
-    // Import tasks with CloudFront URLs
-    await importTasks(lsProject.id, chunk);
+            await Promise.all(
+              [...byPage.entries()].map(async ([pageNumber, entries]) => {
+                const sourceKey = `${storageRoot}/${canonicalPageAsset(pageNumber)}`;
+                const sourceVersion = await requireVersionedSource(sourceKey);
+                if (!tiling) {
+                  const entry = entries[0];
+                  const grant = createLabelStudioGrantSecret();
+                  const snapshotVersionId = await copyS3ObjectVersion(
+                    sourceKey,
+                    sourceVersion,
+                    `${storageRoot}/${grant.snapshotAsset}`,
+                  );
+                  prepared[entry.index] = {
+                    grant: { ...grant, snapshotVersionId },
+                    meta: { pageNumber },
+                  };
+                  return;
+                }
 
-    const projectUrl = `${lsUrl}/projects/${lsProject.id}`;
+                const buffer = await downloadFromS3(sourceKey, sourceVersion);
+                const metadata = await sharp!(buffer).metadata();
+                const tileW = Math.floor((metadata.width || 3000) / 3);
+                const tileH = Math.floor((metadata.height || 2000) / 3);
+                await Promise.all(
+                  entries.map(async ({ spec, index }) => {
+                    const grant = createLabelStudioGrantSecret();
+                    const tileBuffer = await sharp!(buffer)
+                      .extract({
+                        left: spec.col! * tileW,
+                        top: spec.row! * tileH,
+                        width: tileW,
+                        height: tileH,
+                      })
+                      .png()
+                      .toBuffer();
+                    const snapshotVersionId = await uploadS3VersionedSnapshot(
+                      `${storageRoot}/${grant.snapshotAsset}`,
+                      tileBuffer,
+                    );
+                    prepared[index] = {
+                      grant: { ...grant, snapshotVersionId },
+                      meta: {
+                        pageNumber,
+                        row: spec.row!,
+                        col: spec.col!,
+                      },
+                    };
+                  }),
+                );
+              }),
+            );
+            return prepared;
+          },
+        );
 
-    // Store session record
-    const [record] = await db
-      .insert(labelingSessions)
-      .values({
-        projectId: project.id,
-        companyId: project.companyId,
-        labelStudioProjectId: lsProject.id,
-        labelStudioUrl: projectUrl,
-        taskType: "generic",
-        labels: null,
-        pageRange: range,
-        tilingEnabled: !!tiling,
-        tileGrid: tiling ? 3 : null,
-        status: "active",
-      })
-      .returning();
+        // Commit an application-generated provider identity before POST. A timed-out POST may have
+        // committed remotely, so the marker is retained until exact provider search can disprove an
+        // orphan; automatic recovery never repeats CREATE.
+        const intentId = randomUUID();
+        const marker = `bp-labeling-intent:${intentId}`;
+        const requestLease = mutationLease.token;
+        await withProjectWrite(writeCapability, project.id, async (tx) => {
+          const [inserted] = await tx
+            .insert(labelStudioProjectIntents)
+            .values({
+              id: intentId,
+              projectId: project.id,
+              companyId: project.companyId,
+              lifecycleEpoch: project.lifecycleEpoch,
+              marker,
+              providerBaseUrl: labelStudioProvider.baseUrl,
+              providerInstanceId: labelStudioProvider.instanceId,
+              state: "creating",
+              leaseToken: requestLease,
+              leaseExpiresAt: sql`CURRENT_TIMESTAMP + (${LABEL_STUDIO_REQUEST_LEASE_SECONDS} * INTERVAL '1 second')`,
+              nextAttemptAt: sql`CURRENT_TIMESTAMP`,
+            })
+            .returning({ id: labelStudioProjectIntents.id });
+          if (!inserted)
+            throw new Error("Failed to create Label Studio provider intent");
+        });
 
-    sessions.push({
-      id: record.id,
-      labelStudioProjectId: lsProject.id,
-      labelStudioUrl: projectUrl,
-      pageRange: range,
-      taskCount: chunk.length,
-    });
-  }
+        const markCreateUncertain = async (error: unknown): Promise<void> => {
+          // Clear only the request lease. The marker remains the sole safe recovery authority when
+          // the provider response is ambiguous or its returned numeric ID cannot be durably owned.
+          await withProjectWrite(writeCapability, project.id, async (tx) => {
+            const updated = await tx
+              .update(labelStudioProjectIntents)
+              .set({
+                state: "create_uncertain",
+                leaseToken: null,
+                leaseExpiresAt: null,
+                nextAttemptAt: sql`CURRENT_TIMESTAMP`,
+                lastError: labelStudioIntentError(error),
+                updatedAt: sql`CURRENT_TIMESTAMP`,
+              })
+              .where(
+                and(
+                  eq(labelStudioProjectIntents.id, intentId),
+                  eq(labelStudioProjectIntents.projectId, project.id),
+                  eq(
+                    labelStudioProjectIntents.lifecycleEpoch,
+                    project.lifecycleEpoch,
+                  ),
+                  eq(labelStudioProjectIntents.leaseToken, requestLease),
+                ),
+              )
+              .returning({ id: labelStudioProjectIntents.id });
+            if (updated.length !== 1) {
+              throw new Error("Label Studio provider intent lease was lost");
+            }
+          });
+        };
 
-  return { success: true, sessions };
+        let lsProject: Awaited<ReturnType<typeof createProject>>;
+        try {
+          lsProject = await createProject(
+            labelStudioProvider,
+            title,
+            DEFAULT_LABEL_CONFIG,
+            marker,
+          );
+        } catch (error) {
+          // Any transport/provider failure is conservatively ambiguous. Clear only the request lease;
+          // the outer project mutation lease still prevents the reconciler racing this stack unwind.
+          await markCreateUncertain(error).catch((persistError) => {
+            // The original durable row remains request-leased and becomes recoverable when its lease
+            // expires. Never hide the provider error behind best-effort diagnostic persistence.
+            logger.error(
+              "[LABELING] Failed to mark ambiguous Label Studio create:",
+              persistError,
+            );
+          });
+          throw error;
+        }
+
+        const projectUrl = `${lsUrl}/projects/${lsProject.id}`;
+
+        const persistKnownProvider = async (options: {
+          releaseLease: boolean;
+          insertGrants?: boolean;
+          error?: unknown;
+        }): Promise<void> => {
+          await withProjectWrite(writeCapability, project.id, async (tx) => {
+            const updated = await tx
+              .update(labelStudioProjectIntents)
+              .set({
+                providerProjectId: lsProject.id,
+                state: "cleanup_pending",
+                leaseToken: options.releaseLease ? null : requestLease,
+                leaseExpiresAt: options.releaseLease
+                  ? null
+                  : sql`CURRENT_TIMESTAMP + (${LABEL_STUDIO_REQUEST_LEASE_SECONDS} * INTERVAL '1 second')`,
+                nextAttemptAt: sql`CURRENT_TIMESTAMP`,
+                consecutiveFailures: options.error
+                  ? sql`${labelStudioProjectIntents.consecutiveFailures} + 1`
+                  : 0,
+                lastError:
+                  options.error === undefined
+                    ? null
+                    : labelStudioIntentError(options.error),
+                updatedAt: sql`CURRENT_TIMESTAMP`,
+              })
+              .where(
+                and(
+                  eq(labelStudioProjectIntents.id, intentId),
+                  eq(labelStudioProjectIntents.projectId, project.id),
+                  eq(
+                    labelStudioProjectIntents.lifecycleEpoch,
+                    project.lifecycleEpoch,
+                  ),
+                  eq(labelStudioProjectIntents.leaseToken, requestLease),
+                ),
+              )
+              .returning({ id: labelStudioProjectIntents.id });
+            if (updated.length !== 1) {
+              throw new Error("Label Studio provider intent lease was lost");
+            }
+            if (options.insertGrants) {
+              await tx.insert(labelStudioAssetGrants).values(
+                preparedTasks.map(({ grant }) => ({
+                  id: grant.id,
+                  projectId: project.id,
+                  companyId: project.companyId,
+                  lifecycleEpoch: project.lifecycleEpoch,
+                  provisioningIntentId: intentId,
+                  labelingSessionId: null,
+                  tokenHash: grant.tokenHash,
+                  snapshotVersionId: grant.snapshotVersionId,
+                  state: "provisioning",
+                })),
+              );
+            }
+          });
+        };
+
+        const removeCompensatedIntent = async (): Promise<void> => {
+          await withProjectWrite(writeCapability, project.id, async (tx) => {
+            await deleteIntentLabelStudioAssetGrants(tx, intentId);
+            const deleted = await tx
+              .delete(labelStudioProjectIntents)
+              .where(
+                and(
+                  eq(labelStudioProjectIntents.id, intentId),
+                  eq(labelStudioProjectIntents.projectId, project.id),
+                  eq(
+                    labelStudioProjectIntents.lifecycleEpoch,
+                    project.lifecycleEpoch,
+                  ),
+                  eq(labelStudioProjectIntents.leaseToken, requestLease),
+                ),
+              )
+              .returning({ id: labelStudioProjectIntents.id });
+            if (deleted.length !== 1) {
+              throw new Error("Label Studio provider intent lease was lost");
+            }
+          });
+        };
+
+        const compensateKnownProvider = async (): Promise<void> => {
+          // Imported URLs are bearer capabilities. Revoke their database authority before any
+          // provider DELETE that can fail or time out. A DB failure must not suppress the provider
+          // delete attempt: provisioning admission also requires the exact outer mutation-lease
+          // row, so unwinding this operation fail-closes every bearer even if revocation cannot be
+          // persisted. The durable intent remains for the worker to revoke and reconcile later.
+          let revocationError: unknown;
+          try {
+            await withProjectWrite(writeCapability, project.id, async (tx) => {
+              await revokeIntentLabelStudioAssetGrants(tx, intentId);
+            });
+          } catch (error) {
+            revocationError = error;
+            logger.error(
+              "[LABELING] Failed to revoke orphan Label Studio asset grants:",
+              error,
+            );
+          }
+          try {
+            await deleteProject(labelStudioProvider, lsProject.id);
+          } catch (cleanupError) {
+            // Make the known provider identity immediately retryable. If this write itself fails, the
+            // pre-POST marker and expiring request lease still preserve eventual discovery.
+            await persistKnownProvider({
+              releaseLease: true,
+              error: cleanupError,
+            }).catch((persistError) => {
+              logger.error(
+                "[LABELING] Failed to retain Label Studio cleanup identity:",
+                persistError,
+              );
+            });
+            logger.error(
+              "[LABELING] Failed to compensate orphan Label Studio project:",
+              cleanupError,
+            );
+            return;
+          }
+
+          if (revocationError !== undefined) {
+            // Provider deletion succeeded, but retain the known identity until the reconciler can
+            // durably revoke/delete its local grant witnesses. A replayed provider 404 is the
+            // expected idempotent acknowledgement.
+            await persistKnownProvider({
+              releaseLease: true,
+              error: revocationError,
+            }).catch((persistError) => {
+              logger.error(
+                "[LABELING] Failed to retain provider identity after grant revocation failure:",
+                persistError,
+              );
+            });
+            return;
+          }
+
+          await removeCompensatedIntent().catch(async (cleanupError) => {
+            // Provider deletion is idempotent. A retained known-provider row is safe for the worker to
+            // replay, whereas dropping the blocker without proving the DB commit would lose evidence.
+            logger.error(
+              "[LABELING] Failed to remove compensated provider intent:",
+              cleanupError,
+            );
+            await persistKnownProvider({
+              releaseLease: true,
+              error: cleanupError,
+            }).catch((persistError) => {
+              logger.error(
+                "[LABELING] Failed to retain compensated provider identity:",
+                persistError,
+              );
+            });
+          });
+        };
+
+        let providerIdentityPersisted = false;
+        try {
+          // Persist the returned numeric identity before importing tasks. If this commit is ambiguous,
+          // the retained marker is the only safe recovery authority; a colliding ID may belong to an
+          // existing session and must never be imported into or compensation-deleted.
+          await persistKnownProvider({
+            releaseLease: false,
+            insertGrants: true,
+          });
+          providerIdentityPersisted = true;
+          await importTasks(
+            labelStudioProvider,
+            lsProject.id,
+            preparedTasks.map(({ grant, meta }) => ({
+              data: { image: labelStudioAssetUrl(grant.id, grant.token) },
+              meta,
+            })),
+          );
+        } catch (error) {
+          if (providerIdentityPersisted) {
+            await compensateKnownProvider();
+          } else {
+            await markCreateUncertain(error).catch((persistError) => {
+              // A lost commit acknowledgement may mean the known identity is already durable. In
+              // that case this downgrade is rejected and the cleanup_pending witness remains safe.
+              logger.error(
+                "[LABELING] Failed to retain ambiguous provider identity marker:",
+                persistError,
+              );
+            });
+          }
+          throw error;
+        }
+
+        let record: typeof labelingSessions.$inferSelect | undefined;
+        let finalizationError: unknown;
+        try {
+          record = await withProjectWrite(
+            writeCapability,
+            project.id,
+            async (tx) => {
+              const [inserted] = await tx
+                .insert(labelingSessions)
+                .values({
+                  projectId: project.id,
+                  companyId: project.companyId,
+                  labelStudioProjectId: lsProject.id,
+                  providerBaseUrl: labelStudioProvider.baseUrl,
+                  providerInstanceId: labelStudioProvider.instanceId,
+                  labelStudioUrl: projectUrl,
+                  taskType: "generic",
+                  labels: null,
+                  pageRange: range,
+                  tilingEnabled: !!tiling,
+                  tileGrid: tiling ? 3 : null,
+                  status: "active",
+                  provisioningIntentId: intentId,
+                })
+                .returning();
+              if (!inserted)
+                throw new Error("Failed to activate labeling session");
+
+              await activateLabelStudioAssetGrants(
+                tx,
+                intentId,
+                inserted.id,
+                preparedTasks.map(({ grant }) => grant.id),
+              );
+
+              const deleted = await tx
+                .delete(labelStudioProjectIntents)
+                .where(
+                  and(
+                    eq(labelStudioProjectIntents.id, intentId),
+                    eq(labelStudioProjectIntents.projectId, project.id),
+                    eq(
+                      labelStudioProjectIntents.lifecycleEpoch,
+                      project.lifecycleEpoch,
+                    ),
+                    eq(labelStudioProjectIntents.leaseToken, requestLease),
+                    eq(
+                      labelStudioProjectIntents.providerProjectId,
+                      lsProject.id,
+                    ),
+                  ),
+                )
+                .returning({ id: labelStudioProjectIntents.id });
+              if (deleted.length !== 1) {
+                throw new Error("Label Studio provider intent lease was lost");
+              }
+              return inserted;
+            },
+          );
+        } catch (error) {
+          finalizationError = error;
+        }
+
+        if (!record) {
+          // A COMMIT acknowledgement can be lost. Audit both durable witnesses before deciding whether
+          // the provider belongs to an active session; blindly compensating here could delete a
+          // successfully activated project.
+          let activated: typeof labelingSessions.$inferSelect | undefined;
+          let pending:
+            typeof labelStudioProjectIntents.$inferSelect | undefined;
+          let grantWitnesses: Array<
+            typeof labelStudioAssetGrants.$inferSelect
+          > = [];
+          try {
+            await db.transaction(async (tx) => {
+              [activated] = await tx
+                .select()
+                .from(labelingSessions)
+                .where(eq(labelingSessions.provisioningIntentId, intentId))
+                .limit(1);
+              [pending] = await tx
+                .select()
+                .from(labelStudioProjectIntents)
+                .where(eq(labelStudioProjectIntents.id, intentId))
+                .limit(1);
+              grantWitnesses = await tx
+                .select()
+                .from(labelStudioAssetGrants)
+                .where(
+                  inArray(
+                    labelStudioAssetGrants.id,
+                    preparedTasks.map(({ grant }) => grant.id),
+                  ),
+                );
+            });
+          } catch (auditError) {
+            logger.error(
+              "[LABELING] Failed to audit ambiguous session activation:",
+              auditError,
+            );
+            throw finalizationError;
+          }
+
+          if (
+            activated &&
+            !pending &&
+            activated.projectId === project.id &&
+            activated.companyId === project.companyId &&
+            activated.labelStudioProjectId === lsProject.id &&
+            grantWitnesses.length === preparedTasks.length &&
+            grantWitnesses.every(
+              (grant) =>
+                grant.state === "active" &&
+                grant.labelingSessionId === activated!.id &&
+                grant.provisioningIntentId === null,
+            )
+          ) {
+            record = activated;
+          } else if (!activated && pending) {
+            await compensateKnownProvider();
+            throw finalizationError;
+          } else if (!activated && !pending && grantWitnesses.length === 0) {
+            // Neither witness is impossible for the atomic finalization transaction. Re-establish a
+            // cleanup identity before touching the provider so an additional failure cannot orphan it.
+            await withProjectWrite(writeCapability, project.id, async (tx) => {
+              await tx.insert(labelStudioProjectIntents).values({
+                id: intentId,
+                projectId: project.id,
+                companyId: project.companyId,
+                lifecycleEpoch: project.lifecycleEpoch,
+                marker,
+                providerProjectId: lsProject.id,
+                providerBaseUrl: labelStudioProvider.baseUrl,
+                providerInstanceId: labelStudioProvider.instanceId,
+                state: "cleanup_pending",
+                leaseToken: requestLease,
+                leaseExpiresAt: sql`CURRENT_TIMESTAMP + (${LABEL_STUDIO_REQUEST_LEASE_SECONDS} * INTERVAL '1 second')`,
+                nextAttemptAt: sql`CURRENT_TIMESTAMP`,
+              });
+            });
+            await compensateKnownProvider();
+            throw finalizationError;
+          } else {
+            logger.error(
+              "[LABELING] Contradictory Label Studio activation witnesses; preserving provider and blockers",
+              { intentId, providerProjectId: lsProject.id },
+            );
+            throw finalizationError;
+          }
+        }
+
+        sessions.push({
+          id: record.id,
+          labelStudioProjectId: lsProject.id,
+          labelStudioUrl: projectUrl,
+          pageRange: range,
+          taskCount: chunk.length,
+        });
+      }
+
+      return { success: true, sessions };
+    },
+  );
 }

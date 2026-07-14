@@ -33,6 +33,7 @@ import {
   params,
   readJson,
   signedOut,
+  publishDemoFixture,
 } from "@/test/harness";
 import { db } from "@/lib/db";
 import { randomUUID } from "crypto";
@@ -40,22 +41,28 @@ import { randomUUID } from "crypto";
 const dbUp = inject("dbUp") as boolean;
 
 const runDemo = (id: string) =>
-  demoProjectGET(makeReq(`/api/demo/projects/${id}`, { method: "GET" }), params({ id }));
+  demoProjectGET(
+    makeReq(`/api/demo/projects/${id}`, { method: "GET" }),
+    params({ id }),
+  );
 
 /** company + author + a completed isDemo project (the only kind /api/demo/projects/[id] serves). */
 async function createDemoProject(
   companyOver: Partial<Parameters<typeof createCompany>[0]> = {},
   projectOver: Partial<Parameters<typeof createProject>[2]> = {},
+  publish = true,
 ) {
   const company = await createCompany(companyOver);
   const author = await createUser(company.id);
   const project = await createProject(company.id, author.id, {
-    isDemo: true,
     status: "completed",
     numPages: 2,
     ...projectOver,
   });
-  return { company, author, project };
+  const publishedProject = publish
+    ? await publishDemoFixture(project.id)
+    : project;
+  return { company, author, project: publishedProject };
 }
 
 describe.skipIf(!dbUp)("GET /api/demo/projects/[id]", () => {
@@ -64,24 +71,24 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]", () => {
     const { company, author, project } = await createDemoProject(
       { pipelineConfig: { demo: { someFlag: true } } },
       { projectIntelligence: PI as never },
+      false,
     );
     // insert pages OUT of order → proves ORDER BY pageNumber
     await createPage(project.id, 2, { name: "Second", drawingNumber: "A-102" });
     await createPage(project.id, 1, { name: "First", drawingNumber: "A-101" });
+    await publishDemoFixture(project.id);
 
     signedOut(); // the typical public-demo caller — no auth required
     const raw = await runDemo(project.publicId);
     expect(raw.status).toBe(200);
-    // [P1.4 fold] the demo route sets NO Cache-Control (UNLIKE getProject's "private, max-age=60") — pinned
-    // negatively so a future reader can't accidentally couple getDemoProject to getProject's header.
-    expect(raw.headers.get("Cache-Control")).toBeNull();
+    expect(raw.headers.get("Cache-Control")).toBe("public, no-store");
     const body = await raw.json();
     expect(body.id).toBe(project.publicId);
     expect(body.dbId).toBe(project.id);
     expect(body.name).toBe(project.name);
-    expect(body.dataUrl).toBe(project.dataUrl);
-    expect(body.pdfUrl).toContain(project.dataUrl); // getS3Url(dataUrl, "original.pdf")
-    expect(body.pdfUrl).toContain("original.pdf");
+    expect(body.dataUrl).toBeUndefined();
+    expect(body.assetBaseUrl).toBe(`/api/project-assets/${project.publicId}`);
+    expect(body.pdfUrl).toBe(`${body.assetBaseUrl}/original.pdf`);
     expect(body.numPages).toBe(2);
     expect(body.status).toBe("completed");
     expect(body.summaries).toEqual({ keep: true });
@@ -95,8 +102,17 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]", () => {
     // authed-only address/takeoffItems/takeoffGroups/chatMessages (the isolation contract documented on the
     // getDemoProject header in services/projects.ts), and must NEVER drop demoConfig.
     expect(Object.keys(body).sort()).toEqual([
-      "dataUrl", "dbId", "demoConfig", "id", "name", "numPages",
-      "pages", "pdfUrl", "projectIntelligence", "status", "summaries",
+      "assetBaseUrl",
+      "dbId",
+      "demoConfig",
+      "id",
+      "name",
+      "numPages",
+      "pages",
+      "pdfUrl",
+      "projectIntelligence",
+      "status",
+      "summaries",
     ]);
     expect(company.id).toBe(project.companyId);
   });
@@ -128,12 +144,18 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]", () => {
     const { project: realProj } = await createWorld(); // isDemo=false
     const nonDemo = await readJson(await runDemo(realProj.publicId));
     expect(nonDemo.status).toBe(404);
-    expect(nonDemo.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.4 fold] was: "Not found" (string envelope)
+    expect(nonDemo.body.error).toEqual({
+      code: "NOT_FOUND",
+      message: "Not found",
+    }); // [P1.4 fold] was: "Not found" (string envelope)
 
     // valid uuid, no such project → 404
     const ghost = await readJson(await runDemo(randomUUID()));
     expect(ghost.status).toBe(404);
-    expect(ghost.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.4 fold] was: "Not found" (string envelope)
+    expect(ghost.body.error).toEqual({
+      code: "NOT_FOUND",
+      message: "Not found",
+    }); // [P1.4 fold] was: "Not found" (string envelope)
   });
 
   it("non-uuid id → clean 400 (sanctioned diff b; legacy was an unhandled pg uuid-cast throw)", async () => {
@@ -142,7 +164,10 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]", () => {
     // [P1.4 fold] was: an unhandled throw (raw non-uuid fed to the pg uuid column, no try/catch). The freeze
     // commit captured this defensively (thrown OR non-2xx); the fold makes it a clean 400 via zPublicId.
     expect(bad.status).toBe(400);
-    expect(bad.body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
+    expect(bad.body.error).toEqual({
+      code: "VALIDATION",
+      message: "Invalid project id",
+    });
   });
 
   it("unexpected DB error → the shell's leak-free INTERNAL 500 (sanctioned diff c; legacy had no try/catch → raw 500)", async () => {
@@ -157,7 +182,10 @@ describe.skipIf(!dbUp)("GET /api/demo/projects/[id]", () => {
     });
     const res = await readJson(await runDemo(project.publicId));
     expect(res.status).toBe(500);
-    expect(res.body.error).toEqual({ code: "INTERNAL", message: "Internal server error" });
+    expect(res.body.error).toEqual({
+      code: "INTERNAL",
+      message: "Internal server error",
+    });
     expect(JSON.stringify(res.body)).not.toContain("SECRET_LEAK_xyz"); // underlying cause never leaks
     spy.mockRestore();
   });

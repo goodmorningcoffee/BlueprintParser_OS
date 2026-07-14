@@ -206,7 +206,7 @@ describe.skipIf(!dbUp)("POST /api/processing/dev (PQ5-3)", () => {
     let r = await readJson(await dev({ projectId: project.publicId }));
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true, pagesProcessed: 3 }); // spread pinned
-    expect(h.processProject).toHaveBeenCalledWith(project.id);
+    expect(h.processProject).toHaveBeenCalledWith(project.id, expect.anything());
     h.processProject.mockRejectedValue(new Error("pipeline died"));
     r = await readJson(await dev({ projectId: project.publicId }));
     expect(r.status).toBe(500);

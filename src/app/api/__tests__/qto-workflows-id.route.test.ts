@@ -18,6 +18,9 @@ vi.mock("@/lib/auth", async () => {
 
 import { POST as createWorkflow } from "@/app/api/qto-workflows/route";
 import { DELETE, GET, PUT } from "@/app/api/qto-workflows/[id]/route";
+import { db } from "@/lib/db";
+import { qtoWorkflows } from "@/lib/db/schema";
+import { inArray } from "drizzle-orm";
 import {
   asUser,
   createCompany,
@@ -25,6 +28,7 @@ import {
   createWorld,
   makeReq,
   params,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -138,17 +142,38 @@ describe.skipIf(!dbUp)("/api/qto-workflows/[id]", () => {
     expect(nan.body.error).toEqual(INTERNAL_500);
   });
 
-  it("PUT has NO demo write-gate: an owning-company member can update a demo project's workflow", async () => {
-    const { company, project } = await createWorld({ isDemo: true });
+  it("L5 freeze: demo PUT/DELETE deny signed-out, member, admin, and root with zero changes", async () => {
+    const { company, project } = await createWorld();
+    const member = await createUser(company.id);
+    const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser((await createCompany()).id, { role: "admin", isRootAdmin: true });
+    const actors = [null, member, admin, root];
+    const ids: number[] = [];
+    const statuses: number[] = [];
+    const seededPairs = [];
+    for (const [index] of actors.entries()) {
+      const seeded = await db
+        .insert(qtoWorkflows)
+        .values([
+          { projectId: project.id, materialType: `put-${index}`, materialLabel: "original", step: "pick" },
+          { projectId: project.id, materialType: `delete-${index}`, materialLabel: "original", step: "pick" },
+        ])
+        .returning();
+      ids.push(...seeded.map((row) => row.id));
+      seededPairs.push(seeded);
+    }
+    await publishDemoFixture(project.id);
 
-    // seed through the API as an ADMIN (admins bypass the POST demo gate), then PUT as a member.
-    asUser(await createUser(company.id, { role: "admin" }));
-    const id = await makeWorkflow(project.publicId);
-
-    asUser(await createUser(company.id)); // default member of the OWNING company
-    const res = await readJson(await put(id, { step: "review" }));
-    expect(res.status).toBe(200); // confirms [id] has no demo 403 (unlike POST)
-    expect(res.body.step).toBe("review");
+    for (const [index, actor] of actors.entries()) {
+      const seeded = seededPairs[index];
+      actor ? asUser(actor) : signedOut();
+      statuses.push((await readJson(await put(seeded[0].id, { step: "review" }))).status);
+      statuses.push((await readJson(await del(seeded[1].id))).status);
+    }
+    expect(statuses).toEqual(Array(8).fill(403));
+    const rows = await db.select().from(qtoWorkflows).where(inArray(qtoWorkflows.id, ids));
+    expect(rows).toHaveLength(8);
+    expect(rows.every((row) => row.step === "pick")).toBe(true);
   });
 
   it("DELETE: happy (then 404 on re-get); signed-out → 401; missing → 404; cross-tenant → 404; NaN id → 500", async () => {

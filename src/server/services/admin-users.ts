@@ -30,13 +30,58 @@
 
 import { db } from "@/lib/db";
 import { users, companies, projects, annotations, chatMessages, modelAccess, appSettings, annotationGroups } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import { deleteProjectFully } from "@/lib/project-delete";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { ApiError } from "@/server/api/envelope";
 import type { AuthSession } from "@/lib/api-utils";
+import { assertProjectWritable } from "@/server/api/access";
+import {
+  withProjectWrites,
+  type ProjectWriteTransaction,
+} from "@/server/api/project-write-capability";
+
+function assertNoDemoProjects(owned: Array<{ isDemo: boolean }>): void {
+  if (owned.some((project) => project.isDemo)) {
+    throw new ApiError("FORBIDDEN", "Demo projects are read-only");
+  }
+}
+
+const projectWriteIdentitySelection = {
+  id: projects.id,
+  publicId: projects.publicId,
+  companyId: projects.companyId,
+  isDemo: projects.isDemo,
+  lifecycleEpoch: projects.lifecycleEpoch,
+};
+
+async function findReferencedProjects(userId: number) {
+  const [referencedAnnotations, referencedChat, referencedGroups] = await Promise.all([
+    db
+      .selectDistinct(projectWriteIdentitySelection)
+      .from(annotations)
+      .innerJoin(projects, eq(projects.id, annotations.projectId))
+      .where(eq(annotations.creatorId, userId)),
+    db
+      .selectDistinct(projectWriteIdentitySelection)
+      .from(chatMessages)
+      .innerJoin(projects, eq(projects.id, chatMessages.projectId))
+      .where(eq(chatMessages.userId, userId)),
+    db
+      .selectDistinct(projectWriteIdentitySelection)
+      .from(annotationGroups)
+      .innerJoin(projects, eq(projects.id, annotationGroups.projectId))
+      .where(eq(annotationGroups.createdBy, userId)),
+  ]);
+
+  const byId = new Map<number, (typeof referencedAnnotations)[number]>();
+  for (const project of [...referencedAnnotations, ...referencedChat, ...referencedGroups]) {
+    byId.set(project.id, project);
+  }
+  return [...byId.values()];
+}
 
 // GET - list users (root admin: all companies, regular admin: own company)
 export async function listUsers(session: AuthSession): Promise<unknown> {
@@ -218,6 +263,38 @@ export async function deleteUser(session: AuthSession, body: Record<string, unkn
     throw new ApiError("VALIDATION", "Cannot delete root admin");
   }
 
+  // Attribution cleanup is itself a project-data mutation. A user referenced by any published
+  // project must first be explicitly rehomed after that project is withdrawn.
+  const referencedProjects = await findReferencedProjects(target.id);
+  assertNoDemoProjects(referencedProjects);
+
+  // Deleting a user indirectly mutates every authored project. Demo ownership must first be
+  // withdrawn through manageDemo, the sole project-lifecycle exception.
+  const ownedProjects = await db
+    .select({
+      id: projects.id,
+      publicId: projects.publicId,
+      companyId: projects.companyId,
+      isDemo: projects.isDemo,
+      lifecycleEpoch: projects.lifecycleEpoch,
+      dataUrl: projects.dataUrl,
+      jobId: projects.jobId,
+      name: projects.name,
+      updatedAt: projects.updatedAt,
+    })
+    .from(projects)
+    .where(
+      session.user.isRootAdmin
+        ? eq(projects.authorId, target.id)
+        : and(eq(projects.authorId, target.id), eq(projects.companyId, session.user.companyId)),
+    );
+  assertNoDemoProjects(ownedProjects);
+
+  const ownedProjectIds = new Set(ownedProjects.map((project) => project.id));
+  const protectedProjectsById = new Map(
+    [...referencedProjects, ...ownedProjects].map((project) => [project.id, project]),
+  );
+
   // Resolve the reassign target (reassign mode only).
   let reassignTargetId = session.user.dbId; // default: the acting admin (root, for the owner)
   if (mode === "reassign" && reassignTo) {
@@ -248,39 +325,69 @@ export async function deleteUser(session: AuthSession, body: Record<string, unkn
     // Nuclear path touches S3 (irreversible), so it runs BEFORE the transaction;
     // per-project deletion is best-effort/sequential.
     if (mode === "cascade") {
-      const owned = await db
-        .select({ id: projects.id, dataUrl: projects.dataUrl, jobId: projects.jobId, name: projects.name })
-        .from(projects)
-        .where(
-          session.user.isRootAdmin
-            ? eq(projects.authorId, target.id)
-            : and(eq(projects.authorId, target.id), eq(projects.companyId, session.user.companyId))
-        );
-      projectCount = owned.length;
-      for (const p of owned) {
-        await deleteProjectFully(p);
+      projectCount = ownedProjects.length;
+      for (const p of ownedProjects) {
+        await deleteProjectFully(p, assertProjectWritable(p));
       }
     }
 
     // Atomic: reassign the user's projects (reassign mode) + null soft-attribution
     // FKs + delete the user. All-or-nothing so a mid-sequence failure can't leave
     // a half-deleted user.
-    await db.transaction(async (tx) => {
+    const cleanupProjects = [...protectedProjectsById.values()].filter(
+      (project) => mode !== "cascade" || !ownedProjectIds.has(project.id),
+    );
+    const cleanupProjectIds = cleanupProjects.map((project) => project.id);
+    const cleanupCapabilities = cleanupProjects.map(assertProjectWritable);
+    const runCleanup = async (tx: ProjectWriteTransaction) => {
       if (mode === "reassign") {
-        const moved = await tx
-          .update(projects)
-          .set({ authorId: reassignTargetId })
-          .where(eq(projects.authorId, target.id))
-          .returning({ id: projects.id });
-        projectCount = moved.length;
+        const capturedOwnedIds = [...ownedProjectIds];
+        if (capturedOwnedIds.length > 0) {
+          const moved = await tx
+            .update(projects)
+            .set({ authorId: reassignTargetId })
+            .where(and(
+              eq(projects.authorId, target.id),
+              eq(projects.isDemo, false),
+              inArray(projects.id, capturedOwnedIds),
+            ))
+            .returning({ id: projects.id });
+          projectCount = moved.length;
+        }
       }
-      await tx.update(annotations).set({ creatorId: null }).where(eq(annotations.creatorId, target.id));
-      await tx.update(chatMessages).set({ userId: null }).where(eq(chatMessages.userId, target.id));
+      if (cleanupProjectIds.length > 0) {
+        await tx
+          .update(annotations)
+          .set({ creatorId: null })
+          .where(and(
+            eq(annotations.creatorId, target.id),
+            inArray(annotations.projectId, cleanupProjectIds),
+          ));
+        await tx
+          .update(chatMessages)
+          .set({ userId: null })
+          .where(and(
+            eq(chatMessages.userId, target.id),
+            inArray(chatMessages.projectId, cleanupProjectIds),
+          ));
+        await tx
+          .update(annotationGroups)
+          .set({ createdBy: null })
+          .where(and(
+            eq(annotationGroups.createdBy, target.id),
+            inArray(annotationGroups.projectId, cleanupProjectIds),
+          ));
+      }
       await tx.update(modelAccess).set({ grantedBy: null }).where(eq(modelAccess.grantedBy, target.id));
       await tx.update(appSettings).set({ updatedBy: null }).where(eq(appSettings.updatedBy, target.id));
-      await tx.update(annotationGroups).set({ createdBy: null }).where(eq(annotationGroups.createdBy, target.id));
       await tx.delete(users).where(eq(users.publicId, id));
-    });
+    };
+
+    if (cleanupCapabilities.length > 0) {
+      await withProjectWrites(cleanupCapabilities, runCleanup);
+    } else {
+      await db.transaction(runCleanup);
+    }
 
     audit("user_deleted", {
       userId: session.user.dbId,

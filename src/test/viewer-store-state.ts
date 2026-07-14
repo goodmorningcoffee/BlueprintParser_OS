@@ -6,7 +6,10 @@
 // routing boilerplate. CSI bootstrap data is intentionally absent because its residual graph has a
 // dedicated Query facade.
 
-import { useParseFlowStore, type ParseFlowState } from "@/stores/parseFlowStore";
+import {
+  useParseFlowStore,
+  type ParseFlowState,
+} from "@/stores/parseFlowStore";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -16,14 +19,16 @@ import { useViewerStore } from "@/stores/viewerStore";
 export type ViewerStoreTestState = ReturnType<typeof useViewerStore.getState>;
 export type SessionStoreTestState = ReturnType<typeof useSessionStore.getState>;
 export type UiStoreTestState = ReturnType<typeof useUiStore.getState>;
-export type ViewerCoreStoreTestState = ReturnType<typeof useViewerCoreStore.getState>;
+export type ViewerCoreStoreTestState = ReturnType<
+  typeof useViewerCoreStore.getState
+>;
 export type ToolStoreTestState = ReturnType<typeof useToolStore.getState>;
 export type ParseStoreTestState = ParseFlowState;
 
 export const SESSION_TEST_STATE_KEYS = [
   "projectId",
   "publicId",
-  "dataUrl",
+  "assetBaseUrl",
   "isDemo",
   "demoFeatureConfig",
   "pageNames",
@@ -31,7 +36,6 @@ export const SESSION_TEST_STATE_KEYS = [
   "showLabelingWizard",
   "labelingWizardStep",
   "labelingSessions",
-  "labelingCredentials",
 ] as const satisfies readonly (keyof SessionStoreTestState)[];
 
 export type SessionTestStateKey = (typeof SESSION_TEST_STATE_KEYS)[number];
@@ -290,8 +294,9 @@ type MissingRemainingViewerTestKey = Exclude<
 >;
 // This assignment deliberately fails when Viewer gains a member without an explicit routing
 // decision here. `satisfies` above independently rejects stale/extra ledger members.
-const REMAINING_VIEWER_TEST_KEYS_ARE_EXHAUSTIVE:
-  MissingRemainingViewerTestKey extends never ? true : never = true;
+const REMAINING_VIEWER_TEST_KEYS_ARE_EXHAUSTIVE: MissingRemainingViewerTestKey extends never
+  ? true
+  : never = true;
 void REMAINING_VIEWER_TEST_KEYS_ARE_EXHAUSTIVE;
 
 export type RemainingViewerStoreTestPatch = Partial<
@@ -304,9 +309,7 @@ export type ViewerStoreTestPatch = RemainingViewerStoreTestPatch &
   ToolStoreTestPatch &
   ParseStoreTestPatch;
 
-const SESSION_TEST_STATE_KEY_SET = new Set<string>(
-  SESSION_TEST_STATE_KEYS,
-);
+const SESSION_TEST_STATE_KEY_SET = new Set<string>(SESSION_TEST_STATE_KEYS);
 const UI_TEST_STATE_KEY_SET = new Set<string>(UI_TEST_STATE_KEYS);
 const CORE_TEST_STATE_KEY_SET = new Set<string>(CORE_TEST_STATE_KEYS);
 const TOOL_TEST_STATE_KEY_SET = new Set<string>([
@@ -367,7 +370,8 @@ export function partitionViewerStoreTestState(patch: ViewerStoreTestPatch): {
 }
 
 export function setViewerStoreStateForTest(patch: ViewerStoreTestPatch): void {
-  const { session, ui, core, tool, parse, viewer } = partitionViewerStoreTestState(patch);
+  const { session, ui, core, tool, parse, viewer } =
+    partitionViewerStoreTestState(patch);
 
   // Spell every residual property as a literal setState key. Besides preserving one publication,
   // this lets the shared ownership oracle prove that a computed/misrouted parse key cannot escape
@@ -376,7 +380,9 @@ export function setViewerStoreStateForTest(patch: ViewerStoreTestPatch): void {
     ...("allTrades" in viewer ? { allTrades: viewer.allTrades } : {}),
     ...("setAllTrades" in viewer ? { setAllTrades: viewer.setAllTrades } : {}),
     ...("allCsiCodes" in viewer ? { allCsiCodes: viewer.allCsiCodes } : {}),
-    ...("setAllCsiCodes" in viewer ? { setAllCsiCodes: viewer.setAllCsiCodes } : {}),
+    ...("setAllCsiCodes" in viewer
+      ? { setAllCsiCodes: viewer.setAllCsiCodes }
+      : {}),
     ...("resetViewerState" in viewer
       ? { resetViewerState: viewer.resetViewerState }
       : {}),

@@ -22,6 +22,7 @@ import {
   createUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -111,21 +112,23 @@ describe.skipIf(!dbUp)("POST /api/annotations/batch-delete", () => {
     expect((await annotationsFor(project.id)).length).toBe(1);
   });
 
-  it("demo write gate: signed-out batch-delete on a demo project → 401; rows survive", async () => {
-    const { project } = await createWorld({ isDemo: true });
+  it("demo write gate: signed-out batch-delete on a demo project → canonical 403; rows survive", async () => {
+    const { project } = await createWorld();
     const ann = await seedAnnotation(project.id, "x");
+    await publishDemoFixture(project.id);
     signedOut();
     // batch-delete is a WRITE — it never allows demo; a signed-out demo request is denied.
-    expect((await readJson(await post({ projectId: project.publicId, annotationIds: [ann.id] }))).status).toBe(401);
+    expect((await readJson(await post({ projectId: project.publicId, annotationIds: [ann.id] }))).status).toBe(403);
     expect((await annotationsFor(project.id)).length).toBe(1);
   });
 
-  it("demo carve-out: the owning-company member CAN batch-delete on their own demo project", async () => {
-    const { user, project } = await createWorld({ isDemo: true });
-    asUser(user);
+  it("demo read-only policy: the owning-company member cannot batch-delete their own demo project", async () => {
+    const { user, project } = await createWorld();
     const ann = await seedAnnotation(project.id, "x");
+    await publishDemoFixture(project.id);
+    asUser(user);
     const res = await readJson(await post({ projectId: project.publicId, annotationIds: [ann.id] }));
-    expect(res.status).toBe(200);
-    expect(res.body.deletedCount).toBe(1);
+    expect(res.status).toBe(403);
+    expect((await annotationsFor(project.id)).map((row) => row.id)).toEqual([ann.id]);
   });
 });

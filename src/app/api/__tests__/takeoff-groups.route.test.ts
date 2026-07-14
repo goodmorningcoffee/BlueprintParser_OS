@@ -13,6 +13,9 @@ vi.mock("@/lib/auth", async () => {
 });
 
 import { GET, POST } from "@/app/api/takeoff-groups/route";
+import { db } from "@/lib/db";
+import { takeoffGroups } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import {
   asUser,
   createCompany,
@@ -69,19 +72,21 @@ describe.skipIf(!dbUp)("POST /api/takeoff-groups", () => {
     expect((await readJson(await post({ projectId: project.publicId, name: "x", kind: "area" }))).status).toBe(401);
   });
 
-  it("demo project: member write → 403 read-only; admin scope may write", async () => {
+  it("L5 freeze: demo create denies signed-out, member, admin, and root with zero inserts", async () => {
     const { project, company } = await createWorld({ isDemo: true });
     const member = await createUser(company.id);
-    asUser(member);
-    const denied = await readJson(await post({ projectId: project.publicId, name: "x", kind: "count" }));
-    expect(denied.status).toBe(403);
-    // [refactor jun16 P1.2] envelope flip — was `error: "Demo projects are read-only"`.
-    expect(denied.body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
-
     const admin = await createUser(company.id, { role: "admin" });
-    asUser(admin);
-    const allowed = await readJson(await post({ projectId: project.publicId, name: "x", kind: "count" }));
-    expect(allowed.status).toBe(200);
+    const root = await createUser((await createCompany()).id, { role: "admin", isRootAdmin: true });
+    const responses = [];
+    for (const actor of [null, member, admin, root]) {
+      actor ? asUser(actor) : signedOut();
+      responses.push(await readJson(await post({ projectId: project.publicId, name: "x", kind: "count" })));
+    }
+    expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403]);
+    expect(responses.map((response) => response.body.error)).toEqual(
+      Array(4).fill({ code: "FORBIDDEN", message: "Demo projects are read-only" }),
+    );
+    expect(await db.select().from(takeoffGroups).where(eq(takeoffGroups.projectId, project.id))).toEqual([]);
   });
 
   // [refactor jul8 P1-review PR-C1] demo-RESOLUTION parity guard. The service's local

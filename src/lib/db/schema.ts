@@ -11,12 +11,22 @@ import {
   jsonb,
   timestamp,
   doublePrecision,
+  bigint,
   index,
+  uniqueIndex,
   primaryKey,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import type {
-  ProjectIntelligence, PageIntelligence, TextractPageData, KeynoteShapeData,
-  TextAnnotationResult, AnnotationData, QtoParsedSchedule, QtoLineItem, QtoUserEdits,
+  ProjectIntelligence,
+  PageIntelligence,
+  TextractPageData,
+  KeynoteShapeData,
+  TextAnnotationResult,
+  AnnotationData,
+  QtoParsedSchedule,
+  QtoLineItem,
+  QtoUserEdits,
   QtoItemType,
   ModelConfig,
   StagingFile,
@@ -103,7 +113,11 @@ export const companies = pgTable("companies", {
     demo?: Record<string, boolean>;
     pageNaming?: {
       enabled?: boolean;
-      yoloSources?: Array<{ modelId: number; modelName: string; classes: string[] }>;
+      yoloSources?: Array<{
+        modelId: number;
+        modelName: string;
+        classes: string[];
+      }>;
     };
     /** Stage 2d: pluggable pipeline toggles. Each detector is independently
      *  enable-able; absent/undefined fields default to the legacy behavior
@@ -150,7 +164,9 @@ export const companies = pgTable("companies", {
   // (null = since company creation); a "reset" advances it so used → 0.
   sagemakerPageLimit: integer("sagemaker_page_limit").default(500).notNull(),
   textractPageLimit: integer("textract_page_limit").default(10000).notNull(),
-  usageResetInterval: varchar("usage_reset_interval", { length: 50 }).default("manual").notNull(),
+  usageResetInterval: varchar("usage_reset_interval", { length: 50 })
+    .default("manual")
+    .notNull(),
   usageWindowStart: timestamp("usage_window_start", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
@@ -171,7 +187,9 @@ export const users = pgTable(
     oauthProvider: varchar("oauth_provider", { length: 50 }),
     oauthProviderId: varchar("oauth_provider_id", { length: 255 }),
     passwordResetToken: varchar("password_reset_token", { length: 255 }),
-    passwordResetExpires: timestamp("password_reset_expires", { withTimezone: true }),
+    passwordResetExpires: timestamp("password_reset_expires", {
+      withTimezone: true,
+    }),
     companyId: integer("company_id")
       .notNull()
       .references(() => companies.id),
@@ -182,7 +200,7 @@ export const users = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_users_company").on(table.companyId)]
+  (table) => [index("idx_users_company").on(table.companyId)],
 );
 
 // ─── User API Keys (BYOK for LLM providers) ─────────────────
@@ -198,7 +216,7 @@ export const userApiKeys = pgTable(
     label: varchar("label", { length: 255 }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_api_keys_user").on(table.userId)]
+  (table) => [index("idx_api_keys_user").on(table.userId)],
 );
 
 // ─── Projects ────────────────────────────────────────────────
@@ -224,13 +242,108 @@ export const projects = pgTable(
       .notNull()
       .references(() => companies.id),
     isDemo: boolean("is_demo").default(false).notNull(),
-    projectIntelligence: jsonb("project_intelligence").$type<ProjectIntelligence>(),
+    // Monotonic authority generation for private <-> public-demo lifecycle transitions.
+    // Unlike updatedAt this is not content metadata and cannot collide at JS millisecond precision.
+    lifecycleEpoch: bigint("lifecycle_epoch", { mode: "number" })
+      .default(0)
+      .notNull(),
+    projectIntelligence: jsonb(
+      "project_intelligence",
+    ).$type<ProjectIntelligence>(),
     stagingManifest: jsonb("staging_manifest").$type<StagingFile[]>(),
     projectSummary: text("project_summary"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_projects_company").on(table.companyId)]
+  (table) => [index("idx_projects_company").on(table.companyId)],
+);
+
+// Permanent storage-root tombstone + retry outbox for project deletion. The row intentionally has no
+// foreign keys: it must survive deletion of the project, company, and user that created the assets.
+// `storageRoot` is never reused, while the pending state drives idempotent S3-version purge and
+// CloudFront invalidation until both have been observed complete.
+export const projectAssetDeletions = pgTable(
+  "project_asset_deletions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectPublicId: uuid("project_public_id").notNull(),
+    companyId: integer("company_id").notNull(),
+    storageRoot: varchar("storage_root", { length: 255 }).unique().notNull(),
+    lifecycleEpoch: bigint("lifecycle_epoch", { mode: "number" }).notNull(),
+    status: varchar("status", { length: 20 }).default("pending").notNull(),
+    phase: varchar("phase", { length: 20 }).default("purge").notNull(),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    s3PurgedAt: timestamp("s3_purged_at", { withTimezone: true }),
+    invalidationGeneration: integer("invalidation_generation")
+      .default(0)
+      .notNull(),
+    objectEventGeneration: bigint("object_event_generation", { mode: "number" })
+      .default(0)
+      .notNull(),
+    lastReconciledEventGeneration: bigint("last_reconciled_event_generation", {
+      mode: "number",
+    })
+      .default(0)
+      .notNull(),
+    cloudfrontInvalidationId: text("cloudfront_invalidation_id"),
+    lastError: text("last_error"),
+    lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    attentionRequiredAt: timestamp("attention_required_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("idx_project_asset_deletions_due").on(
+      table.status,
+      table.nextAttemptAt,
+    ),
+    index("idx_project_asset_deletions_lease").on(table.leaseExpiresAt),
+  ],
+);
+
+// Durable coordination for long project mutations that cross external systems. The lease is
+// acquired in a short parent-locked transaction; manageDemo rejects every live lease instead of
+// holding a database connection across AWS/S3/LLM work.
+export const projectMutationLeases = pgTable(
+  "project_mutation_leases",
+  {
+    token: uuid("token").defaultRandom().primaryKey(),
+    projectId: integer("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    lifecycleEpoch: bigint("lifecycle_epoch", { mode: "number" }).notNull(),
+    kind: varchar("kind", { length: 80 }).notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 255 }),
+    status: varchar("status", { length: 20 }).default("active").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_project_mutation_leases_project").on(table.projectId),
+    index("idx_project_mutation_leases_expiry").on(table.expiresAt),
+    uniqueIndex("uq_project_mutation_leases_idempotency").on(
+      table.projectId,
+      table.idempotencyKey,
+    ),
+  ],
 );
 
 // ─── Compute Usage Ledger ────────────────────────────────────
@@ -250,17 +363,31 @@ export const computeUsage = pgTable(
     // ON DELETE SET NULL: the ledger is append-only billing history — keep the
     // row (companyId + pages) even if the user/project is later deleted, just
     // drop the link. Without this, a referenced user/project can't be deleted.
-    userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
-    projectId: integer("project_id").references(() => projects.id, { onDelete: "set null" }),
+    userId: integer("user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    projectId: integer("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
     resource: varchar("resource", { length: 50 }).notNull(), // 'sagemaker' | 'textract' | 'lambda_cv'
     pages: integer("pages").notNull(),
     jobId: varchar("job_id", { length: 255 }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [
-    index("idx_compute_usage_company").on(table.companyId, table.resource, table.createdAt),
-    index("idx_compute_usage_user").on(table.userId, table.resource, table.createdAt),
-  ]
+    index("idx_compute_usage_company").on(
+      table.companyId,
+      table.resource,
+      table.createdAt,
+    ),
+    index("idx_compute_usage_user").on(
+      table.userId,
+      table.resource,
+      table.createdAt,
+    ),
+  ],
 );
 
 // ─── Pages ───────────────────────────────────────────────────
@@ -277,7 +404,10 @@ export const pages = pgTable(
     rawText: text("raw_text"),
     textractData: jsonb("textract_data").$type<TextractPageData>(),
     keynotes: jsonb("keynotes").$type<KeynoteShapeData[]>(),
-    csiCodes: jsonb("csi_codes").$type<{ code: string; description: string; trade: string; division: string }[]>(),
+    csiCodes:
+      jsonb("csi_codes").$type<
+        { code: string; description: string; trade: string; division: string }[]
+      >(),
     textAnnotations: jsonb("text_annotations").$type<TextAnnotationResult>(),
     pageIntelligence: jsonb("page_intelligence").$type<PageIntelligence>(),
     error: text("error"),
@@ -289,7 +419,7 @@ export const pages = pgTable(
   (table) => [
     index("idx_pages_project").on(table.projectId),
     index("idx_pages_project_page").on(table.projectId, table.pageNumber),
-  ]
+  ],
 );
 
 // ─── Annotations ─────────────────────────────────────────────
@@ -318,7 +448,7 @@ export const annotations = pgTable(
     index("idx_annotations_project").on(table.projectId),
     index("idx_annotations_name").on(table.name),
     index("idx_annotations_project_page").on(table.projectId, table.pageNumber),
-  ]
+  ],
 );
 
 // ─── Takeoff Groups ─────────────────────────────────────────
@@ -340,7 +470,7 @@ export const takeoffGroups = pgTable(
   (table) => [
     index("idx_takeoff_groups_project").on(table.projectId),
     index("idx_takeoff_groups_project_kind").on(table.projectId, table.kind),
-  ]
+  ],
 );
 
 // ─── Takeoff Items ──────────────────────────────────────────
@@ -351,7 +481,9 @@ export const takeoffItems = pgTable(
     projectId: integer("project_id")
       .notNull()
       .references(() => projects.id),
-    groupId: integer("group_id").references(() => takeoffGroups.id, { onDelete: "set null" }),
+    groupId: integer("group_id").references(() => takeoffGroups.id, {
+      onDelete: "set null",
+    }),
     name: varchar("name", { length: 255 }).notNull(),
     shape: varchar("shape", { length: 50 }).notNull(),
     color: varchar("color", { length: 20 }).notNull(),
@@ -361,7 +493,7 @@ export const takeoffItems = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_takeoff_items_project").on(table.projectId)]
+  (table) => [index("idx_takeoff_items_project").on(table.projectId)],
 );
 
 // ─── Chat Messages ───────────────────────────────────────────
@@ -380,7 +512,7 @@ export const chatMessages = pgTable(
     userId: integer("user_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_chat_project").on(table.projectId)]
+  (table) => [index("idx_chat_project").on(table.projectId)],
 );
 
 // ─── Sessions (for NextAuth) ─────────────────────────────────
@@ -409,7 +541,7 @@ export const processingJobs = pgTable(
     completedAt: timestamp("completed_at", { withTimezone: true }),
     error: text("error"),
   },
-  (table) => [index("idx_jobs_project").on(table.projectId)]
+  (table) => [index("idx_jobs_project").on(table.projectId)],
 );
 
 // ─── Model Registry ──────────────────────────────────────────
@@ -427,7 +559,7 @@ export const models = pgTable(
     isDefault: boolean("is_default").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_models_company").on(table.companyId)]
+  (table) => [index("idx_models_company").on(table.companyId)],
 );
 
 // ─── Model Access (which companies can use which models) ────
@@ -443,7 +575,9 @@ export const modelAccess = pgTable(
       .references(() => companies.id, { onDelete: "cascade" }),
     // Per-user grant: NULL = the whole company may use the model (legacy
     // behavior); set = only that one user (within companyId) may use it.
-    userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
+    userId: integer("user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
     enabled: boolean("enabled").default(true).notNull(),
     grantedBy: integer("granted_by").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
@@ -452,7 +586,7 @@ export const modelAccess = pgTable(
     index("idx_model_access_company").on(table.companyId),
     index("idx_model_access_model").on(table.modelId),
     index("idx_model_access_user").on(table.userId),
-  ]
+  ],
 );
 
 // ─── App Settings (global key-value, root admin configurable) ─
@@ -475,7 +609,7 @@ export const auditLog = pgTable(
     ip: varchar("ip", { length: 45 }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_audit_action").on(table.action)]
+  (table) => [index("idx_audit_action").on(table.action)],
 );
 
 // ─── Admin Logs — abuse events + manual IP bans ─────────────
@@ -495,7 +629,9 @@ export const abuseEvents = pgTable(
     path: varchar("path", { length: 255 }),
     userAgent: varchar("user_agent", { length: 500 }),
     details: jsonb("details").$type<Record<string, unknown>>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     seenAt: timestamp("seen_at", { withTimezone: true }),
   },
   (table) => [
@@ -507,17 +643,16 @@ export const abuseEvents = pgTable(
 // manualIpBans: explicit Root_Admin-initiated bans (distinct from the Phase 3
 // in-memory auto-ban `banStore`). Middleware reads with 60s in-memory cache to
 // avoid per-request DB hits.
-export const manualIpBans = pgTable(
-  "manual_ip_bans",
-  {
-    id: serial("id").primaryKey(),
-    ip: varchar("ip", { length: 45 }).notNull().unique(),
-    reason: varchar("reason", { length: 500 }),
-    bannedByUserId: integer("banned_by_user_id"),
-    bannedUntil: timestamp("banned_until", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-);
+export const manualIpBans = pgTable("manual_ip_bans", {
+  id: serial("id").primaryKey(),
+  ip: varchar("ip", { length: 45 }).notNull().unique(),
+  reason: varchar("reason", { length: 500 }),
+  bannedByUserId: integer("banned_by_user_id"),
+  bannedUntil: timestamp("banned_until", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
 
 // ─── Invite Requests ────────────────────────────────────────
 export const inviteRequests = pgTable("invite_requests", {
@@ -537,23 +672,73 @@ export const llmConfigs = pgTable(
     companyId: integer("company_id")
       .notNull()
       .references(() => companies.id, { onDelete: "cascade" }),
-    userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }), // NULL = company-wide
+    userId: integer("user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }), // NULL = company-wide
     provider: varchar("provider", { length: 50 }).notNull(), // 'groq' | 'anthropic' | 'openai' | 'custom'
     model: varchar("model", { length: 100 }).notNull(),
     encryptedApiKey: text("encrypted_api_key"), // NULL = use env var fallback
     baseUrl: text("base_url"), // for Ollama/custom endpoints
     isDemo: boolean("is_demo").default(false).notNull(),
     isDefault: boolean("is_default").default(false).notNull(),
-    config: jsonb("config").$type<{ temperature?: number; maxTokens?: number }>(),
+    config: jsonb("config").$type<{
+      temperature?: number;
+      maxTokens?: number;
+    }>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [
-    index("idx_llm_configs_company").on(table.companyId),
-  ]
+  (table) => [index("idx_llm_configs_company").on(table.companyId)],
 );
 
 // ─── Labeling Sessions (Label Studio integration) ───────────
+// Durable provider-create cleanup intent. The provider assigns its numeric project ID, so an
+// application UUID marker is committed before POST and searched after any ambiguous outcome.
+export const labelStudioProjectIntents = pgTable(
+  "label_studio_project_intents",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: integer("project_id")
+      .notNull()
+      .unique()
+      .references(() => projects.id),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id),
+    lifecycleEpoch: bigint("lifecycle_epoch", { mode: "number" }).notNull(),
+    marker: varchar("marker", { length: 255 }).notNull().unique(),
+    providerProjectId: integer("provider_project_id"),
+    providerBaseUrl: text("provider_base_url").notNull(),
+    providerInstanceId: text("provider_instance_id").notNull(),
+    state: varchar("state", { length: 30 }).default("creating").notNull(),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_label_studio_project_intents_due").on(table.nextAttemptAt),
+    index("idx_label_studio_project_intents_lease").on(table.leaseExpiresAt),
+    uniqueIndex("uq_ls_intents_provider_project")
+      .on(
+        table.providerBaseUrl,
+        table.providerInstanceId,
+        table.providerProjectId,
+      )
+      .where(sql`${table.providerProjectId} IS NOT NULL`),
+  ],
+);
+
 export const labelingSessions = pgTable(
   "labeling_sessions",
   {
@@ -565,6 +750,8 @@ export const labelingSessions = pgTable(
       .notNull()
       .references(() => companies.id),
     labelStudioProjectId: integer("label_studio_project_id").notNull(),
+    providerBaseUrl: text("provider_base_url").notNull(),
+    providerInstanceId: text("provider_instance_id").notNull(),
     labelStudioUrl: varchar("label_studio_url", { length: 500 }),
     taskType: varchar("task_type", { length: 50 }).default("generic"),
     labels: jsonb("labels").$type<string[]>(),
@@ -572,10 +759,89 @@ export const labelingSessions = pgTable(
     tilingEnabled: boolean("tiling_enabled").default(false),
     tileGrid: integer("tile_grid"),
     status: varchar("status", { length: 50 }).default("active").notNull(),
+    // Audit/finalization witness only. The intent row is removed atomically when this session is
+    // activated, so this deliberately is not an FK.
+    provisioningIntentId: uuid("provisioning_intent_id").notNull().unique(),
+    // A failed/idempotent provider DELETE is a durable retirement queue item. Unlike the
+    // project-wide mutation lease (whose expiry is diagnostic only), this lease may be reclaimed:
+    // deleting the same Label Studio project is idempotent and every task bearer was revoked
+    // before the first attempt.
+    retirementAttemptCount: integer("retirement_attempt_count")
+      .default(0)
+      .notNull(),
+    retirementConsecutiveFailures: integer("retirement_consecutive_failures")
+      .default(0)
+      .notNull(),
+    retirementNextAttemptAt: timestamp("retirement_next_attempt_at", {
+      withTimezone: true,
+    })
+      .defaultNow()
+      .notNull(),
+    retirementLeaseToken: uuid("retirement_lease_token"),
+    retirementLeaseExpiresAt: timestamp("retirement_lease_expires_at", {
+      withTimezone: true,
+    }),
+    retirementLastError: text("retirement_last_error"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_labeling_sessions_project").on(table.projectId)]
+  (table) => [
+    index("idx_labeling_sessions_project").on(table.projectId),
+    index("idx_labeling_sessions_retirement_due").on(
+      table.status,
+      table.retirementNextAttemptAt,
+    ),
+    index("idx_labeling_sessions_retirement_lease").on(
+      table.retirementLeaseExpiresAt,
+    ),
+    uniqueIndex("uq_labeling_sessions_provider_project").on(
+      table.providerBaseUrl,
+      table.providerInstanceId,
+      table.labelStudioProjectId,
+    ),
+  ],
+);
+
+// One immutable, exact-version image capability per imported Label Studio task. The plaintext
+// bearer is embedded in Label Studio's task URL and therefore also enters the shared ALB's
+// request-target access log; BP stores only its SHA-256 digest. Terraform isolates those logs in a
+// private SSE-S3 bucket with one-day lifecycle expiry. Snapshot keys are derived from
+// `(project.dataUrl, id)` and therefore cannot be redirected by a mutable DB field.
+export const labelStudioAssetGrants = pgTable(
+  "label_studio_asset_grants",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: integer("project_id")
+      .notNull()
+      .references(() => projects.id),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id),
+    lifecycleEpoch: bigint("lifecycle_epoch", { mode: "number" }).notNull(),
+    provisioningIntentId: uuid("provisioning_intent_id").references(
+      () => labelStudioProjectIntents.id,
+    ),
+    labelingSessionId: integer("labeling_session_id").references(
+      () => labelingSessions.id,
+    ),
+    tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+    snapshotVersionId: text("snapshot_version_id").notNull(),
+    state: varchar("state", { length: 20 }).default("provisioning").notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_label_studio_asset_grants_project").on(table.projectId),
+    index("idx_label_studio_asset_grants_intent").on(
+      table.provisioningIntentId,
+    ),
+    index("idx_label_studio_asset_grants_session").on(table.labelingSessionId),
+  ],
 );
 
 // ─── QTO Workflows (Auto-QTO feature) ──────────────────────
@@ -594,7 +860,10 @@ export const qtoWorkflows = pgTable(
     step: text("step").notNull().default("pick"),
     schedulePageNumber: integer("schedule_page_number"),
     yoloClassFilter: text("yolo_class_filter"),
-    itemType: text("item_type").notNull().default("yolo-with-inner-text").$type<QtoItemType>(),
+    itemType: text("item_type")
+      .notNull()
+      .default("yolo-with-inner-text")
+      .$type<QtoItemType>(),
     tagShapeClass: text("tag_shape_class"),
     parsedSchedule: jsonb("parsed_schedule").$type<QtoParsedSchedule>(),
     lineItems: jsonb("line_items").$type<QtoLineItem[]>(),
@@ -603,7 +872,7 @@ export const qtoWorkflows = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_qto_workflows_project").on(table.projectId)]
+  (table) => [index("idx_qto_workflows_project").on(table.projectId)],
 );
 
 // ─── Annotation Groups ─────────────────────────────────────
@@ -628,7 +897,7 @@ export const annotationGroups = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("idx_annotation_groups_project").on(table.projectId)]
+  (table) => [index("idx_annotation_groups_project").on(table.projectId)],
 );
 
 // Junction table — M:N annotations ↔ annotation_groups. Composite PK
@@ -649,5 +918,5 @@ export const annotationGroupMembers = pgTable(
   (table) => [
     primaryKey({ columns: [table.annotationId, table.groupId] }),
     index("idx_annotation_group_members_group").on(table.groupId),
-  ]
+  ],
 );

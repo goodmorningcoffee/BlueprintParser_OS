@@ -48,6 +48,7 @@ import {
   createWorld,
   makeReq,
   params,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -213,12 +214,50 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/export", () => {
     expect(body.pages[0].image.pngKey).toBe(`${project.dataUrl}/pages/page_0001.png`);
   });
 
-  it("access matrix: demo signed-out 200 (allowDemo); non-demo signed-out 401; cross-tenant 404; root 200; unknown 404-before-auth", async () => {
+  it("B2 RED access matrix: export is authenticated project tooling only; no anonymous demo projection", async () => {
     s3Mocks.getPresignedGetUrl.mockResolvedValue("https://signed.test/k");
 
-    const demo = await createWorld({ isDemo: true });
+    const demo = await createWorld({
+      projectSummary: "PRIVATE-EXPORT-SUMMARY-CANARY",
+      projectIntelligence: { privateCanary: "PRIVATE-EXPORT-PI-CANARY" } as any,
+    });
+    await createPage(demo.project.id, 1, {
+      rawText: "PRIVATE-EXPORT-OCR-CANARY",
+      textractData: { privateCanary: "PRIVATE-EXPORT-TEXTRACT-CANARY" } as never,
+    });
+    await db.insert(annotations).values({
+      projectId: demo.project.id,
+      pageNumber: 1,
+      name: "PRIVATE-EXPORT-ANNOTATION-CANARY",
+      note: "PRIVATE-EXPORT-NOTE-CANARY",
+      minX: 0.1,
+      minY: 0.1,
+      maxX: 0.2,
+      maxY: 0.2,
+      source: "user",
+    });
+    await publishDemoFixture(demo.project.id);
     signedOut();
-    expect((await readJson(await exp(demo.project.publicId))).status).toBe(200); // demo = public export
+    const demoResponse = await readJson(await exp(demo.project.publicId));
+    expect.soft(demoResponse.status).toBe(401);
+    expect.soft(demoResponse.body).toEqual({
+      error: { code: "UNAUTHORIZED", message: "Unauthorized" },
+    });
+    const anonymousBody = JSON.stringify(demoResponse.body);
+    for (const forbidden of [
+      "dataUrl",
+      demo.project.dataUrl,
+      "PRIVATE-EXPORT-SUMMARY-CANARY",
+      "PRIVATE-EXPORT-PI-CANARY",
+      "PRIVATE-EXPORT-OCR-CANARY",
+      "PRIVATE-EXPORT-TEXTRACT-CANARY",
+      "PRIVATE-EXPORT-ANNOTATION-CANARY",
+      "PRIVATE-EXPORT-NOTE-CANARY",
+    ]) {
+      expect.soft(anonymousBody).not.toContain(forbidden);
+    }
+    asUser(demo.user);
+    expect.soft((await readJson(await exp(demo.project.publicId))).status).toBe(200);
 
     const world = await createWorld();
     signedOut();
@@ -236,8 +275,8 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/export", () => {
 
     signedOut();
     const unknown = await readJson(await exp(randomUUID()));
-    expect(unknown.status).toBe(404); // 404 BEFORE auth (engine order)
-    expect(unknown.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" }); // [P1.5 fold] flipped
+    expect(unknown.status).toBe(401); // authentication precedes project lookup
+    expect(unknown.body.error).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" });
   });
 
   // [DETECTOR closer SD-4] sanctioned diff B representative: an UNEXPECTED throw (here the first
@@ -254,13 +293,16 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/export", () => {
     expect(JSON.stringify(body)).not.toContain("secret-db-detail");
   });
 
-  // [P1.5 fold] WHOLE assertion flipped: legacy fed the non-uuid into the pg uuid cast inside
-  // resolveProjectAccess → REJECTED (frozen at 472e170 as .rejects.toThrow()). Now sanctioned
-  // diff C: clean 400 via zPublicId (fires even signed-out — the cast also did).
-  it("non-uuid id → 400 'Invalid project id' (sanctioned diff C; legacy threw)", async () => {
+  it("B2 RED: export authenticates before id validation; authenticated non-uuid remains a clean 400", async () => {
     signedOut();
-    const { status, body } = await readJson(await exp("not-a-uuid"));
-    expect(status).toBe(400);
-    expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
+    const anonymous = await readJson(await exp("not-a-uuid"));
+    expect.soft(anonymous.status).toBe(401);
+    expect.soft(anonymous.body.error).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" });
+
+    const { user } = await createWorld();
+    asUser(user);
+    const authenticated = await readJson(await exp("not-a-uuid"));
+    expect.soft(authenticated.status).toBe(400);
+    expect.soft(authenticated.body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
   });
 });

@@ -14,10 +14,7 @@
 //   • the S3 key is the PADDED `thumbnails/page_NNNN.png` (String(n).padStart(4,"0") — the
 //     repo convention; contrast [LB-1] in labeling/create which is unpadded).
 //   • downloadFromS3 failure → 404 "Thumbnail not found" (NOT a 500 — the catch quirk).
-//   • success: raw PNG bytes, Content-Type image/png, Cache-Control
-//     "public, max-age=3600, stale-while-revalidate=86400" (AGGRESSIVE-CACHE header — must
-//     survive the fold via the raw-NextResponse shell passthrough, the getPageTextract /
-//     getPageWindow precedent).
+//   • success: raw PNG bytes, Content-Type image/png, withdrawal-safe private,no-store.
 import { randomUUID } from "node:crypto";
 import { describe, expect, inject, it, vi } from "vitest";
 
@@ -31,12 +28,14 @@ vi.mock("@/lib/auth", async () => {
 const s3Mocks = vi.hoisted(() => ({
   downloadFromS3: vi.fn(),
   uploadToS3: vi.fn(),
-  getS3Url: vi.fn(() => "http://cdn.test/x"),
   getPresignedGetUrl: vi.fn(),
 }));
 vi.mock("@/lib/s3", () => s3Mocks);
 
 import { GET } from "@/app/api/projects/[id]/thumbnail/[page]/route";
+import { db } from "@/lib/db";
+import { projects } from "@/lib/db/schema";
+import { eq, sql } from "drizzle-orm";
 import {
   asUser,
   createCompany,
@@ -44,6 +43,7 @@ import {
   createWorld,
   makeReq,
   params,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -56,8 +56,27 @@ const thumb = (id: string, page: string) =>
     params({ id, page }),
   );
 
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function expectPrivateAssetPolicy(response: Response): void {
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+  expect(response.headers.get("vary")).toBe(
+    "Cookie, Authorization, Range",
+  );
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+}
+
 describe.skipIf(!dbUp)("GET /api/projects/[id]/thumbnail/[page]", () => {
-  it("happy: raw PNG bytes + image/png + the aggressive Cache-Control; PADDED S3 key", async () => {
+  it("happy: raw PNG bytes + image/png + withdrawal-safe no-store; PADDED S3 key", async () => {
     const { user, project } = await createWorld();
     asUser(user);
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
@@ -66,9 +85,7 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/thumbnail/[page]", () => {
     const res = await thumb(project.publicId, "3");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
-    expect(res.headers.get("cache-control")).toBe(
-      "public, max-age=3600, stale-while-revalidate=86400",
-    );
+    expectPrivateAssetPolicy(res);
     expect(Buffer.from(await res.arrayBuffer())).toEqual(png);
     // the PADDED key convention (page_0003, NOT page_3 — contrast labeling's [LB-1])
     expect(s3Mocks.downloadFromS3).toHaveBeenCalledWith(
@@ -133,8 +150,38 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/thumbnail/[page]", () => {
     asUser(user);
     s3Mocks.downloadFromS3.mockRejectedValueOnce(new Error("NoSuchKey"));
     // [P1.5 fold] flipped: legacy was a TEXT body — now the envelope. Still 404, never 500.
-    const { status, body } = await readJson(await thumb(project.publicId, "1"));
+    const response = await thumb(project.publicId, "1");
+    const { status, body } = await readJson(response);
     expect(status).toBe(404);
     expect(body.error).toEqual({ code: "NOT_FOUND", message: "Thumbnail not found" });
+    expectPrivateAssetPolicy(response);
+  });
+
+  it("revalidates a public demo after the buffered S3 wait", async () => {
+    const { project } = await createWorld();
+    await publishDemoFixture(project.id);
+    signedOut();
+
+    const started = deferred<void>();
+    const bytes = deferred<Buffer>();
+    s3Mocks.downloadFromS3.mockImplementationOnce(async () => {
+      started.resolve(undefined);
+      return bytes.promise;
+    });
+
+    const pending = thumb(project.publicId, "1");
+    await started.promise;
+    await db
+      .update(projects)
+      .set({
+        isDemo: false,
+        lifecycleEpoch: sql`${projects.lifecycleEpoch} + 1`,
+      })
+      .where(eq(projects.id, project.id));
+    bytes.resolve(Buffer.from([1]));
+
+    const response = await pending;
+    expect(response.status).toBe(404);
+    expectPrivateAssetPolicy(response);
   });
 });

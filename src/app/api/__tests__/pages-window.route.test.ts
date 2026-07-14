@@ -24,6 +24,7 @@ import {
   createWorld,
   makeReq,
   params,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -224,8 +225,9 @@ describe.skipIf(!dbUp)("GET /api/projects/[id]/pages (chunk window)", () => {
   });
 
   it("demo project, signed-out → 401 (this route never serves demo publicly — that is the demo twin's job)", async () => {
-    const { project } = await createWorld({ isDemo: true });
+    const { project } = await createWorld();
     await createPage(project.id, 1);
+    await publishDemoFixture(project.id);
     signedOut();
     const { status } = await readJson(await GET(windowReq(project.publicId, 1, 8), params({ id: project.publicId })));
     expect(status).toBe(401); // no allowDemo → demo falls through to the require-auth 401

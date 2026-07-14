@@ -18,10 +18,13 @@ vi.mock("@/lib/auth", async () => {
 
 import { GET, POST } from "@/app/api/annotation-groups/route";
 import { POST as createAnnotation } from "@/app/api/annotations/route";
+import { db } from "@/lib/db";
+import { annotationGroupMembers, annotationGroups, annotations } from "@/lib/db/schema";
 import {
   asUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -94,14 +97,36 @@ describe.skipIf(!dbUp)("/api/annotation-groups", () => {
     expect((await readJson(await POST(makeReq("x", { body: { projectId: p, name: "ok", annotationIds: ids } })))).status).toBe(401);
   });
 
-  it("GET on a demo project works UNAUTHENTICATED (allowDemo read path — frozen)", async () => {
-    const { user, project } = await createWorld({ isDemo: true });
-    asUser(user);
-    await seedAnnotations(project.publicId, 1); // member of owning company can still write to own demo? — no: demo write gate… seed via direct user on non-demo path
+  it("L5 freeze: unauthenticated demo GET returns empty groups/memberships despite private rows", async () => {
+    const { user, project } = await createWorld();
+    const [annotation] = await db
+      .insert(annotations)
+      .values({
+        projectId: project.id,
+        pageNumber: 1,
+        name: "PRIVATE-GROUP-ANNOTATION-CANARY",
+        note: "PRIVATE-GROUP-NOTE-CANARY",
+        minX: 0.1,
+        minY: 0.1,
+        maxX: 0.2,
+        maxY: 0.2,
+        source: "user",
+      })
+      .returning();
+    const [group] = await db
+      .insert(annotationGroups)
+      .values({
+        projectId: project.id,
+        name: "PRIVATE-GROUP-NAME-CANARY",
+        notes: "PRIVATE-GROUP-NOTES-CANARY",
+        createdBy: user.id,
+      })
+      .returning();
+    await db.insert(annotationGroupMembers).values({ groupId: group.id, annotationId: annotation.id });
+    await publishDemoFixture(project.id);
     signedOut();
     const res = await readJson(await GET(makeReq(`/api/annotation-groups?projectId=${project.publicId}`, { method: "GET" })));
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty("groups");
-    expect(res.body).toHaveProperty("memberships");
+    expect(res.body).toEqual({ groups: [], memberships: [] });
   });
 });

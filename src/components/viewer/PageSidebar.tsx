@@ -30,7 +30,7 @@ const VIRTUAL_BUFFER = 5; // Extra items above/below viewport
 export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
   // Slice selectors (only re-render when relevant slice changes)
   const { pageNumber, numPages } = useNavigation();
-  const { pageNames, publicId } = useProject();
+  const { pageNames, publicId, assetBaseUrl } = useProject();
   const keynotes = useKeynotesByPage();
   const csiCodes = useCsiCodesByPage();
   const textAnnotations = useTextAnnotationsByPage();
@@ -80,8 +80,10 @@ export default function PageSidebar({ pdfDoc }: PageSidebarProps) {
 
   // Thumbnail URL via server proxy (avoids requiring public S3 access from browser)
   const thumbUrl = useCallback(
-    (page: number) => publicId ? `/api/projects/${publicId}/thumbnail/${page}` : null,
-    [publicId],
+    (page: number) => assetBaseUrl
+      ? `${assetBaseUrl}/thumbnails/page_${String(page).padStart(4, "0")}.png`
+      : null,
+    [assetBaseUrl],
   );
 
   // Group-by-sheet state

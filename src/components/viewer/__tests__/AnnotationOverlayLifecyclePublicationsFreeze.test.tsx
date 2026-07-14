@@ -147,7 +147,7 @@ function projectResponse(): ProjectResponse {
     id: PUBLIC_ID,
     dbId: PROJECT_DB_ID,
     name: "Overlay lifecycle fixture",
-    dataUrl: "s3://private/overlay.json",
+    assetBaseUrl: "s3://private/overlay.json",
     pdfUrl: "s3://private/overlay.pdf",
     numPages: 2,
     status: "ready",

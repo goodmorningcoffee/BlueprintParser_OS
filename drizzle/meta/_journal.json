@@ -232,6 +232,48 @@
       "when": 1781311102872,
       "tag": "0032_chat_global_nullable_project",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1784027842672,
+      "tag": "0033_project_lifecycle_epoch_and_leases",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1784034986545,
+      "tag": "0034_project_asset_deletion_outbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1784035578177,
+      "tag": "0035_label_studio_project_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1784036072429,
+      "tag": "0036_project_asset_object_event_generation",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1784042886083,
+      "tag": "0037_label_studio_asset_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1784043996698,
+      "tag": "0038_label_studio_session_retirements",
+      "breakpoints": true
     }
   ]
 }

@@ -7,10 +7,18 @@
 //     describe job"}); RETIRED here — the service lets the SageMaker error propagate → the
 //     shell renders a generic INTERNAL 500 (real cause logged server-side, no AWS-error leak).
 //   • NO E — GET reads a query param, not a body.
-// The SageMaker client + the full response shaping are ported verbatim.
+// The SageMaker client + response shaping remain byte-compatible. P2 adds a durable same-company
+// YOLO-intent witness before Describe; root retains the explicit global operations view.
 
-import { SageMakerClient, DescribeProcessingJobCommand } from "@aws-sdk/client-sagemaker";
-import { ApiError } from "@/server/api/envelope";
+import {
+  SageMakerClient,
+  DescribeProcessingJobCommand,
+} from "@aws-sdk/client-sagemaker";
+import { and, eq, isNotNull, or, sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { processingJobs, projects } from "@/lib/db/schema";
+import type { AuthSession } from "@/lib/api-utils";
+import { ApiError, notFound } from "@/server/api/envelope";
 
 const sagemakerClient = new SageMakerClient({
   region: process.env.AWS_REGION || "us-east-1",
@@ -22,26 +30,50 @@ const sagemakerClient = new SageMakerClient({
   }),
 });
 
-export async function getSagemakerDetails(req: Request): Promise<unknown> {
+export async function getSagemakerDetails(
+  req: Request,
+  session: AuthSession,
+): Promise<unknown> {
   const url = new URL(req.url);
   const jobName = url.searchParams.get("jobName");
   if (!jobName) {
     throw new ApiError("VALIDATION", "jobName required");
   }
 
+  // Processing job names are provider-global capabilities and the response contains private S3
+  // locations. Company admins need an own-company durable YOLO intent; only root retains the
+  // deliberate global operations view.
+  const [job] = await db
+    .select({ id: processingJobs.id })
+    .from(processingJobs)
+    .innerJoin(projects, eq(processingJobs.projectId, projects.id))
+    .where(
+      and(
+        eq(processingJobs.executionId, jobName),
+        isNotNull(processingJobs.modelConfig),
+        or(
+          eq(projects.companyId, session.user.companyId),
+          session.user.isRootAdmin ? sql`TRUE` : sql`FALSE`,
+        ),
+      ),
+    )
+    .limit(1);
+  if (!job) throw notFound();
+
   // [B] no try/catch — a SageMaker error propagates to the shell's generic INTERNAL 500
   // (legacy leaked err.message here; retired).
   const result = await sagemakerClient.send(
-    new DescribeProcessingJobCommand({ ProcessingJobName: jobName })
+    new DescribeProcessingJobCommand({ ProcessingJobName: jobName }),
   );
 
   const startTime = result.ProcessingStartTime || result.CreationTime;
   const endTime = result.ProcessingEndTime;
-  const durationMs = startTime && endTime
-    ? new Date(endTime).getTime() - new Date(startTime).getTime()
-    : startTime
-      ? Date.now() - new Date(startTime).getTime()
-      : null;
+  const durationMs =
+    startTime && endTime
+      ? new Date(endTime).getTime() - new Date(startTime).getTime()
+      : startTime
+        ? Date.now() - new Date(startTime).getTime()
+        : null;
 
   const inputs = (result.ProcessingInputs || []).map((i) => ({
     name: i.InputName,

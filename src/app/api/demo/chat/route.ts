@@ -167,5 +167,7 @@ IMPORTANT: ONLY reference information that appears in the data below. Do not inv
 
   // [refactor jun13 P0.5-G2] null when no demo project (was `|| 0` → the same
   // FK-throw-after-stream class as global chat)
-  return streamChatResponse(config, messages, demoProject?.id ?? null, null, null);
+  const isDemo = true;
+  const noPersist = isDemo;
+  return streamChatResponse(config, messages, demoProject?.id ?? null, null, null, noPersist);
 }

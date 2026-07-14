@@ -44,7 +44,14 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 import { getCompanyCsiContext, type CompanyCsiContext } from "@/lib/csi-company-db";
 import { logger } from "@/lib/logger";
 import { ApiError } from "@/server/api/envelope";
-import { resolveByPublicId, resolveProjectOrThrow } from "@/server/api/access";
+import {
+  resolveByPublicId,
+  resolveWritableProjectOrThrow,
+} from "@/server/api/access";
+import {
+  assertProjectWritable,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
 import type { ClientAnnotation } from "@/types";
 
 /**
@@ -119,8 +126,8 @@ async function verifyAnnotationAccess(annotationId: number) {
   if (!annotation) throw new ApiError("NOT_FOUND", "Not found");
   // [refactor jul9 P2-A C1] keep the resolved project (was discarded) so updateAnnotation
   // can derive companyId for the CSI resolver. Access check is byte-identical.
-  const { project } = await resolveProjectOrThrow({ dbId: annotation.projectId });
-  return { annotation, project };
+  const { project, writeCapability } = await resolveWritableProjectOrThrow({ dbId: annotation.projectId });
+  return { annotation, project, writeCapability };
 }
 
 // ── POST /api/annotations (single + batch) ───────────────────────────────────────
@@ -145,7 +152,8 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
 
   if (!projectId) throw new ApiError("VALIDATION", "projectId required");
 
-  const { project, session } = await resolveByPublicId(projectId);
+  const { project, session } = await resolveByPublicId(projectId, { allowDemo: true });
+  const writeCapability = assertProjectWritable(project);
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
 
   // [refactor jul9 P2-A C1] Resolve company CSI context ONCE, BEFORE the tx below
@@ -159,7 +167,7 @@ async function createAnnotationBatch(body: Record<string, unknown>) {
 
   // delete-before-insert + insert wrapped in ONE tx so a failed insert can't leave a source's
   // annotations deleted-but-not-replaced (sanctioned scope-add; happy path identical — P1.2 precedent).
-  const inserted = await db.transaction(async (tx) => {
+  const inserted = await withProjectWrite(writeCapability, project.id, async (tx) => {
     if (deleteSource && deletePageNumbers?.length) {
       for (const pn of deletePageNumbers) {
         await tx
@@ -221,28 +229,32 @@ async function createAnnotationSingle(body: Record<string, unknown>) {
   const bboxErr = validateBbox(bbox);
   if (bboxErr) throw new ApiError("VALIDATION", bboxErr);
 
-  const { project, session } = await resolveByPublicId(projectId);
+  const { project, session } = await resolveByPublicId(projectId, { allowDemo: true });
+  const writeCapability = assertProjectWritable(project);
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
 
   // [refactor jul9 P2-A C1] company CSI context (no tx here); threaded into mergeAutoCsi.
   const csiCtx = await getCompanyCsiContext(project.companyId);
 
-  const [annotation] = await db
-    .insert(annotations)
-    .values({
-      name,
-      minX: bbox[0],
-      minY: bbox[1],
-      maxX: bbox[2],
-      maxY: bbox[3],
-      pageNumber,
-      note: note || null,
-      source: source || "user",
-      data: mergeAutoCsi(note, data, csiCtx), // [refactor jul9 P2-A C1]
-      creatorId: session.user.dbId,
-      projectId: project.id,
-    })
-    .returning();
+  const annotation = await withProjectWrite(writeCapability, project.id, async (tx) => {
+    const [created] = await tx
+      .insert(annotations)
+      .values({
+        name,
+        minX: bbox[0],
+        minY: bbox[1],
+        maxX: bbox[2],
+        maxY: bbox[3],
+        pageNumber,
+        note: note || null,
+        source: source || "user",
+        data: mergeAutoCsi(note, data, csiCtx), // [refactor jul9 P2-A C1]
+        creatorId: session.user.dbId,
+        projectId: project.id,
+      })
+      .returning();
+    return created;
+  });
 
   return toClientAnnotation(annotation);
 }
@@ -254,7 +266,7 @@ async function createAnnotationSingle(body: Record<string, unknown>) {
 export async function updateAnnotation(idParam: string, body: Record<string, unknown>) {
   // [refactor jul9 P2-A C1] verifyAnnotationAccess now returns { annotation, project };
   // project.companyId feeds the CSI resolver for the auto-CSI detect below.
-  const { annotation, project } = await verifyAnnotationAccess(parseInt(idParam));
+  const { annotation, project, writeCapability } = await verifyAnnotationAccess(parseInt(idParam));
 
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name;
@@ -291,7 +303,12 @@ export async function updateAnnotation(idParam: string, body: Record<string, unk
 
   updates.updatedAt = new Date();
 
-  await db.update(annotations).set(updates).where(eq(annotations.id, annotation.id));
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx
+      .update(annotations)
+      .set(updates)
+      .where(and(eq(annotations.id, annotation.id), eq(annotations.projectId, project.id)));
+  });
 
   return { success: true, autoCsiCodes };
 }
@@ -299,8 +316,12 @@ export async function updateAnnotation(idParam: string, body: Record<string, unk
 /** DELETE /api/annotations/[id] — removes the annotation row (annotation_group_members cascade). */
 export async function deleteAnnotation(idParam: string) {
   // [refactor jul9 P2-A C1] verifyAnnotationAccess now returns { annotation, project }.
-  const { annotation } = await verifyAnnotationAccess(parseInt(idParam));
-  await db.delete(annotations).where(eq(annotations.id, annotation.id));
+  const { annotation, project, writeCapability } = await verifyAnnotationAccess(parseInt(idParam));
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx
+      .delete(annotations)
+      .where(and(eq(annotations.id, annotation.id), eq(annotations.projectId, project.id)));
+  });
   return { success: true as const };
 }
 
@@ -319,13 +340,14 @@ export async function batchDeleteAnnotations(body: Record<string, unknown>) {
     throw new ApiError("VALIDATION", "annotationIds must be integers");
   }
 
-  const { project } = await resolveByPublicId(projectId);
+  const { project } = await resolveByPublicId(projectId, { allowDemo: true });
+  const writeCapability = assertProjectWritable(project);
 
   try {
-    const deleted = await db
+    const deleted = await withProjectWrite(writeCapability, project.id, (tx) => tx
       .delete(annotations)
       .where(and(eq(annotations.projectId, project.id), inArray(annotations.id, annotationIds as number[])))
-      .returning({ id: annotations.id });
+      .returning({ id: annotations.id }));
 
     return {
       success: true,
@@ -333,6 +355,7 @@ export async function batchDeleteAnnotations(body: Record<string, unknown>) {
       deletedIds: deleted.map((r) => r.id),
     };
   } catch (err) {
+    if (err instanceof ApiError) throw err;
     // Was a raw-pg-leak 500 (err.message); now: server log + generic envelope (no leak).
     logger.error("[annotations/batch-delete] Failed:", err);
     throw new ApiError("INTERNAL", "Internal server error");

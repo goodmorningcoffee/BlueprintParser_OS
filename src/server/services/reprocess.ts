@@ -11,7 +11,7 @@
 //
 // Freeze pins (char: admin-reprocess.route.test.ts + admin-reprocess-g3.route.test.ts):
 // ★H6/W8 blind-spread project-PI merge; G3/G3b page-level carry; W2-scoped shape-parse
-// delete; thumbnails IMMUTABLE cache-control (viewer-perf SACRED); counter asymmetries;
+// delete; legacy immutable S3 metadata (the gateway overrides it private/no-store); counter asymmetries;
 // verbatim stream literals incl. the §B-owner-locked raw err.message thumbnails line.
 // DO NOT add scope validation, an isDemo exclusion, or a projectId(singular) body read —
 // those are pre-existing REVIEW-ITEMs deliberately preserved (see SOLOS_RECON_REPROCESS.md).
@@ -51,6 +51,12 @@ const HEATMAP_CLASSES = ["text_box", "vertical_area", "horizontal_area"] as cons
 import { analyzeProject, computeProjectSummaries } from "@/lib/project-analysis";
 import type { TextractPageData, TextAnnotation, TextAnnotationResult, CsiCode } from "@/types";
 import { logger } from "@/lib/logger";
+import { assertProjectWritable } from "@/server/api/access";
+import {
+  type ProjectWriteCapability,
+  withProjectMutationLease,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
 
 /**
  * POST /api/admin/reprocess
@@ -100,7 +106,16 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
   // the ONLY behavior delta vs the S062 fold (freeze-pinned: demo project excluded from the
   // start count and byte-untouched after a no-body run).
   const allCompanyProjects = await db
-    .select({ id: projects.id, name: projects.name, publicId: projects.publicId, dataUrl: projects.dataUrl, numPages: projects.numPages })
+    .select({
+      id: projects.id,
+      name: projects.name,
+      publicId: projects.publicId,
+      companyId: projects.companyId,
+      isDemo: projects.isDemo,
+      lifecycleEpoch: projects.lifecycleEpoch,
+      dataUrl: projects.dataUrl,
+      numPages: projects.numPages,
+    })
     .from(projects)
     .where(and(eq(projects.companyId, session.user.companyId), eq(projects.isDemo, false)));
 
@@ -108,6 +123,25 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
   const allProjects = selectedProjectIds
     ? allCompanyProjects.filter((p) => selectedProjectIds!.includes(p.publicId))
     : allCompanyProjects;
+  const writeCapabilities = new Map(
+    allProjects.map((project) => [project.id, assertProjectWritable(project)]),
+  );
+  const withReprocessLease = <T>(
+    projectId: number,
+    operation: (writeCapability: ProjectWriteCapability) => Promise<T>,
+  ): Promise<T> => {
+    const writeCapability = writeCapabilities.get(projectId);
+    if (!writeCapability) throw new Error("Missing project write capability");
+    return withProjectMutationLease(
+      writeCapability,
+      {
+        kind: `admin-reprocess:${scope ?? "full"}`,
+        // Only one admin reprocess may own a project at a time, regardless of scope.
+        idempotencyKey: "admin-reprocess",
+      },
+      () => operation(writeCapability),
+    );
+  };
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -156,6 +190,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         send({ type: "config", yoloEnabled, targetClasses: [...targetClasses], sources: yoloSources.length });
 
         for (const project of allProjects) {
+          await withReprocessLease(project.id, async (writeCapability) => {
           const projectPages = await db
             .select({
               id: pages.id,
@@ -255,10 +290,12 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
 
               // Only update if the name actually changed
               if (newDrawingNumber !== page.drawingNumber || newName !== page.name) {
-                await db.update(pages).set({
-                  drawingNumber: newDrawingNumber,
-                  name: newName,
-                }).where(eq(pages.id, page.id));
+                await withProjectWrite(writeCapability, project.id, async (tx) => {
+                  await tx.update(pages).set({
+                    drawingNumber: newDrawingNumber,
+                    name: newName,
+                  }).where(eq(pages.id, page.id));
+                });
                 updatedPages++;
               } else {
                 skippedPages++;
@@ -271,6 +308,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               send({ type: "progress", updated: updatedPages, skipped: skippedPages, total: totalPages, project: project.name });
             }
           }
+          });
         }
 
         send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
@@ -282,49 +320,53 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         // Thumbnail + page PNG regeneration: download PDF, rasterize, upload to S3
         for (const project of allProjects) {
           try {
+            await withReprocessLease(project.id, async (writeCapability) => {
             const pdfKey = `${project.dataUrl}/original.pdf`;
             let pdfBuffer: Buffer;
             try {
               pdfBuffer = await downloadFromS3(pdfKey);
             } catch {
               send({ type: "error", project: project.name, error: "PDF not found in S3" });
-              continue;
+              return;
             }
             const pageCount = project.numPages || await getPdfPageCount(pdfBuffer);
             send({ type: "project", name: project.name, pages: pageCount });
 
+            // The durable `admin-reprocess:thumbnails` lease is also the asset gateway's
+            // fail-closed read fence, so stable legacy keys cannot be observed mid-rebuild.
             for (let pg = 1; pg <= pageCount; pg++) {
-              const pageKey = String(pg).padStart(4, "0");
-              try {
-                // Thumbnail at 72 DPI
-                const thumbBuffer = await rasterizePage(pdfBuffer, pg, 72);
-                await uploadToS3(
-                  `${project.dataUrl}/thumbnails/page_${pageKey}.png`,
-                  thumbBuffer,
-                  "image/png",
-                  "public, max-age=31536000, immutable",
-                );
-                // Full page at 300 DPI (also regenerate if missing)
-                const pageBuffer = await rasterizePage(pdfBuffer, pg, 300);
-                await uploadToS3(
-                  `${project.dataUrl}/pages/page_${pageKey}.png`,
-                  pageBuffer,
-                  "image/png",
-                  "public, max-age=31536000, immutable",
-                );
-                updatedPages++;
-              } catch (err) {
-                logger.error(`[reprocess-thumbnails] Page ${pg} failed for ${project.name}:`, err);
-                skippedPages++;
-              }
-              totalPages++;
-              if (totalPages % 3 === 0) {
-                send({ type: "progress", updated: updatedPages, skipped: skippedPages, total: totalPages, project: project.name });
-              }
+                const pageKey = String(pg).padStart(4, "0");
+                try {
+                  // Thumbnail at 72 DPI
+                  const thumbBuffer = await rasterizePage(pdfBuffer, pg, 72);
+                  await uploadToS3(
+                    `${project.dataUrl}/thumbnails/page_${pageKey}.png`,
+                    thumbBuffer,
+                    "image/png",
+                    "public, max-age=31536000, immutable",
+                  );
+                  // Full page at 300 DPI (also regenerate if missing)
+                  const pageBuffer = await rasterizePage(pdfBuffer, pg, 300);
+                  await uploadToS3(
+                    `${project.dataUrl}/pages/page_${pageKey}.png`,
+                    pageBuffer,
+                    "image/png",
+                    "public, max-age=31536000, immutable",
+                  );
+                  updatedPages++;
+                } catch (err) {
+                  logger.error(`[reprocess-thumbnails] Page ${pg} failed for ${project.name}:`, err);
+                  skippedPages++;
+                }
+                totalPages++;
+                if (totalPages % 3 === 0) {
+                  send({ type: "progress", updated: updatedPages, skipped: skippedPages, total: totalPages, project: project.name });
+                }
             }
             // Release PDF buffer between projects
             // @ts-ignore
             pdfBuffer = null;
+            });
           } catch (err) {
             logger.error(`[reprocess-thumbnails] Project ${project.name} failed:`, err);
             // [refactor P1 reprocess-fold] §B owner-locked (2026-07-08): raw err.message
@@ -353,13 +395,16 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             .orderBy(pages.pageNumber);
 
           if (projectPages.length === 0) continue;
+          await withReprocessLease(project.id, async (writeCapability) => {
           send({ type: "project", name: project.name, pages: projectPages.length });
           totalPages += projectPages.length;
 
           // Delete existing shape-parse annotations for this project
-          await db.delete(annotations).where(
-            and(eq(annotations.projectId, project.id), eq(annotations.source, "shape-parse"))
-          );
+          await withProjectWrite(writeCapability, project.id, async (tx) => {
+            await tx.delete(annotations).where(
+              and(eq(annotations.projectId, project.id), eq(annotations.source, "shape-parse")),
+            );
+          });
 
           let lambdaSucceeded = false;
           if (useLambda) {
@@ -383,22 +428,24 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
 
               for (const [pnStr, shapes] of Object.entries(byPage)) {
                 const pn = Number(pnStr);
-                await db.update(pages).set({ keynotes: shapes }).where(
-                  and(eq(pages.projectId, project.id), eq(pages.pageNumber, pn))
-                );
-                if (shapes.length > 0) {
-                  await db.insert(annotations).values(
-                    shapes.map((k) => ({
-                      name: k.shape,
-                      minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
-                      pageNumber: pn,
-                      threshold: 0.9,
-                      source: "shape-parse" as const,
-                      data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
-                      projectId: project.id,
-                    }))
+                await withProjectWrite(writeCapability, project.id, async (tx) => {
+                  await tx.update(pages).set({ keynotes: shapes }).where(
+                    and(eq(pages.projectId, project.id), eq(pages.pageNumber, pn)),
                   );
-                }
+                  if (shapes.length > 0) {
+                    await tx.insert(annotations).values(
+                      shapes.map((k) => ({
+                        name: k.shape,
+                        minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
+                        pageNumber: pn,
+                        threshold: 0.9,
+                        source: "shape-parse" as const,
+                        data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
+                        projectId: project.id,
+                      })),
+                    );
+                  }
+                });
                 updatedPages++;
               }
               lambdaSucceeded = true;
@@ -416,26 +463,27 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
                 const pngBuffer = await downloadFromS3(s3Key);
                 const result = await extractKeynotes(pngBuffer);
 
-                await db.update(pages).set({
-                  keynotes: result.keynotes.length > 0 ? result.keynotes : null,
-                }).where(eq(pages.id, page.id));
+                await withProjectWrite(writeCapability, project.id, async (tx) => {
+                  await tx.update(pages).set({
+                    keynotes: result.keynotes.length > 0 ? result.keynotes : null,
+                  }).where(eq(pages.id, page.id));
 
-                if (result.keynotes.length > 0) {
-                  await db.insert(annotations).values(
-                    result.keynotes.map((k) => ({
-                      name: k.shape,
-                      minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
-                      pageNumber: page.pageNumber,
-                      threshold: 0.9,
-                      source: "shape-parse" as const,
-                      data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
-                      projectId: project.id,
-                    }))
-                  );
-                  updatedPages++;
-                } else {
-                  skippedPages++;
-                }
+                  if (result.keynotes.length > 0) {
+                    await tx.insert(annotations).values(
+                      result.keynotes.map((k) => ({
+                        name: k.shape,
+                        minX: k.bbox[0], minY: k.bbox[1], maxX: k.bbox[2], maxY: k.bbox[3],
+                        pageNumber: page.pageNumber,
+                        threshold: 0.9,
+                        source: "shape-parse" as const,
+                        data: { modelName: "shape-parse", shapeType: k.shape, text: k.text, contour: k.contour, confidence: 0.9 },
+                        projectId: project.id,
+                      })),
+                    );
+                  }
+                });
+                if (result.keynotes.length > 0) updatedPages++;
+                else skippedPages++;
               } catch (err) {
                 logger.error(`[reprocess-shape-parse] Page ${page.pageNumber} failed for ${project.name}:`, err);
                 skippedPages++;
@@ -445,6 +493,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               }
             }
           }
+          });
         }
 
         send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
@@ -458,6 +507,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
         // re-run). If YOLO data exists for a page, it's passed to runHeuristicEngine
         // and classifyPageRegions — mirrors /api/yolo/load post-processing.
         for (const project of allProjects) {
+          await withReprocessLease(project.id, async (writeCapability) => {
           const projectPages = await db
             .select({
               id: pages.id,
@@ -655,7 +705,9 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
               );
               if (spatialMap) pageIntelligence.csiSpatialMap = spatialMap;
 
-              await db.update(pages).set({ pageIntelligence }).where(eq(pages.id, page.id));
+              await withProjectWrite(writeCapability, project.id, async (tx) => {
+                await tx.update(pages).set({ pageIntelligence }).where(eq(pages.id, page.id));
+              });
               // Flush classifier debug writes (if any). Errors inside the writer
               // are already logged; allSettled keeps a single write failure from
               // aborting the loop.
@@ -682,10 +734,21 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
             // [bugfix jul5 H6/DR002] preserve ALL user/unknown PI keys (classCsiOverrides,
             // yoloTags, future keys) — the old classCsiOverrides-only merge silently wiped
             // yoloTags company-wide. See mergeProjectIntelligence.
-            const [currentProject] = await db.select({ pi: projects.projectIntelligence }).from(projects).where(eq(projects.id, project.id));
-            const mergedIntel = mergeProjectIntelligence(currentProject?.pi, intelligence as Record<string, unknown>);
+            await withProjectWrite(writeCapability, project.id, async (tx) => {
+              const [currentProject] = await tx
+                .select({ pi: projects.projectIntelligence })
+                .from(projects)
+                .where(eq(projects.id, project.id));
+              const mergedIntel = mergeProjectIntelligence(
+                currentProject?.pi,
+                intelligence as Record<string, unknown>,
+              );
 
-            await db.update(projects).set({ projectIntelligence: mergedIntel, projectSummary: summary }).where(eq(projects.id, project.id));
+              await tx
+                .update(projects)
+                .set({ projectIntelligence: mergedIntel, projectSummary: summary })
+                .where(eq(projects.id, project.id));
+            });
             send({ type: "project-analysis", project: project.name });
           } catch (err) {
             logger.error(`[reprocess-intel] Project analysis failed for ${project.name}:`, err);
@@ -693,11 +756,12 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
 
           // Recompute project summaries (chunking indexes)
           try {
-            await computeProjectSummaries(project.id);
+            await computeProjectSummaries(project.id, writeCapability);
             send({ type: "project-summaries", project: project.name });
           } catch (err) {
             logger.error(`[reprocess-intel] Summary computation failed for ${project.name}:`, err);
           }
+          });
         }
 
         send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });
@@ -707,6 +771,7 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
 
       // Full reprocess (existing behavior)
       for (const project of allProjects) {
+        await withReprocessLease(project.id, async (writeCapability) => {
         // Fetch pages with existing textractData (core columns only)
         const projectPages = await db
           .select({
@@ -765,19 +830,23 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
 
             // Update page — use try-catch for textAnnotations column
             try {
-              await db
-                .update(pages)
-                .set({
-                  textAnnotations: textAnnotationResult.annotations.length > 0 ? textAnnotationResult : null,
-                  csiCodes: csiCodes.length > 0 ? csiCodes : null,
-                })
-                .where(eq(pages.id, page.id));
+              await withProjectWrite(writeCapability, project.id, async (tx) => {
+                await tx
+                  .update(pages)
+                  .set({
+                    textAnnotations: textAnnotationResult.annotations.length > 0 ? textAnnotationResult : null,
+                    csiCodes: csiCodes.length > 0 ? csiCodes : null,
+                  })
+                  .where(eq(pages.id, page.id));
+              });
             } catch {
               // textAnnotations column may not exist — just update csiCodes
-              await db
-                .update(pages)
-                .set({ csiCodes: csiCodes.length > 0 ? csiCodes : null })
-                .where(eq(pages.id, page.id));
+              await withProjectWrite(writeCapability, project.id, async (tx) => {
+                await tx
+                  .update(pages)
+                  .set({ csiCodes: csiCodes.length > 0 ? csiCodes : null })
+                  .where(eq(pages.id, page.id));
+              });
             }
 
             updatedPages++;
@@ -793,11 +862,12 @@ export async function reprocessProjects(req: Request, session: AuthSession): Pro
 
         // Recompute project summaries after full reprocess
         try {
-          await computeProjectSummaries(project.id);
+          await computeProjectSummaries(project.id, writeCapability);
           send({ type: "project-summaries", project: project.name });
         } catch (err) {
           logger.error(`[reprocess] Summary computation failed for ${project.name}:`, err);
         }
+        });
       }
 
       send({ type: "done", updated: updatedPages, skipped: skippedPages, total: totalPages });

@@ -12,14 +12,16 @@
 //   • NO B — no catch-500 literal; unexpected errors propagate to the shell generic 500.
 // ⚠️ SECURITY SCOPE (H6-class, load-bearing — DO NOT weaken): a company-admin may only
 // re-stamp a model owned by their OWN company; root bypasses for platform-wide re-stamps.
-// The raw pg Pool + the `data = data || $1::jsonb` jsonb MERGE (NOT replace — preserves
-// sibling annotation-data keys) + the two SQL templates are ported byte-for-byte.
+// The `data = data || ...::jsonb` MERGE (NOT replace — preserves sibling annotation-data
+// keys) remains. P2 resolves each concrete private target and locks its lifecycle before writing.
 
 import { db } from "@/lib/db";
-import { models } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { annotations, models, projects } from "@/lib/db/schema";
+import { and, eq, sql } from "drizzle-orm";
 import type { AuthSession } from "@/lib/api-utils";
 import { ApiError } from "@/server/api/envelope";
+import { assertProjectWritable } from "@/server/api/access";
+import { withProjectWrite } from "@/server/api/project-write-capability";
 
 export async function reprocessCsi(rawBody: Record<string, unknown>, session: AuthSession): Promise<unknown> {
   const { modelId } = rawBody as { modelId?: unknown };
@@ -50,53 +52,48 @@ export async function reprocessCsi(rawBody: Record<string, unknown>, session: Au
     return { success: true, annotationsUpdated: 0, projectsProcessed: 0 };
   }
 
-  // Use raw SQL for batch updates — more efficient than Drizzle for jsonb_set
-  const { Pool } = await import("pg");
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
-  });
-
   let totalUpdated = 0;
   const projectIds = new Set<number>();
 
-  try {
-    const client = await pool.connect();
-    try {
-      // For each class that has CSI codes or keywords, update all matching annotations
+  // Resolve every concrete mutation target first, then lock and revalidate its exact lifecycle
+  // generation before writing. A model grant permits inference use; it never grants mutation rights
+  // over a grantee's projects.
+  const targetProjects = await db
+    .selectDistinct({
+      id: projects.id,
+      publicId: projects.publicId,
+      companyId: projects.companyId,
+      isDemo: projects.isDemo,
+      lifecycleEpoch: projects.lifecycleEpoch,
+    })
+    .from(projects)
+    .innerJoin(annotations, eq(annotations.projectId, projects.id))
+    .where(and(
+      eq(projects.companyId, model.companyId),
+      eq(projects.isDemo, false),
+      eq(annotations.source, "yolo"),
+      sql`${annotations.data}->>'modelId' = ${String(modelId)}`,
+    ));
+
+  for (const project of targetProjects) {
+    const writeCapability = assertProjectWritable(project);
+    await withProjectWrite(writeCapability, project.id, async (tx) => {
       for (const className of classNames) {
         const csiCodes = classCsiCodes[className] || [];
         const keywords = classKeywords[className] || [];
-
-        const result = await client.query(
-          `UPDATE annotations
-           SET data = data || $1::jsonb
-           WHERE source = 'yolo'
-             AND data->>'modelId' = $2
-             AND name = $3`,
-          [
-            JSON.stringify({ csiCodes, keywords }),
-            String(modelId),
-            className,
-          ]
-        );
+        const result = await tx.execute(sql`
+          UPDATE annotations
+          SET data = data || ${JSON.stringify({ csiCodes, keywords })}::jsonb
+          WHERE project_id = ${project.id}
+            AND source = 'yolo'
+            AND data->>'modelId' = ${String(modelId)}
+            AND name = ${className}
+          RETURNING project_id
+        `);
         totalUpdated += result.rowCount || 0;
+        if ((result.rowCount || 0) > 0) projectIds.add(project.id);
       }
-
-      // Count distinct projects affected
-      const projResult = await client.query(
-        `SELECT DISTINCT project_id FROM annotations
-         WHERE source = 'yolo' AND data->>'modelId' = $1`,
-        [String(modelId)]
-      );
-      for (const row of projResult.rows) {
-        projectIds.add(row.project_id);
-      }
-    } finally {
-      client.release();
-    }
-  } finally {
-    await pool.end();
+    });
   }
 
   return {

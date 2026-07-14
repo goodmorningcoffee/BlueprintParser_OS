@@ -70,7 +70,7 @@ function lifecycleProjectResponse(demo: boolean): ProjectResponse {
     id: "pid",
     dbId: 1,
     name: demo ? "Demo successor" : "Authenticated project",
-    dataUrl: "s3://private/project.json",
+    assetBaseUrl: "s3://private/project.json",
     pdfUrl: "s3://private/project.pdf",
     numPages: 3,
     status: "ready",

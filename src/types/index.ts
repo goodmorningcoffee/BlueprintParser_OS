@@ -23,6 +23,8 @@ export interface StagingFile {
   filename: string;
   stagingKey: string;
   size: number;
+  /** Exact S3 object version validated at project creation; never read a replayed latest key. */
+  versionId: string;
 }
 
 // ─── Database row types ──────────────────────────────────────
@@ -54,8 +56,18 @@ export type LlmConfig = InferSelectModel<typeof llmConfigs>;
 // - LTWH: Textract OCR words use [left, top, width, height]
 // - MinMax: Annotations/YOLO use [minX, minY, maxX, maxY]
 // Both normalized 0-1.
-export type BboxLTWH = [left: number, top: number, width: number, height: number];
-export type BboxMinMax = [minX: number, minY: number, maxX: number, maxY: number];
+export type BboxLTWH = [
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+];
+export type BboxMinMax = [
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+];
 
 // ─── Client-side types ───────────────────────────────────────
 
@@ -84,7 +96,13 @@ export interface ClientAnnotation {
   name: string;
   bbox: [number, number, number, number]; // [minX, minY, maxX, maxY] normalized 0-1
   note: string | null;
-  source: "user" | "yolo" | "takeoff" | "takeoff-scale" | "shape-parse" | "symbol-search";
+  source:
+    | "user"
+    | "yolo"
+    | "takeoff"
+    | "takeoff-scale"
+    | "shape-parse"
+    | "symbol-search";
   data?: AnnotationData | null;
 }
 
@@ -92,7 +110,13 @@ export interface ClientAnnotation {
 
 // ─── Takeoff types ──────────────────────────────────────────
 
-export const TAKEOFF_SHAPES = ["circle", "square", "diamond", "triangle", "cross"] as const;
+export const TAKEOFF_SHAPES = [
+  "circle",
+  "square",
+  "diamond",
+  "triangle",
+  "cross",
+] as const;
 export type TakeoffShape = (typeof TAKEOFF_SHAPES)[number];
 export type TakeoffItemShape = TakeoffShape | "polygon" | "linear";
 
@@ -112,7 +136,8 @@ export interface LinearPolylineData {
 
 // ─── Auto-QTO Types ──────────────────────────────────────────
 
-export type QtoWorkflowStep = "pick" | "select-schedule" | "confirm-tags" | "map-tags" | "review" | "done";
+export type QtoWorkflowStep =
+  "pick" | "select-schedule" | "confirm-tags" | "map-tags" | "review" | "done";
 
 /**
  * Discriminator for the 5 countable item types (SHIP 2). Determines which
@@ -120,10 +145,10 @@ export type QtoWorkflowStep = "pick" | "select-schedule" | "confirm-tags" | "map
  * memory/project_qto_taxonomy.md and src/lib/yolo-tag-engine.ts.
  */
 export type QtoItemType =
-  | "yolo-only"                    // Type 1 — count all shapes of a class, no text
-  | "text-only"                    // Type 2 — pure free-floating text match
-  | "yolo-with-inner-text"         // Type 3 — text inside a shape (+ Type 5 fallback)
-  | "yolo-object-with-tag-shape"   // Type 4 — object tagged by a separate tag-shape
+  | "yolo-only" // Type 1 — count all shapes of a class, no text
+  | "text-only" // Type 2 — pure free-floating text match
+  | "yolo-with-inner-text" // Type 3 — text inside a shape (+ Type 5 fallback)
+  | "yolo-object-with-tag-shape" // Type 4 — object tagged by a separate tag-shape
   | "yolo-object-with-nearby-text"; // Type 5 — object + nearby floating text (standalone)
 
 export interface QtoWorkflow {
@@ -167,7 +192,12 @@ export interface QtoLineItem {
     /** Phase 2: optional tier + dropReason preserved for per-instance audit
      *  review in the ReviewStep expander. Absent on pre-Phase-2 data. */
     confidenceTier?: "high" | "medium" | "low";
-    dropReason?: "outside_scope" | "pattern_mismatch" | "inside_title_block" | "inside_table" | "outside_drawings";
+    dropReason?:
+      | "outside_scope"
+      | "pattern_mismatch"
+      | "inside_title_block"
+      | "inside_table"
+      | "outside_drawings";
   }[];
   pages: number[];
   flags: QtoFlag[];
@@ -191,7 +221,10 @@ export interface QtoUserEdits {
 }
 export type AreaUnitSq = "SF" | "SI" | "SM" | "SC";
 export const AREA_UNIT_MAP: Record<AreaUnit, AreaUnitSq> = {
-  ft: "SF", in: "SI", m: "SM", cm: "SC",
+  ft: "SF",
+  in: "SI",
+  m: "SM",
+  cm: "SC",
 };
 
 export interface ClientTakeoffItem {
@@ -259,8 +292,8 @@ export interface TextractLine {
 }
 
 export interface TextractCell {
-  row: number;          // 1-based row index
-  col: number;          // 1-based column index
+  row: number; // 1-based row index
+  col: number; // 1-based column index
   rowSpan: number;
   colSpan: number;
   text: string;
@@ -278,7 +311,7 @@ export interface TextractTable {
 export interface TextractPageData {
   lines: TextractLine[];
   words: TextractWord[];
-  tables?: TextractTable[];  // from Textract TABLES feature
+  tables?: TextractTable[]; // from Textract TABLES feature
 }
 
 export interface SearchWordMatch {
@@ -296,9 +329,9 @@ export interface KeynoteShapeData {
 
 /** A specific word/phrase on the page that caused a CSI code to be detected. */
 export interface CsiCodeTrigger {
-  text: string;        // matched word/phrase (lowercased, as it appeared)
-  bbox: BboxLTWH;      // normalized 0-1 bbox on the full page
-  tier: 1 | 2 | 3;     // 1=exact phrase, 2=bag-of-words, 3=anchor word
+  text: string; // matched word/phrase (lowercased, as it appeared)
+  bbox: BboxLTWH; // normalized 0-1 bbox on the full page
+  tier: 1 | 2 | 3; // 1=exact phrase, 2=bag-of-words, 3=anchor word
 }
 
 export interface CsiCode {
@@ -325,28 +358,63 @@ export interface PageData {
 // ─── Text Annotation types ───────────────────────────────────
 
 export type AnnotationCategory =
-  | "contact" | "codes" | "csi" | "dimensions" | "equipment"
-  | "references" | "trade" | "abbreviation" | "notes" | "rooms";
+  | "contact"
+  | "codes"
+  | "csi"
+  | "dimensions"
+  | "equipment"
+  | "references"
+  | "trade"
+  | "abbreviation"
+  | "notes"
+  | "rooms";
 
 export type TextAnnotationType =
   // Contact
-  | "phone" | "fax" | "address" | "email" | "url" | "zip-code"
+  | "phone"
+  | "fax"
+  | "address"
+  | "email"
+  | "url"
+  | "zip-code"
   // Codes
-  | "csi-code" | "spec-section" | "building-code" | "code-compliance"
+  | "csi-code"
+  | "spec-section"
+  | "building-code"
+  | "code-compliance"
   // Dimensions
-  | "imperial-dim" | "metric-dim" | "scale" | "slope"
+  | "imperial-dim"
+  | "metric-dim"
+  | "scale"
+  | "slope"
   // Equipment
-  | "equipment-tag" | "material-code" | "door-window-tag" | "finish-code" | "panel-circuit"
+  | "equipment-tag"
+  | "material-code"
+  | "door-window-tag"
+  | "finish-code"
+  | "panel-circuit"
   // References
-  | "sheet-number" | "sheet-ref" | "detail-ref" | "revision" | "action-marker"
+  | "sheet-number"
+  | "sheet-ref"
+  | "detail-ref"
+  | "revision"
+  | "action-marker"
   // Trade
-  | "structural" | "mechanical" | "electrical" | "plumbing" | "fire-protection"
+  | "structural"
+  | "mechanical"
+  | "electrical"
+  | "plumbing"
+  | "fire-protection"
   // Abbreviation
   | "abbreviation"
   // Notes
-  | "general-note" | "typical-marker" | "coordination-note"
+  | "general-note"
+  | "typical-marker"
+  | "coordination-note"
   // Rooms
-  | "room-number" | "room-name" | "area-designation";
+  | "room-number"
+  | "room-name"
+  | "area-designation";
 
 export interface TextAnnotation {
   type: TextAnnotationType;
@@ -358,7 +426,7 @@ export interface TextAnnotation {
   group?: string;
   note?: string;
   meta?: Record<string, unknown>;
-  csiTags?: CsiCode[];  // CSI codes that apply to this annotation (universal tagging)
+  csiTags?: CsiCode[]; // CSI codes that apply to this annotation (universal tagging)
 }
 
 export interface TextAnnotationGroup {
@@ -390,25 +458,32 @@ export const TEXT_ANNOTATION_COLORS: Record<AnnotationCategory, string> = {
 // ─── Page Intelligence types ────────────────────────────────
 
 export interface PageClassification {
-  discipline: string;       // "Architectural", "Electrical", etc.
+  discipline: string; // "Architectural", "Electrical", etc.
   disciplinePrefix: string; // "A", "E", "M", etc.
-  subType?: string;         // "Floor Plan", "Elevation", "Section", "Detail", "Schedule"
-  series?: string;          // "100", "200", "300", etc.
+  subType?: string; // "Floor Plan", "Elevation", "Section", "Detail", "Schedule"
+  series?: string; // "100", "200", "300", etc.
   confidence: number;
 }
 
 export interface CrossRef {
-  sourceText: string;       // "SEE DETAIL 4/A-501"
-  targetDrawing: string;    // "A-501"
-  refType: "sheet" | "detail" | "section" | "elevation" | "similar" | "typical" | "refer";
-  detail?: string;          // "4" (specific detail number)
+  sourceText: string; // "SEE DETAIL 4/A-501"
+  targetDrawing: string; // "A-501"
+  refType:
+    | "sheet"
+    | "detail"
+    | "section"
+    | "elevation"
+    | "similar"
+    | "typical"
+    | "refer";
+  detail?: string; // "4" (specific detail number)
   bbox: BboxLTWH;
   confidence: number;
 }
 
 export interface NoteBlock {
-  title: string;            // "GENERAL NOTES" or auto-detected
-  notes: string[];          // ["1. All dimensions...", "2. Contractor shall..."]
+  title: string; // "GENERAL NOTES" or auto-detected
+  notes: string[]; // ["1. All dimensions...", "2. Contractor shall..."]
   bbox: BboxLTWH;
   noteCount: number;
 }
@@ -416,19 +491,19 @@ export interface NoteBlock {
 // ─── Text Region types (OCR-based classification) ──────────
 
 export type TextRegionType =
-  | "notes-numbered"        // vertical list of N. or (N) keyed paragraphs
-  | "notes-key-value"       // multi-column KEY → VALUE legends / abbreviations
-  | "spec-dense-columns"    // narrow multi-column flowing spec text
-  | "schedule-table"        // 3+ structured columns
-  | "paragraph"             // free-form prose
-  | "unknown";              // low-confidence fallback
+  | "notes-numbered" // vertical list of N. or (N) keyed paragraphs
+  | "notes-key-value" // multi-column KEY → VALUE legends / abbreviations
+  | "spec-dense-columns" // narrow multi-column flowing spec text
+  | "schedule-table" // 3+ structured columns
+  | "paragraph" // free-form prose
+  | "unknown"; // low-confidence fallback
 
 /** Legacy type strings present on pages processed before 2026-04-24.
  *  Consumers that read `pageIntelligence.textRegions` from DB should route
  *  through `migrateTextRegion` from `text-region-migrate.ts` so legacy data
  *  transparently upgrades at read time. */
 export type LegacyTextRegionType =
-  | "table-like" | "notes-block" | "spec-text" | "key-value";
+  "table-like" | "notes-block" | "spec-text" | "key-value";
 
 export interface TextRegion {
   id: string;
@@ -471,9 +546,14 @@ export interface HeuristicInference {
 
 //there are more schedules to add like eletrical-schedule, hvac-schedule, etc.  for each trade
 export type ClassifiedTableCategory =
-  | "keynote-table" | "material-schedule" | "symbol-legend"
-  | "door-schedule" | "finish-schedule" | "general-notes"
-  | "spec-text" | "unknown-table";
+  | "keynote-table"
+  | "material-schedule"
+  | "symbol-legend"
+  | "door-schedule"
+  | "finish-schedule"
+  | "general-notes"
+  | "spec-text"
+  | "unknown-table";
 
 export interface ClassifiedTable extends TextRegion {
   category: ClassifiedTableCategory;
@@ -498,22 +578,22 @@ export interface ClassifiedTable extends TextRegion {
 export type ClassifiedRegionKind = "table" | "title_block" | "drawings";
 
 export type ClassifiedRegionSource =
-  | "yolo:tables"          // yolo_medium tables class
-  | "yolo:title_block"     // yolo_medium title_block class
-  | "yolo:drawings"        // yolo_medium OR yolo_primitive drawings class
-  | "yolo:grid"            // yolo_primitive grid — confirmation only
-  | "yolo:vertical_area"   // yolo_primitive — confirmation only
+  | "yolo:tables" // yolo_medium tables class
+  | "yolo:title_block" // yolo_medium title_block class
+  | "yolo:drawings" // yolo_medium OR yolo_primitive drawings class
+  | "yolo:grid" // yolo_primitive grid — confirmation only
+  | "yolo:vertical_area" // yolo_primitive — confirmation only
   | "yolo:horizontal_area" // yolo_primitive — confirmation only
-  | "ocr:header_keyword"   // SCHEDULE/LEGEND/NOTES header match
+  | "ocr:header_keyword" // SCHEDULE/LEGEND/NOTES header match
   | "pageIntel:classifiedTables" // legacy OCR-based classifier agreement
-  | "parsedRegions";       // user-saved schedule region
+  | "parsedRegions"; // user-saved schedule region
 
 export interface ClassifiedRegion {
   kind: ClassifiedRegionKind;
-  bbox: BboxMinMax;           // normalized [0,1] page coords
-  confidence: number;          // 0-1, max across merged sources
+  bbox: BboxMinMax; // normalized [0,1] page coords
+  confidence: number; // 0-1, max across merged sources
   sources: ClassifiedRegionSource[];
-  headerText?: string;         // if sourced from OCR header keyword
+  headerText?: string; // if sourced from OCR header keyword
   pageNumber: number;
 }
 
@@ -553,34 +633,48 @@ export interface PageIntelligence {
    *  (reprocess only writes the computed fields, never this one). Consumed
    *  by the NotesClassifier to suppress rejected regions from the card list. */
   rejectedTextRegionIds?: string[];
-  csiSpatialMap?: { pageNumber: number; zones: Array<{ zone: string; divisions: Array<{ division: string; name: string; count: number; codes: string[] }>; totalInstances: number; dominantDivision?: string }>; summary: string } | null;
+  csiSpatialMap?: {
+    pageNumber: number;
+    zones: Array<{
+      zone: string;
+      divisions: Array<{
+        division: string;
+        name: string;
+        count: number;
+        codes: string[];
+      }>;
+      totalInstances: number;
+      dominantDivision?: string;
+    }>;
+    summary: string;
+  } | null;
 }
 
 // ─── Ensemble region reducer types (Stage 2b) ────────────────
 
 /** Canonical vote sources recognized by the ensemble reducer. */
 export type EnsembleVoteSource =
-  | "table-classifier"           // keyword-driven classifiedTables (weak signal — keyword-only)
-  | "composite-classifier"       // YOLO tables + confirmers → classifiedRegions.tables
-  | "yolo-heatmap"               // density of text_box + vertical_area + horizontal_area
-  | "tatr"                       // future: table-transformer probability (Stage 2c+)
-  | "llm"                        // future: LLM table-likelihood score
-  | "parsed-region";              // user-saved ParsedRegion (strongest)
+  | "table-classifier" // keyword-driven classifiedTables (weak signal — keyword-only)
+  | "composite-classifier" // YOLO tables + confirmers → classifiedRegions.tables
+  | "yolo-heatmap" // density of text_box + vertical_area + horizontal_area
+  | "tatr" // future: table-transformer probability (Stage 2c+)
+  | "llm" // future: LLM table-likelihood score
+  | "parsed-region"; // user-saved ParsedRegion (strongest)
 
 /** One vote on whether a bbox is a table. Emitted by an adapter wrapping a
  *  single classifier's output. */
 export interface RegionVote {
   source: EnsembleVoteSource;
   bbox: BboxLTWH;
-  score: number;                  // 0-1 self-reported confidence of this classifier
-  category?: string;              // "door-schedule" / "symbol-legend" / etc. (if known)
+  score: number; // 0-1 self-reported confidence of this classifier
+  category?: string; // "door-schedule" / "symbol-legend" / etc. (if known)
   evidence?: string[];
 }
 
 /** Merged vote cluster — one "probable table" after ensemble agreement. */
 export interface EnsembleRegion {
-  bbox: BboxLTWH;                 // union of all contributing vote bboxes
-  tableProbability: number;       // 0-1 consolidated score
+  bbox: BboxLTWH; // union of all contributing vote bboxes
+  tableProbability: number; // 0-1 consolidated score
   contributingVotes: RegionVote[]; // full audit trail
   /** Distinct vote sources that fired on this region (deduplicated). */
   voteSources: EnsembleVoteSource[];
@@ -627,13 +721,14 @@ export interface YoloHeatmap {
 
 // ─── Parsed Region types (System 4: structured data extraction) ──
 
-export type ParsedRegionType = "schedule" | "keynote" | "legend" | "notes" | "spec";
+export type ParsedRegionType =
+  "schedule" | "keynote" | "legend" | "notes" | "spec";
 
 export interface ParsedRegion {
   id: string;
   type: ParsedRegionType;
-  category: string;              // "door-schedule", "keynote-table", "symbol-legend", etc.
-  bbox: BboxLTWH;               // region location on page
+  category: string; // "door-schedule", "keynote-table", "symbol-legend", etc.
+  bbox: BboxLTWH; // region location on page
   confidence: number;
   csiTags?: CsiCode[];
   data: ScheduleData | KeynoteData | LegendData | NotesData | SpecData;
@@ -665,8 +760,8 @@ export interface AutoTableProposal {
 
 export interface ScheduleData {
   headers: string[];
-  rows: Record<string, string>[];  // { "TAG": "D-01", "TYPE": "Hollow Metal", "WIDTH": "3'-0\"" }
-  tagColumn?: string;              // which column has the item tags
+  rows: Record<string, string>[]; // { "TAG": "D-01", "TYPE": "Hollow Metal", "WIDTH": "3'-0\"" }
+  tagColumn?: string; // which column has the item tags
   rowCount: number;
   columnCount: number;
   /** Normalized X coords of column edges — N+1 values for N columns */
@@ -691,10 +786,10 @@ export interface LegendData {
  *  read via `rowCount ?? notes?.length ?? 0`. */
 export interface NotesData {
   // New (Stage 3) — schedule-style grid
-  headers?: string[];                    // typically ["Key", "Note"]
-  rows?: Record<string, string>[];       // [{Key: "1", Note: "..."}, ...]
-  tagColumn?: string;                     // "Key"
-  tableName?: string;                     // "General Notes p.3"
+  headers?: string[]; // typically ["Key", "Note"]
+  rows?: Record<string, string>[]; // [{Key: "1", Note: "..."}, ...]
+  tagColumn?: string; // "Key"
+  tableName?: string; // "General Notes p.3"
   rowCount?: number;
   columnCount?: number;
   colBoundaries?: number[];
@@ -718,15 +813,15 @@ export interface SpecData {
 // ─── Project Intelligence types ─────────────────────────────
 
 export interface DisciplineBreakdown {
-  prefix: string;          // "A"
-  discipline: string;      // "Architectural"
-  count: number;           // 12
-  range: string;           // "A-101 to A-501"
+  prefix: string; // "A"
+  discipline: string; // "Architectural"
+  count: number; // 12
+  range: string; // "A-101 to A-501"
   series: Record<string, number>; // { "100": 5, "200": 3, "500": 4 }
 }
 
 export interface RefGraphEdge {
-  fromPage: string;        // drawing number or page number
+  fromPage: string; // drawing number or page number
   toPage: string;
   refType: string;
   detail?: string;
@@ -762,9 +857,9 @@ export interface ProjectSummaries {
   specRegions?: SpecSummaryEntry[];
 
   // Page indexes: which pages contain each filter value
-  csiPageIndex: Record<string, number[]>;           // "08 11 16" -> [3, 7, 12]
-  tradePageIndex: Record<string, number[]>;          // "Openings" -> [3, 7, 12]
-  keynotePageIndex: Record<string, number[]>;        // "circle:T-01" -> [5, 8]
+  csiPageIndex: Record<string, number[]>; // "08 11 16" -> [3, 7, 12]
+  tradePageIndex: Record<string, number[]>; // "Openings" -> [3, 7, 12]
+  keynotePageIndex: Record<string, number[]>; // "circle:T-01" -> [5, 8]
   textAnnotationPageIndex: Record<string, number[]>; // "phone:555-1234" -> [1, 3]
   pageClassifications: Record<number, { discipline: string; prefix: string }>;
 
@@ -819,8 +914,8 @@ export interface SpecSummaryEntry {
 
 export interface ScheduleSummaryEntry {
   pageNum: number;
-  category: string;      // "door-schedule", "finish-schedule", etc.
-  name: string;          // page name or classified table header
+  category: string; // "door-schedule", "finish-schedule", etc.
+  name: string; // page name or classified table header
   confidence: number;
 }
 
@@ -835,7 +930,10 @@ export interface ParsedTableSummaryEntry {
 export interface AnnotationSummary {
   modelNames: string[];
   categoryCounts: Record<string, { count: number; pages: number[] }>;
-  pageAnnotationCounts: Record<number, { yolo: number; user: number; takeoff: number }>;
+  pageAnnotationCounts: Record<
+    number,
+    { yolo: number; user: number; takeoff: number }
+  >;
 }
 
 export interface TakeoffItemTotal {
@@ -886,10 +984,26 @@ export const SHAPE_COLORS: Record<Shape, string> = {
 };
 
 export const TWENTY_COLORS = [
-  "#e6194b", "#3cb44b", "#ffe119", "#0082c8", "#f58231",
-  "#911eb4", "#46f0f0", "#f032e6", "#d2f53c", "#fabebe",
-  "#008080", "#e6beff", "#aa6e28", "#fffac8", "#800000",
-  "#aaffc3", "#808000", "#ffd8b1", "#000080", "#808080",
+  "#e6194b",
+  "#3cb44b",
+  "#ffe119",
+  "#0082c8",
+  "#f58231",
+  "#911eb4",
+  "#46f0f0",
+  "#f032e6",
+  "#d2f53c",
+  "#fabebe",
+  "#008080",
+  "#e6beff",
+  "#aa6e28",
+  "#fffac8",
+  "#800000",
+  "#aaffc3",
+  "#808000",
+  "#ffd8b1",
+  "#000080",
+  "#808080",
 ];
 
 // ─── Annotation Groups ──────────────────────────────────────
@@ -936,8 +1050,8 @@ export interface ModelConfig {
   imageSize: number;
   maxDetections?: number;
   classTypes?: Record<string, ModelClassType>;
-  classCsiCodes?: Record<string, string[]>;   // class name -> CSI codes
-  classKeywords?: Record<string, string[]>;   // class name -> keywords
+  classCsiCodes?: Record<string, string[]>; // class name -> CSI codes
+  classKeywords?: Record<string, string[]>; // class name -> keywords
 }
 
 export interface SpatialRegion {
@@ -957,16 +1071,16 @@ export interface SpatialMappingResult {
 
 export interface YoloTag {
   id: string;
-  name: string;                        // user-editable display name
-  tagText: string;                     // the OCR text (e.g., "D-01")
-  yoloClass: string;                   // YOLO class name, "" for free-floating
-  yoloModel: string;                   // YOLO model name, "" for free-floating
+  name: string; // user-editable display name
+  tagText: string; // the OCR text (e.g., "D-01")
+  yoloClass: string; // YOLO class name, "" for free-floating
+  yoloModel: string; // YOLO model name, "" for free-floating
   source: "keynote" | "schedule" | "manual";
   scope: "page" | "project";
-  pageNumber?: number;                 // for page-scoped tags
-  description?: string;                // from keynote/schedule parsing
-  color?: string;                      // user-customizable
-  csiCodes?: string[];                 // CSI codes inherited from parsed region (e.g., ["08 11 13"])
+  pageNumber?: number; // for page-scoped tags
+  description?: string; // from keynote/schedule parsing
+  color?: string; // user-customizable
+  csiCodes?: string[]; // CSI codes inherited from parsed region (e.g., ["08 11 13"])
   /** Scored matches for this tag across the project. ScoredMatch is a
    *  structural superset of YoloTagInstance — pre-Phase-2 data (and
    *  legacy callers returning YoloTagInstance[] via shims) are still
@@ -986,7 +1100,7 @@ export interface YoloTag {
 
 export interface YoloTagInstance {
   pageNumber: number;
-  annotationId: number;                // -1 for free-floating
+  annotationId: number; // -1 for free-floating
   bbox: [number, number, number, number]; // [minX, minY, maxX, maxY]
   confidence: number;
 }
@@ -1000,18 +1114,18 @@ export interface TemplateMatchOptions {
   mode: TemplateMatchMode;
   templatePath: string;
   targetPaths: string[];
-  confidenceThreshold?: number;     // default 0.75
-  multiScale?: boolean;             // default true
-  scales?: number[];                // default [0.9, 0.95, 1.0, 1.05, 1.1]
-  useSiftFallback?: boolean;        // default true
-  siftFallbackThreshold?: number;   // trigger SIFT if < N template hits, default 3
-  nmsIouThreshold?: number;         // default 0.3
-  maxMatchesPerPage?: number;       // default 100
+  confidenceThreshold?: number; // default 0.75
+  multiScale?: boolean; // default true
+  scales?: number[]; // default [0.9, 0.95, 1.0, 1.05, 1.1]
+  useSiftFallback?: boolean; // default true
+  siftFallbackThreshold?: number; // trigger SIFT if < N template hits, default 3
+  nmsIouThreshold?: number; // default 0.3
+  maxMatchesPerPage?: number; // default 100
 }
 
 export interface TemplateMatchHit {
   targetIndex: number;
-  bbox: BboxLTWH;                   // normalized [x, y, w, h] 0-1
+  bbox: BboxLTWH; // normalized [x, y, w, h] 0-1
   confidence: number;
   method: TemplateMatchMethod;
   scale?: number;
@@ -1034,7 +1148,7 @@ export interface TemplateMatchResult {
 export interface SymbolSearchMatch {
   id: string;
   pageNumber: number;
-  bbox: BboxLTWH;                   // normalized [x, y, w, h] 0-1
+  bbox: BboxLTWH; // normalized [x, y, w, h] 0-1
   confidence: number;
   method: TemplateMatchMethod;
 }
@@ -1045,5 +1159,5 @@ export interface SymbolSearchResult {
   matches: SymbolSearchMatch[];
   totalMatches: number;
   pagesWithMatches: number[];
-  searchedAt: string;               // ISO timestamp
+  searchedAt: string; // ISO timestamp
 }

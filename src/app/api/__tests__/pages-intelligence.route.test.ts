@@ -27,7 +27,7 @@ import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
-import { asUser, createPage, createUser, createWorld, makeReq, readJson, signedOut } from "@/test/harness";
+import { asUser, createCompany, createPage, createUser, createWorld, makeReq, publishDemoFixture, readJson, signedOut } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -127,36 +127,25 @@ describe.skipIf(!dbUp)("PATCH /api/pages/intelligence", () => {
     expect(await piOf(page.id)).toMatchObject({ k: 9 }); // write committed despite the swallow
   });
 
-  describe("demo-write 403 gate", () => {
-    it("(a) same-company MEMBER → 403", async () => {
-      const { user, project } = await createWorld({ isDemo: true });
-      await createPage(project.id, 1);
-      asUser(user);
-      const { status, body } = await readJson(await req({ publicId: project.publicId, pageNumber: 1, intelligence: { a: 1 } }));
-      expect(status).toBe(403);
-      expect(body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
-    });
-    it("(b) signed out (scope demo) → 403", async () => {
-      const { project } = await createWorld({ isDemo: true });
-      await createPage(project.id, 1);
-      signedOut();
-      const { status } = await readJson(await req({ publicId: project.publicId, pageNumber: 1, intelligence: { a: 1 } }));
-      expect(status).toBe(403);
-    });
-    it("(c) same-company ADMIN → 200", async () => {
-      const { company, project } = await createWorld({ isDemo: true });
-      await createPage(project.id, 1);
-      asUser(await createUser(company.id, { role: "admin" }));
-      const { status } = await readJson(await req({ publicId: project.publicId, pageNumber: 1, intelligence: { a: 1 } }));
-      expect(status).toBe(200);
-    });
-    it("(d) root admin → 200", async () => {
-      const { project } = await createWorld({ isDemo: true });
-      await createPage(project.id, 1);
-      asUser(await createUser((await createWorld()).company.id, { isRootAdmin: true }));
-      const { status } = await readJson(await req({ publicId: project.publicId, pageNumber: 1, intelligence: { a: 1 } }));
-      expect(status).toBe(200);
-    });
+  it("L5 freeze: demo intelligence denies all roles before writes or summary side effects", async () => {
+    const { company, project } = await createWorld();
+    const page = await createPage(project.id, 1, { pageIntelligence: { canary: "keep" } as any });
+    await publishDemoFixture(project.id);
+    const member = await createUser(company.id);
+    const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser((await createCompany()).id, { role: "admin", isRootAdmin: true });
+    const responses = [];
+    for (const actor of [null, member, admin, root]) {
+      actor ? asUser(actor) : signedOut();
+      responses.push(
+        await readJson(
+          await req({ publicId: project.publicId, pageNumber: 1, intelligence: { attacker: true } }),
+        ),
+      );
+    }
+    expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403]);
+    expect(await piOf(page.id)).toEqual({ canary: "keep" });
+    expect(computeProjectSummaries).not.toHaveBeenCalled();
   });
 
   it("missing fields → 400 VALIDATION (exact message)", async () => {

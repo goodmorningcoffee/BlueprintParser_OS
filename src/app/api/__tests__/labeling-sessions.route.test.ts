@@ -22,11 +22,10 @@ vi.mock("@/lib/auth", async () => {
 });
 
 import { GET } from "@/app/api/labeling/sessions/route";
-import { db } from "@/lib/db";
-import { labelingSessions } from "@/lib/db/schema";
 import {
   asUser,
   createCompany,
+  createLabelingSessionFixture,
   createUser,
   createWorld,
   makeReq,
@@ -44,24 +43,6 @@ const list = (projectId?: string) =>
     ),
   );
 
-/** Seed a labeling_sessions row directly (labeling/create is too heavy to go through). */
-async function seedSession(projectId: number, companyId: number, over: Record<string, unknown> = {}) {
-  const [row] = await db
-    .insert(labelingSessions)
-    .values({
-      projectId,
-      companyId,
-      labelStudioProjectId: 90000 + Math.floor(Math.random() * 9999),
-      labelStudioUrl: "http://ls.test/projects/90001",
-      taskType: "generic",
-      pageRange: "1-3",
-      status: "active",
-      ...over,
-    })
-    .returning();
-  return row;
-}
-
 // The exact 8 wire fields (alphabetical for the sorted key-set assertion).
 const WIRE_FIELDS = [
   "createdAt",
@@ -76,22 +57,22 @@ const WIRE_FIELDS = [
 
 describe.skipIf(!dbUp)("GET /api/labeling/sessions", () => {
   it("happy: bare array of EXACTLY the 8 mapped fields (drops companyId/projectId/tiling*/updatedAt)", async () => {
-    const { user, project, company } = await createWorld();
+    const { user, project } = await createWorld();
     // [DETECTOR closer COV-2] two PER-FIELD-DISTINCT seeds so the field→column mapping is pinned
     // by VALUE (a swapped/dropped mapping in the service .map() would pass a key-set-only check).
-    const s1 = await seedSession(project.id, company.id, {
+    const s1 = await createLabelingSessionFixture(project, {
       labelStudioUrl: "http://ls.test/projects/91001",
       labels: ["door", "window"],
       pageRange: "1-3",
       status: "active",
     });
-    const s2 = await seedSession(project.id, company.id, {
+    const s2 = await createLabelingSessionFixture(project, {
       labelStudioUrl: "http://ls.test/projects/91002",
       taskType: "tiled",
       tilingEnabled: true,
       tileGrid: 3,
       pageRange: "4-9",
-      status: "archived",
+      status: "retiring",
     });
     asUser(user);
 
@@ -118,7 +99,7 @@ describe.skipIf(!dbUp)("GET /api/labeling/sessions", () => {
       taskType: "tiled",
       labels: null,
       pageRange: "4-9",
-      status: "archived",
+      status: "retiring",
     });
   });
 

@@ -193,7 +193,7 @@ beforeEach(() => {
           id: PROJECT_A,
           dbId: 101,
           name: demo ? "Demo successor" : "Authenticated predecessor",
-          dataUrl: "projects/project-A",
+          assetBaseUrl: "projects/project-A",
           pdfUrl: "https://example.test/original.pdf",
           numPages: 1,
           status: "completed",

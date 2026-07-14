@@ -5,7 +5,7 @@
 // the catch appended an error event to a good response, and the assistant
 // message was never saved. Freezes: null projectId persists (NULL = global
 // chat), stream carries no error event, [DONE] still terminates the stream.
-import { describe, expect, inject, it, vi } from "vitest";
+import { afterEach, describe, expect, inject, it, vi } from "vitest";
 
 vi.mock("@/lib/llm/index", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@/lib/llm/index")>();
@@ -23,10 +23,22 @@ vi.mock("@/lib/llm/index", async (importOriginal) => {
 import { streamChatResponse } from "@/lib/llm/stream";
 import { db } from "@/lib/db";
 import { chatMessages } from "@/lib/db/schema";
-import { desc, isNull } from "drizzle-orm";
+import { desc, eq, isNull } from "drizzle-orm";
 import type { ResolvedLLMConfig } from "@/lib/llm/types";
+import { assertProjectWritable } from "@/server/api/project-write-capability";
+import { manageDemo } from "@/server/services/demo";
+import {
+  ageProjectForPublication,
+  asUser,
+  createUser,
+  createWorld,
+  sessionState,
+  signedOut,
+} from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
+
+afterEach(() => signedOut());
 
 const config = {
   provider: "openai",
@@ -59,5 +71,41 @@ describe.skipIf(!dbUp)("streamChatResponse with null projectId (global chat)", (
     expect(row.content).toBe("g2-global-chat persists");
     expect(row.projectId).toBeNull();
     expect(row.role).toBe("assistant");
+  });
+});
+
+describe.skipIf(!dbUp)("streamChatResponse project lifecycle persistence", () => {
+  it("finishes the response without adopting it into a retired project lifecycle", async () => {
+    const { company, project } = await createWorld();
+    await ageProjectForPublication(project.id);
+    const writeCapability = assertProjectWritable(project);
+    const admin = await createUser(company.id, { role: "admin" });
+    asUser(admin);
+    await manageDemo(
+      { projectId: project.publicId, isDemo: true },
+      sessionState.current!,
+    );
+
+    const res = streamChatResponse(
+      config,
+      [{ role: "user", content: "hi" }],
+      project.id,
+      null,
+      null,
+      false,
+      writeCapability,
+    );
+    const sse = await new Response(res.body).text();
+
+    expect.soft(sse).toContain("g2-global-chat");
+    expect.soft(sse).toContain("persists");
+    expect.soft(sse).toContain("data: [DONE]");
+    expect.soft(sse).not.toContain('"error"');
+    expect.soft(
+      await db
+        .select()
+        .from(chatMessages)
+        .where(eq(chatMessages.projectId, project.id)),
+    ).toEqual([]);
   });
 });

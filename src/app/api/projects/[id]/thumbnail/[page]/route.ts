@@ -5,8 +5,12 @@
 // Response passthrough — do NOT convert to a plain return (it would json-envelope the image).
 import { defineRoute } from "@/server/api/defineRoute";
 import { getPageThumbnail } from "@/server/services/pages";
+import { withProjectAssetResponsePolicy } from "@/server/services/project-assets";
 
-export const GET = defineRoute({
+const getLegacyThumbnail = defineRoute({
   auth: "none",
   handler: ({ params }) => getPageThumbnail(params.id, params.page),
 });
+
+export const GET: typeof getLegacyThumbnail = async (req, segment) =>
+  withProjectAssetResponsePolicy(await getLegacyThumbnail(req, segment));

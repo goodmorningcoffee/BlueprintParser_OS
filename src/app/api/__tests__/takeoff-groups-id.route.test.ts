@@ -116,6 +116,32 @@ describe.skipIf(!dbUp)("PUT/DELETE /api/takeoff-groups/[id]", () => {
     expect(stillThere.groupId).toBeNull(); // FK ON DELETE SET NULL
   });
 
+  it("B2 RED: DELETE rejects a group referenced by another project before FK SET NULL mutates it", async () => {
+    const own = await createWorld();
+    const foreign = await createWorld();
+    const group = await seedGroup(own.project.id);
+    const [foreignItem] = await db.insert(takeoffItems).values({
+      projectId: foreign.project.id,
+      groupId: group.id,
+      name: "Foreign item",
+      shape: "circle",
+      color: "#fff",
+      sortOrder: 0,
+    }).returning();
+    asUser(own.user);
+
+    const response = await readJson(await del(group.id));
+
+    expect.soft(response.status).toBe(409);
+    expect.soft(response.body.error).toEqual({
+      code: "CONFLICT",
+      message: "Takeoff group is referenced by another project",
+    });
+    expect.soft((await db.select().from(takeoffGroups).where(eq(takeoffGroups.id, group.id))).length).toBe(1);
+    expect.soft((await db.select({ groupId: takeoffItems.groupId }).from(takeoffItems)
+      .where(eq(takeoffItems.id, foreignItem.id)))[0]?.groupId).toBe(group.id);
+  });
+
   it("DELETE: invalid id → 400; missing → 404; cross-tenant → 404", async () => {
     const { project } = await createWorld();
     const group = await seedGroup(project.id);

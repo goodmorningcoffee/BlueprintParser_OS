@@ -28,6 +28,7 @@ import {
   createUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -122,7 +123,7 @@ describe.skipIf(!dbUp)("DELETE /api/regions", () => {
     });
     expect(body.summaries).toEqual({ marker: "summary" });
     expect(computeProjectSummaries).toHaveBeenCalledOnce();
-    expect(computeProjectSummaries).toHaveBeenCalledWith(project.id);
+    expect(computeProjectSummaries).toHaveBeenCalledWith(project.id, expect.anything());
 
     const fresh = await pageState(page.id);
     expect(fresh.pageIntelligence).toEqual(body.updatedIntelligence);
@@ -151,7 +152,7 @@ describe.skipIf(!dbUp)("DELETE /api/regions", () => {
       summaries: { marker: "summary" },
     });
     expect(await pageVersion(page.id)).toBe(beforeVersion);
-    expect(computeProjectSummaries).toHaveBeenCalledWith(project.id);
+    expect(computeProjectSummaries).toHaveBeenCalledWith(project.id, expect.anything());
   });
 
   it("binds the write to the authorized project and requested non-1 page", async () => {
@@ -280,9 +281,10 @@ describe.skipIf(!dbUp)("DELETE /api/regions", () => {
   });
 
   it("rejects every demo write, including owner admin and root, and leaves DB unchanged", async () => {
-    const { company, user, project } = await createWorld({ isDemo: true });
+    const { company, user, project } = await createWorld();
     const original = { parsedRegions: [region("target", "T")] };
     const page = await createPage(project.id, 1, { pageIntelligence: original as never });
+    await publishDemoFixture(project.id);
     const body = { publicId: project.publicId, pageNumber: 1, regionId: "target" };
     const callers = [
       null,

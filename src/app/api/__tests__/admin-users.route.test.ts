@@ -45,11 +45,11 @@ vi.mock("@/lib/audit", () => ({ audit: h.audit }));
 
 import { GET as usGET, POST as usPOST, PUT as usPUT, DELETE as usDELETE } from "@/app/api/admin/users/route";
 import { db } from "@/lib/db";
-import { users, projects, annotations } from "@/lib/db/schema";
+import { annotationGroups, annotations, chatMessages, projects, users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import { logger } from "@/lib/logger";
-import { asUser, createCompany, createProject, createUser, makeReq, readJson, signedOut } from "@/test/harness";
+import { asUser, createCompany, createProject, createUser, makeReq, publishDemoFixture, readJson, signedOut } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -377,6 +377,53 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     expect(h.audit).toHaveBeenCalledWith("user_deleted", expect.objectContaining({
       details: expect.objectContaining({ mode: "cascade", projectCount: 2, reassignTargetId: undefined }),
     }));
+  });
+
+  it("B2 RED: DELETE rejects a user referenced by demo project data and leaves every row unchanged", async () => {
+    const { company, admin } = await makeWorld();
+    const demoOwner = await createUser(company.id);
+    const victim = await createUser(company.id);
+    const victimPub = await publicIdOf(victim.id);
+    const demo = await createProject(company.id, demoOwner.id);
+    const [annotation] = await db.insert(annotations).values({
+      projectId: demo.id,
+      name: "demo-reference",
+      minX: 0,
+      minY: 0,
+      maxX: 0.5,
+      maxY: 0.5,
+      pageNumber: 1,
+      creatorId: victim.id,
+    }).returning();
+    const [chat] = await db.insert(chatMessages).values({
+      projectId: demo.id,
+      role: "user",
+      content: "demo reference",
+      userId: victim.id,
+    }).returning();
+    const [group] = await db.insert(annotationGroups).values({
+      projectId: demo.id,
+      name: "demo reference",
+      createdBy: victim.id,
+    }).returning();
+    await publishDemoFixture(demo.id);
+
+    asUser(admin);
+    const response = await readJson(await usDELETE(delReq({ id: victimPub })));
+
+    expect.soft(response.status).toBe(403);
+    expect.soft(response.body).toEqual({
+      error: { code: "FORBIDDEN", message: "Demo projects are read-only" },
+    });
+    expect.soft(await userByPublicId(victimPub)).toBeTruthy();
+    expect.soft((await db.select({ creatorId: annotations.creatorId }).from(annotations)
+      .where(eq(annotations.id, annotation.id)))[0]?.creatorId).toBe(victim.id);
+    expect.soft((await db.select({ userId: chatMessages.userId }).from(chatMessages)
+      .where(eq(chatMessages.id, chat.id)))[0]?.userId).toBe(victim.id);
+    expect.soft((await db.select({ createdBy: annotationGroups.createdBy }).from(annotationGroups)
+      .where(eq(annotationGroups.id, group.id)))[0]?.createdBy).toBe(victim.id);
+    expect.soft(h.deleteProjectFully).not.toHaveBeenCalled();
+    expect.soft(h.audit).not.toHaveBeenCalled();
   });
 
   it("US-16 DELETE tx failure → 500 err.message LEAK + logger breadcrumb (legacy)", async () => {

@@ -74,6 +74,20 @@ const VALID_ITEM_TYPES: QtoItemType[] = [
 type StrictnessMode = "strict" | "balanced" | "lenient";
 const VALID_STRICTNESS: StrictnessMode[] = ["strict", "balanced", "lenient"];
 
+type PublicDemoInput = {
+  annotations: ClientAnnotation[];
+  includePrivatePageIntelligence: boolean;
+};
+
+function filterPublicDemoInput(
+  isPublicDemo: boolean,
+  annotationsInput: ClientAnnotation[],
+): PublicDemoInput {
+  return isPublicDemo
+    ? { annotations: [], includePrivatePageIntelligence: false }
+    : { annotations: annotationsInput, includePrivatePageIntelligence: true };
+}
+
 export async function mapTagsBatch(body: Record<string, unknown>, idParam: string) {
   const {
     action, tags, yoloClass, yoloModel, itemType, tagShapeClass,
@@ -141,7 +155,7 @@ export async function mapTagsBatch(body: Record<string, unknown>, idParam: strin
 
   // Auth + project lookup — the legacy resolveProjectAccess engine verbatim: authenticates,
   // allows demo (read-only route), grants root admins any company's project.
-  const { project } = await resolveProjectOrThrow({ publicId: parsed.data }, { allowDemo: true });
+  const { project, scope } = await resolveProjectOrThrow({ publicId: parsed.data }, { allowDemo: true });
 
   // Load annotations + textract + pageIntelligence
   const allAnnotations = await db
@@ -160,7 +174,7 @@ export async function mapTagsBatch(body: Record<string, unknown>, idParam: strin
     .from(annotations)
     .where(eq(annotations.projectId, project.id));
 
-  const clientAnnotations: ClientAnnotation[] = allAnnotations.map((a) => ({
+  const mappedAnnotations: ClientAnnotation[] = allAnnotations.map((a) => ({
     id: a.id,
     pageNumber: a.pageNumber,
     name: a.name,
@@ -169,6 +183,8 @@ export async function mapTagsBatch(body: Record<string, unknown>, idParam: strin
     source: a.source as ClientAnnotation["source"],
     data: a.data ?? null,
   }));
+  const publicDemoSafe = filterPublicDemoInput(project.isDemo && scope === "demo", mappedAnnotations);
+  const clientAnnotations = publicDemoSafe.annotations;
 
   const pageFilter = !isScan && selectedPages && selectedPages.length > 0
     ? new Set(selectedPages)
@@ -194,7 +210,9 @@ export async function mapTagsBatch(body: Record<string, unknown>, idParam: strin
     if (row.textractData) {
       textractMap[row.pageNumber] = row.textractData as TextractPageData;
     }
-    const pi = row.pageIntelligence as PageIntelligence | null;
+    const pi = publicDemoSafe.includePrivatePageIntelligence
+      ? row.pageIntelligence as PageIntelligence | null
+      : null;
     if (pi?.classifiedRegions) {
       classifiedRegionsByPage[row.pageNumber] = pi.classifiedRegions;
     }

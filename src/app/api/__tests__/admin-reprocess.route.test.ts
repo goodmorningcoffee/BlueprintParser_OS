@@ -94,10 +94,12 @@ vi.mock("@/lib/auto-detect/auto-table-detector", async (importOriginal) => ({
 }));
 
 import { POST } from "@/app/api/admin/reprocess/route";
+import { POST as demoPOST } from "@/app/api/admin/demo/route";
 import { db } from "@/lib/db";
 import { annotations, pages, projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
+  ageProjectForPublication,
   annotationsFor,
   asUser,
   createPage,
@@ -105,6 +107,7 @@ import {
   createUser,
   createWorld,
   makeReq,
+  readJson,
   signedOut,
 } from "@/test/harness";
 
@@ -464,6 +467,44 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     }
   }, 30000);
 
+  it("scope=thumbnails: a durable project lease blocks publication across slow S3 work", async () => {
+    const { company, project } = await createWorld({ numPages: 1 });
+    await ageProjectForPublication(project.id);
+    const admin = await createUser(company.id, { role: "admin" });
+    let signalUploadStarted!: () => void;
+    let releaseUpload!: () => void;
+    const uploadStarted = new Promise<void>((resolve) => { signalUploadStarted = resolve; });
+    const uploadReleased = new Promise<void>((resolve) => { releaseUpload = resolve; });
+    s3Mocks.uploadToS3.mockImplementationOnce(async () => {
+      signalUploadStarted();
+      await uploadReleased;
+    });
+
+    asUser(admin);
+    const reprocessResponse = await POST(
+      makeReq("/api/admin/reprocess?scope=thumbnails", { method: "POST" }),
+    );
+    await uploadStarted;
+
+    const publish = await readJson(await demoPOST(makeReq("/api/admin/demo", {
+      method: "POST",
+      body: { projectId: project.publicId, isDemo: true },
+    })));
+    expect(publish.status).toBe(409);
+    expect(publish.body).toEqual({
+      error: { code: "CONFLICT", message: "Project has an active mutation lease" },
+    });
+
+    releaseUpload();
+    const lines = await drain(reprocessResponse);
+    expect(lines[lines.length - 1]).toEqual({
+      type: "done",
+      updated: 1,
+      skipped: 0,
+      total: 1,
+    });
+  }, 30000);
+
   it("scope=thumbnails: missing PDF → in-stream {type:'error', error:'PDF not found in S3'} verbatim, run continues", async () => {
     const { company, project } = await createWorld({ numPages: 1 });
     const admin = await createUser(company.id, { role: "admin" });
@@ -585,13 +626,18 @@ describe.skipIf(!dbUp)("POST /api/admin/reprocess — freeze", () => {
     });
     const admin = await createUser(company.id, { role: "admin" });
     const demoProj = await createProject(company.id, user.id, {
-      isDemo: true,
+      isDemo: false,
       projectIntelligence: { curated: "demo-content" } as any,
     });
     await createPage(normal.id, 1, { textractData: emptyTextract, rawText: "" });
     await createPage(demoProj.id, 1, { textractData: emptyTextract, rawText: "" });
+    await ageProjectForPublication(demoProj.id);
 
     asUser(admin);
+    expect((await readJson(await demoPOST(makeReq("/api/admin/demo", {
+      method: "POST",
+      body: { projectId: demoProj.publicId, isDemo: true },
+    })))).status).toBe(200);
     const res = await POST(makeReq("/api/admin/reprocess?scope=intelligence", { method: "POST" }));
     const lines = await drain(res);
     expect(lines[0]).toEqual({ type: "start", projects: 1 }); // demo project NOT counted

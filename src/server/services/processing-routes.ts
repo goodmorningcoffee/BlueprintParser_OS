@@ -20,13 +20,16 @@ import { auth } from "@/lib/auth";
 import type { AuthSession } from "@/lib/api-utils";
 import { db } from "@/lib/db";
 import { projects, pages, processingJobs } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { parseTextractResponse, extractRawText } from "@/lib/textract";
 import type { Block } from "@aws-sdk/client-textract";
 import { logger } from "@/lib/logger";
 import { processProject } from "@/lib/processing";
 import { ApiError } from "@/server/api/envelope";
+import { assertProjectWritable } from "@/server/api/access";
+import { withProjectWrite } from "@/server/api/project-write-capability";
+import { zPublicId } from "@/server/api/schemas";
 
 interface WebhookPageData {
   pageNumber: number;
@@ -59,6 +62,9 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
   if (!project) {
     throw new ApiError("NOT_FOUND", "Project not found");
   }
+  const writeCapability = assertProjectWritable(project);
+
+  return withProjectWrite(writeCapability, project.id, async (tx) => {
 
   // Process each page's Textract results
   for (const pageData of payload.pages) {
@@ -66,7 +72,7 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
     const rawText = extractRawText(textractData);
 
     // Upsert page
-    const [existingPage] = await db
+    const [existingPage] = await tx
       .select({ id: pages.id, drawingNumber: pages.drawingNumber })
       .from(pages)
       .where(
@@ -78,7 +84,7 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
       .limit(1);
 
     if (existingPage) {
-      await db
+      await tx
         .update(pages)
         .set({
           textractData,
@@ -87,11 +93,11 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
         })
         .where(eq(pages.id, existingPage.id));
 
-      await db.execute(
+      await tx.execute(
         sql`UPDATE pages SET search_vector = to_tsvector('english', ${rawText}) WHERE id = ${existingPage.id}`
       );
     } else {
-      const [newPage] = await db
+      const [newPage] = await tx
         .insert(pages)
         .values({
           pageNumber: pageData.pageNumber,
@@ -103,7 +109,7 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
         })
         .returning();
 
-      await db.execute(
+      await tx.execute(
         sql`UPDATE pages SET search_vector = to_tsvector('english', ${rawText}) WHERE id = ${newPage.id}`
       );
     }
@@ -114,7 +120,7 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
   // info) during ingest; this block used to clobber both on every success
   // ping (numPages → payload.pages.length = 0, processingError → null).
   // processingError is written only when the caller explicitly reports one.
-  await db
+  await tx
     .update(projects)
     .set({
       status: payload.status,
@@ -130,17 +136,22 @@ export async function processingWebhook(rawBody: Record<string, unknown>): Promi
     );
   }
 
-  // Update processing job if exists
-  await db
+  // Close only the ingestion job. YOLO SageMaker intents share processing_jobs but carry
+  // model_config; a late/retried ingestion webhook must never retire their publication block.
+  await tx
     .update(processingJobs)
     .set({
       status: payload.status === "completed" ? "completed" : "failed",
       completedAt: new Date(),
       error: payload.error || null,
     })
-    .where(eq(processingJobs.projectId, project.id));
+    .where(and(
+      eq(processingJobs.projectId, project.id),
+      isNull(processingJobs.modelConfig),
+    ));
 
   return { success: true };
+  });
 }
 
 export async function processingDev(rawBody: Record<string, unknown>): Promise<unknown> {
@@ -152,12 +163,29 @@ export async function processingDev(rawBody: Record<string, unknown>): Promise<u
     throw new ApiError("FORBIDDEN", "Dev processing not enabled");
   }
 
+  const { projectId } = rawBody as { projectId?: string };
+  const parsedProjectId = zPublicId.safeParse(projectId);
+  if (parsedProjectId.success) {
+    const [target] = await db
+      .select({
+        id: projects.id,
+        publicId: projects.publicId,
+        companyId: projects.companyId,
+        isDemo: projects.isDemo,
+        lifecycleEpoch: projects.lifecycleEpoch,
+        updatedAt: projects.updatedAt,
+      })
+      .from(projects)
+      .where(eq(projects.publicId, parsedProjectId.data))
+      .limit(1);
+    if (target?.isDemo) assertProjectWritable(target);
+  }
+
   const session = (await auth()) as unknown as AuthSession | null;
   if (!session?.user) {
     throw new ApiError("UNAUTHORIZED", "Unauthorized");
   }
 
-  const { projectId } = rawBody as { projectId?: string };
   if (!projectId) {
     throw new ApiError("VALIDATION", "projectId required");
   }
@@ -178,6 +206,7 @@ export async function processingDev(rawBody: Record<string, unknown>): Promise<u
     throw new ApiError("NOT_FOUND", "Not found");
   }
 
-  const result = await processProject(project.id);
+  const writeCapability = assertProjectWritable(project);
+  const result = await processProject(project.id, writeCapability);
   return { success: true, ...result };
 }

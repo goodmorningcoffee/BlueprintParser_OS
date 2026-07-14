@@ -9,7 +9,7 @@ import { zLooseBody } from "@/server/api/schemas";
 import { createLabelingSessions } from "@/server/services/labeling";
 
 export const POST = defineRoute({
-  auth: "session",
+  auth: "none",
   body: zLooseBody,
-  handler: ({ body, session }) => createLabelingSessions(body, session!),
+  handler: ({ body }) => createLabelingSessions(body),
 });

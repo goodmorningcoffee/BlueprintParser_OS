@@ -5,6 +5,6 @@ import { defineRoute } from "@/server/api/defineRoute";
 import { deleteLabelingSession } from "@/server/services/labeling";
 
 export const DELETE = defineRoute({
-  auth: "session",
-  handler: ({ params, session }) => deleteLabelingSession(params.id, session!),
+  auth: "none",
+  handler: ({ params }) => deleteLabelingSession(params.id),
 });

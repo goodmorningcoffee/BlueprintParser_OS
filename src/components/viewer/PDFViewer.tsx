@@ -35,7 +35,15 @@ import SymbolSearchPanel from "./SymbolSearchPanel";
 import ViewAllPanel from "./ViewAllPanel";
 import PageWindowLoaderController from "./PageWindowLoaderController";
 import TextractLoaderController from "./TextractLoaderController";
-import { loadViewport, saveViewport, type ViewerViewport } from "@/lib/viewer-state";
+import {
+  loadViewport,
+  saveViewport,
+  type ViewerViewport,
+} from "@/lib/viewer-state";
+import {
+  PDF_RANGE_PROBE_HEADER,
+  PDF_RANGE_PROBE_VALUE,
+} from "@/lib/project-asset-transport";
 
 interface PDFViewerProps {
   pdfUrl: string;
@@ -44,7 +52,12 @@ interface PDFViewerProps {
   onRename?: (newName: string) => void;
 }
 
-export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: PDFViewerProps) {
+export default function PDFViewer({
+  pdfUrl,
+  projectName,
+  backHref,
+  onRename,
+}: PDFViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,12 +69,17 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   const { pageNumber, numPages, setNumPages } = useNavigation();
   const mode = useToolStore((s) => s.mode);
   const setMode = useToolStore((s) => s.setMode);
-  const { scale, setScale } = useViewerCoreStore(useShallow((s) => ({ scale: s.scale, setScale: s.setScale })));
+  const { scale, setScale } = useViewerCoreStore(
+    useShallow((s) => ({ scale: s.scale, setScale: s.setScale })),
+  );
   const tempPanMode = useToolStore((s) => s.tempPanMode);
-  const { publicId, dataUrl } = useProject();
+  const { publicId, assetBaseUrl } = useProject();
   const {
-    symbolSearchActive, symbolSearchResults, symbolSearchLoading,
-    symbolSearchTemplateBbox, symbolSearchError,
+    symbolSearchActive,
+    symbolSearchResults,
+    symbolSearchLoading,
+    symbolSearchTemplateBbox,
+    symbolSearchError,
   } = useSymbolSearch();
   // Gate the floating Symbol Search popup when Parse panel's Template Parse tab
   // is open — the embedded SymbolSearchPanel in ParsePanel is the canonical
@@ -72,30 +90,26 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   // Preload current page PNG via <link> — starts fetch before React commits the img element
   useEffect(() => {
-    if (!dataUrl) return;
-    const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
-    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";
-    const base = cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
+    if (!assetBaseUrl) return;
     const key = String(pageNumber).padStart(4, "0");
     const link = document.createElement("link");
     link.rel = "preload";
     link.as = "image";
-    link.href = `${base}/pages/page_${key}.png`;
+    link.href = `${assetBaseUrl}/pages/page_${key}.png`;
     document.head.appendChild(link);
-    return () => { document.head.removeChild(link); };
-  }, [pageNumber, dataUrl]);
+    return () => {
+      document.head.removeChild(link);
+    };
+  }, [pageNumber, assetBaseUrl]);
 
   // Prefetch adjacent page PNGs into browser cache for instant navigation
   useEffect(() => {
-    if (!dataUrl) return;
-    const cf = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
-    const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";
-    const base = cf ? `https://${cf}/${dataUrl}` : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}`;
+    if (!assetBaseUrl) return;
     for (let i = pageNumber + 1; i <= Math.min(pageNumber + 3, numPages); i++) {
       const img = new Image();
-      img.src = `${base}/pages/page_${String(i).padStart(4, "0")}.png`;
+      img.src = `${assetBaseUrl}/pages/page_${String(i).padStart(4, "0")}.png`;
     }
-  }, [pageNumber, numPages, dataUrl]);
+  }, [pageNumber, numPages, assetBaseUrl]);
 
   // Scroll to highlighted region (tag browse + LLM highlights)
   const llmHighlight = useUiStore((s) => s.llmHighlight);
@@ -124,7 +138,12 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement).isContentEditable) return;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        (e.target as HTMLElement).isContentEditable
+      )
+        return;
       if (e.key === "a") setMode("pointer");
       else if (e.key === "v") {
         if (e.repeat) return;
@@ -180,25 +199,39 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   // Load pdf.js and the document
   useEffect(() => {
     let cancelled = false;
+    let loadingTask: import("pdfjs-dist").PDFDocumentLoadingTask | null = null;
 
     async function loadPdf() {
       try {
         setLoading(true);
         setError(null);
+        setPdfDoc(null);
 
         // Dynamic import to avoid SSR issues
         const pdfjsLib = await import("pdfjs-dist");
+        if (cancelled) return;
 
         // Set up worker — use static copy in public/ for standalone build compatibility
         pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
-        const doc = await pdfjsLib.getDocument({
+        loadingTask = pdfjsLib.getDocument({
           url: pdfUrl,
+          // Mark pdf.js' initial un-ranged capability request so the private
+          // gateway can learn the S3 object length with a one-byte upstream
+          // range instead of racing a buffered full-object GET cancellation.
+          httpHeaders: {
+            [PDF_RANGE_PROBE_HEADER]: PDF_RANGE_PROBE_VALUE,
+          },
           cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/",
           cMapPacked: true,
-          disableAutoFetch: true,   // Only fetch pages user navigates to (range loading)
-          rangeChunkSize: 65536,    // 64KB chunks for range requests
-        }).promise;
+          // pdf.js keeps a full-document GET alive unless streaming is also disabled. Bounded 1MiB
+          // ranges amortize the access-checked application gateway without weakening its pre/post
+          // lifecycle fences, and stop withdrawn documents before the next chunk is admitted.
+          disableStream: true,
+          disableAutoFetch: true,
+          rangeChunkSize: 1024 * 1024,
+        });
+        const doc = await loadingTask.promise;
 
         if (cancelled) return;
 
@@ -216,6 +249,9 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     loadPdf();
     return () => {
       cancelled = true;
+      // Cancel in-flight ranges and release the worker/document when the project changes or the
+      // viewer unmounts. destroy() is idempotent at this loading-task boundary.
+      if (loadingTask) void loadingTask.destroy().catch(() => undefined);
     };
   }, [pdfUrl, setNumPages]);
 
@@ -235,7 +271,10 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
     const saved = loadViewport(publicId);
     if (saved) {
-      const clampedPage = Math.max(1, Math.min(saved.pageNumber, numPages || saved.pageNumber));
+      const clampedPage = Math.max(
+        1,
+        Math.min(saved.pageNumber, numPages || saved.pageNumber),
+      );
       pendingRestoreRef.current = { ...saved, pageNumber: clampedPage };
       setScale(saved.scale);
       navigateViewerPage(clampedPage);
@@ -334,10 +373,12 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
   }, [publicId, scale, pageNumber]);
 
   // Center when zoomFit is triggered (via store flag)
-  const { pendingCenter, clearPendingCenter } = useViewerCoreStore(useShallow((s) => ({
-    pendingCenter: s.pendingCenter,
-    clearPendingCenter: s.clearPendingCenter,
-  })));
+  const { pendingCenter, clearPendingCenter } = useViewerCoreStore(
+    useShallow((s) => ({
+      pendingCenter: s.pendingCenter,
+      clearPendingCenter: s.clearPendingCenter,
+    })),
+  );
   useEffect(() => {
     if (!pendingCenter) return;
     clearPendingCenter();
@@ -350,7 +391,11 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     // adapts to panel state. 0.95 leaves a tiny margin so the page doesn't kiss the edges.
     const dim = pageDimensions[pageNumber];
     if (dim && dim.width > 0 && dim.height > 0) {
-      const fitScale = Math.min(container.clientWidth / dim.width, container.clientHeight / dim.height) * 0.95;
+      const fitScale =
+        Math.min(
+          container.clientWidth / dim.width,
+          container.clientHeight / dim.height,
+        ) * 0.95;
       if (fitScale > 0 && isFinite(fitScale)) {
         setScale(fitScale);
         scaleRef.current = fitScale;
@@ -424,36 +469,38 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     }
 
     // Capture phase on document — fires before any child element or native scroll
-    document.addEventListener("wheel", handleWheel, { passive: false, capture: true });
-    return () => document.removeEventListener("wheel", handleWheel, { capture: true });
+    document.addEventListener("wheel", handleWheel, {
+      passive: false,
+      capture: true,
+    });
+    return () =>
+      document.removeEventListener("wheel", handleWheel, { capture: true });
   }, [setScale]);
 
   // Click-drag pan
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      const tool = useToolStore.getState();
-      const shouldPan = tool.tempPanMode || (tool.activeTool === null && tool.mode === "move");
-      if (!shouldPan) return;
-      if (e.button !== 0) return;
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const tool = useToolStore.getState();
+    const shouldPan =
+      tool.tempPanMode || (tool.activeTool === null && tool.mode === "move");
+    if (!shouldPan) return;
+    if (e.button !== 0) return;
 
-      const container = containerRef.current;
-      if (!container) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-      setIsPanning(true);
-      isPanningRef.current = true;
-      panStart.current = {
-        x: e.clientX,
-        y: e.clientY,
-        scrollLeft: container.scrollLeft,
-        scrollTop: container.scrollTop,
-      };
-      container.style.cursor = "grabbing";
-    },
-    []
-  );
+    setIsPanning(true);
+    isPanningRef.current = true;
+    panStart.current = {
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: container.scrollLeft,
+      scrollTop: container.scrollTop,
+    };
+    container.style.cursor = "grabbing";
+  }, []);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
@@ -467,7 +514,7 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
       container.scrollLeft = panStart.current.scrollLeft - dx;
       container.scrollTop = panStart.current.scrollTop - dy;
     },
-    [isPanning]
+    [isPanning],
   );
 
   const handleMouseUp = useCallback(() => {
@@ -477,7 +524,8 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
     const tool = useToolStore.getState();
     const tempPan = tool.tempPanMode;
     const basePan = tool.activeTool === null && tool.mode === "move";
-    if (container) container.style.cursor = (basePan || tempPan) ? "grab" : "default";
+    if (container)
+      container.style.cursor = basePan || tempPan ? "grab" : "default";
     if (vReleasedDuringPanRef.current) {
       vReleasedDuringPanRef.current = false;
       useToolStore.getState().setTempPanMode(false);
@@ -487,8 +535,10 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 
   // Hooks must be before early returns (Rules of Hooks)
   const { isDemo } = useProject();
-  const { sidebarCollapsed, annotationPanelCollapsed, showTips, helpMode } = useLayoutUi();
-  const { toggleSidebar, toggleAnnotationPanel, toggleTips, toggleHelpMode } = useLayoutUiActions();
+  const { sidebarCollapsed, annotationPanelCollapsed, showTips, helpMode } =
+    useLayoutUi();
+  const { toggleSidebar, toggleAnnotationPanel, toggleTips, toggleHelpMode } =
+    useLayoutUiActions();
   const showTableCompareModal = useUiStore((s) => s.showTableCompareModal);
 
   // Demo page sets helpMode: false, showTips: false directly — no auto-override needed
@@ -503,130 +553,168 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
           {error}
         </div>
       ) : (
-      <div className="flex-1 flex flex-col h-screen">
-      <ViewerToolbar projectName={projectName} backHref={backHref} onRename={onRename} />
-      <GroupActionsBar />
+        <div className="flex-1 flex flex-col h-screen">
+          <ViewerToolbar
+            projectName={projectName}
+            backHref={backHref}
+            onRename={onRename}
+          />
+          <GroupActionsBar />
 
-      {/* Help tips banner — dismissible, toggleable from Menu → Help */}
-      {showTips && (
-        <div className="h-8 bg-[var(--surface)] border-b border-[var(--border)] flex items-center justify-center px-4 shrink-0">
-          <div className="flex items-center gap-3 text-[11px] -ml-16">
-            <span className="text-[var(--fg)]/50 font-medium">BUTTONS:</span>
-            <span className="text-[var(--fg)]/60">Menu — Data labeling & more</span>
-            <span className="text-[var(--border)]">|</span>
-            <span className="text-purple-400/80">YOLO — Toggle AI detections on/off</span>
-            <span className="text-[var(--border)]">|</span>
-            <span className="text-sky-400/80">Text — Phone, abbreviations & more</span>
-            <span className="text-[var(--border)]">|</span>
-            <span className="text-blue-400/80">Chat — Talk with LLM about blueprints</span>
-            <span className="text-[var(--border)]">|</span>
-            <span className="text-emerald-400/80">QTO — Count + area</span>
-            <span className="text-[var(--border)]">|</span>
-            <span className="text-amber-400/80 inline-flex items-center gap-1">
-              <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="inline-block"><ellipse cx="8" cy="8" rx="7" ry="4.5"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>
-              — Toggle simple_parse on/off
-            </span>
-          </div>
-          <button
-            onClick={toggleHelpMode}
-            className={`text-[11px] ml-4 px-2 py-0.5 rounded border transition-colors ${
-              helpMode
-                ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10 animate-pulse"
-                : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]/50"
-            }`}
-          >
-            {helpMode ? "Help ON" : "Help Mode Off"}
-          </button>
-          <button
-            onClick={toggleTips}
-            className="text-[var(--muted)] hover:text-[var(--fg)] text-sm ml-2 w-5 h-5 flex items-center justify-center rounded hover:bg-[var(--surface)]"
-          >
-            x
-          </button>
-        </div>
-      )}
+          {/* Help tips banner — dismissible, toggleable from Menu → Help */}
+          {showTips && (
+            <div className="h-8 bg-[var(--surface)] border-b border-[var(--border)] flex items-center justify-center px-4 shrink-0">
+              <div className="flex items-center gap-3 text-[11px] -ml-16">
+                <span className="text-[var(--fg)]/50 font-medium">
+                  BUTTONS:
+                </span>
+                <span className="text-[var(--fg)]/60">
+                  Menu — Data labeling & more
+                </span>
+                <span className="text-[var(--border)]">|</span>
+                <span className="text-purple-400/80">
+                  YOLO — Toggle AI detections on/off
+                </span>
+                <span className="text-[var(--border)]">|</span>
+                <span className="text-sky-400/80">
+                  Text — Phone, abbreviations & more
+                </span>
+                <span className="text-[var(--border)]">|</span>
+                <span className="text-blue-400/80">
+                  Chat — Talk with LLM about blueprints
+                </span>
+                <span className="text-[var(--border)]">|</span>
+                <span className="text-emerald-400/80">QTO — Count + area</span>
+                <span className="text-[var(--border)]">|</span>
+                <span className="text-amber-400/80 inline-flex items-center gap-1">
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    className="inline-block"
+                  >
+                    <ellipse cx="8" cy="8" rx="7" ry="4.5" />
+                    <circle cx="8" cy="8" r="2" fill="currentColor" />
+                  </svg>
+                  — Toggle simple_parse on/off
+                </span>
+              </div>
+              <button
+                onClick={toggleHelpMode}
+                className={`text-[11px] ml-4 px-2 py-0.5 rounded border transition-colors ${
+                  helpMode
+                    ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10 animate-pulse"
+                    : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--accent)]/50"
+                }`}
+              >
+                {helpMode ? "Help ON" : "Help Mode Off"}
+              </button>
+              <button
+                onClick={toggleTips}
+                className="text-[var(--muted)] hover:text-[var(--fg)] text-sm ml-2 w-5 h-5 flex items-center justify-center rounded hover:bg-[var(--surface)]"
+              >
+                x
+              </button>
+            </div>
+          )}
 
-      <div className="flex flex-1 min-h-0">
-        {!sidebarCollapsed && <PageSidebar pdfDoc={pdfDoc} />}
+          <div className="flex flex-1 min-h-0">
+            {!sidebarCollapsed && <PageSidebar pdfDoc={pdfDoc} />}
 
-        <div className="flex-1 flex flex-col min-w-0 relative">
-          {/* Sidebar collapse toggle — outside scroll container so it doesn't scroll away */}
-          <button
-            onClick={toggleSidebar}
-            className="absolute top-2 left-2 z-20 w-6 h-6 rounded flex items-center justify-center text-xs bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/40"
-            title={sidebarCollapsed ? "Show pages" : "Hide pages"}
-          >
-            {sidebarCollapsed ? ">" : "<"}
-          </button>
+            <div className="flex-1 flex flex-col min-w-0 relative">
+              {/* Sidebar collapse toggle — outside scroll container so it doesn't scroll away */}
+              <button
+                onClick={toggleSidebar}
+                className="absolute top-2 left-2 z-20 w-6 h-6 rounded flex items-center justify-center text-xs bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]/40"
+                title={sidebarCollapsed ? "Show pages" : "Hide pages"}
+              >
+                {sidebarCollapsed ? ">" : "<"}
+              </button>
 
-          {/* Symbol Search floating panel — suppressed when ParsePanel's Template
+              {/* Symbol Search floating panel — suppressed when ParsePanel's Template
               Parse tab is active (the embedded SymbolSearchPanel there is the
               canonical surface in that case). */}
-          {(symbolSearchActive || symbolSearchResults || symbolSearchLoading || symbolSearchTemplateBbox || symbolSearchError) &&
-            !templateTabOpen && (
-            <div className="absolute top-12 left-10 z-50">
-              <SymbolSearchPanel pdfDoc={pdfDoc} />
-            </div>
-          )}
+              {(symbolSearchActive ||
+                symbolSearchResults ||
+                symbolSearchLoading ||
+                symbolSearchTemplateBbox ||
+                symbolSearchError) &&
+                !templateTabOpen && (
+                  <div className="absolute top-12 left-10 z-50">
+                    <SymbolSearchPanel pdfDoc={pdfDoc} />
+                  </div>
+                )}
 
-          <div
-            ref={containerRef}
-            className="flex-1 bg-[var(--bg)] overflow-auto relative"
-            style={{ cursor: (mode === "move" || tempPanMode) ? "grab" : "default" }}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-          >
-            <div
-              className="p-4"
-              style={{ width: "fit-content", paddingTop: "50vh", paddingBottom: "50vh", paddingLeft: "25vw", paddingRight: "25vw" }}
-            >
-              <div style={{ width: "fit-content", margin: "0 auto" }}>
-                <PDFPage
-                  pdfDoc={pdfDoc}
-                  pageNumber={pageNumber}
-                  scale={scale}
-                  containerWidth={containerWidth}
-                />
+              <div
+                ref={containerRef}
+                className="flex-1 bg-[var(--bg)] overflow-auto relative"
+                style={{
+                  cursor: mode === "move" || tempPanMode ? "grab" : "default",
+                }}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+              >
+                <div
+                  className="p-4"
+                  style={{
+                    width: "fit-content",
+                    paddingTop: "50vh",
+                    paddingBottom: "50vh",
+                    paddingLeft: "25vw",
+                    paddingRight: "25vw",
+                  }}
+                >
+                  <div style={{ width: "fit-content", margin: "0 auto" }}>
+                    <PDFPage
+                      pdfDoc={pdfDoc}
+                      pageNumber={pageNumber}
+                      scale={scale}
+                      containerWidth={containerWidth}
+                    />
+                  </div>
+                </div>
               </div>
+
+              {/* Annotation panel — collapsible */}
+              {annotationPanelCollapsed ? (
+                <button
+                  onClick={toggleAnnotationPanel}
+                  className="border-t border-[var(--border)] px-3 py-1 text-xs text-[var(--muted)] hover:text-[var(--fg)] text-left shrink-0"
+                  style={{ backgroundColor: "var(--surface)" }}
+                >
+                  View Annotations
+                </button>
+              ) : (
+                <>
+                  <AnnotationPanel />
+                  <button
+                    onClick={toggleAnnotationPanel}
+                    className="border-t border-[var(--border)] px-3 py-0.5 text-[10px] text-[var(--muted)] hover:text-[var(--fg)] text-center shrink-0"
+                    style={{ backgroundColor: "var(--surface)" }}
+                  >
+                    Collapse
+                  </button>
+                </>
+              )}
             </div>
+
+            {/* Right-side panels — subscribes independently to avoid re-rendering PDF area */}
+            <ViewerPanels pdfDoc={pdfDoc} />
           </div>
 
-          {/* Annotation panel — collapsible */}
-          {annotationPanelCollapsed ? (
-            <button
-              onClick={toggleAnnotationPanel}
-              className="border-t border-[var(--border)] px-3 py-1 text-xs text-[var(--muted)] hover:text-[var(--fg)] text-left shrink-0"
-              style={{ backgroundColor: "var(--surface)" }}
-            >
-              View Annotations
-            </button>
-          ) : (
-            <>
-              <AnnotationPanel />
-              <button
-                onClick={toggleAnnotationPanel}
-                className="border-t border-[var(--border)] px-3 py-0.5 text-[10px] text-[var(--muted)] hover:text-[var(--fg)] text-center shrink-0"
-                style={{ backgroundColor: "var(--surface)" }}
-              >
-                Collapse
-              </button>
-            </>
+          {/* Fullscreen modal overlays */}
+          {showTableCompareModal && pdfDoc && (
+            <TableCompareModal pdfDoc={pdfDoc} />
           )}
 
+          {/* Tag instance browser bar */}
+          <TagBrowseBar />
         </div>
-
-        {/* Right-side panels — subscribes independently to avoid re-rendering PDF area */}
-        <ViewerPanels pdfDoc={pdfDoc} />
-      </div>
-
-      {/* Fullscreen modal overlays */}
-      {showTableCompareModal && pdfDoc && <TableCompareModal pdfDoc={pdfDoc} />}
-
-      {/* Tag instance browser bar */}
-      <TagBrowseBar />
-      </div>
       )}
     </>
   );
@@ -635,9 +723,18 @@ export default function PDFViewer({ pdfUrl, projectName, backHref, onRename }: P
 /** Panels subscribe to their own visibility — toggles don't re-render PDFPage/overlays */
 function ViewerPanels({ pdfDoc }: { pdfDoc: PDFDocumentProxy | null }) {
   const {
-    showTextPanel, showChatPanel, showTakeoffPanel, showDetectionPanel,
-    showCsiPanel, showPageIntelPanel, showTableParsePanel, showKeynoteParsePanel,
-    showSpecsNotesPanel, showParsePanel, showToolsPanel, showViewAllPanel,
+    showTextPanel,
+    showChatPanel,
+    showTakeoffPanel,
+    showDetectionPanel,
+    showCsiPanel,
+    showPageIntelPanel,
+    showTableParsePanel,
+    showKeynoteParsePanel,
+    showSpecsNotesPanel,
+    showParsePanel,
+    showToolsPanel,
+    showViewAllPanel,
   } = usePanelVisibility();
 
   return (

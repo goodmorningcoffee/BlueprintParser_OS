@@ -175,7 +175,7 @@ function lifecycleProjectResponse(): ProjectResponse {
     id: "pid",
     dbId: 1,
     name: "Lifecycle project",
-    dataUrl: "s3://private/project.json",
+    assetBaseUrl: "s3://private/project.json",
     pdfUrl: "s3://private/project.pdf",
     numPages: 10,
     status: "ready",

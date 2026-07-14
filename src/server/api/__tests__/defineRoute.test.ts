@@ -49,6 +49,8 @@ const projectRow = {
   name: "P",
   numPages: 3,
   status: "completed",
+  lifecycleEpoch: 0,
+  updatedAt: new Date("2026-01-01T00:00:00.000Z"),
 };
 const ok = (scope: string, session: unknown = setSessionVal()) => ({
   project: projectRow,
@@ -317,5 +319,26 @@ describe("defineRoute — error leak prevention", () => {
     const { status, body } = await readJson(await route(makeReq("/x", { method: "GET" })));
     expect(status).toBe(409);
     expect(body).toEqual({ error: { code: "CONFLICT", message: "already exists" } });
+  });
+
+  it("the database demo-write backstop maps to the canonical 403 envelope", async () => {
+    const databaseError = {
+      code: "P0001",
+      constraint: "demo_project_read_only",
+      message: "Demo projects are read-only",
+    };
+    const route = defineRoute({
+      auth: "none",
+      handler: () => {
+        throw { message: "Failed query", cause: databaseError };
+      },
+    });
+
+    const { status, body } = await readJson(await route(makeReq("/x", { method: "GET" })));
+
+    expect(status).toBe(403);
+    expect(body).toEqual({
+      error: { code: "FORBIDDEN", message: "Demo projects are read-only" },
+    });
   });
 });

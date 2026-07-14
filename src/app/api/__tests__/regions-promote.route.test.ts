@@ -52,7 +52,7 @@ import { computeProjectSummaries } from "@/lib/project-analysis";
 import { parseNotesFromRegion } from "@/lib/text-region-classifier";
 import { bindSpecSectionsInRegion } from "@/lib/specnote-parser";
 import { detectCsiFromGrid, detectCsiCodes } from "@/lib/csi-detect";
-import { asUser, createPage, createUser, createWorld, makeReq, readJson, signedOut } from "@/test/harness";
+import { asUser, createPage, createUser, createWorld, makeReq, publishDemoFixture, readJson, signedOut } from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -423,34 +423,27 @@ describe.skipIf(!dbUp)("POST /api/regions/promote", () => {
     expect(body.error.code).toBe("NOT_FOUND");
   });
 
-  describe("demo-write 403 gate", () => {
-    it("(a) signed out (scope demo) → 403", async () => {
-      const { project } = await createWorld({ isDemo: true });
-      signedOut();
-      const { status, body } = await readJson(await req({ publicId: project.publicId, pageNumber: 1, type: "notes", overrides: PARSER_SAVE }));
-      expect(status).toBe(403);
-      expect(body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
-    });
-    it("(b) same-company MEMBER → 403", async () => {
-      const { user, project } = await createWorld({ isDemo: true });
-      asUser(user);
-      const { status } = await readJson(await req({ publicId: project.publicId, pageNumber: 1, type: "notes", overrides: PARSER_SAVE }));
-      expect(status).toBe(403);
-    });
-    it("(c) same-company ADMIN → 200", async () => {
-      const { company, project } = await createWorld({ isDemo: true });
-      await createPage(project.id, 1);
-      asUser(await createUser(company.id, { role: "admin" }));
-      const { status } = await readJson(await req({ publicId: project.publicId, pageNumber: 1, type: "notes", overrides: PARSER_SAVE }));
-      expect(status).toBe(200);
-    });
-    it("(d) cross-company ROOT admin → 200", async () => {
-      const { project } = await createWorld({ isDemo: true });
-      await createPage(project.id, 1);
-      asUser(await createUser((await createWorld()).company.id, { isRootAdmin: true }));
-      const { status } = await readJson(await req({ publicId: project.publicId, pageNumber: 1, type: "notes", overrides: PARSER_SAVE }));
-      expect(status).toBe(200);
-    });
+  it("L5 freeze: demo promote denies all roles before page or summary side effects", async () => {
+    const { company, project } = await createWorld();
+    const page = await createPage(project.id, 1);
+    await publishDemoFixture(project.id);
+    const member = await createUser(company.id);
+    const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser((await createWorld()).company.id, { role: "admin", isRootAdmin: true });
+    const statuses: number[] = [];
+    for (const actor of [null, member, admin, root]) {
+      actor ? asUser(actor) : signedOut();
+      statuses.push(
+        (
+          await readJson(
+            await req({ publicId: project.publicId, pageNumber: 1, type: "notes", overrides: PARSER_SAVE }),
+          )
+        ).status,
+      );
+    }
+    expect(statuses).toEqual([403, 403, 403, 403]);
+    expect((await pageState(page.id)).regions).toEqual([]);
+    expect(computeProjectSummaries).not.toHaveBeenCalled();
   });
 
   // ── functional throws (SANCTIONED diff B: 500-with-message → typed 4xx, byte-exact message) ───────
@@ -510,7 +503,7 @@ describe.skipIf(!dbUp)("POST /api/regions/promote", () => {
     vi.mocked(computeProjectSummaries).mockResolvedValue({ totals: 7 } as any);
     asUser(user);
     const { body } = await readJson(await req({ publicId: project.publicId, pageNumber: 1, type: "notes", overrides: { ...PARSER_SAVE, regionId: "s1" } }));
-    expect(computeProjectSummaries).toHaveBeenCalledWith(project.id);
+    expect(computeProjectSummaries).toHaveBeenCalledWith(project.id, expect.anything());
     expect(body.summaries).toEqual({ totals: 7 });
   });
 

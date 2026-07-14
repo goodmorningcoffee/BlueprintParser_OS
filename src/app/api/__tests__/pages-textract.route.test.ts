@@ -11,7 +11,16 @@ vi.mock("@/lib/auth", async () => {
 });
 
 import { GET } from "@/app/api/pages/textract/route";
-import { asUser, createPage, createUser, createWorld, makeReq, readJson, signedOut } from "@/test/harness";
+import {
+  asUser,
+  createPage,
+  createUser,
+  createWorld,
+  makeReq,
+  publishDemoFixture,
+  readJson,
+  signedOut,
+} from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -50,8 +59,9 @@ describe.skipIf(!dbUp)("GET /api/pages/textract", () => {
   });
 
   it("allowDemo: a signed-out reader can fetch demo Textract through numeric and controller publicId", async () => {
-    const { project } = await createWorld({ isDemo: true });
+    const { project } = await createWorld();
     await createPage(project.id, 1, { textractData: SEED as any });
+    await publishDemoFixture(project.id);
     signedOut();
     for (const identity of [`projectId=${project.id}`, `publicId=${project.publicId}`]) {
       const { status, body } = await readJson(await get(`${identity}&pageNumber=1`));

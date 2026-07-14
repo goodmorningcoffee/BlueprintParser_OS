@@ -18,6 +18,9 @@ vi.mock("@/lib/auth", async () => {
 });
 
 import { GET, POST } from "@/app/api/qto-workflows/route";
+import { db } from "@/lib/db";
+import { qtoWorkflows } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import {
   asUser,
   createCompany,
@@ -147,40 +150,32 @@ describe.skipIf(!dbUp)("/api/qto-workflows", () => {
     expect(cross.body.error.code).toBe("NOT_FOUND");
   });
 
-  it("POST demo write-gate covers every scope branch: unauth 403, cross-company 403, owning member 403, owning admin 200, foreign root 200", async () => {
+  it("L5 freeze: demo create denies every role branch and leaves QTO empty", async () => {
     const { company, project } = await createWorld({ isDemo: true });
     const body = { projectId: project.publicId, materialType: "x" };
+    const actors = [
+      null,
+      await createUser((await createCompany()).id),
+      await createUser(company.id),
+      await createUser(company.id, { role: "admin" }),
+      await createUser((await createCompany()).id, { isRootAdmin: true, role: "admin" }),
+    ];
+    const responses = [];
 
-    // unauthenticated write to a demo project → 403 read-only (scope "demo")
-    signedOut();
-    const anon = await readJson(await post(body));
-    expect(anon.status).toBe(403);
-    expect(anon.body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
+    // Anonymous, foreign member, owner member, owner admin, and foreign root all hit the same
+    // project-derived read-only policy. No role is a lifecycle exception; only manageDemo is.
+    for (const actor of actors) {
+      actor ? asUser(actor) : signedOut();
+      responses.push(await readJson(await post(body)));
+    }
 
-    // authenticated member of ANOTHER company → scope "demo" → 403 (NOT the 404 a non-demo project
-    // gives a cross-company writer — the demo carve-out makes the project visible, then gates writes)
-    asUser(await createUser((await createCompany()).id));
-    const crossCo = await readJson(await post(body));
-    expect(crossCo.status).toBe(403);
-    expect(crossCo.body.error.code).toBe("FORBIDDEN");
-
-    // owning-company MEMBER → still 403 (scope "member" does not bypass the gate)
-    asUser(await createUser(company.id)); // default role = member
-    const member = await readJson(await post(body));
-    expect(member.status).toBe(403);
-    expect(member.body.error.code).toBe("FORBIDDEN");
-
-    // owning-company ADMIN → 200 (scope "admin" bypasses the gate, per the frozen exception)
-    asUser(await createUser(company.id, { role: "admin" }));
-    const admin = await readJson(await post(body));
-    expect(admin.status).toBe(200);
-    expect(admin.body.materialType).toBe("x");
-
-    // ROOT admin from a DIFFERENT company → scope "root" → 200 (the other half of the gate exception)
-    asUser(await createUser((await createCompany()).id, { isRootAdmin: true, role: "admin" }));
-    const foreignRoot = await readJson(await post(body));
-    expect(foreignRoot.status).toBe(200);
-    expect(foreignRoot.body.materialType).toBe("x");
+    expect.soft(responses.map((response) => response.status)).toEqual(Array(5).fill(403));
+    expect.soft(responses.map((response) => response.body.error)).toEqual(
+      Array(5).fill({ code: "FORBIDDEN", message: "Demo projects are read-only" }),
+    );
+    expect.soft(
+      await db.select().from(qtoWorkflows).where(eq(qtoWorkflows.projectId, project.id)),
+    ).toEqual([]);
   });
 
   // Inherited zLooseBody/shell diff (the de-facto 4th sanctioned diff, same as families 1/2): a

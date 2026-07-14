@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { defineRoute } from "@/server/api/defineRoute";
 import { ApiError } from "@/server/api/envelope";
+import { assertProjectWritable } from "@/server/api/access";
 import { zPageNumber, zPublicId } from "@/server/api/schemas";
 import { deleteParsedRegion } from "@/server/services/regions";
 
@@ -22,6 +23,7 @@ export const DELETE = defineRoute({
     if (project!.isDemo) {
       throw new ApiError("FORBIDDEN", "Demo projects are read-only");
     }
-    return deleteParsedRegion(project!.id, body.pageNumber, body.regionId);
+    const writeCapability = assertProjectWritable(project!);
+    return deleteParsedRegion(project!.id, body.pageNumber, body.regionId, writeCapability);
   },
 });

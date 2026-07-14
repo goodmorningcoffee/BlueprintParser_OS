@@ -56,7 +56,8 @@ export interface ProjectResponse {
   id: string;
   dbId: number;
   name: string;
-  dataUrl: string;
+  /** Same-origin, access-checked browser asset endpoint. Never an S3 key. */
+  assetBaseUrl: string;
   pdfUrl: string;
   numPages: number;
   status: string;
@@ -279,7 +280,7 @@ function adoptProject(
   useSessionStore.setState({
     projectId: data.dbId,
     publicId,
-    dataUrl: data.dataUrl,
+    assetBaseUrl: data.assetBaseUrl,
     isDemo: options.demo,
     demoFeatureConfig: options.demo ? (data.demoConfig ?? null) : null,
     pageNames: labels.pageNames,

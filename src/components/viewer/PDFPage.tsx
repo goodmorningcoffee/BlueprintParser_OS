@@ -264,15 +264,10 @@ export default memo(function PDFPage({
   }, []);
 
   // Pre-rendered PNG fallback for instant page display while pdf.js renders
-  const dataUrl = useSessionStore((s) => s.dataUrl);
+  const assetBaseUrl = useSessionStore((s) => s.assetBaseUrl);
   const pageKey = String(pageNumber).padStart(4, "0");
-  const cdnDomain = typeof window !== "undefined" ? undefined : undefined; // client-side only
-  const s3Bucket = process.env.NEXT_PUBLIC_S3_BUCKET || "";
-  const cloudfront = process.env.NEXT_PUBLIC_CLOUDFRONT_DOMAIN;
-  const fallbackSrc = dataUrl
-    ? cloudfront
-      ? `https://${cloudfront}/${dataUrl}/pages/page_${pageKey}.png`
-      : `https://${s3Bucket}.s3.amazonaws.com/${dataUrl}/pages/page_${pageKey}.png`
+  const fallbackSrc = assetBaseUrl
+    ? `${assetBaseUrl}/pages/page_${pageKey}.png`
     : null;
   const [canvasReady, setCanvasReady] = useState(false);
   const [fallbackError, setFallbackError] = useState(false);

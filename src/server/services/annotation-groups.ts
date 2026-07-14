@@ -46,7 +46,15 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { TWENTY_COLORS } from "@/types";
 import { ApiError } from "@/server/api/envelope";
-import { resolveByPublicId, resolveProjectOrThrow } from "@/server/api/access";
+import {
+  resolveByPublicId,
+  resolveProjectOrThrow,
+  resolveWritableProjectOrThrow,
+} from "@/server/api/access";
+import {
+  assertProjectWritable,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
 
 function toClientGroup(g: typeof annotationGroups.$inferSelect) {
   return {
@@ -87,8 +95,8 @@ async function loadGroupAndAuthz(idParam: string) {
   // [refactor jul9 P2-A C1] keep the resolved project (was discarded) so
   // updateAnnotationGroup can derive companyId for the CSI resolver. Access
   // check is byte-identical; other callers just destructure { group }.
-  const { project } = await resolveProjectOrThrow({ dbId: group.projectId });
-  return { group, project };
+  const { project, writeCapability } = await resolveWritableProjectOrThrow({ dbId: group.projectId });
+  return { group, project, writeCapability };
 }
 
 /** Narrow + validate an `annotationIds` body into a non-empty integer array (frozen message). */
@@ -108,6 +116,7 @@ function parseAnnotationIds(value: unknown): number[] {
  *  slice + reverse index in one round trip. allowDemo:true → unauthenticated demo reads work. */
 export async function getAnnotationGroups(projectId: string) {
   const { project } = await resolveProjectOrThrow({ publicId: projectId }, { allowDemo: true });
+  if (project.isDemo) return redactPublicDemoGroups();
 
   const groups = await db
     .select()
@@ -130,6 +139,10 @@ export async function getAnnotationGroups(projectId: string) {
       groupId: m.groupId,
     })),
   };
+}
+
+function redactPublicDemoGroups() {
+  return { groups: [], memberships: [] };
 }
 
 // ── POST /api/annotation-groups ──────────────────────────────────────────────────
@@ -163,7 +176,8 @@ export async function createAnnotationGroup(body: Record<string, unknown>) {
     throw new ApiError("VALIDATION", "annotationIds must be integers");
   }
 
-  const { project, session } = await resolveByPublicId(projectId);
+  const { project, session } = await resolveByPublicId(projectId, { allowDemo: true });
+  const writeCapability = assertProjectWritable(project);
   if (!session) throw new ApiError("UNAUTHORIZED", "Unauthorized");
 
   // [refactor jul9 P2-A C1] Resolve company CSI context BEFORE the tx (I-1) — the
@@ -183,16 +197,17 @@ export async function createAnnotationGroup(body: Record<string, unknown>) {
 
   const finalColor = color ?? TWENTY_COLORS[Math.floor(Math.random() * TWENTY_COLORS.length)];
 
-  // Verify all annotationIds belong to this project — prevents grouping across tenancy.
-  const verified = await db
-    .select({ id: annotations.id })
-    .from(annotations)
-    .where(and(inArray(annotations.id, annotationIds), eq(annotations.projectId, project.id)));
-  if (verified.length !== annotationIds.length) {
-    throw new ApiError("VALIDATION", "one or more annotationIds not found in this project");
-  }
+  const group = await withProjectWrite(writeCapability, project.id, async (tx) => {
+    // Verify tenancy only after the project lifecycle is locked. This keeps the validation and
+    // both child writes in the same parent-first transaction.
+    const verified = await tx
+      .select({ id: annotations.id })
+      .from(annotations)
+      .where(and(inArray(annotations.id, annotationIds), eq(annotations.projectId, project.id)));
+    if (verified.length !== annotationIds.length) {
+      throw new ApiError("VALIDATION", "one or more annotationIds not found in this project");
+    }
 
-  const group = await db.transaction(async (tx) => {
     const [created] = await tx
       .insert(annotationGroups)
       .values({
@@ -221,7 +236,7 @@ export async function createAnnotationGroup(body: Record<string, unknown>) {
  *  update. Auto-CSI re-derives from post-update (name, notes) when csiCode omitted but text changed. */
 export async function updateAnnotationGroup(idParam: string, body: Record<string, unknown>) {
   // [refactor jul9 P2-A C1] loadGroupAndAuthz now returns { group, project }.
-  const { group, project } = await loadGroupAndAuthz(idParam);
+  const { group, project, writeCapability } = await loadGroupAndAuthz(idParam);
 
   const updates: Record<string, unknown> = {};
 
@@ -269,11 +284,14 @@ export async function updateAnnotationGroup(idParam: string, body: Record<string
   }
   updates.updatedAt = new Date();
 
-  const [updated] = await db
-    .update(annotationGroups)
-    .set(updates)
-    .where(eq(annotationGroups.id, group.id))
-    .returning();
+  const updated = await withProjectWrite(writeCapability, project.id, async (tx) => {
+    const [row] = await tx
+      .update(annotationGroups)
+      .set(updates)
+      .where(and(eq(annotationGroups.id, group.id), eq(annotationGroups.projectId, project.id)))
+      .returning();
+    return row;
+  });
 
   return { group: toClientGroup(updated) };
 }
@@ -285,25 +303,40 @@ export async function updateAnnotationGroup(idParam: string, body: Record<string
  *  clears junction rows), then the group — a member that ALSO belongs to other groups loses
  *  those memberships too (caller UI must surface impact before calling). */
 export async function deleteAnnotationGroup(idParam: string, cascade: boolean) {
-  const { group } = await loadGroupAndAuthz(idParam); // [refactor jul9 P2-A C1] destructure
+  const { group, project, writeCapability } = await loadGroupAndAuthz(idParam);
 
   if (cascade) {
-    await db.transaction(async (tx) => {
+    await withProjectWrite(writeCapability, project.id, async (tx) => {
+      const [currentGroup] = await tx
+        .select({ id: annotationGroups.id })
+        .from(annotationGroups)
+        .where(and(eq(annotationGroups.id, group.id), eq(annotationGroups.projectId, project.id)))
+        .limit(1);
+      if (!currentGroup) return;
+
       const members = await tx
         .select({ annotationId: annotationGroupMembers.annotationId })
         .from(annotationGroupMembers)
         .where(eq(annotationGroupMembers.groupId, group.id));
       const annotationIds = members.map((m) => m.annotationId);
       if (annotationIds.length > 0) {
-        await tx.delete(annotations).where(inArray(annotations.id, annotationIds));
+        await tx
+          .delete(annotations)
+          .where(and(inArray(annotations.id, annotationIds), eq(annotations.projectId, project.id)));
       }
-      await tx.delete(annotationGroups).where(eq(annotationGroups.id, group.id));
+      await tx
+        .delete(annotationGroups)
+        .where(and(eq(annotationGroups.id, group.id), eq(annotationGroups.projectId, project.id)));
     });
     return { success: true, cascade: true };
   }
 
   // Dissolve — delete the group; junction rows fall via FK cascade.
-  await db.delete(annotationGroups).where(eq(annotationGroups.id, group.id));
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx
+      .delete(annotationGroups)
+      .where(and(eq(annotationGroups.id, group.id), eq(annotationGroups.projectId, project.id)));
+  });
   return { success: true, cascade: false };
 }
 
@@ -312,39 +345,54 @@ export async function deleteAnnotationGroup(idParam: string, cascade: boolean) {
 /** Bulk-add annotations to a group. M:N + upsert (ON CONFLICT DO NOTHING) → repeated adds are
  *  safe. Order (frozen): id-parse → load+authz → body validation → tenancy verify → upsert. */
 export async function addGroupMembers(idParam: string, body: Record<string, unknown>) {
-  const { group } = await loadGroupAndAuthz(idParam); // [refactor jul9 P2-A C1] destructure
+  const { group, project, writeCapability } = await loadGroupAndAuthz(idParam);
   const annotationIds = parseAnnotationIds(body.annotationIds);
 
-  // Tenancy — every annotationId must belong to the group's project.
-  const verified = await db
-    .select({ id: annotations.id })
-    .from(annotations)
-    .where(and(inArray(annotations.id, annotationIds), eq(annotations.projectId, group.projectId)));
-  if (verified.length !== annotationIds.length) {
-    throw new ApiError("VALIDATION", "one or more annotationIds not found in this project");
-  }
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    const [currentGroup] = await tx
+      .select({ id: annotationGroups.id })
+      .from(annotationGroups)
+      .where(and(eq(annotationGroups.id, group.id), eq(annotationGroups.projectId, project.id)))
+      .limit(1);
+    const verified = await tx
+      .select({ id: annotations.id })
+      .from(annotations)
+      .where(and(inArray(annotations.id, annotationIds), eq(annotations.projectId, project.id)));
+    if (!currentGroup || verified.length !== annotationIds.length) {
+      throw new ApiError("VALIDATION", "one or more annotationIds not found in this project");
+    }
 
-  await db
-    .insert(annotationGroupMembers)
-    .values(annotationIds.map((aid) => ({ annotationId: aid, groupId: group.id })))
-    .onConflictDoNothing();
+    await tx
+      .insert(annotationGroupMembers)
+      .values(annotationIds.map((aid) => ({ annotationId: aid, groupId: group.id })))
+      .onConflictDoNothing();
+  });
 
   return { success: true, addedCount: annotationIds.length };
 }
 
 /** Bulk-remove membership rows; the annotations themselves are unaffected. */
 export async function removeGroupMembers(idParam: string, body: Record<string, unknown>) {
-  const { group } = await loadGroupAndAuthz(idParam); // [refactor jul9 P2-A C1] destructure
+  const { group, project, writeCapability } = await loadGroupAndAuthz(idParam);
   const annotationIds = parseAnnotationIds(body.annotationIds);
 
-  await db
-    .delete(annotationGroupMembers)
-    .where(
-      and(
-        eq(annotationGroupMembers.groupId, group.id),
-        inArray(annotationGroupMembers.annotationId, annotationIds),
-      ),
-    );
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    const [currentGroup] = await tx
+      .select({ id: annotationGroups.id })
+      .from(annotationGroups)
+      .where(and(eq(annotationGroups.id, group.id), eq(annotationGroups.projectId, project.id)))
+      .limit(1);
+    if (!currentGroup) throw new ApiError("NOT_FOUND", "Not found");
+
+    await tx
+      .delete(annotationGroupMembers)
+      .where(
+        and(
+          eq(annotationGroupMembers.groupId, group.id),
+          inArray(annotationGroupMembers.annotationId, annotationIds),
+        ),
+      );
+  });
 
   return { success: true, removedCount: annotationIds.length };
 }

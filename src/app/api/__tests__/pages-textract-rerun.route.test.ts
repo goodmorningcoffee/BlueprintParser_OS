@@ -25,11 +25,21 @@ import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { downloadFromS3 } from "@/lib/s3";
 import { analyzePageImageWithFallback } from "@/lib/textract";
-import { asUser, createPage, createUser, createWorld, makeReq, readJson, signedOut } from "@/test/harness";
+import {
+  asUser,
+  createPage,
+  createUser,
+  createWorld,
+  makeReq,
+  publishDemoFixture,
+  readJson,
+  signedOut,
+} from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 const FAKE_TD = { words: [{}, {}], lines: [{}], tables: [] };
-const req = (body: unknown) => POST(makeReq("/api/pages/textract-rerun", { method: "POST", body }));
+const req = (body: unknown) =>
+  POST(makeReq("/api/pages/textract-rerun", { method: "POST", body }));
 
 beforeEach(() => {
   vi.mocked(downloadFromS3).mockReset();
@@ -43,13 +53,19 @@ describe.skipIf(!dbUp)("POST /api/pages/textract-rerun", () => {
     const { user, project } = await createWorld();
     const page = await createPage(project.id, 1);
     asUser(user);
-    const { status, body } = await readJson(await req({ projectId: project.id, pageNumber: 1 }));
+    const { status, body } = await readJson(
+      await req({ projectId: project.id, pageNumber: 1 }),
+    );
     expect(status).toBe(200);
     expect(body.success).toBe(true);
     expect(typeof body.durationMs).toBe("number");
     expect(body.stats).toEqual({ wordCount: 2, lineCount: 1, tableCount: 0 });
     expect(body.textractData).toEqual(FAKE_TD);
-    const [r] = await db.select({ td: pages.textractData }).from(pages).where(eq(pages.id, page.id)).limit(1);
+    const [r] = await db
+      .select({ td: pages.textractData })
+      .from(pages)
+      .where(eq(pages.id, page.id))
+      .limit(1);
     expect(r?.td).toEqual(FAKE_TD);
   });
 
@@ -57,7 +73,9 @@ describe.skipIf(!dbUp)("POST /api/pages/textract-rerun", () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1);
     asUser(user);
-    const { status } = await readJson(await req({ publicId: project.publicId, pageNumber: 1 }));
+    const { status } = await readJson(
+      await req({ publicId: project.publicId, pageNumber: 1 }),
+    );
     expect(status).toBe(200);
   });
 
@@ -65,9 +83,14 @@ describe.skipIf(!dbUp)("POST /api/pages/textract-rerun", () => {
     // [detector-review jun17] locks diff C on the NEW additive publicId branch (resolveByPublicId).
     const { user } = await createWorld();
     asUser(user);
-    const { status, body } = await readJson(await req({ publicId: "not-a-uuid", pageNumber: 1 }));
+    const { status, body } = await readJson(
+      await req({ publicId: "not-a-uuid", pageNumber: 1 }),
+    );
     expect(status).toBe(400);
-    expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
+    expect(body.error).toEqual({
+      code: "VALIDATION",
+      message: "Invalid project id",
+    });
   });
 
   it("SANCTIONED diff D: a non-integer dbId projectId → 400 'Invalid project id' (was pg int-cast 500)", async () => {
@@ -77,25 +100,25 @@ describe.skipIf(!dbUp)("POST /api/pages/textract-rerun", () => {
     const { user } = await createWorld();
     asUser(user);
     for (const bad of ["abc", 3.14, -5]) {
-      const { status, body } = await readJson(await req({ projectId: bad, pageNumber: 1 }));
+      const { status, body } = await readJson(
+        await req({ projectId: bad, pageNumber: 1 }),
+      );
       expect(status).toBe(400);
-      expect(body.error).toEqual({ code: "VALIDATION", message: "Invalid project id" });
+      expect(body.error).toEqual({
+        code: "VALIDATION",
+        message: "Invalid project id",
+      });
     }
   });
 
-  it("no dataUrl → 404 'Project has no dataUrl' (before the page check)", async () => {
-    // dataUrl is non-nullable on insert; "" is the falsy value that trips the `!project.dataUrl` gate.
-    const { user, project } = await createWorld({ dataUrl: "" });
-    asUser(user);
-    const { status, body } = await readJson(await req({ projectId: project.id, pageNumber: 1 }));
-    expect(status).toBe(404);
-    expect(body.error.message).toBe("Project has no dataUrl");
-  });
+  it.skip("schema-impossible no-dataUrl branch (dataUrl is canonical, immutable, and non-null)", () => {});
 
   it("page not found → 404 'Page not found'", async () => {
     const { user, project } = await createWorld();
     asUser(user);
-    const { status, body } = await readJson(await req({ projectId: project.id, pageNumber: 5 }));
+    const { status, body } = await readJson(
+      await req({ projectId: project.id, pageNumber: 5 }),
+    );
     expect(status).toBe(404);
     expect(body.error.message).toBe("Page not found");
   });
@@ -103,70 +126,105 @@ describe.skipIf(!dbUp)("POST /api/pages/textract-rerun", () => {
   it("S3 download failure → 500 with the specific (non-leaking) message", async () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1);
-    vi.mocked(downloadFromS3).mockRejectedValueOnce(new Error("s3 timeout xyz"));
+    vi.mocked(downloadFromS3).mockRejectedValueOnce(
+      new Error("s3 timeout xyz"),
+    );
     asUser(user);
-    const { status, body } = await readJson(await req({ projectId: project.id, pageNumber: 1 }));
+    const { status, body } = await readJson(
+      await req({ projectId: project.id, pageNumber: 1 }),
+    );
     expect(status).toBe(500);
-    expect(body.error).toEqual({ code: "INTERNAL", message: "Failed to load page image from S3" });
+    expect(body.error).toEqual({
+      code: "INTERNAL",
+      message: "Failed to load page image from S3",
+    });
   });
 
   it("SANCTIONED leak-drop: a Textract failure → generic 500, secret absent", async () => {
     const { user, project } = await createWorld();
     await createPage(project.id, 1);
-    vi.mocked(analyzePageImageWithFallback).mockRejectedValueOnce(new Error("AWS_SECRET detail"));
+    vi.mocked(analyzePageImageWithFallback).mockRejectedValueOnce(
+      new Error("AWS_SECRET detail"),
+    );
     asUser(user);
-    const { status, body } = await readJson(await req({ projectId: project.id, pageNumber: 1 }));
+    const { status, body } = await readJson(
+      await req({ projectId: project.id, pageNumber: 1 }),
+    );
     expect(status).toBe(500);
-    expect(body.error).toEqual({ code: "INTERNAL", message: "Internal server error" });
+    expect(body.error).toEqual({
+      code: "INTERNAL",
+      message: "Internal server error",
+    });
     expect(JSON.stringify(body)).not.toContain("AWS_SECRET");
   });
 
   it("missing pageNumber → 400 VALIDATION (exact message)", async () => {
     const { user, project } = await createWorld();
     asUser(user);
-    const { status, body } = await readJson(await req({ projectId: project.id }));
+    const { status, body } = await readJson(
+      await req({ projectId: project.id }),
+    );
     expect(status).toBe(400);
-    expect(body.error).toEqual({ code: "VALIDATION", message: "Missing projectId or pageNumber" });
+    expect(body.error).toEqual({
+      code: "VALIDATION",
+      message: "Missing projectId or pageNumber",
+    });
   });
 
-  it("demo blocked (NO allowDemo): signed-out demo caller → 401 (auth precedence, before any 404)", async () => {
-    // [detector-review jun17] tightened from expect([401,404]).toContain — resolveProjectAccess with
-    // no allowDemo hits the UNAUTHORIZED branch deterministically before any not-found, on legacy + new.
-    const { project } = await createWorld({ isDemo: true });
+  it("demo blocked: signed-out demo caller → canonical project-derived 403", async () => {
+    const { project } = await createWorld();
     await createPage(project.id, 1);
+    await publishDemoFixture(project.id);
     signedOut();
-    const { status, body } = await readJson(await req({ projectId: project.id, pageNumber: 1 }));
-    expect(status).toBe(401);
-    expect(body.error.code).toBe("UNAUTHORIZED");
+    const { status, body } = await readJson(
+      await req({ projectId: project.id, pageNumber: 1 }),
+    );
+    expect(status).toBe(403);
+    expect(body.error).toEqual({
+      code: "FORBIDDEN",
+      message: "Demo projects are read-only",
+    });
   });
 
   it("demo write gate: an authenticated owner gets 403 before S3/Textract work", async () => {
     // [refactor jul11 P2.2⑧] NO allowDemo only blocks the public/signed-out branch. Before this
     // closer, any authenticated same-company user could still spend AWS Textract and overwrite a
     // demo row despite the route comment claiming demos were blocked.
-    const { user, project } = await createWorld({ isDemo: true });
+    const { user, project } = await createWorld();
     await createPage(project.id, 1);
+    await publishDemoFixture(project.id);
     asUser(user);
 
-    const { status, body } = await readJson(await req({ projectId: project.id, pageNumber: 1 }));
+    const { status, body } = await readJson(
+      await req({ projectId: project.id, pageNumber: 1 }),
+    );
 
     expect(status).toBe(403);
-    expect(body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
+    expect(body.error).toEqual({
+      code: "FORBIDDEN",
+      message: "Demo projects are read-only",
+    });
     expect(downloadFromS3).not.toHaveBeenCalled();
     expect(analyzePageImageWithFallback).not.toHaveBeenCalled();
   });
 
   it("demo write gate: a cross-company root also gets 403 before S3/Textract work", async () => {
-    const { project } = await createWorld({ isDemo: true });
+    const { project } = await createWorld();
     await createPage(project.id, 1);
+    await publishDemoFixture(project.id);
     const otherCompany = (await createWorld()).company;
     const root = await createUser(otherCompany.id, { isRootAdmin: true });
     asUser(root);
 
-    const { status, body } = await readJson(await req({ publicId: project.publicId, pageNumber: 1 }));
+    const { status, body } = await readJson(
+      await req({ publicId: project.publicId, pageNumber: 1 }),
+    );
 
     expect(status).toBe(403);
-    expect(body.error).toEqual({ code: "FORBIDDEN", message: "Demo projects are read-only" });
+    expect(body.error).toEqual({
+      code: "FORBIDDEN",
+      message: "Demo projects are read-only",
+    });
     expect(downloadFromS3).not.toHaveBeenCalled();
     expect(analyzePageImageWithFallback).not.toHaveBeenCalled();
   });
@@ -175,7 +233,9 @@ describe.skipIf(!dbUp)("POST /api/pages/textract-rerun", () => {
     const { project } = await createWorld();
     await createPage(project.id, 1);
     asUser(await createUser((await createWorld()).company.id));
-    const { status, body } = await readJson(await req({ projectId: project.id, pageNumber: 1 }));
+    const { status, body } = await readJson(
+      await req({ projectId: project.id, pageNumber: 1 }),
+    );
     expect(status).toBe(404);
     expect(body.error.code).toBe("NOT_FOUND");
   });

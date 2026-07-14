@@ -77,6 +77,7 @@ import {
   createUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -227,7 +228,8 @@ describe.skipIf(!dbUp)("region-parse routes — access matrix (PQ-3)", () => {
   });
 
   it("PQ-3 divergence: demo+anon → 200 on the 4 allowDemo routes, 401 on table-parse/propose", async () => {
-    const { project } = await world({ isDemo: true });
+    const { project } = await world();
+    await publishDemoFixture(project.id);
     for (const key of LONG_BBOX_ROUTES) {
       const { status } = await readJson(await call(ROUTES[key], bodyFor(project.id)));
       expect(status, `${key} allowDemo public read`).toBe(200);

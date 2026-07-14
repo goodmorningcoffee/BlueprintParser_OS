@@ -140,7 +140,7 @@ function projectResponse(demo: boolean): ProjectResponse {
     id: "pid",
     dbId: 1,
     name: "Schedule detail freeze",
-    dataUrl: "projects/pid",
+    assetBaseUrl: "projects/pid",
     pdfUrl: "https://example.test/pid.pdf",
     numPages: 9,
     status: "completed",

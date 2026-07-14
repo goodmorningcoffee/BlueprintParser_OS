@@ -24,6 +24,7 @@
 // The async-factory + dynamic-import form avoids vi.mock hoisting pitfalls.
 
 import { randomUUID } from "crypto";
+import { eq as drizzleEq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 
 // vitest ProvidedContext typing for `inject("dbUp")` (set in global-setup.ts)
@@ -32,8 +33,17 @@ declare module "vitest" {
     dbUp: boolean;
   }
 }
-import { annotations, companies, pages, projects, users } from "@/lib/db/schema";
+import {
+  annotations,
+  companies,
+  labelingSessions,
+  labelStudioProjectIntents,
+  pages,
+  projects,
+  users,
+} from "@/lib/db/schema";
 import type { AuthSession } from "@/lib/api-utils";
+import { PROJECT_UPLOAD_PUBLICATION_FENCE_SECONDS } from "@/lib/project-upload-authority";
 
 // ── session control ─────────────────────────────────────────────────────────
 /** Mutable holder read by the auth() mock. Set per-test; null = signed out. */
@@ -58,6 +68,7 @@ export function signedOut(): void {
 
 // ── fixtures (unique per call → test files stay parallel-safe) ──────────────
 const uniq = () => randomUUID().slice(0, 8);
+const fixtureCompanyDataKeys = new Map<number, string>();
 
 export type FixtureUser = {
   id: number;
@@ -69,7 +80,9 @@ export type FixtureUser = {
   isRootAdmin: boolean;
 };
 
-export async function createCompany(over: Partial<typeof companies.$inferInsert> = {}) {
+export async function createCompany(
+  over: Partial<typeof companies.$inferInsert> = {},
+) {
   const tag = uniq();
   const [row] = await db
     .insert(companies)
@@ -81,6 +94,7 @@ export async function createCompany(over: Partial<typeof companies.$inferInsert>
       ...over,
     })
     .returning();
+  fixtureCompanyDataKeys.set(row.id, row.dataKey);
   return row;
 }
 
@@ -115,11 +129,23 @@ export async function createProject(
   over: Partial<typeof projects.$inferInsert> = {},
 ) {
   const tag = uniq();
+  let companyDataKey = fixtureCompanyDataKeys.get(companyId);
+  if (!companyDataKey) {
+    const [company] = await db
+      .select({ dataKey: companies.dataKey })
+      .from(companies)
+      .where(drizzleEq(companies.id, companyId))
+      .limit(1);
+    if (!company) throw new Error(`Fixture company ${companyId} not found`);
+    companyDataKey = company.dataKey;
+    fixtureCompanyDataKeys.set(companyId, companyDataKey);
+  }
+  const storageId = randomUUID().replace(/-/g, "").slice(0, 20);
   const [row] = await db
     .insert(projects)
     .values({
       name: `Project-${tag}`,
-      dataUrl: `testco/${tag}`,
+      dataUrl: `${companyDataKey}/${storageId}`,
       companyId,
       authorId,
       status: "completed",
@@ -142,8 +168,114 @@ export async function createPage(
   return row;
 }
 
+/**
+ * Create a protocol-valid Label Studio session without calling the external provider. Migration
+ * 0037 intentionally rejects the old bare-session fixture shape, so route tests that only need a
+ * read/blocker witness must still pass through an exact provisioning intent and immutable provider
+ * binding. No grants are created here; grant/retirement tests own their richer fixtures directly.
+ */
+export async function createLabelingSessionFixture(
+  project: Pick<
+    typeof projects.$inferSelect,
+    "id" | "companyId" | "lifecycleEpoch"
+  >,
+  over: Partial<typeof labelingSessions.$inferInsert> = {},
+) {
+  const intentId = randomUUID();
+  const providerProjectId =
+    over.labelStudioProjectId ??
+    1_000_000_000 + (parseInt(intentId.slice(0, 8), 16) % 1_000_000_000);
+  const providerBaseUrl = over.providerBaseUrl ?? "https://labelstudio.test";
+  const providerInstanceId =
+    over.providerInstanceId ?? `fixture-provider-${intentId}`;
+  const requestedStatus = over.status ?? "active";
+  const {
+    status: _status,
+    projectId: _projectId,
+    companyId: _companyId,
+    provisioningIntentId: _provisioningIntentId,
+    labelStudioProjectId: _labelStudioProjectId,
+    providerBaseUrl: _providerBaseUrl,
+    providerInstanceId: _providerInstanceId,
+    ...sessionFields
+  } = over;
+
+  return db.transaction(async (tx) => {
+    await tx.insert(labelStudioProjectIntents).values({
+      id: intentId,
+      projectId: project.id,
+      companyId: project.companyId,
+      lifecycleEpoch: project.lifecycleEpoch,
+      marker: `bp-labeling-intent:${intentId}`,
+      providerProjectId,
+      providerBaseUrl,
+      providerInstanceId,
+      state: "cleanup_pending",
+    });
+    const [created] = await tx
+      .insert(labelingSessions)
+      .values({
+        projectId: project.id,
+        companyId: project.companyId,
+        labelStudioProjectId: providerProjectId,
+        providerBaseUrl,
+        providerInstanceId,
+        provisioningIntentId: intentId,
+        labelStudioUrl: `${providerBaseUrl}/projects/${providerProjectId}`,
+        taskType: "generic",
+        status: "active",
+        ...sessionFields,
+      })
+      .returning();
+    await tx
+      .delete(labelStudioProjectIntents)
+      .where(drizzleEq(labelStudioProjectIntents.id, intentId));
+    if (requestedStatus === "retiring") {
+      const [retiring] = await tx
+        .update(labelingSessions)
+        .set({ status: "retiring", updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(drizzleEq(labelingSessions.id, created.id))
+        .returning();
+      return retiring;
+    }
+    if (requestedStatus !== "active") {
+      throw new Error(`Unsupported Label Studio fixture status: ${requestedStatus}`);
+    }
+    return created;
+  });
+}
+
+/** Publish an already-seeded private fixture through the same monotonic lifecycle transition
+ * enforced in production. Tests must create child rows before calling this helper. */
+export async function publishDemoFixture(projectId: number) {
+  const [row] = await db
+    .update(projects)
+    .set({
+      isDemo: true,
+      lifecycleEpoch: sql`${projects.lifecycleEpoch} + 1`,
+    })
+    .where(drizzleEq(projects.id, projectId))
+    .returning();
+  if (!row) throw new Error("Project fixture not found");
+  return row;
+}
+
+/** Age a private fixture past every app-minted project upload authority using the DB clock. */
+export async function ageProjectForPublication(
+  projectId: number,
+): Promise<void> {
+  await db
+    .update(projects)
+    .set({
+      createdAt: sql`CURRENT_TIMESTAMP - (${PROJECT_UPLOAD_PUBLICATION_FENCE_SECONDS + 1} * INTERVAL '1 second')`,
+    })
+    .where(drizzleEq(projects.id, projectId));
+}
+
 /** One call = company + member user + completed project (the common base). */
-export async function createWorld(projectOver: Partial<typeof projects.$inferInsert> = {}) {
+export async function createWorld(
+  projectOver: Partial<typeof projects.$inferInsert> = {},
+) {
   const company = await createCompany();
   const user = await createUser(company.id);
   const project = await createProject(company.id, user.id, projectOver);
@@ -152,27 +284,41 @@ export async function createWorld(projectOver: Partial<typeof projects.$inferIns
 
 export async function annotationsFor(projectId: number) {
   const { eq } = await import("drizzle-orm");
-  return db.select().from(annotations).where(eq(annotations.projectId, projectId));
+  return db
+    .select()
+    .from(annotations)
+    .where(eq(annotations.projectId, projectId));
 }
 
 // ── request builders ─────────────────────────────────────────────────────────
 export function makeReq(
   path: string,
-  opts: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
+  opts: {
+    method?: string;
+    body?: unknown;
+    headers?: Record<string, string>;
+  } = {},
 ): Request {
   const { method = "POST", body, headers = {} } = opts;
   return new Request(`http://test.local${path}`, {
     method,
-    headers: body !== undefined ? { "content-type": "application/json", ...headers } : headers,
+    headers:
+      body !== undefined
+        ? { "content-type": "application/json", ...headers }
+        : headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 }
 
 /** App-Router dynamic params arrive as a Promise in Next 15+/16. */
-export function params<T extends Record<string, string>>(p: T): { params: Promise<T> } {
+export function params<T extends Record<string, string>>(
+  p: T,
+): { params: Promise<T> } {
   return { params: Promise.resolve(p) };
 }
 
-export async function readJson(res: Response): Promise<{ status: number; body: any }> {
+export async function readJson(
+  res: Response,
+): Promise<{ status: number; body: any }> {
   return { status: res.status, body: await res.json() };
 }

@@ -11,7 +11,7 @@ function sessionData() {
   const {
     setProjectId: _setProjectId,
     setPublicId: _setPublicId,
-    setDataUrl: _setDataUrl,
+    setAssetBaseUrl: _setAssetBaseUrl,
     setIsDemo: _setIsDemo,
     setDemoFeatureConfig: _setDemoFeatureConfig,
     setPageNames: _setPageNames,
@@ -20,7 +20,6 @@ function sessionData() {
     setShowLabelingWizard: _setShowLabelingWizard,
     setLabelingWizardStep: _setLabelingWizardStep,
     setLabelingSessions: _setLabelingSessions,
-    setLabelingCredentials: _setLabelingCredentials,
     resetSession: _resetSession,
     ...data
   } = useSessionStore.getState();
@@ -37,7 +36,7 @@ describe("sessionStore — additive session ownership", () => {
     expect(sessionData()).toEqual({
       projectId: 0,
       publicId: "",
-      dataUrl: "",
+      assetBaseUrl: "",
       isDemo: false,
       demoFeatureConfig: null,
       pageNames: {},
@@ -45,7 +44,6 @@ describe("sessionStore — additive session ownership", () => {
       showLabelingWizard: false,
       labelingWizardStep: 1,
       labelingSessions: [],
-      labelingCredentials: null,
     });
   });
 
@@ -54,14 +52,17 @@ describe("sessionStore — additive session ownership", () => {
     const drawingNumbers = { 1: "A-001", 2: null };
     const demoConfig = { bucketFill: false };
     const sessions = [
-      { labelStudioUrl: "https://labels.test/projects/1", pageRange: "1-3", taskCount: 3 },
+      {
+        labelStudioUrl: "https://labels.test/projects/1",
+        pageRange: "1-3",
+        taskCount: 3,
+      },
     ];
-    const credentials = { email: "labeler@example.test", password: "secret" };
     const state = useSessionStore.getState();
 
     state.setProjectId(42);
     state.setPublicId("project-public-id");
-    state.setDataUrl("company/project");
+    state.setAssetBaseUrl("company/project");
     state.setIsDemo(true);
     state.setDemoFeatureConfig(demoConfig);
     state.setPageNames(pageNames);
@@ -69,12 +70,11 @@ describe("sessionStore — additive session ownership", () => {
     state.setShowLabelingWizard(true);
     state.setLabelingWizardStep(3);
     state.setLabelingSessions(sessions);
-    state.setLabelingCredentials(credentials);
 
     expect(sessionData()).toEqual({
       projectId: 42,
       publicId: "project-public-id",
-      dataUrl: "company/project",
+      assetBaseUrl: "company/project",
       isDemo: true,
       demoFeatureConfig: demoConfig,
       pageNames,
@@ -82,13 +82,11 @@ describe("sessionStore — additive session ownership", () => {
       showLabelingWizard: true,
       labelingWizardStep: 3,
       labelingSessions: sessions,
-      labelingCredentials: credentials,
     });
     expect(useSessionStore.getState().pageNames).toBe(pageNames);
     expect(useSessionStore.getState().pageDrawingNumbers).toBe(drawingNumbers);
     expect(useSessionStore.getState().demoFeatureConfig).toBe(demoConfig);
     expect(useSessionStore.getState().labelingSessions).toBe(sessions);
-    expect(useSessionStore.getState().labelingCredentials).toBe(credentials);
   });
 
   it("setPageName clones the map, retains siblings, and does not mutate the prior map", () => {
@@ -107,7 +105,7 @@ describe("sessionStore — additive session ownership", () => {
     const state = useSessionStore.getState();
     state.setProjectId(7);
     state.setPublicId("old-project");
-    state.setDataUrl("old/data");
+    state.setAssetBaseUrl("old/data");
     state.setIsDemo(true);
     state.setDemoFeatureConfig({ chat: false });
     state.setPageNames({ 1: "Old" });
@@ -115,9 +113,12 @@ describe("sessionStore — additive session ownership", () => {
     state.setShowLabelingWizard(true);
     state.setLabelingWizardStep(4);
     state.setLabelingSessions([
-      { labelStudioUrl: "https://labels.test/projects/9", pageRange: "all", taskCount: 1 },
+      {
+        labelStudioUrl: "https://labels.test/projects/9",
+        pageRange: "all",
+        taskCount: 1,
+      },
     ]);
-    state.setLabelingCredentials({ email: "old@example.test", password: "old" });
     const oldNames = useSessionStore.getState().pageNames;
     const oldNumbers = useSessionStore.getState().pageDrawingNumbers;
     const oldSessions = useSessionStore.getState().labelingSessions;
@@ -139,7 +140,11 @@ describe("sessionStore — additive session ownership", () => {
     firstReset.resetSession();
     const secondReset = useSessionStore.getState();
 
-    for (const key of ["pageNames", "pageDrawingNumbers", "labelingSessions"] as const) {
+    for (const key of [
+      "pageNames",
+      "pageDrawingNumbers",
+      "labelingSessions",
+    ] as const) {
       expect(firstReset[key]).not.toBe(construction[key]);
       expect(secondReset[key]).not.toBe(construction[key]);
       expect(secondReset[key]).not.toBe(firstReset[key]);
@@ -149,7 +154,7 @@ describe("sessionStore — additive session ownership", () => {
     for (const key of [
       "setProjectId",
       "setPublicId",
-      "setDataUrl",
+      "setAssetBaseUrl",
       "setIsDemo",
       "setDemoFeatureConfig",
       "setPageNames",
@@ -158,7 +163,6 @@ describe("sessionStore — additive session ownership", () => {
       "setShowLabelingWizard",
       "setLabelingWizardStep",
       "setLabelingSessions",
-      "setLabelingCredentials",
       "resetSession",
     ] as const) {
       expect(firstReset[key]).toBe(beforeReset[key]);
@@ -183,7 +187,9 @@ describe("sessionStore — demo feature policy", () => {
 
   it("disables only an explicitly false demo feature and reads live state", () => {
     useSessionStore.getState().setIsDemo(true);
-    useSessionStore.getState().setDemoFeatureConfig({ bucketFill: false, chat: true });
+    useSessionStore
+      .getState()
+      .setDemoFeatureConfig({ bucketFill: false, chat: true });
     expect(isDemoFeatureEnabled("bucketFill")).toBe(false);
     expect(isDemoFeatureEnabled("chat")).toBe(true);
 

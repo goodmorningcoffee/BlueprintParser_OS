@@ -21,7 +21,7 @@
 // overlay, identical semantics to services/reprocess.ts:524; merged-empty → OMIT the
 // column from the update (never null-out user data on update).
 //
-// Mocks: true edges only — @/lib/s3 (AWS), global fetch (PDF download), pdf-rasterize
+// Mocks: true edges only — @/lib/s3 (private task-role reads/writes), pdf-rasterize
 // (ghostscript), textract's AWS entrypoint, keynotes (OpenCV/Tesseract spawn). The
 // intelligence pipeline (page-analysis, text-region-classifier, heuristic-engine,
 // table-classifier, csi-spatial, project-analysis, intelligence-merge) runs REAL against
@@ -30,18 +30,14 @@ import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest"
 
 const s3Mocks = vi.hoisted(() => ({
   headS3Object: vi.fn(async () => ({ exists: true, size: 8 })),
-  getS3Url: vi.fn(() => "http://s3.test.local/original.pdf"),
   uploadToS3: vi.fn(async () => {}),
   downloadFromS3: vi.fn(async () => Buffer.from("fake-bytes")),
-  warmCloudFrontCache: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/s3", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   headS3Object: s3Mocks.headS3Object,
-  getS3Url: s3Mocks.getS3Url,
   uploadToS3: s3Mocks.uploadToS3,
   downloadFromS3: s3Mocks.downloadFromS3,
-  warmCloudFrontCache: s3Mocks.warmCloudFrontCache,
 }));
 
 const rasterMocks = vi.hoisted(() => ({
@@ -75,6 +71,7 @@ vi.mock("@/lib/keynotes", async (importOriginal) => ({
 }));
 
 import { processProject } from "@/lib/processing";
+import { assertProjectWritable } from "@/server/api/project-write-capability";
 import { db } from "@/lib/db";
 import { pages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -89,12 +86,6 @@ const staleClassifiedTables = [{ id: "stale-table", kind: "schedule", pageNumber
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // processProject downloads original.pdf via plain fetch(getS3Url(...)) — stub the
-  // network edge (db is pg/TCP, unaffected).
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })),
-  );
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -118,7 +109,7 @@ describe.skipIf(!dbUp)("processProject — F4 pageIntelligence carry (UPDATE bra
     });
     rasterMocks.getPdfPageCount.mockResolvedValue(2);
 
-    const result = await processProject(project.id);
+    const result = await processProject(project.id, assertProjectWritable(project));
     expect(result.pageErrors).toBe(0);
 
     const [victimRow] = await db.select().from(pages).where(eq(pages.id, victim.id));
@@ -150,7 +141,7 @@ describe.skipIf(!dbUp)("processProject — F4 pageIntelligence carry (UPDATE bra
     });
     rasterMocks.getPdfPageCount.mockResolvedValue(1);
 
-    await processProject(project.id);
+    await processProject(project.id, assertProjectWritable(project));
 
     const [row] = await db.select().from(pages).where(eq(pages.id, page.id));
     expect(row.textractData).toEqual({ lines: [], words: [] }); // update DID run
@@ -161,7 +152,7 @@ describe.skipIf(!dbUp)("processProject — F4 pageIntelligence carry (UPDATE bra
     const { project } = await createWorld();
     rasterMocks.getPdfPageCount.mockResolvedValue(1);
 
-    await processProject(project.id);
+    await processProject(project.id, assertProjectWritable(project));
 
     const [row] = await db
       .select()

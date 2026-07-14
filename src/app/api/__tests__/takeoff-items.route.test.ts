@@ -13,6 +13,9 @@ vi.mock("@/lib/auth", async () => {
 });
 
 import { GET, POST } from "@/app/api/takeoff-items/route";
+import { db } from "@/lib/db";
+import { takeoffGroups, takeoffItems } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import {
   asUser,
   createCompany,
@@ -52,12 +55,44 @@ describe.skipIf(!dbUp)("/api/takeoff-items", () => {
     expect((await readJson(await post({ projectId: project.publicId, name: "x", shape: "circle", color: "#fff", groupId: 1.5 }))).status).toBe(400);
   });
 
-  it("demo write gate: member 403, admin allowed (same scope exception as groups)", async () => {
+  it("B2 RED: POST rejects a groupId owned by another project and inserts nothing", async () => {
+    const own = await createWorld();
+    const foreign = await createWorld();
+    const [foreignGroup] = await db.insert(takeoffGroups).values({
+      projectId: foreign.project.id,
+      name: "Foreign group",
+      kind: "count",
+      sortOrder: 0,
+    }).returning();
+    asUser(own.user);
+
+    const response = await readJson(await post({
+      projectId: own.project.publicId,
+      name: "Must not insert",
+      shape: "circle",
+      color: "#fff",
+      groupId: foreignGroup.id,
+    }));
+
+    expect.soft(response.status).toBe(404);
+    expect.soft(response.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" });
+    expect.soft(await db.select().from(takeoffItems).where(eq(takeoffItems.projectId, own.project.id))).toEqual([]);
+  });
+
+  it("L5 freeze: demo create denies signed-out, member, admin, and root with zero inserts", async () => {
     const { project, company } = await createWorld({ isDemo: true });
-    asUser(await createUser(company.id));
-    expect((await readJson(await post({ projectId: project.publicId, name: "x", shape: "circle", color: "#fff" }))).status).toBe(403);
-    asUser(await createUser(company.id, { role: "admin" }));
-    expect((await readJson(await post({ projectId: project.publicId, name: "x", shape: "circle", color: "#fff" }))).status).toBe(200);
+    const member = await createUser(company.id);
+    const admin = await createUser(company.id, { role: "admin" });
+    const root = await createUser((await createCompany()).id, { role: "admin", isRootAdmin: true });
+    const statuses: number[] = [];
+    for (const actor of [null, member, admin, root]) {
+      actor ? asUser(actor) : signedOut();
+      statuses.push(
+        (await readJson(await post({ projectId: project.publicId, name: "x", shape: "circle", color: "#fff" }))).status,
+      );
+    }
+    expect(statuses).toEqual([403, 403, 403, 403]);
+    expect(await db.select().from(takeoffItems).where(eq(takeoffItems.projectId, project.id))).toEqual([]);
   });
 
   // [refactor jul8 P1-review PR-C1] demo-RESOLUTION parity guard. The service's local

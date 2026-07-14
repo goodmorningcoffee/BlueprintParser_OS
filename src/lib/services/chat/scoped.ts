@@ -35,6 +35,11 @@ import type { TextractPageData } from "@/types";
 import type { ProjectAccessRow } from "@/lib/api-utils";
 import { BP_TOOLS, executeToolCall, type ToolContext } from "@/lib/llm/tools";
 import { createLLMClient } from "@/lib/llm";
+import {
+  assertProjectWriteCapability,
+  type ProjectWriteCapability,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
 
 // Cache default domain knowledge file in memory (never changes at runtime)
 let _cachedDomainKnowledge: string | null = null;
@@ -57,6 +62,7 @@ interface ScopedChatParams {
   pageNumber?: number;
   session: { user: { companyId: number; dbId: number } } | null;
   isDemo: boolean;
+  writeCapability?: ProjectWriteCapability;
 }
 
 /**
@@ -64,7 +70,12 @@ interface ScopedChatParams {
  * Resolves LLM config, checks for tool-use mode, then dispatches.
  */
 export async function handleScopedChat(params: ScopedChatParams) {
-  const { project, message, scope, pageNumber, session, isDemo } = params;
+  const { project, message, scope, pageNumber, session, isDemo, writeCapability } = params;
+  if (writeCapability) {
+    await assertProjectWriteCapability(writeCapability, project.id);
+  }
+  const noPersist = !writeCapability;
+  const readOnlyTools = !writeCapability;
 
   // ─── Parallel DB queries for context data ──────────────────
   const pageFilter = scope === "page" && pageNumber
@@ -73,13 +84,19 @@ export async function handleScopedChat(params: ScopedChatParams) {
 
   const [yoloAnnotations, userAnnotations, projectTakeoffItems, history] = await Promise.all([
     db.select().from(annotations).where(and(eq(annotations.projectId, project.id), eq(annotations.source, "yolo"), ...pageFilter)),
-    db.select().from(annotations).where(and(eq(annotations.projectId, project.id), eq(annotations.source, "user"), ...pageFilter)),
-    db.select().from(takeoffItems).where(eq(takeoffItems.projectId, project.id)),
-    db.select().from(chatMessages).where(eq(chatMessages.projectId, project.id)).orderBy(desc(chatMessages.createdAt)).limit(10),
+    noPersist
+      ? Promise.resolve([] as Array<typeof annotations.$inferSelect>)
+      : db.select().from(annotations).where(and(eq(annotations.projectId, project.id), eq(annotations.source, "user"), ...pageFilter)),
+    noPersist
+      ? Promise.resolve([] as Array<typeof takeoffItems.$inferSelect>)
+      : db.select().from(takeoffItems).where(eq(takeoffItems.projectId, project.id)),
+    noPersist
+      ? Promise.resolve([] as Array<typeof chatMessages.$inferSelect>)
+      : db.select().from(chatMessages).where(eq(chatMessages.projectId, project.id)).orderBy(desc(chatMessages.createdAt)).limit(10),
   ]);
 
   // ─── Resolve LLM config early (needed for context budget) ──
-  const config = await resolveLLMConfig(project.companyId, session?.user?.dbId, isDemo);
+  const config = await resolveLLMConfig(project.companyId, isDemo ? undefined : session?.user?.dbId, isDemo);
   if (!config) {
     return apiError("No LLM configured. Set up a provider in Admin → AI Models.", 503);
   }
@@ -91,7 +108,7 @@ export async function handleScopedChat(params: ScopedChatParams) {
     const [companyRow] = await db
       .select({ pipelineConfig: companies.pipelineConfig })
       .from(companies)
-      .where(eq(companies.id, session?.user?.companyId || project.companyId))
+      .where(eq(companies.id, isDemo ? project.companyId : (session?.user?.companyId || project.companyId)))
       .limit(1);
     companyPipelineConfig = companyRow?.pipelineConfig || {};
   } catch { /* ignore */ }
@@ -100,7 +117,19 @@ export async function handleScopedChat(params: ScopedChatParams) {
   const providerSupportsTools = config.provider === "anthropic" || config.provider === "openai";
 
   if (toolUseEnabled && providerSupportsTools && scope !== "global") {
-    return handleToolUseChat(config, project, message, scope, pageNumber, session, isDemo, history);
+    return handleToolUseChat(
+      config,
+      project,
+      message,
+      scope,
+      pageNumber,
+      session,
+      isDemo,
+      noPersist,
+      readOnlyTools,
+      writeCapability,
+      history,
+    );
   }
 
   // ─── Build context sections with priority ordering ─────────
@@ -172,13 +201,13 @@ export async function handleScopedChat(params: ScopedChatParams) {
 
   // --- Page-specific or project-wide data ---
   if (scope === "page" && pageNumber) {
-    await buildPageContext(project, pageNumber, yoloAnnotations, sections, dataSummary);
+    await buildPageContext(project, pageNumber, yoloAnnotations, sections, dataSummary, !isDemo);
   } else {
-    await buildProjectContext(project, contextBudget, sections, dataSummary);
+    await buildProjectContext(project, contextBudget, sections, dataSummary, !isDemo);
   }
 
   // ─── Build messages array ──────────────────────────────────
-  const llmPipelineConfig = companyPipelineConfig?.llm;
+  const llmPipelineConfig = isDemo ? undefined : companyPipelineConfig?.llm;
   const customSystemPrompt: string | undefined = llmPipelineConfig?.systemPrompt;
   const sectionConfig: LlmSectionConfig | undefined = llmPipelineConfig?.sectionConfig as LlmSectionConfig | undefined;
 
@@ -192,17 +221,28 @@ export async function handleScopedChat(params: ScopedChatParams) {
   }
   messages.push({ role: "user", content: message });
 
-  // Save user message to DB
-  await db.insert(chatMessages).values({
-    projectId: project.id,
-    pageNumber: scope === "page" ? pageNumber : null,
-    role: "user",
-    content: message,
-    model: `${config.provider}/${config.model}`,
-    userId: session?.user?.dbId || null,
-  });
+  if (!noPersist) {
+    await withProjectWrite(writeCapability!, project.id, async (tx) => {
+      await tx.insert(chatMessages).values({
+        projectId: project.id,
+        pageNumber: scope === "page" ? pageNumber : null,
+        role: "user",
+        content: message,
+        model: `${config.provider}/${config.model}`,
+        userId: session?.user?.dbId || null,
+      });
+    });
+  }
 
-  return streamChatResponse(config, messages, project.id, scope === "page" ? (pageNumber ?? null) : null, session?.user?.dbId ?? null);
+  return streamChatResponse(
+    config,
+    messages,
+    project.id,
+    scope === "page" ? (pageNumber ?? null) : null,
+    session?.user?.dbId ?? null,
+    noPersist,
+    writeCapability,
+  );
 }
 
 // ─── Page-scope context builder ──────────────────────────────────
@@ -212,6 +252,7 @@ async function buildPageContext(
   yoloAnnotations: any[],
   sections: ContextSection[],
   dataSummary: string[],
+  includePrivateContext: boolean,
 ) {
   const [page] = await db
     .select({
@@ -239,7 +280,7 @@ async function buildPageContext(
   }
 
   // Text annotations (priority 5)
-  if (page?.textAnnotations) {
+  if (includePrivateContext && page?.textAnnotations) {
     const textAnnsText = buildTextAnnotationsSection(page.textAnnotations);
     if (textAnnsText) {
       const annCount = page.textAnnotations?.annotations?.length || 0;
@@ -249,7 +290,7 @@ async function buildPageContext(
   }
 
   // Page Intelligence (classification, cross-refs, notes)
-  if (page?.pageIntelligence) {
+  if (includePrivateContext && page?.pageIntelligence) {
     const intelResult = buildPageIntelligenceSection(page.pageIntelligence, pageNumber);
     if (intelResult) {
       sections.push(...intelResult.sections);
@@ -278,7 +319,7 @@ async function buildPageContext(
 
   // Spatial Intelligence: map OCR words to YOLO regions
   let usedSpatialContext = false;
-  if (page?.textractData && yoloAnnotations.length > 0) {
+  if (includePrivateContext && page?.textractData && yoloAnnotations.length > 0) {
     const modelIds = [...new Set(yoloAnnotations.map((a) => (a.data as any)?.modelId).filter(Boolean))];
     if (modelIds.length > 0) {
       const modelConfigs = await db.select({ id: models.id, config: models.config }).from(models).where(inArray(models.id, modelIds));
@@ -323,6 +364,7 @@ async function buildProjectContext(
   contextBudget: number,
   sections: ContextSection[],
   dataSummary: string[],
+  includePrivateContext: boolean,
 ) {
   const allPages = await db
     .select({
@@ -337,11 +379,13 @@ async function buildProjectContext(
     .orderBy(pages.pageNumber);
 
   // Fetch heavy project fields only when needed (not included in lightweight access query)
-  const [projectExtra] = await db
-    .select({ projectSummary: projects.projectSummary, projectIntelligence: projects.projectIntelligence })
-    .from(projects)
-    .where(eq(projects.id, project.id))
-    .limit(1);
+  const [projectExtra] = includePrivateContext
+    ? await db
+        .select({ projectSummary: projects.projectSummary, projectIntelligence: projects.projectIntelligence })
+        .from(projects)
+        .where(eq(projects.id, project.id))
+        .limit(1)
+    : [];
 
   // Project Intelligence Report (priority 0.5)
   const projectSummarySection = buildProjectSummarySection(
@@ -415,6 +459,9 @@ async function handleToolUseChat(
   pageNumber: number | undefined,
   session: { user: { companyId: number; dbId: number } } | null,
   isDemo: boolean,
+  noPersist: boolean,
+  readOnlyTools: boolean,
+  writeCapability: ProjectWriteCapability | undefined,
   history: any[],
 ) {
   const toolCtx: ToolContext = {
@@ -423,21 +470,26 @@ async function handleToolUseChat(
     companyId: project.companyId,
     pageNumber,
     userId: session?.user.dbId,
+    writeCapability,
   };
 
   // Load domain knowledge
   let domainKnowledge = "";
   try {
-    const [companyDk] = await db
-      .select({ pipelineConfig: companies.pipelineConfig })
-      .from(companies)
-      .where(eq(companies.id, session?.user?.companyId || project.companyId))
-      .limit(1);
-    const customDk = companyDk?.pipelineConfig?.llm?.domainKnowledge;
-    if (customDk) {
-      domainKnowledge = customDk;
-    } else {
+    if (isDemo) {
       domainKnowledge = await getCachedDomainKnowledge();
+    } else {
+      const [companyDk] = await db
+        .select({ pipelineConfig: companies.pipelineConfig })
+        .from(companies)
+        .where(eq(companies.id, session?.user?.companyId || project.companyId))
+        .limit(1);
+      const customDk = companyDk?.pipelineConfig?.llm?.domainKnowledge;
+      if (customDk) {
+        domainKnowledge = customDk;
+      } else {
+        domainKnowledge = await getCachedDomainKnowledge();
+      }
     }
   } catch { /* use empty */ }
 
@@ -447,7 +499,7 @@ PROJECT: "${project.name}" (${project.numPages} pages, status: ${project.status}
 ${scope === "page" && pageNumber ? `CURRENT PAGE: ${pageNumber}` : "SCOPE: Full project"}
 
 IMPORTANT RULES:
-- Call getProjectOverview FIRST to understand the project structure before answering.
+${readOnlyTools ? "- Use only the public read-only tools provided for this demo." : "- Call getProjectOverview FIRST to understand the project structure before answering."}
 - ONLY reference data returned by your tools. Never invent page numbers, counts, or details.
 - Use navigateToPage and highlightRegion to SHOW the user what you're talking about.
 - When citing counts or locations, be specific — give exact page numbers and coordinates.
@@ -460,15 +512,18 @@ ${domainKnowledge ? `\n--- DOMAIN KNOWLEDGE ---\n${domainKnowledge}` : ""}`;
   }
   messages.push({ role: "user", content: message });
 
-  // Save user message
-  await db.insert(chatMessages).values({
-    projectId: project.id,
-    pageNumber: scope === "page" ? pageNumber : null,
-    role: "user",
-    content: message,
-    model: `${config.provider}/${config.model}`,
-    userId: session?.user?.dbId || null,
-  });
+  if (!noPersist) {
+    await withProjectWrite(writeCapability!, project.id, async (tx) => {
+      await tx.insert(chatMessages).values({
+        projectId: project.id,
+        pageNumber: scope === "page" ? pageNumber : null,
+        role: "user",
+        content: message,
+        model: `${config.provider}/${config.model}`,
+        userId: session?.user?.dbId || null,
+      });
+    });
+  }
 
   // Create LLM client
   const client = createLLMClient(config.provider, config.apiKey, config.baseUrl);
@@ -479,6 +534,16 @@ ${domainKnowledge ? `\n--- DOMAIN KNOWLEDGE ---\n${domainKnowledge}` : ""}`;
   // Stream tool use events as SSE
   const encoder = new TextEncoder();
   let fullResponse = "";
+  const publicDemoToolNames = new Set([
+    "searchPages",
+    "getPageOcrText",
+    "detectCsiFromText",
+    "navigateToPage",
+    "highlightRegion",
+  ]);
+  const exposedTools = readOnlyTools
+    ? BP_TOOLS.filter((tool) => publicDemoToolNames.has(tool.name))
+    : BP_TOOLS;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -486,7 +551,7 @@ ${domainKnowledge ? `\n--- DOMAIN KNOWLEDGE ---\n${domainKnowledge}` : ""}`;
         const events = client.streamChatWithTools!({
           model: config.model,
           messages,
-          tools: BP_TOOLS,
+          tools: exposedTools,
           executeToolCall: (name, input) => executeToolCall(name, input, toolCtx),
           maxToolRounds: 10,
           temperature: config.temperature,
@@ -515,15 +580,19 @@ ${domainKnowledge ? `\n--- DOMAIN KNOWLEDGE ---\n${domainKnowledge}` : ""}`;
         const msg = err instanceof Error ? err.message : "Tool use failed";
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`));
       } finally {
-        if (fullResponse) {
-          await db.insert(chatMessages).values({
-            projectId: project.id,
-            pageNumber: scope === "page" ? pageNumber : null,
-            role: "assistant",
-            content: fullResponse,
-            model: `${config.provider}/${config.model}`,
-            userId: null,
-          }).catch(() => {});
+        if (fullResponse && !noPersist) {
+          try {
+            await withProjectWrite(writeCapability!, project.id, async (tx) => {
+              await tx.insert(chatMessages).values({
+                projectId: project.id,
+                pageNumber: scope === "page" ? pageNumber : null,
+                role: "assistant",
+                content: fullResponse,
+                model: `${config.provider}/${config.model}`,
+                userId: null,
+              });
+            });
+          } catch { /* retired/stale project chat never persists */ }
         }
         controller.close();
       }

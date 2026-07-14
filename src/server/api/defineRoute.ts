@@ -29,6 +29,7 @@ import {
 import { logger } from "@/lib/logger";
 import { ApiError, errorResponse } from "./envelope";
 import { resolveProjectOrThrow } from "./access";
+import { isDemoWriteProtectionError } from "./project-write-errors";
 import { zPublicId } from "./schemas";
 
 // ── auth spec ────────────────────────────────────────────────────────────────
@@ -270,6 +271,11 @@ export function defineRoute<B = undefined, Q = undefined>(
     } catch (err) {
       if (err instanceof ApiError) {
         return errorResponse(err.code, err.message, err.status);
+      }
+      // A missed application guard still fails closed at the database trigger. Preserve the
+      // canonical public contract instead of turning that expected policy denial into a 500.
+      if (isDemoWriteProtectionError(err)) {
+        return errorResponse("FORBIDDEN", "Demo projects are read-only");
       }
       // unexpected — NEVER leak the underlying message
       logger.error(

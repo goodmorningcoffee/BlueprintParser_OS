@@ -150,7 +150,7 @@ function lifecycleFetch() {
           id: "pid",
           dbId: 701,
           name: demo ? "Demo successor" : "Authenticated predecessor",
-          dataUrl: "projects/pid",
+          assetBaseUrl: "projects/pid",
           pdfUrl: "https://example.test/original.pdf",
           numPages: 1,
           status: "completed",

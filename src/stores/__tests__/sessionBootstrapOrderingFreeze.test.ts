@@ -127,7 +127,7 @@ describe("P2.5 project bootstrap ownership", () => {
     for (const field of [
       "projectId:",
       "publicId,",
-      "dataUrl:",
+      "assetBaseUrl:",
       "isDemo:",
       "demoFeatureConfig:",
       "pageNames:",

@@ -4,6 +4,7 @@ import {
   DescribeProcessingJobCommand,
 } from "@aws-sdk/client-sagemaker";
 import { S3_BUCKET } from "@/lib/s3";
+import { randomUUID } from "crypto";
 
 const sagemakerClient = new SageMakerClient({
   region: process.env.AWS_REGION || "us-east-1",
@@ -18,6 +19,23 @@ const sagemakerClient = new SageMakerClient({
 const ECR_IMAGE = process.env.YOLO_ECR_IMAGE;
 const SAGEMAKER_ROLE = process.env.SAGEMAKER_ROLE_ARN;
 
+/** Allocate the provider identity before launch so an ambiguous SDK failure remains reconcilable. */
+export function createYoloJobName(
+  modelName: string,
+  nonce = randomUUID(),
+): string {
+  const suffix =
+    nonce.replace(/[^a-zA-Z0-9]/g, "").slice(0, 20) ||
+    randomUUID().replace(/-/g, "").slice(0, 20);
+  const prefix = "bp-yolo-";
+  const safeModel = modelName.replace(/[^a-zA-Z0-9-]/g, "-");
+  const modelBudget = 63 - prefix.length - suffix.length - 1;
+  const truncatedModel = safeModel.slice(0, Math.max(0, modelBudget));
+  return truncatedModel
+    ? `${prefix}${truncatedModel}-${suffix}`
+    : `${prefix}${suffix}`;
+}
+
 /**
  * Start a SageMaker processing job for YOLO inference.
  *
@@ -29,15 +47,13 @@ const SAGEMAKER_ROLE = process.env.SAGEMAKER_ROLE_ARN;
 export async function startYoloJob(
   projectDataUrl: string,
   modelS3Path: string,
-  modelName: string
+  modelName: string,
+  jobName = createYoloJobName(modelName),
 ): Promise<string> {
-  if (!ECR_IMAGE) throw new Error("YOLO_ECR_IMAGE env var required for SageMaker jobs");
-  if (!SAGEMAKER_ROLE) throw new Error("SAGEMAKER_ROLE_ARN env var required for SageMaker jobs");
-
-  const jobName = `bp-yolo-${modelName}-${Date.now()}`.replace(
-    /[^a-zA-Z0-9-]/g,
-    "-"
-  ).slice(0, 63);
+  if (!ECR_IMAGE)
+    throw new Error("YOLO_ECR_IMAGE env var required for SageMaker jobs");
+  if (!SAGEMAKER_ROLE)
+    throw new Error("SAGEMAKER_ROLE_ARN env var required for SageMaker jobs");
 
   const command = new CreateProcessingJobCommand({
     ProcessingJobName: jobName,
@@ -96,9 +112,7 @@ export async function startYoloJob(
 /**
  * Check the status of a SageMaker processing job.
  */
-export async function getYoloJobStatus(
-  jobName: string
-): Promise<{
+export async function getYoloJobStatus(jobName: string): Promise<{
   status: string;
   failureReason?: string;
 }> {

@@ -11,14 +11,30 @@ import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 
-const TEST_DATABASE_URL = "postgres://bp_test:bp_test@localhost:5433/bp_test";
+const TEST_DATABASE_URL =
+  process.env.BP_TEST_DATABASE_URL ??
+  "postgres://bp_test:bp_test@localhost:5433/bp_test";
+const testDatabase = new URL(TEST_DATABASE_URL);
+if (!["localhost", "127.0.0.1", "::1"].includes(testDatabase.hostname)) {
+  throw new Error("BP_TEST_DATABASE_URL must target localhost");
+}
 
-export default async function setup({ provide }: { provide: (key: string, value: unknown) => void }) {
-  const pool = new Pool({ connectionString: TEST_DATABASE_URL, connectionTimeoutMillis: 1500, max: 2 });
+export default async function setup({
+  provide,
+}: {
+  provide: (key: string, value: unknown) => void;
+}) {
+  const pool = new Pool({
+    connectionString: TEST_DATABASE_URL,
+    connectionTimeoutMillis: 1500,
+    max: 2,
+  });
   let up = false;
   try {
     // fresh slate: app schema AND drizzle's migration-journal schema
-    await pool.query("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;");
+    await pool.query(
+      "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;",
+    );
     await pool.query("DROP SCHEMA IF EXISTS drizzle CASCADE;");
     await migrate(drizzle(pool), { migrationsFolder: "./drizzle" });
     up = true;

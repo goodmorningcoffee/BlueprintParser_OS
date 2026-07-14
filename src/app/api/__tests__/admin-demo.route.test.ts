@@ -13,6 +13,7 @@
 // Assertions tagged [S045 fold: … applied] were flipped in the fold commit onto
 // services/demo.ts (sanctioned A/E only).
 import { describe, expect, inject, it, beforeEach, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 
 vi.mock("@/lib/auth", async () => {
   const { sessionState } = await import("@/test/harness");
@@ -21,9 +22,23 @@ vi.mock("@/lib/auth", async () => {
 
 import { POST as demoPOST } from "@/app/api/admin/demo/route";
 import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
+import {
+  labelStudioProjectIntents,
+  processingJobs,
+  projects,
+} from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { asUser, createCompany, createUser, createProject, makeReq, readJson, signedOut } from "@/test/harness";
+import {
+  ageProjectForPublication,
+  asUser,
+  createCompany,
+  createLabelingSessionFixture,
+  createUser,
+  createProject,
+  makeReq,
+  readJson,
+  signedOut,
+} from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -35,16 +50,24 @@ async function makeWorld() {
   return { company, admin, member, root };
 }
 
-const post = (body: unknown) => makeReq("/api/admin/demo", { method: "POST", body });
+const post = (body: unknown) =>
+  makeReq("/api/admin/demo", { method: "POST", body });
 const UNAUTH = { error: { code: "UNAUTHORIZED", message: "Unauthorized" } }; // [S045 fold: A applied]
 const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } }; // [S045 fold: A applied]
 
 async function projectRow(id: number) {
-  const [p] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+  const [p] = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, id))
+    .limit(1);
   return p;
 }
 
-beforeEach(() => { vi.clearAllMocks(); signedOut(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  signedOut();
+});
 
 describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
   it("DEMO-1 auth: signed-out→401, member→403, admin+root pass", async () => {
@@ -57,21 +80,31 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
     expect(r.status).toBe(403);
     expect(r.body).toEqual(ADMIN_ONLY); // [S045 fold: A applied]
     asUser(admin);
-    expect((await readJson(await demoPOST(post({ action: "refresh" })))).status).toBe(200);
+    expect(
+      (await readJson(await demoPOST(post({ action: "refresh" })))).status,
+    ).toBe(200);
     asUser(root);
-    expect((await readJson(await demoPOST(post({ action: "refresh" })))).status).toBe(200);
+    expect(
+      (await readJson(await demoPOST(post({ action: "refresh" })))).status,
+    ).toBe(200);
   });
 
   it("DEMO-2 action=refresh: bumps updatedAt on OWN-company demo projects only (companyId-scoped)", async () => {
     const { company, admin } = await makeWorld();
     const author = await createUser(company.id);
-    const demo1 = await createProject(company.id, author.id, { isDemo: true } as never);
-    const demo2 = await createProject(company.id, author.id, { isDemo: true } as never);
+    const demo1 = await createProject(company.id, author.id, {
+      isDemo: true,
+    } as never);
+    const demo2 = await createProject(company.id, author.id, {
+      isDemo: true,
+    } as never);
     await createProject(company.id, author.id, { isDemo: false } as never); // non-demo, excluded
     // another company's demo project — MUST be untouched
     const otherCo = await createCompany();
     const otherAuthor = await createUser(otherCo.id);
-    const otherDemo = await createProject(otherCo.id, otherAuthor.id, { isDemo: true } as never);
+    const otherDemo = await createProject(otherCo.id, otherAuthor.id, {
+      isDemo: true,
+    } as never);
     const otherBefore = (await projectRow(otherDemo.id)).updatedAt as Date;
     await new Promise((res) => setTimeout(res, 8));
     asUser(admin);
@@ -81,39 +114,184 @@ describe.skipIf(!dbUp)("admin/demo (DEMO)", () => {
     // own demos bumped
     expect((await projectRow(demo1.id)).updatedAt).toBeTruthy();
     // cross-company demo NOT touched
-    expect(((await projectRow(otherDemo.id)).updatedAt as Date).getTime()).toBe(otherBefore.getTime());
+    expect(((await projectRow(otherDemo.id)).updatedAt as Date).getTime()).toBe(
+      otherBefore.getTime(),
+    );
   });
 
   it("DEMO-3 fallthrough validation: missing projectId / non-boolean isDemo → 400 literal", async () => {
     const { admin } = await makeWorld();
     asUser(admin);
-    for (const body of [{}, { isDemo: true }, { projectId: "x" }, { projectId: "x", isDemo: "yes" }, { projectId: "x", isDemo: 1 }]) {
+    for (const body of [
+      {},
+      { isDemo: true },
+      { projectId: "x" },
+      { projectId: "x", isDemo: "yes" },
+      { projectId: "x", isDemo: 1 },
+    ]) {
       const r = await readJson(await demoPOST(post(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: { code: "VALIDATION", message: "projectId and isDemo required" } }); // [S045 fold: A applied]
+      expect(r.body).toEqual({
+        error: { code: "VALIDATION", message: "projectId and isDemo required" },
+      }); // [S045 fold: A applied]
     }
   });
 
   it("DEMO-4 set isDemo by publicId (companyId-scoped); cross-company silently no-ops", async () => {
     const { company, admin } = await makeWorld();
     const author = await createUser(company.id);
-    const proj = await createProject(company.id, author.id, { isDemo: false } as never);
+    const proj = await createProject(company.id, author.id, {
+      isDemo: false,
+    } as never);
+    await ageProjectForPublication(proj.id);
     asUser(admin);
-    let r = await readJson(await demoPOST(post({ projectId: proj.publicId, isDemo: true })));
+    let r = await readJson(
+      await demoPOST(post({ projectId: proj.publicId, isDemo: true })),
+    );
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true });
     expect((await projectRow(proj.id)).isDemo).toBe(true); // toggled on
     // toggle back off
-    r = await readJson(await demoPOST(post({ projectId: proj.publicId, isDemo: false })));
+    r = await readJson(
+      await demoPOST(post({ projectId: proj.publicId, isDemo: false })),
+    );
     expect((await projectRow(proj.id)).isDemo).toBe(false);
     // cross-company: a project in ANOTHER company — the companyId scope means 0 rows match,
     // but the response is still {success:true} (no returning / no row-count check)
     const otherCo = await createCompany();
     const otherAuthor = await createUser(otherCo.id);
-    const otherProj = await createProject(otherCo.id, otherAuthor.id, { isDemo: false } as never);
-    r = await readJson(await demoPOST(post({ projectId: otherProj.publicId, isDemo: true })));
+    const otherProj = await createProject(otherCo.id, otherAuthor.id, {
+      isDemo: false,
+    } as never);
+    r = await readJson(
+      await demoPOST(post({ projectId: otherProj.publicId, isDemo: true })),
+    );
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true });
     expect((await projectRow(otherProj.id)).isDemo).toBe(false); // NOT toggled (cross-company scope)
+  });
+
+  it("B2 RED: publishing rejects an incomplete project without changing lifecycle state", async () => {
+    const { company, admin } = await makeWorld();
+    const author = await createUser(company.id);
+    const project = await createProject(company.id, author.id, {
+      isDemo: false,
+      status: "processing",
+    });
+    await ageProjectForPublication(project.id);
+    asUser(admin);
+
+    const response = await readJson(
+      await demoPOST(post({ projectId: project.publicId, isDemo: true })),
+    );
+
+    expect.soft(response.status).toBe(409);
+    expect.soft(response.body).toEqual({
+      error: {
+        code: "CONFLICT",
+        message: "Project must be completed before publishing",
+      },
+    });
+    expect.soft((await projectRow(project.id)).isDemo).toBe(false);
+  });
+
+  it("B2 RED: publishing rejects a completed project with an active processing job", async () => {
+    const { company, admin } = await makeWorld();
+    const author = await createUser(company.id);
+    const project = await createProject(company.id, author.id, {
+      isDemo: false,
+      status: "completed",
+    });
+    await ageProjectForPublication(project.id);
+    await db.insert(processingJobs).values({
+      projectId: project.id,
+      executionId: `active-${project.id}`,
+      status: "running",
+    });
+    asUser(admin);
+
+    const response = await readJson(
+      await demoPOST(post({ projectId: project.publicId, isDemo: true })),
+    );
+
+    expect.soft(response.status).toBe(409);
+    expect.soft(response.body).toEqual({
+      error: {
+        code: "CONFLICT",
+        message: "Project has an active processing job",
+      },
+    });
+    expect.soft((await projectRow(project.id)).isDemo).toBe(false);
+  });
+
+  it("publishing rejects a project with a linked Label Studio session", async () => {
+    const { company, admin } = await makeWorld();
+    const author = await createUser(company.id);
+    const project = await createProject(company.id, author.id, {
+      isDemo: false,
+      status: "completed",
+    });
+    await ageProjectForPublication(project.id);
+    await createLabelingSessionFixture(project, {
+      labelStudioProjectId: 92000 + project.id,
+      labelStudioUrl: `http://ls.test/projects/${92000 + project.id}`,
+      taskType: "generic",
+      status: "active",
+    });
+    asUser(admin);
+
+    const response = await readJson(
+      await demoPOST(post({ projectId: project.publicId, isDemo: true })),
+    );
+
+    expect.soft(response.status).toBe(409);
+    expect.soft(response.body).toEqual({
+      error: {
+        code: "CONFLICT",
+        message: "Project has linked labeling sessions",
+      },
+    });
+    expect.soft((await projectRow(project.id)).isDemo).toBe(false);
+  });
+
+  it("publishing rejects a project with a pending Label Studio provider intent", async () => {
+    const { company, admin } = await makeWorld();
+    const author = await createUser(company.id);
+    const project = await createProject(company.id, author.id, {
+      isDemo: false,
+      status: "completed",
+    });
+    await ageProjectForPublication(project.id);
+    const intentId = randomUUID();
+    await db.insert(labelStudioProjectIntents).values({
+      id: intentId,
+      projectId: project.id,
+      companyId: company.id,
+      lifecycleEpoch: project.lifecycleEpoch,
+      marker: `bp-labeling-intent:${intentId}`,
+      providerBaseUrl: "https://labelstudio.test",
+      providerInstanceId: `fixture-provider-${intentId}`,
+      state: "create_uncertain",
+    });
+    asUser(admin);
+
+    const response = await readJson(
+      await demoPOST(post({ projectId: project.publicId, isDemo: true })),
+    );
+
+    expect.soft(response.status).toBe(409);
+    expect.soft(response.body).toEqual({
+      error: {
+        code: "CONFLICT",
+        message: "Project has pending Label Studio provisioning",
+      },
+    });
+    expect.soft((await projectRow(project.id)).isDemo).toBe(false);
+    expect(
+      await db
+        .select()
+        .from(labelStudioProjectIntents)
+        .where(eq(labelStudioProjectIntents.id, intentId)),
+    ).toHaveLength(1);
   });
 });

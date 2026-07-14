@@ -91,6 +91,7 @@ import {
   createUser,
   createWorld,
   makeReq,
+  publishDemoFixture,
   readJson,
   signedOut,
 } from "@/test/harness";
@@ -242,7 +243,8 @@ describe.skipIf(!dbUp)("POST /api/table-parse — pre-try cascade (TQ-1)", () =>
   });
 
   it("demo gate: project.isDemo + tableParse disabled → FLAT 403 (does NOT flip at fold); default-on → runs", async () => {
-    const { company, project } = await world(TEXTRACT_WITH_TABLES, { isDemo: true });
+    const { company, project } = await world(TEXTRACT_WITH_TABLES);
+    await publishDemoFixture(project.id);
     await db.update(companies).set({ pipelineConfig: { demo: { tableParse: false } } }).where(eq(companies.id, company.id));
     let r = await readJson(await call(bodyFor(project.id)));
     expect(r.status).toBe(403);

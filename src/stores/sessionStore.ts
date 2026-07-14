@@ -9,15 +9,10 @@ export interface LabelingSession {
   taskCount: number;
 }
 
-export interface LabelingCredentials {
-  email: string;
-  password: string;
-}
-
 export interface SessionData {
   projectId: number;
   publicId: string;
-  dataUrl: string;
+  assetBaseUrl: string;
   isDemo: boolean;
   demoFeatureConfig: DemoFeatureConfig | null;
   pageNames: Record<number, string>;
@@ -25,22 +20,22 @@ export interface SessionData {
   showLabelingWizard: boolean;
   labelingWizardStep: number;
   labelingSessions: LabelingSession[];
-  labelingCredentials: LabelingCredentials | null;
 }
 
 interface SessionActions {
   setProjectId: (projectId: number) => void;
   setPublicId: (publicId: string) => void;
-  setDataUrl: (dataUrl: string) => void;
+  setAssetBaseUrl: (assetBaseUrl: string) => void;
   setIsDemo: (isDemo: boolean) => void;
   setDemoFeatureConfig: (demoFeatureConfig: DemoFeatureConfig) => void;
   setPageNames: (pageNames: Record<number, string>) => void;
   setPageName: (pageNum: number, name: string) => void;
-  setPageDrawingNumbers: (pageDrawingNumbers: Record<number, string | null>) => void;
+  setPageDrawingNumbers: (
+    pageDrawingNumbers: Record<number, string | null>,
+  ) => void;
   setShowLabelingWizard: (showLabelingWizard: boolean) => void;
   setLabelingWizardStep: (labelingWizardStep: number) => void;
   setLabelingSessions: (labelingSessions: LabelingSession[]) => void;
-  setLabelingCredentials: (labelingCredentials: LabelingCredentials | null) => void;
   resetSession: () => void;
 }
 
@@ -49,7 +44,7 @@ export interface SessionState extends SessionData, SessionActions {}
 export const initialSessionState: SessionData = {
   projectId: 0,
   publicId: "",
-  dataUrl: "",
+  assetBaseUrl: "",
   isDemo: false,
   demoFeatureConfig: null,
   pageNames: {},
@@ -57,7 +52,6 @@ export const initialSessionState: SessionData = {
   showLabelingWizard: false,
   labelingWizardStep: 1,
   labelingSessions: [],
-  labelingCredentials: null,
 };
 
 function freshSessionState(): SessionData {
@@ -77,7 +71,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   ...freshSessionState(),
   setProjectId: (projectId) => set({ projectId }),
   setPublicId: (publicId) => set({ publicId }),
-  setDataUrl: (dataUrl) => set({ dataUrl }),
+  setAssetBaseUrl: (assetBaseUrl) => set({ assetBaseUrl }),
   setIsDemo: (isDemo) => set({ isDemo }),
   setDemoFeatureConfig: (demoFeatureConfig) => set({ demoFeatureConfig }),
   setPageNames: (pageNames) => set({ pageNames }),
@@ -87,7 +81,6 @@ export const useSessionStore = create<SessionState>((set) => ({
   setShowLabelingWizard: (showLabelingWizard) => set({ showLabelingWizard }),
   setLabelingWizardStep: (labelingWizardStep) => set({ labelingWizardStep }),
   setLabelingSessions: (labelingSessions) => set({ labelingSessions }),
-  setLabelingCredentials: (labelingCredentials) => set({ labelingCredentials }),
   resetSession: () => set(freshSessionState()),
 }));
 
@@ -101,7 +94,7 @@ export const useProject = () =>
     useShallow((state) => ({
       projectId: state.projectId,
       publicId: state.publicId,
-      dataUrl: state.dataUrl,
+      assetBaseUrl: state.assetBaseUrl,
       isDemo: state.isDemo,
       demoFeatureConfig: state.demoFeatureConfig,
       pageNames: state.pageNames,
@@ -114,7 +107,7 @@ export const useProjectIdentity = () =>
     useShallow((state) => ({
       projectId: state.projectId,
       publicId: state.publicId,
-      dataUrl: state.dataUrl,
+      assetBaseUrl: state.assetBaseUrl,
       isDemo: state.isDemo,
       demoFeatureConfig: state.demoFeatureConfig,
     })),
@@ -141,8 +134,6 @@ export const useLabelingSession = () =>
       setLabelingWizardStep: state.setLabelingWizardStep,
       labelingSessions: state.labelingSessions,
       setLabelingSessions: state.setLabelingSessions,
-      labelingCredentials: state.labelingCredentials,
-      setLabelingCredentials: state.setLabelingCredentials,
     })),
   );
 

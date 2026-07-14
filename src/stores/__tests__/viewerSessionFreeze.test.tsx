@@ -23,7 +23,7 @@ function sessionData() {
   return {
     projectId: state.projectId,
     publicId: state.publicId,
-    dataUrl: state.dataUrl,
+    assetBaseUrl: state.assetBaseUrl,
     isDemo: state.isDemo,
     demoFeatureConfig: state.demoFeatureConfig,
     pageNames: state.pageNames,
@@ -31,7 +31,6 @@ function sessionData() {
     showLabelingWizard: state.showLabelingWizard,
     labelingWizardStep: state.labelingWizardStep,
     labelingSessions: state.labelingSessions,
-    labelingCredentials: state.labelingCredentials,
   };
 }
 
@@ -44,7 +43,7 @@ describe("P2.3 sessionStore ownership characterization", () => {
     expect(SESSION_TEST_STATE_KEYS).toEqual([
       "projectId",
       "publicId",
-      "dataUrl",
+      "assetBaseUrl",
       "isDemo",
       "demoFeatureConfig",
       "pageNames",
@@ -52,12 +51,11 @@ describe("P2.3 sessionStore ownership characterization", () => {
       "showLabelingWizard",
       "labelingWizardStep",
       "labelingSessions",
-      "labelingCredentials",
     ]);
     expect(sessionData()).toEqual({
       projectId: 0,
       publicId: "",
-      dataUrl: "",
+      assetBaseUrl: "",
       isDemo: false,
       demoFeatureConfig: null,
       pageNames: {},
@@ -65,7 +63,6 @@ describe("P2.3 sessionStore ownership characterization", () => {
       showLabelingWizard: false,
       labelingWizardStep: 1,
       labelingSessions: [],
-      labelingCredentials: null,
     });
   });
 
@@ -74,14 +71,17 @@ describe("P2.3 sessionStore ownership characterization", () => {
     const drawingNumbers = { 1: "A-001", 2: null };
     const demoConfig = { bucketFill: false };
     const sessions = [
-      { labelStudioUrl: "https://labels.test/projects/1", pageRange: "1-3", taskCount: 3 },
+      {
+        labelStudioUrl: "https://labels.test/projects/1",
+        pageRange: "1-3",
+        taskCount: 3,
+      },
     ];
-    const credentials = { email: "labeler@example.test", password: "secret" };
     const state = useSessionStore.getState();
 
     state.setProjectId(42);
     state.setPublicId("project-public-id");
-    state.setDataUrl("company/project.pdf");
+    state.setAssetBaseUrl("company/project.pdf");
     state.setIsDemo(true);
     state.setDemoFeatureConfig(demoConfig);
     state.setPageNames(pageNames);
@@ -89,12 +89,11 @@ describe("P2.3 sessionStore ownership characterization", () => {
     state.setShowLabelingWizard(true);
     state.setLabelingWizardStep(3);
     state.setLabelingSessions(sessions);
-    state.setLabelingCredentials(credentials);
 
     expect(sessionData()).toEqual({
       projectId: 42,
       publicId: "project-public-id",
-      dataUrl: "company/project.pdf",
+      assetBaseUrl: "company/project.pdf",
       isDemo: true,
       demoFeatureConfig: demoConfig,
       pageNames,
@@ -102,33 +101,35 @@ describe("P2.3 sessionStore ownership characterization", () => {
       showLabelingWizard: true,
       labelingWizardStep: 3,
       labelingSessions: sessions,
-      labelingCredentials: credentials,
     });
     expect(useSessionStore.getState().pageNames).toBe(pageNames);
     expect(useSessionStore.getState().pageDrawingNumbers).toBe(drawingNumbers);
     expect(useSessionStore.getState().demoFeatureConfig).toBe(demoConfig);
     expect(useSessionStore.getState().labelingSessions).toBe(sessions);
-    expect(useSessionStore.getState().labelingCredentials).toBe(credentials);
 
     state.setPageName(2, "Floor Plans");
     expect(pageNames).toEqual({ 1: "Cover", 2: "Plans" });
     expect(useSessionStore.getState().pageNames).not.toBe(pageNames);
-    expect(useSessionStore.getState().pageNames).toEqual({ 1: "Cover", 2: "Floor Plans" });
-
-    state.setLabelingCredentials(null);
-    expect(useSessionStore.getState().labelingCredentials).toBeNull();
+    expect(useSessionStore.getState().pageNames).toEqual({
+      1: "Cover",
+      2: "Floor Plans",
+    });
   });
 
   it("resetProjectData clears every session field and allocates fresh containers", () => {
     const oldPageNames = { 1: "Old" };
     const oldDrawingNumbers = { 1: "M-101" };
     const oldSessions = [
-      { labelStudioUrl: "https://labels.test/projects/9", pageRange: "all", taskCount: 1 },
+      {
+        labelStudioUrl: "https://labels.test/projects/9",
+        pageRange: "all",
+        taskCount: 1,
+      },
     ];
     setViewerStoreStateForTest({
       projectId: 7,
       publicId: "old-project",
-      dataUrl: "old/data.pdf",
+      assetBaseUrl: "old/data.pdf",
       isDemo: true,
       demoFeatureConfig: { chat: false },
       pageNames: oldPageNames,
@@ -136,7 +137,6 @@ describe("P2.3 sessionStore ownership characterization", () => {
       showLabelingWizard: true,
       labelingWizardStep: 4,
       labelingSessions: oldSessions,
-      labelingCredentials: { email: "old@example.test", password: "old" },
     });
 
     resetProjectData();
@@ -144,7 +144,7 @@ describe("P2.3 sessionStore ownership characterization", () => {
     expect(sessionData()).toEqual({
       projectId: 0,
       publicId: "",
-      dataUrl: "",
+      assetBaseUrl: "",
       isDemo: false,
       demoFeatureConfig: null,
       pageNames: {},
@@ -152,10 +152,11 @@ describe("P2.3 sessionStore ownership characterization", () => {
       showLabelingWizard: false,
       labelingWizardStep: 1,
       labelingSessions: [],
-      labelingCredentials: null,
     });
     expect(useSessionStore.getState().pageNames).not.toBe(oldPageNames);
-    expect(useSessionStore.getState().pageDrawingNumbers).not.toBe(oldDrawingNumbers);
+    expect(useSessionStore.getState().pageDrawingNumbers).not.toBe(
+      oldDrawingNumbers,
+    );
     expect(useSessionStore.getState().labelingSessions).not.toBe(oldSessions);
   });
 
@@ -166,7 +167,7 @@ describe("P2.3 sessionStore ownership characterization", () => {
       setViewerStoreStateForTest({
         projectId: 8,
         publicId: "public-8",
-        dataUrl: "projects/8.pdf",
+        assetBaseUrl: "projects/8.pdf",
         isDemo: true,
         demoFeatureConfig: { labeling: false },
         pageNames: { 1: "A-101" },
@@ -176,7 +177,7 @@ describe("P2.3 sessionStore ownership characterization", () => {
     expect(hook.result.current).toEqual({
       projectId: 8,
       publicId: "public-8",
-      dataUrl: "projects/8.pdf",
+      assetBaseUrl: "projects/8.pdf",
       isDemo: true,
       demoFeatureConfig: { labeling: false },
       pageNames: { 1: "A-101" },

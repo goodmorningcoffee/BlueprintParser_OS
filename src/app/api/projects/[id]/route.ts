@@ -15,12 +15,14 @@ export const GET = defineRoute({
 });
 
 export const PUT = defineRoute({
-  auth: "session",
+  // Demo visibility is enabled solely so the service can apply the canonical all-role
+  // read-only denial before any mutation. Private projects still require a scoped session.
+  auth: { project: { param: "id", allowDemo: true } },
   body: zLooseBody,
-  handler: ({ params, body, session }) => updateProject(params.id, body, session!),
+  handler: ({ params, body, session, project }) => updateProject(params.id, body, session, project!),
 });
 
 export const DELETE = defineRoute({
-  auth: "session",
-  handler: ({ params, session }) => deleteProject(params.id, session!),
+  auth: { project: { param: "id", allowDemo: true } },
+  handler: ({ params, session, project }) => deleteProject(params.id, session, project!),
 });

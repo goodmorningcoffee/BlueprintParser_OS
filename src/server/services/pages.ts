@@ -54,7 +54,15 @@ import { db } from "@/lib/db";
 import { pages, annotations, projects } from "@/lib/db/schema";
 import { eq, and, gte, lte, or, isNull } from "drizzle-orm";
 import { ApiError } from "@/server/api/envelope";
-import { resolveByPublicId, resolveDual, resolveProjectOrThrow } from "@/server/api/access";
+import {
+  resolveByPublicId,
+  resolveDual,
+  resolveProjectOrThrow,
+} from "@/server/api/access";
+import {
+  assertProjectWritable,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
 import { zPublicId } from "@/server/api/schemas";
 import { mergeCsiCodes } from "@/lib/csi-utils";
 import { computeProjectSummaries } from "@/lib/project-analysis";
@@ -63,6 +71,7 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 // into recomputePageCsi's detect call below (D-1/D-2).
 import { getCompanyCsiContext } from "@/lib/csi-company-db";
 import { downloadFromS3 } from "@/lib/s3";
+import { assertCurrentProjectAssetRead } from "@/server/services/project-assets";
 import { analyzePageImageWithFallback, extractRawText } from "@/lib/textract";
 import { logger } from "@/lib/logger";
 import type { CsiCode, TextractPageData, ClientAnnotation } from "@/types";
@@ -104,13 +113,16 @@ export async function updatePageName(body: Record<string, unknown>) {
   // [refactor jul8 P1-review N-2] DELIBERATELY no allowDemo: this is a WRITE — a future
   // "harmonize the resolvers" pass must NOT add allowDemo:true here without an isDemo→403
   // gate, or it opens a demo write (demo-never-writes invariant).
-  const { project } = await resolveByPublicId(publicId || projectId);
+  const { project } = await resolveByPublicId(publicId || projectId, { allowDemo: true });
+  const writeCapability = assertProjectWritable(project);
 
   // Frozen: no pre-read / no 404 for a missing page — a 0-row update still returns success.
-  await db
-    .update(pages)
-    .set({ name })
-    .where(and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber)));
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx
+      .update(pages)
+      .set({ name })
+      .where(and(eq(pages.projectId, project.id), eq(pages.pageNumber, pageNumber)));
+  });
 
   return { success: true };
 }
@@ -134,13 +146,8 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
     throw new ApiError("VALIDATION", "Missing projectId/publicId, pageNumber, or intelligence");
   }
 
-  const { project: proj, scope } = await resolveDual({ publicId, dbId: projectId }, { allowDemo: true });
-
-  // Frozen demo-write gate: admin/root of the owning company may write demo projects; everyone
-  // else (scope "demo" or "member") is blocked. Imperative because the shell cannot express it.
-  if (proj.isDemo && scope !== "admin" && scope !== "root") {
-    throw new ApiError("FORBIDDEN", "Demo projects are read-only");
-  }
+  const { project: proj } = await resolveDual({ publicId, dbId: projectId }, { allowDemo: true });
+  const writeCapability = assertProjectWritable(proj);
 
   // [bugfix jul6 H2/DR002] The read-merge-write below was UNLOCKED — a concurrent writer
   // (regions/promote's own tx, or a second PATCH from another tab holding a stale client
@@ -149,7 +156,7 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
   // destroy a freshly-promoted parsedRegion). Now a transaction with SELECT ... FOR UPDATE,
   // mirroring services/regions.ts promote — writers serialize, last-write-wins stays the
   // (frozen) semantic, but no write is ever TORN. The merge semantics below are UNTOUCHED.
-  const csiCodeCount = await db.transaction(async (tx) => {
+  const csiCodeCount = await withProjectWrite(writeCapability, proj.id, async (tx) => {
     const [pageRow] = await tx
       .select({
         id: pages.id,
@@ -192,7 +199,7 @@ export async function updatePageIntelligence(body: Record<string, unknown>) {
   let summaries = null;
   if (intelligence.parsedRegions) {
     try {
-      summaries = await computeProjectSummaries(proj.id);
+      summaries = await computeProjectSummaries(proj.id, writeCapability);
     } catch (e) {
       logger.error("[pages/intelligence] Summary recompute failed:", e);
     }
@@ -540,6 +547,10 @@ export async function getPageThumbnail(idParam: string, pageParam: string): Prom
     throw new ApiError("NOT_FOUND", "Not found");
   }
 
+  // Keep this compatibility alias behind the same current-row, canonical-root,
+  // and rebuild admission fence as the viewer's canonical asset gateway.
+  await assertCurrentProjectAssetRead(project);
+
   // PADDED key — the engine's real convention (do NOT "align" with labeling's [LB-1] unpadded bug).
   const s3Key = `${project.dataUrl}/thumbnails/page_${String(pageNum).padStart(4, "0")}.png`;
 
@@ -551,11 +562,18 @@ export async function getPageThumbnail(idParam: string, pageParam: string): Prom
     throw new ApiError("NOT_FOUND", "Thumbnail not found");
   }
 
-  // Raw NextResponse → both headers survive the shell passthrough (PERF-relevant caching).
+  // The buffered S3 wait is still an authority race. Revalidate immediately
+  // before admitting the bytes so a withdrawal/rebuild that won is observed.
+  await assertCurrentProjectAssetRead(project);
+
+  // This legacy alias must not preserve a withdrawn demo or a pre-rebuild page in browser/shared
+  // caches. The generation-qualified asset gateway is now the viewer's canonical consumer.
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "image/png",
-      "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      Vary: "Cookie, Authorization",
     },
   });
 }
@@ -580,13 +598,11 @@ export async function rerunPageTextract(body: Record<string, unknown>) {
     throw new ApiError("VALIDATION", "Missing projectId or pageNumber");
   }
 
-  const { project } = await resolveDual({ publicId, dbId: projectId });
-
-  // [refactor jul11 P2.2⑧] Defense-in-depth for the demo-never-writes/cost invariant. Keeping this
-  // server-side is load-bearing: hiding the TextPanel button cannot protect direct API callers.
+  const { project } = await resolveDual({ publicId, dbId: projectId }, { allowDemo: true });
   if (project.isDemo) {
     throw new ApiError("FORBIDDEN", "Demo projects are read-only");
   }
+  const writeCapability = assertProjectWritable(project);
 
   if (!project.dataUrl) {
     throw new ApiError("NOT_FOUND", "Project has no dataUrl");
@@ -622,7 +638,14 @@ export async function rerunPageTextract(body: Record<string, unknown>) {
   }
   const durationMs = Date.now() - start;
 
-  await db.update(pages).set({ textractData }).where(eq(pages.id, pageRow.id));
+  // Textract is a long external await. The final parent-first boundary revalidates the lifecycle,
+  // so a request admitted before publication cannot resume and write into the public generation.
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx
+      .update(pages)
+      .set({ textractData })
+      .where(and(eq(pages.id, pageRow.id), eq(pages.projectId, project.id)));
+  });
 
   // Frozen stats shape (legacy used native Response.json; returning a plain object lets the shell
   // envelope it to 200 with byte-identical keys).
@@ -656,7 +679,8 @@ export async function recomputePageCsi(body: Record<string, unknown>) {
     throw new ApiError("VALIDATION", "Missing projectId or pageNumber");
   }
 
-  const { project } = await resolveDual({ publicId, dbId: projectId });
+  const { project } = await resolveDual({ publicId, dbId: projectId }, { allowDemo: true });
+  const writeCapability = assertProjectWritable(project);
 
   // [refactor jul9 P2-A C1] Resolve the company's CSI context (config + custom DB)
   // before the detect call (no transaction here; engine stays sync).
@@ -688,7 +712,12 @@ export async function recomputePageCsi(body: Record<string, unknown>) {
   }
   const durationMs = Date.now() - start;
 
-  await db.update(pages).set({ csiCodes }).where(eq(pages.id, pageRow.id));
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx
+      .update(pages)
+      .set({ csiCodes })
+      .where(and(eq(pages.id, pageRow.id), eq(pages.projectId, project.id)));
+  });
 
   const triggerCount = csiCodes.reduce((n, c) => n + (c.triggers?.length || 0), 0);
 

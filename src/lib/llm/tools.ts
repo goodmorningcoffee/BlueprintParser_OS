@@ -22,6 +22,11 @@ import { detectCsiCodes } from "@/lib/csi-detect";
 import { detectTagPatterns } from "@/lib/tag-patterns";
 import { logger } from "@/lib/logger";
 import type { ClientAnnotation, TextractPageData } from "@/types";
+import {
+  assertProjectWriteCapability,
+  type ProjectWriteCapability,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
 
 // BP_TOOLS lives in ./tools-defs so client bundles don't pull in db/fs via this module.
 export { BP_TOOLS } from "./tools-defs";
@@ -39,13 +44,44 @@ export interface ToolContext {
    *  every LLM mutation so abusive prompt-injection-driven writes can be
    *  attributed post-hoc. */
   userId?: number;
+  /** Branded, lifecycle-bound authority. Its absence limits direct callers to the public demo
+   * tool allowlist; a structural lookalike cannot unlock private reads or mutations. */
+  writeCapability?: ProjectWriteCapability;
 }
+
+const MUTATING_TOOLS = new Set(["createMarkup", "addNoteToAnnotation", "batchAddNotes"]);
+const PUBLIC_DEMO_TOOLS = new Set([
+  "searchPages",
+  "getPageOcrText",
+  "detectCsiFromText",
+  "navigateToPage",
+  "highlightRegion",
+]);
 
 export async function executeToolCall(
   name: string,
   input: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<unknown> {
+  let hasPrivateAuthority = false;
+  const writeCapability: ProjectWriteCapability | undefined = ctx.writeCapability;
+  if (writeCapability) {
+    try {
+      await assertProjectWriteCapability(writeCapability, ctx.projectId);
+      hasPrivateAuthority = true;
+    } catch {
+      // Treat forged, stale, or demo-revoked authority exactly like no authority. This exported
+      // executor is a sink boundary; advertised tool filtering is not authorization.
+    }
+  }
+
+  if (!hasPrivateAuthority && MUTATING_TOOLS.has(name)) {
+    return { error: "Mutating tools are unavailable for read-only demo projects" };
+  }
+  if (!hasPrivateAuthority && !PUBLIC_DEMO_TOOLS.has(name)) {
+    return { error: "Tool is unavailable in public demo mode" };
+  }
+
   switch (name) {
     case "searchPages":
       if (typeof input.query !== "string") return { error: "query must be a string" };
@@ -526,21 +562,24 @@ async function execCreateMarkup(input: Record<string, unknown>, ctx: ToolContext
     projectId: ctx.projectId,
     args: input,
   });
-  const [inserted] = await db
-    .insert(annotations)
-    .values({
-      projectId: ctx.projectId,
-      pageNumber: input.pageNumber as number,
-      name: input.name as string,
-      minX: input.minX as number,
-      minY: input.minY as number,
-      maxX: input.maxX as number,
-      maxY: input.maxY as number,
-      note: (input.note as string) || null,
-      source: "user",
-      data: {},
-    })
-    .returning({ id: annotations.id });
+  const inserted = await withProjectWrite(ctx.writeCapability!, ctx.projectId, async (tx) => {
+    const [row] = await tx
+      .insert(annotations)
+      .values({
+        projectId: ctx.projectId,
+        pageNumber: input.pageNumber as number,
+        name: input.name as string,
+        minX: input.minX as number,
+        minY: input.minY as number,
+        maxX: input.maxX as number,
+        maxY: input.maxY as number,
+        note: (input.note as string) || null,
+        source: "user",
+        data: {},
+      })
+      .returning({ id: annotations.id });
+    return row;
+  });
 
   return { action: "createMarkup", annotationId: inserted.id, pageNumber: input.pageNumber, name: input.name };
 }
@@ -553,21 +592,32 @@ async function execAddNoteToAnnotation(annotationId: number, note: string, ctx: 
     projectId: ctx.projectId,
     args: { annotationId, note },
   });
-  // Verify annotation belongs to this project
-  const [ann] = await db
-    .select({ id: annotations.id, note: annotations.note, projectId: annotations.projectId })
-    .from(annotations)
-    .where(eq(annotations.id, annotationId))
-    .limit(1);
+  return withProjectWrite(ctx.writeCapability!, ctx.projectId, async (tx) => {
+    // Read and write the child through the same parent-first transaction so the append cannot
+    // cross a publication boundary or overwrite another serialized note append.
+    const [ann] = await tx
+      .select({ id: annotations.id, note: annotations.note })
+      .from(annotations)
+      .where(and(
+        eq(annotations.id, annotationId),
+        eq(annotations.projectId, ctx.projectId),
+      ))
+      .for("update")
+      .limit(1);
 
-  if (!ann || ann.projectId !== ctx.projectId) return { error: "Annotation not found" };
+    if (!ann) return { error: "Annotation not found" };
 
-  // Append note (preserve existing)
-  const existingNote = ann.note?.trim() || "";
-  const newNote = existingNote ? `${existingNote}\n${note}` : note;
-
-  await db.update(annotations).set({ note: newNote }).where(eq(annotations.id, annotationId));
-  return { annotationId, note: newNote, appended: true };
+    const existingNote = ann.note?.trim() || "";
+    const newNote = existingNote ? `${existingNote}\n${note}` : note;
+    await tx
+      .update(annotations)
+      .set({ note: newNote })
+      .where(and(
+        eq(annotations.id, annotationId),
+        eq(annotations.projectId, ctx.projectId),
+      ));
+    return { annotationId, note: newNote, appended: true };
+  });
 }
 
 async function execBatchAddNotes(input: Record<string, unknown>, ctx: ToolContext) {
@@ -587,29 +637,46 @@ async function execBatchAddNotes(input: Record<string, unknown>, ctx: ToolContex
   if (input.className) conditions.push(eq(annotations.name, input.className as string));
   if (input.source) conditions.push(eq(annotations.source, input.source as string));
 
-  // Fetch matching annotations
-  const matching = await db
-    .select({ id: annotations.id, note: annotations.note, data: annotations.data })
-    .from(annotations)
-    .where(and(...conditions));
+  return withProjectWrite(ctx.writeCapability!, ctx.projectId, async (tx) => {
+    const matching = await tx
+      .select({ id: annotations.id, note: annotations.note, data: annotations.data })
+      .from(annotations)
+      .where(and(...conditions))
+      .for("update");
 
-  // JS-level confidence filter
-  let filtered = matching;
-  if (input.minConfidence) {
-    const min = input.minConfidence as number;
-    filtered = filtered.filter((a) => ((a.data as any)?.confidence ?? 1) >= min);
-  }
+    // JS-level confidence filter
+    let filtered = matching;
+    if (input.minConfidence) {
+      const min = input.minConfidence as number;
+      filtered = filtered.filter((a) => ((a.data as any)?.confidence ?? 1) >= min);
+    }
 
-  if (filtered.length === 0) return { error: "No annotations matched the filter", filters: { pageNumber: input.pageNumber, className: input.className, source: input.source } };
+    if (filtered.length === 0) {
+      return {
+        error: "No annotations matched the filter",
+        filters: {
+          pageNumber: input.pageNumber,
+          className: input.className,
+          source: input.source,
+        },
+      };
+    }
 
-  // Batch update — append note to each
-  let updated = 0;
-  for (const ann of filtered) {
-    const existing = ann.note?.trim() || "";
-    const newNote = existing ? `${existing}\n${note}` : note;
-    await db.update(annotations).set({ note: newNote }).where(eq(annotations.id, ann.id));
-    updated++;
-  }
+    // Batch update — append note to each while the selected rows remain locked.
+    let updated = 0;
+    for (const ann of filtered) {
+      const existing = ann.note?.trim() || "";
+      const newNote = existing ? `${existing}\n${note}` : note;
+      await tx
+        .update(annotations)
+        .set({ note: newNote })
+        .where(and(
+          eq(annotations.id, ann.id),
+          eq(annotations.projectId, ctx.projectId),
+        ));
+      updated++;
+    }
 
-  return { updated, totalMatched: filtered.length, noteAppended: note };
+    return { updated, totalMatched: filtered.length, noteAppended: note };
+  });
 }

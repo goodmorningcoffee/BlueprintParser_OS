@@ -14,7 +14,7 @@ vi.mock("@/lib/auth", async () => {
 
 import { DELETE, PUT } from "@/app/api/takeoff-items/[id]/route";
 import { db } from "@/lib/db";
-import { annotations, takeoffItems } from "@/lib/db/schema";
+import { annotations, takeoffGroups, takeoffItems } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import {
   asUser,
@@ -38,7 +38,7 @@ async function seedItem(projectId: number, over: Partial<typeof takeoffItems.$in
 }
 
 async function seedTakeoffAnnotation(projectId: number, takeoffItemId: number, name: string) {
-  await db.insert(annotations).values({
+  const [row] = await db.insert(annotations).values({
     projectId,
     name,
     minX: 0,
@@ -48,7 +48,8 @@ async function seedTakeoffAnnotation(projectId: number, takeoffItemId: number, n
     pageNumber: 1,
     source: "takeoff",
     data: { takeoffItemId } as unknown as (typeof annotations.$inferInsert)["data"],
-  });
+  }).returning();
+  return row;
 }
 
 const put = (id: string | number, body: unknown) =>
@@ -79,6 +80,27 @@ describe.skipIf(!dbUp)("PUT/DELETE /api/takeoff-items/[id]", () => {
     expect(ann.name).toBe("New"); // rename synced to the takeoff marker
   });
 
+  it("B2 RED: PUT rename scopes takeoff annotation sync to the item's project", async () => {
+    const own = await createWorld();
+    const foreign = await createWorld();
+    const item = await seedItem(own.project.id, { name: "Old" });
+    const localMarker = await seedTakeoffAnnotation(own.project.id, item.id, "Old");
+    const plantedForeignMarker = await seedTakeoffAnnotation(
+      foreign.project.id,
+      item.id,
+      "FOREIGN-MUST-STAY",
+    );
+    asUser(own.user);
+
+    const response = await readJson(await put(item.id, { name: "New" }));
+
+    expect.soft(response.status).toBe(200);
+    expect.soft((await db.select({ name: annotations.name }).from(annotations)
+      .where(eq(annotations.id, localMarker.id)))[0]?.name).toBe("New");
+    expect.soft((await db.select({ name: annotations.name }).from(annotations)
+      .where(eq(annotations.id, plantedForeignMarker.id)))[0]?.name).toBe("FOREIGN-MUST-STAY");
+  });
+
   it("PUT invalid groupId (non-integer) → 400; null groupId allowed", async () => {
     const { user, project } = await createWorld();
     asUser(user);
@@ -89,6 +111,26 @@ describe.skipIf(!dbUp)("PUT/DELETE /api/takeoff-items/[id]", () => {
     expect(bad.body.error).toEqual({ code: "VALIDATION", message: "invalid groupId" });
 
     expect((await readJson(await put(item.id, { groupId: null }))).status).toBe(200);
+  });
+
+  it("B2 RED: PUT rejects a groupId owned by another project and preserves the item", async () => {
+    const own = await createWorld();
+    const foreign = await createWorld();
+    const item = await seedItem(own.project.id);
+    const [foreignGroup] = await db.insert(takeoffGroups).values({
+      projectId: foreign.project.id,
+      name: "Foreign group",
+      kind: "count",
+      sortOrder: 0,
+    }).returning();
+    asUser(own.user);
+
+    const response = await readJson(await put(item.id, { groupId: foreignGroup.id }));
+
+    expect.soft(response.status).toBe(404);
+    expect.soft(response.body.error).toEqual({ code: "NOT_FOUND", message: "Not found" });
+    expect.soft((await db.select({ groupId: takeoffItems.groupId }).from(takeoffItems)
+      .where(eq(takeoffItems.id, item.id)))[0]?.groupId).toBeNull();
   });
 
   it("PUT: missing item → 404; signed-out on existing → 401; cross-tenant → 404", async () => {
@@ -126,6 +168,26 @@ describe.skipIf(!dbUp)("PUT/DELETE /api/takeoff-items/[id]", () => {
       .from(annotations)
       .where(and(eq(annotations.projectId, project.id), eq(annotations.source, "takeoff")));
     expect(markers.length).toBe(0);
+  });
+
+  it("B2 RED: DELETE removes only matching markers from the item's project", async () => {
+    const own = await createWorld();
+    const foreign = await createWorld();
+    const item = await seedItem(own.project.id);
+    const localMarker = await seedTakeoffAnnotation(own.project.id, item.id, "local");
+    const plantedForeignMarker = await seedTakeoffAnnotation(
+      foreign.project.id,
+      item.id,
+      "FOREIGN-MUST-STAY",
+    );
+    asUser(own.user);
+
+    const response = await readJson(await del(item.id));
+
+    expect.soft(response.status).toBe(200);
+    expect.soft((await db.select().from(annotations).where(eq(annotations.id, localMarker.id))).length).toBe(0);
+    expect.soft((await db.select({ name: annotations.name }).from(annotations)
+      .where(eq(annotations.id, plantedForeignMarker.id)))[0]?.name).toBe("FOREIGN-MUST-STAY");
   });
 
   it("DELETE: missing → 404; cross-tenant → 404", async () => {

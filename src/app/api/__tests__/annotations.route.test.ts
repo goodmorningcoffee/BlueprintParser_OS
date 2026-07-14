@@ -123,7 +123,7 @@ describe.skipIf(!dbUp)("POST /api/annotations — single record", () => {
     const { status } = await readJson(
       await POST(makeReq("/api/annotations", { body: { projectId: project.publicId, pageNumber: 1, name: "x", bbox } })),
     );
-    expect([401, 404]).toContain(status); // freeze: never 2xx
+    expect(status).toBe(403);
     expect(await annotationsFor(project.id)).toHaveLength(0);
   });
 

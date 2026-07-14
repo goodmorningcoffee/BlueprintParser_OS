@@ -58,7 +58,15 @@ import { db } from "@/lib/db";
 import { projects, qtoWorkflows } from "@/lib/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { ApiError, notFound } from "@/server/api/envelope";
-import { resolveByPublicId, resolveProjectOrThrow } from "@/server/api/access";
+import {
+  resolveByPublicId,
+  resolveProjectOrThrow,
+  resolveWritableProjectOrThrow,
+} from "@/server/api/access";
+import {
+  assertProjectWritable,
+  withProjectWrite,
+} from "@/server/api/project-write-capability";
 import type { AuthSession } from "@/lib/api-utils";
 
 // Frozen PUT validation constants (verbatim from legacy [id]/route.ts lines 52–54).
@@ -79,7 +87,7 @@ const MAX_STRING_LEN = 1024;
  *  Number(id) (NO guard — legacy quirk; non-numeric → NaN → pg int-cast THROWS → shell INTERNAL 500)
  *  → fetch the workflow (404 if missing) → resolve access on the PARENT project by dbId, NO
  *  allowDemo. Returns the workflow row. */
-async function loadWorkflowAndAuthz(idParam: string) {
+async function loadWorkflow(idParam: string) {
   const [workflow] = await db
     .select()
     .from(qtoWorkflows)
@@ -87,8 +95,19 @@ async function loadWorkflowAndAuthz(idParam: string) {
     .limit(1);
   if (!workflow) throw notFound();
 
-  await resolveProjectOrThrow({ dbId: workflow.projectId }); // NO allowDemo — demo needs a session here
   return workflow;
+}
+
+async function loadWorkflowAndAuthz(idParam: string) {
+  const workflow = await loadWorkflow(idParam);
+  await resolveProjectOrThrow({ dbId: workflow.projectId });
+  return workflow;
+}
+
+async function loadWritableWorkflowAndAuthz(idParam: string) {
+  const workflow = await loadWorkflow(idParam);
+  const { project, writeCapability } = await resolveWritableProjectOrThrow({ dbId: workflow.projectId });
+  return { workflow, project, writeCapability };
 }
 
 // ── GET /api/qto-workflows?projectId=<publicId> ──────────────────────────────────
@@ -134,21 +153,21 @@ export async function createQtoWorkflow(body: Record<string, unknown>) {
 
   // [refactor jul8 P1-review PR-C1] allowDemo:true was hardcoded inside the old local helper;
   // now passed explicitly to the shared access.ts helper. Behavior identical.
-  const { project, scope } = await resolveByPublicId(projectId, { allowDemo: true });
+  const { project } = await resolveByPublicId(projectId, { allowDemo: true });
+  const writeCapability = assertProjectWritable(project);
 
-  if (project.isDemo && scope !== "admin" && scope !== "root") {
-    throw new ApiError("FORBIDDEN", "Demo projects are read-only");
-  }
-
-  const [workflow] = await db
-    .insert(qtoWorkflows)
-    .values({
-      projectId: project.id,
-      materialType,
-      materialLabel: materialLabel || materialType, // frozen default
-      step: "select-schedule", // frozen hardcode
-    })
-    .returning();
+  const workflow = await withProjectWrite(writeCapability, project.id, async (tx) => {
+    const [created] = await tx
+      .insert(qtoWorkflows)
+      .values({
+        projectId: project.id,
+        materialType,
+        materialLabel: materialLabel || materialType, // frozen default
+        step: "select-schedule", // frozen hardcode
+      })
+      .returning();
+    return created;
+  });
 
   return workflow;
 }
@@ -166,7 +185,7 @@ export async function getQtoWorkflow(idParam: string) {
  *  source order: step → schedulePageNumber → jsonb-trio 1MB → string-quad ≤1024 → exportedAt
  *  passthrough) → set updatedAt → update. Empty body touches only updatedAt. NO demo gate. Raw row. */
 export async function updateQtoWorkflow(idParam: string, body: Record<string, unknown>) {
-  await loadWorkflowAndAuthz(idParam); // 404 / 401 / cross-tenant-404 BEFORE any field validation
+  const { workflow, project, writeCapability } = await loadWritableWorkflowAndAuthz(idParam);
 
   const updates: Record<string, unknown> = {};
 
@@ -206,11 +225,14 @@ export async function updateQtoWorkflow(idParam: string, body: Record<string, un
 
   updates.updatedAt = new Date();
 
-  const [updated] = await db
-    .update(qtoWorkflows)
-    .set(updates)
-    .where(eq(qtoWorkflows.id, Number(idParam)))
-    .returning();
+  const updated = await withProjectWrite(writeCapability, project.id, async (tx) => {
+    const [row] = await tx
+      .update(qtoWorkflows)
+      .set(updates)
+      .where(and(eq(qtoWorkflows.id, workflow.id), eq(qtoWorkflows.projectId, project.id)))
+      .returning();
+    return row;
+  });
 
   return updated;
 }
@@ -221,7 +243,11 @@ export async function updateQtoWorkflow(idParam: string, body: Record<string, un
  *  even if the row vanished between the authz fetch and the delete (TOCTOU no-op — frozen, no
  *  affected-rows check). */
 export async function deleteQtoWorkflow(idParam: string) {
-  await loadWorkflowAndAuthz(idParam);
-  await db.delete(qtoWorkflows).where(eq(qtoWorkflows.id, Number(idParam)));
+  const { workflow, project, writeCapability } = await loadWritableWorkflowAndAuthz(idParam);
+  await withProjectWrite(writeCapability, project.id, async (tx) => {
+    await tx
+      .delete(qtoWorkflows)
+      .where(and(eq(qtoWorkflows.id, workflow.id), eq(qtoWorkflows.projectId, project.id)));
+  });
   return { success: true };
 }

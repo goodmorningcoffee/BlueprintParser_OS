@@ -63,6 +63,11 @@ import { pages } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { ApiError } from "@/server/api/envelope";
 import { resolveDual } from "@/server/api/access";
+import {
+  assertProjectWritable,
+  withProjectWrite,
+  type ProjectWriteCapability,
+} from "@/server/api/project-write-capability";
 import { parseNotesFromRegion } from "@/lib/text-region-classifier";
 import { bindSpecSectionsInRegion } from "@/lib/specnote-parser";
 import { detectCsiFromGrid, detectCsiCodes } from "@/lib/csi-detect";
@@ -144,21 +149,15 @@ export async function promoteRegion(body: Record<string, unknown>) {
 
   // dual-accept: truthy publicId wins, else numeric projectId. allowDemo:true lets demo READS resolve
   // (scope "demo"); demo WRITES are blocked by the imperative gate below. resolveDual gives D/E free.
-  const { project, scope } = await resolveDual({ publicId, dbId: projectId }, { allowDemo: true });
-
-  // Frozen demo-WRITE gate (identical to pages/intelligence): admin/root of the owning company may
-  // write demo projects; scope "demo" (signed-out) and "member" (same-company member) are blocked.
-  // Imperative because the shell's declarative min-scope cannot express it (demo bypasses min-scope).
-  if (project.isDemo && scope !== "admin" && scope !== "root") {
-    throw new ApiError("FORBIDDEN", "Demo projects are read-only");
-  }
+  const { project } = await resolveDual({ publicId, dbId: projectId }, { allowDemo: true });
+  const writeCapability = assertProjectWritable(project);
 
   // [refactor jul9 P2-A C1] Resolve the company CSI context (async DB/S3) BEFORE opening
   // the tx that holds the FOR UPDATE row lock at :159 (I-1 — no async detect-dep work may
   // run while the lock is held). The engine stays sync and receives the resolved bundle.
   const csiCtx = await getCompanyCsiContext(project.companyId);
 
-  const result = await db.transaction(async (tx) => {
+  const result = await withProjectWrite(writeCapability, project.id, async (tx) => {
     const [pageRow] = await tx
       .select({
         id: pages.id,
@@ -332,7 +331,7 @@ export async function promoteRegion(body: Record<string, unknown>) {
   // leak catch; this inner non-fatal swallow is frozen behavior.)
   let summaries = null;
   try {
-    summaries = await computeProjectSummaries(project.id);
+    summaries = await computeProjectSummaries(project.id, writeCapability);
   } catch (err) {
     logger.warn("[regions/promote] Summary recompute failed (non-fatal):", err);
   }
@@ -359,8 +358,9 @@ export async function deleteParsedRegion(
   projectId: number,
   pageNumber: number,
   regionId: string,
+  writeCapability: ProjectWriteCapability,
 ) {
-  const result = await db.transaction(async (tx) => {
+  const result = await withProjectWrite(writeCapability, projectId, async (tx) => {
     const [pageRow] = await tx
       .select({
         id: pages.id,
@@ -398,7 +398,7 @@ export async function deleteParsedRegion(
 
   let summaries = null;
   try {
-    summaries = await computeProjectSummaries(projectId);
+    summaries = await computeProjectSummaries(projectId, writeCapability);
   } catch (err) {
     logger.warn("[regions/delete] Summary recompute failed (non-fatal):", err);
   }

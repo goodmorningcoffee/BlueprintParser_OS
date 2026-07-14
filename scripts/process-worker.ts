@@ -8,6 +8,10 @@
  * Step Functions watches the exit code to determine task success/failure.
  */
 import { processProject } from "@/lib/processing";
+import { db } from "@/lib/db";
+import { projects } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { assertProjectWritable } from "@/server/api/project-write-capability";
 
 async function main() {
   const projectId = parseInt(process.env.PROJECT_ID || "", 10);
@@ -16,8 +20,22 @@ async function main() {
     process.exit(1);
   }
 
+  const [project] = await db
+    .select({
+      id: projects.id,
+      publicId: projects.publicId,
+      companyId: projects.companyId,
+      isDemo: projects.isDemo,
+      lifecycleEpoch: projects.lifecycleEpoch,
+      updatedAt: projects.updatedAt,
+    })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!project) throw new Error(`Project ${projectId} not found`);
+
   console.log(`[worker] Processing project ${projectId}...`);
-  const result = await processProject(projectId);
+  const result = await processProject(projectId, assertProjectWritable(project));
   console.log(
     `[worker] Done: ${result.pagesProcessed} pages processed, ${result.pageErrors} errors, ${result.processingTime}s`
   );
