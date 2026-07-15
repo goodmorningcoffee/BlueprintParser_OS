@@ -24,6 +24,7 @@ import { GET } from "@/app/api/project-assets/[id]/[...asset]/route";
 import { db } from "@/lib/db";
 import { companies, projectMutationLeases, projects } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
+import { Pool, type PoolClient } from "pg";
 import {
   asUser,
   createCompany,
@@ -55,6 +56,49 @@ function deferred<T>(): {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+async function settleWithin<T>(
+  promise: Promise<T>,
+  label: string,
+  timeoutMs = 5_000,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () =>
+            reject(new Error(`${label} did not settle within ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+async function waitForTransactionWaiter(
+  client: PoolClient,
+  blockingTransactionId: string,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await client.query(
+      `SELECT 1
+         FROM pg_locks
+        WHERE locktype = 'transactionid'
+          AND transactionid::text = $1
+          AND granted = false
+        LIMIT 1`,
+      [blockingTransactionId],
+    );
+    if (result.rows.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for the post-S3 asset fence to block");
 }
 
 function expectPrivateAssetPolicy(response: Response): void {
@@ -178,6 +222,198 @@ describe.skipIf(!dbUp)("GET /api/project-assets/[id]/[...asset]", () => {
         signal: expect.any(AbortSignal),
       }),
     );
+  });
+
+  it("settles an exact-length upstream body without requiring an extra EOF pull", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const releaseClose = deferred<void>();
+    const cancelStarted = deferred<void>();
+    let cancelCalls = 0;
+    let pullCount = 0;
+    s3Mocks.getS3ObjectStream.mockResolvedValueOnce({
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pullCount += 1;
+          if (pullCount > 2) return;
+          controller.enqueue(
+            pullCount === 1 ? new Uint8Array([1]) : new Uint8Array([2, 3]),
+          );
+          // Deliberately do not close. Real HTTP consumers may stop pulling as
+          // soon as Content-Length bytes arrive, so gateway teardown cannot
+          // depend on one more reader.read() observing upstream EOF.
+        },
+        cancel() {
+          cancelCalls += 1;
+          cancelStarted.resolve(undefined);
+        },
+      }),
+      contentType: "application/pdf",
+      contentLength: 3,
+      contentRange: "bytes 10-12/100",
+      bodySettled: releaseClose.promise,
+    });
+
+    const response = await getAsset(project.publicId, ["original.pdf"], {
+      range: "bytes=10-12",
+    });
+    const reader = response.body!.getReader();
+
+    try {
+      expect(await reader.read()).toEqual({
+        done: false,
+        value: new Uint8Array([1]),
+      });
+
+      let finalReadSettled = false;
+      const finalRead = reader.read().then((result) => {
+        finalReadSettled = true;
+        return result;
+      });
+      await settleWithin(cancelStarted.promise, "exact-length body cancel");
+      expect(finalReadSettled).toBe(false);
+      expect(cancelCalls).toBe(1);
+
+      releaseClose.resolve(undefined);
+      await expect(finalRead).resolves.toEqual({
+        done: false,
+        value: new Uint8Array([2, 3]),
+      });
+      await expect(reader.read()).resolves.toEqual({
+        done: true,
+        value: undefined,
+      });
+      expect(cancelCalls).toBe(1);
+      expect(response.status).toBe(206);
+      expect(response.headers.get("content-range")).toBe("bytes 10-12/100");
+      expectPrivateAssetPolicy(response);
+    } finally {
+      releaseClose.resolve(undefined);
+    }
+  });
+
+  it("shares one pending teardown when downstream cancellation races exact completion", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    const releaseClose = deferred<void>();
+    const cancelStarted = deferred<void>();
+    let cancelCalls = 0;
+    let emitted = false;
+    s3Mocks.getS3ObjectStream.mockResolvedValueOnce({
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (emitted) return;
+          emitted = true;
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+        },
+        cancel() {
+          cancelCalls += 1;
+          cancelStarted.resolve(undefined);
+        },
+      }),
+      contentType: "application/pdf",
+      contentLength: 3,
+      contentRange: "bytes 10-12/100",
+      bodySettled: releaseClose.promise,
+    });
+
+    const response = await getAsset(project.publicId, ["original.pdf"], {
+      range: "bytes=10-12",
+    });
+    const reader = response.body!.getReader();
+    try {
+      const pendingRead = reader.read();
+      await settleWithin(
+        cancelStarted.promise,
+        "racing exact-length body cancel",
+      );
+      expect(cancelCalls).toBe(1);
+
+      let downstreamCancelSettled = false;
+      const downstreamCancel = reader
+        .cancel("consumer stopped after Content-Length bytes")
+        .then(() => {
+          downstreamCancelSettled = true;
+        });
+      await Promise.resolve();
+      expect(downstreamCancelSettled).toBe(false);
+      expect(cancelCalls).toBe(1);
+
+      releaseClose.resolve(undefined);
+      await downstreamCancel;
+      await expect(pendingRead).resolves.toEqual({
+        done: true,
+        value: undefined,
+      });
+      expect(downstreamCancelSettled).toBe(true);
+      expect(cancelCalls).toBe(1);
+      expectPrivateAssetPolicy(response);
+    } finally {
+      releaseClose.resolve(undefined);
+    }
+  });
+
+  it("fails closed without emitting bytes beyond the declared upstream length", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    let cancelCalls = 0;
+    let pullCount = 0;
+    s3Mocks.getS3ObjectStream.mockResolvedValueOnce({
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pullCount += 1;
+          controller.enqueue(
+            pullCount === 1 ? new Uint8Array([1, 2]) : new Uint8Array([3, 4]),
+          );
+        },
+        cancel() {
+          cancelCalls += 1;
+        },
+      }),
+      contentType: "application/pdf",
+      contentLength: 3,
+      contentRange: "bytes 10-12/100",
+    });
+
+    const response = await getAsset(project.publicId, ["original.pdf"], {
+      range: "bytes=10-12",
+    });
+    const reader = response.body!.getReader();
+
+    expect(await reader.read()).toEqual({
+      done: false,
+      value: new Uint8Array([1, 2]),
+    });
+    await expect(reader.read()).rejects.toThrow(
+      "S3 project asset body exceeded its 3-byte length",
+    );
+    expect(cancelCalls).toBe(1);
+    expectPrivateAssetPolicy(response);
+  });
+
+  it("fails closed when upstream EOF arrives before the declared length", async () => {
+    const { user, project } = await createWorld();
+    asUser(user);
+    s3Mocks.getS3ObjectStream.mockResolvedValueOnce({
+      body: bodyStream([1, 2]),
+      contentType: "application/pdf",
+      contentLength: 3,
+      contentRange: "bytes 10-12/100",
+    });
+
+    const response = await getAsset(project.publicId, ["original.pdf"], {
+      range: "bytes=10-12",
+    });
+    const reader = response.body!.getReader();
+
+    expect(await reader.read()).toEqual({
+      done: false,
+      value: new Uint8Array([1, 2]),
+    });
+    await expect(reader.read()).rejects.toThrow(
+      "S3 project asset body ended at 2 of 3 bytes",
+    );
+    expectPrivateAssetPolicy(response);
   });
 
   it("turns the marked pdf.js capability probe into a one-byte upstream range", async () => {
@@ -334,6 +570,117 @@ describe.skipIf(!dbUp)("GET /api/project-assets/[id]/[...asset]", () => {
     expect(response.status).toBe(499);
     expectPrivateAssetPolicy(response);
   });
+
+  it.each([
+    {
+      label: "the request was already aborted when S3 resolved",
+      timing: "before-body" as const,
+    },
+    {
+      label: "the request aborted during the post-S3 fence",
+      timing: "during-fence" as const,
+    },
+  ])(
+    "cancels an acquired body while the post-S3 authority fence is blocked: $label",
+    async ({ timing }) => {
+      const { user, project } = await createWorld();
+      asUser(user);
+      const reachedS3 = deferred<void>();
+      const object = deferred<{
+        body: ReadableStream<Uint8Array>;
+        contentType: string;
+        contentLength: number;
+      }>();
+      const canceled = deferred<void>();
+      let cancelCalls = 0;
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelCalls += 1;
+          canceled.resolve(undefined);
+        },
+      });
+      s3Mocks.getS3ObjectStream.mockImplementationOnce(async () => {
+        reachedS3.resolve(undefined);
+        return object.promise;
+      });
+      const controller = new AbortController();
+      const blockerPool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        max: 1,
+      });
+      let blocker: PoolClient | undefined;
+      let pending: Promise<Response> | undefined;
+      let released = false;
+
+      try {
+        blocker = await blockerPool.connect();
+        pending = getAsset(
+          project.publicId,
+          ["original.pdf"],
+          undefined,
+          controller.signal,
+        );
+        void pending.catch(() => undefined);
+        await settleWithin(reachedS3.promise, "project asset S3 acquisition");
+
+        await blocker.query("BEGIN");
+        const [{ xid }] = (
+          await blocker.query<{ xid: string }>(
+            "SELECT txid_current()::text AS xid",
+          )
+        ).rows;
+        await blocker.query("SELECT 1 FROM projects WHERE id = $1 FOR UPDATE", [
+          project.id,
+        ]);
+        if (timing === "before-body") {
+          controller.abort(
+            new Error("browser left before S3 body acquisition"),
+          );
+        }
+        object.resolve({
+          body,
+          contentType: "application/pdf",
+          contentLength: 3,
+        });
+        await waitForTransactionWaiter(blocker, xid);
+
+        if (timing === "during-fence") {
+          controller.abort(new Error("browser left during post-S3 fence"));
+        }
+        await Promise.resolve();
+        expect(cancelCalls).toBe(1);
+        await settleWithin(canceled.promise, "blocked-fence body cancellation");
+
+        await blocker.query("COMMIT");
+        released = true;
+        const response = await settleWithin(
+          pending,
+          "post-fence project asset response",
+        );
+        expect(response.status).toBe(499);
+        expect(await response.text()).toBe("");
+        expect(cancelCalls).toBe(1);
+        expectPrivateAssetPolicy(response);
+      } finally {
+        controller.abort(new Error("project asset lock-test cleanup"));
+        object.resolve({
+          body,
+          contentType: "application/pdf",
+          contentLength: 3,
+        });
+        if (blocker && !released) {
+          await blocker.query("ROLLBACK").catch(() => undefined);
+        }
+        blocker?.release();
+        await blockerPool.end();
+        await settleWithin(
+          Promise.allSettled(pending ? [pending] : []),
+          "project asset lock-test request cleanup",
+        );
+      }
+    },
+    15_000,
+  );
 
   it("fails closed for invalid ranges, paths, non-completed projects, and S3 misses", async () => {
     const { user, project } = await createWorld();

@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Readable } from "node:stream";
 
 const { sendMock } = vi.hoisted(() => ({ sendMock: vi.fn() }));
 
@@ -368,5 +369,34 @@ describe("private project S3 streaming", () => {
       options: { abortSignal: controller.signal },
     });
     expect(sdkBody.transformToWebStream).toHaveBeenCalledOnce();
+  });
+
+  it("exposes actual Node body close settlement separately from Web cancellation", async () => {
+    const body = new ReadableStream<Uint8Array>();
+    const sdkBody = Object.assign(
+      new Readable({
+        read() {
+          // Keep the source open until the test destroys it.
+        },
+      }),
+      { transformToWebStream: vi.fn(() => body) },
+    );
+    sendMock.mockResolvedValueOnce({
+      Body: sdkBody,
+      ContentType: "application/pdf",
+      ContentLength: 3,
+    });
+
+    const result = await getS3ObjectStream("tenant/project/original.pdf");
+    let settled = false;
+    void result.bodySettled?.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    sdkBody.destroy();
+    await expect(result.bodySettled).resolves.toBeUndefined();
+    expect(settled).toBe(true);
   });
 });

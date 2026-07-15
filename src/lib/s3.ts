@@ -172,6 +172,8 @@ export async function getS3ObjectStream(
   contentRange?: string;
   eTag?: string;
   lastModified?: Date;
+  /** Resolves on the underlying Node response's close event, not merely Web cancel initiation. */
+  bodySettled?: Promise<void>;
 }> {
   const res = await s3Client.send(
     new GetObjectCommand({
@@ -185,6 +187,21 @@ export async function getS3ObjectStream(
   if (!res.Body) {
     throw new Error("S3 object response had no body");
   }
+  const nodeBody = res.Body as unknown as {
+    closed?: boolean;
+    once?: (event: "close", listener: () => void) => unknown;
+  };
+  const bodySettled =
+    typeof nodeBody.once === "function"
+      ? nodeBody.closed
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            nodeBody.once!("close", resolve);
+            // Close cannot fire between the synchronous check and listener registration, but a
+            // custom Node-compatible body may expose an already-closed flag only after `.once()`.
+            if (nodeBody.closed) resolve();
+          })
+      : undefined;
   return {
     body: res.Body.transformToWebStream(),
     contentType: res.ContentType,
@@ -192,6 +209,7 @@ export async function getS3ObjectStream(
     contentRange: res.ContentRange,
     eTag: res.ETag,
     lastModified: res.LastModified,
+    ...(bodySettled ? { bodySettled } : {}),
   };
 }
 

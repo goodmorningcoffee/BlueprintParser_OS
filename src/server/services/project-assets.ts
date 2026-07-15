@@ -65,45 +65,158 @@ function assetNotFound(): ApiError {
 function requestBoundBody(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-): ReadableStream<Uint8Array> {
+  expectedLength?: number,
+  upstreamSettled?: Promise<void>,
+): {
+  cancel: (reason?: unknown) => Promise<void>;
+  stream: () => ReadableStream<Uint8Array>;
+} {
   const reader = body.getReader();
+  const exactLength =
+    typeof expectedLength === "number" &&
+    Number.isSafeInteger(expectedLength) &&
+    expectedLength >= 0
+      ? expectedLength
+      : null;
+  let bytesRead = 0;
   let listening = true;
+  let settled = false;
+  let streamCreated = false;
+  let cancelPromise: Promise<void> | null = null;
   const detach = () => {
     if (!listening) return;
     listening = false;
     signal.removeEventListener("abort", abort);
   };
+  const cancelUpstream = (reason?: unknown): Promise<void> => {
+    if (!cancelPromise) {
+      // Cancellation is best-effort: an already-errored SDK body may reject its cancel algorithm.
+      // Share and absorb one settlement so completion, browser abort, and downstream cancel cannot
+      // race multiple teardown attempts or leave a rejection detached from the response lifetime.
+      const cancelStarted = reader.cancel(reason).catch(() => undefined);
+      cancelPromise = Promise.all([
+        cancelStarted,
+        ...(upstreamSettled ? [upstreamSettled.catch(() => undefined)] : []),
+      ])
+        .then(() => undefined)
+        .finally(detach);
+    }
+    return cancelPromise;
+  };
   const abort = () => {
-    // Cancellation is best-effort: an already-errored SDK body may reject its cancel algorithm.
-    // Absorb that rejection so a browser disconnect cannot become process-level unhandled noise.
-    void reader
-      .cancel(signal.reason)
-      .catch(() => undefined)
-      .finally(detach);
+    void cancelUpstream(signal.reason);
   };
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
 
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const chunk = await reader.read();
-        if (chunk.done) {
-          detach();
+  const stream = (): ReadableStream<Uint8Array> => {
+    if (streamCreated) {
+      throw new Error("Project asset response body was already materialized");
+    }
+    streamCreated = true;
+    return new ReadableStream<Uint8Array>({
+      async start(controller) {
+        if (exactLength !== 0) return;
+        await cancelUpstream();
+        if (!settled) {
+          settled = true;
           controller.close();
-        } else {
-          controller.enqueue(chunk.value);
         }
-      } catch (error) {
-        detach();
-        controller.error(error);
-      }
-    },
+      },
+      async pull(controller) {
+        if (settled) return;
+        if (signal.aborted) {
+          await cancelUpstream(signal.reason);
+          if (!settled) {
+            settled = true;
+            controller.close();
+          }
+          return;
+        }
+        try {
+          const chunk = await reader.read();
+          if (signal.aborted) {
+            await cancelUpstream(signal.reason);
+            if (!settled) {
+              settled = true;
+              controller.close();
+            }
+            return;
+          }
+          if (chunk.done) {
+            if (exactLength !== null && bytesRead !== exactLength) {
+              const error = new Error(
+                `S3 project asset body ended at ${bytesRead} of ${exactLength} bytes`,
+              );
+              await cancelUpstream(error);
+              if (!settled) {
+                settled = true;
+                controller.error(error);
+              }
+              return;
+            }
+            if (upstreamSettled) await upstreamSettled;
+            detach();
+            settled = true;
+            controller.close();
+          } else {
+            const nextBytesRead = bytesRead + chunk.value.byteLength;
+            if (exactLength !== null && nextBytesRead > exactLength) {
+              const error = new Error(
+                `S3 project asset body exceeded its ${exactLength}-byte length`,
+              );
+              await cancelUpstream(error);
+              if (!settled) {
+                settled = true;
+                controller.error(error);
+              }
+              return;
+            }
+            // HTTP consumers are entitled to stop pulling after Content-Length bytes. Do not
+            // expose the final framed bytes until the upstream Node body has actually closed: a
+            // client can treat Content-Length completion as EOF without observing controller.close().
+            if (exactLength !== null && nextBytesRead === exactLength) {
+              await cancelUpstream();
+              if (signal.aborted) {
+                if (!settled) {
+                  settled = true;
+                  controller.close();
+                }
+                return;
+              }
+              if (!settled) {
+                bytesRead = nextBytesRead;
+                controller.enqueue(chunk.value);
+                settled = true;
+                controller.close();
+              }
+            } else {
+              bytesRead = nextBytesRead;
+              controller.enqueue(chunk.value);
+            }
+          }
+        } catch (error) {
+          await cancelUpstream(error);
+          if (!settled) {
+            settled = true;
+            controller.error(error);
+          }
+        }
+      },
+      async cancel(reason) {
+        settled = true;
+        await cancelUpstream(reason);
+      },
+    });
+  };
+
+  return {
     async cancel(reason) {
-      detach();
-      await reader.cancel(reason);
+      settled = true;
+      await cancelUpstream(reason);
     },
-  });
+    stream,
+  };
 }
 
 /**
@@ -275,41 +388,55 @@ export async function serveProjectAsset(
     advertisedContentLength = total;
   }
 
+  const boundBody = requestBoundBody(
+    object.body,
+    req.signal,
+    object.contentLength,
+    object.bodySettled,
+  );
   try {
     // S3 acquisition can take arbitrarily longer than access resolution. Make
     // response admission linearizable after that external wait: a withdrawal,
     // deletion, status change, or rebuild that won first is now observed; a
     // supported writer that starts later waits behind this lock.
     await assertCurrentProjectAssetRead(project);
+    if (req.signal.aborted) {
+      await boundBody.cancel(req.signal.reason);
+      return new Response(null, {
+        status: 499,
+        headers: { "Cache-Control": "private, no-store" },
+      });
+    }
+
+    const headers = new Headers({
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "private, no-store",
+      // Never trust mutable S3 metadata on a same-origin response. The path
+      // allowlist defines the only two media types this endpoint can emit.
+      "Content-Type":
+        asset === "original.pdf" ? "application/pdf" : "image/png",
+      "X-Content-Type-Options": "nosniff",
+      Vary: "Cookie, Authorization, Range, X-BlueprintParser-PDF-Range-Probe",
+    });
+    if (advertisedContentLength !== undefined) {
+      headers.set("Content-Length", String(advertisedContentLength));
+    }
+    // The upstream probe range is an implementation detail, not a response to a
+    // browser Range header. Only client-requested ranges receive a 206 contract.
+    if (object.contentRange && requestedRange) {
+      headers.set("Content-Range", object.contentRange);
+    }
+    if (object.eTag) headers.set("ETag", object.eTag);
+    if (object.lastModified) {
+      headers.set("Last-Modified", object.lastModified.toUTCString());
+    }
+
+    return new Response(boundBody.stream(), {
+      status: requestedRange && object.contentRange ? 206 : 200,
+      headers,
+    });
   } catch (error) {
-    await object.body.cancel().catch(() => undefined);
+    await boundBody.cancel(error);
     throw error;
   }
-
-  const headers = new Headers({
-    "Accept-Ranges": "bytes",
-    "Cache-Control": "private, no-store",
-    // Never trust mutable S3 metadata on a same-origin response. The path
-    // allowlist defines the only two media types this endpoint can emit.
-    "Content-Type": asset === "original.pdf" ? "application/pdf" : "image/png",
-    "X-Content-Type-Options": "nosniff",
-    Vary: "Cookie, Authorization, Range, X-BlueprintParser-PDF-Range-Probe",
-  });
-  if (advertisedContentLength !== undefined) {
-    headers.set("Content-Length", String(advertisedContentLength));
-  }
-  // The upstream probe range is an implementation detail, not a response to a
-  // browser Range header. Only client-requested ranges receive a 206 contract.
-  if (object.contentRange && requestedRange) {
-    headers.set("Content-Range", object.contentRange);
-  }
-  if (object.eTag) headers.set("ETag", object.eTag);
-  if (object.lastModified) {
-    headers.set("Last-Modified", object.lastModified.toUTCString());
-  }
-
-  return new Response(requestBoundBody(object.body, req.signal), {
-    status: requestedRange && object.contentRange ? 206 : 200,
-    headers,
-  });
 }

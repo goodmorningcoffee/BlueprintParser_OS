@@ -33,6 +33,7 @@ import {
   PUBLIC_DEMO_SURFACES,
   TOMBSTONED_HTTP_SURFACES,
 } from "./project-security-policy-manifest.mjs";
+import { hasCanonicalProjectAssetFinalization } from "./project-asset-delivery-policy-ast.mjs";
 
 const ROOT = process.cwd();
 const violations = [];
@@ -13639,6 +13640,22 @@ async function validateProjectAssetDeliveryPolicy() {
     "aws_s3_bucket_policy",
     "beaver_data",
   );
+  const assetFence = "await assertCurrentProjectAssetRead(project);";
+  const firstAssetFence = contents.service.indexOf(assetFence);
+  const s3AssetRead = contents.service.indexOf(
+    "object = await getS3ObjectStream",
+  );
+  const boundAssetBody = contents.service.indexOf(
+    "const boundBody = requestBoundBody(",
+  );
+  const secondAssetFence = contents.service.indexOf(
+    assetFence,
+    firstAssetFence + assetFence.length,
+  );
+  const thirdAssetFence = contents.service.indexOf(
+    assetFence,
+    secondAssetFence + assetFence.length,
+  );
 
   if (
     !textHasAll(contents.route, [
@@ -13675,8 +13692,15 @@ async function validateProjectAssetDeliveryPolicy() {
       "req.signal.aborted",
       "status: 499",
       "requestBoundBody",
-      "requestBoundBody(object.body, req.signal)",
-      "cancel(signal.reason)",
+      "const boundBody = requestBoundBody(",
+      "object.contentLength,",
+      "object.bodySettled,",
+      "new Response(boundBody.stream()",
+      "Number.isSafeInteger(expectedLength)",
+      "nextBytesRead === exactLength",
+      "cancelUpstream(signal.reason)",
+      "await cancelUpstream()",
+      "upstreamSettled.catch(() => undefined)",
       ".catch(() => undefined)",
       "object.body.cancel()",
       '"Cache-Control": "private, no-store"',
@@ -13685,6 +13709,12 @@ async function validateProjectAssetDeliveryPolicy() {
       '"Cookie, Authorization, Range, X-BlueprintParser-PDF-Range-Probe"',
       "requestedRange && object.contentRange ? 206 : 200",
     ]) ||
+    firstAssetFence < 0 ||
+    s3AssetRead < firstAssetFence ||
+    boundAssetBody < s3AssetRead ||
+    secondAssetFence < boundAssetBody ||
+    thirdAssetFence >= 0 ||
+    !hasCanonicalProjectAssetFinalization(contents.service) ||
     contents.service.includes("object.contentType") ||
     contents.service.includes("getS3Url") ||
     contents.service.includes("CLOUDFRONT_DOMAIN")
