@@ -52,13 +52,7 @@ import { TWENTY_COLORS, AREA_UNIT_MAP } from "@/types";
 import type { ClientAnnotation, CountMarkerData, TakeoffShape, AreaPolygonData, LinearPolylineData } from "@/types";
 import type { ScoredMatch } from "@/lib/tag-mapping";
 import { requestMapTagsBatch } from "@/lib/client-map-tags";
-import {
-  captureCanvasGestureLease,
-  matchesCanvasGestureLease,
-  selectActiveToolKey,
-  type CanvasGestureLease,
-  type CanvasGestureSnapshot,
-} from "@/lib/active-tool-state";
+import { captureCanvasGestureLease, matchesCanvasGestureLease, selectActiveToolKey, type CanvasGestureLease, type CanvasGestureSnapshot } from "@/lib/active-tool-state";
 import {
   cancelToolTailExact,
   claimLatestToolOperation,
@@ -78,6 +72,7 @@ import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
 import { persistFetch, canPersist , apiErrorMessage } from "@/lib/client-persist";
 import DrawingPreviewLayer from "./DrawingPreviewLayer";
 import MarkupDialog from "./MarkupDialog";
+import { dispatchToolMouseDown, TOOLS } from "./tools/registry";
 import { useMultiSelectInteraction } from "@/hooks/useMultiSelectInteraction";
 import { useProjectLifecycleGuard } from "@/hooks/useProjectLifecycleGuard";
 
@@ -1480,6 +1475,7 @@ export default memo(function AnnotationOverlay({
       const toolAtDown = useToolStore.getState();
       const activeTool = toolAtDown.activeTool;
       const pos = getPos(e);
+      if (dispatchToolMouseDown(TOOLS, e)) return;
 
       // Scale calibration mode
       if (activeTool?.kind === "calibration") {

@@ -272,6 +272,7 @@ describe("later user tool intent revokes parse completion writes", () => {
     const toolSnapshot = gesturePrefix.indexOf("const toolAtDown = useToolStore.getState()");
     const activationSnapshot = gesturePrefix.indexOf("const activeTool = toolAtDown.activeTool");
     const coordinates = gesturePrefix.indexOf("getPos(e)");
+    const registryDispatch = gesturePrefix.indexOf("dispatchToolMouseDown(");
     expect(lifecycleGuard).toBeGreaterThan(-1);
     expect(cancel).toBeGreaterThan(-1);
     expect(projectGuard).toBeGreaterThan(-1);
@@ -279,12 +280,28 @@ describe("later user tool intent revokes parse completion writes", () => {
     expect(toolSnapshot).toBeGreaterThan(-1);
     expect(activationSnapshot).toBeGreaterThan(-1);
     expect(coordinates).toBeGreaterThan(-1);
+    expect(registryDispatch).toBeGreaterThan(-1);
     expect(lifecycleGuard).toBeLessThan(cancel);
     expect(cancel).toBeLessThan(projectGuard);
     expect(projectGuard).toBeLessThan(pageGuard);
     expect(pageGuard).toBeLessThan(toolSnapshot);
     expect(toolSnapshot).toBeLessThan(activationSnapshot);
     expect(activationSnapshot).toBeLessThan(coordinates);
+    expect(coordinates).toBeLessThan(registryDispatch);
+    const compactPrefix = gesturePrefix.replace(/\s+/g, "");
+    expect(compactPrefix).toContain(
+      "if(dispatchToolMouseDown(TOOLS,e))return;",
+    );
+    const mouseDown = source.slice(
+      start,
+      source.indexOf("const handleMouseMove = useCallback(", start),
+    );
+    expect(mouseDown.match(/dispatchToolMouseDown\(/g)).toHaveLength(1);
+    expect(
+      source.slice(
+        source.indexOf("const handleMouseMove = useCallback(", start),
+      ),
+    ).not.toContain("dispatchToolMouseDown(");
     expect(gesturePrefix).not.toContain("invalidateToolTailAuthority");
     expect(gesturePrefix).not.toContain("invalidateParseToolAuthority");
 
