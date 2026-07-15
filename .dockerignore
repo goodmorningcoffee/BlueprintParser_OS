@@ -1,7 +1,10 @@
 node_modules
 .next
 .git
-.env*.local
+.env*
+.deploy.env*
+!.env.example
+!.deploy.env.example
 *.md
 .DS_Store
 .obsidian

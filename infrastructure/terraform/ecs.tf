@@ -27,6 +27,52 @@ resource "aws_ecs_cluster_capacity_providers" "beaver" {
   }
 }
 
+locals {
+  # A digest is immutable even though historical deploys used the mutable
+  # `latest` tag. Every PostgreSQL writer and the migrator share this identity.
+  beaver_app_image               = "${aws_ecr_repository.beaver_app.repository_url}@${var.beaver_app_image_digest}"
+  database_url_secret_value_from = "${aws_secretsmanager_secret.database_url.arn}:::${aws_secretsmanager_secret_version.database_url.version_id}"
+
+  # P2/P5 safety freeze: there are exactly two admissible operational states.
+  # Keeping each tuple explicit prevents a partial outage from leaving one
+  # launcher live or an autoscaler able to repopulate a drained service.
+  beaver_writer_outage_tuple           = var.ecs_desired_count == 0 && var.ecs_min_count == 0 && var.ecs_max_count == 1 && !var.ecs_autoscaling_enabled && !var.maintenance_worker_schedule_enabled
+  beaver_writer_live_tuple             = var.ecs_desired_count == 1 && var.ecs_min_count == 1 && var.ecs_max_count == 1 && var.ecs_autoscaling_enabled && var.maintenance_worker_schedule_enabled
+  beaver_writer_operational_tuple_valid = local.beaver_writer_outage_tuple || local.beaver_writer_live_tuple
+}
+
+resource "terraform_data" "beaver_writer_operational_tuple" {
+  input = {
+    desired_count                = var.ecs_desired_count
+    min_count                    = var.ecs_min_count
+    max_count                    = var.ecs_max_count
+    autoscaling_enabled          = var.ecs_autoscaling_enabled
+    maintenance_schedule_enabled = var.maintenance_worker_schedule_enabled
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.beaver_writer_operational_tuple_valid
+      error_message = "Writer controls must be exactly live (desired/min/max 1, autoscaling and maintenance enabled) or outage (desired/min 0, max 1, autoscaling and maintenance disabled)."
+    }
+  }
+}
+
+# A remote replay boundary for cutover witnesses. This identifier rotates on
+# every exact live <-> outage transition, but intentionally remains stable when
+# an outage apply changes only the immutable application candidate digest.
+resource "terraform_data" "beaver_writer_mode_epoch" {
+  input            = local.beaver_writer_outage_tuple ? "outage" : "live"
+  triggers_replace = [local.beaver_writer_outage_tuple ? "outage" : "live"]
+
+  lifecycle {
+    precondition {
+      condition     = local.beaver_writer_operational_tuple_valid
+      error_message = "A writer-mode epoch exists only for the exact live or outage tuple."
+    }
+  }
+}
+
 ###############################################################################
 # CloudWatch Log Group
 ###############################################################################
@@ -49,10 +95,15 @@ resource "aws_ecs_task_definition" "beaver_app" {
   execution_role_arn       = aws_iam_role.beaver_ecs_execution_role.arn
   task_role_arn            = aws_iam_role.beaver_ecs_task_role.arn
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
   container_definitions = jsonencode([
     {
       name      = "beaver-app"
-      image     = "${aws_ecr_repository.beaver_app.repository_url}:latest"
+      image     = local.beaver_app_image
       essential = true
 
       portMappings = [
@@ -68,12 +119,14 @@ resource "aws_ecs_task_definition" "beaver_app" {
         { name = "S3_BUCKET", value = aws_s3_bucket.beaver_data.id },
         { name = "AWS_REGION", value = var.aws_region },
         { name = "CLOUDFRONT_DOMAIN", value = "assets.${var.domain_name}" },
+        { name = "CLOUDFRONT_DISTRIBUTION_ID", value = aws_cloudfront_distribution.beaver.id },
         { name = "NEXTAUTH_URL", value = "https://app.${var.domain_name}" },
         { name = "STEP_FUNCTION_ARN", value = aws_sfn_state_machine.beaver_process_blueprint.arn },
         { name = "LABEL_STUDIO_URL", value = "https://labelstudio.${var.domain_name}" },
+        { name = "LABEL_STUDIO_INSTANCE_ID", value = "${aws_efs_file_system.label_studio.id}:${var.label_studio_instance_generation}" },
         { name = "AWS_ACCOUNT", value = data.aws_caller_identity.current.account_id },
-        { name = "ROOT_ADMIN_EMAIL", value = var.label_studio_admin_email },
-        { name = "YOLO_ECR_IMAGE", value = "${aws_ecr_repository.beaver_yolo_pipeline.repository_url}:latest" },
+        { name = "ROOT_ADMIN_EMAIL", value = var.root_admin_email },
+        { name = "YOLO_ECR_IMAGE", value = "${aws_ecr_repository.beaver_yolo_pipeline.repository_url}@${var.beaver_yolo_image_digest}" },
         { name = "SAGEMAKER_ROLE_ARN", value = aws_iam_role.beaver_sagemaker_role.arn },
         { name = "LAMBDA_CV_ENABLED", value = "true" },
         { name = "LAMBDA_CV_FUNCTION_NAME", value = aws_lambda_function.beaver_cv_pipeline.function_name },
@@ -82,7 +135,7 @@ resource "aws_ecs_task_definition" "beaver_app" {
       secrets = [
         {
           name      = "DATABASE_URL"
-          valueFrom = aws_secretsmanager_secret.database_url.arn
+          valueFrom = local.database_url_secret_value_from
         },
         {
           name      = "NEXTAUTH_SECRET"
@@ -104,14 +157,6 @@ resource "aws_ecs_task_definition" "beaver_app" {
           name      = "LABEL_STUDIO_API_KEY"
           valueFrom = aws_secretsmanager_secret.ls_api_key.arn
         },
-        {
-          name      = "LABEL_STUDIO_ADMIN_EMAIL"
-          valueFrom = aws_secretsmanager_secret.ls_admin_email.arn
-        },
-        {
-          name      = "LABEL_STUDIO_ADMIN_PASSWORD"
-          valueFrom = aws_secretsmanager_secret.ls_admin_password.arn
-        },
       ]
 
       logConfiguration = {
@@ -132,6 +177,52 @@ resource "aws_ecs_task_definition" "beaver_app" {
       }
     }
   ])
+}
+
+###############################################################################
+# Singleton schema migrator — invoked only by scripts/p2-schema-cutover.sh
+###############################################################################
+
+resource "aws_cloudwatch_log_group" "beaver_schema_migrator" {
+  name              = "/ecs/blueprintparser-schema-migrator"
+  retention_in_days = 30
+}
+
+resource "aws_ecs_task_definition" "beaver_schema_migrator" {
+  family                   = "beaver-schema-migrator"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = 512
+  memory                   = 1024
+  execution_role_arn       = aws_iam_role.beaver_ecs_execution_role.arn
+  task_role_arn            = aws_iam_role.beaver_schema_migrator_task_role.arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
+  container_definitions = jsonencode([{
+    name      = "beaver-schema-migrator"
+    image     = local.beaver_app_image
+    essential = true
+    command   = ["./entrypoint.sh", "migrate"]
+    environment = [
+      { name = "NODE_ENV", value = "production" },
+    ]
+    secrets = [{
+      name      = "DATABASE_URL"
+      valueFrom = local.database_url_secret_value_from
+    }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.beaver_schema_migrator.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "schema-migrator"
+      }
+    }
+  }])
 }
 
 ###############################################################################
@@ -212,7 +303,30 @@ resource "aws_lb" "beaver" {
   subnets            = aws_subnet.public[*].id
   idle_timeout       = 300
 
+  # middleware trusts only the rightmost X-Forwarded-For hop, which is
+  # authoritative precisely because the ALB appends the socket client address.
+  # Keep ports disabled so that hop remains a canonical bare IP literal.
+  xff_header_processing_mode = "append"
+  enable_xff_client_port     = false
+
   enable_deletion_protection = true
+
+  # Request targets can contain Label Studio's opaque asset bearer. The
+  # dedicated destination is private, SSE-S3 encrypted, and expires after the
+  # shortest S3 lifecycle interval while retaining a bounded diagnostic trail.
+  access_logs {
+    bucket  = aws_s3_bucket.beaver_alb_access_logs.id
+    prefix  = "alb-logs"
+    enabled = true
+  }
+
+  depends_on = [
+    aws_s3_bucket_ownership_controls.beaver_alb_access_logs,
+    aws_s3_bucket_server_side_encryption_configuration.beaver_alb_access_logs,
+    aws_s3_bucket_public_access_block.beaver_alb_access_logs,
+    aws_s3_bucket_lifecycle_configuration.beaver_alb_access_logs,
+    aws_s3_bucket_policy.beaver_alb_access_logs,
+  ]
 
   tags = {
     Name = "beaver-alb"
@@ -272,11 +386,12 @@ resource "aws_lb_listener" "beaver_https" {
 ###############################################################################
 
 resource "aws_ecs_service" "beaver_app" {
-  name            = "beaver-app"
-  cluster         = aws_ecs_cluster.beaver.id
-  task_definition = aws_ecs_task_definition.beaver_app.arn
+  name                   = "beaver-app"
+  cluster                = aws_ecs_cluster.beaver.id
+  task_definition        = aws_ecs_task_definition.beaver_app.arn
   desired_count          = var.ecs_desired_count
   launch_type            = "FARGATE"
+  platform_version       = "1.4.0"
   enable_execute_command = true
 
   network_configuration {
@@ -299,14 +414,22 @@ resource "aws_ecs_service" "beaver_app" {
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
 
-  depends_on = [aws_lb_listener.beaver_https]
+  tags = {
+    BlueprintParserWriterMode      = local.beaver_writer_outage_tuple ? "outage" : "live"
+    BlueprintParserWriterModeEpoch = sha256(terraform_data.beaver_writer_mode_epoch.id)
+  }
 
-  # deploy.sh (--force-new-deployment) and any out-of-band task-def registrations
-  # advance the service's task_definition revision outside Terraform. Without this,
-  # `terraform apply` reverts the service to the TF-managed revision (e.g. 19 -> 17),
-  # silently rolling back deploy-time changes. Ignoring task_definition lets the
-  # deploy pipeline own the running revision while Terraform still manages counts,
-  # networking, LB wiring, and deployment policy.
+  depends_on = [
+    aws_lb_listener.beaver_https,
+    terraform_data.beaver_writer_operational_tuple,
+    terraform_data.beaver_writer_mode_epoch,
+  ]
+
+  # Terraform registers one digest-pinned definition for every process role, but
+  # it must never bind a new app revision as a side effect of `terraform apply`.
+  # deploy.sh performs a remote schema equality check before ordinary activation;
+  # p2-schema-cutover.sh binds the compatibility-boundary revision only at desired
+  # count zero. This ignore is therefore a safety boundary, not drift tolerance.
   lifecycle {
     ignore_changes = [task_definition]
   }
@@ -322,6 +445,14 @@ resource "aws_appautoscaling_target" "beaver_ecs" {
   resource_id        = "service/${aws_ecs_cluster.beaver.name}/${aws_ecs_service.beaver_app.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
+
+  depends_on = [terraform_data.beaver_writer_operational_tuple]
+
+  suspended_state {
+    dynamic_scaling_in_suspended  = !var.ecs_autoscaling_enabled
+    dynamic_scaling_out_suspended = !var.ecs_autoscaling_enabled
+    scheduled_scaling_suspended   = !var.ecs_autoscaling_enabled
+  }
 }
 
 resource "aws_appautoscaling_policy" "beaver_cpu" {
@@ -380,12 +511,17 @@ resource "aws_ecs_task_definition" "beaver_cpu_pipeline" {
   execution_role_arn       = aws_iam_role.beaver_ecs_execution_role.arn
   task_role_arn            = aws_iam_role.beaver_ecs_task_role.arn
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
   container_definitions = jsonencode([
     {
       name      = "beaver-cpu-pipeline"
-      image     = "${aws_ecr_repository.beaver_app.repository_url}:latest"
+      image     = local.beaver_app_image
       essential = true
-      command   = ["node", "scripts/process-worker.js"]
+      command   = ["./entrypoint.sh", "worker", "node", "scripts/process-worker.js"]
 
       environment = [
         { name = "NODE_ENV", value = "production" },
@@ -397,7 +533,7 @@ resource "aws_ecs_task_definition" "beaver_cpu_pipeline" {
       secrets = [
         {
           name      = "DATABASE_URL"
-          valueFrom = aws_secretsmanager_secret.database_url.arn
+          valueFrom = local.database_url_secret_value_from
         },
       ]
 
@@ -528,8 +664,8 @@ resource "aws_ecs_task_definition" "beaver_label_studio" {
     name = "label-studio-data"
 
     efs_volume_configuration {
-      file_system_id          = aws_efs_file_system.label_studio.id
-      transit_encryption      = "ENABLED"
+      file_system_id     = aws_efs_file_system.label_studio.id
+      transit_encryption = "ENABLED"
       authorization_config {
         access_point_id = aws_efs_access_point.label_studio.id
         iam             = "DISABLED"
@@ -540,7 +676,7 @@ resource "aws_ecs_task_definition" "beaver_label_studio" {
   container_definitions = jsonencode([
     {
       name      = "label-studio"
-      image     = "heartexlabs/label-studio:latest"
+      image     = var.label_studio_image
       essential = true
 
       portMappings = [

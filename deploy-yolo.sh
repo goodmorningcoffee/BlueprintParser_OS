@@ -1,56 +1,53 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# BuildKit required for cache mounts in Dockerfile.yolo (big torch download).
-export DOCKER_BUILDKIT=1
-
-# ─────────────────────────────────────────────────────────────────────────────
-# YOLO Pipeline Deploy Script
-# Builds GPU inference image and pushes to ECR for SageMaker.
-# ─────────────────────────────────────────────────────────────────────────────
-
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-[ -f "${PROJECT_DIR}/.deploy.env" ] && source "${PROJECT_DIR}/.deploy.env"
+# shellcheck source=scripts/lib/ecs-schema-tools.sh
+source "${PROJECT_DIR}/scripts/lib/ecs-schema-tools.sh"
+DEPLOY_ENV_FILE="${BP_DEPLOY_ENV_FILE:-${PROJECT_DIR}/.deploy.env}"
+[ -f "${DEPLOY_ENV_FILE}" ] && source "${DEPLOY_ENV_FILE}"
 
-: "${AWS_ACCOUNT:?ERROR: Set AWS_ACCOUNT in .deploy.env or environment}"
-: "${AWS_REGION:?ERROR: Set AWS_REGION in .deploy.env or environment}"
-ECR_REPO="${ECR_YOLO_REPO:-${ECR_REPO:?ERROR: Set ECR_YOLO_REPO or ECR_REPO in .deploy.env}}"
+bp_require_env AWS_ACCOUNT AWS_REGION
+bp_assert_caller_account
+command -v docker >/dev/null 2>&1 || bp_die "docker is required"
+
+ECR_YOLO_REPO="${ECR_YOLO_REPO:-beaver-yolo-pipeline}"
+[ "${ECR_YOLO_REPO}" = "beaver-yolo-pipeline" ] ||
+  bp_die "ECR_YOLO_REPO must be the canonical beaver-yolo-pipeline repository"
+
 ECR_BASE="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+IMAGE_TAG="${BP_YOLO_IMAGE_TAG:-yolo-deploy-$(git -C "${PROJECT_DIR}" rev-parse --short=12 HEAD)-$(date -u +%Y%m%d%H%M%S)}"
+LOCAL_IMAGE="${ECR_YOLO_REPO}:${IMAGE_TAG}"
+ECR_TAG="${ECR_BASE}/${ECR_YOLO_REPO}:${IMAGE_TAG}"
 
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+if bp_aws ecr describe-images \
+  --repository-name "${ECR_YOLO_REPO}" \
+  --image-ids "imageTag=${IMAGE_TAG}" \
+  --region "${AWS_REGION}" >/dev/null 2>&1; then
+  bp_die "refusing to reuse existing immutable YOLO tag ${IMAGE_TAG}"
+fi
 
-echo ""
-echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BOLD}  YOLO Pipeline → Deploy to ECR${NC}"
-echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
+export DOCKER_BUILDKIT=1
+bp_aws ecr get-login-password --region "${AWS_REGION}" |
+  docker login --username AWS --password-stdin "${ECR_BASE}" >/dev/null
+docker build --platform linux/amd64 -f Dockerfile.yolo -t "${LOCAL_IMAGE}" "${PROJECT_DIR}"
+docker tag "${LOCAL_IMAGE}" "${ECR_TAG}"
+docker push "${ECR_TAG}"
 
-# 1. ECR Login
-echo -e "${GREEN}▶${NC} Logging into ECR..."
-aws ecr get-login-password --region "${AWS_REGION}" \
-    | docker login --username AWS --password-stdin "${ECR_BASE}" 2>/dev/null
-echo -e "${GREEN}✔${NC} ECR login successful"
+DIGEST=$(bp_aws ecr describe-images \
+  --repository-name "${ECR_YOLO_REPO}" \
+  --image-ids "imageTag=${IMAGE_TAG}" \
+  --region "${AWS_REGION}" \
+  --query 'imageDetails[0].imageDigest' \
+  --output text)
+bp_validate_digest "${DIGEST}"
 
-# 2. Build
-echo -e "\n${GREEN}▶${NC} Building YOLO inference image..."
-docker build -f Dockerfile.yolo -t "${ECR_REPO}:latest" "${PROJECT_DIR}"
-echo -e "${GREEN}✔${NC} Build complete"
+cat <<EOF
+Published immutable YOLO processing image:
+  ${ECR_BASE}/${ECR_YOLO_REPO}@${DIGEST}
 
-# 3. Tag & Push
-ECR_URL="${ECR_BASE}/${ECR_REPO}:latest"
-echo -e "\n${GREEN}▶${NC} Pushing to ${ECR_URL}..."
-docker tag "${ECR_REPO}:latest" "${ECR_URL}"
-docker push "${ECR_URL}"
-echo -e "${GREEN}✔${NC} Push complete"
-
-# 4. Done (no ECS update — SageMaker pulls the image directly)
-echo ""
-echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}✔${NC} ${BOLD}YOLO image deployed!${NC}"
-echo ""
-echo -e "  SageMaker will pull this image when a YOLO job starts."
-echo -e "  Image: ${CYAN}${ECR_URL}${NC}"
-echo ""
+Review and apply the digest through Terraform; SageMaker never consumes a tag:
+  export TF_VAR_beaver_yolo_image_digest=${DIGEST}
+  terraform -chdir=infrastructure/terraform plan
+  terraform -chdir=infrastructure/terraform apply
+EOF

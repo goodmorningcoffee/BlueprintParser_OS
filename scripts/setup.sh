@@ -13,7 +13,7 @@
 # Usage: bash scripts/setup.sh
 # ──────────────────────────────────────────────────────────────
 
-set -e
+set -euo pipefail
 
 echo ""
 echo "  BlueprintParser — First-Time Setup"
@@ -24,26 +24,31 @@ echo ""
 command -v node >/dev/null 2>&1 || { echo "Error: Node.js is required. Install it from https://nodejs.org"; exit 1; }
 command -v npx >/dev/null 2>&1 || { echo "Error: npx is required (comes with Node.js)"; exit 1; }
 
-if [ ! -f .env.local ] && [ -z "$DATABASE_URL" ]; then
+if [ ! -f .env.local ] && [ -z "${DATABASE_URL:-}" ]; then
   echo "Error: No .env.local found and DATABASE_URL not set."
   echo "  Copy .env.example to .env.local and fill in DATABASE_URL first."
   echo "  Example: cp .env.example .env.local"
   exit 1
 fi
 
-# Source .env.local if it exists (for DATABASE_URL)
-if [ -f .env.local ]; then
-  export $(grep -v '^#' .env.local | grep -v '^\s*$' | xargs)
+# Read only DATABASE_URL through dotenv; never execute .env.local as shell code.
+if [ -f .env.local ] && [ -z "${DATABASE_URL:-}" ]; then
+  DATABASE_URL=$(node -e "
+const { config } = require('dotenv');
+config({ path: '.env.local', quiet: true });
+process.stdout.write(process.env.DATABASE_URL || '');
+")
+  export DATABASE_URL
 fi
 
-if [ -z "$DATABASE_URL" ]; then
+if [ -z "${DATABASE_URL:-}" ]; then
   echo "Error: DATABASE_URL not set in .env.local"
   exit 1
 fi
 
 # ── Run database migrations ──────────────────────────────────
 echo "Step 1: Running database migrations..."
-npx drizzle-kit migrate 2>&1 | tail -3
+npm run db:migrate --silent 2>&1 | tail -3
 echo "  Migrations complete."
 echo ""
 
@@ -74,47 +79,14 @@ done
 echo ""
 echo "Step 3: Creating admin account..."
 
-# Pass credentials via env vars (not command line args) for security
+# Pass credentials via env vars (not command line args) for security. The
+# invoked writer independently rechecks local database authority immediately
+# before loading the PostgreSQL driver.
 export SETUP_EMAIL="$ADMIN_EMAIL"
 export SETUP_USER="$ADMIN_USER"
 export SETUP_PASS="$ADMIN_PASS"
 
-node -e "
-const bcrypt = require('bcrypt');
-const { Pool } = require('pg');
-
-async function run() {
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
-  });
-
-  const hash = await bcrypt.hash(process.env.SETUP_PASS, 12);
-
-  // Create default company if none exists
-  let companyId;
-  const existing = await pool.query('SELECT id FROM companies LIMIT 1');
-  if (existing.rows.length > 0) {
-    companyId = existing.rows[0].id;
-  } else {
-    const result = await pool.query(
-      \"INSERT INTO companies (name, public_id) VALUES ('Default', 'default') RETURNING id\"
-    );
-    companyId = result.rows[0].id;
-  }
-
-  // Create or update admin user
-  await pool.query(
-    \"INSERT INTO users (email, username, password_hash, role, is_root_admin, company_id) VALUES (\\\$1, \\\$2, \\\$3, 'admin', true, \\\$4) ON CONFLICT (email) DO UPDATE SET is_root_admin = true, password_hash = \\\$3, role = 'admin'\",
-    [process.env.SETUP_EMAIL, process.env.SETUP_USER, hash, companyId]
-  );
-
-  console.log('  Root admin created: ' + process.env.SETUP_EMAIL);
-  await pool.end();
-}
-
-run().catch(err => { console.error('  Error:', err.message); process.exit(1); });
-" 2>&1
+node scripts/create-local-root-admin.mjs 2>&1
 
 echo ""
 echo "  Setup complete!"

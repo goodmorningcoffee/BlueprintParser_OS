@@ -1,204 +1,91 @@
 #!/usr/bin/env bash
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Beaver Cost Control TUI
-# Manage SageMaker, ECS, and Step Functions from your terminal.
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-[ -f "${SCRIPT_DIR}/../.deploy.env" ] && source "${SCRIPT_DIR}/../.deploy.env"
+# Read-only production cost and writer-state report. Writer counts are owned by
+# Terraform and app activation is owned by deploy.sh / p2-schema-cutover.sh.
 
-ROLE_NAME="${ECS_TASK_ROLE:-blueprintparser-ecs-task-role}"
-SFN_ROLE="${SFN_ROLE:-blueprintparser-step-functions-role}"
-SM_KILL_POLICY="sagemaker-kill-switch"
-SFN_KILL_POLICY="stepfunctions-kill-switch"
-REGION="${AWS_REGION:-us-east-1}"
-ECS_CLUSTER="${ECS_CLUSTER:-blueprintparser-cluster}"
-ECS_SERVICE="${ECS_SERVICE:-blueprintparser-app}"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/lib/ecs-schema-tools.sh
+source "${PROJECT_DIR}/scripts/lib/ecs-schema-tools.sh"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+DEPLOY_ENV_FILE="${BP_DEPLOY_ENV_FILE:-${PROJECT_DIR}/.deploy.env}"
+[ -f "${DEPLOY_ENV_FILE}" ] && source "${DEPLOY_ENV_FILE}"
 
-# ─── Status checks ───────────────────────────────────────────
+readonly CANONICAL_ECS_CLUSTER="beaver-cluster"
+readonly CANONICAL_ECS_SERVICE="beaver-app"
 
-check_sagemaker() {
-  if aws iam get-role-policy --role-name "$ROLE_NAME" --policy-name "$SM_KILL_POLICY" 2>/dev/null | grep -q "Deny"; then
-    echo "BLOCKED"
-  else
-    echo "ENABLED"
-  fi
+usage() {
+  cat >&2 <<'EOF'
+Usage: scripts/cost-control.sh [status]
+
+Prints a read-only production status and cost report. This command never scales
+ECS, changes IAM, or claims that a state-machine execution role blocks callers.
+EOF
+  exit 64
 }
 
-check_stepfunctions() {
-  if aws iam get-role-policy --role-name "$SFN_ROLE" --policy-name "$SFN_KILL_POLICY" 2>/dev/null | grep -q "Deny"; then
-    echo "BLOCKED"
-  else
-    echo "ENABLED"
-  fi
-}
+case "${1:-status}" in
+  status) [ "$#" -le 1 ] || usage ;;
+  *) usage ;;
+esac
 
-check_ecs_service() {
-  local desired
-  desired=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --region "$REGION" --query 'services[0].desiredCount' --output text 2>/dev/null)
-  echo "${desired:-unknown}"
-}
+bp_require_env AWS_ACCOUNT AWS_REGION ECS_CLUSTER ECS_SERVICE
+[ "${ECS_CLUSTER}" = "${CANONICAL_ECS_CLUSTER}" ] ||
+  bp_die "ECS_CLUSTER must be ${CANONICAL_ECS_CLUSTER}"
+[ "${ECS_SERVICE}" = "${CANONICAL_ECS_SERVICE}" ] ||
+  bp_die "ECS_SERVICE must be ${CANONICAL_ECS_SERVICE}"
+bp_assert_caller_account
 
-get_running_tasks() {
-  aws ecs list-tasks --cluster "$ECS_CLUSTER" --region "$REGION" --query 'taskArns | length(@)' --output text 2>/dev/null || echo "?"
-}
+task_definition=$(bp_aws ecs describe-services \
+  --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+  --region "${AWS_REGION}" --query 'services[0].taskDefinition' --output text)
+desired_count=$(bp_aws ecs describe-services \
+  --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+  --region "${AWS_REGION}" --query 'services[0].desiredCount' --output text)
+running_count=$(bp_aws ecs describe-services \
+  --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+  --region "${AWS_REGION}" --query 'services[0].runningCount' --output text)
+pending_count=$(bp_aws ecs describe-services \
+  --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+  --region "${AWS_REGION}" --query 'services[0].pendingCount' --output text)
+platform_version=$(bp_aws ecs describe-services \
+  --cluster "${ECS_CLUSTER}" --services "${ECS_SERVICE}" \
+  --region "${AWS_REGION}" --query 'services[0].platformVersion' --output text)
 
-get_monthly_cost_estimate() {
-  # ECS app cost (always on): 2 vCPU / 4 GB
-  local ecs_hourly="0.137"  # ~$0.08 CPU + $0.018 mem
-  local ecs_monthly
-  ecs_monthly=$(echo "$ecs_hourly * 720" | bc 2>/dev/null || echo "~99")
-  echo "\$${ecs_monthly}/mo"
-}
+state_machine_arn="arn:aws:states:${AWS_REGION}:${AWS_ACCOUNT}:stateMachine:beaver-process-blueprint"
+running_executions=$(bp_aws stepfunctions list-executions \
+  --state-machine-arn "${state_machine_arn}" --status-filter RUNNING \
+  --region "${AWS_REGION}" --query 'length(executions)' --output text)
 
-# ─── Actions ─────────────────────────────────────────────────
+cat <<EOF
+BlueprintParser read-only production report
 
-toggle_sagemaker() {
-  local status
-  status=$(check_sagemaker)
-  if [ "$status" = "BLOCKED" ]; then
-    echo -e "${GREEN}Restoring SageMaker access...${NC}"
-    aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$SM_KILL_POLICY" 2>/dev/null
-    echo -e "${GREEN}SageMaker ENABLED${NC}"
-  else
-    echo -e "${RED}Blocking SageMaker access...${NC}"
-    aws iam put-role-policy \
-      --role-name "$ROLE_NAME" \
-      --policy-name "$SM_KILL_POLICY" \
-      --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"sagemaker:*","Resource":"*"}]}'
-    echo -e "${RED}SageMaker BLOCKED${NC}"
-  fi
-}
+App task definition:       ${task_definition}
+App desired/running/pending: ${desired_count}/${running_count}/${pending_count}
+App Fargate platform:      ${platform_version}
+Running Step Functions:    ${running_executions}
+EOF
 
-toggle_stepfunctions() {
-  local status
-  status=$(check_stepfunctions)
-  if [ "$status" = "BLOCKED" ]; then
-    echo -e "${GREEN}Restoring Step Functions access...${NC}"
-    aws iam delete-role-policy --role-name "$SFN_ROLE" --policy-name "$SFN_KILL_POLICY" 2>/dev/null
-    echo -e "${GREEN}Step Functions ENABLED (uploads will process)${NC}"
-  else
-    echo -e "${RED}Blocking Step Functions access...${NC}"
-    aws iam put-role-policy \
-      --role-name "$SFN_ROLE" \
-      --policy-name "$SFN_KILL_POLICY" \
-      --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":["states:StartExecution","states:StopExecution"],"Resource":"*"}]}'
-    echo -e "${RED}Step Functions BLOCKED (no new processing jobs)${NC}"
-  fi
-}
+echo
+echo "Recent SageMaker processing jobs (read-only):"
+bp_aws sagemaker list-processing-jobs \
+  --region "${AWS_REGION}" \
+  --sort-by CreationTime \
+  --sort-order Descending \
+  --max-results 10 \
+  --query 'ProcessingJobSummaries[].{Name:ProcessingJobName,Status:ProcessingJobStatus,Created:CreationTime}' \
+  --output table
 
-scale_ecs() {
-  local current
-  current=$(check_ecs_service)
-  echo -e "Current desired count: ${BOLD}${current}${NC}"
-  echo -n "New desired count (0 to stop, 1 to run): "
-  read -r count
-  if [[ "$count" =~ ^[0-9]+$ ]]; then
-    aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --desired-count "$count" --region "$REGION" --output text --query 'service.serviceName' > /dev/null
-    echo -e "${GREEN}ECS service scaled to ${count}${NC}"
-  else
-    echo -e "${RED}Invalid number${NC}"
-  fi
-}
+cat <<'EOF'
 
-emergency_shutdown() {
-  echo -e "${RED}${BOLD}EMERGENCY SHUTDOWN${NC}"
-  echo -e "${RED}This will:${NC}"
-  echo -e "  - Block SageMaker (no YOLO jobs)"
-  echo -e "  - Block Step Functions (no processing)"
-  echo -e "  - Scale ECS to 0 (app goes offline)"
-  echo ""
-  echo -n "Type 'SHUTDOWN' to confirm: "
-  read -r confirm
-  if [ "$confirm" = "SHUTDOWN" ]; then
-    aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name "$SM_KILL_POLICY" \
-      --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"sagemaker:*","Resource":"*"}]}'
-    aws iam put-role-policy --role-name "$SFN_ROLE" --policy-name "$SFN_KILL_POLICY" \
-      --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":["states:StartExecution","states:StopExecution"],"Resource":"*"}]}'
-    aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --desired-count 0 --region "$REGION" --output text > /dev/null
-    echo -e "${RED}${BOLD}ALL SERVICES SHUT DOWN${NC}"
-    echo -e "Run this script again to restore services."
-  else
-    echo "Cancelled."
-  fi
-}
+This report does not mutate writer state. Change app desired/minimum counts and
+the maintenance schedule only through reviewed Terraform plan/apply. Use
+deploy.sh activate for an ordinary digest rollout. During the P2 boundary,
+follow scripts/p2-schema-cutover.sh and run verify-restored before reopening
+labeling.
 
-restore_all() {
-  echo -e "${GREEN}Restoring all services...${NC}"
-  aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$SM_KILL_POLICY" 2>/dev/null
-  aws iam delete-role-policy --role-name "$SFN_ROLE" --policy-name "$SFN_KILL_POLICY" 2>/dev/null
-  aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --desired-count 1 --region "$REGION" --output text > /dev/null
-  echo -e "${GREEN}${BOLD}ALL SERVICES RESTORED${NC}"
-}
-
-view_recent_costs() {
-  echo -e "${CYAN}Fetching recent SageMaker jobs...${NC}"
-  aws sagemaker list-processing-jobs \
-    --region "$REGION" \
-    --sort-by CreationTime \
-    --sort-order Descending \
-    --max-results 10 \
-    --query 'ProcessingJobSummaries[].{Name:ProcessingJobName,Status:ProcessingJobStatus,Created:CreationTime}' \
-    --output table 2>/dev/null || echo "No recent jobs or insufficient permissions."
-  echo ""
-
-  echo -e "${CYAN}Active ECS tasks:${NC}"
-  aws ecs list-tasks --cluster "$ECS_CLUSTER" --region "$REGION" \
-    --query 'taskArns' --output table 2>/dev/null || echo "Could not fetch tasks."
-}
-
-# ─── Main loop ───────────────────────────────────────────────
-
-while true; do
-  clear
-  local_sm=$(check_sagemaker)
-  local_sfn=$(check_stepfunctions)
-  local_ecs=$(check_ecs_service)
-  local_tasks=$(get_running_tasks)
-
-  # Color status
-  if [ "$local_sm" = "BLOCKED" ]; then sm_color="${RED}BLOCKED${NC}"; else sm_color="${GREEN}ENABLED${NC}"; fi
-  if [ "$local_sfn" = "BLOCKED" ]; then sfn_color="${RED}BLOCKED${NC}"; else sfn_color="${GREEN}ENABLED${NC}"; fi
-  if [ "$local_ecs" = "0" ]; then ecs_color="${RED}OFFLINE${NC}"; else ecs_color="${GREEN}${local_ecs} instance(s)${NC}"; fi
-
-  echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo -e "${BOLD}  Beaver Cost Control${NC}"
-  echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo ""
-  echo -e "  SageMaker (YOLO):    $sm_color"
-  echo -e "  Step Functions:      $sfn_color"
-  echo -e "  ECS App:             $ecs_color"
-  echo -e "  Running tasks:       ${local_tasks}"
-  echo ""
-  echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo ""
-  echo -e "  ${BOLD}1${NC}  Toggle SageMaker   (YOLO inference)"
-  echo -e "  ${BOLD}2${NC}  Toggle Step Funcs   (PDF processing)"
-  echo -e "  ${BOLD}3${NC}  Scale ECS           (web app instances)"
-  echo -e "  ${BOLD}4${NC}  View recent jobs    (SageMaker + ECS)"
-  echo -e "  ${BOLD}5${NC}  Restore all         (enable everything)"
-  echo -e "  ${RED}${BOLD}9${NC}  ${RED}EMERGENCY SHUTDOWN${NC}  (kill everything)"
-  echo -e "  ${BOLD}0${NC}  Exit"
-  echo ""
-  echo -n "  > "
-  read -r choice
-
-  case "$choice" in
-    1) toggle_sagemaker; echo ""; read -rp "Press Enter to continue..." ;;
-    2) toggle_stepfunctions; echo ""; read -rp "Press Enter to continue..." ;;
-    3) scale_ecs; echo ""; read -rp "Press Enter to continue..." ;;
-    4) view_recent_costs; echo ""; read -rp "Press Enter to continue..." ;;
-    5) restore_all; echo ""; read -rp "Press Enter to continue..." ;;
-    9) emergency_shutdown; echo ""; read -rp "Press Enter to continue..." ;;
-    0|q) echo "Bye."; exit 0 ;;
-    *) ;;
-  esac
-done
+Step Functions start authorization belongs to callers, not the state-machine
+execution role. This report therefore shows observed executions but never
+reports the state machine as blocked; emergency admission control must be
+applied to every caller principal and verified separately.
+EOF

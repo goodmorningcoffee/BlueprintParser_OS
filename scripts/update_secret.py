@@ -4,18 +4,14 @@ Update a secret across local .env.local, AWS Secrets Manager, and ECS.
 
 Usage:
   python3 scripts/update_secret.py GROQ_API_KEY                    # interactive, full chain
-  python3 scripts/update_secret.py GROQ_API_KEY gsk_new_key        # pass value directly
   python3 scripts/update_secret.py GROQ_API_KEY --local-only       # skip AWS
-  python3 scripts/update_secret.py GROQ_API_KEY gsk_x --no-restart # skip ECS redeploy
 """
 
-import os
-import sys
 import getpass
+import os
 import re
-import ssl
 import subprocess
-import json
+import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -25,6 +21,7 @@ ENV_EXAMPLE = Path(__file__).resolve().parent.parent / ".env.example"
 TFVARS_FILE = Path(__file__).resolve().parent.parent / "infrastructure" / "terraform" / "terraform.tfvars"
 
 DEPLOY_ENV = Path(__file__).resolve().parent.parent / ".deploy.env"
+os.umask(0o077)
 
 # Read from .deploy.env if it exists
 _deploy_config: dict[str, str] = {}
@@ -36,9 +33,10 @@ if DEPLOY_ENV.exists():
             _deploy_config[k.strip()] = v.strip()
 
 AWS_REGION = os.environ.get("AWS_REGION", _deploy_config.get("AWS_REGION", "us-east-1"))
-SECRETS_PREFIX = os.environ.get("SECRETS_PREFIX", _deploy_config.get("SECRETS_PREFIX", "beaver"))
-ECS_CLUSTER = os.environ.get("ECS_CLUSTER", _deploy_config.get("ECS_CLUSTER", "blueprintparser-cluster"))
-ECS_SERVICE = os.environ.get("ECS_SERVICE", _deploy_config.get("ECS_SERVICE", "blueprintparser-app"))
+AWS_ACCOUNT = os.environ.get("AWS_ACCOUNT", _deploy_config.get("AWS_ACCOUNT", ""))
+ECS_CLUSTER = os.environ.get("ECS_CLUSTER", _deploy_config.get("ECS_CLUSTER", ""))
+ECS_SERVICE = os.environ.get("ECS_SERVICE", _deploy_config.get("ECS_SERVICE", ""))
+ECR_REPO = os.environ.get("ECR_REPO", _deploy_config.get("ECR_REPO", ""))
 
 # Known key validators
 VALIDATORS = {
@@ -50,6 +48,11 @@ VALIDATORS = {
         "prefix": "sk-ant-",
     },
 }
+ALLOWED_KEY_NAMES = frozenset(VALIDATORS)
+CANONICAL_SECRET_IDS = {
+    "ANTHROPIC_API_KEY": "beaver/ANTHROPIC_API_KEY",
+    "GROQ_API_KEY": "beaver/GROQ_API_KEY",
+}
 
 
 def validate_key(key_name: str, value: str) -> bool:
@@ -57,6 +60,10 @@ def validate_key(key_name: str, value: str) -> bool:
     spec = VALIDATORS.get(key_name)
     if not spec:
         return True  # no validation for unknown keys
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        print("  API keys may contain only letters, digits, underscore, and hyphen")
+        return False
 
     # Prefix check
     expected_prefix = spec.get("prefix")
@@ -69,21 +76,15 @@ def validate_key(key_name: str, value: str) -> bool:
         return True
 
     req = Request(url, headers={"Authorization": f"Bearer {value}"})
-    for ctx in [None, ssl._create_unverified_context()]:
-        try:
-            with urlopen(req, timeout=10, context=ctx) as resp:
-                if resp.status == 200:
-                    if ctx is not None:
-                        print("  (SSL verification skipped — missing CA certs)")
-                    return True
-        except HTTPError as e:
-            print(f"  API returned {e.code}: {e.reason}")
-            return False
-        except URLError as e:
-            if "CERTIFICATE_VERIFY_FAILED" in str(e.reason) and ctx is None:
-                continue
-            print(f"  Network error: {e.reason}")
-            return False
+    try:
+        with urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except HTTPError as e:
+        print(f"  API returned {e.code}: {e.reason}")
+        return False
+    except URLError as e:
+        print(f"  Network/TLS error: {e.reason}")
+        return False
     return False
 
 
@@ -129,12 +130,12 @@ def update_tfvars(key_name: str, value: str) -> bool:
     return True
 
 
-def run_aws(args: list[str]) -> tuple[bool, str]:
+def run_aws(args: list[str], stdin_text: str | None = None) -> tuple[bool, str]:
     """Run an AWS CLI command. Returns (success, output)."""
     try:
         result = subprocess.run(
             ["aws"] + args,
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, input=stdin_text,
         )
         if result.returncode == 0:
             return True, result.stdout.strip()
@@ -147,13 +148,13 @@ def run_aws(args: list[str]) -> tuple[bool, str]:
 
 def update_secrets_manager(key_name: str, value: str) -> bool:
     """Update the secret in AWS Secrets Manager."""
-    secret_id = f"{SECRETS_PREFIX}/{key_name}"
+    secret_id = CANONICAL_SECRET_IDS[key_name]
     ok, output = run_aws([
-        "secretsmanager", "update-secret",
+        "secretsmanager", "put-secret-value",
         "--secret-id", secret_id,
-        "--secret-string", value,
+        "--secret-string", "file:///dev/stdin",
         "--region", AWS_REGION,
-    ])
+    ], stdin_text=value)
     if ok:
         print(f"  Updated Secrets Manager: {secret_id}")
         return True
@@ -168,46 +169,95 @@ def update_secrets_manager(key_name: str, value: str) -> bool:
     return False
 
 
-def restart_ecs() -> bool:
-    """Force ECS to redeploy and pick up new secrets."""
-    print(f"  Restarting ECS service {ECS_SERVICE}...")
+def assert_cloud_identity() -> bool:
+    """Refuse cloud writes outside the one canonical deployment identity."""
+    if not re.fullmatch(r"[0-9]{12}", AWS_ACCOUNT):
+        print("  AWS_ACCOUNT must be the canonical 12-digit account", file=sys.stderr)
+        return False
+    if ECS_CLUSTER != "beaver-cluster" or ECS_SERVICE != "beaver-app" or ECR_REPO != "beaver-app":
+        print("  Cloud secret updates require canonical beaver cluster/service/repository", file=sys.stderr)
+        return False
     ok, output = run_aws([
-        "ecs", "update-service",
-        "--cluster", ECS_CLUSTER,
-        "--service", ECS_SERVICE,
-        "--force-new-deployment",
+        "sts", "get-caller-identity",
+        "--query", "Account",
+        "--output", "text",
         "--region", AWS_REGION,
     ])
-    if ok:
-        print(f"  ECS redeploy triggered — new tasks will pick up the updated secret")
-        return True
+    if not ok or output != AWS_ACCOUNT:
+        print("  AWS caller account identity does not match AWS_ACCOUNT", file=sys.stderr)
+        return False
+    return True
 
-    print(f"  ECS restart failed: {output}")
-    return False
+
+def activate_via_canonical_deploy() -> bool:
+    """Use deploy.sh admission rather than a direct ECS force deployment."""
+    ok, task_definition = run_aws([
+        "ecs", "describe-services",
+        "--cluster", ECS_CLUSTER,
+        "--services", ECS_SERVICE,
+        "--region", AWS_REGION,
+        "--query", "services[0].taskDefinition",
+        "--output", "text",
+    ])
+    if not ok:
+        print(f"  Could not resolve the service-bound task definition: {task_definition}")
+        return False
+    ok, image = run_aws([
+        "ecs", "describe-task-definition",
+        "--task-definition", task_definition,
+        "--region", AWS_REGION,
+        "--query", "taskDefinition.containerDefinitions[0].image",
+        "--output", "text",
+    ])
+    digest = image.rsplit("@", 1)[-1] if ok else ""
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        print("  Service-bound app image is not digest pinned; refusing activation")
+        return False
+
+    deploy = ENV_FILE.parent / "deploy.sh"
+    result = subprocess.run([str(deploy), "activate", digest], text=True)
+    return result.returncode == 0
 
 
 def main():
     # Parse args
     args = sys.argv[1:]
     local_only = "--local-only" in args
-    no_restart = "--no-restart" in args
+    unknown_flags = [
+        arg for arg in args
+        if arg.startswith("--") and arg != "--local-only"
+    ]
+    if unknown_flags:
+        print(f"Unknown option: {unknown_flags[0]}", file=sys.stderr)
+        sys.exit(1)
     args = [a for a in args if not a.startswith("--")]
 
     if len(args) < 1:
-        print("Usage: python3 scripts/update_secret.py KEY_NAME [value] [--local-only] [--no-restart]")
+        print("Usage: python3 scripts/update_secret.py KEY_NAME [--local-only]")
         print("\nExamples:")
         print("  python3 scripts/update_secret.py GROQ_API_KEY")
-        print("  python3 scripts/update_secret.py GROQ_API_KEY gsk_new_key")
         print("  python3 scripts/update_secret.py ANTHROPIC_API_KEY --local-only")
         sys.exit(1)
 
     key_name = args[0]
+    if key_name not in ALLOWED_KEY_NAMES:
+        allowed = ", ".join(sorted(ALLOWED_KEY_NAMES))
+        print(
+            f"Refusing unsupported secret {key_name}. "
+            f"This helper is restricted to rotatable API keys: {allowed}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if len(args) != 1:
+        print(
+            "Refusing a secret value in process arguments; enter it at the hidden prompt",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Get value
-    if len(args) > 1:
-        value = args[1]
-    else:
-        value = getpass.getpass(f"Enter value for {key_name} (input hidden): ").strip()
+    value = getpass.getpass(f"Enter value for {key_name} (input hidden): ").strip()
 
     if not value:
         print("No value provided. Aborting.")
@@ -220,10 +270,14 @@ def main():
     if validate_key(key_name, value):
         print("  Valid\n")
     else:
-        print("  Validation failed. Continue anyway? (y/n): ", end="")
-        if input().strip().lower() != "y":
-            sys.exit(1)
-        print()
+        print("  Validation failed; refusing to store or transmit the secret")
+        sys.exit(1)
+
+    # For a cloud rotation, establish the exact deployment authority before
+    # changing either local file. A mistaken account/cluster must leave every
+    # local and cloud copy untouched.
+    if not local_only and not assert_cloud_identity():
+        sys.exit(1)
 
     # Step 2: Update .env.local
     print("[2/5] Updating .env.local...")
@@ -249,15 +303,29 @@ def main():
     print()
 
     # Step 5: Restart ECS
-    if no_restart:
-        print("[5/5] Skipping ECS restart (--no-restart)")
-    elif sm_ok:
-        print("[5/5] Restarting ECS...")
-        restart_ecs()
-    else:
-        print("[5/5] Skipping ECS restart (Secrets Manager update failed)")
+    if not sm_ok:
+        print("[5/5] Skipping activation (Secrets Manager update failed)")
+        print(
+            "  Rotation incomplete: local files contain the new value, but the AWS "
+            "write did not report success. AWSCURRENT may be unchanged or may already "
+            "contain the new version. Inspect Secrets Manager version stages and "
+            "CloudTrail, then reconcile deliberately; do not retry or roll back blindly."
+        )
+        sys.exit(1)
 
-    print(f"\nDone.")
+    print("[5/5] Running canonical deployment admission...")
+    if not activate_via_canonical_deploy():
+        print(
+            "  AWS AWSCURRENT now contains the new value, but canonical activation "
+            "did not complete verification. Existing and newly launched tasks may "
+            "temporarily use different injected values, and the app rollout outcome "
+            "may be unknown. Do not blindly roll back AWSCURRENT or rotate again; "
+            "inspect ECS deployment/task state, resolve the deploy error, and rerun "
+            "deploy.sh activate with the same service-bound digest."
+        )
+        sys.exit(1)
+
+    print("\nDone.")
 
 
 if __name__ == "__main__":

@@ -93,17 +93,17 @@ output "s3_bucket_arn" {
 ###############################################################################
 
 output "cloudfront_distribution_id" {
-  description = "ID of the CloudFront distribution"
+  description = "ID of the deny-all CloudFront viewer-gate distribution"
   value       = aws_cloudfront_distribution.beaver.id
 }
 
 output "cloudfront_domain_name" {
-  description = "Domain name of the CloudFront distribution"
+  description = "Domain name of the deny-all CloudFront viewer-gate distribution"
   value       = aws_cloudfront_distribution.beaver.domain_name
 }
 
 output "cloudfront_url" {
-  description = "CloudFront URL for serving S3 content"
+  description = "CloudFront viewer-gate URL (returns 404; not a project asset URL)"
   value       = "https://${aws_cloudfront_distribution.beaver.domain_name}"
 }
 

@@ -26,7 +26,7 @@ resource "aws_sns_topic_subscription" "beaver_alerts_email" {
 # notifications to this topic. Without this, AWS Budgets cannot deliver the
 # cost-cap alerts configured in budgets.tf.
 resource "aws_sns_topic_policy" "beaver_alerts" {
-  arn    = aws_sns_topic.beaver_alerts.arn
+  arn = aws_sns_topic.beaver_alerts.arn
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -38,6 +38,24 @@ resource "aws_sns_topic_policy" "beaver_alerts" {
         Resource  = aws_sns_topic.beaver_alerts.arn
         Condition = {
           StringEquals = { "AWS:SourceAccount" = var.account_id }
+        }
+      },
+      {
+        Sid       = "AllowProjectAssetWorkerEventsPublish"
+        Effect    = "Allow"
+        Principal = { Service = "events.amazonaws.com" }
+        Action    = "SNS:Publish"
+        Resource  = aws_sns_topic.beaver_alerts.arn
+        Condition = {
+          StringEquals = {
+            "AWS:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+          ArnEquals = {
+            "AWS:SourceArn" = [
+              aws_cloudwatch_event_rule.beaver_project_asset_worker_nonzero_exit.arn,
+              aws_cloudwatch_event_rule.beaver_project_asset_worker_failed_to_start.arn
+            ]
+          }
         }
       }
     ]

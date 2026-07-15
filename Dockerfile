@@ -1,4 +1,13 @@
 # syntax=docker/dockerfile:1.7
+FROM alpine:3.21 AS rds-ca
+RUN apk add --no-cache ca-certificates curl \
+    && curl --fail --silent --show-error --location \
+      https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+      --output /aws-rds-global-bundle.pem \
+    && test "$(grep -c -- '-----BEGIN CERTIFICATE-----' /aws-rds-global-bundle.pem)" -gt 0 \
+    && test "$(grep -c -- '-----END CERTIFICATE-----' /aws-rds-global-bundle.pem)" -gt 0 \
+    && chmod 0444 /aws-rds-global-bundle.pem
+
 # ── Stage 1: Install dependencies ──────────────────────────────
 # Build stages use Alpine (small, fast). Runner uses Debian for Python/ML deps.
 FROM node:20-alpine AS deps
@@ -10,17 +19,15 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 # ── Stage 2: Build the Next.js app ────────────────────────────
 FROM node:20-alpine AS builder
 WORKDIR /app
+COPY --from=rds-ca /aws-rds-global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
-
-# Next.js inlines NEXT_PUBLIC_* vars at build time — required for client-side
-# S3/CloudFront features (thumbnails, PNG fallback, page prefetching)
-ARG NEXT_PUBLIC_CLOUDFRONT_DOMAIN=""
-ARG NEXT_PUBLIC_S3_BUCKET=""
-ENV NEXT_PUBLIC_CLOUDFRONT_DOMAIN=$NEXT_PUBLIC_CLOUDFRONT_DOMAIN
-ENV NEXT_PUBLIC_S3_BUCKET=$NEXT_PUBLIC_S3_BUCKET
+# The production DB module is evaluated during `next build`. Supply a
+# non-secret, non-routable shape-valid URL so the same fail-closed URL parser is
+# exercised without embedding deployment credentials or contacting a database.
+ENV DATABASE_URL=postgresql://build:build@database.invalid:5432/build
 
 RUN --mount=type=cache,target=/app/.next/cache \
     npm run build
@@ -29,6 +36,13 @@ RUN --mount=type=cache,target=/app/.next/cache \
 RUN npx esbuild scripts/process-worker.ts \
     --bundle --platform=node --target=node20 \
     --outfile=dist/process-worker.js \
+    --alias:@=./src \
+    --external:pg-native
+
+# Bundle the scheduled durable project-asset deletion reconciler.
+RUN npx esbuild scripts/project-asset-deletion-worker.ts \
+    --bundle --platform=node --target=node20 \
+    --outfile=dist/project-asset-deletion-worker.js \
     --alias:@=./src \
     --external:pg-native
 
@@ -50,6 +64,7 @@ RUN groupadd --system --gid 1001 nodejs && \
 # layer, so there's no image bloat, and wheel downloads are reused across builds.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
     ghostscript \
     python3 \
@@ -82,9 +97,13 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     "transformers>=4.40.0,<5.0.0" \
     "timm>=0.9.0,<2.0.0"
 
-# Migrator deps (drizzle-orm, pg). Not traced by Next.js standalone because
-# entrypoint.sh uses them via `node -e "require(...)"` inside a shell heredoc,
-# not from TS code — so the tracer never sees the imports. Installed here
+# Production PostgreSQL clients and the production Next build share the same
+# reviewed RDS trust bundle.
+COPY --from=rds-ca /aws-rds-global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
+
+# Schema checker/migrator deps (drizzle-orm, pg). They are invoked by standalone
+# operational scripts outside Next.js' traced server graph, so the tracer never
+# sees the imports. Installed here
 # (cacheable across source-only rebuilds) instead of at the end of the runner
 # stage, where every builder COPY invalidated the layer and this install cost
 # ~195s every deploy. The `COPY package.json` pins the install to the exact
@@ -107,6 +126,7 @@ RUN chmod +x ./entrypoint.sh
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/src/data ./src/data
 COPY --from=builder /app/dist/process-worker.js ./scripts/process-worker.js
+COPY --from=builder /app/dist/project-asset-deletion-worker.js ./scripts/project-asset-deletion-worker.js
 
 # Copy TATR (Table Transformer) model files for table-structure detection.
 # ~115 MB. Required by scripts/tatr_structure.py via from_pretrained().
@@ -144,4 +164,4 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["./entrypoint.sh"]
+CMD ["./entrypoint.sh", "app"]

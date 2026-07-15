@@ -3,8 +3,10 @@
 ###############################################################################
 
 resource "aws_ecr_repository" "beaver_app" {
-  name                 = "beaver-app"
-  image_tag_mutability = "MUTABLE"
+  name = "beaver-app"
+  # Deploys publish a fresh tag and task definitions consume the resolved
+  # digest. Immutability prevents an operator from silently retargeting a tag.
+  image_tag_mutability = "IMMUTABLE"
   force_delete         = false
 
   image_scanning_configuration {
@@ -40,7 +42,7 @@ resource "aws_ecr_repository" "beaver_cpu_pipeline" {
 
 resource "aws_ecr_repository" "beaver_yolo_pipeline" {
   name                 = "beaver-yolo-pipeline"
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = "IMMUTABLE"
   force_delete         = false
 
   image_scanning_configuration {
@@ -98,10 +100,23 @@ resource "aws_ecr_lifecycle_policy" "beaver_app" {
       },
       {
         rulePriority = 2
-        description  = "Keep last 10 tagged images"
+        description  = "Keep last 10 version-tagged images"
         selection = {
           tagStatus     = "tagged"
           tagPrefixList = ["v"]
+          countType     = "imageCountMoreThan"
+          countNumber   = 10
+        }
+        action = {
+          type = "expire"
+        }
+      },
+      {
+        rulePriority = 3
+        description  = "Keep last 10 immutable deploy-tagged images"
+        selection = {
+          tagStatus     = "tagged"
+          tagPrefixList = ["deploy-"]
           countType     = "imageCountMoreThan"
           countNumber   = 10
         }
@@ -168,10 +183,23 @@ resource "aws_ecr_lifecycle_policy" "beaver_yolo_pipeline" {
       },
       {
         rulePriority = 2
-        description  = "Keep last 10 tagged images"
+        description  = "Keep last 10 version-tagged images"
         selection = {
           tagStatus     = "tagged"
           tagPrefixList = ["v"]
+          countType     = "imageCountMoreThan"
+          countNumber   = 10
+        }
+        action = {
+          type = "expire"
+        }
+      },
+      {
+        rulePriority = 3
+        description  = "Keep last 10 immutable YOLO deploy images"
+        selection = {
+          tagStatus     = "tagged"
+          tagPrefixList = ["yolo-deploy-"]
           countType     = "imageCountMoreThan"
           countNumber   = 10
         }

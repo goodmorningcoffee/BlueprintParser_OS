@@ -13,11 +13,11 @@
 resource "aws_budgets_budget" "beaver_monthly_cap" {
   count = var.monthly_budget_usd > 0 ? 1 : 0
 
-  name              = "blueprintparser-monthly-cost-cap"
-  budget_type       = "COST"
-  limit_amount      = tostring(var.monthly_budget_usd)
-  limit_unit        = "USD"
-  time_unit         = "MONTHLY"
+  name         = "blueprintparser-monthly-cost-cap"
+  budget_type  = "COST"
+  limit_amount = tostring(var.monthly_budget_usd)
+  limit_unit   = "USD"
+  time_unit    = "MONTHLY"
 
   notification {
     comparison_operator        = "GREATER_THAN"

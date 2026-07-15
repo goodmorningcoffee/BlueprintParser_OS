@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ─────────────────────────────────────────────────────────────────────────────
-# BlueprintParser — Root Admin Management
+# BlueprintParser owner break-glass root-admin helper.
 #
-# Runs SQL on the production RDS database via ECS exec (the running container
-# has network access to the private-subnet DB; your local machine does not).
-#
-# Prerequisites:
-#   - AWS CLI configured with credentials (same as deploy.sh)
-#   - ECS Exec enabled on the service (enableExecuteCommand = true in terraform)
-#   - Session Manager plugin installed
-# ─────────────────────────────────────────────────────────────────────────────
+# This helper exposes three fixed, schema-preserving database operations through
+# ECS Exec: list root-admin status, promote one exact email, and demote one exact
+# email. It deliberately has no arbitrary SQL, DDL, password-reset, task-ARN,
+# container, cluster, service, region, or account override channel.
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-[ -f "${SCRIPT_DIR}/.deploy.env" ] && source "${SCRIPT_DIR}/.deploy.env"
+readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly DEPLOY_ENV_FILE="${BP_ROOT_ADMIN_ENV_FILE:-${SCRIPT_DIR}/.deploy.env}"
+[ -f "${DEPLOY_ENV_FILE}" ] && source "${DEPLOY_ENV_FILE}"
+# Reuse the same immutable task-definition and live database-secret authority
+# checks as the deployment/cutover entrypoints.
+# shellcheck source=scripts/lib/ecs-schema-tools.sh
+source "${SCRIPT_DIR}/scripts/lib/ecs-schema-tools.sh"
 
-: "${AWS_REGION:?ERROR: Set AWS_REGION in .deploy.env or environment}"
-: "${ECS_CLUSTER:?ERROR: Set ECS_CLUSTER in .deploy.env or environment}"
-: "${ECS_SERVICE:?ERROR: Set ECS_SERVICE in .deploy.env or environment}"
-CONTAINER_NAME="${ECS_SERVICE}"
+readonly CANONICAL_AWS_REGION="us-east-1"
+readonly CANONICAL_ECS_CLUSTER="beaver-cluster"
+readonly CANONICAL_ECS_SERVICE="beaver-app"
+readonly CANONICAL_CONTAINER_NAME="beaver-app"
+readonly CANONICAL_ECR_REPO="beaver-app"
+readonly AWS_CLI="${AWS_BIN:-aws}"
 
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
@@ -29,227 +31,380 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
-# ─── Get a running task ARN ──────────────────────────────────────────────────
-get_task_arn() {
-  if [ -z "${TASK_ARN:-}" ]; then
-    echo -e "${DIM}Finding running ECS task...${NC}"
-    TASK_ARN=$(aws ecs list-tasks \
-      --cluster "$ECS_CLUSTER" \
-      --service-name "$ECS_SERVICE" \
-      --desired-status RUNNING \
-      --query 'taskArns[0]' \
-      --output text \
-      --region "$AWS_REGION" 2>/dev/null) || {
-      echo -e "${RED}Failed to find running tasks. Is the service running?${NC}"
-      exit 1
-    }
-    if [ "$TASK_ARN" = "None" ] || [ -z "$TASK_ARN" ]; then
-      echo -e "${RED}No running tasks found in ${ECS_SERVICE}.${NC}"
-      exit 1
-    fi
-    echo -e "${GREEN}Task: ${TASK_ARN##*/}${NC}"
+die() {
+  echo -e "${RED}ERROR: $*${NC}" >&2
+  return 1
+}
+
+aws_cli() {
+  "${AWS_CLI}" "$@"
+}
+
+assert_canonical_configuration() {
+  : "${AWS_ACCOUNT:?ERROR: Set AWS_ACCOUNT in .deploy.env or environment}"
+  : "${AWS_REGION:?ERROR: Set AWS_REGION in .deploy.env or environment}"
+  : "${ECS_CLUSTER:?ERROR: Set ECS_CLUSTER in .deploy.env or environment}"
+  : "${ECS_SERVICE:?ERROR: Set ECS_SERVICE in .deploy.env or environment}"
+  : "${ECR_REPO:?ERROR: Set ECR_REPO in .deploy.env or environment}"
+  : "${DOMAIN:?ERROR: Set DOMAIN in .deploy.env or environment}"
+  : "${CLOUDFRONT_DISTRIBUTION_ID:?ERROR: Set CLOUDFRONT_DISTRIBUTION_ID in .deploy.env or environment}"
+  [ "${ROOT_ADMIN_EMAIL+x}" = x ] ||
+    die "ROOT_ADMIN_EMAIL must be explicitly set; use an empty value to disable bootstrap promotion"
+
+  [[ "${AWS_ACCOUNT}" =~ ^[0-9]{12}$ ]] ||
+    die "AWS_ACCOUNT must be the canonical 12-digit account ID"
+  [ "${AWS_REGION}" = "${CANONICAL_AWS_REGION}" ] ||
+    die "AWS_REGION must be ${CANONICAL_AWS_REGION}"
+  [ "${ECS_CLUSTER}" = "${CANONICAL_ECS_CLUSTER}" ] ||
+    die "ECS_CLUSTER must be ${CANONICAL_ECS_CLUSTER}"
+  [ "${ECS_SERVICE}" = "${CANONICAL_ECS_SERVICE}" ] ||
+    die "ECS_SERVICE must be ${CANONICAL_ECS_SERVICE}"
+  [ "${ECR_REPO}" = "${CANONICAL_ECR_REPO}" ] ||
+    die "ECR_REPO must be ${CANONICAL_ECR_REPO}"
+
+  # An operator-supplied task can be unrelated to the canonical service even
+  # when it lives in the same cluster. Always discover and verify the task.
+  if [ "${TASK_ARN+x}" = x ]; then
+    die "TASK_ARN overrides are forbidden; the helper verifies the canonical service task"
   fi
 }
 
-# ─── Run SQL via ECS exec (no parameters) ────────────────────────────────────
-run_sql() {
-  local sql="$1"
-  get_task_arn
-  aws ecs execute-command \
-    --cluster "$ECS_CLUSTER" \
-    --task "$TASK_ARN" \
-    --container "$CONTAINER_NAME" \
-    --interactive \
-    --command "node -e \"
-const{Pool}=require('pg');
-const p=new Pool({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false}});
-p.query(\\\`${sql}\\\`).then(r=>{
-  if(r.rows&&r.rows.length>0){
-    const c=Object.keys(r.rows[0]);
-    console.log(c.map(k=>k.padEnd(25)).join(''));
-    console.log(c.map(()=>'─'.repeat(25)).join(''));
-    r.rows.forEach(row=>console.log(c.map(k=>String(row[k]??'').padEnd(25)).join('')));
-    console.log('('+r.rows.length+' rows)');
-  }else{console.log('OK — '+(r.rowCount||0)+' row(s) affected.');}
-  p.end();
-}).catch(e=>{console.error('SQL Error:',e.message);p.end();process.exit(1);});
-\"" \
-    --region "$AWS_REGION"
+assert_caller_account() {
+  local caller_account
+  caller_account=$(aws_cli sts get-caller-identity \
+    --region "${AWS_REGION}" \
+    --query Account \
+    --output text) || {
+    die "Unable to read the AWS caller identity"
+    return 1
+  }
+  [ "${caller_account}" = "${AWS_ACCOUNT}" ] ||
+    die "AWS caller account identity does not match the configured canonical account"
 }
 
-# ─── Run SQL with a parameterized value (safe for emails with quotes) ────────
-run_sql_param() {
-  local sql="$1"
-  local param="$2"
-  get_task_arn
-  aws ecs execute-command \
-    --cluster "$ECS_CLUSTER" \
-    --task "$TASK_ARN" \
-    --container "$CONTAINER_NAME" \
-    --interactive \
-    --command "node -e \"
-const{Pool}=require('pg');
-const p=new Pool({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false}});
-p.query('${sql}',['${param}']).then(r=>{
-  console.log('OK — '+(r.rowCount||0)+' row(s) affected.');
-  p.end();
-}).catch(e=>{console.error('SQL Error:',e.message);p.end();process.exit(1);});
-\"" \
-    --region "$AWS_REGION"
+canonical_service_task_definition() {
+  local service_json task_definition
+  service_json=$(aws_cli ecs describe-services \
+    --cluster "${ECS_CLUSTER}" \
+    --services "${ECS_SERVICE}" \
+    --region "${AWS_REGION}" \
+    --output json) || {
+    die "Unable to describe the canonical ECS service"
+    return 1
+  }
+
+  if ! task_definition=$(printf '%s' "${service_json}" | node -e '
+let input = "";
+const [account, region, cluster, service] = process.argv.slice(1);
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => { input += chunk; });
+process.stdin.on("end", () => {
+  try {
+    const response = JSON.parse(input);
+    if (!Array.isArray(response.failures) || response.failures.length !== 0 ||
+        !Array.isArray(response.services) || response.services.length !== 1) {
+      throw new Error("expected exactly one service and no lookup failures");
+    }
+    const candidate = response.services[0];
+    const serviceArn = `arn:aws:ecs:${region}:${account}:service/${cluster}/${service}`;
+    const clusterArn = `arn:aws:ecs:${region}:${account}:cluster/${cluster}`;
+    const familyPrefix = `arn:aws:ecs:${region}:${account}:task-definition/${service}:`;
+    if (candidate.serviceArn !== serviceArn || candidate.clusterArn !== clusterArn ||
+        candidate.serviceName !== service || candidate.status !== "ACTIVE" ||
+        candidate.enableExecuteCommand !== true ||
+        typeof candidate.taskDefinition !== "string" ||
+        !candidate.taskDefinition.startsWith(familyPrefix) ||
+        !/:[1-9][0-9]*$/u.test(candidate.taskDefinition)) {
+      throw new Error("service identity, status, ECS Exec, or task-definition authority mismatch");
+    }
+    process.stdout.write(candidate.taskDefinition);
+  } catch (error) {
+    console.error(`Service verification failed: ${error.message}`);
+    process.exit(2);
+  }
+});
+' "${AWS_ACCOUNT}" "${AWS_REGION}" "${ECS_CLUSTER}" "${ECS_SERVICE}"); then
+    die "Canonical ECS service verification failed"
+    return 1
+  fi
+  printf '%s\n' "${task_definition}"
 }
 
-# ─── Menu ────────────────────────────────────────────────────────────────────
+assert_service_task_definition_contract() {
+  local task_definition="$1"
+  local database_selector image image_prefix digest
+
+  database_selector=$(bp_assert_task_definition_contract "${task_definition}" app) || {
+    die "Selected service revision violates the canonical app task contract"
+    return 1
+  }
+
+  image=$(bp_task_definition_image "${task_definition}") || {
+    die "Unable to verify the selected service revision image"
+    return 1
+  }
+  image_prefix="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${CANONICAL_ECR_REPO}@"
+  case "${image}" in
+    "${image_prefix}"*) ;;
+    *)
+      die "Selected service revision does not use the canonical digest-pinned app image"
+      return 1
+      ;;
+  esac
+  digest="${image#"${image_prefix}"}"
+  bp_validate_digest "${digest}" || {
+    die "Selected service revision does not use an exact immutable app digest"
+    return 1
+  }
+  [ "${image}" = "${image_prefix}${digest}" ] || {
+    die "Selected service revision image has noncanonical suffix data"
+    return 1
+  }
+
+  bp_assert_database_secret_identity "${database_selector}" || {
+    die "Selected service revision does not use the live canonical immutable DATABASE_URL secret"
+    return 1
+  }
+  echo -e "${DIM}Verified app task contract, immutable image, and live database secret.${NC}" >&2
+}
+
+single_running_service_task() {
+  local tasks_json task_arn
+  tasks_json=$(aws_cli ecs list-tasks \
+    --cluster "${ECS_CLUSTER}" \
+    --service-name "${ECS_SERVICE}" \
+    --desired-status RUNNING \
+    --region "${AWS_REGION}" \
+    --output json) || {
+    die "Unable to list canonical service tasks"
+    return 1
+  }
+
+  if ! task_arn=$(printf '%s' "${tasks_json}" | node -e '
+let input = "";
+const [account, region, cluster] = process.argv.slice(1);
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => { input += chunk; });
+process.stdin.on("end", () => {
+  try {
+    const response = JSON.parse(input);
+    if (!Array.isArray(response.taskArns) || response.taskArns.length !== 1 || response.nextToken != null) {
+      throw new Error("expected exactly one running task and an unpaginated result");
+    }
+    const taskArn = response.taskArns[0];
+    const prefix = `arn:aws:ecs:${region}:${account}:task/${cluster}/`;
+    if (typeof taskArn !== "string" || !taskArn.startsWith(prefix) ||
+        !/\/[0-9a-f]{32}$/u.test(taskArn)) {
+      throw new Error("task ARN is outside the canonical account, region, or cluster");
+    }
+    process.stdout.write(taskArn);
+  } catch (error) {
+    console.error(`Task selection failed: ${error.message}`);
+    process.exit(2);
+  }
+});
+' "${AWS_ACCOUNT}" "${AWS_REGION}" "${ECS_CLUSTER}"); then
+    die "Refusing an absent or ambiguous running-task selection"
+    return 1
+  fi
+  printf '%s\n' "${task_arn}"
+}
+
+assert_task_belongs_to_service() {
+  local task_arn="$1"
+  local service_task_definition="$2"
+  local task_json
+  task_json=$(aws_cli ecs describe-tasks \
+    --cluster "${ECS_CLUSTER}" \
+    --tasks "${task_arn}" \
+    --region "${AWS_REGION}" \
+    --output json) || {
+    die "Unable to describe the selected service task"
+    return 1
+  }
+
+  if ! printf '%s' "${task_json}" | node -e '
+let input = "";
+const [account, region, cluster, service, containerName, expectedTaskArn, expectedTaskDefinition] = process.argv.slice(1);
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => { input += chunk; });
+process.stdin.on("end", () => {
+  try {
+    const response = JSON.parse(input);
+    if (!Array.isArray(response.failures) || response.failures.length !== 0 ||
+        !Array.isArray(response.tasks) || response.tasks.length !== 1) {
+      throw new Error("expected exactly one described task and no lookup failures");
+    }
+    const task = response.tasks[0];
+    const clusterArn = `arn:aws:ecs:${region}:${account}:cluster/${cluster}`;
+    const containers = task.containers;
+    if (task.taskArn !== expectedTaskArn || task.clusterArn !== clusterArn ||
+        task.group !== `service:${service}` || task.lastStatus !== "RUNNING" ||
+        task.desiredStatus !== "RUNNING" || task.enableExecuteCommand !== true ||
+        task.taskDefinitionArn !== expectedTaskDefinition ||
+        !Array.isArray(containers) || containers.length !== 1 ||
+        containers[0].name !== containerName || containers[0].lastStatus !== "RUNNING" ||
+        containers[0].taskArn !== expectedTaskArn) {
+      throw new Error("task is not the canonical running service/task-definition/container instance");
+    }
+  } catch (error) {
+    console.error(`Task membership verification failed: ${error.message}`);
+    process.exit(2);
+  }
+});
+' "${AWS_ACCOUNT}" "${AWS_REGION}" "${ECS_CLUSTER}" "${ECS_SERVICE}" \
+    "${CANONICAL_CONTAINER_NAME}" "${task_arn}" "${service_task_definition}"; then
+    die "Selected task does not belong to the canonical service deployment"
+    return 1
+  fi
+}
+
+verified_task_arn() {
+  local service_task_definition task_arn
+  assert_caller_account || return 1
+  service_task_definition=$(canonical_service_task_definition) || return 1
+  assert_service_task_definition_contract "${service_task_definition}" || return 1
+  task_arn=$(single_running_service_task) || return 1
+  assert_task_belongs_to_service "${task_arn}" "${service_task_definition}" || return 1
+  echo -e "${DIM}Verified task: ${task_arn##*/}${NC}" >&2
+  printf '%s\n' "${task_arn}"
+}
+
+validate_email() {
+  local email="$1"
+  if [ "${#email}" -gt 255 ] || [[ ! "${email}" =~ ^[^[:space:]@]+@[^[:space:]@]+$ ]]; then
+    die "Enter one syntactically valid email address (maximum 255 characters)"
+  fi
+}
+
+run_fixed_operation() {
+  local operation="$1"
+  local email="${2:-}"
+  local email_b64 task_arn
+  case "${operation}" in
+    list) [ -z "${email}" ] || die "The list operation accepts no value" ;;
+    promote|demote) validate_email "${email}" || return 1 ;;
+    *) die "Unsupported fixed root-admin operation"; return 1 ;;
+  esac
+
+  email_b64=$(printf '%s' "${email}" | base64 | tr -d '\n')
+  task_arn=$(verified_task_arn) || return 1
+  aws_cli ecs execute-command \
+    --cluster "${ECS_CLUSTER}" \
+    --task "${task_arn}" \
+    --container "${CANONICAL_CONTAINER_NAME}" \
+    --interactive \
+    --command "node -e \"
+(async()=>{
+  const{Pool}=require('pg');
+  const{databaseTlsOptions}=await import('./scripts/database-tls.mjs');
+  const operation=process.argv[1];
+  const email=Buffer.from(process.argv[2]||'','base64').toString('utf8');
+  const operations=Object.freeze({
+    list:Object.freeze({text:'SELECT email, is_root_admin FROM public.users ORDER BY lower(email), email',values:[],mutation:false}),
+    promote:Object.freeze({text:'UPDATE public.users SET is_root_admin = true WHERE email = \\\$1 AND is_root_admin = false RETURNING email, is_root_admin',values:[email],mutation:true}),
+    demote:Object.freeze({text:'UPDATE public.users AS target SET is_root_admin = false WHERE target.email = \\\$1 AND target.is_root_admin = true AND EXISTS (SELECT 1 FROM public.users AS other WHERE other.is_root_admin = true AND other.id <> target.id) RETURNING target.email, target.is_root_admin',values:[email],mutation:true})
+  });
+  const spec=operations[operation];
+  if(!spec)throw new Error('unsupported fixed operation');
+  const bootstrapEmail=(process.env.ROOT_ADMIN_EMAIL||'').trim();
+  if(operation==='demote'&&bootstrapEmail!==''&&bootstrapEmail.toLowerCase()===email.trim().toLowerCase()){
+    throw new Error('refusing to demote the configured ROOT_ADMIN_EMAIL bootstrap identity; clear root_admin_email in Terraform, apply it, and complete a same-digest deploy.sh activate before retrying');
+  }
+  const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:databaseTlsOptions(process.env)});
+  let client;
+  try{
+    client=await pool.connect();
+    if(spec.mutation){
+      await client.query('BEGIN');
+      await client.query('SELECT pg_catalog.pg_advisory_xact_lock(737375864)');
+    }
+    const result=await client.query(spec.text,spec.values);
+    if(spec.mutation&&result.rowCount!==1){
+      throw new Error('safety check refused the update: expected exactly one changed user (demotion also requires another root admin)');
+    }
+    if(spec.mutation)await client.query('COMMIT');
+    for(const row of result.rows||[]){
+      console.log(JSON.stringify({email:row.email,isRootAdmin:row.is_root_admin===true}));
+    }
+    console.log(spec.mutation?'Root-admin update verified for exactly one user.':('Listed '+result.rowCount+' user(s); only email and root-admin status were emitted.'));
+  }catch(error){
+    if(client&&spec.mutation){try{await client.query('ROLLBACK');}catch{}}
+    throw error;
+  }finally{
+    if(client)client.release();
+    await pool.end();
+  }
+})().catch(error=>{console.error('Operation failed:',error.message);process.exit(1);});
+\" '${operation}' '${email_b64}'" \
+    --region "${AWS_REGION}"
+}
+
 show_menu() {
   echo ""
   echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo -e "${BOLD}  BlueprintParser — Root Admin Manager${NC}"
+  echo -e "${BOLD}  BlueprintParser — Owner Root-Admin Break Glass${NC}"
   echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo -e "${DIM}  Runs SQL on prod DB via ECS container (private subnet).${NC}"
+  echo -e "${DIM}  Every database action re-verifies the canonical AWS service task.${NC}"
   echo ""
-  echo -e "  ${GREEN}1${NC}  List all users"
-  echo -e "  ${GREEN}2${NC}  Promote user to root admin (by email)"
-  echo -e "  ${GREEN}3${NC}  Demote user from root admin (by email)"
-  echo -e "  ${GREEN}4${NC}  List companies"
-  echo -e "  ${GREEN}5${NC}  Check ECS task env vars"
-  echo -e "  ${GREEN}6${NC}  Update ROOT_ADMIN_EMAIL in ecs.tf"
-  echo -e "  ${GREEN}7${NC}  Run custom SQL"
-  echo -e "  ${GREEN}8${NC}  Quick: promote first user to root admin"
-  echo -e "  ${GREEN}9${NC}  Ensure is_root_admin column exists"
-  echo -e "  ${GREEN}10${NC} Reset user password (by email)"
+  echo -e "  ${GREEN}1${NC}  List user emails and root-admin status"
+  echo -e "  ${GREEN}2${NC}  Promote one exact email"
+  echo -e "  ${GREEN}3${NC}  Demote one exact email (never the last root admin)"
+  echo -e "  ${GREEN}4${NC}  Show ROOT_ADMIN_EMAIL Terraform setup"
   echo -e "  ${GREEN}q${NC}  Quit"
   echo ""
 }
 
-# ─── Actions ─────────────────────────────────────────────────────────────────
-
 list_users() {
-  echo -e "\n${BOLD}All Users:${NC}\n"
-  run_sql "SELECT id, email, username, role, is_root_admin, can_run_models, company_id FROM users ORDER BY id"
+  echo -e "\n${BOLD}User root-admin status:${NC}\n"
+  run_fixed_operation list
 }
 
 promote_user() {
-  read -rp "Enter email to promote to root admin: " email
-  if [ -z "$email" ]; then echo -e "${RED}No email provided.${NC}"; return; fi
-  echo -e "${YELLOW}Promoting ${email} to root admin...${NC}"
-  run_sql_param "UPDATE users SET is_root_admin = true WHERE email = \$1" "$email"
-  echo -e "${GREEN}Done. Refresh the admin page — takes effect immediately.${NC}"
+  local email confirmation
+  read -rp "Enter the exact email to promote: " email
+  validate_email "${email}" || return 1
+  read -rp "Type PROMOTE to confirm: " confirmation
+  [ "${confirmation}" = "PROMOTE" ] || {
+    echo -e "${YELLOW}Promotion cancelled.${NC}"
+    return 0
+  }
+  run_fixed_operation promote "${email}"
 }
 
 demote_user() {
-  read -rp "Enter email to remove root admin: " email
-  if [ -z "$email" ]; then echo -e "${RED}No email provided.${NC}"; return; fi
-  echo -e "${YELLOW}Removing root admin from ${email}...${NC}"
-  run_sql_param "UPDATE users SET is_root_admin = false WHERE email = \$1" "$email"
-  echo -e "${GREEN}Done.${NC}"
+  local email confirmation
+  read -rp "Enter the exact email to demote: " email
+  validate_email "${email}" || return 1
+  read -rp "Type DEMOTE to confirm: " confirmation
+  [ "${confirmation}" = "DEMOTE" ] || {
+    echo -e "${YELLOW}Demotion cancelled.${NC}"
+    return 0
+  }
+  run_fixed_operation demote "${email}"
 }
 
-list_companies() {
-  echo -e "\n${BOLD}All Companies:${NC}\n"
-  run_sql "SELECT c.id, c.name, c.data_key, COUNT(u.id) as user_count FROM companies c LEFT JOIN users u ON u.company_id = c.id GROUP BY c.id, c.name, c.data_key ORDER BY c.id"
-}
-
-check_ecs_env() {
-  echo -e "\n${BOLD}Current ECS Task Definition Environment:${NC}\n"
-  local task_def
-  task_def=$(aws ecs describe-services \
-    --cluster "$ECS_CLUSTER" \
-    --services "$ECS_SERVICE" \
-    --query 'services[0].taskDefinition' \
-    --output text \
-    --region "$AWS_REGION")
-  echo -e "${DIM}Task: ${task_def}${NC}\n"
-  aws ecs describe-task-definition \
-    --task-definition "$task_def" \
-    --query 'taskDefinition.containerDefinitions[0].environment[*].[name,value]' \
-    --output table \
-    --region "$AWS_REGION"
-}
-
-update_root_email() {
-  read -rp "Enter new ROOT_ADMIN_EMAIL value: " new_email
-  if [ -z "$new_email" ]; then echo -e "${RED}No email provided.${NC}"; return; fi
-  echo -e "${YELLOW}This will update ROOT_ADMIN_EMAIL in ecs.tf and require terraform apply + deploy.${NC}"
-
-  local ecs_file="infrastructure/terraform/ecs.tf"
-  if [ ! -f "$ecs_file" ]; then
-    ecs_file="$(dirname "$0")/infrastructure/terraform/ecs.tf"
-  fi
-
-  if [ -f "$ecs_file" ]; then
-    sed -i.bak "s/ROOT_ADMIN_EMAIL.*/ROOT_ADMIN_EMAIL\", value = \"${new_email}\" },/" "$ecs_file"
-    rm -f "${ecs_file}.bak"
-    echo -e "${GREEN}Updated ecs.tf. Now run:${NC}"
-    echo -e "  ${CYAN}cd infrastructure/terraform && terraform apply${NC}"
-    echo -e "  ${CYAN}cd ../.. && ./deploy.sh${NC}"
-  else
-    echo -e "${RED}Could not find ecs.tf. Update manually.${NC}"
-  fi
+show_root_email_setup() {
+  echo -e "\n${BOLD}Root-admin bootstrap configuration:${NC}\n"
+  echo -e "${YELLOW}Never place the bootstrap identity in tracked ecs.tf source.${NC}"
+  echo -e "Set the validated Terraform input with either:"
+  echo -e "  ${CYAN}root_admin_email = \"admin@example.com\"${NC} in the untracked"
+  echo -e "  ${CYAN}infrastructure/terraform/terraform.tfvars${NC} file; or"
+  echo -e "  ${CYAN}export TF_VAR_root_admin_email=admin@example.com${NC} for the owner-run plan/apply."
   echo ""
-  echo -e "${YELLOW}Or promote immediately via option 2 or 8.${NC}"
+  echo -e "Terraform apply and application deploy remain explicit owner-run operations."
 }
 
-run_custom_sql() {
-  echo -e "${DIM}Enter SQL (single line, avoid single quotes — use LIKE instead):${NC}"
-  read -rp "> " sql
-  if [ -z "$sql" ]; then echo -e "${RED}No SQL provided.${NC}"; return; fi
-  run_sql "$sql"
-}
-
-promote_first_user() {
-  echo -e "${YELLOW}Promoting the first user in the database to root admin...${NC}"
-  run_sql "UPDATE users SET is_root_admin = true WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1)"
-  echo -e "${GREEN}Done. Refresh the admin page.${NC}"
-}
-
-ensure_column() {
-  echo -e "${YELLOW}Ensuring is_root_admin column exists...${NC}"
-  run_sql "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_root_admin BOOLEAN DEFAULT FALSE NOT NULL"
-  echo -e "${GREEN}Column ready.${NC}"
-}
-
-reset_password() {
-  read -rp "Enter email: " email
-  if [ -z "$email" ]; then echo -e "${RED}No email provided.${NC}"; return; fi
-  read -rsp "Enter new password: " newpw; echo
-  if [ -z "$newpw" ]; then echo -e "${RED}No password provided.${NC}"; return; fi
-  echo -e "${YELLOW}Resetting password for ${email}...${NC}"
-  get_task_arn
-  aws ecs execute-command \
-    --cluster "$ECS_CLUSTER" \
-    --task "$TASK_ARN" \
-    --container "$CONTAINER_NAME" \
-    --interactive \
-    --command "node -e \"
-const bcrypt=require('bcrypt');
-const{Pool}=require('pg');
-async function run(){
-  const hash=await bcrypt.hash('${newpw}',12);
-  const p=new Pool({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false}});
-  const r=await p.query('UPDATE users SET password_hash=\\\$1 WHERE email=\\\$2',[hash,'${email}']);
-  console.log('Password updated for '+r.rowCount+' user(s).');
-  p.end();
-}
-run().catch(e=>{console.error(e.message);process.exit(1);});
-\"" \
-    --region "$AWS_REGION"
-}
-
-# ─── Main Loop ───────────────────────────────────────────────────────────────
 main() {
+  assert_canonical_configuration
   while true; do
     show_menu
-    read -rp "Choose [1-10, q]: " choice
-    case "$choice" in
+    read -rp "Choose [1-4, q]: " choice
+    case "${choice}" in
       1) list_users ;;
       2) promote_user ;;
       3) demote_user ;;
-      4) list_companies ;;
-      5) check_ecs_env ;;
-      6) update_root_email ;;
-      7) run_custom_sql ;;
-      8) promote_first_user ;;
-      9) ensure_column ;;
-      10) reset_password ;;
+      4) show_root_email_setup ;;
       q|Q) echo -e "\n${GREEN}Bye.${NC}\n"; exit 0 ;;
       *) echo -e "${RED}Invalid choice.${NC}" ;;
     esac

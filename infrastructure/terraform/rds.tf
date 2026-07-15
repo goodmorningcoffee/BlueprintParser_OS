@@ -95,6 +95,11 @@ resource "aws_db_parameter_group" "beaver" {
   family = "postgres16"
 
   parameter {
+    name  = "rds.force_ssl"
+    value = "1"
+  }
+
+  parameter {
     name  = "log_min_duration_statement"
     value = "1000"
   }

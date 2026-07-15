@@ -23,5 +23,39 @@ processing_webhook_secret = "GENERATE_ME"
 anthropic_api_key = "sk-ant-..."
 groq_api_key      = "gsk_..."
 
+# BlueprintParser root-admin bootstrap identity. This is deliberately separate
+# from the Label Studio administrator; leave empty to disable email promotion.
+root_admin_email = ""
+
+# aws_s3_bucket_notification owns the data bucket's complete notification
+# subresource. Keep this false until an owner has saved and reconciled the
+# existing Lambda/SQS/SNS/EventBridge configuration exactly as documented in
+# README.md. Set true only in the reviewed, untracked tfvars used for takeover.
+acknowledge_beaver_data_notification_takeover = false
+
+# Provider identity epoch. Increment this before starting BlueprintParser after
+# the Label Studio database is reinitialized/replaced, even when EFS survives.
+label_studio_instance_generation = "generation-1"
+# Resolve and review an upstream manifest digest; never substitute a tag.
+label_studio_image = "heartexlabs/label-studio@sha256:REPLACE_WITH_64_LOWERCASE_HEX_DIGEST"
+
+# Maintenance worker launch gate. Set false during the provider-replacement
+# writer-outage sequence documented in README.md; restore only after the app
+# service is bound to the new generation's task definition.
+maintenance_worker_schedule_enabled = true
+# Disable alongside desired/minimum zero during a writer outage so target
+# tracking cannot repopulate the app service after the quiescence check.
+ecs_autoscaling_enabled = true
+# Only these two complete writer tuples are admitted:
+# live   = desired 1, minimum 1, maximum 1, autoscaling/schedule enabled
+# outage = desired 0, minimum 0, maximum 1, autoscaling/schedule disabled
+# Every mixed tuple fails Terraform planning.
+ecs_desired_count = 1
+ecs_min_count     = 1
+ecs_max_count     = 1
+# Obtain this exact value from `./deploy.sh publish`; never use a mutable tag.
+beaver_app_image_digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+beaver_yolo_image_digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
 # CORS origins (your app domain)
 cors_allowed_origins = ["https://app.yourdomain.com", "https://yourdomain.com"]

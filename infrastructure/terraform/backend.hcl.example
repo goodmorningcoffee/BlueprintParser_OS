@@ -1,0 +1,7 @@
+# Copy outside the repository and replace every placeholder. Never commit real
+# state coordinates; they select both the AWS account and authoritative state.
+bucket         = "CHANGEME-terraform-state-bucket"
+key            = "CHANGEME/terraform.tfstate"
+region         = "CHANGEME-region"
+encrypt        = true
+dynamodb_table = "CHANGEME-terraform-lock-table"

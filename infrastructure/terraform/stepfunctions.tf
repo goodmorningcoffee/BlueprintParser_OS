@@ -33,12 +33,12 @@ resource "aws_sfn_state_machine" "beaver_process_blueprint" {
       ValidateInput = {
         Type = "Pass"
         Parameters = {
-          "projectId.$"      = "$.projectId"
-          "dataUrl.$"        = "$.dataUrl"
-          "s3Bucket.$"       = "$.s3Bucket"
-          "webhookUrl.$"     = "$.webhookUrl"
-          "webhookSecret.$"  = "$.webhookSecret"
-          "status"           = "PROCESSING"
+          "projectId.$"     = "$.projectId"
+          "dataUrl.$"       = "$.dataUrl"
+          "s3Bucket.$"      = "$.s3Bucket"
+          "webhookUrl.$"    = "$.webhookUrl"
+          "webhookSecret.$" = "$.webhookSecret"
+          "status"          = "PROCESSING"
         }
         Next = "CPUProcessing"
       }
@@ -47,9 +47,10 @@ resource "aws_sfn_state_machine" "beaver_process_blueprint" {
         Type     = "Task"
         Resource = "arn:aws:states:::ecs:runTask.sync"
         Parameters = {
-          LaunchType = "FARGATE"
-          Cluster    = aws_ecs_cluster.beaver.arn
-          TaskDefinition = "beaver-cpu-pipeline"
+          LaunchType      = "FARGATE"
+          PlatformVersion = "1.4.0"
+          Cluster         = aws_ecs_cluster.beaver.arn
+          TaskDefinition  = aws_ecs_task_definition.beaver_cpu_pipeline.arn
           NetworkConfiguration = {
             AwsvpcConfiguration = {
               Subnets        = aws_subnet.private[*].id
@@ -107,14 +108,16 @@ resource "aws_sfn_state_machine" "beaver_process_blueprint" {
     Name = "beaver-process-blueprint"
   }
 
-  # Added 2026-04-23 during launch-day recovery. The log group was renamed
-  # mid-apply which triggered an SFN update that failed due to missing
-  # events:* perms on the SFN IAM role. Ignoring these fields lets the
-  # service move on; SFN still runs, just logs to the OLD log group name
-  # (which is now empty). Fix post-launch by either granting the IAM
-  # perms and removing this block, or by manually updating SFN's logging
-  # config via `aws stepfunctions update-state-machine`.
+  depends_on = [
+    aws_iam_role_policy.beaver_sfn_ecs,
+    aws_iam_role_policy.beaver_sfn_logs,
+    terraform_data.beaver_writer_operational_tuple,
+  ]
+
+  # The historical logging destination remains owner-managed. The definition
+  # itself must not be ignored: it pins CPUProcessing to the exact reviewed task
+  # definition revision, and the deploy/cutover gates verify that live target.
   lifecycle {
-    ignore_changes = [logging_configuration, definition]
+    ignore_changes = [logging_configuration]
   }
 }

@@ -13,8 +13,8 @@ resource "aws_secretsmanager_secret" "database_url" {
 }
 
 resource "aws_secretsmanager_secret_version" "database_url" {
-  secret_id = aws_secretsmanager_secret.database_url.id
-  secret_string = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.beaver.endpoint}/${aws_db_instance.beaver.db_name}"
+  secret_id     = aws_secretsmanager_secret.database_url.id
+  secret_string = "postgresql://${urlencode(var.db_username)}:${urlencode(var.db_password)}@${aws_db_instance.beaver.endpoint}/${urlencode(aws_db_instance.beaver.db_name)}"
 }
 
 resource "aws_secretsmanager_secret" "nextauth_secret" {

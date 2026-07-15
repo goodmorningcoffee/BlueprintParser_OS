@@ -1,10 +1,10 @@
 // [refactor jun12 P0.2] Boot-time environment contract.
 //
 // Why this exists: env vars were folklore — SES silently dead in prod (FROM
-// unset + no IAM), LAMBDA_CV gating subtle, DB_SSL_REJECT_UNAUTHORIZED read
-// nowhere effective, CLOUDWATCH_LOG_GROUP defaulting to a group that doesn't
-// exist. This module is the single documented list of every variable the app
-// reads, validated once at server start (src/instrumentation.ts).
+// unset + no IAM), LAMBDA_CV gating subtle, and CLOUDWATCH_LOG_GROUP defaulting
+// to a group that doesn't exist. This module is the single documented list of
+// every variable the app reads, validated once at server start
+// (src/instrumentation.ts).
 //
 // Behavior: in production a missing REQUIRED var fails the boot fast with a
 // named list (better than a 3am stack trace from deep inside a handler).
@@ -78,7 +78,6 @@ const optional = z.object({
   GEOIP_DB_PATH: opt, // default /data/GeoLite2-Country.mmdb
   CLOUDWATCH_LOG_GROUP: opt, // code default /aws/lambda/bp2 is WRONG (P5.2)
   LOG_LEVEL: opt, // default info
-  DB_SSL_REJECT_UNAUTHORIZED: opt, // entrypoint hardcodes false today (P4.3)
   ALLOW_MODEL_UPLOAD: opt, // default false — weights-upload kill-switch
   DEV_PROCESSING_ENABLED: opt, // default false
   NODE_ENV: opt,

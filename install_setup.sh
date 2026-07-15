@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BlueprintParser 2 — Interactive Setup Wizard
@@ -42,8 +43,8 @@ CFG_AWS_REGION=""
 CFG_AWS_ACCESS_KEY_ID=""
 CFG_AWS_SECRET_ACCESS_KEY=""
 CFG_S3_BUCKET=""
-CFG_NEXT_PUBLIC_S3_BUCKET=""
 CFG_CLOUDFRONT_DOMAIN=""
+CFG_CLOUDFRONT_DISTRIBUTION_ID=""
 CFG_STEP_FUNCTION_ARN=""
 CFG_YOLO_ECR_IMAGE=""
 CFG_SAGEMAKER_ROLE_ARN=""
@@ -53,6 +54,7 @@ CFG_GOOGLE_CLIENT_ID=""
 CFG_GOOGLE_CLIENT_SECRET=""
 CFG_LABEL_STUDIO_URL=""
 CFG_LABEL_STUDIO_API_KEY=""
+CFG_LABEL_STUDIO_INSTANCE_ID=""
 CFG_LABEL_STUDIO_ADMIN_EMAIL=""
 CFG_LABEL_STUDIO_ADMIN_PASSWORD=""
 
@@ -150,8 +152,8 @@ load_existing_env() {
       AWS_ACCESS_KEY_ID)          CFG_AWS_ACCESS_KEY_ID="$value" ;;
       AWS_SECRET_ACCESS_KEY)      CFG_AWS_SECRET_ACCESS_KEY="$value" ;;
       S3_BUCKET)                  CFG_S3_BUCKET="$value" ;;
-      NEXT_PUBLIC_S3_BUCKET)      CFG_NEXT_PUBLIC_S3_BUCKET="$value" ;;
       CLOUDFRONT_DOMAIN)          CFG_CLOUDFRONT_DOMAIN="$value" ;;
+      CLOUDFRONT_DISTRIBUTION_ID) CFG_CLOUDFRONT_DISTRIBUTION_ID="$value" ;;
       STEP_FUNCTION_ARN)          CFG_STEP_FUNCTION_ARN="$value" ;;
       YOLO_ECR_IMAGE)             CFG_YOLO_ECR_IMAGE="$value" ;;
       SAGEMAKER_ROLE_ARN)         CFG_SAGEMAKER_ROLE_ARN="$value" ;;
@@ -161,6 +163,7 @@ load_existing_env() {
       GOOGLE_CLIENT_SECRET)       CFG_GOOGLE_CLIENT_SECRET="$value" ;;
       LABEL_STUDIO_URL)           CFG_LABEL_STUDIO_URL="$value" ;;
       LABEL_STUDIO_API_KEY)       CFG_LABEL_STUDIO_API_KEY="$value" ;;
+      LABEL_STUDIO_INSTANCE_ID)   CFG_LABEL_STUDIO_INSTANCE_ID="$value" ;;
       LABEL_STUDIO_ADMIN_EMAIL)   CFG_LABEL_STUDIO_ADMIN_EMAIL="$value" ;;
       LABEL_STUDIO_ADMIN_PASSWORD) CFG_LABEL_STUDIO_ADMIN_PASSWORD="$value" ;;
     esac
@@ -231,7 +234,7 @@ phase_welcome() {
         CFG_LLM_KEY_SECRET="" ; CFG_GROQ_API_KEY="" ; CFG_ANTHROPIC_API_KEY=""
         CFG_OPENAI_API_KEY="" ; CFG_LLM_PROVIDER="" ; CFG_LLM_MODEL="" ; CFG_LLM_BASE_URL=""
         CFG_AWS_REGION="" ; CFG_AWS_ACCESS_KEY_ID="" ; CFG_AWS_SECRET_ACCESS_KEY=""
-        CFG_S3_BUCKET="" ; CFG_NEXT_PUBLIC_S3_BUCKET="" ; CFG_CLOUDFRONT_DOMAIN=""
+        CFG_S3_BUCKET="" ; CFG_CLOUDFRONT_DOMAIN="" ; CFG_CLOUDFRONT_DISTRIBUTION_ID=""
         CFG_ROOT_ADMIN_EMAIL="" ; CFG_GOOGLE_CLIENT_ID="" ; CFG_GOOGLE_CLIENT_SECRET=""
         ;;
       3)
@@ -246,6 +249,8 @@ phase_welcome() {
         [ -n "$CFG_OPENAI_API_KEY" ]    && ok "OPENAI_API_KEY: $(mask_key "$CFG_OPENAI_API_KEY")"
         [ -n "$CFG_AWS_ACCESS_KEY_ID" ] && ok "AWS_ACCESS_KEY_ID: $(mask_key "$CFG_AWS_ACCESS_KEY_ID")"
         [ -n "$CFG_S3_BUCKET" ]         && ok "S3_BUCKET: $CFG_S3_BUCKET"
+        [ -n "$CFG_CLOUDFRONT_DOMAIN" ] && ok "CLOUDFRONT_DOMAIN: $CFG_CLOUDFRONT_DOMAIN"
+        [ -n "$CFG_CLOUDFRONT_DISTRIBUTION_ID" ] && ok "CLOUDFRONT_DISTRIBUTION_ID: $CFG_CLOUDFRONT_DISTRIBUTION_ID"
         [ -n "$CFG_ROOT_ADMIN_EMAIL" ]  && ok "ROOT_ADMIN_EMAIL: $CFG_ROOT_ADMIN_EMAIL"
         [ -n "$CFG_LLM_PROVIDER" ]      && ok "LLM_PROVIDER: $CFG_LLM_PROVIDER"
         [ -n "$CFG_LLM_MODEL" ]         && ok "LLM_MODEL: $CFG_LLM_MODEL"
@@ -881,11 +886,9 @@ phase_aws() {
       fi
 
       CFG_S3_BUCKET="$bucket_name"
-      CFG_NEXT_PUBLIC_S3_BUCKET="$bucket_name"
       ;;
     2)
       prompt_secret "Enter your S3 bucket name" "CFG_S3_BUCKET"
-      CFG_NEXT_PUBLIC_S3_BUCKET="$CFG_S3_BUCKET"
       # Validate
       if command -v aws &>/dev/null && [ -n "$CFG_S3_BUCKET" ]; then
         if aws s3 ls "s3://${CFG_S3_BUCKET}" --max-items 0 --region "$CFG_AWS_REGION" &>/dev/null; then
@@ -900,16 +903,34 @@ phase_aws() {
       ;;
   esac
 
-  # ─── 5d. CloudFront (Optional) ───
+  # ─── 5d. CloudFront legacy-cache invalidation (Optional) ───
   echo ""
   if [ -n "$CFG_S3_BUCKET" ]; then
-    echo -e "  ${BOLD}CloudFront CDN${NC} (optional)"
-    echo -e "  ${DIM}Speeds up image loading by caching them closer to your users.${NC}"
-    echo -e "  ${DIM}Skip this if you're just getting started -- easy to add later.${NC}"
+    echo -e "  ${BOLD}CloudFront legacy-cache invalidation${NC} (optional)"
+    echo -e "  ${DIM}Browser project assets use the private application gateway, not CloudFront.${NC}"
+    echo -e "  ${DIM}Configure this only for a distribution that may still cache legacy project URLs.${NC}"
     echo ""
-    if prompt_yes_no "Configure CloudFront?" "n"; then
-      prompt_secret "CloudFront domain (e.g., d1234abcde.cloudfront.net)" "CFG_CLOUDFRONT_DOMAIN"
+    local cloudfront_default="n"
+    if [ -n "$CFG_CLOUDFRONT_DOMAIN" ] && [ -n "$CFG_CLOUDFRONT_DISTRIBUTION_ID" ]; then
+      cloudfront_default="y"
     fi
+    if prompt_yes_no "Configure CloudFront invalidation?" "$cloudfront_default"; then
+      prompt_default "CloudFront domain (host only)" "$CFG_CLOUDFRONT_DOMAIN" "CFG_CLOUDFRONT_DOMAIN"
+      prompt_default "CloudFront distribution ID" "$CFG_CLOUDFRONT_DISTRIBUTION_ID" "CFG_CLOUDFRONT_DISTRIBUTION_ID"
+      if [ -z "$CFG_CLOUDFRONT_DOMAIN" ] || [ -z "$CFG_CLOUDFRONT_DISTRIBUTION_ID" ]; then
+        warn "Both CloudFront domain and distribution ID are required; invalidation disabled."
+        CFG_CLOUDFRONT_DOMAIN=""
+        CFG_CLOUDFRONT_DISTRIBUTION_ID=""
+      else
+        ok "CloudFront invalidation pair configured"
+      fi
+    else
+      CFG_CLOUDFRONT_DOMAIN=""
+      CFG_CLOUDFRONT_DISTRIBUTION_ID=""
+    fi
+  else
+    CFG_CLOUDFRONT_DOMAIN=""
+    CFG_CLOUDFRONT_DISTRIBUTION_ID=""
   fi
 
   # ─── 5e. Advanced AWS ───
@@ -1018,6 +1039,16 @@ phase_auth() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 write_env_file() {
+  # CloudFront is optional, but its deletion-invalidation authority is an
+  # all-or-none server-side pair. Drop legacy partial config rather than writing
+  # an environment that fails closed only when a project is deleted.
+  if { [ -n "$CFG_CLOUDFRONT_DOMAIN" ] && [ -z "$CFG_CLOUDFRONT_DISTRIBUTION_ID" ]; } ||
+     { [ -z "$CFG_CLOUDFRONT_DOMAIN" ] && [ -n "$CFG_CLOUDFRONT_DISTRIBUTION_ID" ]; }; then
+    warn "Ignoring incomplete CloudFront invalidation config; both values are required."
+    CFG_CLOUDFRONT_DOMAIN=""
+    CFG_CLOUDFRONT_DISTRIBUTION_ID=""
+  fi
+
   # Backup existing
   if [ -f "$ENV_FILE" ]; then
     cp "$ENV_FILE" "${ENV_FILE}.bak.$(date +%s)"
@@ -1051,9 +1082,15 @@ ENVEOF
 
 # S3 Storage
 S3_BUCKET=${CFG_S3_BUCKET}
-NEXT_PUBLIC_S3_BUCKET=${CFG_NEXT_PUBLIC_S3_BUCKET}
 ENVEOF
-    [ -n "$CFG_CLOUDFRONT_DOMAIN" ] && echo "CLOUDFRONT_DOMAIN=${CFG_CLOUDFRONT_DOMAIN}" >> "$ENV_FILE"
+    if [ -n "$CFG_CLOUDFRONT_DOMAIN" ] && [ -n "$CFG_CLOUDFRONT_DISTRIBUTION_ID" ]; then
+      cat >> "$ENV_FILE" << ENVEOF
+
+# Legacy CloudFront cache invalidation (server-side only)
+CLOUDFRONT_DOMAIN=${CFG_CLOUDFRONT_DOMAIN}
+CLOUDFRONT_DISTRIBUTION_ID=${CFG_CLOUDFRONT_DISTRIBUTION_ID}
+ENVEOF
+    fi
   fi
 
   # Step Functions
@@ -1115,6 +1152,7 @@ ENVEOF
 # Label Studio
 LABEL_STUDIO_URL=${CFG_LABEL_STUDIO_URL}
 LABEL_STUDIO_API_KEY=${CFG_LABEL_STUDIO_API_KEY}
+LABEL_STUDIO_INSTANCE_ID=${CFG_LABEL_STUDIO_INSTANCE_ID}
 LABEL_STUDIO_ADMIN_EMAIL=${CFG_LABEL_STUDIO_ADMIN_EMAIL}
 LABEL_STUDIO_ADMIN_PASSWORD=${CFG_LABEL_STUDIO_ADMIN_PASSWORD}
 ENVEOF
@@ -1125,6 +1163,7 @@ phase_build() {
   header "7/8" "Install & Launch"
 
   local step_num=1
+  local migration_ready=0
 
   # ── Step 1: Write .env.local ──
   echo -e "  ${BOLD}[${step_num}/5]${NC} Writing configuration..."
@@ -1191,14 +1230,18 @@ phase_build() {
   echo ""
   echo -e "  ${BOLD}[${step_num}/5]${NC} Setting up database tables..."
   cd "$SCRIPT_DIR"
-  npx drizzle-kit migrate &>/dev/null &
+  # The npm wrapper permits loopback development databases only. Cloud and
+  # production schemas require the explicit singleton/quiescent cutover.
+  npm run db:migrate --silent &>/dev/null &
   local migrate_pid=$!
   spinner $migrate_pid "Running database migrations..."
   if wait $migrate_pid 2>/dev/null; then
     ok "Database schema is up to date"
+    migration_ready=1
   else
     fail "Migration failed."
     info "Check your DATABASE_URL in .env.local"
+    info "Cloud databases must use the documented singleton migration workflow."
     info "Check database logs: docker compose logs db"
     echo ""
     if ! prompt_yes_no "Continue anyway?" "n"; then
@@ -1214,9 +1257,11 @@ phase_build() {
   echo -e "  ${DIM}Create a demo company with a sample account?${NC}"
   echo -e "  ${DIM}This gives you a working login to test with immediately.${NC}"
   echo ""
-  if prompt_yes_no "Seed demo data?" "y"; then
+  if [ "${migration_ready}" != "1" ]; then
+    warn "Skipping demo seed because schema admission did not succeed."
+  elif prompt_yes_no "Seed demo data?" "y"; then
     cd "$SCRIPT_DIR"
-    if npx tsx src/lib/db/seed.ts &>/dev/null; then
+    if npm run db:seed --silent &>/dev/null; then
       ok "Demo data created!"
       echo ""
       echo -e "  ${BOLD}Demo Login:${NC}"
@@ -1251,9 +1296,9 @@ phase_health_checks() {
   # Database
   if [ -n "$CFG_DATABASE_URL" ]; then
     local db_result
-    db_result=$(cd "$SCRIPT_DIR" && node -e "
+    db_result=$(cd "$SCRIPT_DIR" && BP_HEALTH_DATABASE_URL="$CFG_DATABASE_URL" node -e "
 const{Pool}=require('pg');
-const p=new Pool({connectionString:'${CFG_DATABASE_URL}'});
+const p=new Pool({connectionString:process.env.BP_HEALTH_DATABASE_URL});
 p.query('SELECT count(*) as c FROM information_schema.tables WHERE table_schema=\\'public\\'')
 .then(r=>{console.log('OK:'+r.rows[0].c);p.end()})
 .catch(e=>{console.error('FAIL:'+e.message);p.end();process.exit(1)});
@@ -1347,10 +1392,12 @@ p.query('SELECT count(*) as c FROM information_schema.tables WHERE table_schema=
   else
     fail "Cloud file storage (needs AWS S3)"
   fi
-  if [ -n "$CFG_CLOUDFRONT_DOMAIN" ]; then
-    ok "CDN for fast image loading"
+  if [ -n "$CFG_CLOUDFRONT_DOMAIN" ] && [ -n "$CFG_CLOUDFRONT_DISTRIBUTION_ID" ]; then
+    ok "Legacy CloudFront cache invalidation"
+  elif [ -n "$CFG_CLOUDFRONT_DOMAIN" ] || [ -n "$CFG_CLOUDFRONT_DISTRIBUTION_ID" ]; then
+    fail "CloudFront invalidation (domain and distribution ID must be paired)"
   else
-    fail "CDN (needs CloudFront)"
+    echo -e "  ${DIM}-${NC} CloudFront invalidation: not configured (not needed for private delivery)"
   fi
   if [ -n "$CFG_AWS_ACCESS_KEY_ID" ]; then
     ok "Advanced OCR (AWS Textract)"
@@ -1380,7 +1427,7 @@ p.query('SELECT count(*) as c FROM information_schema.tables WHERE table_schema=
   else
     fail "Google Sign-In (needs OAuth credentials)"
   fi
-  if [ -n "$CFG_LABEL_STUDIO_URL" ] && [ -n "$CFG_LABEL_STUDIO_API_KEY" ]; then
+  if [ -n "$CFG_LABEL_STUDIO_URL" ] && [ -n "$CFG_LABEL_STUDIO_API_KEY" ] && [ -n "$CFG_LABEL_STUDIO_INSTANCE_ID" ]; then
     ok "Label Studio data labeling"
   else
     fail "Label Studio (run: docker compose up label-studio)"

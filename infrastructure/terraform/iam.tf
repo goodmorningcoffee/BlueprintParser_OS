@@ -76,6 +76,27 @@ resource "aws_iam_role" "beaver_ecs_task_role" {
   })
 }
 
+# The migrator receives DATABASE_URL through the ECS execution role and reaches
+# RDS through the VPC. It does not need application AWS API permissions. Keep a
+# dedicated, deliberately policy-free role so task-definition admission can
+# distinguish it from the broad web/worker runtime role.
+resource "aws_iam_role" "beaver_schema_migrator_task_role" {
+  name = "beaver-schema-migrator-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy" "beaver_ecs_task_s3" {
   name = "beaver-ecs-task-s3"
   role = aws_iam_role.beaver_ecs_task_role.id
@@ -87,9 +108,12 @@ resource "aws_iam_role_policy" "beaver_ecs_task_s3" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
+          "s3:GetObjectVersion",
           "s3:PutObject",
           "s3:DeleteObject",
-          "s3:ListBucket"
+          "s3:DeleteObjectVersion",
+          "s3:ListBucket",
+          "s3:ListBucketVersions"
         ]
         Resource = [
           aws_s3_bucket.beaver_data.arn,
@@ -299,11 +323,6 @@ resource "aws_iam_role" "beaver_sagemaker_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "beaver_sagemaker_full" {
-  role       = aws_iam_role.beaver_sagemaker_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
-}
-
 resource "aws_iam_role_policy" "beaver_sagemaker_s3" {
   name = "beaver-sagemaker-s3"
   role = aws_iam_role.beaver_sagemaker_role.id
@@ -312,16 +331,50 @@ resource "aws_iam_role_policy" "beaver_sagemaker_s3" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid    = "ReadOnlyCanonicalInputs"
         Effect = "Allow"
         Action = [
           "s3:GetObject",
-          "s3:PutObject",
-          "s3:ListBucket"
+          "s3:GetObjectVersion",
         ]
         Resource = [
-          aws_s3_bucket.beaver_data.arn,
-          "${aws_s3_bucket.beaver_data.arn}/*"
+          "${aws_s3_bucket.beaver_data.arn}/models/*",
+          "${aws_s3_bucket.beaver_data.arn}/*/*/pages/*",
         ]
+      },
+      {
+        Sid    = "WriteOnlyCanonicalOutputs"
+        Effect = "Allow"
+        Action = [
+          "s3:AbortMultipartUpload",
+          "s3:ListMultipartUploadParts",
+          "s3:PutObject",
+        ]
+        Resource = "${aws_s3_bucket.beaver_data.arn}/*/*/yolo-output/*"
+      },
+      {
+        Sid      = "ResolveCanonicalDataBucket"
+        Effect   = "Allow"
+        Action   = "s3:GetBucketLocation"
+        Resource = aws_s3_bucket.beaver_data.arn
+      },
+      {
+        Sid    = "ListOnlyCanonicalPrefixes"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:ListBucketMultipartUploads",
+        ]
+        Resource = aws_s3_bucket.beaver_data.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "models/*",
+              "*/*/pages/*",
+              "*/*/yolo-output/*",
+            ]
+          }
+        }
       }
     ]
   })
@@ -335,13 +388,20 @@ resource "aws_iam_role_policy" "beaver_sagemaker_ecr" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid      = "ResolvePrivateRegistryToken"
+        Effect = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+      {
+        Sid    = "PullOnlyCanonicalYoloRepository"
         Effect = "Allow"
         Action = [
-          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchCheckLayerAvailability",
           "ecr:BatchGetImage",
-          "ecr:GetAuthorizationToken"
+          "ecr:GetDownloadUrlForLayer",
         ]
-        Resource = "*"
+        Resource = aws_ecr_repository.beaver_yolo_pipeline.arn
       }
     ]
   })
@@ -377,12 +437,23 @@ resource "aws_iam_role_policy" "beaver_sfn_ecs" {
     Statement = [
       {
         Effect = "Allow"
+        Action = "ecs:RunTask"
+        # Preserve in-flight Step Functions executions across ordinary CPU task
+        # revisions while excluding every non-CPU family (especially migrator).
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${aws_ecs_task_definition.beaver_cpu_pipeline.family}:*"
+        Condition = {
+          ArnEquals = {
+            "ecs:cluster" = aws_ecs_cluster.beaver.arn
+          }
+        }
+      },
+      {
+        Effect = "Allow"
         Action = [
-          "ecs:RunTask",
           "ecs:StopTask",
           "ecs:DescribeTasks"
         ]
-        Resource = "*"
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.beaver.name}/*"
         Condition = {
           ArnEquals = {
             "ecs:cluster" = aws_ecs_cluster.beaver.arn
@@ -398,6 +469,11 @@ resource "aws_iam_role_policy" "beaver_sfn_ecs" {
           aws_iam_role.beaver_ecs_execution_role.arn,
           aws_iam_role.beaver_ecs_task_role.arn,
         ]
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "ecs-tasks.amazonaws.com"
+          }
+        }
       },
       {
         Effect = "Allow"

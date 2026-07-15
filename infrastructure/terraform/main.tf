@@ -12,22 +12,17 @@ terraform {
     }
   }
 
-  # NOTE: Terraform backend config doesn't support variables.
-  # Update these values to match your AWS setup before running terraform init.
-  # DO NOT COMMIT these real bucket/table names to a public repo. Before a
-  # public push, revert to CHANGEME- placeholders and use a partial-config
-  # overlay or -backend-config= flags to inject real values.
-  backend "s3" {
-    bucket         = "beaver-terraform-state-123456789012"
-    key            = "infrastructure/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "beaver-terraform-locks"
-  }
+  # Backend coordinates are deployment authority, not source code. Initialize
+  # with an owner-maintained copy of backend.hcl.example kept outside the repo:
+  #   terraform init -backend-config=/owner/private/beaver-backend.hcl
+  # An empty partial backend prevents account/state identities from being
+  # committed and makes a fresh init fail until the owner supplies them.
+  backend "s3" {}
 }
 
 provider "aws" {
-  region = var.aws_region
+  region              = var.aws_region
+  allowed_account_ids = [var.account_id]
 
   default_tags {
     tags = {
