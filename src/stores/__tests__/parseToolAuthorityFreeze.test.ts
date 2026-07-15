@@ -265,17 +265,26 @@ describe("later user tool intent revokes parse completion writes", () => {
     expect(start).toBeGreaterThan(-1);
     expect(firstBranch).toBeGreaterThan(start);
     const gesturePrefix = source.slice(start, firstBranch);
+    const lifecycleGuard = gesturePrefix.indexOf("if (!canAdoptProjectLifecycle()) return");
     const cancel = gesturePrefix.indexOf("cancelDeferredDrawing()");
     const projectGuard = gesturePrefix.indexOf("useSessionStore.getState().publicId");
     const pageGuard = gesturePrefix.indexOf("useViewerCoreStore.getState().pageNumber");
+    const toolSnapshot = gesturePrefix.indexOf("const toolAtDown = useToolStore.getState()");
+    const activationSnapshot = gesturePrefix.indexOf("const activeTool = toolAtDown.activeTool");
     const coordinates = gesturePrefix.indexOf("getPos(e)");
+    expect(lifecycleGuard).toBeGreaterThan(-1);
     expect(cancel).toBeGreaterThan(-1);
     expect(projectGuard).toBeGreaterThan(-1);
     expect(pageGuard).toBeGreaterThan(-1);
+    expect(toolSnapshot).toBeGreaterThan(-1);
+    expect(activationSnapshot).toBeGreaterThan(-1);
     expect(coordinates).toBeGreaterThan(-1);
+    expect(lifecycleGuard).toBeLessThan(cancel);
     expect(cancel).toBeLessThan(projectGuard);
-    expect(projectGuard).toBeLessThan(coordinates);
-    expect(pageGuard).toBeLessThan(coordinates);
+    expect(projectGuard).toBeLessThan(pageGuard);
+    expect(pageGuard).toBeLessThan(toolSnapshot);
+    expect(toolSnapshot).toBeLessThan(activationSnapshot);
+    expect(activationSnapshot).toBeLessThan(coordinates);
     expect(gesturePrefix).not.toContain("invalidateToolTailAuthority");
     expect(gesturePrefix).not.toContain("invalidateParseToolAuthority");
 

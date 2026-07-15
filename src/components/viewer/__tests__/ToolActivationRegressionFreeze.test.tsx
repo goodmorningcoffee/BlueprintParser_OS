@@ -146,13 +146,21 @@ describe("panel-to-canvas specialized activation", () => {
     });
     vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(canvasRect());
 
+    const drawingPublications = { drawing: 0, start: 0, end: 0 };
+    const unsubscribe = useToolStore.subscribe((state, previous) => {
+      if (state._drawing !== previous._drawing) drawingPublications.drawing += 1;
+      if (state._drawStart !== previous._drawStart) drawingPublications.start += 1;
+      if (state._drawEnd !== previous._drawEnd) drawingPublications.end += 1;
+    });
     act(() => {
       fireEvent.mouseDown(canvas, { clientX: 10, clientY: 20, button: 0 });
     });
+    unsubscribe();
 
     expect(useToolStore.getState()._drawing).toBe(true);
     expect(useToolStore.getState()._drawStart).toEqual({ x: 10, y: 20 });
     expect(useToolStore.getState()._drawEnd).toEqual({ x: 10, y: 20 });
+    expect(drawingPublications).toEqual({ drawing: 1, start: 1, end: 1 });
   });
 
   it("rejects a buffered Symbol done message after the processing Cancel intent", async () => {
