@@ -34,13 +34,15 @@ const HARNESS_PATHS = {
   probeSha256: "e2e/perf-v2/AnnotationOwnerPerfRenderProbe.tsx",
   globalSetupSha256: "e2e/global-setup.ts",
   cdnStubSha256: "e2e/cdn-stub.mjs",
+  fixturePreflightSha256: "e2e/ensure-synthetic-pdf.mjs",
+  startDevServerSha256: "e2e/start-dev-server.mjs",
   packageLockSha256: "package-lock.json",
 };
 const EXPECTED_THRESHOLD_CONTRACT = {
   candidateVsBaselineTimingMaxRatioExclusive: 1.6,
   candidateBucket4000MaxMsExclusive: 400,
-  candidateProfilerCommitsMustNotExceedBaseline: true,
-  gatedProfilerScenarios: GATED_PROFILER_SCENARIOS,
+  profilerCommitGateScenarios: GATED_PROFILER_SCENARIOS,
+  candidateProfilerCommitsMustNotExceedBaselineForGatedScenarios: true,
   annotationDeleteWitness: {
     targetId: 990001, requestsPerSample: 1, status: 200, beforeCount: 512, afterCount: 511,
   },

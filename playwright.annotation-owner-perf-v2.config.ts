@@ -4,7 +4,11 @@ import { resolve } from "node:path";
 import { defineConfig } from "@playwright/test";
 
 const HARNESS_ROOT = process.cwd();
-process.env.PLAYWRIGHT_BROWSERS_PATH ||= resolve(HARNESS_ROOT, "..", ".pw-browsers");
+process.env.PLAYWRIGHT_BROWSERS_PATH ||= resolve(
+  HARNESS_ROOT,
+  "..",
+  ".pw-browsers",
+);
 
 const APP_ROOT = resolve(process.env.PERF_APP_ROOT || HARNESS_ROOT);
 const TEST_DATABASE_URL = "postgres://bp_test:bp_test@localhost:5433/bp_test";
@@ -32,16 +36,20 @@ export default defineConfig({
       cwd: HARNESS_ROOT,
       port: 9876,
       reuseExistingServer: false,
-      timeout: 30_000,
+      // A fresh clone generates the ignored 100-page PDF before binding the port.
+      timeout: 120_000,
     },
     {
-      command: "npm run dev -- -p 3100",
-      cwd: APP_ROOT,
+      command: "node e2e/start-dev-server.mjs -p 3100",
+      cwd: HARNESS_ROOT,
       port: 3100,
       reuseExistingServer: false,
       timeout: 240_000,
       env: {
         DATABASE_URL: TEST_DATABASE_URL,
+        BP_E2E_APP_ROOT: APP_ROOT,
+        BP_TEST_S3_ENDPOINT: "https://localhost:9876",
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
         CLOUDFRONT_DOMAIN: "localhost:9876",
         NEXT_PUBLIC_CLOUDFRONT_DOMAIN: "localhost:9876",
         S3_BUCKET: "e2e-dummy-bucket",
@@ -53,7 +61,8 @@ export default defineConfig({
         AWS_ACCESS_KEY_ID: "e2e-dummy",
         AWS_SECRET_ACCESS_KEY: "e2e-dummy",
         AWS_REGION: "us-east-1",
-        NEXT_PUBLIC_BP_PERF_APP_SHA: process.env.PERF_APP_SHA || "missing-source-sha",
+        NEXT_PUBLIC_BP_PERF_APP_SHA:
+          process.env.PERF_APP_SHA || "missing-source-sha",
       },
     },
   ],

@@ -1,5 +1,6 @@
-// Validate and adjudicate the four retained final perf-v2 legs. The collection order is fixed as
-// pre1 -> post1 -> post2 -> pre2; only the fully warmed reverse pair (post2 vs pre2) is gated.
+// Validate and adjudicate the four private-gateway direct-parent perf-v2 legs. The collection order
+// is fixed as pre1 -> post1 -> post2 -> pre2; only the fully warmed reverse pair (post2 vs pre2) is
+// gated.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -7,14 +8,20 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
-const ARTIFACT_SCHEMA_VERSION = "bp-viewer-perf-v2.1.0";
-const PROTOCOL_VERSION = "p2.3-representative-column-profiler-median3-reverse1";
-const VERDICT_SCHEMA_VERSION = "bp-viewer-perf-v2-verdict-3";
+const ARTIFACT_SCHEMA_VERSION = "bp-viewer-perf-v2.2.0";
+const PROTOCOL_VERSION =
+  "p2.4-direct-parent-symmetric-missing-underlays-profiler-median3-reverse1";
+const VERDICT_SCHEMA_VERSION = "bp-viewer-perf-v2-verdict-4";
 const INSTRUMENTATION_SCHEMA_VERSION = "bp-perf-v2-instrumentation-manifest-1";
-const BASELINE_SOURCE_SHA = "26a9de754f4422e1a6d353b2b4a3f2e6307b3f14";
+const BASELINE_SOURCE_SHA = "9edc329d1441c30924a7aa9d92f8fb3d16050698";
+const CANDIDATE_SOURCE_SHA = "85522add9283c51c784266c744e1065c3662cddf";
 const SHA1_PATTERN = /^[0-9a-f]{40}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const scriptRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const TRANSPORT_RATIONALE =
+  "timing A/B intentionally accepts historical direct-CDN baseline versus same-origin candidate; authorization and upstream cancellation are proven by the dedicated private-gateway oracle";
+const MISSING_UNDERLAY_TREATMENT =
+  "all source-compatible legacy/current page and thumbnail request families are intercepted at the browser boundary with the same deterministic 404";
 
 const TIMING_KEYS = [
   "coldOpenWarmMs",
@@ -29,9 +36,24 @@ const TIMING_KEYS = [
   "bucket4000Ms",
   "bucketRafP95Ms",
 ];
-const PROFILER_SCENARIOS = ["nav20", "zoom10", "polygon20", "drag60", "bucket4000"];
-const GATED_PROFILER_SCENARIOS = ["zoom10", "polygon20", "drag60", "bucket4000"];
-const PROFILER_TARGETS = ["AnnotationOverlay", "DrawingPreviewLayer", "PDFPage"];
+const PROFILER_SCENARIOS = [
+  "nav20",
+  "zoom10",
+  "polygon20",
+  "drag60",
+  "bucket4000",
+];
+const GATED_PROFILER_SCENARIOS = [
+  "zoom10",
+  "polygon20",
+  "drag60",
+  "bucket4000",
+];
+const PROFILER_TARGETS = [
+  "AnnotationOverlay",
+  "DrawingPreviewLayer",
+  "PDFPage",
+];
 const PROFILER_FIELDS = ["commits", "mounts", "updates", "actualDurationMs"];
 const HARNESS_HASH_FIELDS = [
   ["specSha256", "e2e/viewer-perf-v2.spec.ts"],
@@ -41,6 +63,8 @@ const HARNESS_HASH_FIELDS = [
   ["probeSha256", "e2e/perf-v2/PerfRenderProbe.tsx"],
   ["globalSetupSha256", "e2e/global-setup.ts"],
   ["cdnStubSha256", "e2e/cdn-stub.mjs"],
+  ["fixturePreflightSha256", "e2e/ensure-synthetic-pdf.mjs"],
+  ["startDevServerSha256", "e2e/start-dev-server.mjs"],
   ["packageLockSha256", "package-lock.json"],
 ];
 const EXPECTED_OVERLAY_STATUS = [
@@ -53,7 +77,8 @@ const EXPECTED_OVERLAY_STATUS = [
 const EXPECTED_THRESHOLD_CONTRACT = {
   candidateVsBaselineTimingMaxRatioExclusive: 1.6,
   candidateBucket4000MaxMsExclusive: 400,
-  candidateProfilerCommitsMustNotExceedBaseline: true,
+  profilerCommitGateScenarios: GATED_PROFILER_SCENARIOS,
+  candidateProfilerCommitsMustNotExceedBaselineForGatedScenarios: true,
   deterministicDrawEndUnitFloor: {
     AnnotationOverlay: 0,
     DrawingPreviewLayer: 1,
@@ -65,7 +90,8 @@ const EXPECTED_FIXTURE = {
   pdfPages: 100,
   pdfBytes: 65_682_593,
   pdfSha256: "f0e6599185554a3035f2487b1385b632578e411eeb42f8db05d5d981e1e0c2d8",
-  generatorSha256: "cfb5faf5e05c43cbe2fb21ea58dafe86e4950496d46c4e53c0c3aeda41616577",
+  generatorSha256:
+    "cfb5faf5e05c43cbe2fb21ea58dafe86e4950496d46c4e53c0c3aeda41616577",
   yoloTags: 120,
   yoloInstances: 3600,
   denseAnnotations: 6848,
@@ -91,37 +117,54 @@ const EXPECTED_FIXTURE = {
     ],
     holePoint: [0.65, 0.5],
   },
-  underlays: "absent (404); bucket uses deterministic 4000x2667 black-wall/white-room-with-column raster",
+  underlays:
+    "absent; legacy/current page and thumbnail families receive symmetric browser-intercepted 404s; bucket uses deterministic 4000x2667 black-wall/white-room-with-column raster",
 };
 
 function parseArguments(argv) {
-  const allowed = new Set(["pre1", "post1", "post2", "pre2", "candidate-sha", "out"]);
+  const allowed = new Set([
+    "pre1",
+    "post1",
+    "post2",
+    "pre2",
+    "candidate-sha",
+    "out",
+  ]);
   const values = {};
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
     const value = argv[index + 1];
-    if (!flag?.startsWith("--") || value === undefined || value.startsWith("--")) {
+    if (
+      !flag?.startsWith("--") ||
+      value === undefined ||
+      value.startsWith("--")
+    ) {
       throw new Error("arguments must be --name value pairs");
     }
     const name = flag.slice(2);
     if (!allowed.has(name)) throw new Error(`unknown argument: ${flag}`);
-    if (Object.hasOwn(values, name)) throw new Error(`duplicate argument: ${flag}`);
+    if (Object.hasOwn(values, name))
+      throw new Error(`duplicate argument: ${flag}`);
     values[name] = value;
   }
   const missing = [...allowed].filter((name) => !values[name]);
   if (missing.length > 0) {
     throw new Error(
       "usage: node scripts/compare-viewer-perf-v2.mjs " +
-      "--pre1 pre1.json --post1 post1.json --post2 post2.json --pre2 pre2.json " +
-      "--candidate-sha SHA --out verdict.json" +
-      ` (missing: ${missing.join(", ")})`,
+        "--pre1 pre1.json --post1 post1.json --post2 post2.json --pre2 pre2.json " +
+        "--candidate-sha SHA --out verdict.json" +
+        ` (missing: ${missing.join(", ")})`,
     );
   }
   if (!SHA1_PATTERN.test(values["candidate-sha"])) {
-    throw new Error("--candidate-sha must be the exact lowercase 40-character commit SHA");
+    throw new Error(
+      "--candidate-sha must be the exact lowercase 40-character commit SHA",
+    );
   }
-  if (values["candidate-sha"] === BASELINE_SOURCE_SHA) {
-    throw new Error("--candidate-sha must be distinct from the fixed baseline SHA");
+  if (values["candidate-sha"] !== CANDIDATE_SOURCE_SHA) {
+    throw new Error(
+      `--candidate-sha must be the fixed private-gateway candidate ${CANDIDATE_SOURCE_SHA}`,
+    );
   }
   return values;
 }
@@ -142,9 +185,11 @@ function median(values) {
   const sorted = [...values].sort((left, right) => left - right);
   if (sorted.length === 0) return 0;
   const middle = Math.floor(sorted.length / 2);
-  return +(sorted.length % 2
-    ? sorted[middle]
-    : (sorted[middle - 1] + sorted[middle]) / 2).toFixed(1);
+  return +(
+    sorted.length % 2
+      ? sorted[middle]
+      : (sorted[middle - 1] + sorted[middle]) / 2
+  ).toFixed(1);
 }
 
 const args = parseArguments(process.argv.slice(2));
@@ -176,8 +221,14 @@ function exact(name, actual, expected) {
   check(name, deepEqual(actual, expected), { actual, expected });
 }
 
-function finite(name, value, { integer = false, minimum = 0, exclusiveMinimum = false } = {}) {
-  const pass = typeof value === "number" && Number.isFinite(value) &&
+function finite(
+  name,
+  value,
+  { integer = false, minimum = 0, exclusiveMinimum = false } = {},
+) {
+  const pass =
+    typeof value === "number" &&
+    Number.isFinite(value) &&
     (!integer || Number.isInteger(value)) &&
     (exclusiveMinimum ? value > minimum : value >= minimum);
   check(name, pass, { actual: value, integer, minimum, exclusiveMinimum });
@@ -197,7 +248,9 @@ function array(name, value) {
 }
 
 function validateProfiler(label, profiler) {
-  check(`${label} is object`, isObject(profiler), { actualType: typeof profiler });
+  check(`${label} is object`, isObject(profiler), {
+    actualType: typeof profiler,
+  });
   if (!isObject(profiler)) return;
   for (const scenario of PROFILER_SCENARIOS) {
     const scenarioValue = profiler[scenario];
@@ -223,55 +276,97 @@ function validateProfiler(label, profiler) {
 function validateBucketRaster(label, raster) {
   check(`${label} is object`, isObject(raster), { actualType: typeof raster });
   if (!isObject(raster)) return;
-  for (const key of ["sourceWidth", "sourceHeight", "processedWidth", "processedHeight"]) {
-    finite(`${label}.${key}`, raster[key], { integer: true, minimum: 0, exclusiveMinimum: true });
+  for (const key of [
+    "sourceWidth",
+    "sourceHeight",
+    "processedWidth",
+    "processedHeight",
+  ]) {
+    finite(`${label}.${key}`, raster[key], {
+      integer: true,
+      minimum: 0,
+      exclusiveMinimum: true,
+    });
   }
   finite(`${label}.roomAreaFraction`, raster.roomAreaFraction);
 }
 
 function validateBucketOutcome(label, outcome) {
-  check(`${label} is object`, isObject(outcome), { actualType: typeof outcome });
+  check(`${label} is object`, isObject(outcome), {
+    actualType: typeof outcome,
+  });
   if (!isObject(outcome)) return;
-  finite(`${label}.previewCanvasWidth`, outcome.previewCanvasWidth,
-    { integer: true, minimum: 0, exclusiveMinimum: true });
-  finite(`${label}.previewCanvasHeight`, outcome.previewCanvasHeight,
-    { integer: true, minimum: 0, exclusiveMinimum: true });
+  finite(`${label}.previewCanvasWidth`, outcome.previewCanvasWidth, {
+    integer: true,
+    minimum: 0,
+    exclusiveMinimum: true,
+  });
+  finite(`${label}.previewCanvasHeight`, outcome.previewCanvasHeight, {
+    integer: true,
+    minimum: 0,
+    exclusiveMinimum: true,
+  });
   exact(`${label}.previewCanvasZIndex`, outcome.previewCanvasZIndex, "15");
-  check(`${label}.filledSampleAlphas has one entry per witness point`,
+  check(
+    `${label}.filledSampleAlphas has one entry per witness point`,
     Array.isArray(outcome.filledSampleAlphas) &&
-      outcome.filledSampleAlphas.length === EXPECTED_FIXTURE.bucketPreviewWitness.filledPoints.length,
-    outcome.filledSampleAlphas);
+      outcome.filledSampleAlphas.length ===
+        EXPECTED_FIXTURE.bucketPreviewWitness.filledPoints.length,
+    outcome.filledSampleAlphas,
+  );
   if (Array.isArray(outcome.filledSampleAlphas)) {
-    outcome.filledSampleAlphas.forEach((alpha, index) => check(
-      `${label}.filledSampleAlphas[${index}] is painted`,
-      Number.isInteger(alpha) && alpha > 0 && alpha <= 255,
-      alpha,
-    ));
+    outcome.filledSampleAlphas.forEach((alpha, index) =>
+      check(
+        `${label}.filledSampleAlphas[${index}] is painted`,
+        Number.isInteger(alpha) && alpha > 0 && alpha <= 255,
+        alpha,
+      ),
+    );
   }
-  exact(`${label}.filledSampleCount`, outcome.filledSampleCount,
-    EXPECTED_FIXTURE.bucketPreviewWitness.filledPoints.length);
+  exact(
+    `${label}.filledSampleCount`,
+    outcome.filledSampleCount,
+    EXPECTED_FIXTURE.bucketPreviewWitness.filledPoints.length,
+  );
   exact(`${label}.holeCenterAlpha`, outcome.holeCenterAlpha, 0);
 }
 
 function validatePageWindow(label, pageWindow) {
-  check(`${label} is object`, isObject(pageWindow), { actualType: typeof pageWindow });
+  check(`${label} is object`, isObject(pageWindow), {
+    actualType: typeof pageWindow,
+  });
   if (!isObject(pageWindow)) return;
   nonemptyString(`${label}.url`, pageWindow.url);
-  finite(`${label}.from`, pageWindow.from, { integer: true, minimum: 0, exclusiveMinimum: true });
-  finite(`${label}.to`, pageWindow.to, { integer: true, minimum: 0, exclusiveMinimum: true });
-  check(`${label} covers page 21`, pageWindow.from <= 21 && pageWindow.to >= 21,
-    { from: pageWindow.from, to: pageWindow.to });
+  finite(`${label}.from`, pageWindow.from, {
+    integer: true,
+    minimum: 0,
+    exclusiveMinimum: true,
+  });
+  finite(`${label}.to`, pageWindow.to, {
+    integer: true,
+    minimum: 0,
+    exclusiveMinimum: true,
+  });
+  check(
+    `${label} covers page 21`,
+    pageWindow.from <= 21 && pageWindow.to >= 21,
+    { from: pageWindow.from, to: pageWindow.to },
+  );
 }
 
 function validateNavOutcome(label, outcome) {
-  check(`${label} is object`, isObject(outcome), { actualType: typeof outcome });
+  check(`${label} is object`, isObject(outcome), {
+    actualType: typeof outcome,
+  });
   if (!isObject(outcome)) return;
   exact(`${label}.targetPage`, outcome.targetPage, 21);
   exact(`${label}.activePage`, outcome.activePage, 21);
   nonemptyString(`${label}.activeClass`, outcome.activeClass);
   validatePageWindow(`${label}.pageWindow`, outcome.pageWindow);
   const raster = outcome.raster;
-  check(`${label}.raster is object`, isObject(raster), { actualType: typeof raster });
+  check(`${label}.raster is object`, isObject(raster), {
+    actualType: typeof raster,
+  });
   if (isObject(raster)) {
     for (const field of ["width", "height", "paintedPixelSamples"]) {
       finite(`${label}.raster.${field}`, raster[field], {
@@ -286,90 +381,290 @@ function validateNavOutcome(label, outcome) {
         exclusiveMinimum: true,
       });
     }
-    check(`${label}.raster.opacity is visible`, typeof raster.opacity === "string" &&
-      raster.opacity !== "" && raster.opacity !== "0", raster.opacity);
+    check(
+      `${label}.raster.opacity is visible`,
+      typeof raster.opacity === "string" &&
+        raster.opacity !== "" &&
+        raster.opacity !== "0",
+      raster.opacity,
+    );
   }
-  finite(`${label}.pdfPageCommits`, outcome.pdfPageCommits,
-    { integer: true, minimum: 0, exclusiveMinimum: true });
+  finite(`${label}.pdfPageCommits`, outcome.pdfPageCommits, {
+    integer: true,
+    minimum: 0,
+    exclusiveMinimum: true,
+  });
 }
 
 function validateZoomOutcome(label, outcome) {
-  check(`${label} is object`, isObject(outcome), { actualType: typeof outcome });
+  check(`${label} is object`, isObject(outcome), {
+    actualType: typeof outcome,
+  });
   if (!isObject(outcome)) return;
   for (const field of ["beforePercent", "afterPercent", "deltaPercent"]) {
-    finite(`${label}.${field}`, outcome[field], { minimum: 0, exclusiveMinimum: true });
+    finite(`${label}.${field}`, outcome[field], {
+      minimum: 0,
+      exclusiveMinimum: true,
+    });
   }
-  check(`${label} records a coherent positive scale change`,
-    Number.isFinite(outcome.beforePercent) && Number.isFinite(outcome.afterPercent) &&
-      Number.isFinite(outcome.deltaPercent) && outcome.afterPercent > outcome.beforePercent &&
+  check(
+    `${label} records a coherent positive scale change`,
+    Number.isFinite(outcome.beforePercent) &&
+      Number.isFinite(outcome.afterPercent) &&
+      Number.isFinite(outcome.deltaPercent) &&
+      outcome.afterPercent > outcome.beforePercent &&
       outcome.afterPercent - outcome.beforePercent === outcome.deltaPercent,
-    outcome);
-  finite(`${label}.pdfPageCommits`, outcome.pdfPageCommits,
-    { integer: true, minimum: 0, exclusiveMinimum: true });
+    outcome,
+  );
+  finite(`${label}.pdfPageCommits`, outcome.pdfPageCommits, {
+    integer: true,
+    minimum: 0,
+    exclusiveMinimum: true,
+  });
+}
+
+function expectedMissingUnderlayFamilies(role) {
+  return role === "baseline"
+    ? ["direct-cdn-page-underlay", "legacy-thumbnail-proxy"]
+    : ["private-gateway-page-underlay", "private-gateway-thumbnail"];
+}
+
+function validMissingUnderlayRequest(request) {
+  if (
+    !isObject(request) ||
+    request.method !== "GET" ||
+    request.status !== 404 ||
+    typeof request.url !== "string" ||
+    typeof request.pathname !== "string"
+  ) {
+    return false;
+  }
+  let url;
+  try {
+    url = new URL(request.url);
+  } catch {
+    return false;
+  }
+  if (url.pathname !== request.pathname) return false;
+  if (request.family === "legacy-thumbnail-proxy") {
+    return /^\/api\/projects\/[0-9a-f-]{36}\/thumbnail\/[1-9][0-9]*$/u.test(
+      url.pathname,
+    );
+  }
+  if (request.family === "direct-cdn-page-underlay") {
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "localhost" &&
+      url.port === "9876" &&
+      /^\/e2e-co\/00000000000000000001\/pages\/page_[0-9]{4}\.png$/u.test(
+        url.pathname,
+      )
+    );
+  }
+  if (request.family === "private-gateway-page-underlay") {
+    return /^\/api\/project-assets\/[0-9a-f-]{36}\/pages\/page_[0-9]{4}\.png$/u.test(
+      url.pathname,
+    );
+  }
+  if (request.family === "private-gateway-thumbnail") {
+    return /^\/api\/project-assets\/[0-9a-f-]{36}\/thumbnails\/page_[0-9]{4}\.png$/u.test(
+      url.pathname,
+    );
+  }
+  return false;
 }
 
 function validateArtifact(leg) {
   const { artifact, key, role, sourceSha } = leg;
   const label = key;
-  check(`${label} top level is object`, isObject(artifact), { actualType: typeof artifact });
+  check(`${label} top level is object`, isObject(artifact), {
+    actualType: typeof artifact,
+  });
   if (!isObject(artifact)) return;
 
-  exact(`${label} schemaVersion`, artifact.schemaVersion, ARTIFACT_SCHEMA_VERSION);
+  exact(
+    `${label} schemaVersion`,
+    artifact.schemaVersion,
+    ARTIFACT_SCHEMA_VERSION,
+  );
   exact(`${label} protocolVersion`, artifact.protocolVersion, PROTOCOL_VERSION);
   exact(`${label} role`, artifact.role, role);
   exact(`${label} leg label`, artifact.leg, key);
   exact(`${label} sourceSha`, artifact.sourceSha, sourceSha);
   exact(`${label} sourceCommitSha`, artifact.sourceCommitSha, sourceSha);
-  check(`${label} sourceSha is exact SHA`, SHA1_PATTERN.test(artifact.sourceSha), artifact.sourceSha);
-  check(`${label} sourceCommitSha is exact SHA`, SHA1_PATTERN.test(artifact.sourceCommitSha),
-    artifact.sourceCommitSha);
-  check(`${label} harnessSha is exact SHA`, SHA1_PATTERN.test(artifact.harnessSha), artifact.harnessSha);
+  check(
+    `${label} sourceSha is exact SHA`,
+    SHA1_PATTERN.test(artifact.sourceSha),
+    artifact.sourceSha,
+  );
+  check(
+    `${label} sourceCommitSha is exact SHA`,
+    SHA1_PATTERN.test(artifact.sourceCommitSha),
+    artifact.sourceCommitSha,
+  );
+  check(
+    `${label} harnessSha is exact SHA`,
+    SHA1_PATTERN.test(artifact.harnessSha),
+    artifact.harnessSha,
+  );
   nonemptyString(`${label} mode`, artifact.mode);
   exact(`${label} runs`, artifact.runs, 3);
   exact(`${label} smoke`, artifact.smoke, false);
-  exact(`${label} thresholdContract`, artifact.thresholdContract, EXPECTED_THRESHOLD_CONTRACT);
-  check(`${label} date is ISO timestamp`, typeof artifact.date === "string" &&
-    Number.isFinite(Date.parse(artifact.date)), artifact.date);
+  const transportBoundary = artifact.transportBoundary;
+  check(`${label} transportBoundary is object`, isObject(transportBoundary), {
+    actualType: typeof transportBoundary,
+  });
+  if (isObject(transportBoundary)) {
+    const expectedBoundary =
+      role === "baseline" ? "direct-cdn" : "same-origin-private-gateway";
+    exact(
+      `${label} browser transport boundary`,
+      transportBoundary.browserBoundary,
+      expectedBoundary,
+    );
+    exact(
+      `${label} transport is source-exact`,
+      transportBoundary.sourceExact,
+      true,
+    );
+    exact(
+      `${label} transport is explicitly non-security evidence`,
+      transportBoundary.securityEvidence,
+      false,
+    );
+    exact(
+      `${label} transport rationale`,
+      transportBoundary.rationale,
+      TRANSPORT_RATIONALE,
+    );
+    exact(
+      `${label} symmetric missing-underlay treatment`,
+      transportBoundary.missingUnderlayTreatment,
+      MISSING_UNDERLAY_TREATMENT,
+    );
+    finite(
+      `${label} transport PDF request count`,
+      transportBoundary.pdfRequestCount,
+      {
+        integer: true,
+        minimum: 0,
+        exclusiveMinimum: true,
+      },
+    );
+    finite(
+      `${label} transport PDF range request count`,
+      transportBoundary.pdfRangeRequestCount,
+      { integer: true, minimum: 0, exclusiveMinimum: true },
+    );
+    check(
+      `${label} transport range count fits total`,
+      Number.isInteger(transportBoundary.pdfRequestCount) &&
+        Number.isInteger(transportBoundary.pdfRangeRequestCount) &&
+        transportBoundary.pdfRangeRequestCount <=
+          transportBoundary.pdfRequestCount,
+      transportBoundary,
+    );
+    check(
+      `${label} transport has one exact browser PDF path`,
+      Array.isArray(transportBoundary.pdfRequestPaths) &&
+        transportBoundary.pdfRequestPaths.length === 1 &&
+        (role === "baseline"
+          ? transportBoundary.pdfRequestPaths[0] ===
+            "/e2e-co/00000000000000000001/original.pdf"
+          : /^\/api\/project-assets\/[0-9a-f-]{36}\/original\.pdf$/u.test(
+              transportBoundary.pdfRequestPaths[0],
+            )),
+      transportBoundary.pdfRequestPaths,
+    );
+  }
+  exact(
+    `${label} thresholdContract`,
+    artifact.thresholdContract,
+    EXPECTED_THRESHOLD_CONTRACT,
+  );
+  check(
+    `${label} date is ISO timestamp`,
+    typeof artifact.date === "string" &&
+      Number.isFinite(Date.parse(artifact.date)),
+    artifact.date,
+  );
 
-  check(`${label} fixture is object`, isObject(artifact.fixture), { actualType: typeof artifact.fixture });
+  check(`${label} fixture is object`, isObject(artifact.fixture), {
+    actualType: typeof artifact.fixture,
+  });
   if (isObject(artifact.fixture)) {
     exact(`${label} fixture protocol`, artifact.fixture, EXPECTED_FIXTURE);
     for (const field of [
-      "pdfPages", "pdfBytes", "yoloTags", "yoloInstances", "denseAnnotations", "takeoffItems",
-    ]) finite(`${label} fixture.${field}`, artifact.fixture[field], {
-      integer: true,
-      minimum: 0,
-      exclusiveMinimum: true,
-    });
-    validateBucketRaster(`${label} fixture.bucketRaster`, artifact.fixture.bucketRaster);
+      "pdfPages",
+      "pdfBytes",
+      "yoloTags",
+      "yoloInstances",
+      "denseAnnotations",
+      "takeoffItems",
+    ])
+      finite(`${label} fixture.${field}`, artifact.fixture[field], {
+        integer: true,
+        minimum: 0,
+        exclusiveMinimum: true,
+      });
+    validateBucketRaster(
+      `${label} fixture.bucketRaster`,
+      artifact.fixture.bucketRaster,
+    );
   }
 
-  check(`${label} harness is object`, isObject(artifact.harness), { actualType: typeof artifact.harness });
+  check(`${label} harness is object`, isObject(artifact.harness), {
+    actualType: typeof artifact.harness,
+  });
   if (isObject(artifact.harness)) {
     for (const [field] of HARNESS_HASH_FIELDS) {
-      check(`${label} harness.${field} is SHA-256`, SHA256_PATTERN.test(artifact.harness[field]),
-        artifact.harness[field]);
+      check(
+        `${label} harness.${field} is SHA-256`,
+        SHA256_PATTERN.test(artifact.harness[field]),
+        artifact.harness[field],
+      );
     }
     const instrumentation = artifact.harness.instrumentation;
     check(`${label} instrumentation is object`, isObject(instrumentation), {
       actualType: typeof instrumentation,
     });
     if (isObject(instrumentation)) {
-      exact(`${label} instrumentation.schemaVersion`, instrumentation.schemaVersion,
-        INSTRUMENTATION_SCHEMA_VERSION);
-      exact(`${label} instrumentation.scriptVersion`, instrumentation.scriptVersion,
-        "bp-perf-v2-overlay-1");
-      exact(`${label} instrumentation.sourceSha`, instrumentation.sourceSha, sourceSha);
-      check(`${label} instrumentation.overlayProtocolSha256 is SHA-256`,
+      exact(
+        `${label} instrumentation.schemaVersion`,
+        instrumentation.schemaVersion,
+        INSTRUMENTATION_SCHEMA_VERSION,
+      );
+      exact(
+        `${label} instrumentation.scriptVersion`,
+        instrumentation.scriptVersion,
+        "bp-perf-v2-overlay-1",
+      );
+      exact(
+        `${label} instrumentation.sourceSha`,
+        instrumentation.sourceSha,
+        sourceSha,
+      );
+      check(
+        `${label} instrumentation.overlayProtocolSha256 is SHA-256`,
         SHA256_PATTERN.test(instrumentation.overlayProtocolSha256),
-        instrumentation.overlayProtocolSha256);
-      check(`${label} instrumentation.probeSha256 is SHA-256`,
-        SHA256_PATTERN.test(instrumentation.probeSha256), instrumentation.probeSha256);
-      exact(`${label} instrumentation probe matches harness probe`,
-        instrumentation.probeSha256, artifact.harness.probeSha256);
-      check(`${label} instrumentation.targets is length 3`,
-        Array.isArray(instrumentation.targets) && instrumentation.targets.length === 3,
-        instrumentation.targets);
+        instrumentation.overlayProtocolSha256,
+      );
+      check(
+        `${label} instrumentation.probeSha256 is SHA-256`,
+        SHA256_PATTERN.test(instrumentation.probeSha256),
+        instrumentation.probeSha256,
+      );
+      exact(
+        `${label} instrumentation probe matches harness probe`,
+        instrumentation.probeSha256,
+        artifact.harness.probeSha256,
+      );
+      check(
+        `${label} instrumentation.targets is length 3`,
+        Array.isArray(instrumentation.targets) &&
+          instrumentation.targets.length === 3,
+        instrumentation.targets,
+      );
       if (Array.isArray(instrumentation.targets)) {
         const expectedFiles = [
           "src/components/viewer/PDFPage.tsx",
@@ -377,16 +672,28 @@ function validateArtifact(leg) {
           "src/components/viewer/DrawingPreviewLayer.tsx",
         ];
         instrumentation.targets.forEach((target, index) => {
-          exact(`${label} instrumentation.targets[${index}].file`, target?.file, expectedFiles[index]);
-          check(`${label} instrumentation.targets[${index}].beforeSha256 is SHA-256`,
-            SHA256_PATTERN.test(target?.beforeSha256), target?.beforeSha256);
-          check(`${label} instrumentation.targets[${index}].afterSha256 is SHA-256`,
-            SHA256_PATTERN.test(target?.afterSha256), target?.afterSha256);
-          check(`${label} instrumentation.targets[${index}] changed`,
+          exact(
+            `${label} instrumentation.targets[${index}].file`,
+            target?.file,
+            expectedFiles[index],
+          );
+          check(
+            `${label} instrumentation.targets[${index}].beforeSha256 is SHA-256`,
+            SHA256_PATTERN.test(target?.beforeSha256),
+            target?.beforeSha256,
+          );
+          check(
+            `${label} instrumentation.targets[${index}].afterSha256 is SHA-256`,
+            SHA256_PATTERN.test(target?.afterSha256),
+            target?.afterSha256,
+          );
+          check(
+            `${label} instrumentation.targets[${index}] changed`,
             SHA256_PATTERN.test(target?.beforeSha256) &&
               SHA256_PATTERN.test(target?.afterSha256) &&
               target.beforeSha256 !== target.afterSha256,
-            { before: target?.beforeSha256, after: target?.afterSha256 });
+            { before: target?.beforeSha256, after: target?.afterSha256 },
+          );
         });
       }
     }
@@ -395,37 +702,73 @@ function validateArtifact(leg) {
       actualType: typeof exactAppWorktree,
     });
     if (isObject(exactAppWorktree)) {
-      check(`${label} exactAppWorktree.root is a distinct absolute path`,
+      check(
+        `${label} exactAppWorktree.root is a distinct absolute path`,
         typeof exactAppWorktree.root === "string" &&
           resolve(exactAppWorktree.root) === exactAppWorktree.root &&
           resolve(exactAppWorktree.root) !== scriptRoot,
-        exactAppWorktree.root);
-      exact(`${label} exactAppWorktree.headSha`, exactAppWorktree.headSha, sourceSha);
-      exact(`${label} exactAppWorktree.sourceCommitSha`, exactAppWorktree.sourceCommitSha, sourceSha);
-      exact(`${label} exactAppWorktree.gitStatus`, exactAppWorktree.gitStatus,
-        EXPECTED_OVERLAY_STATUS);
+        exactAppWorktree.root,
+      );
+      exact(
+        `${label} exactAppWorktree.headSha`,
+        exactAppWorktree.headSha,
+        sourceSha,
+      );
+      exact(
+        `${label} exactAppWorktree.sourceCommitSha`,
+        exactAppWorktree.sourceCommitSha,
+        sourceSha,
+      );
+      exact(
+        `${label} exactAppWorktree.gitStatus`,
+        exactAppWorktree.gitStatus,
+        EXPECTED_OVERLAY_STATUS,
+      );
     }
   }
 
   const environment = artifact.environment;
-  check(`${label} environment is object`, isObject(environment), { actualType: typeof environment });
+  check(`${label} environment is object`, isObject(environment), {
+    actualType: typeof environment,
+  });
   if (isObject(environment)) {
-    for (const field of ["node", "playwright", "chromium", "os", "cpu", "postgres"])
+    for (const field of [
+      "node",
+      "playwright",
+      "chromium",
+      "os",
+      "cpu",
+      "postgres",
+    ])
       nonemptyString(`${label} environment.${field}`, environment[field]);
-    check(`${label} environment.viewport is object`, isObject(environment.viewport),
-      environment.viewport);
+    check(
+      `${label} environment.viewport is object`,
+      isObject(environment.viewport),
+      environment.viewport,
+    );
     if (isObject(environment.viewport)) {
-      finite(`${label} environment.viewport.width`, environment.viewport.width,
-        { integer: true, minimum: 0, exclusiveMinimum: true });
-      finite(`${label} environment.viewport.height`, environment.viewport.height,
-        { integer: true, minimum: 0, exclusiveMinimum: true });
+      finite(
+        `${label} environment.viewport.width`,
+        environment.viewport.width,
+        { integer: true, minimum: 0, exclusiveMinimum: true },
+      );
+      finite(
+        `${label} environment.viewport.height`,
+        environment.viewport.height,
+        { integer: true, minimum: 0, exclusiveMinimum: true },
+      );
     }
-    finite(`${label} environment.devicePixelRatio`, environment.devicePixelRatio,
-      { minimum: 0, exclusiveMinimum: true });
+    finite(
+      `${label} environment.devicePixelRatio`,
+      environment.devicePixelRatio,
+      { minimum: 0, exclusiveMinimum: true },
+    );
   }
 
   const medians = artifact.medians;
-  check(`${label} medians is object`, isObject(medians), { actualType: typeof medians });
+  check(`${label} medians is object`, isObject(medians), {
+    actualType: typeof medians,
+  });
   if (isObject(medians)) {
     for (const timingKey of TIMING_KEYS) {
       finite(`${label} medians.${timingKey}`, medians[timingKey], {
@@ -436,13 +779,23 @@ function validateArtifact(leg) {
     validateProfiler(`${label} medians.profiler`, medians.profiler);
   }
 
-  check(`${label} samples length equals runs`,
-    Array.isArray(artifact.samples) && artifact.samples.length === artifact.runs,
-    { sampleCount: Array.isArray(artifact.samples) ? artifact.samples.length : null, runs: artifact.runs });
+  check(
+    `${label} samples length equals runs`,
+    Array.isArray(artifact.samples) &&
+      artifact.samples.length === artifact.runs,
+    {
+      sampleCount: Array.isArray(artifact.samples)
+        ? artifact.samples.length
+        : null,
+      runs: artifact.runs,
+    },
+  );
   if (Array.isArray(artifact.samples)) {
     artifact.samples.forEach((sample, index) => {
       const sampleLabel = `${label} samples[${index}]`;
-      check(`${sampleLabel} is object`, isObject(sample), { actualType: typeof sample });
+      check(`${sampleLabel} is object`, isObject(sample), {
+        actualType: typeof sample,
+      });
       if (!isObject(sample)) return;
       for (const timingKey of TIMING_KEYS) {
         finite(`${sampleLabel}.${timingKey}`, sample[timingKey], {
@@ -452,26 +805,49 @@ function validateArtifact(leg) {
       }
       validateProfiler(`${sampleLabel}.profiler`, sample.profiler);
       validateBucketRaster(`${sampleLabel}.bucketRaster`, sample.bucketRaster);
-      exact(`${sampleLabel}.bucketRaster protocol`, sample.bucketRaster, EXPECTED_FIXTURE.bucketRaster);
-      validateBucketOutcome(`${sampleLabel}.bucketOutcome`, sample.bucketOutcome);
+      exact(
+        `${sampleLabel}.bucketRaster protocol`,
+        sample.bucketRaster,
+        EXPECTED_FIXTURE.bucketRaster,
+      );
+      validateBucketOutcome(
+        `${sampleLabel}.bucketOutcome`,
+        sample.bucketOutcome,
+      );
       validateNavOutcome(`${sampleLabel}.navOutcome`, sample.navOutcome);
       validateZoomOutcome(`${sampleLabel}.zoomOutcome`, sample.zoomOutcome);
     });
     if (artifact.samples.length === artifact.runs && isObject(medians)) {
       for (const timingKey of TIMING_KEYS) {
         const values = artifact.samples.map((sample) => sample?.[timingKey]);
-        if (values.every((value) => typeof value === "number" && Number.isFinite(value))) {
-          exact(`${label} recomputed median ${timingKey}`, medians[timingKey], median(values));
+        if (
+          values.every(
+            (value) => typeof value === "number" && Number.isFinite(value),
+          )
+        ) {
+          exact(
+            `${label} recomputed median ${timingKey}`,
+            medians[timingKey],
+            median(values),
+          );
         }
       }
       for (const scenario of PROFILER_SCENARIOS) {
         for (const target of PROFILER_TARGETS) {
           for (const field of PROFILER_FIELDS) {
-            const values = artifact.samples.map((sample) =>
-              sample?.profiler?.[scenario]?.[target]?.[field]);
-            if (values.every((value) => typeof value === "number" && Number.isFinite(value))) {
-              exact(`${label} recomputed Profiler median ${scenario}.${target}.${field}`,
-                medians?.profiler?.[scenario]?.[target]?.[field], median(values));
+            const values = artifact.samples.map(
+              (sample) => sample?.profiler?.[scenario]?.[target]?.[field],
+            );
+            if (
+              values.every(
+                (value) => typeof value === "number" && Number.isFinite(value),
+              )
+            ) {
+              exact(
+                `${label} recomputed Profiler median ${scenario}.${target}.${field}`,
+                medians?.profiler?.[scenario]?.[target]?.[field],
+                median(values),
+              );
             }
           }
         }
@@ -480,66 +856,132 @@ function validateArtifact(leg) {
   }
 
   const integrity = artifact.integrity;
-  check(`${label} integrity is object`, isObject(integrity), { actualType: typeof integrity });
+  check(`${label} integrity is object`, isObject(integrity), {
+    actualType: typeof integrity,
+  });
   if (isObject(integrity)) {
     for (const field of [
-      "pageErrors", "requestFailures", "abortedRequestFailures", "unexpectedRequestFailures",
-      "pagePngResponses", "http429", "polygonPostVertexCounts", "servedShas", "navFinalPages",
-      "navFinalPageWindows", "navRasterPaintedPixelSamples", "navPdfPageCommits",
-      "zoomScaleChanges", "zoomPdfPageCommits", "bucketPreviewOutcomes",
-    ]) array(`${label} integrity.${field}`, integrity[field]);
+      "pageErrors",
+      "requestFailures",
+      "abortedRequestFailures",
+      "unexpectedRequestFailures",
+      "missingUnderlayRequests",
+      "http429",
+      "polygonPostVertexCounts",
+      "servedShas",
+      "navFinalPages",
+      "navFinalPageWindows",
+      "navRasterPaintedPixelSamples",
+      "navPdfPageCommits",
+      "zoomScaleChanges",
+      "zoomPdfPageCommits",
+      "bucketPreviewOutcomes",
+    ])
+      array(`${label} integrity.${field}`, integrity[field]);
     for (const field of [
-      "pagePng404s", "annotationPosts", "bucketServerFallbacks", "cachedProjectResponses",
-      "cachedPageWindowKeys", "cachedTextractKeys",
-    ]) finite(`${label} integrity.${field}`, integrity[field], { integer: true });
+      "missingUnderlay404s",
+      "annotationPosts",
+      "bucketServerFallbacks",
+      "cachedProjectResponses",
+      "cachedPageWindowKeys",
+      "cachedTextractKeys",
+    ])
+      finite(`${label} integrity.${field}`, integrity[field], {
+        integer: true,
+      });
 
-    check(`${label} request failures are completely classified as aborted`,
-      Array.isArray(integrity.requestFailures) && Array.isArray(integrity.abortedRequestFailures) &&
-        deepEqual(integrity.requestFailures, integrity.abortedRequestFailures), {
+    check(
+      `${label} request failures are completely classified as aborted`,
+      Array.isArray(integrity.requestFailures) &&
+        Array.isArray(integrity.abortedRequestFailures) &&
+        deepEqual(integrity.requestFailures, integrity.abortedRequestFailures),
+      {
         requestFailures: integrity.requestFailures,
         abortedRequestFailures: integrity.abortedRequestFailures,
-      });
-    check(`${label} page PNG CDN witness is non-vacuous and all 404`,
-      Array.isArray(integrity.pagePngResponses) && integrity.pagePngResponses.length > 0 &&
-        integrity.pagePngResponses.every((response) => isObject(response) &&
-          typeof response.url === "string" &&
-          /^https:\/\/localhost:9876\/.*\/pages\/page_\d{4}\.png$/.test(response.url) &&
-          response.status === 404) &&
-        integrity.pagePng404s === integrity.pagePngResponses.length, {
-        pagePngResponses: integrity.pagePngResponses,
-        pagePng404s: integrity.pagePng404s,
-      });
-    check(`${label} nav witness arrays have one entry per run`, [
-      integrity.navFinalPages,
-      integrity.navFinalPageWindows,
-      integrity.navRasterPaintedPixelSamples,
-      integrity.navPdfPageCommits,
-      integrity.zoomScaleChanges,
-      integrity.zoomPdfPageCommits,
-      integrity.bucketPreviewOutcomes,
-    ].every((values) => Array.isArray(values) && values.length === artifact.runs), {
-      runs: artifact.runs,
-      lengths: Object.fromEntries([
-        "navFinalPages", "navFinalPageWindows", "navRasterPaintedPixelSamples",
-        "navPdfPageCommits", "zoomScaleChanges", "zoomPdfPageCommits", "bucketPreviewOutcomes",
-      ].map((field) => [field, Array.isArray(integrity[field]) ? integrity[field].length : null])),
-    });
+      },
+    );
+    check(
+      `${label} missing-underlay treatment is symmetric, non-vacuous, and role-exact`,
+      Array.isArray(integrity.missingUnderlayRequests) &&
+        integrity.missingUnderlayRequests.length > 0 &&
+        integrity.missingUnderlayRequests.every(validMissingUnderlayRequest) &&
+        deepEqual(
+          [
+            ...new Set(
+              integrity.missingUnderlayRequests.map(
+                (request) => request.family,
+              ),
+            ),
+          ].sort(),
+          expectedMissingUnderlayFamilies(role).sort(),
+        ) &&
+        integrity.missingUnderlay404s ===
+          integrity.missingUnderlayRequests.length,
+      {
+        expectedFamilies: expectedMissingUnderlayFamilies(role),
+        requests: integrity.missingUnderlayRequests,
+        missingUnderlay404s: integrity.missingUnderlay404s,
+      },
+    );
+    check(
+      `${label} nav witness arrays have one entry per run`,
+      [
+        integrity.navFinalPages,
+        integrity.navFinalPageWindows,
+        integrity.navRasterPaintedPixelSamples,
+        integrity.navPdfPageCommits,
+        integrity.zoomScaleChanges,
+        integrity.zoomPdfPageCommits,
+        integrity.bucketPreviewOutcomes,
+      ].every(
+        (values) => Array.isArray(values) && values.length === artifact.runs,
+      ),
+      {
+        runs: artifact.runs,
+        lengths: Object.fromEntries(
+          [
+            "navFinalPages",
+            "navFinalPageWindows",
+            "navRasterPaintedPixelSamples",
+            "navPdfPageCommits",
+            "zoomScaleChanges",
+            "zoomPdfPageCommits",
+            "bucketPreviewOutcomes",
+          ].map((field) => [
+            field,
+            Array.isArray(integrity[field]) ? integrity[field].length : null,
+          ]),
+        ),
+      },
+    );
     if (Array.isArray(integrity.navFinalPages)) {
-      check(`${label} nav final pages are exactly page 21`,
-        integrity.navFinalPages.every((page) => page === 21), integrity.navFinalPages);
+      check(
+        `${label} nav final pages are exactly page 21`,
+        integrity.navFinalPages.every((page) => page === 21),
+        integrity.navFinalPages,
+      );
     }
     if (Array.isArray(integrity.navFinalPageWindows)) {
       integrity.navFinalPageWindows.forEach((pageWindow, index) =>
-        validatePageWindow(`${label} integrity.navFinalPageWindows[${index}]`, pageWindow));
+        validatePageWindow(
+          `${label} integrity.navFinalPageWindows[${index}]`,
+          pageWindow,
+        ),
+      );
     }
     for (const field of [
-      "navRasterPaintedPixelSamples", "navPdfPageCommits", "zoomPdfPageCommits",
+      "navRasterPaintedPixelSamples",
+      "navPdfPageCommits",
+      "zoomPdfPageCommits",
     ]) {
       if (Array.isArray(integrity[field])) {
-        integrity[field].forEach((value, index) => finite(
-          `${label} integrity.${field}[${index}]`, value,
-          { integer: true, minimum: 0, exclusiveMinimum: true },
-        ));
+        integrity[field].forEach((value, index) =>
+          finite(`${label} integrity.${field}[${index}]`, value, {
+            integer: true,
+            minimum: 0,
+            exclusiveMinimum: true,
+          }),
+        );
       }
     }
     if (Array.isArray(integrity.zoomScaleChanges)) {
@@ -547,158 +989,329 @@ function validateArtifact(leg) {
         validateZoomOutcome(`${label} integrity.zoomScaleChanges[${index}]`, {
           ...change,
           pdfPageCommits: integrity.zoomPdfPageCommits?.[index],
-        }));
+        }),
+      );
     }
     if (Array.isArray(integrity.bucketPreviewOutcomes)) {
       integrity.bucketPreviewOutcomes.forEach((outcome, index) =>
-        validateBucketOutcome(`${label} integrity.bucketPreviewOutcomes[${index}]`, outcome));
+        validateBucketOutcome(
+          `${label} integrity.bucketPreviewOutcomes[${index}]`,
+          outcome,
+        ),
+      );
     }
     if (Array.isArray(artifact.samples)) {
-      exact(`${label} integrity.navFinalPages matches samples`, integrity.navFinalPages,
-        artifact.samples.map((sample) => sample?.navOutcome?.activePage));
-      exact(`${label} integrity.navFinalPageWindows matches samples`, integrity.navFinalPageWindows,
-        artifact.samples.map((sample) => sample?.navOutcome?.pageWindow));
-      exact(`${label} integrity.navRasterPaintedPixelSamples matches samples`,
+      exact(
+        `${label} integrity.navFinalPages matches samples`,
+        integrity.navFinalPages,
+        artifact.samples.map((sample) => sample?.navOutcome?.activePage),
+      );
+      exact(
+        `${label} integrity.navFinalPageWindows matches samples`,
+        integrity.navFinalPageWindows,
+        artifact.samples.map((sample) => sample?.navOutcome?.pageWindow),
+      );
+      exact(
+        `${label} integrity.navRasterPaintedPixelSamples matches samples`,
         integrity.navRasterPaintedPixelSamples,
-        artifact.samples.map((sample) => sample?.navOutcome?.raster?.paintedPixelSamples));
-      exact(`${label} integrity.navPdfPageCommits matches samples`, integrity.navPdfPageCommits,
-        artifact.samples.map((sample) => sample?.navOutcome?.pdfPageCommits));
-      exact(`${label} integrity.zoomScaleChanges matches samples`, integrity.zoomScaleChanges,
+        artifact.samples.map(
+          (sample) => sample?.navOutcome?.raster?.paintedPixelSamples,
+        ),
+      );
+      exact(
+        `${label} integrity.navPdfPageCommits matches samples`,
+        integrity.navPdfPageCommits,
+        artifact.samples.map((sample) => sample?.navOutcome?.pdfPageCommits),
+      );
+      exact(
+        `${label} integrity.zoomScaleChanges matches samples`,
+        integrity.zoomScaleChanges,
         artifact.samples.map((sample) => ({
           beforePercent: sample?.zoomOutcome?.beforePercent,
           afterPercent: sample?.zoomOutcome?.afterPercent,
           deltaPercent: sample?.zoomOutcome?.deltaPercent,
-        })));
-      exact(`${label} integrity.zoomPdfPageCommits matches samples`, integrity.zoomPdfPageCommits,
-        artifact.samples.map((sample) => sample?.zoomOutcome?.pdfPageCommits));
-      exact(`${label} integrity.bucketPreviewOutcomes matches samples`, integrity.bucketPreviewOutcomes,
-        artifact.samples.map((sample) => sample?.bucketOutcome));
+        })),
+      );
+      exact(
+        `${label} integrity.zoomPdfPageCommits matches samples`,
+        integrity.zoomPdfPageCommits,
+        artifact.samples.map((sample) => sample?.zoomOutcome?.pdfPageCommits),
+      );
+      exact(
+        `${label} integrity.bucketPreviewOutcomes matches samples`,
+        integrity.bucketPreviewOutcomes,
+        artifact.samples.map((sample) => sample?.bucketOutcome),
+      );
     }
   }
 }
 
 for (const leg of legs) validateArtifact(leg);
 
-check("four distinct retained artifact paths", new Set(legs.map((leg) => leg.path)).size === 4,
-  legs.map((leg) => leg.path));
+check(
+  "four distinct retained artifact paths",
+  new Set(legs.map((leg) => leg.path)).size === 4,
+  legs.map((leg) => leg.path),
+);
 const collectionTimestamps = legs.map((leg) => Date.parse(leg.artifact.date));
-check("retained artifact timestamps follow pre1 -> post1 -> post2 -> pre2",
-  collectionTimestamps.every(Number.isFinite) && collectionTimestamps.every((timestamp, index) =>
-    index === 0 || timestamp > collectionTimestamps[index - 1]),
-  Object.fromEntries(legs.map((leg, index) => [leg.key, leg.artifact.date])));
-check("verdict output does not overwrite a retained artifact",
-  !legs.some((leg) => leg.path === resolve(args.out)), resolve(args.out));
+check(
+  "retained artifact timestamps follow pre1 -> post1 -> post2 -> pre2",
+  collectionTimestamps.every(Number.isFinite) &&
+    collectionTimestamps.every(
+      (timestamp, index) =>
+        index === 0 || timestamp > collectionTimestamps[index - 1],
+    ),
+  Object.fromEntries(legs.map((leg, index) => [leg.key, leg.artifact.date])),
+);
+check(
+  "verdict output does not overwrite a retained artifact",
+  !legs.some((leg) => leg.path === resolve(args.out)),
+  resolve(args.out),
+);
 
 function equalAcross(name, getter) {
-  const values = Object.fromEntries(legs.map((leg) => [leg.key, getter(leg.artifact)]));
+  const values = Object.fromEntries(
+    legs.map((leg) => [leg.key, getter(leg.artifact)]),
+  );
   const [first, ...rest] = Object.values(values);
-  check(name, rest.every((value) => deepEqual(value, first)), values);
+  check(
+    name,
+    rest.every((value) => deepEqual(value, first)),
+    values,
+  );
 }
 
-equalAcross("all legs exact schemaVersion", (artifact) => artifact.schemaVersion);
-equalAcross("all legs exact protocolVersion", (artifact) => artifact.protocolVersion);
+equalAcross(
+  "all legs exact schemaVersion",
+  (artifact) => artifact.schemaVersion,
+);
+equalAcross(
+  "all legs exact protocolVersion",
+  (artifact) => artifact.protocolVersion,
+);
 equalAcross("all legs runs", (artifact) => artifact.runs);
 equalAcross("all legs smoke flag", (artifact) => artifact.smoke);
-equalAcross("all legs threshold contract", (artifact) => artifact.thresholdContract);
+equalAcross(
+  "all legs threshold contract",
+  (artifact) => artifact.thresholdContract,
+);
 equalAcross("all legs mode", (artifact) => artifact.mode);
-equalAcross("all legs nonempty actual harnessSha", (artifact) => artifact.harnessSha);
+equalAcross(
+  "all legs explicitly mark transport as non-security evidence",
+  (artifact) => artifact.transportBoundary?.securityEvidence,
+);
+equalAcross(
+  "all legs nonempty actual harnessSha",
+  (artifact) => artifact.harnessSha,
+);
 equalAcross("all legs fixture inputs", (artifact) => artifact.fixture);
 equalAcross("all legs environment", (artifact) => artifact.environment);
 for (const [field] of HARNESS_HASH_FIELDS) {
-  equalAcross(`all legs harness.${field}`, (artifact) => artifact.harness?.[field]);
+  equalAcross(
+    `all legs harness.${field}`,
+    (artifact) => artifact.harness?.[field],
+  );
 }
-for (const field of ["schemaVersion", "scriptVersion", "overlayProtocolSha256", "probeSha256"]) {
-  equalAcross(`all legs instrumentation.${field}`,
-    (artifact) => artifact.harness?.instrumentation?.[field]);
+for (const field of [
+  "schemaVersion",
+  "scriptVersion",
+  "overlayProtocolSha256",
+  "probeSha256",
+]) {
+  equalAcross(
+    `all legs instrumentation.${field}`,
+    (artifact) => artifact.harness?.instrumentation?.[field],
+  );
 }
-exact("baseline instrumentation stable across pre1/pre2",
+exact(
+  "baseline instrumentation stable across pre1/pre2",
   byKey.pre1.artifact.harness?.instrumentation,
-  byKey.pre2.artifact.harness?.instrumentation);
-exact("candidate instrumentation stable across post1/post2",
+  byKey.pre2.artifact.harness?.instrumentation,
+);
+exact(
+  "candidate instrumentation stable across post1/post2",
   byKey.post1.artifact.harness?.instrumentation,
-  byKey.post2.artifact.harness?.instrumentation);
-exact("baseline exact app worktree stable across pre1/pre2",
+  byKey.post2.artifact.harness?.instrumentation,
+);
+exact(
+  "baseline exact app worktree stable across pre1/pre2",
   byKey.pre1.artifact.harness?.exactAppWorktree,
-  byKey.pre2.artifact.harness?.exactAppWorktree);
-exact("candidate exact app worktree stable across post1/post2",
+  byKey.pre2.artifact.harness?.exactAppWorktree,
+);
+exact(
+  "candidate exact app worktree stable across post1/post2",
   byKey.post1.artifact.harness?.exactAppWorktree,
-  byKey.post2.artifact.harness?.exactAppWorktree);
+  byKey.post2.artifact.harness?.exactAppWorktree,
+);
+exact(
+  "baseline browser boundary is stable across pre1/pre2",
+  byKey.pre1.artifact.transportBoundary?.browserBoundary,
+  byKey.pre2.artifact.transportBoundary?.browserBoundary,
+);
+exact(
+  "candidate browser boundary is stable across post1/post2",
+  byKey.post1.artifact.transportBoundary?.browserBoundary,
+  byKey.post2.artifact.transportBoundary?.browserBoundary,
+);
+check(
+  "source-exact timing protocol explicitly accepts direct-CDN baseline versus same-origin candidate",
+  byKey.pre1.artifact.transportBoundary?.browserBoundary === "direct-cdn" &&
+    byKey.pre2.artifact.transportBoundary?.browserBoundary === "direct-cdn" &&
+    byKey.post1.artifact.transportBoundary?.browserBoundary ===
+      "same-origin-private-gateway" &&
+    byKey.post2.artifact.transportBoundary?.browserBoundary ===
+      "same-origin-private-gateway" &&
+    legs.every(
+      (leg) =>
+        leg.artifact.transportBoundary?.sourceExact === true &&
+        leg.artifact.transportBoundary?.securityEvidence === false,
+    ),
+  Object.fromEntries(
+    legs.map((leg) => [leg.key, leg.artifact.transportBoundary]),
+  ),
+);
 
 const harnessSha = byKey.pre1.artifact.harnessSha;
 let harnessCommitExists = false;
 if (SHA1_PATTERN.test(harnessSha)) {
   try {
-    execFileSync("git", ["-C", scriptRoot, "cat-file", "-e", `${harnessSha}^{commit}`], {
-      stdio: "ignore",
-    });
+    execFileSync(
+      "git",
+      ["-C", scriptRoot, "cat-file", "-e", `${harnessSha}^{commit}`],
+      {
+        stdio: "ignore",
+      },
+    );
     harnessCommitExists = true;
   } catch {
     // Reported by the check below.
   }
 }
-check("harnessSha names an actual local commit", harnessCommitExists, harnessSha);
+check(
+  "harnessSha names an actual local commit",
+  harnessCommitExists,
+  harnessSha,
+);
 if (harnessCommitExists) {
   for (const [field, path] of HARNESS_HASH_FIELDS) {
     let committedSha256 = null;
     try {
-      committedSha256 = sha256(execFileSync(
-        "git",
-        ["-C", scriptRoot, "show", `${harnessSha}:${path}`],
-        { encoding: "buffer", maxBuffer: 128 * 1024 * 1024 },
-      ));
+      committedSha256 = sha256(
+        execFileSync(
+          "git",
+          ["-C", scriptRoot, "show", `${harnessSha}:${path}`],
+          { encoding: "buffer", maxBuffer: 128 * 1024 * 1024 },
+        ),
+      );
     } catch {
       // A missing blob is a failed identity check.
     }
-    check(`harnessSha committed ${path} matches artifact hash`,
-      committedSha256 !== null && committedSha256 === byKey.pre1.artifact.harness?.[field], {
+    check(
+      `harnessSha committed ${path} matches artifact hash`,
+      committedSha256 !== null &&
+        committedSha256 === byKey.pre1.artifact.harness?.[field],
+      {
         committedSha256,
         artifactSha256: byKey.pre1.artifact.harness?.[field],
-      });
+      },
+    );
   }
 }
 
 for (const sourceSha of [BASELINE_SOURCE_SHA, candidateSourceSha]) {
   let exists = false;
   try {
-    execFileSync("git", ["-C", scriptRoot, "cat-file", "-e", `${sourceSha}^{commit}`], {
-      stdio: "ignore",
-    });
+    execFileSync(
+      "git",
+      ["-C", scriptRoot, "cat-file", "-e", `${sourceSha}^{commit}`],
+      {
+        stdio: "ignore",
+      },
+    );
     exists = true;
   } catch {
     // Reported below.
   }
   check(`source commit exists ${sourceSha}`, exists, sourceSha);
 }
+let candidateDirectParent = null;
+try {
+  candidateDirectParent = execFileSync(
+    "git",
+    ["-C", scriptRoot, "rev-parse", `${candidateSourceSha}^`],
+    { encoding: "utf8" },
+  ).trim();
+} catch {
+  // The commit-existence check above reports malformed/missing candidates.
+}
+check(
+  "candidate is an exact direct child of the fixed baseline",
+  candidateDirectParent === BASELINE_SOURCE_SHA,
+  { expectedParent: BASELINE_SOURCE_SHA, actualParent: candidateDirectParent },
+);
 
 for (const leg of legs) {
   const integrity = leg.artifact.integrity ?? {};
-  check(`${leg.key} zero page errors`, Array.isArray(integrity.pageErrors) &&
-    integrity.pageErrors.length === 0, integrity.pageErrors);
-  check(`${leg.key} zero unexpected request failures`,
+  check(
+    `${leg.key} zero page errors`,
+    Array.isArray(integrity.pageErrors) && integrity.pageErrors.length === 0,
+    integrity.pageErrors,
+  );
+  check(
+    `${leg.key} zero unexpected request failures`,
     Array.isArray(integrity.unexpectedRequestFailures) &&
       integrity.unexpectedRequestFailures.length === 0,
-    integrity.unexpectedRequestFailures);
-  check(`${leg.key} zero 429`, Array.isArray(integrity.http429) && integrity.http429.length === 0,
-    integrity.http429);
-  check(`${leg.key} non-vacuous all-404 localhost CDN witness`,
-    Array.isArray(integrity.pagePngResponses) && integrity.pagePngResponses.length > 0 &&
-      integrity.pagePng404s === integrity.pagePngResponses.length &&
-      integrity.pagePngResponses.every((response) => response?.status === 404), {
-      responses: integrity.pagePngResponses?.length,
-      pagePng404s: integrity.pagePng404s,
-    });
-  check(`${leg.key} non-vacuous polygon persistence`,
-    Number.isInteger(integrity.annotationPosts) && integrity.annotationPosts >= leg.artifact.runs,
-    { posts: integrity.annotationPosts, runs: leg.artifact.runs });
-  check(`${leg.key} exact polygon20 POSTs`,
+    integrity.unexpectedRequestFailures,
+  );
+  check(
+    `${leg.key} zero 429`,
+    Array.isArray(integrity.http429) && integrity.http429.length === 0,
+    integrity.http429,
+  );
+  check(
+    `${leg.key} non-vacuous role-exact symmetric missing-underlay witness`,
+    Array.isArray(integrity.missingUnderlayRequests) &&
+      integrity.missingUnderlayRequests.length > 0 &&
+      integrity.missingUnderlay404s ===
+        integrity.missingUnderlayRequests.length &&
+      integrity.missingUnderlayRequests.every(validMissingUnderlayRequest) &&
+      deepEqual(
+        [
+          ...new Set(
+            integrity.missingUnderlayRequests.map((request) => request.family),
+          ),
+        ].sort(),
+        expectedMissingUnderlayFamilies(leg.role).sort(),
+      ),
+    {
+      expectedFamilies: expectedMissingUnderlayFamilies(leg.role),
+      requests: integrity.missingUnderlayRequests,
+      missingUnderlay404s: integrity.missingUnderlay404s,
+    },
+  );
+  check(
+    `${leg.key} non-vacuous polygon persistence`,
+    Number.isInteger(integrity.annotationPosts) &&
+      integrity.annotationPosts >= leg.artifact.runs,
+    { posts: integrity.annotationPosts, runs: leg.artifact.runs },
+  );
+  check(
+    `${leg.key} exact polygon20 POSTs`,
     Array.isArray(integrity.polygonPostVertexCounts) &&
       integrity.polygonPostVertexCounts.length === leg.artifact.runs &&
       integrity.polygonPostVertexCounts.every((count) => count === 20),
-    integrity.polygonPostVertexCounts);
-  check(`${leg.key} zero bucket server fallback`, integrity.bucketServerFallbacks === 0,
-    integrity.bucketServerFallbacks);
-  check(`${leg.key} served-SHA handshake`,
-    deepEqual(integrity.servedShas, [leg.sourceSha]), integrity.servedShas);
+    integrity.polygonPostVertexCounts,
+  );
+  check(
+    `${leg.key} zero bucket server fallback`,
+    integrity.bucketServerFallbacks === 0,
+    integrity.bucketServerFallbacks,
+  );
+  check(
+    `${leg.key} served-SHA handshake`,
+    deepEqual(integrity.servedShas, [leg.sourceSha]),
+    integrity.servedShas,
+  );
 }
 
 function pairDiagnostics(baselineLeg, candidateLeg) {
@@ -708,8 +1321,12 @@ function pairDiagnostics(baselineLeg, candidateLeg) {
   for (const key of TIMING_KEYS) {
     const pre = baseline.medians?.[key];
     const post = candidate.medians?.[key];
-    const valid = typeof pre === "number" && Number.isFinite(pre) && pre > 0 &&
-      typeof post === "number" && Number.isFinite(post);
+    const valid =
+      typeof pre === "number" &&
+      Number.isFinite(pre) &&
+      pre > 0 &&
+      typeof post === "number" &&
+      Number.isFinite(post);
     timing[key] = {
       baseline: pre,
       candidate: post,
@@ -739,7 +1356,8 @@ function pairDiagnostics(baselineLeg, candidateLeg) {
     candidateBucket4000: {
       value: candidate.medians?.bucket4000Ms,
       ceilingExclusive: 400,
-      pass: Number.isFinite(candidate.medians?.bucket4000Ms) &&
+      pass:
+        Number.isFinite(candidate.medians?.bucket4000Ms) &&
         candidate.medians.bucket4000Ms < 400,
     },
   };
@@ -750,25 +1368,49 @@ const warmedReversePair = pairDiagnostics(byKey.pre2, byKey.post2);
 for (const [key, result] of Object.entries(warmedReversePair.timing)) {
   check(`warmed reverse timing ${key} < baseline×1.6`, result.pass, result);
 }
-check("warmed reverse candidate bucket4000 <400ms",
-  warmedReversePair.candidateBucket4000.pass, warmedReversePair.candidateBucket4000);
+check(
+  "warmed reverse candidate bucket4000 <400ms",
+  warmedReversePair.candidateBucket4000.pass,
+  warmedReversePair.candidateBucket4000,
+);
 for (const [scenario, targets] of Object.entries(warmedReversePair.profiler)) {
   for (const [target, result] of Object.entries(targets)) {
-    check(`warmed reverse Profiler ${scenario}.${target} candidate<=baseline`, result.pass, result);
+    check(
+      `warmed reverse Profiler ${scenario}.${target} candidate<=baseline`,
+      result.pass,
+      result,
+    );
   }
 }
-check("warmed reverse polygon20 Profiler is non-vacuous",
-  byKey.pre2.artifact.medians?.profiler?.polygon20?.DrawingPreviewLayer?.commits >= 20 &&
-    byKey.post2.artifact.medians?.profiler?.polygon20?.DrawingPreviewLayer?.commits >= 20, {
-    baseline: byKey.pre2.artifact.medians?.profiler?.polygon20?.DrawingPreviewLayer?.commits,
-    candidate: byKey.post2.artifact.medians?.profiler?.polygon20?.DrawingPreviewLayer?.commits,
-  });
-check("warmed reverse drag60 Profiler is non-vacuous",
-  byKey.pre2.artifact.medians?.profiler?.drag60?.AnnotationOverlay?.commits >= 30 &&
-    byKey.post2.artifact.medians?.profiler?.drag60?.AnnotationOverlay?.commits >= 30, {
-    baseline: byKey.pre2.artifact.medians?.profiler?.drag60?.AnnotationOverlay?.commits,
-    candidate: byKey.post2.artifact.medians?.profiler?.drag60?.AnnotationOverlay?.commits,
-  });
+check(
+  "warmed reverse polygon20 Profiler is non-vacuous",
+  byKey.pre2.artifact.medians?.profiler?.polygon20?.DrawingPreviewLayer
+    ?.commits >= 20 &&
+    byKey.post2.artifact.medians?.profiler?.polygon20?.DrawingPreviewLayer
+      ?.commits >= 20,
+  {
+    baseline:
+      byKey.pre2.artifact.medians?.profiler?.polygon20?.DrawingPreviewLayer
+        ?.commits,
+    candidate:
+      byKey.post2.artifact.medians?.profiler?.polygon20?.DrawingPreviewLayer
+        ?.commits,
+  },
+);
+check(
+  "warmed reverse drag60 Profiler is non-vacuous",
+  byKey.pre2.artifact.medians?.profiler?.drag60?.AnnotationOverlay?.commits >=
+    30 &&
+    byKey.post2.artifact.medians?.profiler?.drag60?.AnnotationOverlay
+      ?.commits >= 30,
+  {
+    baseline:
+      byKey.pre2.artifact.medians?.profiler?.drag60?.AnnotationOverlay?.commits,
+    candidate:
+      byKey.post2.artifact.medians?.profiler?.drag60?.AnnotationOverlay
+        ?.commits,
+  },
+);
 
 const pass = checks.every((entry) => entry.pass);
 const verdict = {
@@ -786,7 +1428,10 @@ const verdict = {
     sourceSha: leg.artifact.sourceSha,
     harnessSha: leg.artifact.harnessSha,
     runs: leg.artifact.runs,
-    sampleCount: Array.isArray(leg.artifact.samples) ? leg.artifact.samples.length : null,
+    transportBoundary: leg.artifact.transportBoundary,
+    sampleCount: Array.isArray(leg.artifact.samples)
+      ? leg.artifact.samples.length
+      : null,
     medians: leg.artifact.medians,
   })),
   pairDiagnostics: {
@@ -797,15 +1442,27 @@ const verdict = {
   checks,
   pass,
 };
-writeFileSync(resolve(args.out), `${JSON.stringify(verdict, null, 2)}\n`, { flag: "wx" });
-console.log(JSON.stringify({
-  pass,
-  retainedLegs: verdict.retainedLegs.map(({ leg, sourceSha, artifactSha256 }) => ({
-    leg,
-    sourceSha,
-    artifactSha256,
-  })),
-  gatedPair: warmedReversePair,
-  failedChecks: checks.filter((entry) => !entry.pass).map((entry) => entry.name),
-}, null, 2));
+writeFileSync(resolve(args.out), `${JSON.stringify(verdict, null, 2)}\n`, {
+  flag: "wx",
+});
+console.log(
+  JSON.stringify(
+    {
+      pass,
+      retainedLegs: verdict.retainedLegs.map(
+        ({ leg, sourceSha, artifactSha256 }) => ({
+          leg,
+          sourceSha,
+          artifactSha256,
+        }),
+      ),
+      gatedPair: warmedReversePair,
+      failedChecks: checks
+        .filter((entry) => !entry.pass)
+        .map((entry) => entry.name),
+    },
+    null,
+    2,
+  ),
+);
 if (!pass) process.exitCode = 1;

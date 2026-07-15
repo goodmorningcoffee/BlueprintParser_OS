@@ -123,9 +123,9 @@ const derive = (before, after, count, label) => {
   generatedSpec = replaceExactly(generatedSpec, before, after, count, label);
 };
 
-derive('const SCHEMA_VERSION = "bp-viewer-perf-v2.1.0";',
+derive('const SCHEMA_VERSION = "bp-viewer-perf-v2.2.0";',
   'const SCHEMA_VERSION = "bp-annotation-owner-perf-v2.1.0";', 1, "artifact schema");
-derive('const PROTOCOL_VERSION = "p2.3-representative-column-profiler-median3-reverse1";',
+derive('const PROTOCOL_VERSION =\n  "p2.4-direct-parent-symmetric-missing-underlays-profiler-median3-reverse1";',
   'const PROTOCOL_VERSION = "p2.2.6-annotation-owner-direct-parent-delete-witness-median3-abba1";',
   1, "protocol version");
 derive('} from "@playwright/test";',
@@ -140,17 +140,17 @@ derive('const PERF_PAGE_ONE_ANNOTATIONS = [\n  PERF_DRAG_TARGET,\n  ...Array.fro
 derive('const manifestPath = resolve(APP_ROOT, ".perf-v2-instrumentation.json");',
   'const manifestPath = resolve(APP_ROOT, ".annotation-owner-perf-v2-instrumentation.json");',
   1, "manifest path");
-derive('expect(instrumentation.schemaVersion).toBe("bp-perf-v2-instrumentation-manifest-1");',
-  'expect(instrumentation.schemaVersion).toBe("bp-annotation-owner-perf-v2-instrumentation-manifest-1");',
+derive('  expect(instrumentation.schemaVersion).toBe(\n    "bp-perf-v2-instrumentation-manifest-1",\n  );',
+  '  expect(instrumentation.schemaVersion).toBe(\n    "bp-annotation-owner-perf-v2-instrumentation-manifest-1",\n  );',
   1, "manifest schema");
-derive('expect(instrumentation.probeSha256).toBe(sha256File("e2e/perf-v2/PerfRenderProbe.tsx"));',
-  'expect(instrumentation.probeSha256).toBe(sha256File("e2e/perf-v2/AnnotationOwnerPerfRenderProbe.tsx"));\n  expect(instrumentation.baseSpecSha256).toBe(sha256File("e2e/viewer-perf-v2.spec.ts"));\n  expect(instrumentation.generatedSpecSha256).toBe(sha256File(resolve(APP_ROOT, "e2e/annotation-owner-perf-v2.spec.ts")));',
+derive('  expect(instrumentation.probeSha256).toBe(\n    sha256File("e2e/perf-v2/PerfRenderProbe.tsx"),\n  );',
+  '  expect(instrumentation.probeSha256).toBe(\n    sha256File("e2e/perf-v2/AnnotationOwnerPerfRenderProbe.tsx"),\n  );\n  expect(instrumentation.baseSpecSha256).toBe(\n    sha256File("e2e/viewer-perf-v2.spec.ts"),\n  );\n  expect(instrumentation.generatedSpecSha256).toBe(\n    sha256File(resolve(APP_ROOT, "e2e/annotation-owner-perf-v2.spec.ts")),\n  );',
   1, "manifest provenance assertions");
 derive('    "?? .perf-v2-instrumentation.json",\n    "?? src/components/viewer/PerfRenderProbe.tsx",',
   '    "?? .annotation-owner-perf-v2-instrumentation.json",\n    "?? e2e/annotation-owner-perf-v2.spec.ts",\n    "?? src/components/viewer/AnnotationOwnerPerfRenderProbe.tsx",',
   1, "expected detached status");
-derive('expect(sha256File(resolve(APP_ROOT, "src/components/viewer/PerfRenderProbe.tsx")),\n    "copied probe must match the common harness probe")',
-  'expect(sha256File(resolve(APP_ROOT, "src/components/viewer/AnnotationOwnerPerfRenderProbe.tsx")),\n    "copied annotation-owner probe must match the common harness probe")',
+derive('    sha256File(resolve(APP_ROOT, "src/components/viewer/PerfRenderProbe.tsx")),\n    "copied probe must match the common harness probe",',
+  '    sha256File(\n      resolve(APP_ROOT, "src/components/viewer/AnnotationOwnerPerfRenderProbe.tsx"),\n    ),\n    "copied annotation-owner probe must match the common harness probe",',
   1, "copied probe assertion");
 
 const deleteMeasure = `type DeleteTransportObservation = {
@@ -224,8 +224,8 @@ async function measureAnnotationDelete(page: Page, tracker: DeleteTransportTrack
 
 `;
 derive('type PerfSample = {', deleteMeasure + 'type PerfSample = {', 1, "delete measurement");
-derive('  bucketRafP95Ms: number;\n  profiler: Record<"nav20" | "zoom10" | "polygon20" | "drag60" | "bucket4000", ProfilerSnapshot>;',
-  '  bucketRafP95Ms: number;\n  annotationDeleteMs: number;\n  annotationDeleteRafP95Ms: number;\n  profiler: Record<"nav20" | "zoom10" | "polygon20" | "drag60" | "bucket4000" | "annotationDelete", ProfilerSnapshot>;',
+derive('  bucketRafP95Ms: number;\n  profiler: Record<\n    "nav20" | "zoom10" | "polygon20" | "drag60" | "bucket4000",\n    ProfilerSnapshot\n  >;',
+  '  bucketRafP95Ms: number;\n  annotationDeleteMs: number;\n  annotationDeleteRafP95Ms: number;\n  profiler: Record<\n    "nav20" | "zoom10" | "polygon20" | "drag60" | "bucket4000" | "annotationDelete",\n    ProfilerSnapshot\n  >;',
   1, "delete sample timing type");
 derive('  zoomOutcome: Awaited<ReturnType<typeof measureZoom10>>["outcome"];\n};',
   '  zoomOutcome: Awaited<ReturnType<typeof measureZoom10>>["outcome"];\n  polygonOutcome: Awaited<ReturnType<typeof measurePolygon20>>;\n  dragOutcome: Awaited<ReturnType<typeof measureDrag60>>;\n  annotationDeleteOutcome: Awaited<ReturnType<typeof measureAnnotationDelete>>["outcome"];\n};',
@@ -250,18 +250,30 @@ derive('    "bucketRafP95Ms",\n  ] as const;',
   1, "validate delete timings");
 derive('["nav20", "zoom10", "polygon20", "drag60", "bucket4000"] as const',
   '["nav20", "zoom10", "polygon20", "drag60", "bucket4000", "annotationDelete"] as const',
-  2, "profiler scenarios");
+  1, "profiler median scenarios");
+derive('    for (const scenario of [\n      "nav20",\n      "zoom10",\n      "polygon20",\n      "drag60",\n      "bucket4000",\n    ] as const) {',
+  '    for (const scenario of [\n      "nav20",\n      "zoom10",\n      "polygon20",\n      "drag60",\n      "bucket4000",\n      "annotationDelete",\n    ] as const) {',
+  1, "sample profiler scenarios");
 derive('    expect(sample.bucketOutcome.holeCenterAlpha).toBe(0);\n  }',
   '    expect(sample.bucketOutcome.holeCenterAlpha).toBe(0);\n    expect(sample.polygonOutcome.vertices).toBe(20);\n    expect(sample.polygonOutcome.optimisticPolygonVisible).toBe(true);\n    expect(sample.dragOutcome.pointerSteps).toBe(60);\n    expect(sample.dragOutcome.observedMouseMoves).toBeGreaterThanOrEqual(60);\n    expect(sample.dragOutcome.denseAnnotations).toBe(6848);\n    expect(sample.dragOutcome.targetWasReactive).toBe(true);\n    expect(sample.annotationDeleteOutcome.targetId).toBe(PERF_DELETE_TARGET.id);\n    expect(sample.annotationDeleteOutcome.beforeCount).toBe(512);\n    expect(sample.annotationDeleteOutcome.afterCount).toBe(511);\n    expect(sample.annotationDeleteOutcome.selectedIdBefore).toBe(PERF_DELETE_TARGET.id);\n    expect(sample.annotationDeleteOutcome.selectedIdAfter).toBeNull();\n    expect(sample.annotationDeleteOutcome.replayDeleteSuppressed).toBe(true);\n    expect(sample.annotationDeleteOutcome.transport.method).toBe("DELETE");\n    expect(sample.annotationDeleteOutcome.transport.status).toBe(200);\n  }',
   1, "validate delete outcome");
 derive('test("viewer perf-v2 populated source-exact protocol"',
   'test("annotation-owner direct-parent populated source-exact protocol"', 1, "test name");
+derive('  const expectedMissingUnderlayFamilies: MissingUnderlayFamily[] =\n    ROLE === "baseline"\n      ? ["direct-cdn-page-underlay", "legacy-thumbnail-proxy"]\n      : ["private-gateway-page-underlay", "private-gateway-thumbnail"];',
+  '  const expectedMissingUnderlayFamilies: MissingUnderlayFamily[] = [\n    "direct-cdn-page-underlay",\n    "legacy-thumbnail-proxy",\n  ];',
+  1, "source-compatible missing underlays");
+derive('  const expectedTransportBoundary =\n    ROLE === "baseline" ? "direct-cdn" : "same-origin-private-gateway";',
+  '  const expectedTransportBoundary = "direct-cdn";',
+  1, "source-compatible PDF transport");
+derive('timing A/B intentionally accepts historical direct-CDN baseline versus same-origin candidate; authorization and upstream cancellation are proven by the dedicated private-gateway oracle',
+  'annotation-owner direct parent and candidate both use the historical direct-CDN browser boundary; transport is held constant and is not security evidence',
+  1, "annotation transport rationale");
 
 derive('  const annotationPostBodies: Array<Record<string, unknown>> = [];',
   '  const annotationPostBodies: Array<Record<string, unknown>> = [];\n  const annotationPostTransports: Array<{ method: string; url: string; status: number; requestedAtEpochMs: number; fulfilledAtEpochMs: number }> = [];',
   1, "polygon POST tracker");
-derive('    annotationPosts += 1;\n    const body = JSON.parse(route.request().postData() || "{}") as Record<string, unknown>;',
-  '    annotationPosts += 1;\n    const requestedAtEpochMs = Date.now();\n    const body = JSON.parse(route.request().postData() || "{}") as Record<string, unknown>;',
+derive('    annotationPosts += 1;\n    const body = JSON.parse(route.request().postData() || "{}") as Record<',
+  '    annotationPosts += 1;\n    const requestedAtEpochMs = Date.now();\n    const body = JSON.parse(route.request().postData() || "{}") as Record<',
   1, "polygon POST request timing");
 derive('      json: { id: 920000 + annotationPosts, ...body },\n    });',
   '      json: { id: 920000 + annotationPosts, ...body },\n    });\n    annotationPostTransports.push({ method: route.request().method(), url: route.request().url(), status: 200, requestedAtEpochMs, fulfilledAtEpochMs: Date.now() });',
@@ -300,8 +312,8 @@ derive('  expect(bucketServerFallbacks).toBe(0);',
 derive('  const specPath = "e2e/viewer-perf-v2.spec.ts";\n  const configPath = "playwright.perf-v2.config.ts";\n  const patcherPath = "scripts/apply-perf-v2-instrumentation.mjs";\n  const comparatorPath = "scripts/compare-viewer-perf-v2.mjs";\n  const probePath = "e2e/perf-v2/PerfRenderProbe.tsx";',
   '  const baseSpecPath = "e2e/viewer-perf-v2.spec.ts";\n  const generatedSpecPath = resolve(APP_ROOT, "e2e/annotation-owner-perf-v2.spec.ts");\n  const configPath = "playwright.annotation-owner-perf-v2.config.ts";\n  const patcherPath = "scripts/apply-annotation-owner-perf-v2-instrumentation.mjs";\n  const comparatorPath = "scripts/compare-annotation-owner-perf-v2.mjs";\n  const probePath = "e2e/perf-v2/AnnotationOwnerPerfRenderProbe.tsx";',
   1, "derivative harness paths");
-derive('      candidateProfilerCommitsMustNotExceedBaseline: true,\n      deterministicDrawEndUnitFloor:',
-  '      candidateProfilerCommitsMustNotExceedBaseline: true,\n      gatedProfilerScenarios: ["zoom10", "polygon20", "drag60", "bucket4000", "annotationDelete"],\n      annotationDeleteWitness: { targetId: 990001, requestsPerSample: 1, status: 200, beforeCount: 512, afterCount: 511 },\n      deterministicDrawEndUnitFloor:',
+derive('      profilerCommitGateScenarios: [\n        "zoom10",\n        "polygon20",\n        "drag60",\n        "bucket4000",\n      ],\n      candidateProfilerCommitsMustNotExceedBaselineForGatedScenarios: true,\n      deterministicDrawEndUnitFloor:',
+  '      profilerCommitGateScenarios: ["zoom10", "polygon20", "drag60", "bucket4000", "annotationDelete"],\n      candidateProfilerCommitsMustNotExceedBaselineForGatedScenarios: true,\n      annotationDeleteWitness: { targetId: 990001, requestsPerSample: 1, status: 200, beforeCount: 512, afterCount: 511 },\n      deterministicDrawEndUnitFloor:',
   1, "threshold contract");
 derive('      specSha256: sha256File(specPath),',
   '      baseSpecSha256: sha256File(baseSpecPath),\n      generatedSpecSha256: sha256File(generatedSpecPath),',

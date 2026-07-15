@@ -1,11 +1,10 @@
 // [refactor jun12 P0.4] Playwright e2e + viewer-perf harness.
 //
 // Two servers boot for a run (webServer array):
-//   :9876 e2e/cdn-stub.mjs — HTTPS static stand-in for CloudFront, serving the
-//         synthetic 100-page fixture with Range + CORS exactly like the real
-//         edge config (getS3Url hardcodes https://CLOUDFRONT_DOMAIN/…).
-//   :3100 next dev — pointed at the LOCAL test database (never live RDS) with
-//         CLOUDFRONT_DOMAIN=localhost:9876 so the viewer loads the fixture.
+//   :9876 e2e/cdn-stub.mjs — HTTPS S3-shaped fixture endpoint. The app asset
+//         gateway reads it with the test-only task-role client and preserves
+//         the real Range contract without exposing a browser CDN URL.
+//   :3100 next dev — pointed at the LOCAL test database (never live RDS).
 //
 // Browsers live on the WORKSPACE BIND MOUNT, not the container overlay: the
 // Docker Desktop VM disk runs ~100% full (host-side; root cause of every
@@ -18,12 +17,16 @@
 // never against prod; mode is stamped into the perf JSON.
 import { defineConfig } from "@playwright/test";
 
-process.env.PLAYWRIGHT_BROWSERS_PATH ||= "/workspaces/BlueprintParser_OS/.pw-browsers";
+process.env.PLAYWRIGHT_BROWSERS_PATH ||=
+  "/workspaces/BlueprintParser_OS/.pw-browsers";
 
 const TEST_DATABASE_URL = "postgres://bp_test:bp_test@localhost:5433/bp_test";
 
 export default defineConfig({
   testDir: "e2e",
+  // Source-exact A/B protocols require detached worktrees and immutable output
+  // identities. They run only through their dedicated configs.
+  testIgnore: ["viewer-perf-v2.spec.ts", "annotation-owner-perf-v2.spec.ts"],
   globalSetup: "./e2e/global-setup.ts",
   timeout: 180_000,
   workers: 1, // perf measurements want the machine to themselves
@@ -42,18 +45,25 @@ export default defineConfig({
     {
       command: "node e2e/cdn-stub.mjs",
       port: 9876,
-      reuseExistingServer: true,
-      timeout: 30_000,
+      // Byte-accounting is part of the transport oracle; a stale pre-oracle stub must never satisfy
+      // this port check and silently make the benchmark vacuous.
+      reuseExistingServer: false,
+      // A fresh clone generates the ignored 100-page PDF before binding the port.
+      timeout: 120_000,
     },
     {
-      command: "npm run dev -- -p 3100",
+      // Start from the current route tree. Next 16's persistent `.next/dev` cache can survive an
+      // interrupted run with a partial app-path manifest and return framework 404s for valid routes.
+      command: "node e2e/start-dev-server.mjs -p 3100",
       port: 3100,
-      reuseExistingServer: true,
+      // A pre-existing process would bypass both the clean launcher and this test-only DB/S3 env.
+      reuseExistingServer: false,
       timeout: 240_000, // first turbopack compile is slow
       env: {
         DATABASE_URL: TEST_DATABASE_URL,
-        CLOUDFRONT_DOMAIN: "localhost:9876",
         S3_BUCKET: "e2e-dummy-bucket",
+        BP_TEST_S3_ENDPOINT: "https://localhost:9876",
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
         NEXTAUTH_URL: "http://localhost:3100",
         NEXTAUTH_SECRET: "e2e-dummy-secret",
         AUTH_SECRET: "e2e-dummy-secret",

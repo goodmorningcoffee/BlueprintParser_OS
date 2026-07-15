@@ -23,13 +23,20 @@ const world = JSON.parse(readFileSync("e2e/.state/world.json", "utf8"));
 // { publicId, projectDbId, demoPublicId, demoProjectDbId, email, password, dataUrl, demoDataUrl, pages }
 
 test.beforeEach(async ({ page }) => {
-  // The offline fixture intentionally has no thumbnail PNGs. Preserve that known 404 at the
-  // browser boundary so five flows' virtualized sidebar probes do not exhaust middleware's shared
-  // 120-request/minute API bucket before the final search contract runs.
-  await page.route("**/api/projects/*/thumbnail/*", async (route) => {
-    if (route.request().method() !== "GET") return route.continue();
-    await route.fulfill({ status: 404, contentType: "text/plain", body: "not found" });
-  });
+  // The offline fixture intentionally has no page/thumbnail PNG underlays. Replace those missing
+  // browser requests with deterministic 404s so fallback/preload/sidebar probes do not spend
+  // gateway DB/S3 admission. This interception is fixture isolation, not gateway evidence.
+  await page.route(
+    /\/api\/project-assets\/[^/]+\/(?:pages|thumbnails)\/page_\d{4}\.png(?:\?.*)?$/,
+    async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      await route.fulfill({
+        status: 404,
+        contentType: "text/plain",
+        body: "not found",
+      });
+    },
+  );
 });
 
 async function login(page: import("@playwright/test").Page) {
@@ -49,14 +56,27 @@ async function interactiveViewerCanvas(page: import("@playwright/test").Page) {
   // The PDF canvas mounts at its HTML default 300×150 before pdf.js publishes real page
   // dimensions; event overlays therefore exist briefly at 0×0. Wait for the overlay itself,
   // not merely for any canvas, before dispatching a gesture.
-  await page.waitForFunction(() => Array.from(document.querySelectorAll("canvas")).some((node) => {
-    const canvas = node as HTMLCanvasElement;
-    const rect = canvas.getBoundingClientRect();
-    const style = getComputedStyle(canvas);
-    return canvas.dataset.pageCanvas !== "true" && style.position === "absolute" &&
-      style.pointerEvents === "auto" && rect.width > 0 && rect.height > 0 &&
-      rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight;
-  }), undefined, { timeout: 120_000 });
+  await page.waitForFunction(
+    () =>
+      Array.from(document.querySelectorAll("canvas")).some((node) => {
+        const canvas = node as HTMLCanvasElement;
+        const rect = canvas.getBoundingClientRect();
+        const style = getComputedStyle(canvas);
+        return (
+          canvas.dataset.pageCanvas !== "true" &&
+          style.position === "absolute" &&
+          style.pointerEvents === "auto" &&
+          rect.width > 0 &&
+          rect.height > 0 &&
+          rect.right > 0 &&
+          rect.bottom > 0 &&
+          rect.left < innerWidth &&
+          rect.top < innerHeight
+        );
+      }),
+    undefined,
+    { timeout: 120_000 },
+  );
 
   const canvases = page.locator("canvas");
   const index = await canvases.evaluateAll((nodes) => {
@@ -65,15 +85,24 @@ async function interactiveViewerCanvas(page: import("@playwright/test").Page) {
       const canvas = node as HTMLCanvasElement;
       const rect = canvas.getBoundingClientRect();
       const style = getComputedStyle(canvas);
-      if (canvas.dataset.pageCanvas !== "true" && style.position === "absolute" &&
-          style.pointerEvents === "auto" && rect.width > 0 && rect.height > 0 &&
-          rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight) {
+      if (
+        canvas.dataset.pageCanvas !== "true" &&
+        style.position === "absolute" &&
+        style.pointerEvents === "auto" &&
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.right > 0 &&
+        rect.bottom > 0 &&
+        rect.left < innerWidth &&
+        rect.top < innerHeight
+      ) {
         lastMatch = candidateIndex;
       }
     });
     return lastMatch;
   });
-  if (index < 0) throw new Error("interactive viewer canvas not found after readiness wait");
+  if (index < 0)
+    throw new Error("interactive viewer canvas not found after readiness wait");
   return canvases.nth(index);
 }
 
@@ -88,13 +117,14 @@ async function visibleCanvasBox(
   const y = Math.max(0, box.y);
   const right = Math.min(viewport.width, box.x + box.width);
   const bottom = Math.min(viewport.height, box.y + box.height);
-  if (right - x < 50 || bottom - y < 50) throw new Error("canvas visible area is too small");
+  if (right - x < 50 || bottom - y < 50)
+    throw new Error("canvas visible area is too small");
   return { x, y, width: right - x, height: bottom - y };
 }
 
 async function openSchedulesPanel(page: import("@playwright/test").Page) {
   const heading = page.getByRole("heading", { name: "Schedules / Tables" });
-  if (!await heading.isVisible()) {
+  if (!(await heading.isVisible())) {
     await page.getByTitle("Schedules & Table Parser").click();
   }
   await expect(heading).toBeVisible();
@@ -112,15 +142,19 @@ async function drawViewerRegion(page: import("@playwright/test").Page) {
   const box = await visibleCanvasBox(page, canvas);
   await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.25);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.55, { steps: 8 });
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.55, {
+    steps: 8,
+  });
   await page.mouse.up();
 }
 
 // Write requests the viewer makes for annotation/takeoff/region mutations —
 // the two demo flows assert NONE of these fire.
-const WRITE_RE = /\/api\/(annotations|takeoff-items|takeoff-groups|regions|qto-workflows|pages\/intelligence)/;
+const WRITE_RE =
+  /\/api\/(annotations|takeoff-items|takeoff-groups|regions|qto-workflows|pages\/intelligence)/;
 const isWrite = (req: import("@playwright/test").Request) =>
-  !["GET", "HEAD", "OPTIONS"].includes(req.method()) && WRITE_RE.test(req.url());
+  !["GET", "HEAD", "OPTIONS"].includes(req.method()) &&
+  WRITE_RE.test(req.url());
 
 // ── FLOW 1 — draw a count marker, reload, confirm it persisted ──────────────
 // Fit first, then target the computed pointer-enabled overlay canvas—not the first PDF/render
@@ -135,7 +169,10 @@ test("draw-count → reload → persists", async ({ page }) => {
   await page.getByText("+ Add Count Item").click();
   await page.getByPlaceholder("Item name...").fill("Doors");
   const itemSaved = page.waitForResponse(
-    (r) => r.url().includes("/api/takeoff-items") && r.request().method() === "POST" && r.ok(),
+    (r) =>
+      r.url().includes("/api/takeoff-items") &&
+      r.request().method() === "POST" &&
+      r.ok(),
   );
   await page.getByRole("button", { name: "Create" }).click();
   await itemSaved;
@@ -152,24 +189,33 @@ test("draw-count → reload → persists", async ({ page }) => {
     [0.45, 0.65],
   ]) {
     const saved = page.waitForResponse(
-      (r) => r.url().includes("/api/annotations") && r.request().method() === "POST" && r.ok(),
+      (r) =>
+        r.url().includes("/api/annotations") &&
+        r.request().method() === "POST" &&
+        r.ok(),
     );
     await page.mouse.click(box.x + box.width * dx, box.y + box.height * dy);
     await saved;
   }
 
   // footer reads "{total} total across {n} items" — 3 markers in 1 item
-  await expect(page.getByText(/3 total across 1 item/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/3 total across 1 item/)).toBeVisible({
+    timeout: 10_000,
+  });
 
   // the real assertion: reload, reopen QTO, the 3 still there (loaded from DB)
   await page.reload();
   await page.waitForSelector("canvas", { timeout: 60_000 });
   await page.getByRole("button", { name: "QTO" }).click();
-  await expect(page.getByText(/3 total across 1 item/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/3 total across 1 item/)).toBeVisible({
+    timeout: 15_000,
+  });
 });
 
 // ── FLOW 2 — ParsedRegion promote → render → reload → delete → reload absent ─
-test("parsed schedule promote and delete both survive reload", async ({ page }) => {
+test("parsed schedule promote and delete both survive reload", async ({
+  page,
+}) => {
   await login(page);
   const tableName = "E2E Door Schedule";
   let tableParseCalls = 0;
@@ -200,12 +246,16 @@ test("parsed schedule promote and delete both survive reload", async ({ page }) 
 
   const process = page.getByRole("button", { name: "Process Region" });
   await expect(process).toBeVisible({ timeout: 15_000 });
-  const parsed = page.waitForRequest((request) =>
-    new URL(request.url()).pathname === "/api/table-parse" && request.method() === "POST",
+  const parsed = page.waitForRequest(
+    (request) =>
+      new URL(request.url()).pathname === "/api/table-parse" &&
+      request.method() === "POST",
   );
-  const autoPromoted = page.waitForResponse((response) =>
-    response.url().endsWith("/api/regions/promote") &&
-      response.request().method() === "POST" && response.ok(),
+  const autoPromoted = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/regions/promote") &&
+      response.request().method() === "POST" &&
+      response.ok(),
   );
   await process.click();
   const parseRequest = await parsed;
@@ -225,15 +275,20 @@ test("parsed schedule promote and delete both survive reload", async ({ page }) 
 
   // Auto Parse persists immediately. Name the retained row through the same client command so
   // reload assertions can identify this exact table instead of relying on a generic category.
-  await page.getByPlaceholder("Name this table (e.g. Door Schedule)...").fill(tableName);
-  const named = page.waitForResponse((response) =>
-    response.url().endsWith("/api/regions/promote") &&
-      response.request().method() === "POST" && response.ok(),
+  await page
+    .getByPlaceholder("Name this table (e.g. Door Schedule)...")
+    .fill(tableName);
+  const named = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/regions/promote") &&
+      response.request().method() === "POST" &&
+      response.ok(),
   );
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await named;
-  await expect(page.getByPlaceholder("Name this table (e.g. Door Schedule)..."))
-    .not.toBeAttached({ timeout: 15_000 });
+  await expect(
+    page.getByPlaceholder("Name this table (e.g. Door Schedule)..."),
+  ).not.toBeAttached({ timeout: 15_000 });
   await page.getByRole("button", { name: "All Tables" }).click();
   await expect(page.getByText(tableName)).toBeVisible({ timeout: 15_000 });
 
@@ -243,8 +298,10 @@ test("parsed schedule promote and delete both survive reload", async ({ page }) 
   await expect(page.getByText(tableName)).toBeVisible({ timeout: 15_000 });
 
   const deleted = page.waitForResponse(
-    (response) => response.url().endsWith("/api/regions") &&
-      response.request().method() === "DELETE" && response.ok(),
+    (response) =>
+      response.url().endsWith("/api/regions") &&
+      response.request().method() === "DELETE" &&
+      response.ok(),
   );
   await page.getByTitle("Delete table").click();
   const deletedResponse = await deleted;
@@ -258,7 +315,9 @@ test("parsed schedule promote and delete both survive reload", async ({ page }) 
   await page.waitForSelector("canvas", { timeout: 120_000 });
   await openAllTables(page);
   await expect(page.getByText(tableName)).not.toBeAttached({ timeout: 15_000 });
-  await expect(page.getByText("No parsed tables found.")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("No parsed tables found.")).toBeVisible({
+    timeout: 15_000,
+  });
 });
 
 // ── FLOW 3 — demo project is read-only: drawing fires no write request ───────
@@ -285,16 +344,24 @@ test("demo viewer fires no write requests", async ({ page }) => {
   // The item and marker both exist LOCALLY, proving the same gesture ran rather than a wrong-canvas
   // no-op making the zero-write assertion pass vacuously.
   // .first(): "Doors" renders twice in the panel (active-item header + list row)
-  await expect(page.getByText("Doors").first()).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText(/1 total across 1 item/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Doors").first()).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByText(/1 total across 1 item/)).toBeVisible({
+    timeout: 10_000,
+  });
 
   // let any debounced/async save attempt fire, then assert NONE did
   await page.waitForTimeout(1000);
-  expect(writes, `unexpected write(s) in demo: ${writes.join(", ")}`).toEqual([]);
+  expect(writes, `unexpected write(s) in demo: ${writes.join(", ")}`).toEqual(
+    [],
+  );
 });
 
 // ── FLOW 4 — demo retained-region delete is local-only ──────────────────────────────────
-test("demo parsed schedule delete stays local and returns after reload", async ({ page }) => {
+test("demo parsed schedule delete stays local and returns after reload", async ({
+  page,
+}) => {
   const writes: string[] = [];
   page.on("request", (request) => {
     if (isWrite(request)) writes.push(`${request.method()} ${request.url()}`);
@@ -307,7 +374,10 @@ test("demo parsed schedule delete stays local and returns after reload", async (
   await page.getByTitle("Delete table").click();
   await expect(page.getByText(tableName)).not.toBeAttached({ timeout: 15_000 });
   await page.waitForTimeout(500);
-  expect(writes, `unexpected demo delete write(s): ${writes.join(", ")}`).toEqual([]);
+  expect(
+    writes,
+    `unexpected demo delete write(s): ${writes.join(", ")}`,
+  ).toEqual([]);
 
   await page.reload();
   await page.waitForSelector("canvas", { timeout: 120_000 });
@@ -322,7 +392,8 @@ test("search filters the sidebar and jumps to a page", async ({ page }) => {
 
   // type a term seeded into every page's search_vector; server FTS responds
   const searched = page.waitForResponse(
-    (response) => response.url().includes("/api/search") &&
+    (response) =>
+      response.url().includes("/api/search") &&
       response.request().method() === "GET",
   );
   await page.getByPlaceholder("Search text...").fill("schedule");
@@ -331,11 +402,15 @@ test("search filters the sidebar and jumps to a page", async ({ page }) => {
 
   // sidebar enters search-filter mode: "Found on N page(s)" header + a "{n}pg"
   // results badge in the toolbar
-  await expect(page.getByText(/Found on \d+ page/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/Found on \d+ page/)).toBeVisible({
+    timeout: 10_000,
+  });
 
   // jump: click a result page button (page 3 is within the initial virtualized
   // window) and assert it becomes the active page (accent highlight class)
   const target = page.locator('[data-page-num="3"]');
   await target.click();
-  await expect(target).toHaveClass(/bg-\[var\(--accent\)\]\/20/, { timeout: 10_000 });
+  await expect(target).toHaveClass(/bg-\[var\(--accent\)\]\/20/, {
+    timeout: 10_000,
+  });
 });
