@@ -40,13 +40,17 @@ export function Section11Architecture() {
           <ArchitectureSvgDiagram />
         </Figure>
         <p>
-          A browser hits CloudFront at <InlineCode>assets.*</InlineCode> for
-          page images and thumbnails, and the ALB at the primary domain for
-          everything else. The ALB routes HTTPS to two ECS services: the main
+          A browser uses the ALB-hosted, access-checked project asset gateway for
+          PDFs, page images, and thumbnails. CloudFront at{" "}
+          <InlineCode>assets.*</InlineCode> has no S3 read grant and a viewer-request
+          function returns 404 before cache lookup for every path. The reserved{" "}
+          <InlineCode>_bp-public/</InlineCode> namespace remains unused until an atomic
+          publication and revocation protocol can land with its worker and edge authority. The
+          ALB routes HTTPS to two ECS services: the main
           app (a Next.js container) and Label Studio (a separate labeling UI for
           training data work). Both run in Fargate &mdash; no EC2 to manage.
           Secrets come from Secrets Manager; the DB is RDS PostgreSQL; durable
-          storage is S3 behind CloudFront.
+          storage is private S3 behind task-role access.
         </p>
       </SubSection>
 
@@ -130,12 +134,14 @@ circuit_breaker = { enable = true, rollback = true }`}
 
       <SubSection title="Storage layout">
         <p>
-          S3 is the durability layer. The bucket is{" "}
+          S3 is the private durability layer. The bucket is{" "}
           <InlineCode>blueprintparser-data-&#123;account_id&#125;</InlineCode> and the
           layout is stable:
         </p>
         <CodeBlock lang="text" caption="S3 layout per project">
-{`{dataUrl}/                             // {company_id}/{project_public_id}
+{`_bp-staging/{dataUrl}/...             // short-lived browser uploads
+
+{dataUrl}/                             // private {company key}/{20-hex storage id}
 ├── original.pdf                       // raw upload
 ├── thumbnail.png                      // 72 DPI cover image
 ├── pages/
@@ -144,21 +150,27 @@ circuit_breaker = { enable = true, rollback = true }`}
 ├── thumbnails/
 │   ├── page_0001.png                  // 72 DPI thumbnail
 │   └── page_0002.png
+├── label-studio-assets/
+│   └── {grant-uuid}.png                // immutable exact-version task snapshot
 ├── yolo-output/                       // written by SageMaker
 │   ├── page_0001_detections.json
 │   └── page_0002_detections.json
 └── exports/
     ├── takeoff.csv                    // user-exported CSVs
-    └── labels.zip                     // Label Studio exports`}
+    └── labels.zip                     // Label Studio exports
+
+_bp-public/                            // reserved; no current publisher`}
         </CodeBlock>
         <p>
-          Every file under <InlineCode>pages/</InlineCode> and{" "}
-          <InlineCode>thumbnails/</InlineCode> is cached as{" "}
-          <InlineCode>public, max-age=31536000, immutable</InlineCode> so
-          CloudFront holds them forever. The cache-warming pass at the end of
-          preprocessing primes edge locations so the first viewer open is fast.
-          Filenames include the page number so they&apos;re effectively
-          content-addressed.
+          Canonical project paths are never anonymous CDN URLs. The browser receives
+          an opaque same-origin <InlineCode>assetBaseUrl</InlineCode>; the gateway
+          rechecks tenant/demo visibility, supports PDF byte ranges, and overrides
+          legacy object metadata with <InlineCode>private, no-store</InlineCode>.
+          Page-number filenames are stable names, not content addresses, so the
+          gateway also refuses reads while a project or thumbnail rebuild lease is
+          active. Immutable generation-qualified publication remains deferred until
+          its producer, edge activation/revocation authority, and cleanup worker can
+          land as one reviewed protocol.
         </p>
         <p>
           Database storage uses PostgreSQL 16 on a{" "}
@@ -189,7 +201,9 @@ circuit_breaker = { enable = true, rollback = true }`}
             ["models", "YOLO model registry — name, type, s3Path, config, isDefault."],
             ["model_access", "Per-company access grants for models owned by another company."],
             ["processing_jobs", "SageMaker / Step Functions job tracking with status + CloudWatch refs."],
-            ["labeling_sessions", "Label Studio integration state."],
+            ["labeling_sessions", "Active or durably retiring Label Studio sessions, bound to one provider data-volume identity."],
+            ["label_studio_project_intents", "Provider-create identity and ambiguity-recovery queue with immutable base URL + instance binding."],
+            ["label_studio_asset_grants", "Hashed, revocable task bearers bound to exact immutable S3 versions."],
             ["app_settings", "Global key/value (root admin only). Includes the sagemakerEnabled toggle password."],
             ["audit_log", "Admin action history."],
           ]}
@@ -211,10 +225,26 @@ circuit_breaker = { enable = true, rollback = true }`}
           Label Studio runs as a separate ECS task with an EFS volume mounted at{" "}
           <InlineCode>/label-studio/data</InlineCode>. The ALB routes{" "}
           <InlineCode>labelstudio.*</InlineCode> to the task; the main app
-          integrates via <InlineCode>/api/labeling/*</InlineCode> routes. It
-          reads from the same S3 bucket the main app writes to, so
-          round-tripping a project from ingest to labeling and back works
-          without cross-service copying.
+          integrates via <InlineCode>/api/labeling/*</InlineCode> routes. Each
+          imported task receives an opaque app URL backed by a unique S3
+          snapshot version. BlueprintParser stores only the bearer hash,
+          rechecks the current project/session under parent-first locks, and
+          revokes every grant before a provider deletion attempt. Label Studio
+          therefore has no direct browser CORS path to the private bucket;
+          failed provider creates and deletions remain durable worker queues.
+          The shared provider bootstrap credentials are container-only and are
+          never returned by an application route. Cleanup proceeds only when
+          the stored provider base URL and persistent-volume instance ID still
+          match current configuration, preventing a recycled numeric project
+          ID from targeting a replacement provider.
+        </p>
+        <p>
+          Migration <InlineCode>0037</InlineCode> is an explicit cutover: stop
+          old application and worker writers, retire every pre-protocol Label
+          Studio project and local session/intent, rotate the former browser-
+          exposed bootstrap credentials, run migrations once, and start only
+          the new binary. Do not roll back to a binary that can create a
+          grant-less session after this boundary.
         </p>
       </SubSection>
 

@@ -3,7 +3,7 @@
 ## Supported Versions
 
 | Version | Supported |
-|---------|-----------|
+| ------- | --------- |
 | 1.x     | Yes       |
 
 ## Reporting a Vulnerability
@@ -53,4 +53,6 @@ If you're deploying BlueprintParser:
 - [ ] Use HTTPS in production (the Terraform config includes ALB + ACM)
 - [ ] Don't expose PostgreSQL to the public internet
 - [ ] Rotate API keys stored in the database periodically
-- [ ] Review the AWS WAF rules in `hardening.sh`
+- [ ] Review/import owner-managed WAF, GuardDuty, and CloudTrail controls; the retired `hardening.sh` is deliberately side-effect-free
+- [ ] Keep ALB logs in the dedicated private SSE-S3 bucket with one-day expiry; query strings can contain revocable Label Studio asset bearers
+- [ ] Restrict ALB-log `s3:GetObject` and `s3:ListBucket` access to incident responders, and never paste request targets into tickets or chat

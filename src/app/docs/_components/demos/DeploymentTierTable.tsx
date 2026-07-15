@@ -27,7 +27,7 @@ export function DeploymentTierTable() {
         [
           "Full AWS (CPU-only)",
           "Terraform stack: ECS, RDS, S3, CloudFront, Step Functions, Textract, Secrets Manager",
-          "Production pipeline with Step Functions orchestration, Textract OCR, cached page CDN, multi-user auth, Label Studio",
+          "Production pipeline with Step Functions orchestration, Textract OCR, access-checked project assets, multi-user auth, Label Studio",
           "YOLO inference (no GPU)",
         ],
         [

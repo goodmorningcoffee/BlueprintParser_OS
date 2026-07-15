@@ -29,15 +29,13 @@ export function ArchitectureSvgDiagram() {
           <text x="85" y="104" textAnchor="middle" fontSize="12" opacity="0.75">/home, /project, /docs</text>
         </g>
 
-        <line x1="150" y1="88" x2="200" y2="88" stroke="currentColor" strokeWidth="1.8" opacity="0.5" markerEnd="url(#arr)" />
+        <line x1="150" y1="88" x2="390" y2="88" stroke="currentColor" strokeWidth="1.8" opacity="0.5" markerEnd="url(#arr)" />
 
         <g>
-          <rect x="200" y="58" width="140" height="60" rx="6" fill="none" stroke="#60a5fa" strokeWidth="1.8" />
-          <text x="270" y="84" textAnchor="middle" fontSize="14" fontWeight="bold" fill="#60a5fa">CloudFront</text>
-          <text x="270" y="104" textAnchor="middle" fontSize="12" opacity="0.75">assets.*, CORS at edge</text>
+          <rect x="200" y="132" width="160" height="40" rx="6" fill="none" stroke="#ef4444" strokeWidth="1.8" />
+          <text x="280" y="148" textAnchor="middle" fontSize="12" fontWeight="bold" fill="#ef4444">CloudFront viewer gate</text>
+          <text x="280" y="164" textAnchor="middle" fontSize="11" opacity="0.75">off-path · deny-all 404</text>
         </g>
-
-        <line x1="340" y1="88" x2="390" y2="88" stroke="currentColor" strokeWidth="1.8" opacity="0.5" markerEnd="url(#arr)" />
 
         <g>
           <rect x="390" y="58" width="130" height="60" rx="6" fill="none" stroke="#60a5fa" strokeWidth="1.8" />

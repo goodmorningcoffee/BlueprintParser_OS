@@ -9,7 +9,7 @@ import { ApiEndpoint } from "../ApiEndpoint";
 interface ApiRow {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
-  auth?: "public" | "session" | "admin" | "root";
+  auth?: "public" | "project" | "session" | "admin" | "root";
   desc: string;
   params?: { name: string; type: string; required?: boolean; desc: string }[];
 }
@@ -49,7 +49,8 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
       { method: "GET", path: "/api/projects/[id]/pages", auth: "session", desc: "List pages in a project with classifications and CSI counts." },
       { method: "POST", path: "/api/projects/[id]/map-tags-batch", auth: "session", desc: "Bind parsed schedule tags to matching YOLO shapes and free-floating OCR text. Returns scored matches with tier + drop reason; supports strictness and drawing-number-prefix scope." },
       { method: "POST", path: "/api/projects/[id]/classify-regions", auth: "session", desc: "Re-run spatial classification using current YOLO + OCR data." },
-      { method: "GET", path: "/api/projects/[id]/thumbnail/[page]", auth: "session", desc: "Pre-signed redirect to the page thumbnail on CloudFront." },
+      { method: "GET", path: "/api/project-assets/[id]/[...asset]", auth: "project", desc: "Tenant-authenticated or public-demo, no-store PDF/page/thumbnail stream with single-range PDF support." },
+      { method: "GET", path: "/api/projects/[id]/thumbnail/[page]", auth: "project", desc: "Legacy no-store thumbnail gateway alias." },
       { method: "POST", path: "/api/pages/intelligence", auth: "session", desc: "Re-run analyzePageIntelligence on a specific page." },
       {
         method: "GET",
@@ -166,10 +167,9 @@ const GROUPS: { id: string; label: string; endpoints: ApiRow[] }[] = [
     id: "labeling",
     label: "Labeling (Label Studio)",
     endpoints: [
-      { method: "POST", path: "/api/labeling/create", auth: "admin", desc: "Provision a Label Studio labeling session for a project." },
-      { method: "GET", path: "/api/labeling/sessions", auth: "admin", desc: "List active labeling sessions." },
-      { method: "GET", path: "/api/labeling/credentials", auth: "admin", desc: "Return credentials for embedding the Label Studio iframe." },
-      { method: "POST", path: "/api/labeling/sessions/[id]", auth: "admin", desc: "Fetch or update a specific labeling session." },
+      { method: "POST", path: "/api/labeling/create", auth: "session", desc: "Provision an immutable, provider-bound labeling session for an owned project." },
+      { method: "GET", path: "/api/labeling/sessions", auth: "session", desc: "List project labeling sessions." },
+      { method: "DELETE", path: "/api/labeling/sessions/[id]", auth: "session", desc: "Revoke task assets and enqueue durable provider retirement." },
     ],
   },
   {

@@ -172,8 +172,8 @@ export function Section01Overview() {
           (pdfplumber, Camelot, img2table, TATR, OpenCV, Tesseract, and the YOLO
           inference container) are spawned from TypeScript via stdin/stdout JSON.
           AWS deployment is codified in <InlineCode>infrastructure/terraform/</InlineCode> &mdash;
-          13 files totaling the full stack including ECS, RDS, S3, Step Functions,
-          IAM, Secrets Manager, and CloudFront.
+          17 files totaling the full stack including ECS, RDS, private S3, Step Functions,
+          IAM, Secrets Manager, and the deny-all CloudFront viewer gate.
         </p>
       </SubSection>
     </Section>

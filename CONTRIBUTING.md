@@ -22,7 +22,7 @@ cd BlueprintParser/blueprintparser_2
 cp .env.example .env.local       # Edit DATABASE_URL and NEXTAUTH_SECRET
 docker compose up -d              # Start PostgreSQL
 npm install
-npx drizzle-kit migrate           # Run database migrations
+npm run db:migrate                # Loopback development database only
 npm run dev                       # http://localhost:3000
 ```
 
@@ -80,7 +80,7 @@ If you modify the schema in `src/lib/db/schema.ts`:
 
 ```bash
 npx drizzle-kit generate    # Generate migration SQL
-npx drizzle-kit migrate     # Apply it locally
+npm run db:migrate          # Apply to a loopback development database
 ```
 
 Include the generated migration file in your PR.

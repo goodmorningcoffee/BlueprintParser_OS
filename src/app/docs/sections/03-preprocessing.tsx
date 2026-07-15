@@ -51,7 +51,7 @@ export function Section03Preprocessing() {
 }> {
   // ... fetch project, download PDF, count pages ...
   // ... mapConcurrent(pageNums, pageConcurrency, processOnePage) ...
-  // ... analyzeProject + computeProjectSummaries + warmCloudFrontCache
+  // ... analyzeProject + computeProjectSummaries
 }`}
         </CodeBlock>
       </SubSection>
@@ -82,9 +82,10 @@ export function Section03Preprocessing() {
             eventually renders.
           </li>
           <li>
-            <strong>Upload PNG + 72 DPI thumbnail to S3</strong> &mdash; both get{" "}
-            <InlineCode>Cache-Control: public, max-age=31536000, immutable</InlineCode>{" "}
-            so CloudFront can cache forever. The thumbnail backs the sidebar.
+            <strong>Upload PNG + 72 DPI thumbnail to private S3</strong> &mdash; the
+            same-origin project asset gateway serves them only after access checks.
+            It currently overrides legacy object cache metadata with{" "}
+            <InlineCode>private, no-store</InlineCode>; the thumbnail backs the sidebar.
           </li>
           <li>
             <strong>Re-rasterize at a safe DPI if the 300 DPI image exceeds 9500 px
@@ -183,9 +184,10 @@ export function Section03Preprocessing() {
           reads at O(1) from LLM tool calls.
         </p>
         <p>
-          The final step is a best-effort CloudFront cache warm: each page PNG
-          gets a HEAD request so CloudFront edge locations pull it ahead of the
-          first viewer hit. Failures are logged and ignored.
+          The final database publication marks the project completed only after
+          project analysis and summary indexes finish. Canonical project assets are
+          not warmed through CloudFront: workers read them with the ECS task role,
+          and browsers read them through the access-checked asset gateway.
         </p>
       </SubSection>
 

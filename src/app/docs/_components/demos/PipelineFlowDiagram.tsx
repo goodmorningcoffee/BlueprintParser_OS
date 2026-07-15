@@ -116,7 +116,7 @@ export function PipelineFlowDiagram() {
         {/* Project-level footer */}
         <rect x="40" y={60 + Math.ceil(STAGES.length / 2) * 70 + 10} width="880" height="40" rx="4" fill="none" stroke="#a855f7" strokeWidth="1.5" />
         <text x="480" y={60 + Math.ceil(STAGES.length / 2) * 70 + 34} textAnchor="middle" fontSize="11" fontWeight="bold" fill="#a855f7">
-          After all pages: analyzeProject() → computeProjectSummaries() → buildCsiGraph() → warmCloudFrontCache()
+          After all pages: analyzeProject() → computeProjectSummaries() → buildCsiGraph() → publish completed
         </text>
       </svg>
     </div>

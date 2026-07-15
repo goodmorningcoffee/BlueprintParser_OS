@@ -212,8 +212,10 @@ export function Landing() {
         <ArchitectureSvgDiagram />
         <div className="mt-3 text-[12px] text-[var(--muted)] italic leading-relaxed">
           The BP runtime on AWS. ECS Fargate serves the Next.js app and runs the
-          preprocessing worker; SageMaker runs YOLO on-demand; S3 + CloudFront
-          store and serve page images; RDS PostgreSQL holds structured results.
+          preprocessing worker; SageMaker runs YOLO on-demand; private S3 stores
+          project bytes, the app gates browser reads, and CloudFront viewer delivery
+          is disabled until a complete publication protocol exists; RDS PostgreSQL holds
+          structured results.
           Local / development uses the same code with AWS services disabled.
         </div>
       </div>

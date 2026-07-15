@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-type Auth = "public" | "session" | "admin" | "root";
+type Auth = "public" | "project" | "session" | "admin" | "root";
 
 interface ApiParam {
   name: string;
@@ -31,6 +31,7 @@ const METHOD_COLOR: Record<Method, string> = {
 
 const AUTH_COLOR: Record<Auth, string> = {
   public: "text-[var(--muted)] border-[var(--border)]",
+  project: "text-emerald-400/80 border-emerald-400/30",
   session: "text-sky-400/80 border-sky-400/30",
   admin: "text-amber-400/90 border-amber-400/30",
   root: "text-red-400/90 border-red-400/40",
