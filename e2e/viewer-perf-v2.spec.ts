@@ -22,6 +22,22 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 const SCHEMA_VERSION = "bp-viewer-perf-v2.2.0";
 const PROTOCOL_VERSION =
   "p2.4-direct-parent-symmetric-missing-underlays-profiler-median3-reverse1";
+const PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE =
+  "private-gateway-bucket-quiescence-v1";
+const PRIVATE_GATEWAY_BUCKET_QUIESCENCE_SCHEMA_VERSION =
+  "bp-viewer-perf-v2.3.0-private-gateway-bucket-quiescence";
+const PERF_VALIDATION_GATE = process.env.PERF_VALIDATION_GATE || "";
+const IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE =
+  PERF_VALIDATION_GATE === PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE;
+const EFFECTIVE_SCHEMA_VERSION = IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+  ? PRIVATE_GATEWAY_BUCKET_QUIESCENCE_SCHEMA_VERSION
+  : SCHEMA_VERSION;
+const EFFECTIVE_PROTOCOL_VERSION = IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+  ? PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+  : PROTOCOL_VERSION;
+const BUCKET_TRANSPORT_QUIET_MS = 100;
+const BUCKET_TRANSPORT_POLL_MS = 25;
+const BUCKET_TRANSPORT_STATS_TIMEOUT_MS = 30_000;
 const RUNS = Number(process.env.PERF_RUNS || 3);
 const SMOKE = process.env.PERF_SMOKE === "1";
 const SOURCE_SHA = process.env.PERF_APP_SHA || "";
@@ -89,6 +105,98 @@ type InstrumentationManifest = {
     afterSha256: string;
   }>;
 };
+type BrowserPdfTransportSnapshot = {
+  observedAtEpochMs: number;
+  requestGeneration: number;
+  lifecycleGeneration: number;
+  activeCount: number;
+};
+type UpstreamTransportSnapshot = {
+  requestGeneration: number;
+  lifecycleGeneration: number;
+  activeCount: number;
+  activeStreamCount: number;
+};
+type TransportObservationWindow = {
+  startedAtEpochMs: number;
+  endedAtEpochMs: number;
+  elapsedMs: number;
+};
+type CoherentTransportObservation = {
+  observationWindow: TransportObservationWindow;
+  coherenceRetries: number;
+  coherenceStateTransitions: number;
+  browserBefore: BrowserPdfTransportSnapshot;
+  upstream: UpstreamTransportSnapshot;
+  browserAfter: BrowserPdfTransportSnapshot;
+  browserBracketDeltas: {
+    requestGeneration: number;
+    lifecycleGeneration: number;
+  };
+};
+type BucketTransportQuietBarrier = {
+  requiredQuietMs: 100;
+  pollIntervalMs: 25;
+  initialActive: {
+    browserPdfRequests: number;
+    upstreamRequests: number;
+    upstreamStreams: number;
+  };
+  polls: number;
+  stablePolls: number;
+  elapsedMs: number;
+  stateChangeTransitions: number;
+  observationWindow: TransportObservationWindow;
+  stableObservationWindow: TransportObservationWindow;
+  pollObservations: CoherentTransportObservation[];
+};
+type BucketTransportIntervalDeltas = {
+  browserRequestGeneration: number;
+  browserLifecycleGeneration: number;
+  upstreamRequestGeneration: number;
+  upstreamLifecycleGeneration: number;
+};
+type BucketTransportQuiescencePhase = {
+  quietBarrier: BucketTransportQuietBarrier;
+  before: CoherentTransportObservation;
+  after: CoherentTransportObservation;
+  intervalDeltas: BucketTransportIntervalDeltas;
+};
+type BucketTransportQuiescence = {
+  warm1000: BucketTransportQuiescencePhase;
+  timed4000: BucketTransportQuiescencePhase;
+};
+type BrowserPdfTransportTracker = {
+  active: Set<import("@playwright/test").Request>;
+  requestGeneration: number;
+  lifecycleGeneration: number;
+  snapshot: () => BrowserPdfTransportSnapshot;
+};
+type UpstreamTransportStats = {
+  schemaVersion: 2;
+  activeCount: number;
+  activeStreamCount: number;
+  activeRequests: UpstreamTransportRequest[];
+  completedRequests: UpstreamTransportRequest[];
+};
+type UpstreamTransportRequest = {
+  id: number;
+  status: number | null;
+  outcome: string | null;
+  sourceCreated: boolean;
+  sourceEnded: boolean;
+  sourceClosed: boolean;
+  sourceDestroyed: boolean;
+  sourceDestroyedOnResponseClose: boolean;
+  sourceError: string | null;
+  throttleCreated: boolean;
+  throttleClosed: boolean;
+};
+
+const browserPdfTransportTrackers = new WeakMap<
+  Page,
+  BrowserPdfTransportTracker
+>();
 
 const PERF_AREA_ITEM = {
   id: 910001,
@@ -226,6 +334,389 @@ function sha256File(path: string): string {
 
 function sha256Bytes(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function isBrowserPdfTransportRequest(
+  request: import("@playwright/test").Request,
+): boolean {
+  if (request.method() !== "GET") return false;
+  const url = new URL(request.url());
+  const directPath = `/${world.dataUrl}/original.pdf`;
+  const gatewayPath = `/api/project-assets/${world.publicId}/original.pdf`;
+  return (
+    url.pathname === gatewayPath ||
+    (url.protocol === "https:" &&
+      url.hostname === "localhost" &&
+      url.port === "9876" &&
+      url.pathname === directPath)
+  );
+}
+
+function installBrowserPdfTransportTracker(
+  page: Page,
+): BrowserPdfTransportTracker {
+  const existing = browserPdfTransportTrackers.get(page);
+  if (existing) return existing;
+
+  const tracker: BrowserPdfTransportTracker = {
+    active: new Set(),
+    requestGeneration: 0,
+    lifecycleGeneration: 0,
+    snapshot: () => ({
+      observedAtEpochMs: Date.now(),
+      requestGeneration: tracker.requestGeneration,
+      lifecycleGeneration: tracker.lifecycleGeneration,
+      activeCount: tracker.active.size,
+    }),
+  };
+  const settle = (request: import("@playwright/test").Request) => {
+    if (!tracker.active.delete(request)) return;
+    tracker.lifecycleGeneration += 1;
+  };
+  page.on("request", (request) => {
+    if (!isBrowserPdfTransportRequest(request)) return;
+    tracker.requestGeneration += 1;
+    tracker.active.add(request);
+  });
+  page.on("requestfinished", settle);
+  page.on("requestfailed", settle);
+  browserPdfTransportTrackers.set(page, tracker);
+  return tracker;
+}
+
+function requireBrowserPdfTransportTracker(
+  page: Page,
+): BrowserPdfTransportTracker {
+  const tracker = browserPdfTransportTrackers.get(page);
+  if (!tracker) throw new Error("browser PDF transport tracker missing");
+  return tracker;
+}
+
+async function captureCoherentTransportObservation(
+  page: Page,
+  deadlineAtEpochMs = Date.now() + BUCKET_TRANSPORT_STATS_TIMEOUT_MS,
+): Promise<CoherentTransportObservation> {
+  const tracker = requireBrowserPdfTransportTracker(page);
+  let coherenceRetries = 0;
+  let coherenceStateTransitions = 0;
+  while (Date.now() < deadlineAtEpochMs) {
+    const startedAtEpochMs = Date.now();
+    const started = performance.now();
+    const browserBefore = tracker.snapshot();
+    const response = await page.evaluate(
+      async ({ statsUrl, timeoutMs }) => {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(
+          () => controller.abort("transport stats timeout"),
+          timeoutMs,
+        );
+        try {
+          const result = await fetch(statsUrl, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          return { status: result.status, body: await result.text() };
+        } finally {
+          window.clearTimeout(timeout);
+        }
+      },
+      {
+        statsUrl: "https://localhost:9876/__bp_e2e_s3_transport",
+        timeoutMs: Math.max(1, deadlineAtEpochMs - Date.now()),
+      },
+    );
+    const browserAfter = tracker.snapshot();
+    const endedAtEpochMs = Date.now();
+    expect(response.status, "bucket transport stats status").toBe(200);
+    const stats = JSON.parse(response.body) as UpstreamTransportStats;
+    expect(stats.schemaVersion, "bucket transport stats schema").toBe(2);
+    expect(
+      Number.isInteger(stats.activeCount),
+      "bucket transport upstream active count",
+    ).toBe(true);
+    expect(
+      Number.isInteger(stats.activeStreamCount),
+      "bucket transport upstream stream count",
+    ).toBe(true);
+    expect(Array.isArray(stats.activeRequests)).toBe(true);
+    expect(Array.isArray(stats.completedRequests)).toBe(true);
+    expect(stats.activeCount).toBe(stats.activeRequests.length);
+    const allRows = [...stats.activeRequests, ...stats.completedRequests];
+    const allIds = allRows.map((request) => request.id);
+    expect(
+      allIds.every((id) => Number.isSafeInteger(id) && id > 0),
+      "bucket transport upstream request ids",
+    ).toBe(true);
+    expect(new Set(allIds).size, "bucket transport upstream unique ids").toBe(
+      allIds.length,
+    );
+    const lifecycleGeneration = allRows.reduce(
+      (generation, request) =>
+        generation +
+        Number(request.status !== null) +
+        Number(request.outcome !== null) +
+        Number(request.sourceCreated) +
+        Number(request.sourceEnded) +
+        Number(request.sourceClosed) +
+        Number(request.sourceDestroyed) +
+        Number(request.sourceDestroyedOnResponseClose) +
+        Number(request.sourceError !== null) +
+        Number(request.throttleCreated) +
+        Number(request.throttleClosed),
+      0,
+    );
+    const observation: CoherentTransportObservation = {
+      observationWindow: {
+        startedAtEpochMs,
+        endedAtEpochMs,
+        elapsedMs: +(performance.now() - started).toFixed(1),
+      },
+      coherenceRetries,
+      coherenceStateTransitions,
+      browserBefore,
+      upstream: {
+        requestGeneration: Math.max(0, ...allIds),
+        lifecycleGeneration,
+        activeCount: stats.activeCount,
+        activeStreamCount: stats.activeStreamCount,
+      },
+      browserAfter,
+      browserBracketDeltas: {
+        requestGeneration:
+          browserAfter.requestGeneration - browserBefore.requestGeneration,
+        lifecycleGeneration:
+          browserAfter.lifecycleGeneration - browserBefore.lifecycleGeneration,
+      },
+    };
+    if (
+      observation.browserBracketDeltas.requestGeneration === 0 &&
+      observation.browserBracketDeltas.lifecycleGeneration === 0
+    ) {
+      return observation;
+    }
+    coherenceRetries += 1;
+    coherenceStateTransitions +=
+      Number(observation.browserBracketDeltas.requestGeneration !== 0) +
+      Number(observation.browserBracketDeltas.lifecycleGeneration !== 0);
+    await new Promise<void>((resolveRetry) => setTimeout(resolveRetry, 0));
+  }
+  throw new Error(
+    "browser-bracketed transport stats did not stabilize within 30s",
+  );
+}
+
+function transportObservationState(
+  observation: CoherentTransportObservation,
+): string {
+  return JSON.stringify({
+    browserRequestGeneration: observation.browserAfter.requestGeneration,
+    browserLifecycleGeneration: observation.browserAfter.lifecycleGeneration,
+    browserActiveCount: observation.browserAfter.activeCount,
+    upstreamRequestGeneration: observation.upstream.requestGeneration,
+    upstreamLifecycleGeneration: observation.upstream.lifecycleGeneration,
+    upstreamActiveCount: observation.upstream.activeCount,
+    upstreamActiveStreamCount: observation.upstream.activeStreamCount,
+  });
+}
+
+function assertCoherentTransportObservation(
+  observation: CoherentTransportObservation,
+  label: string,
+): void {
+  expect(
+    observation.observationWindow.endedAtEpochMs,
+    `${label} ordered observation window`,
+  ).toBeGreaterThanOrEqual(observation.observationWindow.startedAtEpochMs);
+  expect(
+    observation.observationWindow.elapsedMs,
+    `${label} bounded stats observation`,
+  ).toBeLessThan(BUCKET_TRANSPORT_STATS_TIMEOUT_MS);
+  expect(
+    observation.browserBracketDeltas.requestGeneration,
+    `${label} browser request generation across stats GET`,
+  ).toBe(0);
+  expect(
+    observation.browserBracketDeltas.lifecycleGeneration,
+    `${label} browser lifecycle generation across stats GET`,
+  ).toBe(0);
+}
+
+function assertIdleTransportObservation(
+  observation: CoherentTransportObservation,
+  label: string,
+): void {
+  assertCoherentTransportObservation(observation, label);
+  expect(observation.browserBefore.activeCount, `${label} browser before`).toBe(
+    0,
+  );
+  expect(observation.browserAfter.activeCount, `${label} browser after`).toBe(
+    0,
+  );
+  expect(observation.upstream.activeCount, `${label} upstream requests`).toBe(
+    0,
+  );
+  expect(
+    observation.upstream.activeStreamCount,
+    `${label} upstream streams`,
+  ).toBe(0);
+}
+
+async function observeBucketTransportQuietBarrier(
+  page: Page,
+  label: string,
+): Promise<BucketTransportQuietBarrier> {
+  const startedAtEpochMs = Date.now();
+  const started = performance.now();
+  const deadlineAtEpochMs =
+    startedAtEpochMs + BUCKET_TRANSPORT_STATS_TIMEOUT_MS;
+  const initialBrowser = requireBrowserPdfTransportTracker(page).snapshot();
+  const pollObservations: CoherentTransportObservation[] = [];
+  const requiredStablePolls =
+    BUCKET_TRANSPORT_QUIET_MS / BUCKET_TRANSPORT_POLL_MS + 1;
+  let stablePolls = 0;
+  let stateChangeTransitions = 0;
+  let previousState: string | null = null;
+  while (Date.now() < deadlineAtEpochMs) {
+    if (pollObservations.length > 0) {
+      const remainingMs = deadlineAtEpochMs - Date.now();
+      if (remainingMs <= 0) break;
+      await new Promise<void>((resolvePoll) =>
+        setTimeout(
+          resolvePoll,
+          Math.min(BUCKET_TRANSPORT_POLL_MS, remainingMs),
+        ),
+      );
+    }
+    const observation = await captureCoherentTransportObservation(
+      page,
+      deadlineAtEpochMs,
+    );
+    pollObservations.push(observation);
+    assertCoherentTransportObservation(
+      observation,
+      `${label} poll ${pollObservations.length - 1}`,
+    );
+    const state = transportObservationState(observation);
+    const visibleTransition =
+      previousState === null
+        ? observation.browserBefore.requestGeneration !==
+            initialBrowser.requestGeneration ||
+          observation.browserBefore.lifecycleGeneration !==
+            initialBrowser.lifecycleGeneration ||
+          observation.browserBefore.activeCount !== initialBrowser.activeCount
+        : previousState !== state;
+    const transitioned =
+      visibleTransition || observation.coherenceStateTransitions > 0;
+    stateChangeTransitions +=
+      observation.coherenceStateTransitions +
+      Number(visibleTransition && observation.coherenceStateTransitions === 0);
+    previousState = state;
+    const idle =
+      observation.browserBefore.activeCount === 0 &&
+      observation.browserAfter.activeCount === 0 &&
+      observation.upstream.activeCount === 0 &&
+      observation.upstream.activeStreamCount === 0;
+    stablePolls = idle && !transitioned ? stablePolls + 1 : idle ? 1 : 0;
+    if (stablePolls >= requiredStablePolls) break;
+  }
+  const endedAtEpochMs = Date.now();
+  if (stablePolls < requiredStablePolls || endedAtEpochMs > deadlineAtEpochMs) {
+    throw new Error(`${label} did not reach 100ms transport quiet within 30s`);
+  }
+  const elapsedMs = +(performance.now() - started).toFixed(1);
+  const first = pollObservations[0];
+  const stableTail = pollObservations.slice(-requiredStablePolls);
+  const stableStartedAtEpochMs =
+    stableTail[0].observationWindow.startedAtEpochMs;
+  const stableEndedAtEpochMs =
+    stableTail.at(-1)!.observationWindow.endedAtEpochMs;
+  const stableElapsedMs = stableEndedAtEpochMs - stableStartedAtEpochMs;
+  const barrier: BucketTransportQuietBarrier = {
+    requiredQuietMs: BUCKET_TRANSPORT_QUIET_MS,
+    pollIntervalMs: BUCKET_TRANSPORT_POLL_MS,
+    initialActive: {
+      browserPdfRequests: initialBrowser.activeCount,
+      upstreamRequests: first.upstream.activeCount,
+      upstreamStreams: first.upstream.activeStreamCount,
+    },
+    polls: pollObservations.length,
+    stablePolls,
+    elapsedMs,
+    stateChangeTransitions,
+    observationWindow: { startedAtEpochMs, endedAtEpochMs, elapsedMs },
+    stableObservationWindow: {
+      startedAtEpochMs: stableStartedAtEpochMs,
+      endedAtEpochMs: stableEndedAtEpochMs,
+      elapsedMs: stableElapsedMs,
+    },
+    pollObservations,
+  };
+  expect(
+    barrier.polls,
+    `${label} total quiet poll count`,
+  ).toBeGreaterThanOrEqual(requiredStablePolls);
+  expect(barrier.stablePolls, `${label} stable quiet poll count`).toBe(5);
+  expect(
+    barrier.elapsedMs,
+    `${label} complete quiet window`,
+  ).toBeGreaterThanOrEqual(BUCKET_TRANSPORT_QUIET_MS);
+  expect(
+    barrier.observationWindow.endedAtEpochMs -
+      barrier.observationWindow.startedAtEpochMs,
+    `${label} bounded quiet observation`,
+  ).toBeLessThanOrEqual(BUCKET_TRANSPORT_STATS_TIMEOUT_MS);
+  expect(stableTail).toHaveLength(5);
+  expect(
+    barrier.stableObservationWindow.elapsedMs,
+    `${label} stable tail spans the complete quiet window`,
+  ).toBeGreaterThanOrEqual(BUCKET_TRANSPORT_QUIET_MS);
+  for (const [index, observation] of stableTail.entries()) {
+    assertIdleTransportObservation(
+      observation,
+      `${label} stable poll ${index}`,
+    );
+  }
+  expect(
+    new Set(stableTail.map(transportObservationState)).size,
+    `${label} stable tail state`,
+  ).toBe(1);
+  return barrier;
+}
+
+function completeBucketTransportQuiescencePhase(
+  quietBarrier: BucketTransportQuietBarrier,
+  after: CoherentTransportObservation,
+  label: string,
+): BucketTransportQuiescencePhase {
+  const before = quietBarrier.pollObservations.at(-1)!;
+  const intervalDeltas = {
+    browserRequestGeneration:
+      after.browserBefore.requestGeneration -
+      before.browserAfter.requestGeneration,
+    browserLifecycleGeneration:
+      after.browserBefore.lifecycleGeneration -
+      before.browserAfter.lifecycleGeneration,
+    upstreamRequestGeneration:
+      after.upstream.requestGeneration - before.upstream.requestGeneration,
+    upstreamLifecycleGeneration:
+      after.upstream.lifecycleGeneration - before.upstream.lifecycleGeneration,
+  };
+  assertIdleTransportObservation(before, `${label} before`);
+  assertIdleTransportObservation(after, `${label} after`);
+  expect(
+    after.observationWindow.startedAtEpochMs,
+    `${label} before/after observation order`,
+  ).toBeGreaterThanOrEqual(before.observationWindow.endedAtEpochMs);
+  expect(
+    intervalDeltas,
+    `${label} no PDF transport during bucket worker`,
+  ).toEqual({
+    browserRequestGeneration: 0,
+    browserLifecycleGeneration: 0,
+    upstreamRequestGeneration: 0,
+    upstreamLifecycleGeneration: 0,
+  });
+  return { quietBarrier, before, after, intervalDeltas };
 }
 
 function gitText(root: string, args: string[]): string {
@@ -766,6 +1257,9 @@ async function measureBucket4000(page: Page) {
   // Compile/start the exact singleton worker outside the timed 4000px sample. Dev-Turbopack's
   // first worker-chunk request is build-system latency, not the warmed client algorithm target.
   await resolution.fill("1000");
+  const warmQuietBarrier = IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+    ? await observeBucketTransportQuietBarrier(page, "bucket warm1000")
+    : null;
   await installBucketRaster(pageCanvas, 1000, 667);
   await page.mouse.click(
     box.x + box.width * BUCKET_RASTER_FIXTURE.seed[0],
@@ -781,12 +1275,26 @@ async function measureBucket4000(page: Page) {
       timeout: 15_000,
     })
     .not.toBe("wait");
+  const warmAfter = IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+    ? await captureCoherentTransportObservation(page)
+    : null;
+  const warm1000 =
+    warmQuietBarrier && warmAfter
+      ? completeBucketTransportQuiescencePhase(
+          warmQuietBarrier,
+          warmAfter,
+          "bucket warm1000",
+        )
+      : null;
   await page.keyboard.press("Escape");
   await settleFrames(page, 4);
 
   await resolution.fill("4000");
   await expect(resolution).toHaveValue("4000");
   await settleFrames(page, 4);
+  const timedQuietBarrier = IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+    ? await observeBucketTransportQuietBarrier(page, "bucket timed4000")
+    : null;
   const raster = await installBucketRaster(pageCanvas, 4000, 2667);
   expect(Math.max(raster.processedWidth, raster.processedHeight)).toBe(4000);
   await resetProfiler(page, "bucket4000");
@@ -848,6 +1356,17 @@ async function measureBucket4000(page: Page) {
     return promise;
   });
   const gaps = await stopFrameSampler(page);
+  const timedAfter = IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+    ? await captureCoherentTransportObservation(page)
+    : null;
+  const timed4000 =
+    timedQuietBarrier && timedAfter
+      ? completeBucketTransportQuiescencePhase(
+          timedQuietBarrier,
+          timedAfter,
+          "bucket timed4000",
+        )
+      : null;
   const profiler = await profilerSnapshot(page);
   expect(settlement.sawWait).toBe(true);
   await settleFrames(page, 4);
@@ -899,6 +1418,9 @@ async function measureBucket4000(page: Page) {
     outcome,
     workerWarmup: "1000px deterministic room-with-column outside timed sample",
     previewAcceptedByEnter: true,
+    ...(warm1000 && timed4000
+      ? { bucketTransportQuiescence: { warm1000, timed4000 } }
+      : {}),
   };
 }
 
@@ -1010,6 +1532,7 @@ type PerfSample = {
   bucketRaster: Awaited<ReturnType<typeof measureBucket4000>>["raster"];
   bucketOutcome: Awaited<ReturnType<typeof measureBucket4000>>["outcome"];
   navOutcome: Awaited<ReturnType<typeof measureNav20>>["outcome"];
+  bucketTransportQuiescence?: BucketTransportQuiescence;
   zoomOutcome: Awaited<ReturnType<typeof measureZoom10>>["outcome"];
 };
 
@@ -1046,6 +1569,9 @@ async function measureOnce(
     bucketRaster: bucket.raster,
     bucketOutcome: bucket.outcome,
     navOutcome: nav.outcome,
+    ...(bucket.bucketTransportQuiescence
+      ? { bucketTransportQuiescence: bucket.bucketTransportQuiescence }
+      : {}),
     zoomOutcome: zoom.outcome,
   };
 }
@@ -1113,6 +1639,14 @@ function validatePopulatedSamples(samples: PerfSample[]): void {
     expect(sample.bucketOutcome.filledSampleCount).toBe(
       BUCKET_PREVIEW_WITNESS.filledPoints.length,
     );
+    if (IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE) {
+      expect(
+        sample.bucketTransportQuiescence,
+        "gated sample bucket transport quiescence witness",
+      ).toBeDefined();
+    } else {
+      expect(sample.bucketTransportQuiescence).toBeUndefined();
+    }
     expect(sample.bucketOutcome.holeCenterAlpha).toBe(0);
   }
 }
@@ -1170,12 +1704,19 @@ test("viewer perf-v2 populated source-exact protocol", async ({
   }))
     expect(value, `${name} is required`).not.toBe("");
   expect(["baseline", "candidate"]).toContain(ROLE);
+  expect(
+    ["", PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE],
+    "PERF_VALIDATION_GATE must be absent or the exact declared gate",
+  ).toContain(PERF_VALIDATION_GATE);
   expect(RUNS).toBe(SMOKE ? 1 : 3);
   expect(
     existsSync(OUTPUT_PATH),
     "perf output path must be new/immutable",
   ).toBe(false);
   const worktree = validateInstrumentedWorktree();
+  if (IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE) {
+    installBrowserPdfTransportTracker(page);
+  }
 
   const pageErrors: string[] = [];
   const requestFailures: string[] = [];
@@ -1531,12 +2072,19 @@ test("viewer perf-v2 populated source-exact protocol", async ({
     ROLE === "baseline"
       ? ["direct-cdn-page-underlay", "legacy-thumbnail-proxy"]
       : ["private-gateway-page-underlay", "private-gateway-thumbnail"];
+  const effectiveExpectedMissingUnderlayFamilies =
+    IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+      ? ([
+          "private-gateway-page-underlay",
+          "private-gateway-thumbnail",
+        ] satisfies MissingUnderlayFamily[])
+      : expectedMissingUnderlayFamilies;
   expect(
     [
       ...new Set(missingUnderlayRequests.map((request) => request.family)),
     ].sort(),
     "both role-specific missing-underlay request families must be exercised",
-  ).toEqual([...expectedMissingUnderlayFamilies].sort());
+  ).toEqual([...effectiveExpectedMissingUnderlayFamilies].sort());
   expect(
     missingUnderlayRequests.every(
       (request) => request.method === "GET" && request.status === 404,
@@ -1546,6 +2094,10 @@ test("viewer perf-v2 populated source-exact protocol", async ({
   expect(http429).toEqual([]);
   const expectedTransportBoundary =
     ROLE === "baseline" ? "direct-cdn" : "same-origin-private-gateway";
+  const effectiveExpectedTransportBoundary =
+    IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+      ? "same-origin-private-gateway"
+      : expectedTransportBoundary;
   expect(
     pdfTransportRequests.length,
     "source-exact A/B must exercise a PDF transport",
@@ -1553,7 +2105,7 @@ test("viewer perf-v2 populated source-exact protocol", async ({
   expect(
     [...new Set(pdfTransportRequests.map((request) => request.boundary))],
     "source-exact A/B browser boundary",
-  ).toEqual([expectedTransportBoundary]);
+  ).toEqual([effectiveExpectedTransportBoundary]);
   expect(
     pdfTransportRequests.every((request) => request.method === "GET"),
     "source-exact A/B PDF requests are GETs",
@@ -1581,14 +2133,20 @@ test("viewer perf-v2 populated source-exact protocol", async ({
   const patcherPath = "scripts/apply-perf-v2-instrumentation.mjs";
   const comparatorPath = "scripts/compare-viewer-perf-v2.mjs";
   const probePath = "e2e/perf-v2/PerfRenderProbe.tsx";
+  const effectiveComparatorPath = IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+    ? "scripts/compare-private-gateway-bucket-quiescence-v1.mjs"
+    : comparatorPath;
   const generatorPath = "scripts/make-synthetic-pdf.mjs";
   const globalSetupPath = "e2e/global-setup.ts";
   const cdnStubPath = "e2e/cdn-stub.mjs";
   const fixturePreflightPath = "e2e/ensure-synthetic-pdf.mjs";
   const startDevServerPath = "e2e/start-dev-server.mjs";
   const result = {
-    schemaVersion: SCHEMA_VERSION,
-    protocolVersion: PROTOCOL_VERSION,
+    schemaVersion: EFFECTIVE_SCHEMA_VERSION,
+    protocolVersion: EFFECTIVE_PROTOCOL_VERSION,
+    ...(IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+      ? { validationGate: PERF_VALIDATION_GATE }
+      : {}),
     date: new Date().toISOString(),
     role: ROLE,
     leg: LEG,
@@ -1599,13 +2157,15 @@ test("viewer perf-v2 populated source-exact protocol", async ({
     runs: RUNS,
     smoke: SMOKE,
     transportBoundary: {
-      browserBoundary: expectedTransportBoundary,
+      browserBoundary: effectiveExpectedTransportBoundary,
       sourceExact: true,
       securityEvidence: false,
-      rationale:
-        "timing A/B intentionally accepts historical direct-CDN baseline versus same-origin candidate; authorization and upstream cancellation are proven by the dedicated private-gateway oracle",
-      missingUnderlayTreatment:
-        "all source-compatible legacy/current page and thumbnail request families are intercepted at the browser boundary with the same deterministic 404",
+      rationale: IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+        ? "both direct-parent roles use the same-origin private gateway; the bucket quiescence witness proves no browser PDF request or upstream fixture lifecycle overlaps either worker interval"
+        : "timing A/B intentionally accepts historical direct-CDN baseline versus same-origin candidate; authorization and upstream cancellation are proven by the dedicated private-gateway oracle",
+      missingUnderlayTreatment: IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+        ? "private-gateway page and thumbnail request families are intercepted at the browser boundary with the same deterministic 404 for both roles"
+        : "all source-compatible legacy/current page and thumbnail request families are intercepted at the browser boundary with the same deterministic 404",
       pdfRequestCount: pdfTransportRequests.length,
       pdfRequestPaths: [
         ...new Set(pdfTransportRequests.map((request) => request.pathname)),
@@ -1629,6 +2189,21 @@ test("viewer perf-v2 populated source-exact protocol", async ({
         DrawingPreviewLayer: 1,
         PDFPage: 0,
       },
+      ...(IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+        ? {
+            timingGateScenarios: ["bucket4000"],
+            profilerCommitGateScenarios: ["bucket4000"],
+            polygonTimingGated: false,
+            polygonRafGated: false,
+            bucketTransportQuiescence: {
+              requiredQuietMs: BUCKET_TRANSPORT_QUIET_MS,
+              pollIntervalMs: BUCKET_TRANSPORT_POLL_MS,
+              stablePolls: 5,
+              activeCountsMustBeZero: true,
+              generationDeltasMustBeZero: true,
+            },
+          }
+        : {}),
     },
     fixture: {
       pdfVersion: "synthetic-100pg-seed-b1ce-target60mb",
@@ -1645,14 +2220,15 @@ test("viewer perf-v2 populated source-exact protocol", async ({
       takeoffItems: PERF_TAKEOFF_ITEMS.length,
       bucketRaster: samples[0].bucketRaster,
       bucketPreviewWitness: BUCKET_PREVIEW_WITNESS,
-      underlays:
-        "absent; legacy/current page and thumbnail families receive symmetric browser-intercepted 404s; bucket uses deterministic 4000x2667 black-wall/white-room-with-column raster",
+      underlays: IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+        ? "absent; private-gateway page and thumbnail families receive symmetric browser-intercepted 404s; bucket uses deterministic 4000x2667 black-wall/white-room-with-column raster"
+        : "absent; legacy/current page and thumbnail families receive symmetric browser-intercepted 404s; bucket uses deterministic 4000x2667 black-wall/white-room-with-column raster",
     },
     harness: {
       specSha256: sha256File(specPath),
       configSha256: sha256File(configPath),
       patcherSha256: sha256File(patcherPath),
-      comparatorSha256: sha256File(comparatorPath),
+      comparatorSha256: sha256File(effectiveComparatorPath),
       probeSha256: sha256File(probePath),
       globalSetupSha256: sha256File(globalSetupPath),
       cdnStubSha256: sha256File(cdnStubPath),
@@ -1734,6 +2310,13 @@ test("viewer perf-v2 populated source-exact protocol", async ({
         (sample) => sample.zoomOutcome.pdfPageCommits,
       ),
       bucketPreviewOutcomes: samples.map((sample) => sample.bucketOutcome),
+      ...(IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE
+        ? {
+            bucketTransportQuiescence: samples.map(
+              (sample) => sample.bucketTransportQuiescence!,
+            ),
+          }
+        : {}),
     },
   };
   writeFileSync(OUTPUT_PATH, `${JSON.stringify(result, null, 2)}\n`, {
