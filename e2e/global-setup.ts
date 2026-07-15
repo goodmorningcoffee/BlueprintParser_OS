@@ -8,7 +8,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { Pool } from "pg";
 import bcrypt from "bcrypt";
-import { ensureSyntheticPdfFixture } from "./ensure-synthetic-pdf.mjs";
 
 const TEST_DATABASE_URL = "postgres://bp_test:bp_test@localhost:5433/bp_test";
 export const E2E = {
@@ -25,6 +24,11 @@ export const E2E = {
 };
 
 export default async function globalSetup() {
+  // Playwright loads this TypeScript setup through its CommonJS transform in
+  // this repository. Keep the ESM helper behind a literal dynamic import so
+  // Node, rather than the CJS require hook, owns the .mjs module boundary.
+  const { ensureSyntheticPdfFixture } =
+    await import("./ensure-synthetic-pdf.mjs");
   ensureSyntheticPdfFixture();
 
   const pool = new Pool({ connectionString: TEST_DATABASE_URL, max: 2 });

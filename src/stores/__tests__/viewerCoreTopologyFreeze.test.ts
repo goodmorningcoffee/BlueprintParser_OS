@@ -12,6 +12,11 @@ const VIEWER_STORE_FILE = "src/stores/viewerStore.ts";
 const CORE_STORE_FILE = "src/stores/viewerCoreStore.ts";
 const TOOL_STORE_FILE = "src/stores/toolStore.ts";
 
+// Repository-wide AST oracles finish well below this in isolation, but can
+// exceed Vitest's five-second default while the full suite has several parser
+// workers contending for CPU.
+const PRODUCTION_TREE_ORACLE_TIMEOUT_MS = 15_000;
+
 const VIEWER_OWNER = {
   file: VIEWER_STORE_FILE,
   module: "@/stores/viewerStore",
@@ -693,7 +698,7 @@ describe("P2.3 V2 split useNavigation topology", () => {
         .filter(([, count]) => count > 0),
     );
     expect(topology).toEqual(CURRENT_NAVIGATION_CALL_TOPOLOGY);
-  });
+  }, PRODUCTION_TREE_ORACLE_TIMEOUT_MS);
 
   it("keeps AnnotationOverlay on primitive page/tool-mode selectors plus exact event snapshots", () => {
     const path = "src/components/viewer/AnnotationOverlay.tsx";
@@ -786,5 +791,5 @@ describe("P2.3 V2 post-flip core access oracle", () => {
 
     expect(active.length, "viewerCore members have real consumers").toBeGreaterThan(50);
     expect(inactive).toEqual([]);
-  }, 15_000);
+  }, PRODUCTION_TREE_ORACLE_TIMEOUT_MS);
 });

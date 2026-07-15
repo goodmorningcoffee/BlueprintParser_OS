@@ -1,9 +1,8 @@
 # [refactor jun12 P0.1] CI gate — first automation this repo has had.
-# Gates: typecheck, unit tests, production build. Lint runs NON-BLOCKING for
-# now: the repo carries 81 pre-existing eslint errors; converting lint to a
-# blocking gate is a ratchet item once the count hits 0 (tracked in the
-# refactor changelog). Node is PINNED to 20 to match Dockerfile (node:20-alpine);
-# vitest is known-broken under node 24 (ERR_INTERNAL_ASSERTION).
+# Gates: architecture ratchets, typecheck, unit tests, production build, and a blocking
+# no-growth lint baseline. Ordinary lint debt remains honestly frozen at 60 errors / 54 warnings;
+# cleanup passes and can lower the future ceiling, while growth fails. Node is PINNED to 20 to match
+# Dockerfile (node:20-alpine); vitest is known-broken under node 24 (ERR_INTERNAL_ASSERTION).
 # Deploys stay manual (deploy.sh, owner-run) — CI is the gate, not the trigger.
 name: ci
 
@@ -16,27 +15,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
-      # [P0.3] real postgres for the route characterization tests — same URL
-      # as the local scripts/test-db.sh cluster, so tests run identically.
+      # [P0.3] real postgres for route and migration-boundary tests. Local runs
+      # keep the :5433 bp_test default; CI overrides both guarded test URLs.
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
-          POSTGRES_USER: bp_test
-          POSTGRES_PASSWORD: bp_test
-          POSTGRES_DB: bp_test
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
         ports:
-          - 5433:5432
+          - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U bp_test"
+          --health-cmd "pg_isready -U ci"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
       # route tests must never silently skip in CI
       BP_REQUIRE_TEST_DB: "1"
-      # Dummy values so `next build` can evaluate server modules; nothing
-      # connects at build time. Real values come from Secrets Manager at runtime.
-      DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+      # Admin connection for isolated migration-boundary databases. This matches
+      # the postgres service above; production DATABASE_URL is never consulted.
+      BP_TEST_ADMIN_URL: postgresql://ci:ci@localhost:5432/postgres
+      BP_TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      # Build-time placeholders. DATABASE_URL is also the localhost-only CI test
+      # database; production values come from Secrets Manager at runtime.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       NEXTAUTH_SECRET: ci-dummy-secret-not-real
       AUTH_SECRET: ci-dummy-secret-not-real
       NEXTAUTH_URL: http://localhost:3000
@@ -51,19 +54,35 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
       - run: npm ci
+      - name: terraform format
+        run: terraform fmt -check -recursive infrastructure/terraform
+      - name: terraform initialize without backend
+        run: terraform -chdir=infrastructure/terraform init -backend=false -input=false
+      - name: terraform validate
+        run: terraform -chdir=infrastructure/terraform validate
+      - name: architecture guardrails
+        run: npm run check:architecture
+      - name: project security policy
+        run: npm run check:project-security-policy
+      - name: schema cutover policy
+        run: npm run check:schema-cutover
       - name: typecheck
         run: npx tsc --noEmit
+      - name: script tests
+        run: npm run test:scripts
       - name: unit tests
         run: npm test
       - name: build
         run: npm run build
 
   lint:
-    # Non-blocking until the 81 pre-existing errors are paid down (ratchet).
+    # Blocking no-growth ratchet over the accepted 60-error / 54-warning baseline.
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -71,4 +90,4 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run lint
+      - run: npm run check:lint-baseline

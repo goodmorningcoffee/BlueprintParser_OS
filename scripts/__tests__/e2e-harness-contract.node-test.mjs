@@ -84,6 +84,26 @@ test("synthetic PDF preflight fails closed when the generator produces no fixtur
   );
 });
 
+test("Playwright global setup preserves the ESM fixture-helper boundary", () => {
+  const setup = source("e2e/global-setup.ts");
+  assert.doesNotMatch(
+    setup,
+    /^import\s+\{\s*ensureSyntheticPdfFixture\s*\}\s+from\s+"\.\/ensure-synthetic-pdf\.mjs";/mu,
+  );
+  const dynamicImport = setup.search(
+    /const\s+\{\s*ensureSyntheticPdfFixture\s*\}\s*=\s*await\s+import\(\s*"\.\/ensure-synthetic-pdf\.mjs"\s*\)/u,
+  );
+  const ensureCall = setup.indexOf(
+    "ensureSyntheticPdfFixture();",
+    dynamicImport,
+  );
+  assert.notEqual(dynamicImport, -1);
+  assert.ok(
+    ensureCall > dynamicImport,
+    "fixture preflight must run only after Node owns the literal .mjs import",
+  );
+});
+
 test("global setup pins owner authority and reseeds the private project atomically", () => {
   const setup = source("e2e/global-setup.ts");
   const ownerStart = setup.indexOf("const user = await pool.query");
