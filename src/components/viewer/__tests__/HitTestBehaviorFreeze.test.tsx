@@ -8,7 +8,9 @@
 //
 // Three layers:
 //   A. PURE-MATH truth table — inline byte-copies of the live formulas, asserted against
-//      hand-computed + node-verified expected values. Freezes the numeric contract.
+//      hand-computed + node-verified expected values. Freezes the numeric contract. NOTE: Layer A
+//      is the ORACLE (it imports neither hitTest.ts nor the overlay); regression bite against the
+//      real code lives in HitTestPure.test.ts (pure exports) and Layers B/C (overlay wiring).
 //   B. LIVE SOURCE topology pins — readFileSync snapshot of the POST-move topology (2 withHoles /
 //      2 polyline / 3 bbox / 3 handle helper calls, old inline math absent, pure dependency-free
 //      hitTest leaf). The freeze commit (e33642e) pinned the PRE-move inline math; the mechanical
@@ -252,7 +254,16 @@ describe("A. normalized bbox min-plus-extent (inline copy of AnnotationOverlay.t
     expect(pointInNormalizedBbox({ x: 40, y: 50 }, INV, 100, 100)).toBe(false);
     expect(pointInNormalizedBbox({ x: 60, y: 70 }, INV, 100, 100)).toBe(false); // even at the min
     // A reorder-MinMax implementation would (wrongly) treat this as a valid [0.2,0.6]x[0.3,0.7]
-    // box and hit (40,50). Min-plus-extent must MISS. This case is the discriminator.
+    // box and hit (40,50). This discriminates reorder/normalize implementations only; the
+    // min-plus-extent FORM (vs maxX*pageWidth, which also misses inverted boxes) is
+    // discriminated by the ULP cases below.
+  });
+
+  it("pins the exact min-plus-extent float form at ULP granularity (not maxX*pageWidth)", () => {
+    // Node-verified: [0.01,0.15]@pw100 extent upper = 14.999999999999998 vs max-form 15;
+    // [0.01,0.1]@pw100 extent upper = 10.000000000000002 vs max-form 10.
+    expect(pointInNormalizedBbox({ x: 15, y: 50 }, [0.01, 0, 0.15, 1], 100, 100)).toBe(false); // max-form would HIT
+    expect(pointInNormalizedBbox({ x: 10.000000000000002, y: 50 }, [0.01, 0, 0.1, 1], 100, 100)).toBe(true); // max-form would MISS
   });
 });
 
@@ -343,6 +354,17 @@ describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired c
     expect(count(AO, "tl: { x: minX * width, y: minY * height },")).toBe(2);
   });
 
+  it("pins exact helper call strings including scale-argument order (width, height)", () => {
+    // Review probe B: a width/height transposition at any scale-taking call site passes the
+    // square-canvas witnesses and the bare count pins. These full-string pins close that hole;
+    // the non-square Layer C witness (d) provides the behavior-level backstop.
+    expect(count(AO, "pointInPolygonWithHoles(clickNorm, data.vertices, data.holes)")).toBe(2);
+    expect(count(AO, "pointNearPolyline(pos, data.vertices, width, height)")).toBe(2);
+    expect(count(AO, "pointInNormalizedBbox(pos, ann.bbox, width, height)")).toBe(3);
+    expect(count(AO, "pointInHandle(pos, corner, HANDLE)")).toBe(2);
+    expect(count(AO, "pointInHandle(pos, { x: vx, y: vy }, HANDLE)")).toBe(1);
+  });
+
   it("pins the distinct double-click (one else-if loop) vs single-click (three ordered loops) shape", () => {
     const idxDouble = AO.indexOf("// Double-click: universal annotation filter");
     const idxArea = AO.indexOf("// Check area polygons first");
@@ -402,9 +424,9 @@ function noopContext(): CanvasRenderingContext2D {
   }) as unknown as CanvasRenderingContext2D;
 }
 
-function canvasRect(): DOMRect {
+function canvasRect(width = 100, height = 100): DOMRect {
   return {
-    x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 100, width: 100, height: 100,
+    x: 0, y: 0, top: 0, left: 0, right: width, bottom: height, width, height,
     toJSON: () => ({}),
   } as DOMRect;
 }
@@ -476,9 +498,9 @@ function seedRealOverlay(rows: ClientAnnotation[]): void {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(noopContext());
 }
 
-async function mountCanvas() {
+async function mountCanvas(width = 100, height = 100) {
   const { container } = render(
-    <AnnotationOverlay width={100} height={100} cssScale={1} />,
+    <AnnotationOverlay width={width} height={height} cssScale={1} />,
     { wrapper },
   );
   const canvas = await waitFor(() => {
@@ -488,7 +510,7 @@ async function mountCanvas() {
     }
     return candidate;
   });
-  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(canvasRect());
+  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(canvasRect(width, height));
   return canvas;
 }
 
@@ -522,6 +544,40 @@ describe("C. real-overlay legacy hit-test witnesses", () => {
     const canvas = await mountCanvas();
     press(canvas, 40, 60); // >8px from both segments, inside bounding bbox
     expect(useUiStore.getState().searchQuery).toBe("Wall A");
+  });
+
+  it("(d) NON-SQUARE page: bbox selection uses width for x and height for y (transposition witness)", async () => {
+    // Review probe B closure: on a 200x100 page, bbox [0.1,0.2,0.4,0.8] spans px x:[20,80] y:[20,80].
+    // A width/height transposition at the pointInNormalizedBbox call site would scale x by 100
+    // (x:[10,40]) and this click at (60,30) would MISS. Square canvases cannot see this bug.
+    const COUNT_BADGE = {
+      id: 3,
+      pageNumber: 1,
+      name: "Fixture F3",
+      bbox: [0.1, 0.2, 0.4, 0.8],
+      note: null,
+      source: "takeoff",
+      data: { type: "count-marker", takeoffItemId: 11, color: "#22c55e" },
+    } as unknown as ClientAnnotation;
+    seedRealOverlay([COUNT_BADGE]);
+    const canvas = await mountCanvas(200, 100);
+    press(canvas, 60, 30); // inside px x:[20,80] y:[20,80] under correct anisotropic scaling
+    expect(useUiStore.getState().searchQuery).toBe("Fixture F3");
+  });
+
+  it("(e) single-click on a polygon BODY is claimed by the area loop BEFORE the bbox loop", async () => {
+    // Review probe E closure: the area loop selects via setSelectedId ONLY (no store write);
+    // the generic bbox loop calls setSearch. Body point (20,50) is inside the stored bbox too,
+    // so if the loops were reordered (bbox first) searchQuery would become "Room 101" and this
+    // witness goes RED. Loop-order protection no longer rests on grep pins alone.
+    seedRealOverlay([POLYGON_WITH_HOLE]);
+    const canvas = await mountCanvas();
+    press(canvas, 20, 50); // inside outer ring, outside the hole
+    expect(useUiStore.getState().searchQuery).toBe("");
+    // Contrast in the same mount proves the handler is live: a hole click falls through to the
+    // bbox loop and DOES write searchQuery.
+    press(canvas, 50, 50);
+    expect(useUiStore.getState().searchQuery).toBe("Room 101");
   });
 
   it("(c) double-click inside a polygon hole does NOT trigger the polygon's double-click action", async () => {

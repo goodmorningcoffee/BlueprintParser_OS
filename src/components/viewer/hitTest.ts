@@ -66,7 +66,8 @@ export function pointNearPolyline(
 }
 
 // [refactor jul15 P3.1½] Normalized MinMax bbox via live MIN-PLUS-EXTENT float form (ax +
-// (max-min)*dim, NOT max*dim — they differ at ULP level and on inverted boxes). Mirrors
+// (max-min)*dim, NOT max*dim — the two forms differ at ULP level on non-round coordinates;
+// both miss inverted boxes). ULP cases pinning this form live in HitTestPure.test.ts. Mirrors
 // AnnotationOverlay.tsx:2022-2024 / 2263-2268 / 2362-2367. Inclusive edges; zero-size box hits its
 // exact point; inverted axes (max<min) => empty range => miss.
 export function pointInNormalizedBbox(

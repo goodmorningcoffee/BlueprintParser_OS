@@ -153,6 +153,18 @@ describe("hitTest.pointInNormalizedBbox (min-plus-extent)", () => {
     const INV = [0.6, 0.7, 0.2, 0.3] as const;
     expect(pointInNormalizedBbox({ x: 40, y: 50 }, INV, 100, 100)).toBe(false);
     expect(pointInNormalizedBbox({ x: 60, y: 70 }, INV, 100, 100)).toBe(false); // even at the min
+    // This case guards against reorder/normalize implementations; the min-plus-extent float
+    // FORM itself is pinned by the ULP cases below (an inverted box misses under both forms).
+  });
+
+  it("pins the exact min-plus-extent float form at ULP granularity (not maxX*pageWidth)", () => {
+    // Node-verified: minX*pw + (maxX-minX)*pw differs from maxX*pw on non-round coords.
+    // [0.01,0.15]@pw100: extent upper = 14.999999999999998, max-form = 15
+    //   => x=15 MISSES under the live extent form, would HIT under maxX*pw.
+    expect(pointInNormalizedBbox({ x: 15, y: 50 }, [0.01, 0, 0.15, 1], 100, 100)).toBe(false);
+    // [0.01,0.1]@pw100: extent upper = 10.000000000000002, max-form = 10
+    //   => x=10.000000000000002 HITS under the live extent form, would MISS under maxX*pw.
+    expect(pointInNormalizedBbox({ x: 10.000000000000002, y: 50 }, [0.01, 0, 0.1, 1], 100, 100)).toBe(true);
   });
 });
 
