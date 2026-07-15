@@ -162,10 +162,9 @@ export default function GroupActionsBar() {
     setShowAddPicker(false);
   }
 
-  // GROUPS-W1 deferred (owner): unguarded PUT site (no canPersist — demo-inert only emergently,
-  // demo groups stay empty). Error channel (alert + dialog-stays-open) and rollback semantics
-  // are FROZEN by G-4; tier-2 useMutation unification is the future owner-signed GROUPS-W1 pass
-  // — see the useAnnotationGroups.ts header tripwire. Do not convert opportunistically.
+  // GROUPS-W1 deferred (owner): this raw PUT is lifecycle- and canPersist-gated, while its error
+  // channel (alert + dialog-stays-open), server-row adoption, and no-rollback semantics remain
+  // frozen by G-4. Tier-2 useMutation unification is the future owner-signed GROUPS-W1 pass.
   async function handleEditSave() {
     if (!canAdoptProjectLifecycle()) return;
     if (!editingGroup || !editName.trim()) return;

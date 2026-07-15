@@ -17,9 +17,9 @@
 //     id (404 if missing), then access is checked on its PARENT project.
 //
 // Frozen quirks deliberately kept (do NOT "fix" them here):
-//   • WRITES never allow demo: create resolves WITHOUT allowDemo; [id]/members resolve the
-//     parent project WITHOUT allowDemo. Only GET passes allowDemo:true. (An owning-company
-//     member can still write to their own demo project, treated as a normal company project.)
+//   • Every write acquires a ProjectWriteCapability and revalidates it under the parent-row lock;
+//     `project.isDemo` is rejected for every role. GET alone allows public demo resolution and
+//     returns the explicit empty public projection for demo projects.
 //   • [id] parses with parseInt(id, 10) + Number.isInteger guard → a non-numeric id is a clean
 //     400 "invalid id" (NOT the 500 the annotations/[id] family produces — that family used
 //     parseInt with no radix + no guard; this one is stricter. Preserve the difference.)

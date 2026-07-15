@@ -10,10 +10,9 @@
 //         (miss-404 BEFORE auth / non-demo-anon-401 / cross-tenant-404) → demo gate 403
 //         → quota 429 → dispatch. Validate-before-auth: shell auth is "none".
 //   FC-2  `!message` is a FALSY check — "", 0, null all → "message required".
-//   FC-3  isDemo = access.scope === "demo", NOT project.isDemo: same-company members/root
-//         on a demo project keep their REAL scope (api-utils carve-out) → NO demo gate,
-//         COMPANY quota. Diverges from services/symbol-search.ts (project.isDemo) — the
-//         carve-out exists so an admin's own LLM config/quota apply. Do NOT harmonize.
+//   FC-3  isDemo = project.isDemo, independent of caller scope. Same-company members/root therefore
+//         use demo quota and read-only/no-persist chat policy too. This deliberate P2 security repair
+//         supersedes the legacy scope-derived carve-out and now matches the canonical demo boundary.
 //   FC-4  scope:"global" while signed out falls THROUGH the global branch (session?.user
 //         guard) into the scoped path → "projectId required" 400.
 //   FC-6  quota sources: global = session.user.companyId; scoped non-demo =

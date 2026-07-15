@@ -35,7 +35,7 @@ bash root_admin.sh
 ## Code Style
 
 - **TypeScript** with strict mode enabled
-- **ESLint** for linting: `npm run lint`
+- **ESLint** with a baseline-aware no-growth gate: `npm run check:lint-baseline` (`npm run lint` reports the full accepted backlog)
 - **Tailwind CSS 4** for styling
 - No Prettier config yet — match the existing code style
 
@@ -70,7 +70,7 @@ See the [README](README.md) for detailed architecture documentation.
 
 1. Fork the repo and create a branch from `main`
 2. Make your changes
-3. Run `npm run lint` and `npm test` to verify
+3. Run `npm run test:scripts`, `npm run check:architecture`, `npm run check:project-security-policy`, `npm run check:schema-cutover`, `npm run check:lint-baseline`, and `npm test`
 4. Run `npm run build` to confirm the build succeeds
 5. Open a PR against `main` with a clear description of what changed and why
 

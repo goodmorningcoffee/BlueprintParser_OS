@@ -2,8 +2,8 @@
  * Store-free CSI spatial recompute for an explicitly captured project/page target.
  *
  * The public session-aware wrapper remains in csi-spatial-refresh.ts for existing event callers.
- * ParsedRegion persistence already owns a captured target and must finish P -> A -> S? -> X even
- * after the visible session changes, so its C1 command uses this Query-keyed core directly.
+ * Captured-target commands invoke this core only while their adoption authority is current; the
+ * explicit Query key prevents a recompute from silently borrowing the visible successor session.
  */
 
 import type { QueryClient } from "@tanstack/react-query";

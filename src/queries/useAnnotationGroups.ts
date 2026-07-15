@@ -61,12 +61,10 @@ import type { AnnotationGroup, AnnotationGroupMembership } from "@/types";
 // (GroupActionsBarFreeze / ViewAllPanelGroupsFreeze) fail loudly on conversion. Do NOT convert
 // call sites opportunistically.
 //
-// ⚠️ DEMO TRIPWIRE (SPEC §7.1): demo write-inertness is TWO-mechanism — canPersist guards on 3
-// sites (GAB create/add/mass-delete) + EMERGENT-empty on 4 unguarded PUT sites (GAB-edit,
-// VAP-edit/toggle/bulk). If a future demo group seed ever appears, those four sites fire real
-// PUTs (server rejects them — resolveProjectOrThrow without allowDemo — but client noise +
-// error dialogs would be new demo behavior). Keep demo groups empty: enabled gate below +
-// openProject's explicit empty demo seed + empty initialData.
+// ⚠️ DEMO TRIPWIRE (the original SPEC §7.1 mechanism was superseded during P2 review): every
+// group-mutation entry is now lifecycle- and canPersist-gated, and the server independently rejects
+// demo writes through ProjectWriteCapability. Keep this query disabled for demos as a transport-
+// silence boundary; the server also returns the explicit empty public projection for demo reads.
 
 /** Raw cache-entry shape — the annotation-groups GET response, verbatim (no client mapper). */
 export type AnnotationGroupsPayload = {
@@ -189,15 +187,11 @@ export function useAnnotationGroups() {
       if (!r.ok) return EMPTY_PAYLOAD;
       return ((await r.json().catch(() => null)) ?? EMPTY_PAYLOAD) as AnnotationGroupsPayload;
     },
-    // DEFENSE-IN-DEPTH, not the active dormancy mechanism (DETECTOR jul10 reword — the old
-    // "LOAD-BEARING TWICE" phrasing overclaimed; SPEC §7.1 erratum): under initialData +
-    // staleTime ∞ this query never fetches AUTOMATICALLY even ungated, so the gate's real work
-    // is (1) blocking INVALIDATION-driven refetches — invalidateQueries pierces staleTime but
-    // flows through `enabled` (M10 pin in the hook suite) — and (2) config drift: any future
-    // staleTime/initialData change would expose demo to the allowDemo-readable GET (DB rows old
-    // demo never showed), and demo write-inertness for the four unguarded PUT sites depends on
-    // demo groups staying EMPTY (SPEC §7.1). Gate-order safe: openProject publishes the empty
-    // demo entry before its single session activation, so this never flickers true.
+    // DEFENSE-IN-DEPTH, not the active dormancy mechanism: under initialData + staleTime ∞ this
+    // query never fetches automatically even ungated. `enabled` blocks invalidation-driven
+    // refetches (M10) and keeps demo GET transport silent if the config changes. The server still
+    // returns an empty demo projection and rejects demo writes independently. Gate-order safe:
+    // openProject publishes the empty demo entry before its single session activation.
     enabled: !!publicId && !isDemo,
     // Matches the old zustand inits ([], {}, {} → derived-empty). See the header COUPLING note.
     initialData: EMPTY_PAYLOAD,
@@ -240,10 +234,10 @@ export function useAnnotationGroups() {
   // inline the loop here (per-render fresh Sets) — both are E6-pinned failures.
   const indexes = useMemo(() => deriveGroupIndexes(raw.memberships), [raw.memberships]);
 
-  // Both actions close over [qc, publicId] — captured-key semantics (E2): a write racing a
-  // project switch lands under the OLD key, isolated by keying (the old store wrote the global
-  // singleton — that leak class is eliminated). `key` derives from publicId; do NOT list it
-  // (fresh array each render).
+  // Both actions close over [qc, publicId] so an admitted write targets its captured project key,
+  // never the visible successor key. Mutation callers own exact lifecycle admission before every
+  // invocation; these cache primitives intentionally do not borrow the live session. `key` derives
+  // from publicId; do NOT list it (fresh array each render).
 
   // The old store upsert VERBATIM (deleted viewerStore.ts:761-768): findIndex append-or-replace.
   // Functional updater is MANDATORY — see header (create-flow upsert→hydrate same-entry pair).

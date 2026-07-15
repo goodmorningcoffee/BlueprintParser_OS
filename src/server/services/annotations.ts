@@ -23,10 +23,9 @@
 //     {success, autoCsiCodes}; DELETE [id] returns {success} and does NOT touch markers.
 //   • [id] uses parseInt(id) with NO radix → a non-numeric id → NaN → pg int-cast THROWS →
 //     generic 500 (NOT 404). Same quirk as takeoff-items/[id]; verified empirically.
-//   • annotation WRITES never allow demo — resolveByPublicId / resolveProjectOrThrow are called
-//     WITHOUT allowDemo (legacy used plain resolveProjectAccess / checkProjectAccess). An
-//     owning-company member CAN still write to their own demo project (demo is then treated
-//     as a normal company-scoped project); a signed-out demo write is 401/404.
+//   • annotation writes resolve the canonical project, acquire a ProjectWriteCapability, and
+//     revalidate it under the parent-row lock at the sink. `project.isDemo` is rejected for every
+//     role; allowDemo on public-id resolution identifies the protected project but grants no write.
 //
 // Two leak/robustness changes from the legacy bare routes (sanctioned, logged in CHANGELOG):
 //   • batch POST wraps delete-before-insert + insert in ONE db.transaction so a failed insert

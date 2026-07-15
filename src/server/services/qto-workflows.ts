@@ -22,12 +22,11 @@
 //     filter. (Swapping in resolveProjectOrThrow would silently GRANT root admins cross-company
 //     reads — a behavior change we explicitly refuse. Frozen by the root-admin GET char case.)
 //   • POST (create): validate-before-auth — projectId/materialType 400 fires BEFORE the 401/404.
-//     Then resolveByPublicId (zPublicId → resolveProjectOrThrow with allowDemo:true) → explicit
-//     isDemo write-gate → 403 for everyone except an owning-company admin / root.
+//     Then resolveByPublicId (zPublicId → resolveProjectOrThrow with allowDemo:true) identifies the
+//     canonical project; the shared ProjectWriteCapability policy rejects every demo project.
 //   • [id] GET/PUT/DELETE: indirect lookup — fetch the workflow by Number(id) (404 if missing),
-//     then resolveProjectOrThrow({dbId: workflow.projectId}) with NO allowDemo. Demo projects need
-//     a session here (same as legacy); an owning-company member can still reach their own demo
-//     project, treated as a normal company project — so [id] has NO demo write-gate (unlike POST).
+//     then resolve access on its parent. GET retains the read resolver; PUT/DELETE require a
+//     ProjectWriteCapability and therefore reject demo writes for every role.
 //
 // Frozen quirks deliberately kept (do NOT "fix" them):
 //   • [id] uses Number(id) with NO integer guard (UNLIKE annotation-groups, whose legacy used a
@@ -35,8 +34,8 @@
 //     `id = NaN`; the pg int-cast on NaN DETERMINISTICALLY THROWS → the shell's leak-free INTERNAL
 //     500 (verified empirically — identical to annotations/[id] + takeoff-items/[id]; it is NEVER a
 //     404 and NEVER a clean 400). We do NOT add a 400 guard — legacy had none.
-//   • PUT has NO demo write-gate (unlike POST). An authenticated owning-company member/admin CAN
-//     PUT/DELETE a demo project's workflow. Do NOT add a demo 403 to [id].
+//   • PUT/DELETE use the shared parent-locked project-write boundary. This later P2 security repair
+//     intentionally supersedes the legacy role-dependent demo-write behavior.
 //   • POST: materialLabel defaults to materialType when falsy (`materialLabel || materialType`),
 //     and step is hardcoded "select-schedule" at create.
 //   • PUT field validation runs in SOURCE ORDER and SHORT-CIRCUITS on the first invalid field:
@@ -181,9 +180,9 @@ export async function getQtoWorkflow(idParam: string) {
 
 // ── PUT /api/qto-workflows/[id] ────────────────────────────────────────────────────
 //
-/** Partial update. Order (frozen): load+authz → field validation (SHORT-CIRCUIT on first invalid,
+/** Partial update. Order: load+write-authority → field validation (SHORT-CIRCUIT on first invalid,
  *  source order: step → schedulePageNumber → jsonb-trio 1MB → string-quad ≤1024 → exportedAt
- *  passthrough) → set updatedAt → update. Empty body touches only updatedAt. NO demo gate. Raw row. */
+ *  passthrough) → set updatedAt → parent-locked update. Empty body touches only updatedAt. Raw row. */
 export async function updateQtoWorkflow(idParam: string, body: Record<string, unknown>) {
   const { workflow, project, writeCapability } = await loadWritableWorkflowAndAuthz(idParam);
 
