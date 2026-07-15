@@ -43,6 +43,9 @@ const SMOKE = process.env.PERF_SMOKE === "1";
 const SOURCE_SHA = process.env.PERF_APP_SHA || "";
 const ROLE = process.env.PERF_ROLE || "";
 const LEG = process.env.PERF_LEG || "";
+const ASSERT_CANDIDATE_BUCKET_ABSOLUTE_TARGET =
+  ROLE === "candidate" &&
+  (!IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE || LEG === "post2");
 const HARNESS_SHA = process.env.PERF_HARNESS_SHA || "";
 const OUTPUT_PATH = process.env.PERF_OUTPUT_PATH || "";
 const APP_ROOT_INPUT = process.env.PERF_APP_ROOT || "";
@@ -2324,7 +2327,7 @@ test("viewer perf-v2 populated source-exact protocol", async ({
   });
   console.log(`[perf-v2] wrote ${OUTPUT_PATH}`, result.medians);
 
-  if (ROLE === "candidate") {
+  if (ASSERT_CANDIDATE_BUCKET_ABSOLUTE_TARGET) {
     expect
       .soft(result.medians.bucket4000Ms, "candidate bucket4000 absolute target")
       .toBeLessThan(400);

@@ -469,6 +469,20 @@ test("private-gateway Bucket quiescence mode brackets transport outside both wor
     spec,
     /IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE\s*\? "same-origin-private-gateway"\s*: expectedTransportBoundary;/u,
   );
+  assert.match(
+    spec,
+    /const ASSERT_CANDIDATE_BUCKET_ABSOLUTE_TARGET =\s*ROLE === "candidate" &&\s*\(!IS_PRIVATE_GATEWAY_BUCKET_QUIESCENCE_GATE \|\| LEG === "post2"\);/u,
+    "the new gate must assert the absolute Bucket target only for its predeclared warmed-reverse candidate leg while legacy gate-absent candidate runs remain gated",
+  );
+  assert.match(
+    spec,
+    /if \(ASSERT_CANDIDATE_BUCKET_ABSOLUTE_TARGET\) \{\s*expect\s*\.soft\(result\.medians\.bucket4000Ms, "candidate bucket4000 absolute target"\)\s*\.toBeLessThan\(400\);/u,
+  );
+  assert.doesNotMatch(
+    spec,
+    /if \(ROLE === "candidate"\) \{\s*expect\s*\.soft\(result\.medians\.bucket4000Ms, "candidate bucket4000 absolute target"\)/u,
+    "private-gateway quiescence post1 must not inherit the legacy unconditional candidate assertion",
+  );
   for (const fragment of [
     'timingGateScenarios: ["bucket4000"]',
     'profilerCommitGateScenarios: ["bucket4000"]',
