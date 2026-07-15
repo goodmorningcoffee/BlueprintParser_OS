@@ -11,7 +11,7 @@
 import { useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom";
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   openProject,
@@ -170,6 +170,19 @@ function never<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+};
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
+
 function noopContext(): CanvasRenderingContext2D {
   const target = { measureText: () => ({ width: 0 }) };
   return new Proxy(target, {
@@ -201,6 +214,8 @@ function canvasRect(): DOMRect {
 let queryClient: QueryClient;
 let holdSuccessor: boolean;
 let lifecycleHandles: OpenProjectHandle[];
+let splitPuts: Deferred<Response>[];
+let splitPosts: Deferred<Response>[];
 const fetchMock = vi.fn();
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -230,15 +245,18 @@ function InstallSuccessorBeforeOverlayEffects({ seedB }: { seedB: () => void }) 
   return null;
 }
 
-function installSameIdSuccessor(seedB: () => void): OpenProjectHandle {
-  const handle = openProject(queryClient, PUBLIC_ID, { demo: true });
+function installSameIdSuccessor(
+  seedB: () => void,
+  demo = true,
+): OpenProjectHandle {
+  const handle = openProject(queryClient, PUBLIC_ID, { demo });
   lifecycleHandles.push(handle);
   // B owns the lifecycle before its held metadata resolves. Restore its same route tuple and then
   // publish the exact sentinel whose survival the caller asserts.
   setViewerStoreStateForTest({
     projectId: PROJECT_DB_ID,
     publicId: PUBLIC_ID,
-    isDemo: true,
+    isDemo: demo,
     pageNumber: PAGE,
     numPages: 2,
   });
@@ -275,10 +293,33 @@ function installFrames(): FrameRequestCallback[] {
 beforeEach(async () => {
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   lifecycleHandles = [];
+  splitPuts = [];
+  splitPosts = [];
   holdSuccessor = false;
   fetchMock.mockReset();
-  fetchMock.mockImplementation((url: unknown) => {
+  fetchMock.mockImplementation((url: unknown, init?: RequestInit) => {
     const path = String(url);
+    if (path === `/api/annotations/${areaAnnotation().id}` && init?.method === "PUT") {
+      const request = deferred<Response>();
+      splitPuts.push(request);
+      return request.promise;
+    }
+    if (path === "/api/annotations" && init?.method === "POST") {
+      const request = deferred<Response>();
+      splitPosts.push(request);
+      return request.promise;
+    }
+    if (path === `/api/projects/${PUBLIC_ID}`) {
+      return holdSuccessor ? never<Response>() : Promise.resolve(jsonResponse(projectResponse()));
+    }
+    if (path === `/api/projects/${PUBLIC_ID}/pages?from=1&to=15`) {
+      return holdSuccessor
+        ? never<Response>()
+        : Promise.resolve(jsonResponse({ from: 1, to: 2, pages: [], annotations: [] }));
+    }
+    if (path === `/api/annotation-groups?projectId=${PUBLIC_ID}`) {
+      return Promise.resolve(jsonResponse({ groups: [], memberships: [] }));
+    }
     if (path === `/api/demo/projects/${PUBLIC_ID}`) {
       return holdSuccessor ? never<Response>() : Promise.resolve(jsonResponse(projectResponse()));
     }
@@ -465,6 +506,107 @@ describe("AnnotationOverlay paired project publications", () => {
     expect(admittedB).toBe(true);
     expect(useToolStore.getState().splitPreview).toBe(bPreview);
   });
+
+  it.each([
+    { label: "auth→auth", successorDemo: false },
+    { label: "auth→demo", successorDemo: true },
+  ])(
+    "$label retirement still completes the admitted split pair without adopting into B",
+    async ({ successorDemo }) => {
+      holdSuccessor = false;
+      const authenticatedA = openProject(queryClient, PUBLIC_ID, { demo: false });
+      lifecycleHandles.push(authenticatedA);
+      expect((await authenticatedA.result).status).toBe("opened");
+      holdSuccessor = true;
+
+      const source = areaAnnotation();
+      const right = [
+        { x: 0.5, y: 0.2 },
+        { x: 0.8, y: 0.2 },
+        { x: 0.8, y: 0.8 },
+        { x: 0.5, y: 0.8 },
+      ];
+      const preview = {
+        targetAnnotationId: source.id,
+        original: SQUARE,
+        left: [
+          { x: 0.2, y: 0.2 },
+          { x: 0.5, y: 0.2 },
+          { x: 0.5, y: 0.8 },
+          { x: 0.2, y: 0.8 },
+        ],
+        right,
+        lineA: { x: 0.5, y: 0.2 },
+        lineB: { x: 0.5, y: 0.8 },
+      };
+      seedAnnotations(queryClient, [source]);
+      seedTakeoff(queryClient, [takeoffItem("polygon")], []);
+      renderCanvas();
+      act(() => {
+        useToolStore.getState().setSplitAreaActive(true);
+        useToolStore.setState({ splitPreview: preview });
+      });
+
+      fireEvent.keyDown(window, { key: "Enter" });
+      expect(splitPuts).toHaveLength(1);
+      expect(splitPosts).toHaveLength(0);
+      const optimisticRight = readSeededAnnotations(queryClient).find(
+        (annotation) => annotation.id < 0,
+      );
+      if (!optimisticRight) throw new Error("Expected captured optimistic right half");
+
+      const successorRows = [userAnnotation({
+        // Deliberately collide with A's temp id so a missing saved-id guard rewrites B to 8801.
+        id: optimisticRight.id,
+        name: "successor B row",
+      })];
+      const successorPreview = {
+        ...preview,
+        targetAnnotationId: successorRows[0].id,
+      };
+      act(() => {
+        installSameIdSuccessor(() => {
+          seedAnnotations(queryClient, successorRows);
+          useToolStore.setState({
+            activeTool: { kind: "split" },
+            splitPreview: successorPreview,
+            splitLineA: B_POINT,
+            splitLineB: { x: 0.95, y: 0.96 },
+            splitError: "successor B split error",
+          });
+        }, successorDemo);
+      });
+
+      await act(async () => {
+        splitPuts[0].resolve(jsonResponse({ id: source.id }));
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(splitPosts).toHaveLength(1));
+      const postCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          url === "/api/annotations" &&
+          (init as RequestInit | undefined)?.method === "POST",
+      );
+      if (!postCall) throw new Error("Expected captured right-half POST");
+      expect(JSON.parse(String((postCall[1] as RequestInit).body))).toMatchObject({
+        projectId: PUBLIC_ID,
+        pageNumber: PAGE,
+        bbox: [0.5, 0.2, 0.8, 0.8],
+        data: { vertices: right },
+      });
+
+      await act(async () => {
+        splitPosts[0].resolve(jsonResponse({ id: 8801 }));
+        await Promise.resolve();
+      });
+      expect(readSeededAnnotations(queryClient)).toEqual(successorRows);
+      expect(useToolStore.getState().splitPreview).toBe(successorPreview);
+      expect(useToolStore.getState().splitLineA).toEqual(B_POINT);
+      expect(useToolStore.getState().splitError).toBe(
+        "successor B split error",
+      );
+    },
+  );
 
   it("barrier completion does not clear successor B's pending point", () => {
     const bBarriers = [{ x1: 0.7, y1: 0.7, x2: 0.8, y2: 0.8 }];

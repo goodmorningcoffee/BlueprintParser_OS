@@ -1276,7 +1276,6 @@ export default memo(function AnnotationOverlay({
               "PUT",
             );
           }
-          if (!canAdoptProjectLifecycle()) return;
           const saved = await persistFetch("/api/annotations", {
             projectId: publicId,
             pageNumber,

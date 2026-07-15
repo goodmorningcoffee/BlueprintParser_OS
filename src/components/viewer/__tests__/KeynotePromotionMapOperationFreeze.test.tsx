@@ -10,7 +10,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import KeynotePanel from "@/components/viewer/KeynotePanel";
 import { EMPTY_ACTIVE_PAGE_WINDOW } from "@/queries/pageWindowCore";
 import { queryKeys } from "@/queries/queryKeys";
-import { clearYoloTagsProject, seedYoloTagsFromBootstrap } from "@/queries/useYoloTags";
+import {
+  clearYoloTagsProject,
+  readYoloTags,
+  seedYoloTagsFromBootstrap,
+} from "@/queries/useYoloTags";
 import { useParseFlowStore } from "@/stores/parseFlowStore";
 import { useToolStore } from "@/stores/toolStore";
 import { resetKeynoteGuidedParse, resetProjectData } from "@/stores/viewerCommands";
@@ -77,12 +81,21 @@ function promotionResponse(marker: string): Response {
   } as unknown as Response;
 }
 
-function mapResponse(): Response {
+function mapResponse(marker?: string): Response {
   return {
     ok: true,
     status: 200,
     json: vi.fn().mockResolvedValue({
-      results: {},
+      results: marker
+        ? {
+            [marker]: [{
+              pageNumber: PAGE,
+              annotationId: 641,
+              bbox: [0.2, 0.3, 0.25, 0.35],
+              confidence: 0.96,
+            }],
+          }
+        : {},
       dropCounts: {},
       strictnessMode: "balanced",
     }),
@@ -420,6 +433,47 @@ describe("A2c Keynote deferred promotion and map authority", () => {
       revision: liveRevision,
       busy: false,
     });
+    expect(useToolStore.getState().mode).toBe("pointer");
+  });
+
+  it("lets an admitted captured-key map settle after only the local Keynote operation is revoked", async () => {
+    render(<KeynotePanel embedded />, { wrapper });
+    act(() => { manualParseButton().click(); });
+    expect(promotions).toHaveLength(1);
+
+    await act(async () => {
+      promotions[0].resolve(promotionResponse("A"));
+      await flushCompletion();
+    });
+    expect(maps).toHaveLength(1);
+
+    act(() => {
+      useParseFlowStore.getState().resetKeynoteParse();
+      seedManual(BBOX_B);
+      useToolStore.getState().setMode("pointer");
+    });
+    const successorOperation = {
+      ...useParseFlowStore.getState().parseOperations.keynote,
+    };
+
+    await act(async () => {
+      maps[0].resolve(mapResponse("K1"));
+      await flushCompletion();
+    });
+
+    expect(readYoloTags(queryClient, PUBLIC_ID)).toEqual([
+      expect.objectContaining({
+        tagText: "K1",
+        source: "keynote",
+        scope: "page",
+        pageNumber: PAGE,
+        instances: [expect.objectContaining({ annotationId: 641 })],
+      }),
+    ]);
+    expect(useParseFlowStore.getState().keynoteParseRegion).toEqual(BBOX_B);
+    expect(useParseFlowStore.getState().parseOperations.keynote).toEqual(
+      successorOperation,
+    );
     expect(useToolStore.getState().mode).toBe("pointer");
   });
 

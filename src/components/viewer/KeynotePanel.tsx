@@ -451,7 +451,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
           selectedPages: [pageNumber],
         },
       );
-      if (!canPublish()) return false;
+      if (!isRenderedLifecycleCurrent()) return false;
       if (!result.ok) {
         commitParseOperation(token, () => {
           console.error(`[KeynotePanel] Map Tags failed: HTTP ${result.status}`);
@@ -475,7 +475,7 @@ export default function KeynotePanel({ embedded = false }: { embedded?: boolean 
         }));
       // Captured-key Query adoption may settle for A; subsequent parse/tool/reset tails still
       // re-authorize through the inherited token.
-      if (!canPublish()) return false;
+      if (!isRenderedLifecycleCurrent()) return false;
       if (newTags.length > 0) addYoloTagsBulk(newTags);
     } catch (e) {
       if (canPublish()) {
