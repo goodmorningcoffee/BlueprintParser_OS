@@ -3,11 +3,11 @@
 // folded from the legacy routes (git show 926c631:src/app/api/demo/{config,domain-knowledge,
 // admin}/route.ts). Char: __tests__/demo-landing.route.test.ts (DC/DK/DA-*). Option-B
 // (owner-LOCKED): the public endpoints STAY dedicated auth:"none" shells; only internals live
-// here. Sanctioned diffs: A on demo/admin's sole error path ("No demo projects" 404 flat →
-// envelope). NOTHING else — no E (GETs), no B (the demo/config catch is a LOAD-BEARING
-// swallow→defaults @200; domain-knowledge's catch produces its RAW ""-404 contract).
-// PRESERVED verbatim:
-//   • demo/config: the 5 defaults + row spread + ensureProtocol; swallow-catch → defaults.
+// here. The later B2 public-shape repair replaces demo/config's open-ended settings spread with
+// an exact five-key serializer; the swallow→defaults @200 and domain-knowledge RAW ""-404
+// control flow remain unchanged.
+//   • demo/config: the 5 public keys + ensureProtocol; unknown stored keys never cross the
+//     anonymous boundary; swallow-catch → defaults.
 //   • demo/domain-knowledge: RAW text/plain NextResponse + Cache-Control "public,
 //     max-age=3600" (shell Response-passthrough keeps the header — getPageTextract precedent);
 //     read failure → RAW "" 404.
@@ -33,30 +33,49 @@ function ensureProtocol(url: string): string {
   return `https://${url}`;
 }
 
+const DEFAULT_HEADER_LINKS = {
+  home: "https://blueprintparser.com",
+  hded: "https://hded.blueprintparser.com",
+  modelExchange: "https://models.blueprintparser.com",
+  planExchange: "https://planexchange.blueprintparser.com",
+  labelFleet: "https://www.labelfleet.xyz",
+};
+
+function publicHeaderLink(
+  source: Record<string, unknown>,
+  key: keyof typeof DEFAULT_HEADER_LINKS,
+): string {
+  const candidate = source[key];
+  return ensureProtocol(
+    typeof candidate === "string" ? candidate : DEFAULT_HEADER_LINKS[key],
+  );
+}
+
+function serializePublicHeaderLinks(source: Record<string, unknown>) {
+  return {
+    headerLinks: {
+      home: publicHeaderLink(source, "home"),
+      hded: publicHeaderLink(source, "hded"),
+      modelExchange: publicHeaderLink(source, "modelExchange"),
+      planExchange: publicHeaderLink(source, "planExchange"),
+      labelFleet: publicHeaderLink(source, "labelFleet"),
+    },
+  };
+}
+
 /** Public GET — returns header link config for the demo page. */
 export async function getDemoHeaderLinks(): Promise<unknown> {
-  const defaults = {
-    home: "https://blueprintparser.com",
-    hded: "https://hded.blueprintparser.com",
-    modelExchange: "https://models.blueprintparser.com",
-    planExchange: "https://planexchange.blueprintparser.com",
-    labelFleet: "https://www.labelfleet.xyz",
-  };
-
   try {
     const [row] = await db
       .select()
       .from(appSettings)
       .where(eq(appSettings.key, "header_links"))
       .limit(1);
-    const links = row ? { ...defaults, ...(row.value as Record<string, string>) } : defaults;
-    const sanitized = Object.fromEntries(
-      Object.entries(links).map(([k, v]) => [k, ensureProtocol(v)])
-    );
-    return { headerLinks: sanitized };
+    const stored = row ? (row.value as Record<string, unknown>) : {};
+    return serializePublicHeaderLinks(stored);
   } catch {
     // LOAD-BEARING swallow (DC-3): never a 500 — the demo landing header always renders.
-    return { headerLinks: defaults };
+    return serializePublicHeaderLinks({});
   }
 }
 
@@ -132,6 +151,51 @@ const MOCK_MODELS = [
   },
 ];
 
+type PublicDemoProject = {
+  id: string;
+  name: string;
+  numPages: number | null;
+  status: string;
+  isDemo: boolean;
+};
+
+type PublicDemoModel = {
+  id: number;
+  name: string;
+  type: string;
+  isDefault: boolean;
+};
+
+function serializePublicDemoAdminBundle(
+  projectList: PublicDemoProject[],
+  allModels: PublicDemoModel[],
+  yoloStatus: Record<string, Record<string, number>>,
+  demoConfig: Record<string, unknown>,
+) {
+  return {
+    projects: projectList.map((project) => ({
+      id: project.id,
+      name: project.name,
+      numPages: project.numPages,
+      status: project.status,
+      isDemo: project.isDemo,
+    })),
+    models: allModels.map((model) => ({
+      id: model.id,
+      name: model.name,
+      type: model.type,
+      isDefault: model.isDefault,
+    })),
+    yoloStatus,
+    toggles: {
+      sagemakerEnabled: true,
+      quotaEnabled: false,
+      hasPassword: true,
+    },
+    pipelineConfig: { demo: demoConfig },
+  };
+}
+
 /**
  * Returns a read-only, demo-scoped admin bundle. Public — no auth required.
  *
@@ -206,16 +270,11 @@ export async function getDemoAdminBundle(): Promise<unknown> {
     yoloStatus[row.project_id][row.model_name || String(row.model_id)] = row.detection_count;
   }
 
-  const toggles = { sagemakerEnabled: true, quotaEnabled: false, hasPassword: true };
-
   const fullConfig = (companyRow[0]?.pipelineConfig ?? {}) as { demo?: Record<string, unknown> };
-  const scrubbedConfig = { demo: fullConfig.demo ?? {} };
-
-  return {
-    projects: projectList,
-    models: allModels,
+  return serializePublicDemoAdminBundle(
+    projectList,
+    allModels,
     yoloStatus,
-    toggles,
-    pipelineConfig: scrubbedConfig,
-  };
+    fullConfig.demo ?? {},
+  );
 }

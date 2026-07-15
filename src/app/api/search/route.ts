@@ -10,6 +10,10 @@ export const GET = defineRoute({
   auth: "none",
   handler: ({ req }) => {
     const url = new URL(req.url);
-    return searchProjectPages(url.searchParams.get("projectId"), url.searchParams.get("q"));
+    return searchProjectPages(
+      url.searchParams.get("projectId"),
+      url.searchParams.get("q"),
+      { allowDemo: false },
+    );
   },
 });

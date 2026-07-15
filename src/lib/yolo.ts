@@ -19,6 +19,29 @@ const sagemakerClient = new SageMakerClient({
 const ECR_IMAGE = process.env.YOLO_ECR_IMAGE;
 const SAGEMAKER_ROLE = process.env.SAGEMAKER_ROLE_ARN;
 
+function assertYoloRuntimeAuthority(): void {
+  const account = process.env.AWS_ACCOUNT;
+  const region = process.env.AWS_REGION;
+  if (!account || !/^[0-9]{12}$/.test(account)) {
+    throw new Error("AWS_ACCOUNT is required for SageMaker jobs");
+  }
+  if (!region || !/^[a-z]{2}(?:-gov)?-[a-z]+-[0-9]$/.test(region)) {
+    throw new Error("AWS_REGION is required for SageMaker jobs");
+  }
+  const expectedImage = new RegExp(
+    `^${account}\\.dkr\\.ecr\\.${region}\\.amazonaws\\.com/beaver-yolo-pipeline@sha256:[0-9a-f]{64}$`,
+  );
+  if (!ECR_IMAGE || !expectedImage.test(ECR_IMAGE)) {
+    throw new Error("YOLO_ECR_IMAGE must be the canonical digest-pinned repository image");
+  }
+  if (SAGEMAKER_ROLE !== `arn:aws:iam::${account}:role/beaver-sagemaker-role`) {
+    throw new Error("SAGEMAKER_ROLE_ARN must be the canonical SageMaker execution role");
+  }
+  if (S3_BUCKET !== `beaver-data-${account}`) {
+    throw new Error("S3_BUCKET must be the canonical account-owned data bucket");
+  }
+}
+
 /** Allocate the provider identity before launch so an ambiguous SDK failure remains reconcilable. */
 export function createYoloJobName(
   modelName: string,
@@ -50,10 +73,7 @@ export async function startYoloJob(
   modelName: string,
   jobName = createYoloJobName(modelName),
 ): Promise<string> {
-  if (!ECR_IMAGE)
-    throw new Error("YOLO_ECR_IMAGE env var required for SageMaker jobs");
-  if (!SAGEMAKER_ROLE)
-    throw new Error("SAGEMAKER_ROLE_ARN env var required for SageMaker jobs");
+  assertYoloRuntimeAuthority();
 
   const command = new CreateProcessingJobCommand({
     ProcessingJobName: jobName,
@@ -68,6 +88,9 @@ export async function startYoloJob(
       ImageUri: ECR_IMAGE,
     },
     RoleArn: SAGEMAKER_ROLE,
+    NetworkConfig: {
+      EnableNetworkIsolation: true,
+    },
     ProcessingInputs: [
       {
         InputName: "images",

@@ -4,7 +4,7 @@
 // the folds onto services/demo-landing.ts. Option-B (owner-LOCKED): public /api/demo/* STAY
 // dedicated auth:"none" routes; only internals move. All three PUBLIC GETs (no auth, no body →
 // NO E anywhere). Frozen quirk inventory:
-//   • demo/config: appSettings "header_links" row spread over the 5 defaults; ensureProtocol
+//   • demo/config: appSettings "header_links" may override only the 5 public keys; ensureProtocol
 //     prefixes https:// onto protocol-less values; the WHOLE body is a swallow-catch → defaults
 //     @200 (LOAD-BEARING control-flow — never a 500, DC-3). {headerLinks} shape.
 //   • demo/domain-knowledge: serves src/data/domain-knowledge.md as a RAW text/plain Response
@@ -95,11 +95,15 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
     expect(r.body).toEqual({ headerLinks: DEFAULTS });
   });
 
-  it("DC-2 row spreads over defaults + ensureProtocol prefixes protocol-less values", async () => {
+  it("DC-2 public-key overrides merge with defaults and unknown keys stay private", async () => {
     await db.delete(appSettings).where(eq(appSettings.key, "header_links"));
     await db.insert(appSettings).values({
       key: "header_links",
-      value: { home: "custom.example.com", labelFleet: "http://keep-http.example" } as never,
+      value: {
+        home: "custom.example.com",
+        labelFleet: "http://keep-http.example",
+        privateAdminLink: "https://private.example",
+      } as never,
     });
     const r = await readJson(await dcGET(makeReq("/api/demo/config", { method: "GET" })));
     expect(r.status).toBe(200);
@@ -108,6 +112,7 @@ describe.skipIf(!dbUp)("demo landing surface (DC/DK/DA)", () => {
       home: "https://custom.example.com", // protocol added
       labelFleet: "http://keep-http.example", // existing protocol kept
     });
+    expect(r.body.headerLinks).not.toHaveProperty("privateAdminLink");
     await db.delete(appSettings).where(eq(appSettings.key, "header_links"));
   });
 
