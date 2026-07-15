@@ -77,23 +77,3 @@ export function computePolylineLength(
   }
   return { total: segments.reduce((a, b) => a + b, 0), segments };
 }
-
-/** Point-in-polygon test using ray casting. */
-export function pointInPolygon(
-  point: { x: number; y: number },
-  vertices: { x: number; y: number }[]
-): boolean {
-  const n = vertices.length;
-  let inside = false;
-  for (let i = 0, j = n - 1; i < n; j = i++) {
-    const xi = vertices[i].x, yi = vertices[i].y;
-    const xj = vertices[j].x, yj = vertices[j].y;
-    if (
-      ((yi > point.y) !== (yj > point.y)) &&
-      (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi)
-    ) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}

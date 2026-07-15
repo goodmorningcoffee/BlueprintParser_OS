@@ -9,10 +9,10 @@
 // Three layers:
 //   A. PURE-MATH truth table — inline byte-copies of the live formulas, asserted against
 //      hand-computed + node-verified expected values. Freezes the numeric contract.
-//   B. LIVE SOURCE topology pins — readFileSync snapshot of the PRE-move inline math. These
-//      characterize exactly what the move will replace. NOTE: the mechanical-move commit REWRITES
-//      this describe block to the POST-move topology (2 withHoles / 2 polyline / 3 bbox / 3 handle
-//      helper calls + old math absent); that rewrite is expected, not a behavior regression.
+//   B. LIVE SOURCE topology pins — readFileSync snapshot of the POST-move topology (2 withHoles /
+//      2 polyline / 3 bbox / 3 handle helper calls, old inline math absent, pure dependency-free
+//      hitTest leaf). The freeze commit (e33642e) pinned the PRE-move inline math; the mechanical
+//      move commit rewrote this block as planned. Layers A and C are UNCHANGED across the move.
 //   C. REAL-OVERLAY witnesses — jsdom + the real AnnotationOverlay, entered through the production
 //      mousedown handler, proving the legacy single-click bbox-fallback and double-click
 //      shape-exclusive-miss behaviors that SPEC §"Legacy behavior" requires preserved.
@@ -289,7 +289,7 @@ describe("A. handle open-square (inline copy of AnnotationOverlay.tsx:2155)", ()
 // LAYER B — LIVE SOURCE topology pins (PRE-move snapshot).
 // The mechanical-move commit REWRITES this describe block to the POST-move topology.
 // ═════════════════════════════════════════════════════════════════════════════
-describe("B. live-source topology pins (pre-move; rewritten by the move commit)", () => {
+describe("B. live-source topology pins (post-move: pure hitTest leaf + rewired call sites)", () => {
   const AO = readFileSync(
     join(process.cwd(), "src/components/viewer/AnnotationOverlay.tsx"),
     "utf8",
@@ -298,37 +298,48 @@ describe("B. live-source topology pins (pre-move; rewritten by the move commit)"
     join(process.cwd(), "src/lib/areaCalc.ts"),
     "utf8",
   );
+  const HITTEST = readFileSync(
+    join(process.cwd(), "src/components/viewer/hitTest.ts"),
+    "utf8",
+  );
   const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
   const squish = (s: string): string => s.replace(/\s+/g, " ").trim();
 
-  it("pins the ray-cast primitive living in areaCalc.ts, imported only by the overlay", () => {
-    expect(AREACALC).toContain("export function pointInPolygon(");
+  it("pins the pure dependency-free hitTest leaf and the rewired AO imports", () => {
+    expect(HITTEST).not.toMatch(/^import /m); // no imports at all: pure leaf
     expect(AO).toContain(
-      'import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";',
+      'import { pointInPolygonWithHoles, pointNearPolyline, pointInNormalizedBbox, pointInHandle } from "./hitTest";',
+    );
+    // areaCalc no longer exports the ray cast; AO no longer imports it from there
+    expect(AREACALC).not.toContain("export function pointInPolygon(");
+    expect(AO).toContain(
+      'import { polygonCentroid, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";',
     );
   });
 
-  it("pins TWO polygon/hole compositions (outer test + holes.some)", () => {
-    expect(count(AO, "pointInPolygon(clickNorm, data.vertices)")).toBe(2);
-    expect(count(AO, "(data.holes ?? []).some((h) => pointInPolygon(clickNorm, h.vertices))")).toBe(2);
+  it("pins helper call counts 2 withHoles / 2 polyline / 3 bbox / 3 handle", () => {
+    expect(count(AO, "pointInPolygonWithHoles(")).toBe(2); // double-click + single area loop
+    expect(count(AO, "pointNearPolyline(")).toBe(2); // double-click + single line loop
+    expect(count(AO, "pointInNormalizedBbox(")).toBe(3); // double-click else + generic + markup
+    expect(count(AO, "pointInHandle(")).toBe(3); // vertices + pointer corners + markup corners
   });
 
-  it("pins TWO distinct inline segment-distance blocks (double-click literal, single-click threshold)", () => {
-    expect(count(AO, "if (dist2 < 8) { hit = true; break; }")).toBe(1); // double-click
-    expect(count(AO, "const threshold = 8; // pixels")).toBe(1); // single-click
-    expect(count(AO, "if (dist < threshold) { hit = true; break; }")).toBe(1);
+  it("pins the old inline math ABSENT from the targeted branches", () => {
+    expect(count(AO, "pointInPolygon(clickNorm")).toBe(0);
+    expect(count(AO, "if (dist2 < 8) { hit = true; break; }")).toBe(0);
+    expect(count(AO, "const threshold = 8; // pixels")).toBe(0);
+    expect(count(AO, "if (dist < threshold) { hit = true; break; }")).toBe(0);
+    expect(count(AO, "pos.x <= ax + (maxX - minX) * width")).toBe(0);
+    expect(count(AO, "ax + aw")).toBe(0);
+    expect(count(AO, "< HANDLE && Math.abs(")).toBe(0);
   });
 
-  it("pins THREE generic bbox MinMax predicates in min-plus-extent form", () => {
-    // double-click else branch (inline (maxX-minX)*width)
-    expect(count(AO, "hit = pos.x >= ax && pos.x <= ax + (maxX - minX) * width && pos.y >= ay && pos.y <= ay + (maxY - minY) * height;")).toBe(1);
-    // single-pointer generic loop + markup selection (named aw/ah) — identical text, TWO sites
-    expect(count(AO, "if (pos.x >= ax && pos.x <= ax + aw && pos.y >= ay && pos.y <= ay + ah) {")).toBe(2);
+  it("pins exactly THREE residual mousedown Math.sqrt sites (polygon close / linear finish / count marker)", () => {
+    // Census §"Explicitly excluded": these are draw-placement thresholds, NOT hit-test targets.
+    expect(count(AO, "Math.sqrt")).toBe(3);
   });
 
-  it("pins THREE handle-square predicates (strict independent-axis < HANDLE)", () => {
-    expect(count(AO, "< HANDLE && Math.abs(")).toBe(3);
-    // both corner objects enumerate tl -> tr -> bl -> br
+  it("pins the corner handle enumeration order tl -> tr -> bl -> br at both sites", () => {
     expect(count(AO, "tl: { x: minX * width, y: minY * height },")).toBe(2);
   });
 

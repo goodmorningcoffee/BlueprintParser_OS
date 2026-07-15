@@ -65,7 +65,9 @@ import {
   registerToolTailCancellation,
   releaseToolTailCancellation,
 } from "@/lib/parse-tool-authority";
-import { polygonCentroid, pointInPolygon, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
+import { polygonCentroid, computeRealArea, computePolylineLength, computePixelsPerUnit } from "@/lib/areaCalc";
+// [refactor jul15 P3.1½] hit-test predicates extracted to the pure geometry leaf; math unchanged.
+import { pointInPolygonWithHoles, pointNearPolyline, pointInNormalizedBbox, pointInHandle } from "./hitTest";
 import { splitPolygonByLine, findSplittablePolygons } from "@/lib/polygon-split";
 import { getOcrTextInAnnotation, mapYoloToOcrText } from "@/lib/yolo-tag-engine";
 import { clientBucketFill, findPageCanvas } from "@/lib/bucket-fill-client";
@@ -2002,26 +2004,13 @@ export default memo(function AnnotationOverlay({
             if (ann.source === "takeoff" && (ann.data as any)?.type === "area-polygon") {
               const data = ann.data as unknown as AreaPolygonData;
               const clickNorm = { x: pos.x / width, y: pos.y / height };
-              if (pointInPolygon(clickNorm, data.vertices)) {
-                // Clicking inside a hole (courtyard) should NOT select the polygon
-                const insideHole = (data.holes ?? []).some((h) => pointInPolygon(clickNorm, h.vertices));
-                hit = !insideHole;
-              }
+              // Clicking inside a hole (courtyard) should NOT select the polygon
+              hit = pointInPolygonWithHoles(clickNorm, data.vertices, data.holes);
             } else if (ann.source === "takeoff" && (ann.data as any)?.type === "linear-polyline") {
               const data = ann.data as unknown as LinearPolylineData;
-              for (let i = 0; i < data.vertices.length - 1; i++) {
-                const ax2 = data.vertices[i].x * width, ay2 = data.vertices[i].y * height;
-                const bx2 = data.vertices[i + 1].x * width, by2 = data.vertices[i + 1].y * height;
-                const dx2 = bx2 - ax2, dy2 = by2 - ay2;
-                const lenSq2 = dx2 * dx2 + dy2 * dy2;
-                const t2 = lenSq2 === 0 ? 0 : Math.max(0, Math.min(1, ((pos.x - ax2) * dx2 + (pos.y - ay2) * dy2) / lenSq2));
-                const dist2 = Math.sqrt((pos.x - (ax2 + t2 * dx2)) ** 2 + (pos.y - (ay2 + t2 * dy2)) ** 2);
-                if (dist2 < 8) { hit = true; break; }
-              }
+              hit = pointNearPolyline(pos, data.vertices, width, height);
             } else {
-              const [minX, minY, maxX, maxY] = ann.bbox;
-              const ax = minX * width, ay = minY * height;
-              hit = pos.x >= ax && pos.x <= ax + (maxX - minX) * width && pos.y >= ay && pos.y <= ay + (maxY - minY) * height;
+              hit = pointInNormalizedBbox(pos, ann.bbox, width, height);
             }
             if (!hit) continue;
             e.stopPropagation();
@@ -2152,7 +2141,7 @@ export default memo(function AnnotationOverlay({
               for (let i = 0; i < polyData.vertices.length; i++) {
                 const vx = polyData.vertices[i].x * width;
                 const vy = polyData.vertices[i].y * height;
-                if (Math.abs(pos.x - vx) < HANDLE && Math.abs(pos.y - vy) < HANDLE) {
+                if (pointInHandle(pos, { x: vx, y: vy }, HANDLE)) {
                   e.stopPropagation();
                   const handle = { annId: selAnn.id, idx: i };
                   setDraggingVertex(handle);
@@ -2173,7 +2162,7 @@ export default memo(function AnnotationOverlay({
 
               // Check if clicking a corner handle for resize
               for (const [key, corner] of Object.entries(corners)) {
-                if (Math.abs(pos.x - corner.x) < HANDLE && Math.abs(pos.y - corner.y) < HANDLE) {
+                if (pointInHandle(pos, corner, HANDLE)) {
                   e.stopPropagation();
                   setResizeCorner(key);
                   setDragging(true);
@@ -2225,9 +2214,7 @@ export default memo(function AnnotationOverlay({
           if (ann.source !== "takeoff" || (ann.data as any)?.type !== "area-polygon") continue;
           const data = ann.data as unknown as AreaPolygonData;
           const clickNorm = { x: pos.x / width, y: pos.y / height };
-          if (pointInPolygon(clickNorm, data.vertices)) {
-            const insideHole = (data.holes ?? []).some((h) => pointInPolygon(clickNorm, h.vertices));
-            if (insideHole) continue;
+          if (pointInPolygonWithHoles(clickNorm, data.vertices, data.holes)) {
             e.stopPropagation();
             setSelectedId(ann.id);
             return;
@@ -2237,22 +2224,7 @@ export default memo(function AnnotationOverlay({
         for (const ann of pageAnnotations) {
           if (ann.source !== "takeoff" || (ann.data as any)?.type !== "linear-polyline") continue;
           const data = ann.data as unknown as LinearPolylineData;
-          const threshold = 8; // pixels
-          let hit = false;
-          for (let i = 0; i < data.vertices.length - 1; i++) {
-            const ax = data.vertices[i].x * width;
-            const ay = data.vertices[i].y * height;
-            const bx = data.vertices[i + 1].x * width;
-            const by = data.vertices[i + 1].y * height;
-            // Point-to-segment distance
-            const dx = bx - ax, dy = by - ay;
-            const lenSq = dx * dx + dy * dy;
-            let t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((pos.x - ax) * dx + (pos.y - ay) * dy) / lenSq));
-            const projX = ax + t * dx, projY = ay + t * dy;
-            const dist = Math.sqrt((pos.x - projX) ** 2 + (pos.y - projY) ** 2);
-            if (dist < threshold) { hit = true; break; }
-          }
-          if (hit) {
+          if (pointNearPolyline(pos, data.vertices, width, height)) {
             e.stopPropagation();
             setSelectedId(ann.id);
             return;
@@ -2260,12 +2232,10 @@ export default memo(function AnnotationOverlay({
         }
         // Check annotations (bbox-based) — select and start drag
         for (const ann of pageAnnotations) {
-          const [minX, minY, maxX, maxY] = ann.bbox;
+          const [minX, minY] = ann.bbox;
           const ax = minX * width;
           const ay = minY * height;
-          const aw = (maxX - minX) * width;
-          const ah = (maxY - minY) * height;
-          if (pos.x >= ax && pos.x <= ax + aw && pos.y >= ay && pos.y <= ay + ah) {
+          if (pointInNormalizedBbox(pos, ann.bbox, width, height)) {
             e.stopPropagation();
             // Multi-select layer decides first. In group mode OR pointer mode
             // with a modifier key, this toggles the annotation in the set and
@@ -2338,7 +2308,7 @@ export default memo(function AnnotationOverlay({
           };
 
           for (const [key, corner] of Object.entries(corners)) {
-            if (Math.abs(pos.x - corner.x) < HANDLE && Math.abs(pos.y - corner.y) < HANDLE) {
+            if (pointInHandle(pos, corner, HANDLE)) {
               e.stopPropagation();
               setResizeCorner(key);
               setDragging(true);
@@ -2359,12 +2329,7 @@ export default memo(function AnnotationOverlay({
       // Markup mode: check if clicking annotation to select
       if (toolAtDown.mode === "markup") {
         for (const ann of pageAnnotations) {
-          const [minX, minY, maxX, maxY] = ann.bbox;
-          const ax = minX * width;
-          const ay = minY * height;
-          const aw = (maxX - minX) * width;
-          const ah = (maxY - minY) * height;
-          if (pos.x >= ax && pos.x <= ax + aw && pos.y >= ay && pos.y <= ay + ah) {
+          if (pointInNormalizedBbox(pos, ann.bbox, width, height)) {
             e.stopPropagation();
             setSelectedId(ann.id);
             return;
