@@ -24,7 +24,10 @@ import {
 import { ApiError } from "@/server/api/envelope";
 import {
   withProjectStorageWrite,
+  withProjectStorageWritesInTransaction,
+  withProjectWritesInTransaction,
   type ProjectWriteCapability,
+  type ProjectWriteTransaction,
 } from "@/server/api/project-write-capability";
 
 export interface DeletableProject {
@@ -32,6 +35,21 @@ export interface DeletableProject {
   dataUrl: string;
   jobId: string | null;
   name?: string;
+}
+
+export interface ProjectDeletionEntry {
+  project: DeletableProject;
+  writeCapability: ProjectWriteCapability;
+}
+
+export interface StagedProjectAssetDeletion {
+  id: string;
+  storageRoot: string;
+}
+
+export interface StagedProjectDeletionResult<T> {
+  deletions: StagedProjectAssetDeletion[];
+  result: T;
 }
 
 /**
@@ -62,164 +80,208 @@ export interface DeletableProject {
  * by DELETE /api/projects/[id] and by the cascade path of user deletion. Keep
  * the deletion sequence identical to avoid divergent cleanup.
  */
+async function stageLockedProjectDeletion(
+  tx: ProjectWriteTransaction,
+  project: DeletableProject,
+): Promise<StagedProjectAssetDeletion> {
+  const [storageOwner] = await tx
+    .select({
+      dataUrl: projects.dataUrl,
+      publicId: projects.publicId,
+      companyId: projects.companyId,
+      lifecycleEpoch: projects.lifecycleEpoch,
+      companyDataKey: companies.dataKey,
+    })
+    .from(projects)
+    .innerJoin(companies, eq(companies.id, projects.companyId))
+    .where(eq(projects.id, project.id))
+    .limit(1);
+  if (
+    !storageOwner ||
+    storageOwner.dataUrl !== project.dataUrl ||
+    !isCanonicalProjectPath(storageOwner.companyDataKey, storageOwner.dataUrl)
+  ) {
+    throw new ApiError(
+      "CONFLICT",
+      "Project storage root requires reconciliation",
+    );
+  }
+
+  const [deletion] = await tx
+    .insert(projectAssetDeletions)
+    .values({
+      projectPublicId: storageOwner.publicId,
+      companyId: storageOwner.companyId,
+      storageRoot: storageOwner.dataUrl,
+      lifecycleEpoch: storageOwner.lifecycleEpoch,
+    })
+    .returning({ id: projectAssetDeletions.id });
+  if (!deletion) throw new Error("Failed to record project asset deletion");
+
+  const [runningJob] = await tx
+    .select({ id: processingJobs.id })
+    .from(processingJobs)
+    .where(
+      and(
+        eq(processingJobs.projectId, project.id),
+        eq(processingJobs.status, "running"),
+      ),
+    )
+    .limit(1);
+  if (runningJob) {
+    throw new ApiError("CONFLICT", "Project has an active processing job");
+  }
+
+  const [activeLease] = await tx
+    .select({ token: projectMutationLeases.token })
+    .from(projectMutationLeases)
+    .where(
+      and(
+        eq(projectMutationLeases.projectId, project.id),
+        eq(projectMutationLeases.status, "active"),
+      ),
+    )
+    .limit(1);
+  if (activeLease) {
+    throw new ApiError("CONFLICT", "Project has an active mutation lease");
+  }
+
+  // Deleting only the local row would orphan a still-mutable Label Studio project. Sessions
+  // must first be retired through their provider-aware delete path (404 is already idempotent).
+  const [linkedLabelingSession] = await tx
+    .select({ id: labelingSessions.id })
+    .from(labelingSessions)
+    .where(eq(labelingSessions.projectId, project.id))
+    .limit(1);
+  if (linkedLabelingSession) {
+    throw new ApiError("CONFLICT", "Project has linked labeling sessions");
+  }
+  const [pendingLabelStudioProject] = await tx
+    .select({ id: labelStudioProjectIntents.id })
+    .from(labelStudioProjectIntents)
+    .where(eq(labelStudioProjectIntents.projectId, project.id))
+    .limit(1);
+  if (pendingLabelStudioProject) {
+    throw new ApiError(
+      "CONFLICT",
+      "Project has pending Label Studio provisioning",
+    );
+  }
+
+  // This is a conservative credential-drain delay, not proof that an already accepted request
+  // finished. Isolated staging + server-only canonical final roots are the immutability boundary.
+  const [uploadAuthority] = await tx
+    .select({
+      active: sql<boolean>`
+        ${projects.createdAt} IS NULL
+        OR ${projects.createdAt}
+          + (${PROJECT_UPLOAD_PUBLICATION_FENCE_SECONDS} * INTERVAL '1 second')
+          > CURRENT_TIMESTAMP
+      `,
+    })
+    .from(projects)
+    .where(eq(projects.id, project.id))
+    .limit(1);
+  if (uploadAuthority?.active) {
+    throw new ApiError(
+      "CONFLICT",
+      "Project upload credentials are still active",
+    );
+  }
+
+  // DB deletes and the permanent outbox row share the caller's transaction. S3/CDN work is
+  // deliberately absent here and can begin only after that transaction has committed.
+  await tx.delete(chatMessages).where(eq(chatMessages.projectId, project.id));
+  await tx.delete(annotations).where(eq(annotations.projectId, project.id));
+  await tx
+    .delete(annotationGroups)
+    .where(eq(annotationGroups.projectId, project.id));
+  await tx.delete(takeoffItems).where(eq(takeoffItems.projectId, project.id));
+  await tx.delete(takeoffGroups).where(eq(takeoffGroups.projectId, project.id));
+  await tx.delete(qtoWorkflows).where(eq(qtoWorkflows.projectId, project.id));
+  await tx
+    .delete(processingJobs)
+    .where(eq(processingJobs.projectId, project.id));
+  await tx.delete(pages).where(eq(pages.projectId, project.id));
+  await tx.delete(projects).where(eq(projects.id, project.id));
+  return { id: deletion.id, storageRoot: storageOwner.dataUrl };
+}
+
+/**
+ * Stage several project teardowns and an associated DB mutation on one already-open transaction.
+ * Every storage root and every affected parent is locked before the first outbox row is inserted.
+ */
+export async function stageProjectDeletionsInTransaction<T>(
+  tx: ProjectWriteTransaction,
+  entries: readonly ProjectDeletionEntry[],
+  additionalCapabilities: readonly ProjectWriteCapability[],
+  write: (tx: ProjectWriteTransaction) => Promise<T>,
+): Promise<StagedProjectDeletionResult<T>> {
+  const projectIds = new Set<number>();
+  for (const entry of entries) {
+    if (projectIds.has(entry.project.id)) {
+      throw new Error("Duplicate project deletion entry");
+    }
+    projectIds.add(entry.project.id);
+  }
+
+  const stage = async (lockedTx: ProjectWriteTransaction) => {
+    const deletions: StagedProjectAssetDeletion[] = [];
+    for (const entry of [...entries].sort(
+      (left, right) => left.project.id - right.project.id,
+    )) {
+      deletions.push(await stageLockedProjectDeletion(lockedTx, entry.project));
+    }
+    return { deletions, result: await write(lockedTx) };
+  };
+
+  if (entries.length === 0) {
+    if (additionalCapabilities.length === 0) {
+      return stage(tx);
+    }
+    return withProjectWritesInTransaction(tx, additionalCapabilities, stage);
+  }
+
+  return withProjectStorageWritesInTransaction(
+    tx,
+    entries.map((entry) => ({
+      capability: entry.writeCapability,
+      projectId: entry.project.id,
+      storageRoot: entry.project.dataUrl,
+    })),
+    additionalCapabilities,
+    stage,
+  );
+}
+
+/** Run best-effort immediate reconciliation only for outboxes whose transaction has committed. */
+export async function reconcileCommittedProjectDeletions(
+  deletions: readonly StagedProjectAssetDeletion[],
+): Promise<void> {
+  for (const deletion of deletions) {
+    try {
+      await reconcileProjectAssetDeletion(deletion.id);
+    } catch (err) {
+      logger.error(
+        `[project-delete] immediate asset reconciliation failed for ${deletion.storageRoot}; durable retry remains pending:`,
+        err,
+      );
+    }
+  }
+}
+
 export async function deleteProjectFully(
   project: DeletableProject,
   writeCapability: ProjectWriteCapability,
 ): Promise<void> {
-  // The parent lock, quiescence decision, and delete are one transaction. Provider stop
+  // The parent lock, quiescence decision, outbox, and delete are one transaction. Provider stop
   // acknowledgement is not quiescence: workers may still be writing after a timeout/stop request.
-  // Callers retry only after the provider-attested job row and every explicit lease are retired.
-  const deletionId = await withProjectStorageWrite(
+  const deletion = await withProjectStorageWrite(
     writeCapability,
     project.id,
     project.dataUrl,
-    async (tx) => {
-      const [storageOwner] = await tx
-        .select({
-          dataUrl: projects.dataUrl,
-          publicId: projects.publicId,
-          companyId: projects.companyId,
-          lifecycleEpoch: projects.lifecycleEpoch,
-          companyDataKey: companies.dataKey,
-        })
-        .from(projects)
-        .innerJoin(companies, eq(companies.id, projects.companyId))
-        .where(eq(projects.id, project.id))
-        .limit(1);
-      if (
-        !storageOwner ||
-        storageOwner.dataUrl !== project.dataUrl ||
-        !isCanonicalProjectPath(
-          storageOwner.companyDataKey,
-          storageOwner.dataUrl,
-        )
-      ) {
-        throw new ApiError(
-          "CONFLICT",
-          "Project storage root requires reconciliation",
-        );
-      }
-
-      const [deletion] = await tx
-        .insert(projectAssetDeletions)
-        .values({
-          projectPublicId: storageOwner.publicId,
-          companyId: storageOwner.companyId,
-          storageRoot: storageOwner.dataUrl,
-          lifecycleEpoch: storageOwner.lifecycleEpoch,
-        })
-        .returning({ id: projectAssetDeletions.id });
-      if (!deletion) throw new Error("Failed to record project asset deletion");
-
-      const [runningJob] = await tx
-        .select({ id: processingJobs.id })
-        .from(processingJobs)
-        .where(
-          and(
-            eq(processingJobs.projectId, project.id),
-            eq(processingJobs.status, "running"),
-          ),
-        )
-        .limit(1);
-      if (runningJob) {
-        throw new ApiError("CONFLICT", "Project has an active processing job");
-      }
-
-      const [activeLease] = await tx
-        .select({ token: projectMutationLeases.token })
-        .from(projectMutationLeases)
-        .where(
-          and(
-            eq(projectMutationLeases.projectId, project.id),
-            eq(projectMutationLeases.status, "active"),
-          ),
-        )
-        .limit(1);
-      if (activeLease) {
-        throw new ApiError("CONFLICT", "Project has an active mutation lease");
-      }
-
-      // Deleting only the local row would orphan a still-mutable Label Studio project. Sessions
-      // must first be retired through their provider-aware delete path (404 is already idempotent).
-      const [linkedLabelingSession] = await tx
-        .select({ id: labelingSessions.id })
-        .from(labelingSessions)
-        .where(eq(labelingSessions.projectId, project.id))
-        .limit(1);
-      if (linkedLabelingSession) {
-        throw new ApiError("CONFLICT", "Project has linked labeling sessions");
-      }
-      const [pendingLabelStudioProject] = await tx
-        .select({ id: labelStudioProjectIntents.id })
-        .from(labelStudioProjectIntents)
-        .where(eq(labelStudioProjectIntents.projectId, project.id))
-        .limit(1);
-      if (pendingLabelStudioProject) {
-        throw new ApiError(
-          "CONFLICT",
-          "Project has pending Label Studio provisioning",
-        );
-      }
-
-      // This is a conservative credential-drain delay, not proof that an already accepted request
-      // finished. Isolated staging + server-only canonical final roots are the immutability boundary.
-      const [uploadAuthority] = await tx
-        .select({
-          active: sql<boolean>`
-          ${projects.createdAt} IS NULL
-          OR ${projects.createdAt}
-            + (${PROJECT_UPLOAD_PUBLICATION_FENCE_SECONDS} * INTERVAL '1 second')
-            > CURRENT_TIMESTAMP
-        `,
-        })
-        .from(projects)
-        .where(eq(projects.id, project.id))
-        .limit(1);
-      if (uploadAuthority?.active) {
-        throw new ApiError(
-          "CONFLICT",
-          "Project upload credentials are still active",
-        );
-      }
-
-      // [refactor jun13 P0.5-G4] DB deletes first, in ONE parent-first transaction; S3 purge
-      // only after commit. The old order (S3 → unwrapped per-table deletes) could leave a live
-      // project row pointing at deleted files after any mid-sequence failure.
-      await tx
-        .delete(chatMessages)
-        .where(eq(chatMessages.projectId, project.id));
-      await tx.delete(annotations).where(eq(annotations.projectId, project.id));
-      // [refactor jun16 P0-review G4] explicit (was DB-cascade-only); members
-      // junction cascades off both annotations (above) and annotation_groups.
-      await tx
-        .delete(annotationGroups)
-        .where(eq(annotationGroups.projectId, project.id));
-      await tx
-        .delete(takeoffItems)
-        .where(eq(takeoffItems.projectId, project.id));
-      await tx
-        .delete(takeoffGroups)
-        .where(eq(takeoffGroups.projectId, project.id));
-      await tx
-        .delete(qtoWorkflows)
-        .where(eq(qtoWorkflows.projectId, project.id));
-      await tx
-        .delete(processingJobs)
-        .where(eq(processingJobs.projectId, project.id));
-      await tx.delete(pages).where(eq(pages.projectId, project.id));
-      await tx.delete(projects).where(eq(projects.id, project.id));
-      return deletion.id;
-    },
+    (tx) => stageLockedProjectDeletion(tx, project),
   );
 
-  // Reconcile S3 versions + CDN only after the DB transaction commits. Failure is persisted on the
-  // outbox row and retried by the scheduled worker; the permanent row also forbids path reuse.
-  try {
-    await reconcileProjectAssetDeletion(deletionId);
-  } catch (err) {
-    logger.error(
-      `[project-delete] immediate asset reconciliation failed for ${project.dataUrl}; durable retry remains pending:`,
-      err,
-    );
-  }
+  await reconcileCommittedProjectDeletions([deletion]);
 }

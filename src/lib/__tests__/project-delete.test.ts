@@ -80,7 +80,10 @@ vi.mock("@/lib/s3", async (importOriginal) => {
   };
 });
 
-import { deleteProjectFully } from "@/lib/project-delete";
+import {
+  deleteProjectFully,
+  stageProjectDeletionsInTransaction,
+} from "@/lib/project-delete";
 import { createProject as createProjectFromManifest } from "@/server/services/projects";
 import { db } from "@/lib/db";
 import {
@@ -95,6 +98,7 @@ import {
   projectAssetDeletions,
   projectMutationLeases,
   projects,
+  users,
 } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import {
@@ -102,11 +106,14 @@ import {
   asUser,
   createLabelingSessionFixture,
   createPage,
+  createProject,
+  createUser,
   createWorld,
   sessionState,
 } from "@/test/harness";
 import { projectUploadStagingKey } from "@/lib/project-upload-authority";
 import {
+  PROJECT_STORAGE_ADVISORY_LOCK_SEED,
   acquireProjectMutationLease,
   assertProjectWritable,
   releaseProjectMutationLease,
@@ -256,6 +263,206 @@ describe.skipIf(!dbUp)("deleteProjectFully — G4 ordering contract", () => {
     expect(tombstone).toMatchObject({ status: "pending", phase: "purge" });
     expect(tombstone.lastError).toContain("Project asset purge failed");
   });
+
+  it("rolls back every staged deletion, outbox, user mutation, and attribution when the transaction tail fails", async () => {
+    const { company, user: victim, project: first } = await createWorld();
+    const second = await createProject(company.id, victim.id);
+    const otherOwner = await createUser(company.id);
+    const referenced = await createProject(company.id, otherOwner.id);
+    await Promise.all([
+      ageProjectForPublication(first.id),
+      ageProjectForPublication(second.id),
+    ]);
+    const [attribution] = await db
+      .insert(annotations)
+      .values({
+        projectId: referenced.id,
+        creatorId: victim.id,
+        name: "tail-rollback-attribution",
+        minX: 0,
+        minY: 0,
+        maxX: 1,
+        maxY: 1,
+        pageNumber: 1,
+      })
+      .returning({ id: annotations.id });
+
+    await expect(
+      db.transaction((tx) =>
+        stageProjectDeletionsInTransaction(
+          tx,
+          [first, second].map((project) => ({
+            project,
+            writeCapability: assertProjectWritable(project),
+          })),
+          [assertProjectWritable(referenced)],
+          async (lockedTx) => {
+            await lockedTx
+              .update(annotations)
+              .set({ creatorId: null })
+              .where(eq(annotations.id, attribution.id));
+            await lockedTx.delete(users).where(eq(users.id, victim.id));
+            throw new Error("simulated atomic tail failure");
+          },
+        ),
+      ),
+    ).rejects.toThrow("simulated atomic tail failure");
+
+    expect(
+      await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(sql`${projects.id} IN (${first.id}, ${second.id})`),
+    ).toHaveLength(2);
+    expect(
+      await db
+        .select({ id: projectAssetDeletions.id })
+        .from(projectAssetDeletions)
+        .where(
+          sql`${projectAssetDeletions.storageRoot} IN (${first.dataUrl}, ${second.dataUrl})`,
+        ),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.id, victim.id)),
+    ).toHaveLength(1);
+    expect(
+      await db
+        .select({ creatorId: annotations.creatorId })
+        .from(annotations)
+        .where(eq(annotations.id, attribution.id)),
+    ).toEqual([{ creatorId: victim.id }]);
+    expect(s3CallsFor(first.dataUrl)).toHaveLength(0);
+    expect(s3CallsFor(second.dataUrl)).toHaveLength(0);
+  });
+
+  it("locks reversed bulk storage roots lexicographically before touching the later root", async () => {
+    const { company, user, project: first } = await createWorld();
+    const second = await createProject(company.id, user.id);
+    await Promise.all([
+      ageProjectForPublication(first.id),
+      ageProjectForPublication(second.id),
+    ]);
+    const ordered = [first, second].sort((left, right) =>
+      left.dataUrl < right.dataUrl ? -1 : left.dataUrl > right.dataUrl ? 1 : 0,
+    );
+    const blockerPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 2,
+    });
+    const blocker = await blockerPool.connect();
+    const probe = await blockerPool.connect();
+    let staged: Promise<unknown> | undefined;
+    let released = false;
+    try {
+      await blocker.query("BEGIN");
+      const [{ pid }] = (
+        await blocker.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+      ).rows;
+      await blocker.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, $2))",
+        [ordered[0].dataUrl, PROJECT_STORAGE_ADVISORY_LOCK_SEED],
+      );
+
+      staged = db.transaction((tx) =>
+        stageProjectDeletionsInTransaction(
+          tx,
+          [ordered[1], ordered[0]].map((project) => ({
+            project,
+            writeCapability: assertProjectWritable(project),
+          })),
+          [],
+          async () => undefined,
+        ),
+      );
+      await waitForAdvisoryWaiter(blocker, pid);
+
+      const [{ acquired }] = (
+        await probe.query<{ acquired: boolean }>(
+          "SELECT pg_try_advisory_lock(hashtextextended($1, $2)) AS acquired",
+          [ordered[1].dataUrl, PROJECT_STORAGE_ADVISORY_LOCK_SEED],
+        )
+      ).rows;
+      expect(acquired).toBe(true);
+      if (acquired) {
+        await probe.query(
+          "SELECT pg_advisory_unlock(hashtextextended($1, $2))",
+          [ordered[1].dataUrl, PROJECT_STORAGE_ADVISORY_LOCK_SEED],
+        );
+      }
+      await blocker.query("COMMIT");
+      released = true;
+      await expect(staged).resolves.toMatchObject({ deletions: { length: 2 } });
+    } finally {
+      if (!released) await blocker.query("ROLLBACK").catch(() => undefined);
+      blocker.release();
+      probe.release();
+      await blockerPool.end();
+      await Promise.allSettled(staged ? [staged] : []);
+    }
+  }, 15_000);
+
+  it("locks reversed bulk project parents by ascending id", async () => {
+    const { company, user, project: first } = await createWorld();
+    const second = await createProject(company.id, user.id);
+    await Promise.all([
+      ageProjectForPublication(first.id),
+      ageProjectForPublication(second.id),
+    ]);
+    const ordered = [first, second].sort((left, right) => left.id - right.id);
+    const blockerPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 2,
+    });
+    const blocker = await blockerPool.connect();
+    const probe = await blockerPool.connect();
+    let staged: Promise<unknown> | undefined;
+    let released = false;
+    try {
+      await blocker.query("BEGIN");
+      const [{ xid }] = (
+        await blocker.query<{ xid: string }>(
+          "SELECT txid_current()::text AS xid",
+        )
+      ).rows;
+      await blocker.query("SELECT 1 FROM projects WHERE id = $1 FOR UPDATE", [
+        ordered[0].id,
+      ]);
+
+      staged = db.transaction((tx) =>
+        stageProjectDeletionsInTransaction(
+          tx,
+          [ordered[1], ordered[0]].map((project) => ({
+            project,
+            writeCapability: assertProjectWritable(project),
+          })),
+          [],
+          async () => undefined,
+        ),
+      );
+      await waitForTransactionWaiter(blocker, xid);
+
+      await probe.query("BEGIN");
+      await expect(
+        probe.query("SELECT 1 FROM projects WHERE id = $1 FOR UPDATE NOWAIT", [
+          ordered[1].id,
+        ]),
+      ).resolves.toBeDefined();
+      await probe.query("ROLLBACK");
+      await blocker.query("COMMIT");
+      released = true;
+      await expect(staged).resolves.toMatchObject({ deletions: { length: 2 } });
+    } finally {
+      await probe.query("ROLLBACK").catch(() => undefined);
+      if (!released) await blocker.query("ROLLBACK").catch(() => undefined);
+      blocker.release();
+      probe.release();
+      await blockerPool.end();
+      await Promise.allSettled(staged ? [staged] : []);
+    }
+  }, 15_000);
 
   it("removes annotation_groups + their member links (the previously cascade-only path)", async () => {
     const { user, project } = await createWorld();

@@ -48,6 +48,12 @@ export interface ProjectWriteCapability {
   readonly [projectWriteCapabilityBrand]: true;
 }
 
+export interface ProjectStorageWriteAuthority {
+  readonly capability: ProjectWriteCapability;
+  readonly projectId: number;
+  readonly storageRoot: string;
+}
+
 export interface ProjectMutationLease {
   readonly token: string;
   readonly projectId: number;
@@ -179,7 +185,60 @@ export async function withProjectWrites<T>(
   return withProjectWritesInternal(capabilities, [], write);
 }
 
+/**
+ * Reuse an already-open transaction while preserving the ordinary bulk parent-lock protocol.
+ * This exists for larger atomic operations whose non-project rows must commit with the project
+ * mutation; callers must never perform an external side effect before the outer transaction ends.
+ */
+export async function withProjectWritesInTransaction<T>(
+  tx: ProjectWriteTransaction,
+  capabilities: readonly ProjectWriteCapability[],
+  write: (tx: ProjectWriteTransaction) => Promise<T>,
+): Promise<T> {
+  return withProjectWritesOnTransaction(tx, capabilities, [], write);
+}
+
+/**
+ * Existing-transaction bulk deletion boundary. All storage roots are locked lexicographically
+ * before any project parent is locked by ascending id, so reversed caller input cannot invert the
+ * global storage-root/parent order. Additional capabilities cover related projects mutated by the
+ * same transaction without granting them storage-delete authority.
+ */
+export async function withProjectStorageWritesInTransaction<T>(
+  tx: ProjectWriteTransaction,
+  storageWrites: readonly ProjectStorageWriteAuthority[],
+  additionalCapabilities: readonly ProjectWriteCapability[],
+  write: (tx: ProjectWriteTransaction) => Promise<T>,
+): Promise<T> {
+  for (const storageWrite of storageWrites) {
+    assertCapabilityBinding(storageWrite.capability, storageWrite.projectId);
+    if (!storageWrite.storageRoot) {
+      throw new Error("Project storage root is required");
+    }
+  }
+  return withProjectWritesOnTransaction(
+    tx,
+    [
+      ...storageWrites.map((storageWrite) => storageWrite.capability),
+      ...additionalCapabilities,
+    ],
+    storageWrites.map((storageWrite) => storageWrite.storageRoot),
+    write,
+  );
+}
+
 async function withProjectWritesInternal<T>(
+  capabilities: readonly ProjectWriteCapability[],
+  storageRoots: readonly string[],
+  write: (tx: ProjectWriteTransaction) => Promise<T>,
+): Promise<T> {
+  return db.transaction((tx) =>
+    withProjectWritesOnTransaction(tx, capabilities, storageRoots, write),
+  );
+}
+
+async function withProjectWritesOnTransaction<T>(
+  tx: ProjectWriteTransaction,
   capabilities: readonly ProjectWriteCapability[],
   storageRoots: readonly string[],
   write: (tx: ProjectWriteTransaction) => Promise<T>,
@@ -206,26 +265,24 @@ async function withProjectWritesInternal<T>(
     throw new Error("At least one project write capability is required");
   }
 
-  return db.transaction(async (tx) => {
-    for (const storageRoot of [...new Set(storageRoots)].sort()) {
-      await lockProjectStorageRoot(tx, storageRoot);
-    }
-    for (const capability of ordered) {
-      const [current] = await tx
-        .select({
-          publicId: projects.publicId,
-          companyId: projects.companyId,
-          isDemo: projects.isDemo,
-          lifecycleEpoch: projects.lifecycleEpoch,
-        })
-        .from(projects)
-        .where(eq(projects.id, capability.projectId))
-        .for("update")
-        .limit(1);
-      assertLockedProjectWritable(capability, current);
-    }
-    return write(tx);
-  });
+  for (const storageRoot of [...new Set(storageRoots)].sort()) {
+    await lockProjectStorageRoot(tx, storageRoot);
+  }
+  for (const capability of ordered) {
+    const [current] = await tx
+      .select({
+        publicId: projects.publicId,
+        companyId: projects.companyId,
+        isDemo: projects.isDemo,
+        lifecycleEpoch: projects.lifecycleEpoch,
+      })
+      .from(projects)
+      .where(eq(projects.id, capability.projectId))
+      .for("update")
+      .limit(1);
+    assertLockedProjectWritable(capability, current);
+  }
+  return write(tx);
 }
 
 export async function acquireProjectMutationLease(

@@ -18,30 +18,47 @@
 // PRESERVED verbatim (DR006 + recon traps):
 //   • GET INNER perms try/catch = DATA fallback (canRunModels=role-derived, isRootAdmin=false)
 //     — BUSINESS logic @200, NOT a B; the real column is authoritative when the query works;
-//   • every in-body isRootAdmin branch stays IN-SERVICE (GET all-companies+companyName; POST
-//     targetCompanyId; PUT role/companyId gates; DELETE cross-company scope + unscoped
-//     cascade-select for root) — mis-hoisting any = tenant/priv-esc regression;
+//   • every root/tenant decision stays IN-SERVICE. GET/POST use the freshly refreshed session;
+//     PUT/DELETE additionally re-read the actor under the shared authority protocol before their
+//     role/company gates and destructive project scope — mis-hoisting any = tenant/priv-esc regression;
 //   • cross-company target → "User not found" 404 (indistinguishable from missing);
-//   • cascade deleteProjectFully loop runs BEFORE the tx by design (S3 irreversible;
-//     per-project best-effort/sequential; do NOT reorder into the tx);
-//   • the tx = reassign + 5 soft-FK nulls + user delete (all-or-nothing);
+//   • cascade stages every project teardown + permanent asset-deletion outbox and the user cleanup
+//     on the locked authority transaction; S3/CDN reconciliation starts only after that tx commits;
+//   • the tx = project teardown/outboxes (cascade) OR reassign + 5 soft-FK nulls + user delete;
 //   • audit("user_deleted") fire-and-forget (unawaited);
 //   • bcrypt.hash(password, 12); email lowercased/trimmed BEFORE validation.
 
 import { db } from "@/lib/db";
-import { users, companies, projects, annotations, chatMessages, modelAccess, appSettings, annotationGroups } from "@/lib/db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import {
+  users,
+  companies,
+  projects,
+  annotations,
+  chatMessages,
+  modelAccess,
+  appSettings,
+  annotationGroups,
+} from "@/lib/db/schema";
+import { eq, and, inArray, or, sql } from "drizzle-orm";
 import bcrypt from "bcrypt";
-import { deleteProjectFully } from "@/lib/project-delete";
+import {
+  reconcileCommittedProjectDeletions,
+  stageProjectDeletionsInTransaction,
+  type StagedProjectAssetDeletion,
+} from "@/lib/project-delete";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { ApiError } from "@/server/api/envelope";
 import type { AuthSession } from "@/lib/api-utils";
 import { assertProjectWritable } from "@/server/api/access";
 import {
-  withProjectWrites,
+  withProjectWritesInTransaction,
   type ProjectWriteTransaction,
 } from "@/server/api/project-write-capability";
+
+// Shared with the owner break-glass helper. Supported root/role/company mutations and the
+// final user-deletion admission serialize on this transaction-scoped lock.
+const ROOT_ADMIN_MUTATION_ADVISORY_LOCK = 737375864;
 
 function assertNoDemoProjects(owned: Array<{ isDemo: boolean }>): void {
   if (owned.some((project) => project.isDemo)) {
@@ -57,27 +74,34 @@ const projectWriteIdentitySelection = {
   lifecycleEpoch: projects.lifecycleEpoch,
 };
 
-async function findReferencedProjects(userId: number) {
-  const [referencedAnnotations, referencedChat, referencedGroups] = await Promise.all([
-    db
-      .selectDistinct(projectWriteIdentitySelection)
-      .from(annotations)
-      .innerJoin(projects, eq(projects.id, annotations.projectId))
-      .where(eq(annotations.creatorId, userId)),
-    db
-      .selectDistinct(projectWriteIdentitySelection)
-      .from(chatMessages)
-      .innerJoin(projects, eq(projects.id, chatMessages.projectId))
-      .where(eq(chatMessages.userId, userId)),
-    db
-      .selectDistinct(projectWriteIdentitySelection)
-      .from(annotationGroups)
-      .innerJoin(projects, eq(projects.id, annotationGroups.projectId))
-      .where(eq(annotationGroups.createdBy, userId)),
-  ]);
+async function findReferencedProjects(
+  tx: ProjectWriteTransaction,
+  userId: number,
+) {
+  // Keep these reads on the authority transaction. Running them sequentially also avoids
+  // multiplexing concurrent queries onto the transaction's single PostgreSQL client.
+  const referencedAnnotations = await tx
+    .selectDistinct(projectWriteIdentitySelection)
+    .from(annotations)
+    .innerJoin(projects, eq(projects.id, annotations.projectId))
+    .where(eq(annotations.creatorId, userId));
+  const referencedChat = await tx
+    .selectDistinct(projectWriteIdentitySelection)
+    .from(chatMessages)
+    .innerJoin(projects, eq(projects.id, chatMessages.projectId))
+    .where(eq(chatMessages.userId, userId));
+  const referencedGroups = await tx
+    .selectDistinct(projectWriteIdentitySelection)
+    .from(annotationGroups)
+    .innerJoin(projects, eq(projects.id, annotationGroups.projectId))
+    .where(eq(annotationGroups.createdBy, userId));
 
   const byId = new Map<number, (typeof referencedAnnotations)[number]>();
-  for (const project of [...referencedAnnotations, ...referencedChat, ...referencedGroups]) {
+  for (const project of [
+    ...referencedAnnotations,
+    ...referencedChat,
+    ...referencedGroups,
+  ]) {
     byId.set(project.id, project);
   }
   return [...byId.values()];
@@ -101,22 +125,39 @@ export async function listUsers(session: AuthSession): Promise<unknown> {
     .where(isRoot ? undefined : eq(users.companyId, session.user.companyId));
 
   // Fetch canRunModels + isRootAdmin
-  const permsMap: Record<number, { canRunModels: boolean; isRootAdmin: boolean }> = {};
+  const permsMap: Record<
+    number,
+    { canRunModels: boolean; isRootAdmin: boolean }
+  > = {};
   try {
     const perms = await db
-      .select({ dbId: users.id, canRunModels: users.canRunModels, isRootAdmin: users.isRootAdmin })
+      .select({
+        dbId: users.id,
+        canRunModels: users.canRunModels,
+        isRootAdmin: users.isRootAdmin,
+      })
       .from(users)
       .where(isRoot ? undefined : eq(users.companyId, session.user.companyId));
-    for (const p of perms) permsMap[p.dbId] = { canRunModels: p.canRunModels, isRootAdmin: p.isRootAdmin };
+    for (const p of perms)
+      permsMap[p.dbId] = {
+        canRunModels: p.canRunModels,
+        isRootAdmin: p.isRootAdmin,
+      };
   } catch {
     // DATA fallback (not an error path): derive from role. US-4 pins.
-    for (const u of coreUsers) permsMap[u.dbId] = { canRunModels: u.role === "admin", isRootAdmin: false };
+    for (const u of coreUsers)
+      permsMap[u.dbId] = {
+        canRunModels: u.role === "admin",
+        isRootAdmin: false,
+      };
   }
 
   // Fetch company names for root admin
   const companyMap: Record<number, string> = {};
   if (isRoot) {
-    const allCompanies = await db.select({ id: companies.id, name: companies.name }).from(companies);
+    const allCompanies = await db
+      .select({ id: companies.id, name: companies.name })
+      .from(companies);
     for (const c of allCompanies) companyMap[c.id] = c.name;
   }
 
@@ -136,11 +177,25 @@ export async function listUsers(session: AuthSession): Promise<unknown> {
 }
 
 // POST - create new user (root admin can specify companyId)
-export async function createUser(session: AuthSession, body: Record<string, unknown>): Promise<unknown> {
-  const { username, email: rawEmail, password, role, companyId } = body as {
-    username?: string; email?: string; password?: string; role?: string; companyId?: number;
+export async function createUser(
+  session: AuthSession,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const {
+    username,
+    email: rawEmail,
+    password,
+    role,
+    companyId,
+  } = body as {
+    username?: string;
+    email?: string;
+    password?: string;
+    role?: string;
+    companyId?: number;
   };
-  const email = typeof rawEmail === "string" ? rawEmail.toLowerCase().trim() : "";
+  const email =
+    typeof rawEmail === "string" ? rawEmail.toLowerCase().trim() : "";
 
   if (!username || !email || !password) {
     throw new ApiError("VALIDATION", "username, email, password required");
@@ -151,9 +206,8 @@ export async function createUser(session: AuthSession, body: Record<string, unkn
   }
 
   // Root admin can create in any company, regular admin only in own company
-  const targetCompanyId = session.user.isRootAdmin && companyId
-    ? companyId
-    : session.user.companyId;
+  const targetCompanyId =
+    session.user.isRootAdmin && companyId ? companyId : session.user.companyId;
 
   const [existing] = await db
     .select({ id: users.id })
@@ -183,38 +237,93 @@ export async function createUser(session: AuthSession, body: Record<string, unkn
 }
 
 // PUT - update user permissions, role, or company
-export async function updateUser(session: AuthSession, body: Record<string, unknown>): Promise<unknown> {
+export async function updateUser(
+  session: AuthSession,
+  body: Record<string, unknown>,
+): Promise<unknown> {
   const { id, canRunModels, role, companyId } = body as {
-    id?: string; canRunModels?: unknown; role?: string; companyId?: number;
+    id?: string;
+    canRunModels?: unknown;
+    role?: string;
+    companyId?: number;
   };
 
   if (!id) {
     throw new ApiError("VALIDATION", "id required");
   }
 
-  const [target] = await db
-    .select({ id: users.id, companyId: users.companyId })
-    .from(users)
-    .where(eq(users.publicId, id))
-    .limit(1);
+  await db.transaction(async (tx) => {
+    const lockResult = await tx.execute(
+      sql`SELECT pg_catalog.pg_try_advisory_xact_lock(${ROOT_ADMIN_MUTATION_ADVISORY_LOCK}) AS acquired`,
+    );
+    const acquired =
+      (lockResult.rows[0] as { acquired?: boolean } | undefined)?.acquired ===
+      true;
+    if (!acquired) {
+      throw new ApiError("CONFLICT", "User authority change in progress");
+    }
 
-  if (!target) {
-    throw new ApiError("NOT_FOUND", "User not found");
-  }
+    const [candidateTarget] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.publicId, id))
+      .limit(1);
+    if (!candidateTarget) {
+      throw new ApiError("NOT_FOUND", "User not found");
+    }
 
-  // Regular admin: can only manage own company users (same message — no existence leak)
-  if (!session.user.isRootAdmin && target.companyId !== session.user.companyId) {
-    throw new ApiError("NOT_FOUND", "User not found");
-  }
+    // The global authority lock orders this path with root bootstrap, break-glass root changes,
+    // and deletion. Lock the involved rows in id order as a second, local defense against any
+    // future user-authority writer that correctly takes row locks but has no global operation.
+    const authorityIds = [
+      ...new Set([session.user.dbId, candidateTarget.id]),
+    ].sort((left, right) => left - right);
+    const currentUsers = await tx
+      .select({
+        id: users.id,
+        publicId: users.publicId,
+        companyId: users.companyId,
+        role: users.role,
+        isRootAdmin: users.isRootAdmin,
+      })
+      .from(users)
+      .where(inArray(users.id, authorityIds))
+      .orderBy(users.id)
+      .for("update");
+    const actor = currentUsers.find(
+      (current) => current.id === session.user.dbId,
+    );
+    const target = currentUsers.find(
+      (current) => current.id === candidateTarget.id,
+    );
 
-  const updates: Record<string, unknown> = { updatedAt: new Date() };
-  if (typeof canRunModels === "boolean") updates.canRunModels = canRunModels;
-  if (role && session.user.isRootAdmin) updates.role = role; // Only root admin can change roles
-  if (companyId && session.user.isRootAdmin) updates.companyId = companyId; // Only root admin can move between companies
+    if (!actor || (actor.role !== "admin" && !actor.isRootAdmin)) {
+      throw new ApiError("FORBIDDEN", "Admin only");
+    }
+    if (!target) {
+      throw new ApiError("NOT_FOUND", "User not found");
+    }
+    // Regular admin: can only manage own company users (same message — no existence leak).
+    if (!actor.isRootAdmin && target.companyId !== actor.companyId) {
+      throw new ApiError("NOT_FOUND", "User not found");
+    }
 
-  // [S058 diff B] legacy caught update errors with the FIXED literal "Update failed"@500 —
-  // retired: an update throw now propagates to the shell's generic INTERNAL 500.
-  await db.update(users).set(updates).where(eq(users.publicId, id));
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (typeof canRunModels === "boolean") updates.canRunModels = canRunModels;
+    if (role && actor.isRootAdmin) updates.role = role; // Only root admin can change roles
+    if (companyId && actor.isRootAdmin) updates.companyId = companyId; // Only root admin can move between companies
+
+    // [S058 diff B] legacy caught update errors with the FIXED literal "Update failed"@500 —
+    // retired: an update throw now propagates to the shell's generic INTERNAL 500.
+    const updated = await tx
+      .update(users)
+      .set(updates)
+      .where(eq(users.id, target.id))
+      .returning({ id: users.id });
+    if (updated.length !== 1) {
+      throw new ApiError("NOT_FOUND", "User not found");
+    }
+  });
 
   return { success: true };
 }
@@ -229,9 +338,18 @@ export async function updateUser(session: AuthSession, body: Record<string, unkn
 // Either way, soft-attribution rows (annotation/chat/etc. "who did this" links)
 // are nulled so the user row can be removed; compute_usage.user_id nulls via
 // ON DELETE SET NULL; sessions / api-keys / llm-configs cascade-delete.
-export async function deleteUser(session: AuthSession, body: Record<string, unknown>): Promise<unknown> {
-  const { id, mode = "reassign", reassignTo } = body as {
-    id?: string; mode?: string; reassignTo?: string;
+export async function deleteUser(
+  session: AuthSession,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const {
+    id,
+    mode = "reassign",
+    reassignTo,
+  } = body as {
+    id?: string;
+    mode?: string;
+    reassignTo?: string;
   };
   if (!id) {
     throw new ApiError("VALIDATION", "User id required");
@@ -240,164 +358,265 @@ export async function deleteUser(session: AuthSession, body: Record<string, unkn
     throw new ApiError("VALIDATION", "mode must be 'reassign' or 'cascade'");
   }
 
-  const [target] = await db
-    .select({ id: users.id, companyId: users.companyId, isRootAdmin: users.isRootAdmin })
-    .from(users)
-    .where(eq(users.publicId, id))
-    .limit(1);
-
-  if (!target) {
-    throw new ApiError("NOT_FOUND", "User not found");
-  }
-
-  // Regular admin: can only delete own company users (same message — no existence leak)
-  if (!session.user.isRootAdmin && target.companyId !== session.user.companyId) {
-    throw new ApiError("NOT_FOUND", "User not found");
-  }
-
-  // Prevent self-deletion and root admin deletion
-  if (target.id === session.user.dbId) {
-    throw new ApiError("VALIDATION", "Cannot delete yourself");
-  }
-  if (target.isRootAdmin) {
-    throw new ApiError("VALIDATION", "Cannot delete root admin");
-  }
-
-  // Attribution cleanup is itself a project-data mutation. A user referenced by any published
-  // project must first be explicitly rehomed after that project is withdrawn.
-  const referencedProjects = await findReferencedProjects(target.id);
-  assertNoDemoProjects(referencedProjects);
-
-  // Deleting a user indirectly mutates every authored project. Demo ownership must first be
-  // withdrawn through manageDemo, the sole project-lifecycle exception.
-  const ownedProjects = await db
-    .select({
-      id: projects.id,
-      publicId: projects.publicId,
-      companyId: projects.companyId,
-      isDemo: projects.isDemo,
-      lifecycleEpoch: projects.lifecycleEpoch,
-      dataUrl: projects.dataUrl,
-      jobId: projects.jobId,
-      name: projects.name,
-      updatedAt: projects.updatedAt,
-    })
-    .from(projects)
-    .where(
-      session.user.isRootAdmin
-        ? eq(projects.authorId, target.id)
-        : and(eq(projects.authorId, target.id), eq(projects.companyId, session.user.companyId)),
-    );
-  assertNoDemoProjects(ownedProjects);
-
-  const ownedProjectIds = new Set(ownedProjects.map((project) => project.id));
-  const protectedProjectsById = new Map(
-    [...referencedProjects, ...ownedProjects].map((project) => [project.id, project]),
-  );
-
-  // Resolve the reassign target (reassign mode only).
-  let reassignTargetId = session.user.dbId; // default: the acting admin (root, for the owner)
-  if (mode === "reassign" && reassignTo) {
-    const [rt] = await db
-      .select({ id: users.id, companyId: users.companyId })
-      .from(users)
-      .where(eq(users.publicId, reassignTo))
-      .limit(1);
-    if (!rt) {
-      throw new ApiError("VALIDATION", "Reassign target not found");
-    }
-    // Keep projects in-company for regular admins.
-    if (!session.user.isRootAdmin && rt.companyId !== session.user.companyId) {
-      throw new ApiError("VALIDATION", "Reassign target must be in your company");
-    }
-    reassignTargetId = rt.id;
-  }
-  if (mode === "reassign" && reassignTargetId === target.id) {
-    throw new ApiError("VALIDATION", "Cannot reassign projects to the user being deleted");
-  }
-
   // [S058 diff B] legacy's outer catch returned err.message@500 (DR002 users:270 leak) —
   // retired to the shell generic INTERNAL 500, but the "[user-delete] Failed" breadcrumb
   // SURVIVES via this try/log/re-throw (the cascade is irreversible; ops needs the trace).
+  let mutationStarted = false;
   try {
     let projectCount = 0;
+    let reassignTargetId: number | undefined;
+    let actorCompanyId = session.user.companyId;
+    let committedProjectDeletions: StagedProjectAssetDeletion[] = [];
 
-    // Nuclear path touches S3 (irreversible), so it runs BEFORE the transaction;
-    // per-project deletion is best-effort/sequential.
-    if (mode === "cascade") {
-      projectCount = ownedProjects.length;
-      for (const p of ownedProjects) {
-        await deleteProjectFully(p, assertProjectWritable(p));
+    // Fail fast so authority-lock waiters cannot consume the pool. Project/outbox/user mutations
+    // reuse this exact transaction; no external work or nested transaction runs while it is open.
+    await db.transaction(async (rootMutationTx) => {
+      const lockResult = await rootMutationTx.execute(
+        sql`SELECT pg_catalog.pg_try_advisory_xact_lock(${ROOT_ADMIN_MUTATION_ADVISORY_LOCK}) AS acquired`,
+      );
+      const acquired =
+        (lockResult.rows[0] as { acquired?: boolean } | undefined)?.acquired ===
+        true;
+      if (!acquired) {
+        throw new ApiError("CONFLICT", "User authority change in progress");
       }
-    }
 
-    // Atomic: reassign the user's projects (reassign mode) + null soft-attribution
-    // FKs + delete the user. All-or-nothing so a mid-sequence failure can't leave
-    // a half-deleted user.
-    const cleanupProjects = [...protectedProjectsById.values()].filter(
-      (project) => mode !== "cascade" || !ownedProjectIds.has(project.id),
-    );
-    const cleanupProjectIds = cleanupProjects.map((project) => project.id);
-    const cleanupCapabilities = cleanupProjects.map(assertProjectWritable);
-    const runCleanup = async (tx: ProjectWriteTransaction) => {
-      if (mode === "reassign") {
-        const capturedOwnedIds = [...ownedProjectIds];
-        if (capturedOwnedIds.length > 0) {
-          const moved = await tx
-            .update(projects)
-            .set({ authorId: reassignTargetId })
-            .where(and(
-              eq(projects.authorId, target.id),
-              eq(projects.isDemo, false),
-              inArray(projects.id, capturedOwnedIds),
-            ))
-            .returning({ id: projects.id });
-          projectCount = moved.length;
+      const requestedPublicIds = [id];
+      if (mode === "reassign" && reassignTo)
+        requestedPublicIds.push(reassignTo);
+      const guardedUsers = await rootMutationTx
+        .select({
+          id: users.id,
+          publicId: users.publicId,
+          companyId: users.companyId,
+          role: users.role,
+          isRootAdmin: users.isRootAdmin,
+        })
+        .from(users)
+        .where(
+          or(
+            eq(users.id, session.user.dbId),
+            inArray(users.publicId, requestedPublicIds),
+          ),
+        )
+        .orderBy(users.id);
+      const guardedActor = guardedUsers.find(
+        (current) => current.id === session.user.dbId,
+      );
+      const guardedTarget = guardedUsers.find(
+        (current) => current.publicId === id,
+      );
+
+      if (
+        !guardedActor ||
+        (guardedActor.role !== "admin" && !guardedActor.isRootAdmin)
+      ) {
+        throw new ApiError("FORBIDDEN", "Admin only");
+      }
+      if (!guardedTarget) {
+        throw new ApiError("NOT_FOUND", "User not found");
+      }
+      actorCompanyId = guardedActor.companyId;
+
+      // Derive the tenant/root decision from the rows read after lock acquisition, never from
+      // the request's JWT snapshot. A demotion or company move that won the lock first therefore
+      // changes this operation's authority before any project/outbox mutation can begin.
+      if (
+        !guardedActor.isRootAdmin &&
+        guardedTarget.companyId !== guardedActor.companyId
+      ) {
+        throw new ApiError("NOT_FOUND", "User not found");
+      }
+      if (guardedTarget.id === guardedActor.id) {
+        throw new ApiError("VALIDATION", "Cannot delete yourself");
+      }
+      if (guardedTarget.isRootAdmin) {
+        throw new ApiError("VALIDATION", "Cannot delete root admin");
+      }
+
+      reassignTargetId = guardedActor.id;
+      if (mode === "reassign" && reassignTo) {
+        const guardedReassignTarget = guardedUsers.find(
+          (current) => current.publicId === reassignTo,
+        );
+        if (!guardedReassignTarget) {
+          throw new ApiError("VALIDATION", "Reassign target not found");
         }
+        if (
+          !guardedActor.isRootAdmin &&
+          guardedReassignTarget.companyId !== guardedActor.companyId
+        ) {
+          throw new ApiError(
+            "VALIDATION",
+            "Reassign target must be in your company",
+          );
+        }
+        reassignTargetId = guardedReassignTarget.id;
       }
-      if (cleanupProjectIds.length > 0) {
-        await tx
-          .update(annotations)
-          .set({ creatorId: null })
-          .where(and(
-            eq(annotations.creatorId, target.id),
-            inArray(annotations.projectId, cleanupProjectIds),
-          ));
-        await tx
-          .update(chatMessages)
-          .set({ userId: null })
-          .where(and(
-            eq(chatMessages.userId, target.id),
-            inArray(chatMessages.projectId, cleanupProjectIds),
-          ));
-        await tx
-          .update(annotationGroups)
-          .set({ createdBy: null })
-          .where(and(
-            eq(annotationGroups.createdBy, target.id),
-            inArray(annotationGroups.projectId, cleanupProjectIds),
-          ));
+      if (mode === "reassign" && reassignTargetId === guardedTarget.id) {
+        throw new ApiError(
+          "VALIDATION",
+          "Cannot reassign projects to the user being deleted",
+        );
       }
-      await tx.update(modelAccess).set({ grantedBy: null }).where(eq(modelAccess.grantedBy, target.id));
-      await tx.update(appSettings).set({ updatedBy: null }).where(eq(appSettings.updatedBy, target.id));
-      await tx.delete(users).where(eq(users.publicId, id));
-    };
 
-    if (cleanupCapabilities.length > 0) {
-      await withProjectWrites(cleanupCapabilities, runCleanup);
-    } else {
-      await db.transaction(runCleanup);
-    }
+      // Attribution cleanup is itself a project-data mutation. A user referenced by any published
+      // project must first be explicitly rehomed after that project is withdrawn.
+      const referencedProjects = await findReferencedProjects(
+        rootMutationTx,
+        guardedTarget.id,
+      );
+      assertNoDemoProjects(referencedProjects);
+
+      // Deleting a user indirectly mutates every authored project. Demo ownership must first be
+      // withdrawn through manageDemo, the sole project-lifecycle exception.
+      const ownedProjects = await rootMutationTx
+        .select({
+          id: projects.id,
+          publicId: projects.publicId,
+          companyId: projects.companyId,
+          isDemo: projects.isDemo,
+          lifecycleEpoch: projects.lifecycleEpoch,
+          dataUrl: projects.dataUrl,
+          jobId: projects.jobId,
+          name: projects.name,
+          updatedAt: projects.updatedAt,
+        })
+        .from(projects)
+        .where(
+          guardedActor.isRootAdmin
+            ? eq(projects.authorId, guardedTarget.id)
+            : and(
+                eq(projects.authorId, guardedTarget.id),
+                eq(projects.companyId, guardedActor.companyId),
+              ),
+        );
+      assertNoDemoProjects(ownedProjects);
+
+      const ownedProjectIds = new Set(
+        ownedProjects.map((project) => project.id),
+      );
+      const protectedProjectsById = new Map(
+        [...referencedProjects, ...ownedProjects].map((project) => [
+          project.id,
+          project,
+        ]),
+      );
+      const cleanupProjects = [...protectedProjectsById.values()].filter(
+        (project) => mode !== "cascade" || !ownedProjectIds.has(project.id),
+      );
+      const cleanupProjectIds = cleanupProjects.map((project) => project.id);
+      const cleanupCapabilities = cleanupProjects.map(assertProjectWritable);
+      const runCleanup = async (tx: ProjectWriteTransaction) => {
+        if (mode === "reassign") {
+          const capturedOwnedIds = [...ownedProjectIds];
+          if (capturedOwnedIds.length > 0) {
+            const moved = await tx
+              .update(projects)
+              .set({ authorId: reassignTargetId! })
+              .where(
+                and(
+                  eq(projects.authorId, guardedTarget.id),
+                  eq(projects.isDemo, false),
+                  inArray(projects.id, capturedOwnedIds),
+                ),
+              )
+              .returning({ id: projects.id });
+            projectCount = moved.length;
+          }
+        }
+        if (cleanupProjectIds.length > 0) {
+          await tx
+            .update(annotations)
+            .set({ creatorId: null })
+            .where(
+              and(
+                eq(annotations.creatorId, guardedTarget.id),
+                inArray(annotations.projectId, cleanupProjectIds),
+              ),
+            );
+          await tx
+            .update(chatMessages)
+            .set({ userId: null })
+            .where(
+              and(
+                eq(chatMessages.userId, guardedTarget.id),
+                inArray(chatMessages.projectId, cleanupProjectIds),
+              ),
+            );
+          await tx
+            .update(annotationGroups)
+            .set({ createdBy: null })
+            .where(
+              and(
+                eq(annotationGroups.createdBy, guardedTarget.id),
+                inArray(annotationGroups.projectId, cleanupProjectIds),
+              ),
+            );
+        }
+        await tx
+          .update(modelAccess)
+          .set({ grantedBy: null })
+          .where(eq(modelAccess.grantedBy, guardedTarget.id));
+        await tx
+          .update(appSettings)
+          .set({ updatedBy: null })
+          .where(eq(appSettings.updatedBy, guardedTarget.id));
+        const deleted = await tx
+          .delete(users)
+          .where(and(eq(users.publicId, id), eq(users.isRootAdmin, false)))
+          .returning({ id: users.id });
+        if (deleted.length !== 1) {
+          throw new ApiError("VALIDATION", "Cannot delete root admin");
+        }
+      };
+
+      mutationStarted = true;
+      if (mode === "cascade") {
+        projectCount = ownedProjects.length;
+        const staged = await stageProjectDeletionsInTransaction(
+          rootMutationTx,
+          ownedProjects.map((project) => ({
+            project,
+            writeCapability: assertProjectWritable(project),
+          })),
+          cleanupCapabilities,
+          runCleanup,
+        );
+        committedProjectDeletions = staged.deletions;
+      } else if (cleanupCapabilities.length > 0) {
+        await withProjectWritesInTransaction(
+          rootMutationTx,
+          cleanupCapabilities,
+          runCleanup,
+        );
+      } else {
+        await runCleanup(rootMutationTx);
+      }
+    });
+
+    // The scheduled worker owns durability. These immediate attempts are best-effort and cannot
+    // observe an uncommitted tombstone or purge files for a rolled-back user deletion.
+    await reconcileCommittedProjectDeletions(committedProjectDeletions);
 
     audit("user_deleted", {
       userId: session.user.dbId,
-      companyId: session.user.companyId,
-      details: { deletedUserId: id, mode, projectCount, reassignTargetId: mode === "reassign" ? reassignTargetId : undefined },
+      companyId: actorCompanyId,
+      details: {
+        deletedUserId: id,
+        mode,
+        projectCount,
+        reassignTargetId: mode === "reassign" ? reassignTargetId : undefined,
+      },
     });
 
     return { success: true, mode, projectCount };
   } catch (err) {
-    logger.error("[user-delete] Failed", { id, mode, err });
+    // Preserve the operational breadcrumb for unexpected admission failures and for every error
+    // after mutation starts, without logging ordinary pre-mutation 4xx validation as a failure.
+    if (mutationStarted || !(err instanceof ApiError)) {
+      logger.error("[user-delete] Failed", { id, mode, err });
+    }
     throw err; // → shell generic INTERNAL 500 (no err.message leak)
   }
 }

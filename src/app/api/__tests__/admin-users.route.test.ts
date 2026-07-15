@@ -2,9 +2,8 @@
 // [refactor jul8 S058] CHARACTERIZATION for the admin/users SOLO (GET list + POST create +
 // PUT update + DELETE reassign/cascade), written as THE FREEZE before the fold onto
 // services/admin-users.ts. Solo. requireAdmin on all 4. ⚠️ SAFETY: @/lib/project-delete is
-// MODULE-MOCKED (deleteProjectFully fires S3 deletes UNCONDITIONALLY + SFN StopExecution when
-// STEP_FUNCTION_ARN is set — leaving the env unset is INSUFFICIENT; the mock severs both with
-// one seam). @/lib/audit mocked (fire-and-forget db write). bcrypt REAL (never assert hash
+// MODULE-MOCKED so route characterization never reaches S3/CDN; focused production-helper tests
+// separately prove the real atomic cascade. @/lib/audit mocked (fire-and-forget db write). bcrypt REAL (never assert hash
 // bytes — verify via bcrypt.compare). Frozen quirk inventory:
 //   • GET: BARE ARRAY. Root → all companies + companyName; regular admin → own company only,
 //     companyName undefined (key dropped). INNER perms try/catch = DATA fallback (throw →
@@ -20,9 +19,10 @@
 //     ROOT-gated (silently ignored for regular admin); updatedAt always; catch :149 = FIXED
 //     literal "Update failed" @500 [fold: B → generic INTERNAL 500]. {success:true}.
 //   • DELETE: 9-literal validation ladder (see US-12); reassign default → acting admin;
-//     reassignTo publicId honored (in-company for non-root); cascade → deleteProjectFully per
-//     owned project (root: unscoped by company; admin: company-scoped select) BEFORE the tx;
-//     tx = reassign projects + null 5 soft-attribution FKs + delete user (all-or-nothing);
+//     reassignTo publicId honored (in-company for non-root); cascade bulk-stages every owned
+//     project teardown/outbox (root: unscoped by company; admin: company-scoped select) with
+//     referenced-project attribution cleanup + user deletion on one authority transaction;
+//     the mock's singleton spy is characterization instrumentation for the selected project set;
 //     audit("user_deleted") fire-and-forget; catch :270 = err.message LEAK + logger.error
 //     "[user-delete] Failed" [fold: B → generic INTERNAL 500, KEEP the logger breadcrumb via
 //     in-service try/log/re-throw]. {success:true, mode, projectCount}.
@@ -38,18 +38,44 @@ vi.mock("@/lib/auth", async () => {
 
 const h = vi.hoisted(() => ({
   deleteProjectFully: vi.fn(),
+  stageProjectDeletionsInTransaction: vi.fn(),
+  reconcileCommittedProjectDeletions: vi.fn(),
   audit: vi.fn(),
 }));
-vi.mock("@/lib/project-delete", () => ({ deleteProjectFully: h.deleteProjectFully }));
+vi.mock("@/lib/project-delete", () => ({
+  deleteProjectFully: h.deleteProjectFully,
+  stageProjectDeletionsInTransaction: h.stageProjectDeletionsInTransaction,
+  reconcileCommittedProjectDeletions: h.reconcileCommittedProjectDeletions,
+}));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
 
-import { GET as usGET, POST as usPOST, PUT as usPUT, DELETE as usDELETE } from "@/app/api/admin/users/route";
+import {
+  GET as usGET,
+  POST as usPOST,
+  PUT as usPUT,
+  DELETE as usDELETE,
+} from "@/app/api/admin/users/route";
 import { db } from "@/lib/db";
-import { annotationGroups, annotations, chatMessages, projects, users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import {
+  annotationGroups,
+  annotations,
+  chatMessages,
+  projects,
+  users,
+} from "@/lib/db/schema";
+import { eq, sql } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import { logger } from "@/lib/logger";
-import { asUser, createCompany, createProject, createUser, makeReq, publishDemoFixture, readJson, signedOut } from "@/test/harness";
+import {
+  asUser,
+  createCompany,
+  createProject,
+  createUser,
+  makeReq,
+  publishDemoFixture,
+  readJson,
+  signedOut,
+} from "@/test/harness";
 
 const dbUp = inject("dbUp") as boolean;
 
@@ -60,44 +86,85 @@ const ADMIN_ONLY = { error: { code: "FORBIDDEN", message: "Admin only" } };
 const A = {
   validation: (message: string) => ({ error: { code: "VALIDATION", message } }),
   notFound: (message: string) => ({ error: { code: "NOT_FOUND", message } }),
+  conflict: (message: string) => ({ error: { code: "CONFLICT", message } }),
+  forbidden: (message: string) => ({ error: { code: "FORBIDDEN", message } }),
 };
-const INTERNAL = { error: { code: "INTERNAL", message: "Internal server error" } };
+const INTERNAL = {
+  error: { code: "INTERNAL", message: "Internal server error" },
+};
 
 async function makeWorld() {
   const company = await createCompany();
   const admin = await createUser(company.id, { role: "admin" });
   const member = await createUser(company.id);
-  const root = await createUser(company.id, { isRootAdmin: true, role: "admin" });
+  const root = await createUser(company.id, {
+    isRootAdmin: true,
+    role: "admin",
+  });
   return { company, admin, member, root };
 }
 
 async function userByPublicId(publicId: string) {
-  const [u] = await db.select().from(users).where(eq(users.publicId, publicId)).limit(1);
+  const [u] = await db
+    .select()
+    .from(users)
+    .where(eq(users.publicId, publicId))
+    .limit(1);
   return u;
 }
 async function publicIdOf(dbId: number) {
-  const [u] = await db.select({ publicId: users.publicId }).from(users).where(eq(users.id, dbId)).limit(1);
+  const [u] = await db
+    .select({ publicId: users.publicId })
+    .from(users)
+    .where(eq(users.id, dbId))
+    .limit(1);
   return u.publicId;
 }
 
 const getReq = () => makeReq("/api/admin/users", { method: "GET" });
-const postReq = (body: unknown) => makeReq("/api/admin/users", { method: "POST", body });
-const putReq = (body: unknown) => makeReq("/api/admin/users", { method: "PUT", body });
-const delReq = (body: unknown) => makeReq("/api/admin/users", { method: "DELETE", body });
+const postReq = (body: unknown) =>
+  makeReq("/api/admin/users", { method: "POST", body });
+const putReq = (body: unknown) =>
+  makeReq("/api/admin/users", { method: "PUT", body });
+const delReq = (body: unknown) =>
+  makeReq("/api/admin/users", { method: "DELETE", body });
 const malformed = (method: string) =>
   new Request("http://test.local/api/admin/users", {
-    method, headers: { "content-type": "application/json" }, body: "{ nope",
+    method,
+    headers: { "content-type": "application/json" },
+    body: "{ nope",
   });
 
 beforeEach(() => {
   vi.clearAllMocks();
   signedOut();
-  // The mock severs S3 + SFN but MUST mimic the real fn's DB effect (project row deleted) —
-  // otherwise the cascade's subsequent user-delete violates projects.authorId FK and the
-  // route 500s where production succeeds.
-  h.deleteProjectFully.mockImplementation(async (p: { id: number }) => {
-    await db.delete(projects).where(eq(projects.id, p.id));
-  });
+  h.deleteProjectFully.mockResolvedValue(undefined);
+  h.stageProjectDeletionsInTransaction.mockImplementation(
+    async (
+      tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+      entries: Array<{
+        project: { id: number; dataUrl: string };
+        writeCapability: unknown;
+      }>,
+      _additionalCapabilities: unknown[],
+      write: (
+        tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+      ) => Promise<unknown>,
+    ) => {
+      for (const entry of entries) {
+        await h.deleteProjectFully(entry.project, entry.writeCapability);
+        await tx.delete(projects).where(eq(projects.id, entry.project.id));
+      }
+      return {
+        deletions: entries.map((entry, index) => ({
+          id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+          storageRoot: entry.project.dataUrl,
+        })),
+        result: await write(tx),
+      };
+    },
+  );
+  h.reconcileCommittedProjectDeletions.mockResolvedValue(undefined);
   h.audit.mockResolvedValue(undefined);
 });
 
@@ -107,7 +174,10 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const { member } = await makeWorld();
     const calls = [
       () => usGET(getReq()),
-      () => usPOST(postReq({ username: "u", email: "e@x.t", password: "longenough" })),
+      () =>
+        usPOST(
+          postReq({ username: "u", email: "e@x.t", password: "longenough" }),
+        ),
       () => usPUT(putReq({ id: "x" })),
       () => usDELETE(delReq({ id: "x" })),
     ];
@@ -143,7 +213,11 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const me = r.body.find((u: { id: string }) => u.id === adminPub);
     // canRunModels reflects the REAL column (harness default false) — NOT role-derived;
     // contrast with US-4 where the perms-query fallback DOES derive true from role==="admin".
-    expect(me).toMatchObject({ role: "admin", canRunModels: false, isRootAdmin: false });
+    expect(me).toMatchObject({
+      role: "admin",
+      canRunModels: false,
+      isRootAdmin: false,
+    });
     expect(me.companyName).toBeUndefined(); // non-root: no company map
     const mem = r.body.find((u: { id: string }) => u.id === memberPub);
     expect(mem).toMatchObject({ role: "member", canRunModels: false });
@@ -159,7 +233,9 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const row = r.body.find((u: { id: string }) => u.id === foreignPub);
     expect(row).toBeTruthy(); // cross-company visible to root
     expect(row.companyName).toBe(otherCo.name);
-    const mine = r.body.find((u: { id: string; companyId: number }) => u.companyId === company.id);
+    const mine = r.body.find(
+      (u: { id: string; companyId: number }) => u.companyId === company.id,
+    );
     expect(mine.companyName).toBe(company.name);
   });
 
@@ -168,7 +244,9 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     asUser(admin);
     const realSelect = db.select.bind(db);
     let n = 0;
-    const spy = vi.spyOn(db, "select").mockImplementation(((...a: unknown[]) => {
+    const spy = vi.spyOn(db, "select").mockImplementation(((
+      ...a: unknown[]
+    ) => {
       n += 1;
       if (n === 2) throw new Error("perms query down"); // the canRunModels/isRootAdmin select
       return (realSelect as (...args: unknown[]) => unknown)(...a);
@@ -178,26 +256,54 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     expect(r.status).toBe(200); // business fallback, not an error
     const adminPub = await publicIdOf(admin.id);
     const memberPub = await publicIdOf(member.id);
-    expect(r.body.find((u: { id: string }) => u.id === adminPub)).toMatchObject({ canRunModels: true, isRootAdmin: false }); // role==='admin'
-    expect(r.body.find((u: { id: string }) => u.id === memberPub)).toMatchObject({ canRunModels: false, isRootAdmin: false });
+    expect(r.body.find((u: { id: string }) => u.id === adminPub)).toMatchObject(
+      { canRunModels: true, isRootAdmin: false },
+    ); // role==='admin'
+    expect(
+      r.body.find((u: { id: string }) => u.id === memberPub),
+    ).toMatchObject({ canRunModels: false, isRootAdmin: false });
   });
 
   // ── POST ────────────────────────────────────────────────────────────────────
   it("US-5 POST validation ladder: required fields, short password, duplicate email (normalized)", async () => {
     const { admin } = await makeWorld();
     asUser(admin);
-    for (const body of [{}, { username: "u" }, { username: "u", email: "e@x.t" }]) {
+    for (const body of [
+      {},
+      { username: "u" },
+      { username: "u", email: "e@x.t" },
+    ]) {
       const r = await readJson(await usPOST(postReq(body)));
       expect(r.status).toBe(400);
-      expect(r.body).toEqual(A.validation("username, email, password required")); // [S058 fold: A applied]
+      expect(r.body).toEqual(
+        A.validation("username, email, password required"),
+      ); // [S058 fold: A applied]
     }
-    let r = await readJson(await usPOST(postReq({ username: "u", email: "e@x.t", password: "short7c" })));
+    let r = await readJson(
+      await usPOST(
+        postReq({ username: "u", email: "e@x.t", password: "short7c" }),
+      ),
+    );
     expect(r.status).toBe(400);
-    expect(r.body).toEqual(A.validation("Password must be at least 8 characters")); // [S058 fold: A applied]
+    expect(r.body).toEqual(
+      A.validation("Password must be at least 8 characters"),
+    ); // [S058 fold: A applied]
     // duplicate email — existing row is lowercase; POST an upper/spaced variant → normalized match
     const dup = `dup-${Date.now()}@x.test`;
-    await readJson(await usPOST(postReq({ username: "first", email: dup, password: "longenough" })));
-    r = await readJson(await usPOST(postReq({ username: "second", email: `  ${dup.toUpperCase()}  `, password: "longenough" })));
+    await readJson(
+      await usPOST(
+        postReq({ username: "first", email: dup, password: "longenough" }),
+      ),
+    );
+    r = await readJson(
+      await usPOST(
+        postReq({
+          username: "second",
+          email: `  ${dup.toUpperCase()}  `,
+          password: "longenough",
+        }),
+      ),
+    );
     expect(r.status).toBe(400);
     expect(r.body).toEqual(A.validation("Email already exists")); // [S058 fold: A applied]
   });
@@ -206,16 +312,46 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const { company, admin } = await makeWorld();
     asUser(admin);
     const email = `New-${Date.now()}@X.Test`;
-    const r = await readJson(await usPOST(postReq({ username: "newbie", email: `  ${email}  `, password: "longenough" })));
+    const r = await readJson(
+      await usPOST(
+        postReq({
+          username: "newbie",
+          email: `  ${email}  `,
+          password: "longenough",
+        }),
+      ),
+    );
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true });
-    const [row] = await db.select().from(users).where(eq(users.email, email.toLowerCase())).limit(1);
-    expect(row).toMatchObject({ username: "newbie", role: "member", canRunModels: false, companyId: company.id });
+    const [row] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email.toLowerCase()))
+      .limit(1);
+    expect(row).toMatchObject({
+      username: "newbie",
+      role: "member",
+      canRunModels: false,
+      companyId: company.id,
+    });
     expect(await bcrypt.compare("longenough", row.passwordHash!)).toBe(true);
     // role:"admin" → admin + canRunModels
     const email2 = `adm-${Date.now()}@x.test`;
-    await readJson(await usPOST(postReq({ username: "adminette", email: email2, password: "longenough", role: "admin" })));
-    const [row2] = await db.select().from(users).where(eq(users.email, email2)).limit(1);
+    await readJson(
+      await usPOST(
+        postReq({
+          username: "adminette",
+          email: email2,
+          password: "longenough",
+          role: "admin",
+        }),
+      ),
+    );
+    const [row2] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email2))
+      .limit(1);
     expect(row2).toMatchObject({ role: "admin", canRunModels: true });
   });
 
@@ -224,19 +360,51 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const targetCo = await createCompany();
     asUser(root);
     const e1 = `r-${Date.now()}@x.test`;
-    await readJson(await usPOST(postReq({ username: "rooted", email: e1, password: "longenough", companyId: targetCo.id })));
-    expect((await db.select().from(users).where(eq(users.email, e1)))[0].companyId).toBe(targetCo.id);
+    await readJson(
+      await usPOST(
+        postReq({
+          username: "rooted",
+          email: e1,
+          password: "longenough",
+          companyId: targetCo.id,
+        }),
+      ),
+    );
+    expect(
+      (await db.select().from(users).where(eq(users.email, e1)))[0].companyId,
+    ).toBe(targetCo.id);
     asUser(admin);
     const e2 = `a-${Date.now()}@x.test`;
-    await readJson(await usPOST(postReq({ username: "scoped", email: e2, password: "longenough", companyId: targetCo.id })));
-    expect((await db.select().from(users).where(eq(users.email, e2)))[0].companyId).toBe(company.id); // forced own
+    await readJson(
+      await usPOST(
+        postReq({
+          username: "scoped",
+          email: e2,
+          password: "longenough",
+          companyId: targetCo.id,
+        }),
+      ),
+    );
+    expect(
+      (await db.select().from(users).where(eq(users.email, e2)))[0].companyId,
+    ).toBe(company.id); // forced own
   });
 
   it("US-8 POST insert throws → 500 err.message LEAK (legacy)", async () => {
     const { admin } = await makeWorld();
     asUser(admin);
-    const spy = vi.spyOn(db, "insert").mockImplementationOnce(() => { throw new Error("boom-insert"); });
-    const r = await readJson(await usPOST(postReq({ username: "u", email: `l-${Date.now()}@x.t`, password: "longenough" })));
+    const spy = vi.spyOn(db, "insert").mockImplementationOnce(() => {
+      throw new Error("boom-insert");
+    });
+    const r = await readJson(
+      await usPOST(
+        postReq({
+          username: "u",
+          email: `l-${Date.now()}@x.t`,
+          password: "longenough",
+        }),
+      ),
+    );
     spy.mockRestore();
     expect(r.status).toBe(500);
     // [S058 fold: B applied — the :109 err.message leak ({error:"boom-insert"}) is RETIRED
@@ -253,10 +421,16 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     let r = await readJson(await usPUT(putReq({})));
     expect(r.status).toBe(400);
     expect(r.body).toEqual(A.validation("id required")); // [S058 fold: A applied]
-    r = await readJson(await usPUT(putReq({ id: "00000000-0000-4000-8000-000000000000" })));
+    r = await readJson(
+      await usPUT(putReq({ id: "00000000-0000-4000-8000-000000000000" })),
+    );
     expect(r.status).toBe(404);
     expect(r.body).toEqual(A.notFound("User not found")); // [S058 fold: A applied]
-    r = await readJson(await usPUT(putReq({ id: await publicIdOf(foreign.id), canRunModels: true })));
+    r = await readJson(
+      await usPUT(
+        putReq({ id: await publicIdOf(foreign.id), canRunModels: true }),
+      ),
+    );
     expect(r.status).toBe(404);
     expect(r.body).toEqual(A.notFound("User not found")); // [S058 fold: A applied] — same msg cross-company
   });
@@ -266,17 +440,36 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const otherCo = await createCompany();
     const memberPub = await publicIdOf(member.id);
     asUser(admin);
-    let r = await readJson(await usPUT(putReq({ id: memberPub, canRunModels: true, role: "admin", companyId: otherCo.id })));
+    let r = await readJson(
+      await usPUT(
+        putReq({
+          id: memberPub,
+          canRunModels: true,
+          role: "admin",
+          companyId: otherCo.id,
+        }),
+      ),
+    );
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true });
     let row = await userByPublicId(memberPub);
-    expect(row).toMatchObject({ canRunModels: true, role: "member", companyId: company.id }); // role+company IGNORED
+    expect(row).toMatchObject({
+      canRunModels: true,
+      role: "member",
+      companyId: company.id,
+    }); // role+company IGNORED
     // canRunModels only applies when boolean
-    r = await readJson(await usPUT(putReq({ id: memberPub, canRunModels: "yes" })));
+    r = await readJson(
+      await usPUT(putReq({ id: memberPub, canRunModels: "yes" })),
+    );
     expect((await userByPublicId(memberPub)).canRunModels).toBe(true); // unchanged (string ignored)
     // root: role + companyId applied
     asUser(root);
-    r = await readJson(await usPUT(putReq({ id: memberPub, role: "admin", companyId: otherCo.id })));
+    r = await readJson(
+      await usPUT(
+        putReq({ id: memberPub, role: "admin", companyId: otherCo.id }),
+      ),
+    );
     row = await userByPublicId(memberPub);
     expect(row).toMatchObject({ role: "admin", companyId: otherCo.id });
   });
@@ -285,8 +478,12 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const { admin, member } = await makeWorld();
     asUser(admin);
     const memberPub = await publicIdOf(member.id);
-    const spy = vi.spyOn(db, "update").mockImplementationOnce(() => { throw new Error("boom-update"); });
-    const r = await readJson(await usPUT(putReq({ id: memberPub, canRunModels: false })));
+    const spy = vi
+      .spyOn(db, "transaction")
+      .mockRejectedValueOnce(new Error("boom-update"));
+    const r = await readJson(
+      await usPUT(putReq({ id: memberPub, canRunModels: false })),
+    );
     spy.mockRestore();
     expect(r.status).toBe(500);
     // [S058 fold: B applied — the :149 fixed catch-500 literal ({error:"Update failed"}) is
@@ -303,20 +500,38 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     asUser(admin);
     const cases: Array<[unknown, number, string]> = [
       [{}, 400, "User id required"],
-      [{ id: memberPub, mode: "nuke" }, 400, "mode must be 'reassign' or 'cascade'"],
+      [
+        { id: memberPub, mode: "nuke" },
+        400,
+        "mode must be 'reassign' or 'cascade'",
+      ],
       [{ id: "00000000-0000-4000-8000-000000000000" }, 404, "User not found"],
       [{ id: await publicIdOf(foreign.id) }, 404, "User not found"], // cross-company
       [{ id: await publicIdOf(admin.id) }, 400, "Cannot delete yourself"],
       [{ id: await publicIdOf(root.id) }, 400, "Cannot delete root admin"],
-      [{ id: memberPub, reassignTo: "00000000-0000-4000-8000-000000000000" }, 400, "Reassign target not found"],
-      [{ id: memberPub, reassignTo: await publicIdOf(foreign.id) }, 400, "Reassign target must be in your company"],
-      [{ id: memberPub, reassignTo: memberPub }, 400, "Cannot reassign projects to the user being deleted"],
+      [
+        { id: memberPub, reassignTo: "00000000-0000-4000-8000-000000000000" },
+        400,
+        "Reassign target not found",
+      ],
+      [
+        { id: memberPub, reassignTo: await publicIdOf(foreign.id) },
+        400,
+        "Reassign target must be in your company",
+      ],
+      [
+        { id: memberPub, reassignTo: memberPub },
+        400,
+        "Cannot reassign projects to the user being deleted",
+      ],
     ];
     for (const [body, status, msg] of cases) {
       const r = await readJson(await usDELETE(delReq(body)));
       expect(r.status).toBe(status);
       // [S058 fold: A applied — code from status: 400→VALIDATION, 404→NOT_FOUND]
-      expect(r.body).toEqual(status === 404 ? A.notFound(msg) : A.validation(msg));
+      expect(r.body).toEqual(
+        status === 404 ? A.notFound(msg) : A.validation(msg),
+      );
     }
   });
 
@@ -326,25 +541,54 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const victimPub = await publicIdOf(victim.id);
     const p1 = await createProject(company.id, victim.id);
     const p2 = await createProject(company.id, victim.id);
-    const [ann] = await db.insert(annotations).values({
-      projectId: p1.id, name: "a", minX: 0, minY: 0, maxX: 0.5, maxY: 0.5, pageNumber: 1, creatorId: victim.id,
-    }).returning();
+    const [ann] = await db
+      .insert(annotations)
+      .values({
+        projectId: p1.id,
+        name: "a",
+        minX: 0,
+        minY: 0,
+        maxX: 0.5,
+        maxY: 0.5,
+        pageNumber: 1,
+        creatorId: victim.id,
+      })
+      .returning();
     asUser(admin);
     const r = await readJson(await usDELETE(delReq({ id: victimPub })));
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ success: true, mode: "reassign", projectCount: 2 });
+    expect(r.body).toEqual({
+      success: true,
+      mode: "reassign",
+      projectCount: 2,
+    });
     expect(h.deleteProjectFully).not.toHaveBeenCalled();
     for (const p of [p1, p2]) {
-      const [row] = await db.select({ authorId: projects.authorId }).from(projects).where(eq(projects.id, p.id));
+      const [row] = await db
+        .select({ authorId: projects.authorId })
+        .from(projects)
+        .where(eq(projects.id, p.id));
       expect(row.authorId).toBe(admin.id); // default reassign target = acting admin
     }
-    const [annRow] = await db.select({ creatorId: annotations.creatorId }).from(annotations).where(eq(annotations.id, ann.id));
+    const [annRow] = await db
+      .select({ creatorId: annotations.creatorId })
+      .from(annotations)
+      .where(eq(annotations.id, ann.id));
     expect(annRow.creatorId).toBeNull(); // soft-attribution nulled in the tx
     expect(await userByPublicId(victimPub)).toBeUndefined();
-    expect(h.audit).toHaveBeenCalledWith("user_deleted", expect.objectContaining({
-      userId: admin.id, companyId: company.id,
-      details: expect.objectContaining({ deletedUserId: victimPub, mode: "reassign", projectCount: 2, reassignTargetId: admin.id }),
-    }));
+    expect(h.audit).toHaveBeenCalledWith(
+      "user_deleted",
+      expect.objectContaining({
+        userId: admin.id,
+        companyId: company.id,
+        details: expect.objectContaining({
+          deletedUserId: victimPub,
+          mode: "reassign",
+          projectCount: 2,
+          reassignTargetId: admin.id,
+        }),
+      }),
+    );
   });
 
   it("US-14 DELETE reassign explicit reassignTo publicId honored", async () => {
@@ -353,30 +597,55 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const heir = await createUser(company.id);
     const p = await createProject(company.id, victim.id);
     asUser(admin);
-    const r = await readJson(await usDELETE(delReq({ id: await publicIdOf(victim.id), reassignTo: await publicIdOf(heir.id) })));
+    const r = await readJson(
+      await usDELETE(
+        delReq({
+          id: await publicIdOf(victim.id),
+          reassignTo: await publicIdOf(heir.id),
+        }),
+      ),
+    );
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ success: true, mode: "reassign", projectCount: 1 });
-    const [row] = await db.select({ authorId: projects.authorId }).from(projects).where(eq(projects.id, p.id));
+    expect(r.body).toEqual({
+      success: true,
+      mode: "reassign",
+      projectCount: 1,
+    });
+    const [row] = await db
+      .select({ authorId: projects.authorId })
+      .from(projects)
+      .where(eq(projects.id, p.id));
     expect(row.authorId).toBe(heir.id);
   });
 
-  it("US-15 DELETE cascade: deleteProjectFully once per owned project (BEFORE the tx), user gone, counts", async () => {
+  it("US-15 DELETE cascade: guarded project teardown and cleanup stage atomically", async () => {
     const { company, admin } = await makeWorld();
     const victim = await createUser(company.id);
     const victimPub = await publicIdOf(victim.id);
     const p1 = await createProject(company.id, victim.id);
     const p2 = await createProject(company.id, victim.id);
     asUser(admin);
-    const r = await readJson(await usDELETE(delReq({ id: victimPub, mode: "cascade" })));
+    const r = await readJson(
+      await usDELETE(delReq({ id: victimPub, mode: "cascade" })),
+    );
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true, mode: "cascade", projectCount: 2 });
     expect(h.deleteProjectFully).toHaveBeenCalledTimes(2);
-    const calledIds = h.deleteProjectFully.mock.calls.map((c) => (c[0] as { id: number }).id).sort();
+    const calledIds = h.deleteProjectFully.mock.calls
+      .map((c) => (c[0] as { id: number }).id)
+      .sort();
     expect(calledIds).toEqual([p1.id, p2.id].sort());
     expect(await userByPublicId(victimPub)).toBeUndefined();
-    expect(h.audit).toHaveBeenCalledWith("user_deleted", expect.objectContaining({
-      details: expect.objectContaining({ mode: "cascade", projectCount: 2, reassignTargetId: undefined }),
-    }));
+    expect(h.audit).toHaveBeenCalledWith(
+      "user_deleted",
+      expect.objectContaining({
+        details: expect.objectContaining({
+          mode: "cascade",
+          projectCount: 2,
+          reassignTargetId: undefined,
+        }),
+      }),
+    );
   });
 
   it("B2 RED: DELETE rejects a user referenced by demo project data and leaves every row unchanged", async () => {
@@ -385,27 +654,36 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const victim = await createUser(company.id);
     const victimPub = await publicIdOf(victim.id);
     const demo = await createProject(company.id, demoOwner.id);
-    const [annotation] = await db.insert(annotations).values({
-      projectId: demo.id,
-      name: "demo-reference",
-      minX: 0,
-      minY: 0,
-      maxX: 0.5,
-      maxY: 0.5,
-      pageNumber: 1,
-      creatorId: victim.id,
-    }).returning();
-    const [chat] = await db.insert(chatMessages).values({
-      projectId: demo.id,
-      role: "user",
-      content: "demo reference",
-      userId: victim.id,
-    }).returning();
-    const [group] = await db.insert(annotationGroups).values({
-      projectId: demo.id,
-      name: "demo reference",
-      createdBy: victim.id,
-    }).returning();
+    const [annotation] = await db
+      .insert(annotations)
+      .values({
+        projectId: demo.id,
+        name: "demo-reference",
+        minX: 0,
+        minY: 0,
+        maxX: 0.5,
+        maxY: 0.5,
+        pageNumber: 1,
+        creatorId: victim.id,
+      })
+      .returning();
+    const [chat] = await db
+      .insert(chatMessages)
+      .values({
+        projectId: demo.id,
+        role: "user",
+        content: "demo reference",
+        userId: victim.id,
+      })
+      .returning();
+    const [group] = await db
+      .insert(annotationGroups)
+      .values({
+        projectId: demo.id,
+        name: "demo reference",
+        createdBy: victim.id,
+      })
+      .returning();
     await publishDemoFixture(demo.id);
 
     asUser(admin);
@@ -416,12 +694,36 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
       error: { code: "FORBIDDEN", message: "Demo projects are read-only" },
     });
     expect.soft(await userByPublicId(victimPub)).toBeTruthy();
-    expect.soft((await db.select({ creatorId: annotations.creatorId }).from(annotations)
-      .where(eq(annotations.id, annotation.id)))[0]?.creatorId).toBe(victim.id);
-    expect.soft((await db.select({ userId: chatMessages.userId }).from(chatMessages)
-      .where(eq(chatMessages.id, chat.id)))[0]?.userId).toBe(victim.id);
-    expect.soft((await db.select({ createdBy: annotationGroups.createdBy }).from(annotationGroups)
-      .where(eq(annotationGroups.id, group.id)))[0]?.createdBy).toBe(victim.id);
+    expect
+      .soft(
+        (
+          await db
+            .select({ creatorId: annotations.creatorId })
+            .from(annotations)
+            .where(eq(annotations.id, annotation.id))
+        )[0]?.creatorId,
+      )
+      .toBe(victim.id);
+    expect
+      .soft(
+        (
+          await db
+            .select({ userId: chatMessages.userId })
+            .from(chatMessages)
+            .where(eq(chatMessages.id, chat.id))
+        )[0]?.userId,
+      )
+      .toBe(victim.id);
+    expect
+      .soft(
+        (
+          await db
+            .select({ createdBy: annotationGroups.createdBy })
+            .from(annotationGroups)
+            .where(eq(annotationGroups.id, group.id))
+        )[0]?.createdBy,
+      )
+      .toBe(victim.id);
     expect.soft(h.deleteProjectFully).not.toHaveBeenCalled();
     expect.soft(h.audit).not.toHaveBeenCalled();
   });
@@ -431,8 +733,12 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const victim = await createUser(company.id);
     asUser(admin);
     const logSpy = vi.spyOn(logger, "error");
-    const spy = vi.spyOn(db, "transaction").mockRejectedValueOnce(new Error("boom-tx"));
-    const r = await readJson(await usDELETE(delReq({ id: await publicIdOf(victim.id) })));
+    const spy = vi
+      .spyOn(db, "transaction")
+      .mockRejectedValueOnce(new Error("boom-tx"));
+    const r = await readJson(
+      await usDELETE(delReq({ id: await publicIdOf(victim.id) })),
+    );
     spy.mockRestore();
     expect(r.status).toBe(500);
     // [S058 fold: B applied — the :270 err.message leak ({error:"boom-tx"}) is RETIRED to
@@ -442,7 +748,10 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     // [S058 DETECTOR closer P2] the breadcrumb is the WHOLE POINT of the try/log/re-throw —
     // pin it (the objectContaining 2nd arg distinguishes it from the shell's string-only
     // '[route] …' log; a bare-propagate mutation would pass without this assert).
-    expect(logSpy).toHaveBeenCalledWith("[user-delete] Failed", expect.objectContaining({ mode: "reassign", err: expect.anything() }));
+    expect(logSpy).toHaveBeenCalledWith(
+      "[user-delete] Failed",
+      expect.objectContaining({ mode: "reassign", err: expect.anything() }),
+    );
     logSpy.mockRestore();
     expect(await userByPublicId(await publicIdOf(victim.id))).toBeTruthy(); // nothing deleted
   });
@@ -455,13 +764,17 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const victimPub = await publicIdOf(victim.id);
     const p = await createProject(otherCo.id, victim.id);
     asUser(root);
-    const r = await readJson(await usDELETE(delReq({ id: victimPub, mode: "cascade" })));
+    const r = await readJson(
+      await usDELETE(delReq({ id: victimPub, mode: "cascade" })),
+    );
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ success: true, mode: "cascade", projectCount: 1 });
     // proves the root arm is eq(authorId) UNSCOPED by company — a companyId filter added to
     // the root arm would orphan the cross-company victim's projects and fail here loudly
     expect(h.deleteProjectFully).toHaveBeenCalledTimes(1);
-    expect((h.deleteProjectFully.mock.calls[0][0] as { id: number }).id).toBe(p.id);
+    expect((h.deleteProjectFully.mock.calls[0][0] as { id: number }).id).toBe(
+      p.id,
+    );
     expect(await userByPublicId(victimPub)).toBeUndefined();
   });
 
@@ -475,11 +788,385 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     asUser(root);
     // root deletes a cross-company victim (non-root would 404) AND reassigns to a heir in a
     // THIRD company (non-root would 400 'Reassign target must be in your company')
-    const r = await readJson(await usDELETE(delReq({ id: await publicIdOf(victim.id), reassignTo: await publicIdOf(heir.id) })));
+    const r = await readJson(
+      await usDELETE(
+        delReq({
+          id: await publicIdOf(victim.id),
+          reassignTo: await publicIdOf(heir.id),
+        }),
+      ),
+    );
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ success: true, mode: "reassign", projectCount: 1 });
-    const [row] = await db.select({ authorId: projects.authorId }).from(projects).where(eq(projects.id, p.id));
+    expect(r.body).toEqual({
+      success: true,
+      mode: "reassign",
+      projectCount: 1,
+    });
+    const [row] = await db
+      .select({ authorId: projects.authorId })
+      .from(projects)
+      .where(eq(projects.id, p.id));
     expect(row.authorId).toBe(heir.id);
+  });
+
+  it("B2 root-status race: promotion stops cascade before project deletion", async () => {
+    const { root } = await makeWorld();
+    const victim = await createUser(root.companyId);
+    const victimPublicId = await publicIdOf(victim.id);
+    const protectedProject = await createProject(root.companyId, victim.id);
+    asUser(root);
+
+    const originalTransaction = db.transaction.bind(db);
+    let admitTransaction!: () => void;
+    let releaseTransaction!: () => void;
+    const transactionAdmitted = new Promise<void>((resolve) => {
+      admitTransaction = resolve;
+    });
+    const transactionReleased = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    const transactionSpy = vi
+      .spyOn(db, "transaction")
+      .mockImplementationOnce((async (
+        callback: Parameters<typeof db.transaction>[0],
+      ) => {
+        admitTransaction();
+        await transactionReleased;
+        return originalTransaction(callback);
+      }) as typeof db.transaction);
+
+    try {
+      const pendingDelete = usDELETE(
+        delReq({ id: victimPublicId, mode: "cascade" }),
+      );
+      await transactionAdmitted;
+
+      // Reproduce the break-glass interleaving: the admitted target becomes a
+      // root, then the former sole root is demoted while that promoted row is
+      // the invariant witness. The final delete must recheck atomically.
+      await db
+        .update(users)
+        .set({ isRootAdmin: true })
+        .where(eq(users.id, victim.id));
+      await db
+        .update(users)
+        .set({ isRootAdmin: false })
+        .where(eq(users.id, root.id));
+      releaseTransaction();
+
+      const response = await readJson(await pendingDelete);
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual(A.validation("Cannot delete root admin"));
+      expect(h.deleteProjectFully).not.toHaveBeenCalled();
+      const [survivingProject] = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.id, protectedProject.id));
+      expect(survivingProject?.id).toBe(protectedProject.id);
+      expect((await userByPublicId(victimPublicId))?.isRootAdmin).toBe(true);
+      expect(
+        (await userByPublicId(await publicIdOf(root.id)))?.isRootAdmin,
+      ).toBe(false);
+      const roots = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.isRootAdmin, true));
+      expect(roots.map((row) => row.id)).toContain(victim.id);
+    } finally {
+      releaseTransaction();
+      transactionSpy.mockRestore();
+    }
+  });
+
+  it("B2 authority-lock contention fails DELETE and PUT fast without consuming mutation authority", async () => {
+    const { company, admin, member } = await makeWorld();
+    const victim = await createUser(company.id);
+    const victimPublicId = await publicIdOf(victim.id);
+    const memberPublicId = await publicIdOf(member.id);
+    const protectedProject = await createProject(company.id, victim.id);
+    asUser(admin);
+
+    let announceLock!: () => void;
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      announceLock = resolve;
+    });
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const holder = db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_catalog.pg_advisory_xact_lock(737375864)`);
+      announceLock();
+      await lockReleased;
+    });
+    await lockHeld;
+
+    const pendingDelete = usDELETE(
+      delReq({ id: victimPublicId, mode: "cascade" }),
+    );
+    const pendingUpdate = usPUT(
+      putReq({ id: memberPublicId, canRunModels: true }),
+    );
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const responses = await Promise.race([
+        Promise.all([
+          pendingDelete.then(readJson),
+          pendingUpdate.then(readJson),
+        ]),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () =>
+              reject(
+                new Error("authority operations blocked on the advisory lock"),
+              ),
+            1_000,
+          );
+        }),
+      ]);
+      expect(responses).toEqual([
+        {
+          status: 409,
+          body: A.conflict("User authority change in progress"),
+        },
+        {
+          status: 409,
+          body: A.conflict("User authority change in progress"),
+        },
+      ]);
+      expect(h.deleteProjectFully).not.toHaveBeenCalled();
+      expect((await userByPublicId(victimPublicId))?.id).toBe(victim.id);
+      expect((await userByPublicId(memberPublicId))?.canRunModels).toBe(false);
+      const [survivingProject] = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.id, protectedProject.id));
+      expect(survivingProject?.id).toBe(protectedProject.id);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      releaseLock();
+      await holder;
+      await Promise.allSettled([pendingDelete, pendingUpdate]);
+    }
+  });
+
+  it("B2 PUT derives role gates from the current actor after lock admission", async () => {
+    const { admin, member } = await makeWorld();
+    const memberPublicId = await publicIdOf(member.id);
+    asUser(admin);
+
+    const originalTransaction = db.transaction.bind(db);
+    let admitTransaction!: () => void;
+    let releaseTransaction!: () => void;
+    const transactionAdmitted = new Promise<void>((resolve) => {
+      admitTransaction = resolve;
+    });
+    const transactionReleased = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    const transactionSpy = vi
+      .spyOn(db, "transaction")
+      .mockImplementationOnce((async (
+        callback: Parameters<typeof db.transaction>[0],
+      ) => {
+        admitTransaction();
+        await transactionReleased;
+        return originalTransaction(callback);
+      }) as typeof db.transaction);
+
+    try {
+      const pendingUpdate = usPUT(
+        putReq({ id: memberPublicId, canRunModels: true }),
+      );
+      await transactionAdmitted;
+      await db
+        .update(users)
+        .set({ role: "member" })
+        .where(eq(users.id, admin.id));
+      releaseTransaction();
+
+      const response = await readJson(await pendingUpdate);
+      expect(response.status).toBe(403);
+      expect(response.body).toEqual(A.forbidden("Admin only"));
+      expect((await userByPublicId(memberPublicId))?.canRunModels).toBe(false);
+    } finally {
+      releaseTransaction();
+      transactionSpy.mockRestore();
+    }
+  });
+
+  it("B2 actor demotion that wins admission revokes root-wide cascade authority", async () => {
+    const { admin, root } = await makeWorld();
+    const otherCo = await createCompany();
+    const victim = await createUser(otherCo.id);
+    const victimPublicId = await publicIdOf(victim.id);
+    const protectedProject = await createProject(otherCo.id, victim.id);
+    asUser(root);
+
+    const originalTransaction = db.transaction.bind(db);
+    let admitTransaction!: () => void;
+    let releaseTransaction!: () => void;
+    const transactionAdmitted = new Promise<void>((resolve) => {
+      admitTransaction = resolve;
+    });
+    const transactionReleased = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    const transactionSpy = vi
+      .spyOn(db, "transaction")
+      .mockImplementationOnce((async (
+        callback: Parameters<typeof db.transaction>[0],
+      ) => {
+        admitTransaction();
+        await transactionReleased;
+        return originalTransaction(callback);
+      }) as typeof db.transaction);
+
+    try {
+      const pendingDelete = usDELETE(
+        delReq({ id: victimPublicId, mode: "cascade" }),
+      );
+      await transactionAdmitted;
+      await db
+        .update(users)
+        .set({ isRootAdmin: true })
+        .where(eq(users.id, admin.id));
+      await db
+        .update(users)
+        .set({ isRootAdmin: false, role: "member" })
+        .where(eq(users.id, root.id));
+      releaseTransaction();
+
+      const response = await readJson(await pendingDelete);
+      expect(response.status).toBe(403);
+      expect(response.body).toEqual(A.forbidden("Admin only"));
+      expect(h.deleteProjectFully).not.toHaveBeenCalled();
+      expect((await userByPublicId(victimPublicId))?.id).toBe(victim.id);
+      const [survivingProject] = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.id, protectedProject.id));
+      expect(survivingProject?.id).toBe(protectedProject.id);
+    } finally {
+      releaseTransaction();
+      transactionSpy.mockRestore();
+    }
+  });
+
+  it("B2 target company move that wins admission stops a regular-admin cascade", async () => {
+    const { company, admin } = await makeWorld();
+    const otherCo = await createCompany();
+    const victim = await createUser(company.id);
+    const victimPublicId = await publicIdOf(victim.id);
+    const protectedProject = await createProject(company.id, victim.id);
+    asUser(admin);
+
+    const originalTransaction = db.transaction.bind(db);
+    let admitTransaction!: () => void;
+    let releaseTransaction!: () => void;
+    const transactionAdmitted = new Promise<void>((resolve) => {
+      admitTransaction = resolve;
+    });
+    const transactionReleased = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    const transactionSpy = vi
+      .spyOn(db, "transaction")
+      .mockImplementationOnce((async (
+        callback: Parameters<typeof db.transaction>[0],
+      ) => {
+        admitTransaction();
+        await transactionReleased;
+        return originalTransaction(callback);
+      }) as typeof db.transaction);
+
+    try {
+      const pendingDelete = usDELETE(
+        delReq({ id: victimPublicId, mode: "cascade" }),
+      );
+      await transactionAdmitted;
+      await db
+        .update(users)
+        .set({ companyId: otherCo.id })
+        .where(eq(users.id, victim.id));
+      releaseTransaction();
+
+      const response = await readJson(await pendingDelete);
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual(A.notFound("User not found"));
+      expect(h.deleteProjectFully).not.toHaveBeenCalled();
+      expect((await userByPublicId(victimPublicId))?.companyId).toBe(
+        otherCo.id,
+      );
+      const [survivingProject] = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.id, protectedProject.id));
+      expect(survivingProject?.id).toBe(protectedProject.id);
+    } finally {
+      releaseTransaction();
+      transactionSpy.mockRestore();
+    }
+  });
+
+  it("B2 reassignment company move that wins admission stops cleanup", async () => {
+    const { company, admin } = await makeWorld();
+    const otherCo = await createCompany();
+    const victim = await createUser(company.id);
+    const heir = await createUser(company.id);
+    const victimPublicId = await publicIdOf(victim.id);
+    const heirPublicId = await publicIdOf(heir.id);
+    const protectedProject = await createProject(company.id, victim.id);
+    asUser(admin);
+
+    const originalTransaction = db.transaction.bind(db);
+    let admitTransaction!: () => void;
+    let releaseTransaction!: () => void;
+    const transactionAdmitted = new Promise<void>((resolve) => {
+      admitTransaction = resolve;
+    });
+    const transactionReleased = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    const transactionSpy = vi
+      .spyOn(db, "transaction")
+      .mockImplementationOnce((async (
+        callback: Parameters<typeof db.transaction>[0],
+      ) => {
+        admitTransaction();
+        await transactionReleased;
+        return originalTransaction(callback);
+      }) as typeof db.transaction);
+
+    try {
+      const pendingDelete = usDELETE(
+        delReq({ id: victimPublicId, reassignTo: heirPublicId }),
+      );
+      await transactionAdmitted;
+      await db
+        .update(users)
+        .set({ companyId: otherCo.id })
+        .where(eq(users.id, heir.id));
+      releaseTransaction();
+
+      const response = await readJson(await pendingDelete);
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual(
+        A.validation("Reassign target must be in your company"),
+      );
+      expect((await userByPublicId(victimPublicId))?.id).toBe(victim.id);
+      const [survivingProject] = await db
+        .select({ id: projects.id, authorId: projects.authorId })
+        .from(projects)
+        .where(eq(projects.id, protectedProject.id));
+      expect(survivingProject).toMatchObject({
+        id: protectedProject.id,
+        authorId: victim.id,
+      });
+    } finally {
+      releaseTransaction();
+      transactionSpy.mockRestore();
+    }
   });
 
   it("US-20 [closer P3 pin] non-object JSON bodies → shell zLooseBody VALIDATION 400 (uniform shell property)", async () => {
@@ -490,9 +1177,15 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     // uniform VALIDATION 400 instead — repo-wide shell property (remerge precedent, DR006
     // noted-not-drift), pinned here so it cannot silently shift.
     for (const body of ["[1,2]", "null", ""] as const) {
-      const r = await readJson(await usPOST(new Request("http://test.local/api/admin/users", {
-        method: "POST", headers: { "content-type": "application/json" }, body,
-      })));
+      const r = await readJson(
+        await usPOST(
+          new Request("http://test.local/api/admin/users", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body,
+          }),
+        ),
+      );
       expect(r.status).toBe(400);
       expect(r.body.error.code).toBe("VALIDATION");
     }
@@ -503,10 +1196,16 @@ describe.skipIf(!dbUp)("admin/users (US)", () => {
     const { admin } = await makeWorld();
     asUser(admin);
     // [S058 fold: E applied — legacy `await req.json()` threw (handler rejected)]
-    for (const call of [usPOST(malformed("POST")), usPUT(malformed("PUT")), usDELETE(malformed("DELETE"))]) {
+    for (const call of [
+      usPOST(malformed("POST")),
+      usPUT(malformed("PUT")),
+      usDELETE(malformed("DELETE")),
+    ]) {
       const r = await readJson(await call);
       expect(r.status).toBe(400);
-      expect(r.body).toEqual({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } });
+      expect(r.body).toEqual({
+        error: { code: "BAD_REQUEST", message: "Invalid JSON body" },
+      });
     }
   });
 });
